@@ -1,0 +1,23 @@
+{
+  "_comment_model": [
+    "MODEL SELECTION (set automatically based on modality):",
+    "  Audio/voice agents: model=gemini-3.1-flash-live, modality=audio, default_channel=audio",
+    "  Text-only agents:   model=gemini-3-flash, modality=text, default_channel=text",
+    "  IMPORTANT: When switching modality, update ALL THREE fields together:",
+    "  model, modality, AND default_channel. Mismatched values cause eval failures."
+  ],
+  "_comment_deployed_app_id": [
+    "CRITICAL FORMATTING:",
+    "  deployed_app_id MUST be the short name only (e.g., 'your-app-name').",
+    "  DO NOT use the full Google Cloud resource path (projects/.../apps/...).",
+    "  The SDK automatically constructs the full path during push and eval operations."
+  ],
+  "gcp_project_id": "YOUR_PROJECT_ID",
+  "location": "us",
+  "app_name": "your-app-name",
+  "deployed_app_id": null,
+  "app_dir": "cxas_app/",
+  "model": "gemini-3.1-flash-live",
+  "modality": "audio",
+  "default_channel": "audio"
+}

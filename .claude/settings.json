@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push.sh",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": ".agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push-lint.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".agents/skills/cxas-agent-foundry/scripts/hooks/post-agent-update.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

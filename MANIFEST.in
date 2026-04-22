@@ -1,0 +1,7 @@
+recursive-include .agents *
+recursive-include .claude *
+recursive-include .gemini *
+include AGENTS.md
+include GEMINI.md
+global-exclude __pycache__
+global-exclude *.pyc

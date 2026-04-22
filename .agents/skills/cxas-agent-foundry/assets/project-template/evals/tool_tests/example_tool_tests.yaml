@@ -1,0 +1,85 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# =============================================================================
+# TOOL TESTS
+#
+# Test individual tools in isolation — faster and more precise than
+# end-to-end conversation evals for catching tool-level regressions.
+#
+# KEY PATTERNS DEMONSTRATED:
+#   1. Top-level key MUST be 'tests:' (not 'test_cases:' — SCRAPI silently
+#      loads 0 tests with the wrong key)
+#   2. Each test needs 'tool:' with the display name (not resource path)
+#   3. Response paths start with '$.result.'
+#   4. Use 'variables:' to populate session state the tool may need
+#   5. Test both success AND error cases
+#
+# IMPORTANT: Before writing expectations, READ the tool's python_code.py
+# to find the exact keys in the return dict. Mismatched keys are the #1
+# cause of tool test failures.
+# =============================================================================
+
+tests:
+  # --- Success case: tool called with valid args ---
+  - name: lookup_account_success
+    tool: lookup_account
+    args:
+      account_id: "9820598207"
+    variables:
+      auth_status: "authenticated"
+    expectations:
+      response:
+        - path: "$.result.status"
+          operator: equals
+          value: "success"
+        - path: "$.result.account.balance"
+          operator: is_not_null
+
+  # --- Error case: missing required arg ---
+  - name: lookup_account_missing_id
+    tool: lookup_account
+    args:
+      account_id: ""
+    variables:
+      auth_status: "authenticated"
+    expectations:
+      response:
+        - path: "$.result.agent_action"
+          operator: is_not_null
+
+  # --- Error case: unauthenticated access ---
+  - name: lookup_account_unauthenticated
+    tool: lookup_account
+    args:
+      account_id: "9820598207"
+    variables:
+      auth_status: ""
+    expectations:
+      response:
+        - path: "$.result.agent_action"
+          operator: is_not_null
+
+  # --- State-setting tool ---
+  - name: set_session_state_trigger
+    tool: set_session_state
+    args:
+      _action_trigger: "escalate"
+      _escalation_reason: "customer requested"
+      _escalation_topic: "billing"
+    expectations:
+      response:
+        - path: "$.result.status"
+          operator: equals
+          value: "success"
