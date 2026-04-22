@@ -1,0 +1,116 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# cxaslint.yaml — CXAS Agent Linter configuration
+#
+# Place this file in your app's root directory (next to app.json).
+# All rules are enabled at their default severity. Override below.
+#
+# Run `cxas lint --list-rules` to see all available rules.
+
+# Path to the app directory (relative to this file)
+app_dir: .
+
+# Path to the evals directory
+evals_dir: evals/
+
+# Rule severity overrides (error, warning, info, off)
+rules:
+  # Instruction rules
+  # I001: error      # Required XML structure (<role>, <persona>, <taskflow>)
+  # I002: error      # Taskflow must contain <subtask> or <step>
+  # I003: error      # Excessive IF/ELSE logic
+  # I004: error      # Negative conditions in triggers
+  # I005: error      # conditional_logic block
+  # I006: error      # Hardcoded data (phone numbers, prices)
+  # I007: info       # Instruction too long (>3000 words)
+  # I008: error      # Invalid {@AGENT: ...} reference
+  # I009: error      # Invalid {@TOOL: ...} reference
+  # I010: error      # Wrong agent reference syntax
+  # I011: error      # Wrong tool reference syntax
+  # I012: error      # Tool in agent JSON but not referenced in instruction
+  # I013: error      # Tool referenced in instruction but not in agent JSON
+
+  # Callback rules
+  # C001: error      # Wrong function name for callback type
+  # C002: error      # Wrong argument count
+  # C003: error      # camelCase function name
+  # C004: error      # Returns dict instead of LlmResponse
+  # C005: error      # Hardcoded phrase list for intent detection
+  # C006: error      # Bare except without logging
+  # C007: info       # tools.* call naming convention
+  # C008: error      # Missing typing import
+
+  # Tool rules
+  # T001: error      # Missing agent_action error return
+  # T002: error      # Missing docstring
+  # T003: info       # Missing type hints
+  # T004: error      # Function name doesn't match tool directory
+  # T005: info       # High-cardinality input arguments
+  # T006: info       # Excessive return data
+  # T007: error      # Tool name not snake_case
+  # T008: error      # Tool displayName not referenced by any agent
+
+  # Eval rules
+  # E001: error      # Invalid YAML
+  # E002: error      # Missing 'conversations' key
+  # E003: error      # Tool call references non-existent tool
+  # E004: error      # Undeclared session parameter
+  # E005: error      # Duplicate YAML keys
+  # E006: error      # Golden with tool_calls but no session_parameters
+  # E007: error      # Agent field is not a string
+  # E008: error      # Missing agent field in golden turn
+  # E009: error      # Simulation missing tags
+  # E010: error      # Tool test uses wrong key
+  # E011: error      # Invalid $matchType value
+
+  # Config rules
+  # A001: error      # Invalid JSON
+  # A002: error      # Missing required fields
+  # A003: error      # Agent references non-existent tool
+  # A004: error      # Agent missing instruction.txt
+  # A005: error      # Root agent missing end_session
+
+  # Structure rules
+  # S002: error      # Instruction references tool not in agent's list
+  # S003: error      # Callback file reference not found
+  # S004: error      # Child agent reference not found
+
+  # Schema rules
+  # V001: error      # App config schema validation
+  # V002: error      # Agent config schema validation
+  # V003: error      # Tool config schema validation
+  # V004: error      # Toolset config schema validation
+  # V005: error      # Guardrail config schema validation
+  # V006: error      # Evaluation config schema validation
+  # V007: error      # Evaluation expectation config schema validation
+
+# Rule-specific options
+options:
+  I007:
+    max_words: 3000
+  I006:
+    patterns:
+      - '\b\d{3}[-.]?\d{3}[-.]?\d{4}\b'
+      - '\$\d+(\.\d{2})?'
+
+# File patterns to skip
+ignore:
+  - "**/__pycache__/**"
+  - "**/test_*.py"
+
+# Per-file rule overrides
+# per_file:
+#   "**/root_agent/instruction.txt":
+#     I007: off

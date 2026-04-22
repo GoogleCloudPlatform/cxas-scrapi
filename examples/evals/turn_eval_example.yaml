@@ -1,0 +1,101 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+config:
+  # Global configuration applied across all test cases unless overridden inside a specific test block.
+  # This map directly extends the kwargs passed to the underlying cxas_scrapi.core.sessions.Sessions.run() method.
+  modality: "TEXT" # Alternatively "AUDIO". Defaults to TEXT if omitted.
+
+conversations:
+  # ----------------------------------------------------------------------------
+  # 1. Standard Event Trigger (e.g., testing implicit Welcome greetings)
+  # ----------------------------------------------------------------------------
+  - conversation: "Session Start Event Check"
+    event: "session_start"
+    expectations:
+      - type: "contains"
+        value: "Shopping Assistant"
+
+  # ----------------------------------------------------------------------------
+  # 2. Basic Text Input & Asserting Agent Transfers
+  # ----------------------------------------------------------------------------
+  - conversation: "Party Planner transfer"
+    user: "Plan a party for my 4 year old"
+    expectations:
+      - type: "agent_transfer"
+        value: "party_planner"
+
+  # ----------------------------------------------------------------------------
+  # 3. Validating Tool Calls, Inputs, and Outputs (with Context Variables)
+  # ----------------------------------------------------------------------------
+  - conversation: "Product search tool I/O"
+    user: "cupcake decorations"
+    variables:
+      # Variables injected BEFORE the turn executes into the backend context
+      first_turn: true 
+    expectations:
+      - type: "tool_called"
+        value: "search_products"
+      - type: "tool_input"
+        # Tool inputs execute a boolean subset match. You only need to define the exact args you want verified.
+        value:
+          query: "cupcake decorations"
+      - type: "tool_output"
+        # Tool outputs execute a subset match against the returned JSON objects.
+        # An empty dictionary {} validates that the key exists without restricting its value contents.
+        value:
+          search_products: {}
+
+  # ----------------------------------------------------------------------------
+  # 4. Strict Output Matching assuring No Backend Functions triggered
+  # ----------------------------------------------------------------------------
+  - conversation: "Direct Response Only"
+    user: "Thank you!"
+    expectations:
+      - type: "no_tools_called"
+        # Null value is sufficient here as the Type validates simply that the toolkit list is empty.
+        value: null
+      - type: "equals"
+        # Checks for exact string equality (safely ignoring leading/trailing whitespaces automatically).
+        value: "You're very welcome! Let me know if you need anything else."
+
+  # ----------------------------------------------------------------------------
+  # 5. Fetching Historic Context via Session ID String (With Turn Limits)
+  # ----------------------------------------------------------------------------
+  - conversation: "Dynamic Context Session Injection"
+    user: "Does the policy cover that procedure?"
+    # By providing a string session ID, TurnEvals invokes ConversationHistory to automatically 
+    # fetch, format, and serialize the prior conversation trajectory.
+    historical_contexts: "simulator-1d519e30-6521-4ca6-bc14-e1dd46d1d2c3"
+    # We can configure Sessions.run via TurnEvals to only fetch a subset of the historical session's turns. 
+    # (e.g., stopping the trace extraction after 5 turns to test the middle state of a conversation).
+    # If turn_count is provided, historical_contexts must also be provided.
+    turn_count: 5 
+    expectations:
+      - type: "contains"
+        value: "Yes, that procedure is covered"
+
+  # ----------------------------------------------------------------------------
+  # 6. Hard-coding Static Dictionary Contexts manually
+  # ----------------------------------------------------------------------------
+  - conversation: "Static Dictionary Context Injection"
+    user: "What did I ask about again?"
+    # Alternatively, supply the exact conversational layout you specifically want applied instead of fetching it.
+    historical_contexts:
+      - user: "Hi, I need help finding my member ID."
+      - agent: "I can help with that. What is your name and date of birth?"
+        name: "Authentication Agent"
+    expectations:
+      - type: "contains"
+        value: "member ID"

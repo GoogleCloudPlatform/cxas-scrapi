@@ -1,0 +1,22 @@
+{
+    "_comment_tool_json": [
+        "TOOL JSON FORMAT:",
+        "  name: Internal identifier. Must match the directory name.",
+        "  displayName: How the agent JSON references this tool. Must match 'name'",
+        "    exactly (use snake_case). Mismatched names cause 'Reference not found' on push.",
+        "  pythonFunction.name: The Python function name in the code file.",
+        "  pythonFunction.pythonCode: Path to the Python file, relative to the app directory.",
+        "  pythonFunction.description: Tool description for the LLM -- it uses this to decide",
+        "    WHEN to call the tool. Treat this as a core instruction.",
+        "  executionType: SYNCHRONOUS (wait for result) or ASYNCHRONOUS (fire and forget).",
+        "    Use SYNCHRONOUS for tools whose return value the agent needs to respond."
+    ],
+    "name": "lookup_account",
+    "pythonFunction": {
+        "name": "lookup_account",
+        "pythonCode": "tools/lookup_account/python_function/python_code.py",
+        "description": "Looks up customer account details by account ID. Returns account information including balance, plan, and service status. Requires authenticated session."
+    },
+    "executionType": "SYNCHRONOUS",
+    "displayName": "lookup_account"
+}

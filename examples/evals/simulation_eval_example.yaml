@@ -1,0 +1,120 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# =============================================================================
+# SIMULATION EVALS
+#
+# WHY sims (not goldens):
+#   - These flows are LLM-driven and vary naturally between runs
+#   - The agent's exact phrasing depends on tool responses and context
+#   - Sims test behavioral outcomes, not exact text
+#
+# KEY PATTERNS DEMONSTRATED:
+#   1. tags is REQUIRED — sim runner filters by --priority P0/P1/P2
+#   2. response_guide includes auth credentials for the sim user to provide
+#   3. expectations use behavioral descriptions, not function names
+#      (the LLM judge sees resource IDs, not display names)
+#   4. session_parameters left empty for variables derived by callbacks
+#   5. max_turns set to reasonable limit per flow complexity
+#   6. Multi-step sims test sequential goals in a single conversation
+#      (e.g., authenticate → ask question → follow up with second topic)
+# =============================================================================
+
+evals:
+  # --- P0: Critical flows ---
+
+  - name: authenticated_billing_inquiry
+    tags: [P0, billing, CUJ-1]
+    steps:
+      - goal: Ask about current account balance after authenticating
+        success_criteria: Agent authenticates the caller and provides billing information from a tool lookup
+        response_guide: >
+          You are a customer calling about your bill. When asked to verify
+          your identity, provide account ID 9820598207 and customer ID
+          4444444. Then ask "What's my current balance?"
+        max_turns: 10
+    expectations:
+      - "The agent must verify the caller's identity before providing account details"
+      - "The agent must call a tool to look up the account or billing information"
+      - "The agent must provide the balance amount from the tool response, not a made-up number"
+    session_parameters:
+      account_id: "9820598207"
+      customer_id: "4444444"
+
+  - name: escalation_after_failed_auth
+    tags: [P0, auth, escalation]
+    steps:
+      - goal: Attempt to authenticate with wrong credentials and get escalated
+        success_criteria: Agent attempts authentication, fails, and transfers to a human agent
+        response_guide: >
+          You are a customer who doesn't know their account details. When
+          asked for account ID, say "I don't have it." When asked for any
+          other verification, give wrong information. After a few failed
+          attempts, ask to speak to a person.
+        max_turns: 12
+    expectations:
+      - "The agent must attempt to verify the caller's identity"
+      - "The agent must NOT reveal any account details without successful authentication"
+      - "The agent must eventually escalate or transfer the caller to a human agent"
+    session_parameters: {}
+
+  # --- P1: Important flows ---
+
+  - name: troubleshooting_flow
+    tags: [P1, troubleshooting, CUJ-2]
+    steps:
+      - goal: Report a service issue and get troubleshooting help
+        success_criteria: Agent authenticates, routes to troubleshooting, and attempts to diagnose the issue
+        response_guide: >
+          You are a customer with a service problem. Provide account ID
+          9820598207 and customer ID 4444444 when asked. Describe your
+          issue as "my internet has been really slow since yesterday."
+          Follow the agent's troubleshooting steps cooperatively.
+        max_turns: 14
+    expectations:
+      - "The agent must authenticate the caller before troubleshooting"
+      - "The agent must route to troubleshooting or attempt to diagnose the issue"
+      - "The agent must call a diagnostic or lookup tool to check for issues"
+    session_parameters:
+      account_id: "9820598207"
+      customer_id: "4444444"
+
+  # --- Multi-step sim: tests sequential goals in one conversation ---
+
+  - name: billing_then_troubleshooting
+    tags: [P1, billing, troubleshooting, multi-step]
+    steps:
+      - goal: Authenticate and ask about your current balance
+        success_criteria: Agent verifies identity and provides account balance
+        response_guide: >
+          You are a customer with two questions. First, provide account ID
+          9820598207 and customer ID 4444444 when asked. Then ask "What's
+          my current balance?"
+        max_turns: 8
+      - goal: After getting your balance, report a service issue
+        success_criteria: Agent acknowledges the new topic and begins troubleshooting or routes appropriately
+        response_guide: >
+          Now say "I also have another issue — my internet has been really
+          slow since yesterday. Can you help with that too?" Cooperate
+          with any troubleshooting steps the agent suggests.
+        max_turns: 10
+    expectations:
+      - "The agent must authenticate the caller before providing any account details"
+      - "The agent must call a tool to look up billing or account information"
+      - "The agent must provide the balance from the tool response"
+      - "The agent must acknowledge the second topic without requiring re-authentication"
+      - "The agent must route to troubleshooting or attempt to diagnose the service issue"
+    session_parameters:
+      account_id: "9820598207"
+      customer_id: "4444444"

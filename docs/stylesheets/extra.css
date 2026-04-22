@@ -1,0 +1,71 @@
+/* Custom branding */
+:root {
+  --md-primary-fg-color:        #1967D2;
+  --md-primary-fg-color--light: #4285F4;
+  --md-primary-fg-color--dark:  #174EA6;
+}
+
+/* Card grid for home page */
+.grid.cards > :is(ul, ol) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+}
+
+/* Hero section */
+.hero {
+  padding: 4rem 2rem;
+  text-align: center;
+}
+
+.hero .hero-title {
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 1rem;
+}
+
+.hero .hero-subtitle {
+  font-size: 1.25rem;
+  color: var(--md-default-fg-color--light);
+  margin-bottom: 2rem;
+}
+
+/* CLI output styling */
+.cli-output {
+  background: var(--md-code-bg-color);
+  border-left: 4px solid var(--md-primary-fg-color);
+  padding: 1rem;
+  font-family: var(--md-code-font);
+  font-size: 0.875rem;
+}
+
+/* Rule severity badges */
+.badge-error   { background: #D93025; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge-warning { background: #F9AB00; color: black; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge-info    { background: #1967D2; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge-off     { background: #5F6368; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+
+/* Feature cards on home page */
+.feature-card {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+  padding: 1.5rem;
+  transition: box-shadow 0.2s;
+}
+
+.feature-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Command reference styling */
+.cmd-syntax {
+  background: var(--md-code-bg-color);
+  padding: 1rem 1.5rem;
+  border-radius: 6px;
+  font-family: var(--md-code-font);
+  font-size: 0.9rem;
+  margin: 1rem 0;
+}

@@ -1,0 +1,18 @@
+{
+    "_comment_tool_json": [
+        "TOOL JSON FORMAT:",
+        "  name/displayName: Must match each other and the directory name (snake_case).",
+        "  pythonFunction.name: The Python function name in the code file.",
+        "  pythonFunction.pythonCode: Path to Python file, relative to the app directory.",
+        "  pythonFunction.description: The LLM reads this to decide WHEN to call the tool.",
+        "  executionType: SYNCHRONOUS (wait for result) or ASYNCHRONOUS (fire and forget)."
+    ],
+    "name": "set_session_state",
+    "pythonFunction": {
+        "name": "set_session_state",
+        "pythonCode": "tools/set_session_state/python_function/python_code.py",
+        "description": "Sets one or more session state variables. Used by the trigger pattern: the LLM calls this tool to set _action_trigger and related variables, then the before_model_callback intercepts and executes the action deterministically."
+    },
+    "executionType": "SYNCHRONOUS",
+    "displayName": "set_session_state"
+}

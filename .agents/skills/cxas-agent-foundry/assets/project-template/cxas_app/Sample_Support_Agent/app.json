@@ -1,0 +1,104 @@
+{
+    "_comment_variable_conventions": [
+        "VARIABLE NAMING CONVENTIONS:",
+        "",
+        "Underscore prefix (_action_trigger, _escalation_reason, _escalation_topic):",
+        "  These are INTERNAL variables used for callback-to-callback communication.",
+        "  The underscore prefix signals 'do not set in session_parameters' -- they",
+        "  are written by the LLM (via set_session_state) or by callbacks, never by",
+        "  the caller. In evals, you should NEVER set these in session_parameters.",
+        "",
+        "No prefix (auth_status, user_role, account_id, customer_id):",
+        "  These are either INPUT variables (account_id, customer_id -- set by the",
+        "  telephony platform) or DERIVED variables (auth_status, user_role -- set",
+        "  by the before_agent_callback from API lookups).",
+        "",
+        "Empty string defaults (not 'UNKNOWN' or 'none'):",
+        "  auth_status defaults to '' so the before_agent_callback can use a simple",
+        "  truthy check: if state.get('auth_status') --> falsy on first run, truthy",
+        "  after being set. If the default were 'UNKNOWN', the callback would need",
+        "  explicit value comparison, which is error-prone and verbose.",
+        "",
+        "api_failed defaults to 'false' (string, not boolean):",
+        "  GECX session state only supports string values. The before_model_callback",
+        "  checks str(state.get('api_failed', 'false')).lower() == 'true'."
+    ],
+    "name": "sample_support_agent",
+    "displayName": "Sample Support Agent",
+    "description": "Sample customer support agent demonstrating GECX best practices",
+    "rootAgent": "root_agent",
+    "tools": [
+        "lookup_account",
+        "set_session_state",
+        "payload_update_tool"
+    ],
+
+    "_comment_model_settings": [
+        "MODEL SETTINGS (set based on modality):",
+        "  Audio/voice: gemini-3.1-flash-live (streaming, real-time voice)",
+        "  Text-only:   gemini-3-flash (lower latency, no streaming)",
+        "  The '-live' suffix enables bidirectional streaming for voice."
+    ],
+    "modelSettings": {
+        "model": "gemini-3.1-flash-live"
+    },
+
+    "_comment_audio_settings": [
+        "AUDIO / LANGUAGE / TIMEZONE:",
+        "  Set these for voice agents. Text-only agents can omit them.",
+        "  toolExecutionMode: PARALLEL reduces latency by running independent",
+        "  tool calls concurrently instead of sequentially."
+    ],
+    "languageSettings": {
+        "defaultLanguageCode": "en"
+    },
+    "timeZoneSettings": {
+        "timeZone": "America/New_York"
+    },
+    "_comment_logging_settings": [
+        "LOGGING SETTINGS:",
+        "  For VOICE/AUDIO agents ONLY: evaluationAudioRecordingConfig MUST be provided",
+        "  to run audio evaluations. Without it, the platform will return a 400 BadRequestException.",
+        "  For TEXT/CHAT agents: You can remove this entire evaluationAudioRecordingConfig block."
+    ],
+    "loggingSettings": {
+        "conversationLoggingSettings": {},
+        "evaluationAudioRecordingConfig": {
+            "gcsBucket": "gs://your-audio-evals-bucket"
+        }
+    },
+    "toolExecutionMode": "PARALLEL",
+
+    "_comment_eval_thresholds": [
+        "EVALUATION THRESHOLDS:",
+        "  These control how goldens are scored. Adjust via app-thresholds.py.",
+        "  semanticSimilaritySuccessThreshold: 1-4 scale (lower = more lenient).",
+        "  extraToolCallBehavior: ALLOW lets the agent call extra tools without failing.",
+        "  hallucinationMetricBehavior: DISABLED avoids false failures from the scorer."
+    ],
+    "evaluationMetricsThresholds": {
+        "goldenEvaluationMetricsThresholds": {
+            "turnLevelMetricsThresholds": {
+                "semanticSimilaritySuccessThreshold": 3,
+                "overallToolInvocationCorrectnessThreshold": 1
+            },
+            "toolMatchingSettings": {
+                "extraToolCallBehavior": "ALLOW"
+            }
+        },
+        "goldenHallucinationMetricBehavior": "DISABLED"
+    },
+
+    "variableDeclarations": [
+        {"name": "auth_status", "description": "Authentication status of the caller", "schema": {"type": "STRING", "default": ""}},
+        {"name": "account_id", "description": "Customer account identifier from telephony platform", "schema": {"type": "STRING", "default": ""}},
+        {"name": "customer_id", "description": "Customer identifier from telephony platform", "schema": {"type": "STRING", "default": ""}},
+        {"name": "user_role", "description": "Derived user role from customer profile lookup", "schema": {"type": "STRING", "default": ""}},
+        {"name": "customer_name", "description": "Derived customer name from profile lookup", "schema": {"type": "STRING", "default": ""}},
+        {"name": "_action_trigger", "description": "Internal trigger for deterministic callback actions", "schema": {"type": "STRING", "default": ""}},
+        {"name": "_escalation_reason", "description": "Internal reason for escalation", "schema": {"type": "STRING", "default": ""}},
+        {"name": "_escalation_topic", "description": "Internal topic category for escalation routing", "schema": {"type": "STRING", "default": ""}},
+        {"name": "api_failed", "description": "Flag indicating API failure in callbacks", "schema": {"type": "STRING", "default": "false"}},
+        {"name": "no_input_counter", "description": "Consecutive silence/no-input count", "schema": {"type": "STRING", "default": "0"}}
+    ]
+}
