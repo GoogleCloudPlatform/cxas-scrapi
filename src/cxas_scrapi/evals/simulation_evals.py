@@ -26,6 +26,7 @@ from alive_progress import alive_it
 
 import pandas as pd
 import pydantic
+from alive_progress import alive_it
 
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.sessions import Sessions
@@ -687,7 +688,9 @@ class SimulationEvals(Apps):
                     )
                     for tc, run_idx in jobs
                 }
-                for future in alive_it(as_completed(futures), total=len(futures), title="Running Simulations"):
+                for future in alive_it(
+                    as_completed(futures), total=len(futures), title="Running Simulations"
+                ):
                     results.append(future.result())
 
         return results
