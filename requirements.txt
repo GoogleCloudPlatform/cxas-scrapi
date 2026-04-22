@@ -12,7 +12,7 @@ pandas
 gspread
 gspread-dataframe
 PyYAML
-tqdm
+alive-progress
 pandas-gbq
 google-cloud-bigquery
 google-cloud-ces

@@ -23,6 +23,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+from alive_progress import alive_it
 import yaml
 from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
@@ -665,7 +666,7 @@ class TurnEvals:
             print(f"Error in dependency resolution: {e}")
             raise
 
-        for case in sorted_cases:
+        for case in alive_it(sorted_cases, title="Running Turn Tests"):
             print(f"Running Turn Test: {case.name}")
 
             try:

@@ -22,6 +22,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
+from alive_progress import alive_it
+
 import pandas as pd
 import pydantic
 
@@ -673,7 +675,7 @@ class SimulationEvals(Apps):
                 }
 
         if parallel <= 1:
-            for tc, run_idx in jobs:
+            for tc, run_idx in alive_it(jobs, title="Running Simulations"):
                 results.append(_run_job(tc, run_idx))
         else:
             max_workers = min(parallel, 25)
@@ -685,7 +687,7 @@ class SimulationEvals(Apps):
                     )
                     for tc, run_idx in jobs
                 }
-                for future in as_completed(futures):
+                for future in alive_it(as_completed(futures), total=len(futures), title="Running Simulations"):
                     results.append(future.result())
 
         return results
