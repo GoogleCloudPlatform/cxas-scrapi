@@ -19,6 +19,7 @@ jobs:
         id: release
         with:
           release-type: python
+          token: ${{ secrets.GH_TOKEN }}
 
   publish-pypi:
     needs: release-please
