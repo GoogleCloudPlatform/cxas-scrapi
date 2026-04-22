@@ -1,0 +1,47 @@
+{
+  "tools": {
+    "truncateToolOutputThreshold": 0
+  },
+  "hooks": {
+    "AfterTool": [
+      {
+        "matcher": "run_shell_command",
+        "hooks": [
+          {
+            "name": "post-agent-update",
+            "type": "command",
+            "command": "$GEMINI_PROJECT_DIR/.agents/skills/cxas-agent-foundry/scripts/hooks/post-agent-update.sh",
+            "description": "Auto-pull from CXAS and sync callbacks after update_agent calls",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": "run_shell_command",
+        "hooks": [
+          {
+            "name": "pre-agent-push",
+            "type": "command",
+            "command": "$GEMINI_PROJECT_DIR/.agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push.sh",
+            "description": "Block push if local files are stale vs platform (drift detection)",
+            "timeout": 30000
+          },
+          {
+            "name": "pre-agent-push-lint",
+            "type": "command",
+            "command": "$GEMINI_PROJECT_DIR/.agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push-lint.sh",
+            "description": "Lint before pushing to CXAS — block on errors",
+            "timeout": 30000
+          }
+        ]
+      }
+    ]
+  },
+  "skills": {
+    "disabled": [
+      "cxas_sim_eval"
+    ]
+  }
+}

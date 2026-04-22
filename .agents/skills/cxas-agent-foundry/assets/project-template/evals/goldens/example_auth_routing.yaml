@@ -1,0 +1,86 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# =============================================================================
+# GOLDEN EVAL: Authenticated Customer Routing
+#
+# WHY this is a golden (not a sim):
+#   - Auth routing is callback-enforced and deterministic
+#   - Same input always produces same output (before_agent_callback derives
+#     auth_status from account_id/customer_id)
+#   - Tool calls are consistent and predictable
+#
+# KEY PATTERNS DEMONSTRATED:
+#   1. common_session_parameters: Only non-derived variables (account_id,
+#      customer_id). NEVER override auth_status or user_role — they must be
+#      derived by the before_agent_callback, just like in production.
+#   2. Golden truncated at last deterministic turn (see comment below)
+#   3. $matchType: "ignore" for free-text args like summary
+#   4. agent field is ALWAYS a plain string (never use $matchType on agent)
+#   5. Only core tool expectations (no auxiliary/logging tools)
+#   6. Tags with priority, severity, PRD ID, category
+# =============================================================================
+
+common_session_parameters:
+  # Include ALL variables the before_agent_callback reads from state.
+  # Check the callback source code to find these.
+  #
+  # WHY NOT override auth_status here?
+  #   auth_status is DERIVED by the before_agent_callback from account_id +
+  #   customer_id via the customer datastore API. Overriding it in session
+  #   parameters bypasses the authentication logic entirely, giving you a
+  #   false pass — the eval succeeds but the actual auth flow is untested.
+  #   Same applies to user_role, customer_name, service_status.
+  account_id: "9820598207"
+  customer_id: "4444444"
+
+conversations:
+  - conversation: auth_routing_happy_path
+    session_parameters: {}
+    turns:
+      # First turn uses <event>welcome</event> to trigger the session start.
+      # Every turn MUST have both user and agent fields.
+      - user: "<event>welcome</event>"
+        agent: "Hi, I am your virtual assistant. How can I help you today?"
+
+      - user: "I have a question about my bill."
+        agent: "I'd be happy to help with your billing question. Let me pull up your account."
+        tool_calls:
+          - action: lookup_account
+            args:
+              account_id: "9820598207"
+
+      # ---------------------------------------------------------------
+      # GOLDEN TRUNCATED HERE: This is the last deterministic turn.
+      #
+      # WHY truncate? After this point, the conversation becomes
+      # free-form (customer might ask follow-ups, say goodbye, etc.).
+      # Extending the golden past the last deterministic turn makes it
+      # fragile — it will fail when the LLM's phrasing naturally varies.
+      #
+      # WHY is `agent` a plain string? The platform rejects $matchType
+      # dicts on the agent field with a Pydantic validation error. Use
+      # approximate text — the platform's semantic similarity scorer
+      # handles the comparison.
+      # ---------------------------------------------------------------
+      - user: "What's my current balance?"
+        agent: "Your current balance is $142.50."
+
+    expectations:
+      - "The agent must greet the customer by name"
+      - "The agent must call lookup_account with the correct account_id"
+      - "The agent must provide the account balance from the tool response"
+      - "The agent must NOT reveal account details before authentication"
+
+    tags: [P0, NO-GO, FR-1.1, auth-routing, billing]

@@ -1,0 +1,234 @@
+site_name: CXAS SCRAPI
+site_description: CX Agent Studio Scripting API — Build, test, deploy, and maintain Google CX Agent Studio conversational agents.
+site_url: https://googlecloudplatform.github.io/cxas-scrapi/
+repo_url: https://github.com/GoogleCloudPlatform/cxas-scrapi
+repo_name: GoogleCloudPlatform/cxas-scrapi
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Google LLC. Apache 2.0 License.
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+  font:
+    text: Google Sans
+    code: Roboto Mono
+  logo: assets/logo.svg
+  favicon: assets/favicon.png
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.tracking
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - announce.dismiss
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_root_full_path: false
+            show_source: true
+            show_bases: true
+            members_order: source
+            filters:
+              - "!^_"
+              - "!^__"
+            merge_init_into_class: true
+            separate_signature: true
+            signature_crossrefs: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+      enable_git_follow: false
+  - minify:
+      minify_html: true
+  - tags
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      title: On this page
+  - tables
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: GoogleCloudPlatform
+      repo: cxas-scrapi
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      auto_append:
+        - docs/includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/GoogleCloudPlatform/cxas-scrapi
+
+extra_css:
+  - stylesheets/extra.css
+  - stylesheets/diagrams.css
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Authentication: getting-started/authentication.md
+    - Quick Start (Python): getting-started/quickstart-python.md
+    - Quick Start (CLI): getting-started/quickstart-cli.md
+    - Concepts: getting-started/concepts.md
+  - Guides:
+    - guides/index.md
+    - Agent Development:
+      - guides/agent-development/index.md
+      - Creating Agents: guides/agent-development/creating-agents.md
+      - Managing Resources: guides/agent-development/managing-resources.md
+      - Pull & Push Workflow: guides/agent-development/pull-push-workflow.md
+      - Branching Apps: guides/agent-development/branching.md
+    - Testing & Evaluation:
+      - guides/evaluation/index.md
+      - Platform Goldens: guides/evaluation/platform-goldens.md
+      - Local Simulations: guides/evaluation/local-simulations.md
+      - Tool Tests: guides/evaluation/tool-tests.md
+      - Callback Tests: guides/evaluation/callback-tests.md
+      - Turn Evals: guides/evaluation/turn-evals.md
+      - Running Evaluations: guides/evaluation/running-evals-cli.md
+    - Linting:
+      - guides/linting/index.md
+      - Configuration: guides/linting/configuration.md
+      - Rule Reference: guides/linting/rules.md
+      - CI Integration: guides/linting/ci-integration.md
+    - AI Skills:
+      - guides/skills/index.md
+      - Installing Skills: guides/skills/installation.md
+      - Agent Foundry: guides/skills/agent-foundry.md
+      - Build Skill: guides/skills/build.md
+      - Run Skill: guides/skills/run.md
+      - Debug Skill: guides/skills/debug.md
+      - Hooks Reference: guides/skills/hooks.md
+    - Insights:
+      - guides/insights/index.md
+      - Scorecards: guides/insights/scorecards.md
+  - CLI Reference:
+    - cli/index.md
+    - cxas pull: cli/pull.md
+    - cxas push: cli/push.md
+    - cxas create: cli/create.md
+    - cxas delete: cli/delete.md
+    - cxas branch: cli/branch.md
+    - cxas apps: cli/apps.md
+    - cxas export: cli/export.md
+    - cxas push-eval: cli/push-eval.md
+    - cxas run: cli/run.md
+    - cxas test-tools: cli/test-tools.md
+    - cxas test-callbacks: cli/test-callbacks.md
+    - cxas test-single-callback: cli/test-single-callback.md
+    - cxas ci-test: cli/ci-test.md
+    - cxas local-test: cli/local-test.md
+    - cxas init-github-action: cli/init-github-action.md
+    - cxas lint: cli/lint.md
+    - cxas init: cli/init.md
+    - cxas insights: cli/insights.md
+  - API Reference:
+    - api/index.md
+    - Core:
+      - api/core/apps.md
+      - api/core/agents.md
+      - api/core/sessions.md
+      - api/core/tools.md
+      - api/core/guardrails.md
+      - api/core/deployments.md
+      - api/core/evaluations.md
+      - api/core/variables.md
+      - api/core/versions.md
+      - api/core/changelogs.md
+      - api/core/callbacks.md
+      - api/core/conversation-history.md
+      - api/core/insights.md
+    - Evals:
+      - api/evals/tool-evals.md
+      - api/evals/simulation-evals.md
+      - api/evals/callback-evals.md
+      - api/evals/guardrail-evals.md
+    - Utils:
+      - api/utils/eval-utils.md
+      - api/utils/linter.md
+      - api/utils/secret-manager.md
+      - api/utils/changelog-utils.md
+      - api/utils/google-sheets.md
+    - Migration:
+      - api/migration/index.md
+  - Contributing:
+    - contributing/index.md
+    - Development Setup: contributing/development-setup.md
+    - Code Style: contributing/code-style.md
+    - Submitting PRs: contributing/pull-requests.md

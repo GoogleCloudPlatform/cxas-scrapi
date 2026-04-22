@@ -1,0 +1,23 @@
+{
+    "name": "root_agent",
+    "displayName": "root_agent",
+    "instruction": "agents/root_agent/instruction.txt",
+    "_comment_tools": [
+        "TOOL LIST:",
+        "  end_session is a platform-provided SYSTEM tool. Do not create a tool",
+        "  directory for it -- just reference it by name here. The other tools are",
+        "  custom Python function tools defined in the tools/ directory."
+    ],
+    "tools": ["set_session_state", "lookup_account", "payload_update_tool", "end_session"],
+    "_comment_child_agents": [
+        "CHILD AGENTS (CRITICAL LINTER/PLATFORM QUIRK):",
+        "  The cxas lint tool may expect spaces matching the 'displayName',",
+        "  but the platform PUSH will fail (400 Reference Not Found) if it doesn't",
+        "  exactly match the agent's 'name' field (the directory name).",
+        "  ALWAYS use the exact 'name' field with underscores (e.g., 'troubleshoot_agent')."
+    ],
+    "childAgents": ["troubleshoot_agent"],
+    "beforeAgentCallbacks": [{"pythonCode": "agents/root_agent/before_agent_callbacks/before_agent_callbacks_01/python_code.py"}],
+    "beforeModelCallbacks": [{"pythonCode": "agents/root_agent/before_model_callbacks/before_model_callbacks_01/python_code.py"}],
+    "afterModelCallbacks": [{"pythonCode": "agents/root_agent/after_model_callbacks/after_model_callbacks_01/python_code.py"}]
+}

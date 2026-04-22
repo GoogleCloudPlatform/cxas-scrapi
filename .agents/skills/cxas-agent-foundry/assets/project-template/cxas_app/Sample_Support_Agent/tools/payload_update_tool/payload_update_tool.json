@@ -1,0 +1,18 @@
+{
+    "_comment_tool_json": [
+        "TOOL JSON FORMAT:",
+        "  name/displayName: Must match each other and the directory name (snake_case).",
+        "  pythonFunction.name: The Python function name in the code file.",
+        "  pythonFunction.pythonCode: Path to Python file, relative to the app directory.",
+        "  pythonFunction.description: The LLM reads this to decide WHEN to call the tool.",
+        "  executionType: SYNCHRONOUS (wait for result) or ASYNCHRONOUS (fire and forget)."
+    ],
+    "name": "payload_update_tool",
+    "pythonFunction": {
+        "name": "payload_update_tool",
+        "pythonCode": "tools/payload_update_tool/python_function/python_code.py",
+        "description": "Updates the session payload with escalation metadata (summary, reason, topic). Called by the before_model_callback during deterministic escalation -- the LLM does not call this tool directly."
+    },
+    "executionType": "SYNCHRONOUS",
+    "displayName": "payload_update_tool"
+}

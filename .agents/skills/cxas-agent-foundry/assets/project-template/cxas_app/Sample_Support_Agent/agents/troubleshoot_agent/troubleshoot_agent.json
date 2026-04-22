@@ -1,0 +1,23 @@
+{
+    "name": "troubleshoot_agent",
+    "displayName": "troubleshoot_agent",
+    "instruction": "agents/troubleshoot_agent/instruction.txt",
+    "_comment_tools": [
+        "SUB-AGENT TOOLS:",
+        "  Sub-agents need access to set_session_state for the trigger pattern to work.",
+        "  Without it, when the customer requests escalation while talking to this agent,",
+        "  the LLM can't set _action_trigger and the callback can't intercept.",
+        "  end_session is a platform-provided SYSTEM tool -- do not create a directory for it."
+    ],
+    "tools": ["set_session_state", "lookup_account", "payload_update_tool", "end_session"],
+    "_comment_callbacks": [
+        "SUB-AGENT CALLBACKS (THE CALLBACK GAP FIX):",
+        "  This agent only has beforeModelCallbacks -- not beforeAgent or afterModel.",
+        "  WHY: The trigger-handling before_model_callback must exist on ALL agents",
+        "  that handle user messages, not just root. Without it, escalation triggers",
+        "  set by the LLM while the customer is talking to this sub-agent would never",
+        "  be intercepted. The before_agent and after_model callbacks handle concerns",
+        "  (auth derivation, farewell injection) that only apply to the root agent."
+    ],
+    "beforeModelCallbacks": [{"pythonCode": "agents/troubleshoot_agent/before_model_callbacks/before_model_callbacks_01/python_code.py"}]
+}

@@ -1,0 +1,68 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# =============================================================================
+# GOLDEN EVAL: Escalation via Trigger Pattern
+#
+# WHY this is a golden (not a sim):
+#   - Escalation is callback-driven (before_model_callback intercepts the
+#     trigger and returns deterministic tool calls)
+#   - The text and tool calls are fixed by the callback, not the LLM
+#
+# KEY PATTERNS DEMONSTRATED:
+#   1. Golden tests the trigger pattern: instruction → set_session_state →
+#      before_model_callback intercepts next model call
+#   2. $matchType: "ignore" for free-text args
+#   3. $matchType: "semantic" for meaning-based matching
+#   4. agent field is ALWAYS a plain string
+#   5. Golden ends before the callback's deterministic response (to avoid
+#      expressing the callback turn which is hard to model in goldens)
+# =============================================================================
+
+common_session_parameters:
+  account_id: "9820598207"
+  customer_id: "4444444"
+
+conversations:
+  - conversation: escalation_customer_request
+    session_parameters: {}
+    turns:
+      # First turn uses <event>welcome</event> to trigger the session start.
+      - user: "<event>welcome</event>"
+        agent: "Hi, I am your virtual assistant. How can I help you today?"
+
+      # The instruction tells the LLM to acknowledge the request and call
+      # set_session_state with _action_trigger = "escalate". The golden
+      # ends here — the callback's deterministic response on the next model
+      # call is not expressed in the golden to avoid fragile extra turns.
+      - user: "I want to speak to a real person."
+        agent: "Of course, I can connect you with someone who can help."
+        tool_calls:
+          - action: set_session_state
+            args:
+              _action_trigger: "escalate"
+              _escalation_reason:
+                $matchType: "semantic"
+                $matchValue: "Customer requested to speak with a human agent"
+                $originalValue: ""
+              _escalation_topic:
+                $matchType: "ignore"
+                $matchValue: ""
+                $originalValue: ""
+
+    expectations:
+      - "The agent must acknowledge the customer's request to speak to a human"
+      - "The agent must call set_session_state with _action_trigger set to escalate"
+
+    tags: [P0, HIGH, FR-2.1, escalation]
