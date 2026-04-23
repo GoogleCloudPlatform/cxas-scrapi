@@ -215,7 +215,7 @@ def _app_push(
         if target_app_id:
             # Extract UUID if full resource name provided.
             if "apps/" in target_app_id:
-                target_app_id = target_app_id.split("apps/")[-1]
+                target_app_id = target_app_id.rsplit("apps/", maxsplit=1)[-1]
             result = apps_client.import_app(
                 app_name=target_app_id, app_content=app_content
             )
@@ -223,7 +223,9 @@ def _app_push(
             result = apps_client.import_as_new_app(
                 display_name=display_name, app_content=app_content
             )
-        return _handle_import_result(result, "pushed to" if identifier else "pushed")
+        return _handle_import_result(
+            result, "pushed to" if identifier else "pushed"
+        )
 
     except Exception as e:
         print(f"Failed to push app: {e}")
@@ -349,7 +351,8 @@ def apps_list(args: argparse.Namespace) -> None:
             import pandas as pd  # noqa: PLC0415
 
             data = [
-                {"Display Name": app.display_name, "Name": app.name} for app in apps
+                {"Display Name": app.display_name, "Name": app.name}
+                for app in apps
             ]
             df = pd.DataFrame(data)
             print("\nApps:")
@@ -453,7 +456,9 @@ def app_lint(args: argparse.Namespace) -> None:  # noqa: C901
                             "file": str(app_dir),
                             "severity": "error",
                             "rule_id": "SETUP",
-                            "message": (f"No app directory found under {app_dir}"),
+                            "message": (
+                                f"No app directory found under {app_dir}"
+                            ),
                         }
                     ]
                 )
@@ -509,7 +514,9 @@ def app_init(args: argparse.Namespace) -> None:
 
     if not skills_root.exists():
         print(f"ERROR: Bundled skills not found at {skills_root}")
-        print("This may happen if cxas-scrapi was installed without skill data.")
+        print(
+            "This may happen if cxas-scrapi was installed without skill data."
+        )
         sys.exit(1)
 
     overwrite_all = force
@@ -547,7 +554,8 @@ def _prompt_overwrite(name: str) -> str:
     while True:
         choice = (
             input(
-                f"  '{name}' already exists. " "[o]verwrite / [a]ll / [s]kip / [q]uit? "
+                f"  '{name}' already exists. "
+                "[o]verwrite / [a]ll / [s]kip / [q]uit? "
             )
             .strip()
             .lower()

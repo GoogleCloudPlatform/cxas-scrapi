@@ -365,7 +365,9 @@ def test_app_lint_clean_app(capsys, tmp_path):
     _make_lint_app(tmp_path)
     args = _lint_args(tmp_path)
 
-    with mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"):
+    with mock.patch(
+        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    ):
         with pytest.raises(SystemExit) as excinfo:
             cli_app.app_lint(args)
 
@@ -388,7 +390,9 @@ def test_app_lint_with_errors(capsys, tmp_path):
 
     args = _lint_args(tmp_path)
 
-    with mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"):
+    with mock.patch(
+        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    ):
         with pytest.raises(SystemExit) as excinfo:
             cli_app.app_lint(args)
 
@@ -401,7 +405,9 @@ def test_app_lint_json_output(capsys, tmp_path):
     _make_lint_app(tmp_path)
     args = _lint_args(tmp_path, json_output=True)
 
-    with mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"):
+    with mock.patch(
+        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    ):
         with pytest.raises(SystemExit) as excinfo:
             cli_app.app_lint(args)
 
@@ -417,7 +423,9 @@ def test_app_lint_validate_only(capsys, tmp_path):
     _make_lint_app(tmp_path)
     args = _lint_args(tmp_path, json_output=True, validate_only=True)
 
-    with mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"):
+    with mock.patch(
+        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    ):
         with pytest.raises(SystemExit) as excinfo:
             cli_app.app_lint(args)
 
@@ -428,16 +436,18 @@ def test_app_lint_validate_only(capsys, tmp_path):
     results = json.loads(captured.out)
     valid_prefixes = ("A", "S", "V")
     for r in results:
-        assert any(
-            r["rule_id"].startswith(p) for p in valid_prefixes
-        ), f"Expected config/structure/schema rule, got {r['rule_id']}"
+        assert any(r["rule_id"].startswith(p) for p in valid_prefixes), (
+            f"Expected config/structure/schema rule, got {r['rule_id']}"
+        )
 
 
 def test_app_lint_only_filter(capsys, tmp_path):
     _make_lint_app(tmp_path)
     args = _lint_args(tmp_path, json_output=True, only="config")
 
-    with mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"):
+    with mock.patch(
+        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    ):
         with pytest.raises(SystemExit) as excinfo:
             cli_app.app_lint(args)
 
@@ -447,16 +457,18 @@ def test_app_lint_only_filter(capsys, tmp_path):
 
     results = json.loads(captured.out)
     for r in results:
-        assert r["rule_id"].startswith(
-            "A"
-        ), f"Expected only A-rules with --only config, got {r['rule_id']}"
+        assert r["rule_id"].startswith("A"), (
+            f"Expected only A-rules with --only config, got {r['rule_id']}"
+        )
 
 
 def test_app_lint_rule_filter(capsys, tmp_path):
     _make_lint_app(tmp_path)
     args = _lint_args(tmp_path, json_output=True, rule="I001")
 
-    with mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"):
+    with mock.patch(
+        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    ):
         with pytest.raises(SystemExit) as excinfo:
             cli_app.app_lint(args)
 
@@ -466,6 +478,6 @@ def test_app_lint_rule_filter(capsys, tmp_path):
 
     results = json.loads(captured.out)
     for r in results:
-        assert (
-            r["rule_id"] == "I001"
-        ), f"Expected only I001 with --rule I001, got {r['rule_id']}"
+        assert r["rule_id"] == "I001", (
+            f"Expected only I001 with --rule I001, got {r['rule_id']}"
+        )
