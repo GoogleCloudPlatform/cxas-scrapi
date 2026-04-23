@@ -25,6 +25,7 @@ from typing import Dict, List
 
 import pandas as pd
 
+from cxas_scrapi import Sessions
 from cxas_scrapi.cli.app import (
     app_branch,
     app_create,
@@ -718,6 +719,30 @@ def local_test(args: argparse.Namespace) -> None:
     sys.exit(subprocess.call(docker_cmd))
 
 
+def run_session(args: argparse.Namespace) -> None:
+    """Handles the 'run-session' command."""
+    try:
+        session_client = Sessions(args.app_name)
+        session_id = session_client.create_session_id()
+
+        while True:
+            try:
+                user_input = input()
+            except (EOFError, KeyboardInterrupt):
+                break
+
+            if not user_input.strip():
+                continue
+
+            res = session_client.run(
+                session_id=session_id, text=user_input, modality=args.modality
+            )
+            session_client.parse_result(res)
+    except Exception as e:
+        print(f"Failed to run session: {e}")
+        sys.exit(1)
+
+
 def get_parser() -> argparse.ArgumentParser:
     """Sets up the argument parser."""
     parser = argparse.ArgumentParser(
@@ -1045,6 +1070,22 @@ def get_parser() -> argparse.ArgumentParser:
     )
 
     parser_run.set_defaults(func=run_eval)
+
+    # Parser for 'run-session'
+    parser_run_session = subparsers.add_parser(
+        "run-session",
+        help="Start an interactive text session with the agent.",
+    )
+    parser_run_session.add_argument(
+        "modality",
+        choices=["text"],
+        help="Modality of the session.",
+    )
+    parser_run_session.add_argument(
+        "app_name",
+        help="The app name (projects/.../locations/.../apps/...).",
+    )
+    parser_run_session.set_defaults(func=run_session)
 
     # Parser for 'ci-test'
     parser_ci_test = subparsers.add_parser(
