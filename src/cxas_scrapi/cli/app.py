@@ -91,6 +91,11 @@ def app_pull(args: argparse.Namespace) -> None:
 
     apps_client, app_id, _ = _resolve_app_args(args.app, args)
 
+    _app_pull(apps_client, app_id, args.target_dir)
+
+
+def _app_pull(apps_client: Apps, app_id: str, target_dir: str) -> None:
+    """Helper to pull an app from CXAS."""
     try:
         # Export the app
         print("Exporting app from CXAS...")
@@ -98,7 +103,6 @@ def app_pull(args: argparse.Namespace) -> None:
         response = lro.result()
 
         # Determine the target directory
-        target_dir = args.target_dir if args.target_dir else "."
         if not os.path.exists(target_dir):
             os.makedirs(target_dir)
 
@@ -119,6 +123,38 @@ def app_push(args: argparse.Namespace) -> Optional[str]:  # noqa: C901
     app_dir = args.app_dir if args.app_dir else "."
     print(f"Pushing app from {app_dir}...")
 
+    target_app = getattr(args, "to", None)
+    app_id_arg = getattr(args, "app_id", None)
+    identifier = target_app or app_id_arg
+
+    if identifier:
+        apps_client, app_id, display_name = _resolve_app_args(identifier, args)
+        print("Pushing to existing app... Overwriting if supported.")
+    else:
+        apps_client = Apps(project_id=args.project_id, location=args.location)
+        app_id = None
+        print("No target specified, using existing name if needed.")
+        display_name = getattr(args, "display_name", None) or "Pushed Agent"
+
+    _app_push(
+        app_dir=app_dir,
+        apps_client=apps_client,
+        target_app_id=getattr(args, "app_id", None) or app_id,
+        identifier=getattr(args, "to", None) or getattr(args, "app_id", None),
+        display_name=getattr(args, "display_name", None) or display_name,
+        env_file=getattr(args, "env_file", None),
+    )
+
+
+def _app_push(
+    app_dir: str,
+    apps_client: Apps = None,
+    target_app_id: str = None,
+    identifier: str = None,
+    display_name: str = None,
+    env_file: str = None,
+) -> Optional[str]:
+    """Helper to push an app to CXAS."""
     temp_dir = tempfile.mkdtemp()
     inner_dir = os.path.join(temp_dir, "agent")
     os.makedirs(inner_dir)
@@ -150,7 +186,6 @@ def app_push(args: argparse.Namespace) -> Optional[str]:  # noqa: C901
                 shutil.copy2(src_path, dst_path)
 
     # Inject explicit env_file if provided
-    env_file = getattr(args, "env_file", None)
     if env_file:
         if os.path.exists(env_file):
             dst_path = os.path.join(inner_dir, "environment.json")
@@ -173,36 +208,14 @@ def app_push(args: argparse.Namespace) -> Optional[str]:  # noqa: C901
         with open(temp_zip, "rb") as f:
             app_content = f.read()
 
-        target_app = getattr(args, "to", None)
-        app_id_arg = getattr(args, "app_id", None)
-        identifier = target_app or app_id_arg
-
-        if identifier:
-            apps_client, app_id, display_name = _resolve_app_args(
-                identifier, args
-            )
-            print("Pushing to existing app... Overwriting if supported.")
-        else:
-            apps_client = Apps(
-                project_id=args.project_id, location=args.location
-            )
-            app_id = None
-            print("No target specified, using existing name if needed.")
-            display_name = getattr(args, "display_name", None) or "Pushed Agent"
-
         # If no target is specified, the SDK creates a new app with the
         # provided display_name.
         print("Uploading to CES...")
 
-        # In v1beta, setting the app resource name and conflict strategy allows
-        # overwriting an app explicitly. Not all SDK versions support app_id
-        # natively in import.
-        target_app_id = getattr(args, "app_id", None) or app_id
-
         if target_app_id:
             # Extract UUID if full resource name provided.
             if "apps/" in target_app_id:
-                target_app_id = target_app_id.split("apps/")[-1]
+                target_app_id = target_app_id.rsplit("apps/", maxsplit=1)[-1]
             result = apps_client.import_app(
                 app_name=target_app_id, app_content=app_content
             )
@@ -211,7 +224,7 @@ def app_push(args: argparse.Namespace) -> Optional[str]:  # noqa: C901
                 display_name=display_name, app_content=app_content
             )
         return _handle_import_result(
-            result, "pushed to" if target_app else "pushed"
+            result, "pushed to" if identifier else "pushed"
         )
 
     except Exception as e:
@@ -293,22 +306,34 @@ def app_branch(args: argparse.Namespace) -> None:
     # Composite operation: pull existing, create new, push content.
 
     apps_client, app_id, _ = _resolve_app_args(args.source, args)
+    env_file = getattr(args, "env_file", None)
 
-    try:
-        print("Pulling source app...")
-        lro = apps_client.export_app(app_name=app_id)
-        response = lro.result()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        try:
+            print("Pulling source app...")
+            _app_pull(apps_client, app_id, temp_dir)
 
-        # Import exported content directly into new app.
-        result = apps_client.import_as_new_app(
-            app_content=response.app_content,
-            display_name=args.new_name,
-        )
-        _handle_import_result(result, "created branch")
+            extracted_dirs = [
+                d
+                for d in os.listdir(temp_dir)
+                if os.path.isdir(os.path.join(temp_dir, d))
+            ]
+            app_dir = (
+                os.path.join(temp_dir, extracted_dirs[0])
+                if extracted_dirs
+                else temp_dir
+            )
 
-    except Exception as e:
-        print(f"Failed to branch app: {e}")
-        sys.exit(1)
+            print("Pushing branched app...")
+            _app_push(
+                app_dir=app_dir,
+                apps_client=apps_client,
+                display_name=args.new_name,
+                env_file=env_file,
+            )
+        except Exception as e:
+            print(f"Failed to branch app: {e}")
+            sys.exit(1)
 
 
 def apps_list(args: argparse.Namespace) -> None:

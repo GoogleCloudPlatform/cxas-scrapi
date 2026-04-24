@@ -202,8 +202,12 @@ def test_app_branch(
         location="us",
     )
 
-    # Mock export
-    dummy_zip_bytes = b"dummy_zip_data"
+    # Create a dummy zip file in memory representing the LRO response
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("app.yaml", "name: Branched App")
+    dummy_zip_bytes = dummy_zip_io.getvalue()
+
     mock_export_lro = mock.MagicMock()
     mock_export_response = mock.MagicMock()
     mock_export_response.app_content = dummy_zip_bytes
@@ -222,9 +226,10 @@ def test_app_branch(
     mock_apps_client.export_app.assert_called_once_with(
         app_name="projects/test-project/locations/us/apps/source-id"
     )
-    mock_apps_client.import_as_new_app.assert_called_once_with(
-        app_content=dummy_zip_bytes, display_name="Branched App"
-    )
+    mock_apps_client.import_as_new_app.assert_called_once()
+    call_args = mock_apps_client.import_as_new_app.call_args[1]
+    assert call_args["display_name"] == "Branched App"
+    assert "app_content" in call_args
 
 
 def test_app_delete_by_app_id(
