@@ -63,7 +63,7 @@ class ThreadLocalStream:
 thread_local_stdout = ThreadLocalStream(sys.stdout)
 sys.stdout = thread_local_stdout
 
-def run_single_eval(item, evals_dir, app_name, run_index, skip_analysis=False):
+def run_single_eval(item, evals_dir, app_name, run_index, skip_analysis=False, modality="text"):
     json_path = os.path.join(evals_dir, item)
     log_path = json_path.replace(".json", f"_run_{run_index}.log")
     session_id = str(uuid.uuid4())
@@ -86,7 +86,7 @@ def run_single_eval(item, evals_dir, app_name, run_index, skip_analysis=False):
         # Initialize the Simulator per test case
         sim_evals = SimulationEvals(app_name)
         eval_conv = sim_evals.simulate_conversation(
-            test_case=test_case, console_logging=True, session_id=session_id
+            test_case=test_case, console_logging=True, session_id=session_id, modality=modality
         )
         
         report = eval_conv.generate_report()
@@ -526,6 +526,7 @@ def main():
     parser.add_argument("--start-index", type=int, default=0, help="Start index of files to run")
     parser.add_argument("--end-index", type=int, default=10, help="End index of files to run")
     parser.add_argument("--skip-analysis", action="store_true", help="Skip cognitive diagnostics and LLM analysis")
+    parser.add_argument("--modality", type=str, default="text", help="Simulation modality (text or audio)")
     parser.add_argument("--runs-per-eval", type=int, default=1, help="Number of times to run each evaluation")
     args = parser.parse_args()
 
@@ -544,7 +545,7 @@ def main():
         future_to_item = {}
         for item in files_to_run:
             for run_idx in range(1, args.runs_per_eval + 1):
-                future = executor.submit(run_single_eval, item, evals_dir, args.app_name, run_idx, args.skip_analysis)
+                future = executor.submit(run_single_eval, item, evals_dir, args.app_name, run_idx, args.skip_analysis, args.modality)
                 future_to_item[future] = (item, run_idx)
                 
         for future in concurrent.futures.as_completed(future_to_item):
