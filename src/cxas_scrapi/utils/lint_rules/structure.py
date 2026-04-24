@@ -192,8 +192,11 @@ class ChildAgentReferences(Rule):
 
         results = []
         child_agents = agent_config.get("childAgents", [])
+        valid_agents = (
+            context.all_agent_names | context.all_agent_display_names
+        )
         for child_name in child_agents:
-            if child_name not in context.all_agent_names:
+            if child_name not in valid_agents:
                 results.append(
                     self.make_result(
                         str(file_path),
@@ -202,7 +205,7 @@ class ChildAgentReferences(Rule):
                             f" '{child_name}' but no"
                             " agent directory found."
                             " Available agents:"
-                            f" {sorted(context.all_agent_names)}"
+                            f" {sorted(valid_agents)}"
                         ),
                         fix="Create the agent directory or fix the reference",
                     )

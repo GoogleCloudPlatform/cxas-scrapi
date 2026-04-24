@@ -1389,3 +1389,16 @@ def test_s004_no_children(tmp_path, context):
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
+
+
+def test_s004_child_agent_by_display_name(tmp_path, context):
+    """Reference by display name (with space) should be accepted (S004)."""
+    from cxas_scrapi.utils.lint_rules.structure import ChildAgentReferences  # noqa: PLC0415,I001
+
+    rule = ChildAgentReferences()
+    f = tmp_path / "root_agent.json"
+    # 'billing agent' is the display name for directory 'billing_agent'
+    f.write_text('{"childAgents": ["billing agent"]}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
