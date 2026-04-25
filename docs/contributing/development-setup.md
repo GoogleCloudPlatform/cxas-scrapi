@@ -26,8 +26,8 @@ cd cxas-scrapi
 We recommend using a virtual environment to keep your dependencies isolated:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
 ## Install in Editable Mode
@@ -35,10 +35,11 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 Install the package in editable mode so that your code changes are immediately reflected without reinstalling:
 
 ```bash
-pip install -e ".[dev]"
+pip install -e .
+pip install -r requirements.txt
 ```
 
-This installs SCRAPI along with all development dependencies (ruff, pytest, etc.).
+This installs SCRAPI along with all development dependencies (ruff, pytest, etc.) and additional runtime dependencies.
 
 If you also want to build the documentation locally:
 

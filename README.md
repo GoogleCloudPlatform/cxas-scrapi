@@ -36,7 +36,7 @@ history.
 
 
 <!-- AUTHENTICATION -->
-# Authentication  
+# Authentication
 Authentication can vary depending on how and where you are interacting with SCRAPI.
 
 ## Google Colab
@@ -64,7 +64,7 @@ apps_map = app_client.get_apps_map()
 ```
 ---
 ## Cloud Functions / Cloud Run
-If you're using CXAS SCRAPI with [Cloud Functions](https://cloud.google.com/functions) or [Cloud Run](https://cloud.google.com/run), CXAS SCRAPI can pick up on the default environment creds used by these services without any additional configuration! 
+If you're using CXAS SCRAPI with [Cloud Functions](https://cloud.google.com/functions) or [Cloud Run](https://cloud.google.com/run), CXAS SCRAPI can pick up on the default environment creds used by these services without any additional configuration!
 
 1. Add `cxas-scrapi` to your `requirements.txt` file
 2. Ensure the Cloud Function / Cloud Run service account has the appropriate Custom Agent / Conversational Agents IAM Role
@@ -88,7 +88,7 @@ Similar to Cloud Functions / Cloud Run, CXAS SCRAPI can pick up on your local au
 4. Run `gcloud auth application-default login`
 5. Run `gcloud auth list` to ensure your principal account is active.
 
-This will authenticate your principal GCP account with the gcloud CLI, and SCRAPI can pick up the creds from here.  
+This will authenticate your principal GCP account with the gcloud CLI, and SCRAPI can pick up the creds from here.
 
 ---
 ## Exceptions and Misc.
@@ -113,8 +113,8 @@ gcloud auth application-default login
 gcloud config set project <project name>
 ```
 ```sh
-python3 -m venv venv
-source ./venv/bin/activate
+python3 -m venv .venv
+source ./.venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -194,7 +194,7 @@ Distributed under the Apache 2.0 License. See [LICENSE](LICENSE.txt) for more in
 
 <!-- CONTACT -->
 # Contact
-Patrick Marlow - [pmarlow@google.com](mailto:pmarlow@google.com) - [@kmaphoenix](https://github.com/kmaphoenix)  
+Patrick Marlow - [pmarlow@google.com](mailto:pmarlow@google.com) - [@kmaphoenix](https://github.com/kmaphoenix)
 
 Project Link: [https://github.com/GoogleCloudPlatform/cxas-scrapi](https://github.com/GoogleCloudPlatform/cxas-scrapi)
 

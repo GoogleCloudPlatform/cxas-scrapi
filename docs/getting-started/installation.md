@@ -39,15 +39,15 @@ It's a good habit to install Python packages inside a virtual environment rather
 === "venv (built-in)"
 
     ```sh
-    # Create a virtual environment called "venv"
-    python -m venv venv
+    # Create a virtual environment called ".venv"
+    python -m venv .venv
 
     # Activate it
     # On macOS / Linux:
-    source venv/bin/activate
+    source .venv/bin/activate
 
     # On Windows:
-    venv\Scripts\activate
+    .venv\Scripts\activate
     ```
 
 === "conda"
@@ -78,7 +78,7 @@ That's it. pip will download and install `cxas-scrapi` and all of its dependenci
 
 ## Install from source
 
-If you want to work with the latest unreleased code, or if you're contributing to SCRAPI itself, you can install directly from the GitHub repository:
+If you want to work with the latest unreleased code, you can install directly from the GitHub repository. If you're contributing to SCRAPI, see the [Development Setup](../contributing/development-setup.md) guide instead.
 
 ```sh
 # Clone the repository
@@ -87,6 +87,7 @@ cd cxas-scrapi
 
 # Install in editable mode (changes to the source are reflected immediately)
 pip install -e .
+pip install -r requirements.txt
 ```
 
 The `-e` flag (editable install) means Python points directly to the source files in your cloned directory, so any edits you make are picked up immediately without reinstalling.
