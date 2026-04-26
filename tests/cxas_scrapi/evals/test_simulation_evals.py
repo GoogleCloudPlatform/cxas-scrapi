@@ -17,6 +17,7 @@
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+
 from cxas_scrapi.evals.simulation_evals import (
     LLMUserConversation,
     SimulationEvals,
