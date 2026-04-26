@@ -24,15 +24,25 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import pydantic
+import yaml
 from alive_progress import alive_it
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.prompts import llm_user_prompts
 from cxas_scrapi.utils.eval_utils import (
+    Conversation as GoldenConversation,
+)
+from cxas_scrapi.utils.eval_utils import (
+    Conversations as GoldenConversations,
+)
+from cxas_scrapi.utils.eval_utils import (
     ExpectationResult,
     ExpectationStatus,
+    ToolCall,
+    Turn,
     evaluate_expectations,
 )
 from cxas_scrapi.utils.gemini import GeminiGenerate
@@ -703,3 +713,171 @@ class SimulationEvals(Apps):
                     results.append(future.result())
 
         return results
+
+    def export_results_to_golden(
+        self,
+        results: List[Dict[str, Any]],
+        output_path: Optional[str] = None,
+    ) -> str:
+        """Exports simulation results to a Golden Evaluation YAML file.
+
+        Fetches the full conversation trace for each simulation from the
+        platform to ensure accuracy.
+
+        Args:
+            results: The list of results returned by run_simulations.
+            output_path: Optional local path to save the generated YAML.
+
+        Returns:
+            The generated YAML string.
+        """
+        ch = ConversationHistory(app_name=self.app_name, creds=self.creds)
+
+        conversations_list = []
+
+        for res in results:
+            session_id = res.get("session_id")
+            if not session_id:
+                continue
+
+            turns = []
+            try:
+                conv_obj = ch.get_conversation(session_id)
+                conv_dict = type(conv_obj).to_dict(conv_obj)
+
+                current_turn = None
+
+                for p_turn in conv_dict.get("turns", []):
+                    messages = p_turn.get("messages", [])
+                    for msg in messages:
+                        role = msg.get("role", "")
+                        chunks = msg.get("chunks", [])
+
+                        text = " ".join(
+                            [c.get("text", "") for c in chunks if "text" in c]
+                        ).strip()
+
+                        if role == "user":
+                            if current_turn:
+                                turns.append(current_turn)
+                            current_turn = Turn(user=text, tool_calls=[])
+                        else:
+                            # Agent or other role
+                            if not current_turn:
+                                current_turn = Turn(tool_calls=[])
+
+                            if text:
+                                if current_turn.agent:
+                                    if isinstance(current_turn.agent, list):
+                                        current_turn.agent.append(text)
+                                    else:
+                                        current_turn.agent = [
+                                            current_turn.agent,
+                                            text,
+                                        ]
+                                else:
+                                    current_turn.agent = text
+
+                        for chunk in chunks:
+                            if "tool_call" in chunk:
+                                tc = chunk["tool_call"]
+                                if not current_turn:
+                                    current_turn = Turn(tool_calls=[])
+
+                                tool_name = (
+                                    tc.get("display_name") or tc.get("tool")
+                                )
+                                args = Sessions._expand_pb_struct(
+                                    tc.get("args", {})
+                                )
+
+                                current_turn.tool_calls.append(
+                                    ToolCall(action=tool_name, args=args)
+                                )
+                            elif "tool_response" in chunk:
+                                tr = chunk["tool_response"]
+                                tool_name = (
+                                    tr.get("display_name") or tr.get("tool")
+                                )
+                                response = Sessions._expand_pb_struct(
+                                    tr.get("response", {})
+                                )
+
+                                if current_turn and current_turn.tool_calls:
+                                    # Match response to the latest call for same
+                                    # tool
+                                    for tc_obj in reversed(
+                                        current_turn.tool_calls
+                                    ):
+                                        if (
+                                            tc_obj.action == tool_name
+                                            and tc_obj.output is None
+                                        ):
+                                            tc_obj.output = response
+                                            break
+                if current_turn:
+                    turns.append(current_turn)
+
+            except Exception as e:
+                # Fallback to local trace if platform fetch fails
+                print(
+                    f"Warning: Failed to fetch conversation {session_id} "
+                    f"from platform: {e}. Falling back to local trace."
+                )
+                trace = res.get("detailed_trace", [])
+                current_turn = None
+                for line in trace:
+                    if line.startswith("User: "):
+                        if current_turn:
+                            turns.append(current_turn)
+                        current_turn = Turn(
+                            user=line[6:].strip(), tool_calls=[]
+                        )
+                    elif line.startswith("Agent Text: "):
+                        if not current_turn:
+                            current_turn = Turn(tool_calls=[])
+                        agent_text = line[12:].strip()
+                        if current_turn.agent:
+                            if isinstance(current_turn.agent, list):
+                                current_turn.agent.append(agent_text)
+                            else:
+                                current_turn.agent = [
+                                    current_turn.agent,
+                                    agent_text,
+                                ]
+                        else:
+                            current_turn.agent = agent_text
+                    # Note: Local trace might not have structured tool calls
+                    # in some versions, but we do our best.
+
+                if current_turn:
+                    turns.append(current_turn)
+
+            # Extract expectations and params from result
+            expectations = [
+                e["expectation"]
+                for e in res.get("expectation_details", [])
+            ]
+            params = res.get("session_parameters", {})
+
+            conversations_list.append(
+                GoldenConversation(
+                    conversation=res.get("name", "Simulated_Conversation"),
+                    turns=turns,
+                    expectations=expectations,
+                    session_parameters=params,
+                )
+            )
+
+        dataset = GoldenConversations(conversations=conversations_list)
+        yaml_content = yaml.dump(
+            dataset.model_dump(exclude_none=True),
+            sort_keys=False,
+            allow_unicode=True,
+        )
+
+        if output_path:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(yaml_content)
+
+        return yaml_content
