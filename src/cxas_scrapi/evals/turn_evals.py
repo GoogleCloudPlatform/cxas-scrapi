@@ -515,11 +515,11 @@ class TurnEvals:
                             break
                     if not match_found:
                         status = "FAILURE"
-                    justification = (
-                        f"TOOL_INPUT failed: No tool call contained "
-                        f"matching arguments {expected}. Actual tool "
-                        f"inputs: {tool_inputs}"
-                    )
+                        justification = (
+                            f"TOOL_INPUT failed: No tool call contained "
+                            f"matching arguments {expected}. Actual tool "
+                            f"inputs: {tool_inputs}"
+                        )
             elif op == TurnOperator.TOOL_OUTPUT:
                 actual = str(tool_outputs)
                 if not isinstance(expected, dict):
@@ -542,11 +542,11 @@ class TurnEvals:
                             break
                     if not match_found:
                         status = "FAILURE"
-                    justification = (
-                        f"TOOL_OUTPUT failed: No tool response "
-                        f"contained matching outputs {expected}. "
-                        f"Actual tool outputs: {tool_outputs}"
-                    )
+                        justification = (
+                            f"TOOL_OUTPUT failed: No tool response "
+                            f"contained matching outputs {expected}. "
+                            f"Actual tool outputs: {tool_outputs}"
+                        )
 
             results.append(
                 {
