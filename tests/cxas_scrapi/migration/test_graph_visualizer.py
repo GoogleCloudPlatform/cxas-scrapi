@@ -60,7 +60,7 @@ DATA_WITH_FLOW = {
     "playbooks": [],
     "flows": [
         {
-            "flow": {
+            "flow_data": {
                 "name": f"projects/p/l/a/flows/{FLOW_UUID}",
                 "displayName": "Main Flow",
                 "transitionRoutes": [],
@@ -90,7 +90,7 @@ DATA_WITH_PLAYBOOK_TO_FLOW = {
     ],
     "flows": [
         {
-            "flow": {
+            "flow_data": {
                 "name": f"projects/p/l/a/flows/{FLOW_UUID}",
                 "displayName": "Sub Flow",
                 "transitionRoutes": [],
@@ -184,7 +184,7 @@ class TestHighLevelGraphVisualizer:
             "playbooks": [],
             "flows": [
                 {
-                    "flow": {
+                    "flow_data": {
                         "name": f"projects/p/l/a/flows/{FLOW_UUID}",
                         "displayName": "End Flow",
                         "transitionRoutes": [
@@ -262,7 +262,7 @@ class TestHighLevelGraphVisualizer:
             "playbooks": [],
             "flows": [
                 {
-                    "flow": {
+                    "flow_data": {
                         "name": f"projects/p/l/a/flows/{FLOW_UUID}",
                         "displayName": "WH Flow",
                         "transitionRoutes": [

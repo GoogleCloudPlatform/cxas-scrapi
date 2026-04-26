@@ -60,7 +60,7 @@ MINIMAL_AGENT_DATA = {
     "playbooks": [],
     "flows": [
         {
-            "flow": {
+            "flow_data": {
                 "name": (f"projects/p/locations/l/agents/a/flows/{FLOW_UUID}"),
                 "displayName": "Main Flow",
             },
@@ -70,7 +70,7 @@ MINIMAL_AGENT_DATA = {
 }
 
 FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK = {
-    "flow": {
+    "flow_data": {
         "name": f"projects/p/locations/l/agents/a/flows/{FLOW_UUID}",
         "displayName": "Test Flow",
         "transitionRoutes": [
@@ -94,8 +94,11 @@ FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK = {
     },
     "pages": [
         {
-            "key": PAGE_UUID,
-            "value": {
+            "page_id": (
+                f"projects/p/locations/l/agents/a/flows/{FLOW_UUID}/"
+                f"pages/{PAGE_UUID}"
+            ),
+            "page_data": {
                 "displayName": "Collect Info",
                 "transitionRoutes": [],
                 "eventHandlers": [],
@@ -105,7 +108,7 @@ FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK = {
 }
 
 CONVERSATIONAL_FLOW_WRAPPER = {
-    "flow": {
+    "flow_data": {
         "name": f"projects/p/locations/l/agents/a/flows/{FLOW_UUID}",
         "displayName": "Conversational Flow",
         "transitionRoutes": [],
@@ -116,7 +119,7 @@ CONVERSATIONAL_FLOW_WRAPPER = {
 }
 
 LOGIC_FLOW_WRAPPER = {
-    "flow": {
+    "flow_data": {
         "name": f"projects/p/locations/l/agents/a/flows/{FLOW_UUID}",
         "displayName": "Logic Flow",
         "transitionRoutes": [
@@ -164,7 +167,7 @@ class TestFlowDependencyResolver:
     def test_pages_preserved_in_result(self):
         result = self.resolver.resolve(FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK)
         assert len(result["pages"]) == 1
-        assert result["pages"][0]["key"] == PAGE_UUID
+        assert PAGE_UUID in result["pages"][0]["page_id"]
 
     def test_name_map_contains_flow(self):
         result = self.resolver.resolve(FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK)
@@ -179,7 +182,7 @@ class TestFlowDependencyResolver:
         """Webhooks referenced by displayName (not UUID) should be resolved."""
         agent_data = dict(MINIMAL_AGENT_DATA)
         flow_wrapper = {
-            "flow": {
+            "flow_data": {
                 "name": f"projects/p/l/a/flows/{FLOW_UUID}",
                 "displayName": "Test",
                 "transitionRoutes": [
@@ -212,7 +215,7 @@ class TestFlowDependencyResolver:
             "flows": [],
         }
         flow_with_form = {
-            "flow": {
+            "flow_data": {
                 "name": "projects/p/l/a/flows/f1",
                 "displayName": "Form Flow",
                 "transitionRoutes": [],
@@ -307,7 +310,7 @@ class TestFlowTreeVisualizer:
 
     def test_event_handler_rendered(self):
         flow_with_event = {
-            "flow": {
+            "flow_data": {
                 "name": "projects/p/l/a/flows/f1",
                 "displayName": "Event Flow",
                 "transitionRoutes": [],
@@ -328,7 +331,7 @@ class TestFlowTreeVisualizer:
 
     def test_set_parameter_action_rendered(self):
         flow_with_set_param = {
-            "flow": {
+            "flow_data": {
                 "name": "projects/p/l/a/flows/f1",
                 "displayName": "Param Flow",
                 "transitionRoutes": [
@@ -354,7 +357,7 @@ class TestFlowTreeVisualizer:
 
     def test_empty_flow_builds_without_error(self):
         empty_flow = {
-            "flow": {
+            "flow_data": {
                 "name": "projects/p/l/a/flows/f1",
                 "displayName": "Empty",
                 "transitionRoutes": [],

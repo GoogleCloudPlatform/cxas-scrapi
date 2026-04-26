@@ -39,7 +39,7 @@ class HighLevelGraphVisualizer:
                 self.name_to_uuid[name] = uid
 
         for flow_wrap in self.data.get("flows", []):
-            flow = flow_wrap.get("flow", flow_wrap)
+            flow = flow_wrap.get("flow_data", flow_wrap)
             uid = self._get_raw_id(flow)
             name = flow.get("displayName", uid)
             if uid:
@@ -147,12 +147,15 @@ class HighLevelGraphVisualizer:
                             condition=cond_text,
                         )
                     elif ref_type != "PAGE":
-                        self._accumulate_edge(
-                            pb_uuid,
-                            ref_clean,
-                            "routes to",
-                            condition=cond_text,
-                        )
+                        # Filter out self-references
+                        pb_name = self.uuid_to_name.get(pb_uuid, "")
+                        if ref_clean not in (pb_uuid, pb_name):
+                            self._accumulate_edge(
+                                pb_uuid,
+                                ref_clean,
+                                "routes to",
+                                condition=cond_text,
+                            )
                 tool_matches = re.findall(r"\${TOOL:([^}]+)}", text)
                 for tool_ref in tool_matches:
                     self._accumulate_edge(
@@ -395,7 +398,7 @@ class HighLevelGraphVisualizer:
 
         # Flows
         for flow_wrap in self.data.get("flows", []):
-            flow = flow_wrap.get("flow", flow_wrap)
+            flow = flow_wrap.get("flow_data", flow_wrap)
             flow_uuid = self._resolve_to_uuid(self._get_raw_id(flow))
             name = self.uuid_to_name.get(flow_uuid, flow_uuid)
 

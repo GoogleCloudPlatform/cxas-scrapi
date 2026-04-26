@@ -29,6 +29,7 @@ from cxas_scrapi.migration.data_models import (
     IRAgent,
     IRMetadata,
     IRTool,
+    MigrationConfig,
     MigrationIR,
     MigrationStatus,
 )
@@ -113,16 +114,13 @@ class MigrationService:
     async def run_migration(
         self,
         source_cx_agent_id: str,
-        target_ps_app_name: str,
-        migrate_dfcx_flows: bool = True,
-        source_agent_data_override: Dict[str, Any] = None,
-        gen_unit_tests: bool = True,
+        config: MigrationConfig,
     ) -> None:
         """The comprehensive async executor for Hybrid Migration."""
 
         # --- 0. Data Loading & Preprocessing ---
         self.source_agent_data = (
-            source_agent_data_override
+            config.source_agent_data_override
             or self.exporter.fetch_full_agent_details(
                 source_cx_agent_id, use_export=True
             )
@@ -133,7 +131,7 @@ class MigrationService:
             )
             return
 
-        logger.info(f"Starting Hybrid Migration for: {target_ps_app_name}")
+        logger.info(f"Starting Hybrid Migration for: {config.target_name}")
 
         # --- 1. Populate IR Metadata & Predictable IDs ---
         target_app_uuid = str(uuid.uuid4())
@@ -144,10 +142,10 @@ class MigrationService:
 
         self.ir = MigrationIR(
             metadata=IRMetadata(
-                app_name=target_ps_app_name,
+                app_name=config.target_name,
                 app_id=target_app_uuid,
                 app_resource_name=target_app_resource_name,
-                default_model=self.default_model,
+                default_model=config.model or self.default_model,
             )
         )
         self.deployment_state = {
@@ -157,7 +155,7 @@ class MigrationService:
 
         self.eval_generator = DeterministicEvalGenerator(self.ir)
         self.reporter.set_app_info(
-            source_cx_agent_id, target_ps_app_name, target_app_resource_name
+            source_cx_agent_id, config.target_name, target_app_resource_name
         )
 
         # --- 2. Async Playbook Description Generation ---
@@ -298,7 +296,7 @@ class MigrationService:
 
         # --- 8. Background Processing for Flows (Phase 2) ---
         flows = self.source_agent_data.get("flows", [])
-        if flows and migrate_dfcx_flows:
+        if flows:
             logger.info(
                 f"\nLaunching parallel Analysis & Architecture for "
                 f"{len(flows)} flows..."
@@ -318,7 +316,7 @@ class MigrationService:
 
         logger.info("MIGRATION COMPLETE!")
         self.reporter.export_and_download(
-            f"{target_ps_app_name}_migration_report.md"
+            f"{config.target_name}_migration_report.md"
         )
 
     async def _deploy_base_resources(self):

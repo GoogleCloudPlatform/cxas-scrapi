@@ -30,6 +30,7 @@ from proto.marshal.collections import maps, repeated
 # Define global scopes used for CX Agent Studio Requests
 GLOBAL_SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/generative-language.retriever",
 ]
 
 

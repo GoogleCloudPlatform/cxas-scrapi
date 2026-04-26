@@ -130,3 +130,19 @@ class MigrationIR(BaseModel):
     test_cases: Dict[str, Any] = Field(default_factory=dict)
     test_runs: Dict[str, Any] = Field(default_factory=dict)
     optimization_logs: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MigrationConfig(BaseModel):
+    """Configuration for the migration process."""
+
+    project_id: str
+    target_name: str
+    env: str = "PROD"
+    model: str
+    gen_report: bool = True
+    gen_unit_tests: bool = True
+    gen_hillclimbing_evals: bool = False
+    eval_runner_target: str = "Custom API Runner"
+    migration_version: str = "2.0"
+    optimize_for_cxas: bool = False
+    source_agent_data_override: Optional[Dict[str, Any]] = None

@@ -26,7 +26,6 @@ TEST_APP_ID = "projects/df-reference/locations/us/apps/f39d3ab5-a463-4025-8437-3
 os.environ["CXAS_OAUTH_TOKEN"] = "mock_token_for_tests"
 
 
-
 def pytest_addoption(parser):
     parser.addoption(
         "--app-id",

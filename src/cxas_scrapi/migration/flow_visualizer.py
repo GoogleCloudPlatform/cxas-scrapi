@@ -64,7 +64,7 @@ class FlowDependencyResolver:
                 )
             ] = playbook_data.get("displayName", "Unknown")
         for flow_entry in full_agent_data.get("flows", []):
-            flow_entry_data = flow_entry.get("flow", flow_entry)
+            flow_entry_data = flow_entry.get("flow_data", flow_entry)
             self.name_map[
                 self._get_resource_id(
                     flow_entry_data.get("name") or flow_entry.get("flowId")
@@ -170,7 +170,7 @@ class FlowDependencyResolver:
             ``entityTypes``, ``webhooks``, ``tools``, ``name_map``, and
             ``flow_type`` (1 = logic flow, 2 = conversational flow).
         """
-        flow_data = flow_wrapper.get("flow", flow_wrapper)
+        flow_data = flow_wrapper.get("flow_data", flow_wrapper)
         pages_data = flow_wrapper.get("pages", [])
 
         dependencies: Dict[str, Any] = {
@@ -264,12 +264,11 @@ class FlowTreeVisualizer:
         self.flow = context_data["flow"]
         self.page_names: Dict[str, str] = {}
         for page_wrapper in self.context.get("pages", []):
-            if "key" in page_wrapper and "displayName" in page_wrapper.get(
-                "value", {}
-            ):
-                self.page_names[page_wrapper["key"]] = page_wrapper["value"][
-                    "displayName"
-                ]
+            page_data = page_wrapper.get("page_data", {})
+            page_id = page_wrapper.get("page_id")
+            display_name = page_data.get("displayName")
+            if page_id and display_name:
+                self.page_names[page_id.split("/")[-1]] = display_name
 
     def _get_id(self, resource_name: str) -> str:
         return (
@@ -472,13 +471,14 @@ class FlowTreeVisualizer:
 
         for page_wrap in sorted(
             self.context.get("pages", []),
-            key=lambda page_entry: page_entry.get("value", page_entry).get(
+            key=lambda page_entry: page_entry.get("page_data", page_entry).get(
                 "displayName", ""
             ),
         ):
-            page = page_wrap.get("value", page_wrap)
+            page = page_wrap.get("page_data", page_wrap)
+            page_name = page.get("displayName", "Unnamed")
             page_node = struct_node.add(
-                f":page_facing_up: [bold cyan]{page.get('displayName')}[/]"
+                f":page_facing_up: [bold cyan]{page_name}[/]"
             )
             if page.get("entryFulfillment") or page.get("onLoad"):
                 self._render_fulfillment(

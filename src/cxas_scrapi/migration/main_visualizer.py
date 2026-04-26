@@ -14,10 +14,17 @@
 
 """Master visualizer coordinating topology graph and detailed Rich trees."""
 
+import io
 import uuid
 from typing import Any, Dict
 
-from IPython.display import HTML, display
+try:
+    from IPython.display import HTML, display
+
+    HAS_IPYTHON = True
+except ImportError:
+    HAS_IPYTHON = False
+
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
@@ -252,26 +259,42 @@ class MainVisualizer:
                 }}
             </script>
             """
-            display(HTML(html_content))
+            if HAS_IPYTHON:
+                display(HTML(html_content))
+            else:
+                print(
+                    "Interactive graph skipped (not in notebook). "
+                    "Use export_visualizations() to save as SVG."
+                )
 
         except Exception as e:
-            print(
-                f"Warning: Could not render interactive SVG "
-                f"(ensure graphviz is installed). "
-                f"Falling back to static image. Error: {e}"
-            )
-            display(dot_standard)
+            print(f"Warning: Could not render interactive SVG. Error: {e}")
+            if HAS_IPYTHON:
+                display(dot_standard)
+            else:
+                print(
+                    "Static image display skipped (not in notebook). "
+                    "Use export_visualizations() to save as SVG."
+                )
 
     def visualize_details(self):
         """Build and display Rich Trees for Playbooks, Flows, and Tools."""
-        display(HTML("<h3>🛠️ Agent Tools &amp; Webhooks</h3>"))
+        if HAS_IPYTHON:
+            display(HTML("<h3>🛠️ Agent Tools &amp; Webhooks</h3>"))
+        else:
+            self.console.print("\n[bold orange3]🛠️ Agent Tools & Webhooks[/]\n")
+
         self.console.print(
             Panel(self._build_tools_tree(), border_style="orange3")
         )
 
         playbooks = self.data.get("playbooks", [])
         if playbooks:
-            display(HTML("<hr><h3>📘 Selected Playbooks</h3>"))
+            if HAS_IPYTHON:
+                display(HTML("<hr><h3>📘 Selected Playbooks</h3>"))
+            else:
+                self.console.print("\n[bold blue]📘 Selected Playbooks[/]\n")
+
             for playbook_wrapper in playbooks:
                 playbook = playbook_wrapper.get("playbook", playbook_wrapper)
                 self.console.print(
@@ -283,7 +306,11 @@ class MainVisualizer:
 
         flows = self.data.get("flows", [])
         if flows:
-            display(HTML("<hr><h3>🔀 Selected Flows</h3>"))
+            if HAS_IPYTHON:
+                display(HTML("<hr><h3>🔀 Selected Flows</h3>"))
+            else:
+                self.console.print("\n[bold magenta]🔀 Selected Flows[/]\n")
+
             resolver = FlowDependencyResolver(self.data)
             for flow_wrapper in flows:
                 self.console.print(
@@ -309,7 +336,9 @@ class MainVisualizer:
         svg_filename = f"{prefix}_topology.svg"
         dot.render(outfile=svg_filename, format="svg", cleanup=True)
 
-        capture_console = Console(force_terminal=False, width=120, record=True)
+        buf = io.StringIO()
+        capture_console = Console(file=buf, force_terminal=False, width=120)
+
         capture_console.print("### Agent Tools & Webhooks ###\n")
         capture_console.print(
             Panel(self._build_tools_tree(), border_style="orange3")
@@ -343,7 +372,7 @@ class MainVisualizer:
 
         md_filename = f"{prefix}_detailed_resources.md"
         with open(md_filename, "w", encoding="utf-8") as md_file:
-            md_file.write(capture_console.export_text())
+            md_file.write(buf.getvalue())
 
         if HAS_COLAB:
             files.download(svg_filename)

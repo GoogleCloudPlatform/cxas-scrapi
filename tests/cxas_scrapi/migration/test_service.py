@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from cxas_scrapi.migration.data_models import MigrationConfig
 from cxas_scrapi.migration.service import MigrationService
 
 
@@ -69,8 +70,13 @@ async def test_run_migration_success():
         "cxas_scrapi.migration.service.DFCXParameterExtractor.migrate_parameters"
     ) as mock_migrate:
         mock_migrate.return_value = ([], {})
+        config = MigrationConfig(
+            project_id="dummy-project",
+            target_name="cxas-app",
+            model="gemini-2.5-flash-001",
+        )
         await service.run_migration(
-            source_cx_agent_id="dfcx-123", target_ps_app_name="cxas-app"
+            source_cx_agent_id="dfcx-123", config=config
         )
 
     # Verify sequence
