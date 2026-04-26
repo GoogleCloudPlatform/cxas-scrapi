@@ -767,37 +767,37 @@ class Sessions(Common):
 
         Args:
             session_id: Unique UUID string or identifying string (e.g. 'test1')
-            for the session.
+                for the session.
             text: Text input from the user. Can give a single string or list of
-            strings.
+                strings.
             dtmf: DTMF input from the user.
             event: Name of a system event to trigger (e.g. 'WELCOME').
             event_vars: Key-value map of variables to inject alongside the
-            event.
+                event.
             blob: Raw binary content (image, pdf, etc.) for multimodal inputs.
             blob_mime_type: Mime type for the blob (defaults to
-            'application/octet-stream').
+                'application/octet-stream').
             variables: Key-value state maps to inject for the session turn.
             tool_responses: Pre-computed tool run outputs if mocking tool
-            execution.
+                execution.
             audio: Raw audio bytes to send as user input.
             audio_config: Custom turn-specific audio configurations.
             input_audio_config: Custom gRPC properties for input audio
-            (defaults to 16kHz linear PCM).
+                (defaults to 16kHz linear PCM).
             output_audio_config: Custom gRPC properties for output audio
-            (defaults to 16kHz linear PCM).
+                (defaults to 16kHz linear PCM).
             deployment_id: Overrides the default deployment ID setting for this
-            turn run.
+                turn run.
             version_id: Overrides the default app version setting for this turn
-            run.
+                run.
             historical_contexts: An existing conversation ID (string) or raw
-            list of dictionaries to pre-set past history.
+                list of dictionaries to pre-set past history.
             turn_count: Truncates historical context limits when pulling from a
-            saved conversation ID.
+                saved conversation ID.
             modality: Running via text (synced) or audio (asynchronous
-            bidirectional streaming). Defaults to Modality.TEXT.
+                bidirectional streaming). Defaults to Modality.TEXT.
             use_tool_fakes: Use fake tools for the session if available.
-            Defaults to False.
+                Defaults to False.
         """
 
         if isinstance(modality, str):

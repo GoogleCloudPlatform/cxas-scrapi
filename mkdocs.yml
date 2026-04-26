@@ -201,6 +201,7 @@ nav:
   - API Reference:
     - api/index.md
     - Core:
+      - api/core/common.md
       - api/core/apps.md
       - api/core/agents.md
       - api/core/sessions.md

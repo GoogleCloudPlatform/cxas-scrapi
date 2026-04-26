@@ -89,7 +89,7 @@ class Apps(Common):
 
         Args:
             display_name: human-readable display name of CX Agent Studio App as
-            a string.
+                a string.
 
         Returns:
             CX Agent Studio App resource object. If no app is found,

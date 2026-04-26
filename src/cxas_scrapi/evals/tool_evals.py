@@ -95,7 +95,7 @@ class Expectation(BaseModel):
 class ToolEvals:
     """Utility class for testing CXAS Tools."""
 
-    def __init__(self, app_name: str, creds=None):
+    def __init__(self, app_name: str, creds: Any = None):
         """Initializes the ToolEvals class.
 
         Args:

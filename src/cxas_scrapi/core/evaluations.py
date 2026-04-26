@@ -248,7 +248,7 @@ class Evaluations(Common):
         return out_yaml
 
     @staticmethod
-    def process_export_operation(export_op) -> Optional[bytes]:
+    def process_export_operation(export_op: Any) -> Optional[bytes]:
         """Processes the export operation and returns app content bytes.
 
         Args:
