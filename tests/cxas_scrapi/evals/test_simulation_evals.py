@@ -17,7 +17,6 @@
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-
 from cxas_scrapi.evals.simulation_evals import (
     LLMUserConversation,
     SimulationEvals,
@@ -307,6 +306,73 @@ def test_parse_agent_response_standard():
 
     assert agent_text == "Hello there"
     assert any("Tool Call (Output): some_tool" in c for c in trace_chunks)
+    assert not session_ended
+
+
+def test_parse_agent_response_agent_transfer():
+    mock_response = MagicMock()
+    mock_output = MagicMock()
+    mock_output.text = ""
+
+    mock_msg = MagicMock()
+    mock_msg.role = "model"
+    mock_chunk = MagicMock()
+    mock_chunk._pb.WhichOneof.return_value = "agent_transfer"
+    mock_chunk.agent_transfer.display_name = "Billing Agent"
+    mock_msg.chunks = [mock_chunk]
+
+    mock_diag = MagicMock()
+    mock_diag.messages = [mock_msg]
+    mock_output.diagnostic_info = mock_diag
+    mock_response.outputs = [mock_output]
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    agent_text, trace_chunks, session_ended = simulator._parse_agent_response(
+        mock_response
+    )
+
+    assert any(
+        "Agent Transfer: Transferred to Billing Agent" in c
+        for c in trace_chunks
+    )
+    assert not session_ended
+
+
+def test_parse_agent_response_custom_payload():
+    mock_response = MagicMock()
+    mock_output = MagicMock()
+    mock_output.text = ""
+
+    mock_msg = MagicMock()
+    mock_msg.role = "model"
+    mock_chunk = MagicMock()
+    mock_chunk._pb.WhichOneof.return_value = "payload"
+    mock_chunk.payload = {"key": "value"}
+    mock_msg.chunks = [mock_chunk]
+
+    mock_diag = MagicMock()
+    mock_diag.messages = [mock_msg]
+    mock_output.diagnostic_info = mock_diag
+    mock_response.outputs = [mock_output]
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    with patch(
+        "cxas_scrapi.evals.simulation_evals.Sessions._expand_pb_struct",
+        return_value={"key": "value"},
+    ):
+        agent_text, trace_chunks, session_ended = (
+            simulator._parse_agent_response(mock_response)
+        )
+
+    assert any("Custom Payload:" in c for c in trace_chunks)
     assert not session_ended
 
 

@@ -403,6 +403,15 @@ class SimulationEvals(Apps):
             trace_chunks.append(
                 f"Tool Response: {tool_name} with result {expanded_response}"
             )
+        elif chunk_type == "agent_transfer":
+            at = chunk.agent_transfer
+            display_name = getattr(at, "display_name", "unknown")
+            trace_chunks.append(
+                f"Agent Transfer: Transferred to {display_name}"
+            )
+        elif chunk_type == "payload":
+            expanded_payload = Sessions._expand_pb_struct(chunk.payload)
+            trace_chunks.append(f"Custom Payload: {expanded_payload}")
         elif chunk_type == "text":
             agent_text_add = chunk.text + " "
             trace_chunks.append(f"Agent Text (Diag): {chunk.text}")
@@ -687,8 +696,9 @@ class SimulationEvals(Apps):
                     for tc, run_idx in jobs
                 }
                 for future in alive_it(
-                    as_completed(futures), total=len(futures),
-                    title="Running Simulations"
+                    as_completed(futures),
+                    total=len(futures),
+                    title="Running Simulations",
                 ):
                     results.append(future.result())
 
