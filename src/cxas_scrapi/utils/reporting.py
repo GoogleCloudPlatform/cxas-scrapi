@@ -365,6 +365,20 @@ def _parse_trace(trace, tools_map):
                 parsed_lines.append(("tool_call", formatted_line))
             elif formatted_line.startswith("Tool Response"):
                 parsed_lines.append(("tool_resp", formatted_line))
+            elif formatted_line.startswith("Agent Transfer:"):
+                parsed_lines.append(
+                    (
+                        "agent_transfer",
+                        formatted_line[len("Agent Transfer:") :].strip(),
+                    )
+                )
+            elif formatted_line.startswith("Custom Payload:"):
+                parsed_lines.append(
+                    (
+                        "custom_payload",
+                        formatted_line[len("Custom Payload:") :].strip(),
+                    )
+                )
             else:
                 parsed_lines.append(("system", formatted_line))
     return parsed_lines
@@ -428,6 +442,19 @@ def _render_merged_items(merged):
             if result:
                 html += f'<pre class="tool-data">{_escape(result)}</pre>'
             html += "</details>\n"
+        elif kind == "agent_transfer":
+            html += (
+                f'<div class="system">&#128256; <b>Agent Transfer:</b>'
+                f" {_escape(item[1])}</div>\n"
+            )
+        elif kind == "custom_payload":
+            html += (
+                f'<details class="tool-details">'
+                f'<summary class="tool-summary">'
+                f"&#128230; <b>Custom Payload</b></summary>"
+                f'<pre class="tool-data">{_escape(item[1])}</pre>'
+                f"</details>\n"
+            )
         else:
             html += f'<div class="system">{_escape(item[1])}</div>\n'
     return html

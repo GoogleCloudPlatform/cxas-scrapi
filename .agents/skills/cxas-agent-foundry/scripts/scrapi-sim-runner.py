@@ -506,6 +506,10 @@ function jumpToRun(evalName, runIdx) {{
                                 parsed_lines.append(("tool_call", line))
                             elif line.startswith("Tool Response"):
                                 parsed_lines.append(("tool_resp", line))
+                            elif line.startswith("Agent Transfer:"):
+                                parsed_lines.append(("agent_transfer", line[len("Agent Transfer:"):].strip()))
+                            elif line.startswith("Custom Payload:"):
+                                parsed_lines.append(("custom_payload", line[len("Custom Payload:"):].strip()))
                             else:
                                 parsed_lines.append(("system", line))
 
@@ -544,6 +548,11 @@ function jumpToRun(evalName, runIdx) {{
                             if result:
                                 html += f'<pre class="tool-data">{_escape(result)}</pre>'
                             html += '</details>\n'
+                        elif kind == "agent_transfer":
+                            html += f'<div class="tool-details" style="background:#e8f4fd;border-left-color:#2980b9;"><div class="tool-summary" style="color:#2471a3;">&#10132; <b>Agent Transfer:</b> {_escape(item[1])}</div></div>\n'
+                        elif kind == "custom_payload":
+                            html += f'<details class="tool-details" style="background:#fff8e1;border-left-color:#f39c12;"><summary class="tool-summary" style="color:#b7950b;">&#128230; <b>Custom Payload</b></summary>'
+                            html += f'<pre class="tool-data">{_escape(item[1])}</pre></details>\n'
                         else:
                             html += f'<div class="system">{_escape(item[1])}</div>\n'
 
