@@ -41,6 +41,11 @@ Authentication can vary depending on how and where you are interacting with SCRA
 
 ## Google Colab
 If you're using CXAS SCRAPI with a [Google Colab](https://colab.research.google.com/) notebook, you can add the following to the top of your notebook for easy authentication:
+
+```py
+pip install cxas-scrapi
+```
+
 ```py
 project_id = '<YOUR_GCP_PROJECT_ID>'
 
@@ -155,6 +160,8 @@ The `src/cxas_scrapi/migration` directory contains tools to facilitate transitio
 
 <!-- DOCUMENTATION -->
 # Documentation
+
+The full documentation site [CXAS SCRAPI](https://googlecloudplatform.github.io/cxas-scrapi)
 
 The full documentation site is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/). To run it locally:
 
