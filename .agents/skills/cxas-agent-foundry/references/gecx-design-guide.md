@@ -28,6 +28,7 @@
   - [Common Error Handling Pitfalls](#common-error-handling-pitfalls)
 - [Callback Patterns for Deterministic Behavior](#callback-patterns-for-deterministic-behavior)
 - [Instruction Design Anti-Patterns](#instruction-design-anti-patterns)
+- [Guardrails](#guardrails)
 - [Source Control](#source-control)
 - [Advanced techniques](#advanced-techniques)
   - [Dynamic Prompting](#dynamic-prompting)
@@ -100,6 +101,11 @@ When we treat prompts as "vibes" or polite requests and let Gemini figure it out
 ### Error handling
 - **Early Validation:** Verify mandatory inputs and prerequisites before calling external services.
 - **Actionable Recovery:** Return an agent_action key in failures to provide the model with deterministic recovery steps.
+
+### Guardrails
+- **Critical Requirements Only:** Only create guardrails for legal/compliance behaviors where failure has severe consequences.
+- **Guardrails vs Callbacks:** Guardrails enforce what must never happen (content safety, false confirmations). Callbacks enforce deterministic execution (tool calls, state transitions). Don't duplicate logic across both.
+- **Start Permissive:** Begin with lenient thresholds and tighten based on guardrail test results to avoid false positives.
 
 ### Advanced patterns
 - **Dynamic Prompting:** Update instructions via callbacks to minimize active context
@@ -478,6 +484,45 @@ These patterns cause regressions in practice. Avoid them.
 | Escalation trigger callbacks on root agent only | Sub-agent flows bypass root callbacks -- trigger never fires | Add trigger-handling `before_model_callback` to ALL agents |
 | Using `hide_tool()` to prevent empty-arg calls | Reduces LLM's tool awareness, causes worse instruction-following overall | Use better docstrings + tool-level state fallback + trigger pattern instead |
 | "Do NOT call this tool" in instructions | Confuses the LLM, often reduces tool calling reliability | Guide with positive instructions ("call {@TOOL: state_setting_tool} with...") not negative constraints |
+
+## Guardrails
+
+Guardrails are a collection of checks and balances that help protect and keep agent applications safe and secure. They provide content restrictions for both model input and model output. Guardrails run independently of agent instructions and callbacks -- they intercept content at the platform level before the agent processes input or after it generates a response.
+
+**Use guardrails for legal/compliance behaviors** -- protections that must be enforced regardless of what the agent's instructions say. For example:
+- **False confirmation prevention** -- ensuring the agent does not tell a user it has completed an action (e.g., "Your freeze has been placed") without actually calling the corresponding tool. An `llm_policy` guardrail can validate that the agent's response doesn't confirm actions that weren't performed.
+- **PII leakage protection** -- ensuring the agent never surfaces raw PII (SSN, credit card numbers) in its responses
+- **Content safety** -- blocking harmful, toxic, or sexually explicit content
+- **Prompt injection resistance** -- detecting and blocking attempts to override the agent's instructions
+- **Topic restrictions** -- preventing the agent from discussing topics outside its domain
+
+**Only create guardrails for critical requirements.** Guardrails add latency (each one is an additional check on every turn) and complexity. Reserve them for behaviors where failure has severe consequences -- safety, compliance, data leakage, brand damage. Non-critical behaviors should be handled in instructions or callbacks.
+
+### Guardrails vs Callbacks vs Instructions
+
+These three mechanisms serve different purposes. Choosing the wrong layer leads to gaps or conflicts.
+
+| Mechanism | When to Use | Enforcement | Examples |
+|-----------|-------------|-------------|---------|
+| **Instructions** | Behavioral guidance the LLM should follow -- tone, conversation flow, when to use tools | Probabilistic (LLM may not always follow) | "Ask for DOB before proceeding", "Use a professional tone", "Escalate if user is frustrated" |
+| **Callbacks** | Deterministic execution that must always happen the same way -- tool calls with correct args, session termination, state transitions | Deterministic (code, always executes) | Greeting injection, trigger pattern for escalation, silence counter, text before end_session |
+| **Guardrails** | Legal/compliance protections that must be enforced regardless of instructions -- content safety, false confirmation prevention, PII protection | Independent (platform-level, runs outside agent logic) | Block harmful content, prevent hallucinated confirmations, block PII in responses, resist prompt injection |
+
+**Key distinctions:**
+- Instructions tell the LLM WHAT to do. Callbacks enforce HOW. Guardrails enforce WHAT MUST NEVER HAPPEN.
+- Callbacks are agent-scoped (attached to specific agents). Guardrails are app-scoped (protect all agents in the app).
+- If a guardrail blocks input, the agent's instructions and callbacks never execute for that turn.
+- Guardrails and callbacks can conflict: if the agent has instruction-level profanity handling (detect → escalate via callback), but a `model_safety` guardrail blocks profanity first, the escalation never fires. Decide which layer owns the behavior.
+
+### Common Guardrail Anti-Patterns
+
+| Anti-Pattern | Why It Fails | Do This Instead |
+|-------------|-------------|----------------|
+| Guardrails for non-critical behaviors | Adds latency on every turn for low-risk checks | Use instructions for non-critical guidance |
+| Duplicating guardrail logic in instructions | Agent handles the behavior AND the guardrail blocks it -- one fires before the other causing unpredictable behavior | Pick one layer to own the behavior |
+| Overly strict safety thresholds | Blocks legitimate user inputs (e.g., "I'm having trouble with my account" flagged as harassment) | Start permissive (`BLOCK_ONLY_HIGH`), tighten incrementally based on guardrail test results |
+| Using guardrails for conversation flow | Guardrails block/allow content -- they don't guide conversation | Use instructions and callbacks for flow control |
+| Policy prompt without examples | LLM policy guardrails are LLM calls -- vague prompts produce inconsistent results | Include specific examples of what should and should not be flagged in the policy prompt |
 
 ## Source Control
 You can use the UI to build agents, but you must get them checked into source control (github, gitlab, etc) for easier management. Use SCRAPI to help you sync back and forth between the UI and source control.

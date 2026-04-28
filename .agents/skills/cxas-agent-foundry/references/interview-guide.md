@@ -5,6 +5,7 @@
 - [Round 1: The Big Picture](#round-1-the-big-picture)
 - [Round 2: Write the Technical Design Document (TDD)](#round-2-write-the-technical-design-document-tdd)
   - [Agent Design](#agent-design)
+  - [Guardrail Design](#guardrail-design)
   - [Eval Design](#eval-design)
   - [Build Steps](#build-steps)
 - [Keeping the TDD Current](#keeping-the-tdd-current)
@@ -35,6 +36,31 @@ Ask the user to review and approve the TDD before building anything.
 4. **Variables** -- what session variables are needed and where they come from
 5. **Callbacks** -- before/after agent callbacks for setup logic (auth, profile lookup)
 
+### Guardrail Design
+
+**Only create guardrails for requirements explicitly marked as critical in the PRD** (e.g., P0/NO-GO, "CRITICAL", "MUST NOT", compliance-mandated). Not every requirement needs a guardrail -- guardrails add latency and complexity. Reserve them for behaviors where failure has severe consequences (safety, compliance, data leakage, brand damage).
+
+For each critical requirement, determine if a guardrail is needed and which type:
+
+| Critical Requirement Pattern | Guardrail Type | Example |
+|------------------------------|---------------|---------|
+| Agent must never produce harmful/toxic content | `model_safety` | Block hate speech, dangerous content, sexually explicit, harassment |
+| Agent must not leak PII or sensitive data | `llm_policy` | Custom policy: "Flag any response containing SSN, credit card, or account numbers in plain text" |
+| Agent must resist prompt injection / jailbreaking | `llm_prompt_security` | Default prompt security settings |
+| Agent must not discuss off-topic subjects | `llm_policy` | Custom policy: "Flag responses about topics outside of [domain]" |
+| Agent must not hallucinate confirmations | `llm_policy` | Custom policy: "Flag responses that confirm an action was completed without a preceding tool call" |
+| Specific words/phrases must be blocked | `content_filter` | Block competitor names, profanity, internal jargon |
+
+For each guardrail, document in the TDD:
+
+1. **Source requirement** -- which PRD requirement (with ID) drives this guardrail
+2. **Guardrail type** -- one of: `model_safety`, `llm_policy`, `llm_prompt_security`, `content_filter`, `code_callback`
+3. **Action on trigger** -- what happens when the guardrail fires: `DENY` (block + generic message), `generativeAnswer` (block + LLM-generated safe response), or `transferAgent` (block + hand off to human)
+4. **Scope** (for `llm_policy`) -- `AGENT_RESPONSE` (check agent output) or `USER_INPUT` (check user input)
+5. **Policy prompt** (for `llm_policy`) -- the validation prompt the guardrail LLM uses to evaluate content
+
+**If no requirements in the PRD are marked as critical or no critical requirements map to guardrail-appropriate behaviors, skip this section entirely.** Default platform safety settings are always active -- only add explicit guardrails when the PRD demands protection beyond the defaults.
+
 ### Eval Design
 For each requirement in the PRD:
 1. **Eval type** -- golden or scenario (with rationale)
@@ -45,7 +71,8 @@ For each requirement in the PRD:
 6. **For scenarios** -- task description, max turns, LLM expectations
 7. **Tool tests** -- which tools need isolated tests and what to assert
 8. **Callback tests** -- which callbacks need tests and what logic paths to cover
-9. **Tags** -- for filtering (category, PRD ID, priority)
+9. **Guardrail tests** -- if custom guardrails were created in the Guardrail Design section, define test cases for each guardrail (inputs that should trigger it, inputs that should pass through). Only include this if custom guardrails exist
+10. **Tags** -- for filtering (category, PRD ID, priority)
 
 ### Build Steps
 Numbered list of exactly what will be created, in order:

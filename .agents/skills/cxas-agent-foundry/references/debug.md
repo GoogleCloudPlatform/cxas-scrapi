@@ -18,6 +18,7 @@ Methodology for systematically debugging eval failures and improving agent behav
   - [Diagnosable Failure Patterns](#diagnosable-failure-patterns)
   - [Golden Failures](#golden-failures)
   - [Scenario Failures](#scenario-failures)
+  - [Guardrail Failures](#guardrail-failures)
   - [Tuning Scoring Thresholds](#tuning-scoring-thresholds)
 - [Common Mistakes](#common-mistakes)
 
@@ -69,6 +70,7 @@ Check `<project>/gecx-config.json` first for project configuration (where `<proj
 | **Sims** | `<project>/evals/simulations/simulations.yaml` | Generate from TDD -- see `references/build.md` |
 | **Tool tests** | `<project>/evals/tool_tests/*.yaml` | Generate using `ToolEvals.generate_tool_tests()` |
 | **Callback tests** | `<project>/evals/callback_tests/agents/` | Sync from platform and write tests |
+| **Guardrail tests** | `<project>/evals/guardrail_tests/*.yaml` (only if app has custom guardrails) | Generate from TDD -- see `references/build.md` -> Generate Guardrails |
 | **Target pass rate** | Ask the user | e.g., 90%, 100% |
 | **Channel** | Ask the user | text or audio |
 
@@ -226,6 +228,27 @@ Tune thresholds after confirming the agent behavior is correct (read transcripts
 | Sim user goes off-script | Task instructions too vague | Add "You MUST cooperate fully" |
 | Tool expectation fails (audio) | Platform audio bug | Use `expect_criteria` (LLM judges) instead of `expect_tools` |
 | Runs out of turns | Flow exceeds `max_turns` | Increase `max_turns` -- audio needs 4-6 extra |
+
+### Guardrail failures
+
+Only relevant if the app has custom guardrails. Guardrail test failures fall into two categories: false positives (guardrail blocks legitimate input) and false negatives (guardrail fails to block harmful input).
+
+| Symptom | Category | Likely Cause | Fix |
+|---------|----------|-------------|-----|
+| Guardrail blocks legitimate user input | False positive | Safety threshold too strict | Lower the threshold (e.g., `BLOCK_MEDIUM_AND_ABOVE` → `BLOCK_ONLY_HIGH`) |
+| Guardrail blocks agent's valid response | False positive | `llm_policy` prompt too broad | Narrow the policy prompt -- add exceptions for legitimate scenarios |
+| Harmful input passes through unblocked | False negative | Safety threshold too permissive | Raise the threshold (e.g., `BLOCK_ONLY_HIGH` → `BLOCK_MEDIUM_AND_ABOVE`) |
+| Policy guardrail misses a violation | False negative | Policy prompt doesn't cover the case | Add the specific pattern to the policy prompt with examples |
+| Agent's escalation logic never fires | Interaction conflict | Guardrail blocks input before agent sees it | Lower guardrail threshold or remove agent-level handling and let the guardrail own the behavior entirely |
+| Guardrail triggers but wrong action taken | Action mismatch | Wrong `action` configured (e.g., `DENY` instead of `transferAgent`) | Update the guardrail's action field |
+| Test expects guardrail trigger but none found | Missing guardrail | Guardrail not created, not enabled, or not associated with the app | Check `inspect-app.py` output -- verify the guardrail exists and is enabled |
+
+**Hill-climbing guardrails:**
+
+1. **Start permissive, then tighten.** Begin with `BLOCK_ONLY_HIGH` for `model_safety` and broad policy prompts for `llm_policy`. Run guardrail tests to establish a baseline. Tighten thresholds incrementally and re-run after each change.
+2. **Check for guardrail-agent conflicts.** If the agent has instruction-level handling for the same behavior (e.g., profanity → escalation), the guardrail fires first and the instruction never executes. Decide which layer owns the behavior -- don't split it across both.
+3. **Refine `llm_policy` prompts iteratively.** When a policy guardrail has false positives, add explicit exceptions to the prompt (e.g., "Do NOT flag responses that reference a completed tool call"). When it has false negatives, add the missed pattern with examples.
+4. **Use `maxConversationMessages`** to control how much conversation context the policy guardrail sees. `1` means it only evaluates the latest exchange. Higher values give the guardrail more context but increase latency.
 
 ### Session parameter pitfalls
 

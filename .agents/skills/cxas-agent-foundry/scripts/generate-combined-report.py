@@ -246,7 +246,7 @@ def load_sim_results(json_path):
     return results, wall_clock_s
 
 
-def build_html(golden_results=None, sim_results=None, app_name="", golden_modality="text", sim_modality="text", sim_wall_clock_s=None, tool_results=None, callback_results=None):
+def build_html(golden_results=None, sim_results=None, app_name="", golden_modality="text", sim_modality="text", sim_wall_clock_s=None, tool_results=None, callback_results=None, guardrail_results=None):
     """Build combined HTML report."""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -868,8 +868,8 @@ function collapseAll() {{
                 html += '</details>\n'
             html += '</div></div>\n'
 
-    # Component test sections (tool + callback)
-    html = render_component_tests(html, tool_results, callback_results)
+    # Component test sections (tool + callback + guardrail)
+    html = render_component_tests(html, tool_results, callback_results, guardrail_results)
 
     html += "</body></html>"
     return html
@@ -913,9 +913,27 @@ def load_callback_test_results(csv_or_json_path):
     return results
 
 
-def render_component_tests(html, tool_results=None, callback_results=None):
-    """Render tool and callback test sections into the HTML."""
-    if not tool_results and not callback_results:
+def load_guardrail_test_results(json_path):
+    """Load guardrail test results from a JSON file."""
+    df = pd.read_json(json_path)
+    results = []
+    for _, row in df.iterrows():
+        results.append({
+            "name": row.get("name", row.get("test_id", "?")),
+            "user_input": row.get("user_input", ""),
+            "passed": row.get("pass", False) is True,
+            "triggered": row.get("actual_triggered", False),
+            "guardrail_name": row.get("actual_guardrail_name", ""),
+            "guardrail_type": row.get("actual_guardrail_type", ""),
+            "latency_ms": row.get("latency (ms)", 0),
+            "error_details": row.get("error_details", ""),
+        })
+    return results
+
+
+def render_component_tests(html, tool_results=None, callback_results=None, guardrail_results=None):
+    """Render tool, callback, and guardrail test sections into the HTML."""
+    if not tool_results and not callback_results and not guardrail_results:
         return html
 
     section = ""
@@ -949,6 +967,24 @@ def render_component_tests(html, tool_results=None, callback_results=None):
             section += f'<tr data-passed="{passed_str}"><td class="{cls}"><b>{r["status"]}</b></td><td>{_escape(r["agent"])}</td><td>{_escape(r["callback_type"])}</td><td>{_escape(r["name"])}</td><td>{error}</td></tr>\n'
         section += '</table>\n'
 
+    if guardrail_results:
+        g_total = len(guardrail_results)
+        g_passed = sum(1 for r in guardrail_results if r["passed"])
+        g_pct = 100 * g_passed / g_total if g_total else 0
+
+        section += f'<h2 id="section-guardrails">Guardrail Tests <span class="meta">({g_passed}/{g_total} — {g_pct:.0f}%)</span></h2>\n'
+        section += '<table><tr><th>Result</th><th>Test</th><th>Input</th><th>Triggered</th><th>Guardrail</th><th>Type</th><th>Latency</th><th>Errors</th></tr>\n'
+        for r in sorted(guardrail_results, key=lambda x: x["passed"]):
+            cls = "pass" if r["passed"] else "fail"
+            passed_str = "true" if r["passed"] else "false"
+            status = "PASSED" if r["passed"] else "FAILED"
+            triggered = "Yes" if r.get("triggered") else "No"
+            lat = f'{r["latency_ms"]:.0f}ms' if r.get("latency_ms") else "-"
+            errors = _escape(str(r.get("error_details", ""))[:100])
+            user_input = _escape(str(r.get("user_input", ""))[:80])
+            section += f'<tr data-passed="{passed_str}"><td class="{cls}"><b>{status}</b></td><td>{_escape(r["name"])}</td><td>{user_input}</td><td>{triggered}</td><td>{_escape(str(r.get("guardrail_name", "") or ""))}</td><td>{_escape(str(r.get("guardrail_type", "") or ""))}</td><td>{lat}</td><td>{errors}</td></tr>\n'
+        section += '</table>\n'
+
     return html + section
 
 
@@ -964,13 +1000,14 @@ def main():
     parser.add_argument("--sim-results", help="Path to sim results JSON")
     parser.add_argument("--tool-results", help="Path to tool test results CSV/JSON")
     parser.add_argument("--callback-results", help="Path to callback test results CSV/JSON")
+    parser.add_argument("--guardrail-results", help="Path to guardrail test results JSON")
     parser.add_argument("--app-name", default=None, help="App resource name. If not provided, reads from gecx-config.json via config.py.")
     parser.add_argument("--golden-modality", default="text", help="Modality for golden run (text/audio)")
     parser.add_argument("--sim-modality", default="text", help="Modality for sim run (text/audio)")
     parser.add_argument("--output", help="Output HTML path")
     args = parser.parse_args()
 
-    if not any([args.golden_run, args.sim_results, args.tool_results, args.callback_results]):
+    if not any([args.golden_run, args.sim_results, args.tool_results, args.callback_results, args.guardrail_results]):
         parser.print_help()
         return
 
@@ -987,6 +1024,7 @@ def main():
     sim_results = None
     tool_results = None
     callback_results = None
+    guardrail_results = None
 
     if args.golden_run:
         print(f"Loading golden results for run {args.golden_run}...")
@@ -1010,9 +1048,14 @@ def main():
         callback_results = load_callback_test_results(args.callback_results)
         print(f"  {len(callback_results)} callback test results")
 
+    if args.guardrail_results:
+        print(f"Loading guardrail test results from {args.guardrail_results}...")
+        guardrail_results = load_guardrail_test_results(args.guardrail_results)
+        print(f"  {len(guardrail_results)} guardrail test results")
+
     html = build_html(golden_results, sim_results, args.app_name,
                        args.golden_modality, args.sim_modality, sim_wall_clock_s,
-                       tool_results, callback_results)
+                       tool_results, callback_results, guardrail_results)
 
     os.makedirs(REPORTS_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%d_%H%M")

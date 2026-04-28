@@ -5,7 +5,7 @@ Run evals, triage failures, and generate reports for GECX conversational agents.
 ## Table of Contents
 
 - [Before Starting](#before-starting)
-- [Four Eval Types](#four-eval-types)
+- [Eval Types](#eval-types)
 - [Run Everything](#run-everything)
 - [Choosing Golden vs Sim](#choosing-golden-vs-sim)
 - [Filtering](#filtering)
@@ -20,7 +20,7 @@ Run evals, triage failures, and generate reports for GECX conversational agents.
 ## Run Steps
 
 Initialize your `todo.md` checklist with:
-1. Run Goldens, Sims & Tool Tests
+1. Run Goldens, Sims, Tool Tests & Guardrail Tests
 2. Triage Results & Generate Report
 
 ## Before Starting
@@ -33,10 +33,11 @@ Check memory for project-specific context (app ID, variable handling rules, know
 **CRITICAL: Evaluation Channel Enforcement**
 If the app's `gecx-config.json` specifies `"modality": "audio"`, you MUST NOT run evaluations in text mode. The runner scripts will now throw a fatal error if you attempt to bypass this. When running eval scripts, either omit the `--channel` flag to rely on the default config, or explicitly pass `--channel audio`. Never pass `--channel text` for an audio agent.
 
-## Four Eval Types
+## Eval Types
 
 - **Conversation-level:** goldens, simulations (test end-to-end agent behavior)
 - **Component-level:** tool tests, callback tests (test individual pieces in isolation)
+- **Safety-level:** guardrail tests (test content safety and compliance guardrails -- only if custom guardrails exist)
 
 ### 1. Platform Goldens -- deterministic flows
 Turn-by-turn **ideal** conversations. The platform replays user inputs and scores agent responses via semantic similarity and tool call matching.
@@ -74,6 +75,30 @@ from cxas_scrapi.evals.callback_evals import CallbackEvals
 cb = CallbackEvals()
 results_df = cb.test_all_callbacks_in_app_dir(app_dir="<project>/evals/callback_tests")
 ```
+
+### 5. Guardrail Tests -- content safety and compliance validation (runs locally)
+Tests that custom guardrails correctly block harmful or non-compliant inputs and pass through safe ones. Only relevant if the app has custom guardrails. These run against the deployed app via SCRAPI's Sessions API -- each test sends an input and inspects the trace to check if the expected guardrail was triggered.
+
+```python
+import yaml
+import pandas as pd
+from pathlib import Path
+from cxas_scrapi.evals.guardrail_evals import GuardrailEvals
+
+ge = GuardrailEvals(app_name=app_name)
+
+# Load test cases from all YAML files in the guardrail_tests directory
+all_tests = []
+for yaml_file in Path("<project>/evals/guardrail_tests").glob("*.yaml"):
+    with open(yaml_file) as f:
+        data = yaml.safe_load(f)
+    all_tests.extend(data.get("tests", []))
+
+df = pd.DataFrame(all_tests)
+results_df = ge.run_guardrail_tests(df, console_logging=True)
+```
+
+**Use for:** verifying guardrails that enforce critical/compliance requirements -- false confirmation prevention, PII leakage protection, content safety, prompt injection resistance.
 
 ## Run Everything
 

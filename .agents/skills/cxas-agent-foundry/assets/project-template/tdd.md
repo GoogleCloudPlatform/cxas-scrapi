@@ -42,6 +42,14 @@
 | `after_model` | root_agent | Text injection before end_session |
 | `before_model` | sub_agent | Same trigger pattern (callbacks on ALL agents) |
 
+### Guardrails
+<!-- Only add guardrails for requirements marked as CRITICAL in the PRD. Skip this section if none apply. -->
+<!-- For each critical requirement, identify the guardrail type and action. -->
+
+| Source Requirement | Guardrail Name | Type | Action | Scope | Notes |
+|--------------------|---------------|------|--------|-------|-------|
+| FR-5.1 (No PII leakage) (example) | `pii_leak_guard` | `llm_policy` | `DENY` | `AGENT_RESPONSE` | Blocks responses containing sensitive data in plain text (example) |
+
 ---
 
 ## Eval Design
@@ -53,6 +61,7 @@
 | Auth routing | Golden | Callback-enforced, deterministic | P0 | NO-GO | `auth-routing, FR-1.1` |
 | Escalation flow | Golden | Trigger pattern, deterministic | P0 | HIGH | `escalation, FR-2.1` |
 | Troubleshooting | Sim | KB-dependent, steps vary | P1 | HIGH | `troubleshooting, FR-3.1` |
+| No sensitive data leakage (example) | Guardrail | Critical requirement -- custom llm_policy guardrail (example) | P0 | NO-GO | `guardrail, FR-5.1` |
 
 ### Golden vs Sim Decision
 <!-- Apply the key question: is the behavior deterministic for this flow? -->
@@ -74,20 +83,22 @@
 2. Create tools + tool configurations
 3. Define variables and session parameters
 4. Implement callbacks (before_agent, before_model, after_model)
-5. Write golden YAML files
-6. Write simulation YAML entries
-7. Write tool test YAML files
-8. Write callback test files (python_code.py + test.py)
-9. Run initial eval suite
-10. Hill-climb: fix failures, update TDD, re-run
+5. Create guardrails (only if TDD Guardrails section has entries)
+6. Write golden YAML files
+7. Write simulation YAML entries
+8. Write tool test YAML files
+9. Write callback test files (python_code.py + test.py)
+10. Write guardrail test YAML files (only if custom guardrails were created in step 5)
+11. Run initial eval suite
+12. Hill-climb: fix failures, update TDD, re-run
 
 ---
 
 ## Pass Rate History
 
-| Date | Goldens | Sims | Tool Tests | Callback Tests | Notes |
-|------|---------|------|------------|----------------|-------|
-| YYYY-MM-DD | 0/0 | 0/0 | 0/0 | 0/0 | Initial |
+| Date | Goldens | Sims | Tool Tests | Callback Tests | Guardrail Tests | Notes |
+|------|---------|------|------------|----------------|-----------------|-------|
+| YYYY-MM-DD | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | Initial |
 
 ---
 

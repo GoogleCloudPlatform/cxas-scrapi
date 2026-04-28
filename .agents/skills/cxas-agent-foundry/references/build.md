@@ -43,11 +43,13 @@ Choose the checklist that matches your entry point and initialize `todo.md`:
 1. Interview
 2. TDD
 3. Build App
-4. Generate Evals: Goldens
-5. Generate Evals: Simulations
-6. Generate Evals: Tool Tests
-7. Generate Evals: Callback Tests
-8. Push and Run
+4. Generate Guardrails (only if TDD contains critical requirements with guardrails)
+5. Generate Evals: Goldens
+6. Generate Evals: Simulations
+7. Generate Evals: Tool Tests
+8. Generate Evals: Callback Tests
+9. Generate Evals: Guardrail Tests (only if custom guardrails were created in step 4)
+10. Push and Run
 
 **Eval creation** (existing app -> evals):
 1. Inspect App
@@ -56,7 +58,8 @@ Choose the checklist that matches your entry point and initialize `todo.md`:
 4. Generate Evals: Simulations
 5. Generate Evals: Tool Tests
 6. Generate Evals: Callback Tests
-7. Push and Run
+7. Generate Evals: Guardrail Tests (only if the app has custom guardrails)
+8. Push and Run
 
 ---
 
@@ -190,6 +193,141 @@ For the full 6-gate verification (recommended before writing production evals), 
 
 ---
 
+## Generate Guardrails
+
+**Skip this section entirely if no critical requirements in the TDD map to guardrails.** Only create guardrails when the TDD's Guardrail Design section identifies critical requirements that need them.
+
+For each guardrail defined in the TDD, create a guardrail JSON file in `<project>/cxas_app/<AppName>/guardrails/<guardrail_name>/`:
+
+### Guardrail JSON Format
+
+#### Model Safety (content category blocking)
+
+```json
+{
+  "displayName": "Safety_Guardrail",
+  "enabled": true,
+  "action": {"generativeAnswer": {}},
+  "modelSafety": {
+    "safetySettings": [
+      {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+      {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+      {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+      {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}
+    ]
+  }
+}
+```
+
+Threshold options: `BLOCK_LOW_AND_ABOVE` (strictest), `BLOCK_MEDIUM_AND_ABOVE`, `BLOCK_ONLY_HIGH` (most permissive).
+
+#### LLM Policy (custom validation prompt)
+
+```json
+{
+  "displayName": "Hallucination_Guardrail",
+  "enabled": true,
+  "action": {"transferAgent": {"agent": "escalation_agent"}},
+  "llmPolicy": {
+    "maxConversationMessages": 1,
+    "prompt": "You are a safety validator for a [domain] assistant.\n\n{guardrail_instruction}",
+    "policyScope": "AGENT_RESPONSE"
+  }
+}
+```
+
+The `{guardrail_instruction}` placeholder is populated by the platform. Write the prompt so it evaluates the agent's response (or user input, depending on `policyScope`) and returns a pass/fail signal.
+
+#### Prompt Security (prompt injection protection)
+
+```json
+{
+  "displayName": "Prompt_Guardrail",
+  "enabled": true,
+  "action": {"generativeAnswer": {}},
+  "llmPromptSecurity": {"defaultSettings": {}}
+}
+```
+
+#### Content Filter (keyword/phrase blocking)
+
+```json
+{
+  "displayName": "Content_Filter_Guardrail",
+  "enabled": true,
+  "action": {"generativeAnswer": {}},
+  "contentFilter": {
+    "bannedPhrases": [
+      {"phrase": "phrase to block", "matchType": "CONTAINS"}
+    ]
+  }
+}
+```
+
+`matchType` options: `CONTAINS` (substring match), `EQUALS` (exact match).
+
+#### Code Callback (custom validation logic)
+
+```json
+{
+  "displayName": "Custom_Validation_Guardrail",
+  "enabled": true,
+  "action": {"generativeAnswer": {}},
+  "codeCallback": {
+    "pythonCode": "guardrails/<guardrail_name>/python_function/python_code.py"
+  }
+}
+```
+
+The Python function receives the user input or agent response and returns a pass/fail signal. Use this when validation logic is too complex for an LLM policy prompt (e.g., regex matching, external API checks).
+
+### Creating Guardrails via SCRAPI
+
+Guardrails can also be created programmatically:
+
+```python
+from cxas_scrapi import Guardrails
+
+guardrails = Guardrails(app_name=APP_NAME)
+
+# Model safety guardrail
+guardrails.create_guardrail(
+    guardrail_id="safety_guardrail",
+    display_name="Safety Guardrail",
+    payload={"model_safety": {"safety_settings": [...]}},
+    action="DENY",
+)
+
+# LLM policy guardrail
+guardrails.create_guardrail(
+    guardrail_id="hallucination_guard",
+    display_name="Hallucination Guard",
+    payload={"llm_policy": {
+        "max_conversation_messages": 1,
+        "prompt": "Your validation prompt here...",
+        "policy_scope": "AGENT_RESPONSE",
+    }},
+    action="DENY",
+)
+```
+
+### Guardrail Interaction with Agent Flow
+
+Guardrails run BEFORE agent instructions. If a guardrail blocks input, the agent's instruction never executes. Keep this in mind:
+- If the agent has its own escalation logic for profanity/abuse, a `model_safety` guardrail with a strict threshold may fire first and prevent the agent's instruction-driven escalation
+- If this conflict occurs, either lower the guardrail threshold (e.g., `BLOCK_ONLY_HIGH`) or remove the agent's instruction-level handling and let the guardrail own it entirely
+
+After creating guardrails, proceed to lint and push:
+
+```bash
+cxas lint --app-dir <project>/cxas_app/<AppName>
+cxas push --app-dir <project>/cxas_app/<AppName> \
+  --to <app_resource_name> \
+  --project-id <project_id> --location <location>
+```
+
+---
+
 ## Generate Evals
 
 **CRITICAL -- PLAN BEFORE WRITING:** If you are generating the initial batch of evaluation YAML files from the TDD, you MUST first propose a coverage plan to the user and get approval before writing files. This ensures coverage consistency across all eval types.
@@ -213,6 +351,16 @@ Before writing any tool test expectations, READ each tool's `python_function/pyt
 ### 4. Callback Tests (`<project>/evals/callback_tests/`)
 
 Test callbacks in isolation using pytest. Use `sync-callbacks.py` to pull code from platform, then write tests. See `references/eval-templates.md` -> Callback Tests for layout, patterns, and what to test per callback type.
+
+### 5. Guardrail Tests (`<project>/evals/guardrail_tests/*.yaml`) -- only if custom guardrails exist
+
+**Skip this section if no custom guardrails were created.** Only generate guardrail tests when the app has custom guardrails defined in the Guardrail Design section of the TDD.
+
+For each custom guardrail, create test cases that verify:
+- **Positive cases** -- inputs that SHOULD trigger the guardrail (blocked)
+- **Negative cases** -- inputs that should NOT trigger the guardrail (passed through)
+
+See `references/eval-templates.md` -> Guardrail Tests for the YAML format.
 
 ---
 

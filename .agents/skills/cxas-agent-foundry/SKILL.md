@@ -57,6 +57,8 @@ Read what the user wants and load the appropriate sub-skill:
 | "Generate tool tests", "create callback tests" | Build | `references/build.md` |
 | "Update evals -- requirements changed" | Build | `references/build.md` |
 | "Update the TDD" | Build | `references/build.md` |
+| "Add guardrails", "create guardrails" | Build | `references/build.md` |
+| "Add guardrail evals", "test guardrails" | Build | `references/build.md` |
 | "Run evals", "push evals", "check results" | Run | `references/run.md` |
 | "Run tool tests", "test the callbacks" | Run | `references/run.md` |
 | "Generate a report" | Run | `references/run.md` |

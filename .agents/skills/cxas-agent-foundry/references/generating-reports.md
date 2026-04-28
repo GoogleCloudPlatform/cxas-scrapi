@@ -19,6 +19,7 @@ Output: HTML report in `<project>/eval-reports/iterations/iteration-N/`. Include
 - Sim pass rates (per-eval and overall)
 - Tool test results
 - Callback test results
+- Guardrail test results (if custom guardrails exist)
 - Triage categories for failures
 
 ### 2. Combined Report
@@ -46,6 +47,7 @@ On-demand analysis of eval coverage against agent architecture. No script -- gen
 | Sim pass rate | >80% across 3+ runs | 60-80% | Read transcripts, check expectations |
 | Tool test pass rate | 100% | <100% | Fix tool code -- these are deterministic |
 | Callback test pass rate | 100% | <100% | Fix callback code -- these are deterministic |
+| Guardrail test pass rate | 100% | <100% | Adjust guardrail thresholds or refine policy prompts -- check for false positives/negatives |
 
 ### Triage Categories
 
@@ -235,7 +237,7 @@ For each agent, produce:
 2. Untested agent transfers
 3. Uncovered instruction directives
 4. Missing negative/edge case tests
-5. Untested guardrails
+5. Untested guardrails (check if custom guardrails have corresponding guardrail test YAML files)
 6. Untested callbacks/python code
 7. No scheduled runs (recommend if missing)
 ```

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run all 4 eval types and generate a combined report in one command.
+"""Run all eval types and generate a combined report in one command.
 
 Usage:
   python run-all-evals.py                          # Run everything, default channel from gecx-config
@@ -36,6 +36,7 @@ from config import load_config as _load_shared_config, get_project_path, resolve
 # --- Paths ---
 TOOL_TESTS_DIR = get_project_path("evals", "tool_tests")
 CALLBACK_TESTS_DIR = get_project_path("evals", "callback_tests")
+GUARDRAIL_TESTS_DIR = get_project_path("evals", "guardrail_tests")
 REPORTS_DIR = get_project_path("eval-reports")
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -281,8 +282,60 @@ def run_sims(channel):
     return None
 
 
+def run_guardrail_tests(config):
+    """Run guardrail tests using GuardrailEvals and save results."""
+    print("\n" + "=" * 60)
+    print("PHASE 5: Guardrail Tests")
+    print("=" * 60)
+
+    yaml_files = list(Path(GUARDRAIL_TESTS_DIR).glob("*.yaml")) if os.path.isdir(GUARDRAIL_TESTS_DIR) else []
+    if not yaml_files:
+        print(f"  Skipped: No YAML files in {GUARDRAIL_TESTS_DIR}")
+        return None
+
+    try:
+        import yaml
+        import pandas as pd
+        from cxas_scrapi.evals.guardrail_evals import GuardrailEvals
+
+        # Load test cases from all YAML files
+        all_tests = []
+        for yaml_file in yaml_files:
+            with open(yaml_file) as f:
+                data = yaml.safe_load(f)
+            tests = data.get("tests", [])
+            all_tests.extend(tests)
+
+        if not all_tests:
+            print("  Skipped: No test cases loaded from YAML files")
+            return None
+
+        df = pd.DataFrame(all_tests)
+        ge = GuardrailEvals(app_name=config["app_resource"])
+
+        print(f"  Running {len(all_tests)} guardrail tests...")
+        results_df = ge.run_guardrail_tests(df, console_logging=True)
+
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+        output_path = os.path.join(REPORTS_DIR, "guardrail_test_results.json")
+        results_df.to_json(output_path, orient="records", indent=2)
+
+        total = len(results_df)
+        passed = sum(1 for p in results_df.get("pass", []) if p is True)
+        print(f"  Guardrail tests: {passed}/{total} passed")
+        print(f"  Results saved to: {output_path}")
+        return output_path
+
+    except ImportError:
+        print("  Skipped: cxas_scrapi.evals.guardrail_evals not available")
+        return None
+    except Exception as e:
+        print(f"  ERROR: Guardrail tests failed: {e}")
+        return None
+
+
 def generate_combined_report(golden_run_id, sim_results_path, tool_results_path,
-                              callback_results_path, channel):
+                              callback_results_path, guardrail_results_path, channel):
     """Generate combined HTML report from all result sources."""
     print("\n" + "=" * 60)
     print("GENERATING COMBINED REPORT")
@@ -299,6 +352,8 @@ def generate_combined_report(golden_run_id, sim_results_path, tool_results_path,
         cmd.extend(["--tool-results", tool_results_path])
     if callback_results_path:
         cmd.extend(["--callback-results", callback_results_path])
+    if guardrail_results_path:
+        cmd.extend(["--guardrail-results", guardrail_results_path])
 
     if len(cmd) <= 2:
         print("  Skipped: No results to combine")
@@ -388,12 +443,16 @@ def main():
     if not args.skip_sims:
         sim_results_path = run_sims(channel)
 
-    # --- Step 5: Generate combined report ---
+    # --- Step 5: Run guardrail tests (if they exist) ---
+    guardrail_results_path = run_guardrail_tests(config)
+
+    # --- Step 6: Generate combined report ---
     report_path = generate_combined_report(
         golden_run_id=golden_run_id,
         sim_results_path=sim_results_path,
         tool_results_path=tool_results_path,
         callback_results_path=callback_results_path,
+        guardrail_results_path=guardrail_results_path,
         channel=channel,
     )
 
@@ -413,6 +472,7 @@ def main():
         ("Tool tests", tool_results_path),
         ("Goldens", golden_run_id if golden_run_id else None),
         ("Sims", sim_results_path),
+        ("Guardrail tests", guardrail_results_path),
     ]
     for label, result in status_lines:
         if args.skip_goldens and label == "Goldens":

@@ -15,6 +15,7 @@ For exact field names, enum values, or threshold structures, see the schema file
 - [Tools](#tools)
 - [Variables](#variables)
 - [Callbacks](#callbacks)
+- [Guardrails](#guardrails)
 - [Sessions](#sessions)
 - [Evaluations](#evaluations)
 - [Inspecting an Existing App](#inspecting-an-existing-app)
@@ -50,10 +51,11 @@ grep -A 20 "def create_" .venv/lib/python3.13/site-packages/cxas_scrapi/core/<mo
 5. Create custom tools, associate with agents via `update_agent(tools=[...])`
 6. Create variables
 7. Create callbacks
-8. Set root agent + model on app
-9. Pull to local: `cxas pull $APP_NAME --target-dir cxas_app/`
-10. Run linter: `cxas lint --app-dir cxas_app/`
-11. Run build verification gates (see `build-verification.md`)
+8. Create guardrails (only if critical requirements demand them -- see `references/build.md` -> Generate Guardrails)
+9. Set root agent + model on app
+10. Pull to local: `cxas pull $APP_NAME --target-dir cxas_app/`
+11. Run linter: `cxas lint --app-dir cxas_app/`
+12. Run build verification gates (see `build-verification.md`)
 
 ## Common Mistakes
 
@@ -166,6 +168,62 @@ callbacks.create_callback(
 **Key methods:** `create_callback` (appends), `update_callback(index=0)`, `delete_callback(index=0)`, `list_callbacks`
 
 **Schema:** `api-schemas/agents.md` (Callback schema is agent-scoped)
+
+## Guardrails
+
+Only create guardrails when the TDD identifies critical requirements that need them. See `references/build.md` -> Generate Guardrails for guidance on when and which type.
+
+```python
+from cxas_scrapi.core.guardrails import Guardrails
+
+guardrails = Guardrails(app_name=app_name)
+
+# List existing guardrails
+all_guardrails = guardrails.list_guardrails()
+
+# Get name-to-display-name map
+guardrails_map = guardrails.get_guardrails_map()
+
+# Create a model safety guardrail
+guardrails.create_guardrail(
+    guardrail_id="safety_guardrail",
+    display_name="Safety Guardrail",
+    payload={"model_safety": {"safety_settings": [
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    ]}},
+    action="DENY",
+)
+
+# Create an LLM policy guardrail
+guardrails.create_guardrail(
+    guardrail_id="hallucination_guard",
+    display_name="Hallucination Guard",
+    payload={"llm_policy": {
+        "max_conversation_messages": 1,
+        "prompt": "You are a safety validator...\n\n{guardrail_instruction}",
+        "policy_scope": "AGENT_RESPONSE",
+    }},
+    action="DENY",
+)
+
+# Update a guardrail
+guardrails.update_guardrail(guardrail_id="safety_guardrail", enabled=False)
+
+# Delete a guardrail
+guardrails.delete_guardrail(guardrail_id="safety_guardrail")
+```
+
+**Key methods:** `list_guardrails`, `get_guardrails_map`, `get_guardrail`, `create_guardrail`, `update_guardrail`, `delete_guardrail`
+
+**Guardrail types** (mutually exclusive -- each guardrail uses exactly one):
+- `model_safety` -- blocks harmful content categories at configurable thresholds
+- `llm_policy` -- custom LLM-based policy validation with a prompt
+- `llm_prompt_security` -- protects against prompt injection
+- `content_filter` -- keyword/phrase content filtering
+- `code_callback` -- custom code-based guardrail logic
+
+**Important:** Guardrails run BEFORE agent instructions. If a guardrail blocks input, the agent never sees it.
 
 ## Sessions
 

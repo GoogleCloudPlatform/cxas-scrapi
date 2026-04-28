@@ -38,6 +38,7 @@ def inspect(app_name, verbose=False):
     from cxas_scrapi.core.tools import Tools
     from cxas_scrapi.core.callbacks import Callbacks
     from cxas_scrapi.core.evaluations import Evaluations
+    from cxas_scrapi.core.guardrails import Guardrails
 
     parts = app_name.split("/")
     project = parts[1]
@@ -131,6 +132,38 @@ def inspect(app_name, verbose=False):
     except Exception as e:
         result["tools_error"] = str(e)
 
+    # Guardrails
+    guardrails_client = Guardrails(app_name=app_name)
+    result["guardrails"] = []
+    try:
+        guardrail_list = guardrails_client.list_guardrails()
+        for g in guardrail_list:
+            g_dict = type(g).to_dict(g)
+            guardrail_info = {
+                "display_name": g.display_name,
+                "id": g.name.split("/")[-1] if g.name else "",
+                "enabled": g.enabled if hasattr(g, "enabled") else True,
+                "action": g_dict.get("action", {}),
+            }
+            # Determine guardrail type
+            if g_dict.get("modelSafety") or g_dict.get("model_safety"):
+                guardrail_info["type"] = "model_safety"
+            elif g_dict.get("llmPolicy") or g_dict.get("llm_policy"):
+                guardrail_info["type"] = "llm_policy"
+                policy = g_dict.get("llmPolicy") or g_dict.get("llm_policy", {})
+                guardrail_info["scope"] = policy.get("policyScope") or policy.get("policy_scope", "")
+            elif g_dict.get("llmPromptSecurity") or g_dict.get("llm_prompt_security"):
+                guardrail_info["type"] = "llm_prompt_security"
+            elif g_dict.get("contentFilter") or g_dict.get("content_filter"):
+                guardrail_info["type"] = "content_filter"
+            elif g_dict.get("codeCallback") or g_dict.get("code_callback"):
+                guardrail_info["type"] = "code_callback"
+            else:
+                guardrail_info["type"] = "unknown"
+            result["guardrails"].append(guardrail_info)
+    except Exception as e:
+        result["guardrails_error"] = str(e)
+
     # Existing evals
     evals_client = Evaluations(app_name=app_name)
     try:
@@ -199,6 +232,18 @@ def format_text(data):
         lines.append(f"  {tool['display_name']} ({tool['id'][:8]})")
     lines.append("")
 
+    # Guardrails
+    guardrails = data.get("guardrails", [])
+    lines.append(f"Guardrails ({len(guardrails)}):")
+    if guardrails:
+        for g in guardrails:
+            enabled = "" if g.get("enabled", True) else " [DISABLED]"
+            scope = f" scope={g['scope']}" if g.get("scope") else ""
+            lines.append(f"  {g['display_name']} ({g['type']}{scope}){enabled}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
     # Evals
     goldens = data["evals"]["goldens"]
     scenarios = data["evals"]["scenarios"]
@@ -212,6 +257,8 @@ def format_text(data):
 
     if "tools_error" in data:
         lines.append(f"\nTools error: {data['tools_error']}")
+    if "guardrails_error" in data:
+        lines.append(f"\nGuardrails error: {data['guardrails_error']}")
     if "evals_error" in data:
         lines.append(f"\nEvals error: {data['evals_error']}")
 
