@@ -1,4 +1,4 @@
-# Technical Design Document
+# Mercedes F1 Fan Agent Technical Design Document
 
 ## Agent Design
 
