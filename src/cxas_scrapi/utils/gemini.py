@@ -30,7 +30,7 @@ class GeminiGenerate:
         project_id: str,
         location: str = "global",
         credentials=None,
-        model_name: str = "gemini-3.1-flash-lite-preview",
+        model_name: str = "gemini-3.1-pro-preview",
         max_concurrent_requests: int = 2,
     ):
         """Initializes the GeminiGenerate client.
@@ -40,7 +40,7 @@ class GeminiGenerate:
             location: Vertex AI location. Defaults to 'global'.
             credentials: Optional Google Cloud credentials.
             model_name: The Gemini model name to use. Defaults to
-              'gemini-3.1-flash-lite-preview'.
+              'gemini-3.1-pro-preview'.
             max_concurrent_requests: Limits the maximum number of simultaneous
               API calls to avoid 429 Quota Exhaustion.
         """

@@ -97,7 +97,7 @@ class MigrationService:
             project_id=project_id,
             location=gemini_location,
             credentials=credentials,
-            model_name=default_model,
+            model_name="gemini-3.1-pro-preview",
         )
 
         self.exporter = ConversationalAgentsAPI()
@@ -144,13 +144,11 @@ class MigrationService:
             )
             return
 
-
-
         logger.info("\nPre-processing text fields (Playbook -> agent)...")
         self._preprocess_text_fields(self.source_agent_data)
         self.reporter.log_action(
             "Pre-processing",
-            "Executed global text replacement: 'playbook' -> 'agent'"
+            "Executed global text replacement: 'playbook' -> 'agent'",
         )
 
         logger.info(f"Starting Hybrid Migration for: {config.target_name}")
@@ -223,15 +221,10 @@ class MigrationService:
                 "name": "mock_mode",
                 "description": (
                     "Global toggle. If true, Python tool wrappers will "
-                    "return mock data instead of executing "\
+                    "return mock data instead of executing "
                     "real backend API calls."
                 ),
-                "schema": {
-                    "type": "BOOLEAN",
-                    "default": {
-                        "bool_value": False
-                    }
-                }
+                "schema": {"type": "BOOLEAN", "default": {"bool_value": False}},
             }
 
         # --- 4. Populate Standard Tools & Webhooks into IR ---
@@ -270,7 +263,7 @@ class MigrationService:
             suffix_counter = 2
             while final_id in existing_ids:
                 suffix = f"_{suffix_counter}"
-                final_id = f"{base_id[:36 - len(suffix)]}{suffix}"
+                final_id = f"{base_id[: 36 - len(suffix)]}{suffix}"
                 suffix_counter += 1
 
             existing_ids.add(final_id)
@@ -367,17 +360,21 @@ class MigrationService:
 
                 # Link ALL referenced Python tools (new and reused)
                 for _func_name, tool_id in action_to_tool_map.items():
-                    full_tool_name = \
+                    full_tool_name = (
                         f"{target_app_resource_name}/tools/{tool_id}"
-                    if full_tool_name not in playbook_to_code_tools_map[
-                        pb_name
-                    ]:
-                        playbook_to_code_tools_map[pb_name].append(
+                    )
+                    if (
+                        full_tool_name
+                        not in playbook_to_code_tools_map[playbook_name]
+                    ):
+                        playbook_to_code_tools_map[playbook_name].append(
                             full_tool_name
                         )
 
                 master_inline_action_map.update(action_to_tool_map)
-                playbook_to_code_dependencies_map[pb_name].update(referenced_toolsets)
+                playbook_to_code_dependencies_map[playbook_name].update(
+                    referenced_toolsets
+                )
 
         # --- 6. Compile Playbooks into IR ---
         logger.info("Compiling Playbooks into IR payload...")
@@ -417,9 +414,9 @@ class MigrationService:
                     toolset_entry.get("toolset") == dep_toolset_name
                     for toolset_entry in agent_payload["toolsets"]
                 ):
-                    agent_payload["toolsets"].append({
-                        "toolset": dep_toolset_name
-                    })
+                    agent_payload["toolsets"].append(
+                        {"toolset": dep_toolset_name}
+                    )
 
             self.ir.agents[pb_name] = IRAgent(
                 type="PLAYBOOK",
@@ -442,6 +439,17 @@ class MigrationService:
         # --- 8. Background Processing for Flows (Phase 2) ---
         flows = self.source_agent_data.flows
         if flows:
+            app_id = self.ir.metadata.app_id
+            app_url = (
+                f"https://ces.cloud.google.com/projects/{self.project_id}"
+                f"/locations/{self.location}/apps/{app_id}"
+            )
+            logger.info(
+                f"\nACCESS YOUR CXAS AGENT HERE:\n{app_url}\n\n"
+                f"*(Note: Background processes are still running and more "
+                f"sub-agents and other resources are currently being "
+                f"migrated!)*\n"
+            )
             logger.info(
                 f"\nLaunching parallel Analysis & Architecture for "
                 f"{len(flows)} flows..."
@@ -625,9 +633,7 @@ class MigrationService:
                     for cb_type, cb_code in agent.callbacks.items():
                         if cb_code:
                             key = cb_type + "s"
-                            callback_payload[key] = [
-                                {"python_code": cb_code}
-                            ]
+                            callback_payload[key] = [{"python_code": cb_code}]
 
                 # --- Clean Instruction Syntax & Agent Names ---
                 instruction = agent.instruction
@@ -750,18 +756,10 @@ class MigrationService:
                     elif hasattr(ms, "model"):
                         model_to_use = ms.model
 
-                logger.info(
-                    f"DEBUG TOOLSETS PAYLOAD for {display_name}: "
-                    f"{ps_agent_payload.get('toolsets')}"
-                )
-                logger.info(
-                    f"DEBUG TOOLS PAYLOAD for {display_name}: "
-                    f"{ps_agent_payload.get('tools')}"
-                )
                 new_ps_agent = self.ps_agents.create_agent(
                     display_name=display_name,
                     model=model_to_use,
-                    **ps_agent_payload
+                    **ps_agent_payload,
                 )
 
                 if new_ps_agent and hasattr(new_ps_agent, "name"):
@@ -856,7 +854,7 @@ class MigrationService:
                     setattr(
                         data_structure,
                         key,
-                        re.sub(r"playbook", "agent", val, flags=re.IGNORECASE)
+                        re.sub(r"playbook", "agent", val, flags=re.IGNORECASE),
                     )
                 else:
                     self._preprocess_text_fields(val)
@@ -880,7 +878,6 @@ class MigrationService:
         console = Console(file=buf)
         console.print(viz.build_tree())
         tree_view = buf.getvalue()
-        print(f">>> DEBUG: tree_view len: {len(tree_view)}")
 
         # Step 2A: Architecture Expert Blueprinting
         blueprint_2a = await self.designer.run_step_2a(
@@ -1027,9 +1024,7 @@ class MigrationService:
                             matched_tool.name
                         )
                     elif matched_tool.type == "TOOLSET":
-                        ts_entry = {
-                            "toolset": matched_tool.name
-                        }
+                        ts_entry = {"toolset": matched_tool.name}
                         if ts_entry not in self.ir.agents[flow_name].toolsets:
                             self.ir.agents[flow_name].toolsets.append(ts_entry)
 
@@ -1040,9 +1035,7 @@ class MigrationService:
                 for op in used_ops:
                     for tool in self.ir.tools.values():
                         if tool.type == "TOOLSET" and op in tool.operation_ids:
-                            ts_entry = {
-                                "toolset": tool.name
-                            }
+                            ts_entry = {"toolset": tool.name}
                             if (
                                 ts_entry
                                 not in self.ir.agents[flow_name].toolsets
@@ -1082,7 +1075,7 @@ class MigrationService:
                 new_agent = self.ps_agents.create_agent(
                     display_name=display_name,
                     model=self.ir.metadata.default_model,
-                    **agent_payload
+                    **agent_payload,
                 )
                 if new_agent and hasattr(new_agent, "name"):
                     logger.info(f"[{flow_name}] -> Success! Deployed Agent.")

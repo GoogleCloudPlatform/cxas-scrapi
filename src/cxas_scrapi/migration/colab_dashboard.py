@@ -43,6 +43,16 @@ logger = logging.getLogger(__name__)
 AGENT_ID_PATTERN = re.compile(r"projects/[^/]+/locations/[^/]+/agents/[^/]+")
 
 
+class OutputWidgetHandler(logging.Handler):
+    def __init__(self, output_widget):
+        super().__init__()
+        self.output_widget = output_widget
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.output_widget.append_stdout(msg + "\n")
+
+
 class MigrationConfigurator:
     def __init__(self):
         self.style = {"description_width": "initial"}
@@ -137,7 +147,6 @@ class MigrationConfigurator:
         )
 
     def get_config(self) -> MigrationConfig:
-        print(">>> get_config entered")
         try:
             config = MigrationConfig(
                 project_id=self.project_id.value,
@@ -151,7 +160,6 @@ class MigrationConfigurator:
                 migration_version=self.migration_version.value,
                 optimize_for_cxas=False,
             )
-            print(">>> get_config success")
             return config
         except Exception as e:
             print(f">>> get_config failed: {e}")
@@ -359,18 +367,19 @@ class AgentResourceSelector:
                 )
             if incoming:
                 html = (
-                "<div style='background-color:#d1ecf1; "
-                "border:1px solid #bee5eb; padding:10px; border-radius:5px;'>"
-            )
+                    "<div style='background-color:#d1ecf1; "
+                    "border:1px solid #bee5eb; padding:10px; "
+                    "border-radius:5px;'>"
+                )
                 html += (
                     "<h4 style='color:#0c5460; margin-top:0;'>Incoming "
                     "References</h4>"
                 )
                 html += (
-                "<p style='font-size:12px'>These unselected resources "
-                "reference your selection (they might break if you migrate "
-                "only the selection):</p><ul>"
-            )
+                    "<p style='font-size:12px'>These unselected resources "
+                    "reference your selection (they might break if you migrate "
+                    "only the selection):</p><ul>"
+                )
                 for rid in incoming:
                     det = self.analyzer.get_details(rid)
                     html += f"<li><b>[{det['type']}]</b> {det['name']}</li>"
@@ -517,14 +526,10 @@ class AgentResourceSelector:
                 selected_pbs_data.append(pb_data)
         filtered_data.playbooks = selected_pbs_data
         selected_flows = [
-            cb.data_ref.flow_id
-            for cb in self.checkboxes["flows"]
-            if cb.value
+            cb.data_ref.flow_id for cb in self.checkboxes["flows"] if cb.value
         ]
         filtered_data.flows = [
-            f
-            for f in filtered_data.flows
-            if f.flow_id in selected_flows
+            f for f in filtered_data.flows if f.flow_id in selected_flows
         ]
         return filtered_data
 
@@ -671,8 +676,7 @@ def render_migration_dashboard(cx_api, migration_service):
     def on_visualize_click(b):
         filtered_data = selector_ui.get_selected_data()
         if not filtered_data or (
-            not filtered_data.playbooks
-            and not filtered_data.flows
+            not filtered_data.playbooks and not filtered_data.flows
         ):
             with output_log:
                 logger.error(
@@ -698,8 +702,7 @@ def render_migration_dashboard(cx_api, migration_service):
     def on_export_viz_click(b):
         filtered_data = selector_ui.get_selected_data()
         if not filtered_data or (
-            not filtered_data.playbooks
-            and not filtered_data.flows
+            not filtered_data.playbooks and not filtered_data.flows
         ):
             with output_log:
                 logger.error(
@@ -719,11 +722,8 @@ def render_migration_dashboard(cx_api, migration_service):
             )
 
     def on_migrate_click(b):
-        print(">>> on_migrate_click triggered (terminal)")
         with output_log:
             # clear_output()
-            print(">>> on_migrate_click triggered (widget)")
-            logger.info(">>> on_migrate_click triggered")
             try:
                 config = config_ui.get_config()
                 print(f">>> Config obtained: {config.target_name}")
@@ -743,14 +743,12 @@ def render_migration_dashboard(cx_api, migration_service):
                 )
                 print(f">>> Data loaded: {display_name}")
 
-                print(">>> DEBUG: Before check if not filtered_data")
                 if not filtered_data:
                     print(
                         "❌ Error: No agent data loaded. Please Load ID or "
                         "Upload Zip first."
                     )
                     return
-                print(">>> DEBUG: After check if not filtered_data")
 
                 config.source_agent_data_override = filtered_data
 
@@ -765,13 +763,23 @@ def render_migration_dashboard(cx_api, migration_service):
                 logger_to_use.addHandler(file_handler)
                 logger_to_use.setLevel(logging.INFO)
                 print(f">>> Logs are being written to {log_file}")
+                print(
+                    f">>> Check the log above often with `!cat {log_file}` "
+                    "for links to your agent, migration logs and agent "
+                    "migration status. The final migration confirmation "
+                    "will be there."
+                )
+
+                widget_handler = OutputWidgetHandler(output_log)
+                widget_handler.setFormatter(
+                    logging.Formatter(
+                        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                    )
+                )
+                logger_to_use.addHandler(widget_handler)
 
                 async def _run():
                     with output_log:
-                        print(">>> DEBUG: _run entered")
-                        output_log.append_stdout(
-                            ">>> Background task _run started\n"
-                        )
                         try:
                             await migration_service.run_migration(
                                 source_cx_agent_id=(
@@ -780,18 +788,15 @@ def render_migration_dashboard(cx_api, migration_service):
                                 config=config,
                             )
                         except Exception as e:
-                            output_log.append_stderr(
-                                f"❌ Migration failed inside _run: {e}\n"
+                            logger_to_use.error(
+                                f"Migration failed inside _run: {e}",
+                                exc_info=True,
                             )
-
-                            buf = io.StringIO()
-                            traceback.print_exc(file=buf)
-                            output_log.append_stderr(buf.getvalue())
                         finally:
                             logger_to_use.removeHandler(file_handler)
                             file_handler.close()
+                            logger_to_use.removeHandler(widget_handler)
 
-                print(">>> Scheduling background task...")
                 asyncio.create_task(_run())
             except Exception as e:
                 output_log.append_stderr(f"❌ Error in on_migrate_click: {e}\n")
@@ -799,7 +804,6 @@ def render_migration_dashboard(cx_api, migration_service):
                 buf = io.StringIO()
                 traceback.print_exc(file=buf)
                 output_log.append_stderr(buf.getvalue())
-
 
     load_btn.on_click(on_load_click)
     upload_btn.observe(on_upload_change, names="value")
