@@ -85,10 +85,10 @@ If you're starting fresh and want to get to a running agent quickly, here's the 
 
 ```bash
 # 1. Create an app
-cxas create "My App" --app_name my-app --project_id my-gcp-project --location us
+cxas create "My App" --app-name my-app --project-id my-gcp-project --location us
 
 # 2. Pull it locally
-cxas pull "my-app" --project_id my-gcp-project --location us-central1
+cxas pull "my-app" --project-id my-gcp-project --location us-central1
 
 # 3. Edit the instruction
 # (edit cxas_app/my-app/agents/root/instruction.txt)
