@@ -1,0 +1,93 @@
+{
+  "slot_order": [
+    {
+      "name": "party_size",
+      "description": "Number of guests dining",
+      "ask": "How many guests will be dining?",
+      "source": "user",
+      "setter": "set_party_size",
+      "setter_field": "size"
+    },
+    {
+      "name": "preferred_date",
+      "description": "Desired reservation date in YYYY-MM-DD format",
+      "ask": "What date would you like to come in?",
+      "source": "user",
+      "setter": "set_preferred_date",
+      "setter_field": "date"
+    },
+    {
+      "name": "available_times",
+      "description": "Available time slots returned by the system",
+      "source": "task:FindAvailableTimes"
+    },
+    {
+      "name": "selected_time",
+      "description": "The time slot chosen by the guest in HH:MM 24-hour format",
+      "ask": "We have availability at {available_times}. Which time works best for you?",
+      "source": "user",
+      "setter": "set_selected_time",
+      "setter_field": "time",
+      "requires": ["available_times"]
+    },
+    {
+      "name": "guest_name",
+      "description": "Name for the reservation",
+      "ask": "What name should I put the reservation under?",
+      "source": "user",
+      "setter": "set_guest_name",
+      "setter_field": "name"
+    },
+    {
+      "name": "special_requests",
+      "description": "Any dietary needs or special requests",
+      "ask": "Do you have any special requests or dietary needs? Just say none if not.",
+      "source": "user",
+      "setter": "set_special_requests",
+      "setter_field": "requests"
+    },
+    {
+      "name": "confirmation_number",
+      "description": "Reservation confirmation number from the booking system",
+      "source": "task:BookReservation"
+    }
+  ],
+  "tasks": [
+    {
+      "name": "FindAvailableTimes",
+      "inputs": {"date": "$preferred_date", "party_size": "$party_size"},
+      "outputs": {"available_times": "available_times"},
+      "success_check": {"field": "success"},
+      "on_failure": {
+        "retry_say": "I'm sorry, we don't have availability for that date and party size. Could you try a different date?",
+        "max_retries": 1,
+        "on_exhaust": {
+          "say": "I'm unable to find availability for your request. Please call us at 555-0100 to check for openings.",
+          "then": "Escalate"
+        }
+      }
+    },
+    {
+      "name": "BookReservation",
+      "inputs": {
+        "date": "$preferred_date",
+        "time": "$selected_time",
+        "party_size": "$party_size",
+        "guest_name": "$guest_name",
+        "special_requests": "$special_requests"
+      },
+      "outputs": {"confirmation_number": "confirmation_number"},
+      "terminal": true,
+      "then_say": "Wonderful! Your reservation is confirmed. Your confirmation number is {confirmation_number}. We look forward to welcoming you to Bella Notte!",
+      "success_check": {"field": "success"},
+      "on_failure": {
+        "retry_say": "I'm having a bit of trouble completing your reservation. Let me try once more.",
+        "max_retries": 2,
+        "on_exhaust": {
+          "say": "I'm sorry, I wasn't able to complete your reservation. Please call us directly at 555-0100 and we'll get you sorted.",
+          "then": "Escalate"
+        }
+      }
+    }
+  ]
+}
