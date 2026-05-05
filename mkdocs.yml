@@ -183,6 +183,7 @@ nav:
     - cxas pull: cli/pull.md
     - cxas push: cli/push.md
     - cxas create: cli/create.md
+    - cxas migrate: cli/migrate.md
     - cxas delete: cli/delete.md
     - cxas branch: cli/branch.md
     - cxas apps: cli/apps.md
