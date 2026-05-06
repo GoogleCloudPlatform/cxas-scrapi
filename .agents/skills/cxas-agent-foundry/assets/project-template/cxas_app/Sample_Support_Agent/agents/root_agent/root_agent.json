@@ -8,7 +8,7 @@
         "  directory for it -- just reference it by name here. The other tools are",
         "  custom Python function tools defined in the tools/ directory."
     ],
-    "tools": ["set_session_state", "lookup_account", "payload_update_tool", "end_session"],
+    "tools": ["set_session_state", "lookup_account", "end_session"],
     "_comment_child_agents": [
         "CHILD AGENTS (CRITICAL LINTER/PLATFORM QUIRK):",
         "  The cxas lint tool may expect spaces matching the 'displayName',",

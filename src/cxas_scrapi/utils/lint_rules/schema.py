@@ -87,7 +87,7 @@ def _resolve_paths(data, extra_prefixes=(), base_path=None):  # noqa: C901
                     and base_path
                     and prefix in base_path
                 ):
-                    parts = base_path.split(prefix)
+                    parts = base_path.rsplit(prefix, 1)
                     if parts:
                         alt = Path(parts[0]) / data
                         if alt.exists():

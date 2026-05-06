@@ -284,6 +284,20 @@ A multi-agent architecture is the preferred architecture for agents that have mu
 
 A simple test is to offload part of the agent logic (instruction + tool def) to a standalone LLM call with specialized prompt - if that yields better results, it may hint towards splitting off into a specialized agent
 
+#### Configuring childAgents (platform quirk)
+
+The parent agent declares its sub-agents in `<agent_name>.json`'s `childAgents` array. The strings MUST use underscores matching each sub-agent's directory name (its `name` field), NOT spaces matching `displayName`:
+
+```json
+{
+  "name": "root_agent",
+  "displayName": "root_agent",
+  "childAgents": ["member_benefits_agent", "claims_agent"]
+}
+```
+
+`cxas lint` may accept space-separated names matching `displayName`, but `cxas push` returns `400 Reference not found` and silently drops the sub-agents (orphaning all of their tools). When in doubt, the platform takes the directory name — use underscores.
+
 ### Using the multi-agent framework
 With the benefits of the multi-agent framework in mind, it is best to think about how to break up the business logic into individual use cases. The best way to think about this is to follow two best practices:
 - Build sub-agents that can be re-used across multiple intents (e.g., an "authentication" agent that could be used across various secure use cases for a banking agent)

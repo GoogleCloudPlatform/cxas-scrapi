@@ -214,16 +214,24 @@ class EnhancedSimRunner(SimulationEvals):
         return eval_conv
 
 
+def _parse_priorities(priority):
+    """Parse a priority arg like 'P0' or 'P0,P1,P2' into an upper-cased set."""
+    if not priority:
+        return None
+    return {p.strip().upper() for p in priority.split(",") if p.strip()}
+
+
 def filter_evals(evals, priority=None, tag=None):
-    if priority:
+    prios = _parse_priorities(priority)
+    if prios:
         filtered = []
         for e in evals:
             # Check both 'priority' field and 'tags' list for priority matching
             tags = e.get("tags", [])
             prio_field = e.get("priority", "")
-            if prio_field and prio_field.upper() == priority.upper():
+            if prio_field and prio_field.upper() in prios:
                 filtered.append(e)
-            elif tags and priority.upper() in [t.upper() for t in tags]:
+            elif tags and prios.intersection({t.upper() for t in tags}):
                 filtered.append(e)
             elif not prio_field and not tags:
                 # No priority info at all — include with warning
@@ -710,7 +718,8 @@ def cmd_run(args):
                 continue
             tags = t.get("tags", [])
             if args.priority:
-                if tags and args.priority.upper() not in [tg.upper() for tg in tags]:
+                prios = _parse_priorities(args.priority)
+                if tags and not prios.intersection({tg.upper() for tg in tags}):
                     continue
                 if not tags:
                     print(f"  WARNING: sim '{name}' has no tags — including anyway (add tags for proper filtering)")

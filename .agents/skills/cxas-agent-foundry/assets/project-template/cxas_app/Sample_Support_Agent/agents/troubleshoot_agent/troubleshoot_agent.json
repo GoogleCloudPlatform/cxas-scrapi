@@ -9,7 +9,7 @@
         "  the LLM can't set _action_trigger and the callback can't intercept.",
         "  end_session is a platform-provided SYSTEM tool -- do not create a directory for it."
     ],
-    "tools": ["set_session_state", "lookup_account", "payload_update_tool", "end_session"],
+    "tools": ["set_session_state", "lookup_account", "end_session"],
     "_comment_callbacks": [
         "SUB-AGENT CALLBACKS (THE CALLBACK GAP FIX):",
         "  This agent only has beforeModelCallbacks -- not beforeAgent or afterModel.",

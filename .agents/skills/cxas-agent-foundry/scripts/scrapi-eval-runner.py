@@ -458,14 +458,55 @@ def cmd_report(args):
     print(f"\nReport written to: {report_path}")
 
 
+def _diff_golden(local_dict, remote_eval):
+    """Diff a local golden dict against the remote Evaluation proto.
+
+    Returns a (needs_recreate, reason) tuple. recreates are required when
+    update_evaluation()'s proto-merge would silently lose a removal:
+      - turn count shrunk
+      - any remote evaluation_expectation resource path is missing locally
+        (catches both removals and edits — edits resolve to a new resource
+        path via find_or_create_evaluation_expectation, so the original
+        path remains only on the remote side)
+    Other shape changes (additions, in-turn edits, tag changes) merge fine.
+    """
+    local_golden = local_dict.get("golden") or {}
+    local_turns = local_golden.get("turns") or []
+    local_exps = set(local_golden.get("evaluationExpectations") or [])
+
+    remote_turns = list(remote_eval.golden.turns)
+    remote_exps = set(remote_eval.golden.evaluation_expectations)
+
+    if len(local_turns) < len(remote_turns):
+        return True, f"turns shrunk {len(remote_turns)} -> {len(local_turns)}"
+
+    missing = remote_exps - local_exps
+    if missing:
+        # Show abbreviated resource ids so the message is readable
+        sample = sorted(m.split("/")[-1] for m in missing)[:3]
+        more = f" (+{len(missing)-3} more)" if len(missing) > 3 else ""
+        return True, f"{len(missing)} expectation(s) removed: {', '.join(sample)}{more}"
+
+    return False, None
+
+
 def cmd_push_goldens(args):
-    """Push golden evals from YAML files to platform."""
+    """Push golden evals from YAML files to platform.
+
+    Default: diff-aware upsert.
+      - missing on platform     -> create
+      - present, no truncation  -> update_evaluation (proto merge)
+      - present, truncated      -> delete + create (preserves removals)
+
+    With --force-recreate, every existing eval is delete + create regardless
+    of diff. Use this to bypass the diff (debugging, suspicious state, etc.).
+    """
     utils = get_eval_utils()
+    client = get_evals_client()
     app_name = get_app_name()
 
     source = args.source or GOLDEN_EVALS_DIR
 
-    # Collect YAML files
     if os.path.isfile(source):
         yaml_files = [source]
     elif os.path.isdir(source):
@@ -478,28 +519,66 @@ def cmd_push_goldens(args):
         print(f"Not found: {source}")
         return
 
-    print(f"Pushing golden evals from {len(yaml_files)} file(s)...")
+    # Pull current platform state up front so we don't list per file
+    evals_map = client.get_evaluations_map(reverse=True)
+    platform_goldens = evals_map.get("goldens", {})  # display_name -> resource_path
 
-    total_created = 0
-    total_updated = 0
+    print(f"Pushing golden evals from {len(yaml_files)} file(s)...")
+    if args.force_recreate:
+        print("  Mode: --force-recreate (delete + create for every existing eval)")
+
+    counts = {"created": 0, "updated": 0, "recreated": 0, "failed": 0}
 
     for yf in track(yaml_files, description="Pushing Golden Files"):
         try:
             evals = utils.load_golden_evals_from_yaml(yf)
         except Exception as e:
             console.print(f"  Failed to parse {os.path.basename(yf)}: {e}")
+            counts["failed"] += 1
             continue
 
         for eval_dict in evals:
             name = eval_dict.get("displayName", "?")
             try:
-                result = utils.update_evaluation(eval_dict, app_name=app_name)
-                new_id = result.name.split("/")[-1]
-                total_created += 1
-            except Exception as e:
-                console.print(f"  FAILED: {name}: {e}")
+                remote_path = platform_goldens.get(name)
+                action = None
+                reason = None
 
-    print(f"\nDone. Synced {total_created} golden evals.")
+                if not remote_path:
+                    action = "create"
+                elif args.force_recreate:
+                    action = "recreate"
+                    reason = "--force-recreate"
+                else:
+                    remote_eval = client.get_evaluation(remote_path)
+                    needs_recreate, diff_reason = _diff_golden(eval_dict, remote_eval)
+                    action = "recreate" if needs_recreate else "update"
+                    reason = diff_reason
+
+                if action == "create":
+                    result = client.create_evaluation(eval_dict, app_name=app_name)
+                    print(f"  Created:   {name} -> {result.name.split('/')[-1]}")
+                    counts["created"] += 1
+                elif action == "update":
+                    result = utils.update_evaluation(eval_dict, app_name=app_name)
+                    print(f"  Updated:   {name} -> {result.name.split('/')[-1]}")
+                    counts["updated"] += 1
+                else:  # recreate
+                    client.delete_evaluation(remote_path, force=True)
+                    result = client.create_evaluation(eval_dict, app_name=app_name)
+                    suffix = f"  ({reason})" if reason else ""
+                    print(f"  Recreated: {name} -> {result.name.split('/')[-1]}{suffix}")
+                    counts["recreated"] += 1
+            except Exception as e:
+                console.print(f"  FAILED:    {name}: {e}")
+                counts["failed"] += 1
+
+    total_synced = counts["created"] + counts["updated"] + counts["recreated"]
+    print(
+        f"\nDone. Synced {total_synced} golden eval(s): "
+        f"{counts['created']} created, {counts['updated']} updated, "
+        f"{counts['recreated']} recreated, {counts['failed']} failed."
+    )
 
 
 def cmd_run_goldens(args):
@@ -563,9 +642,12 @@ def main():
     p_run.add_argument("--runs", type=int, default=5)
 
     # push-goldens
-    p_push_g = sub.add_parser("push-goldens", help="Push golden evals from YAML")
+    p_push_g = sub.add_parser("push-goldens", help="Push golden evals from YAML (diff-aware upsert)")
     p_push_g.add_argument("source", nargs="?", default=None,
-                           help="YAML file or directory (default: golden-evals/)")
+                           help="YAML file or directory (default: evals/goldens/)")
+    p_push_g.add_argument("--force-recreate", action="store_true", default=False,
+                           help="Delete + create every existing eval, bypassing the truncation diff. "
+                                "Use when the platform copy is suspect or you want a hard reset.")
 
     # run-goldens
     p_run_g = sub.add_parser("run-goldens", help="Run all golden evals")

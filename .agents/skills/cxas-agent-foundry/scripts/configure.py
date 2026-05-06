@@ -286,32 +286,46 @@ def select_modality():
     return modality
 
 
-def select_model():
-    """Select the default model for the agent."""
-    console.print("[bold]5. Model[/bold]")
+def select_gcs_bucket(modality):
+    """Enter GCS bucket for storing artifacts.
 
-    model = inquirer.text(
-        message="Enter model name:",
-        default="gemini-3.1-flash-live",
-    ).execute()
+    REQUIRED for audio modality (the platform needs evaluationAudioRecordingConfig.gcsBucket
+    to run audio evaluations — without it, every audio eval run fails with a 400 BadRequestException).
+    Optional for text modality.
+    """
+    console.print("[bold]5. GCS Bucket[/bold]")
 
-    console.print(f"  Selected: [green]{model}[/green]\n")
-    return model
+    if modality == "audio":
+        console.print(
+            "  [yellow]Required for audio agents — the platform's evaluationAudioRecordingConfig\n"
+            "  needs this bucket to run audio evals (without it, eval runs return HTTP 400).[/yellow]"
+        )
 
+        def validate_bucket(val):
+            if not val:
+                return "GCS bucket is required for audio agents"
+            if not val.startswith("gs://"):
+                return "Bucket must start with gs://"
+            return True
 
-def select_gcs_bucket():
-    """Enter GCS bucket for storing artifacts."""
-    console.print("[bold]6. GCS Bucket[/bold]")
+        bucket = inquirer.text(
+            message="Enter GCS bucket (gs://...):",
+            default="",
+            validate=validate_bucket,
+        ).execute()
+        console.print(f"  Bucket: [green]{bucket}[/green]\n")
+        return bucket
 
+    # text modality — keep optional
     def validate_bucket(val):
         if not val:
-            return True  # optional
+            return True
         if not val.startswith("gs://"):
             return "Bucket must start with gs://"
         return True
 
     bucket = inquirer.text(
-        message="Enter GCS bucket (leave empty to skip):",
+        message="Enter GCS bucket (leave empty to skip — text agents don't need one):",
         default="",
         validate=validate_bucket,
     ).execute()
@@ -321,6 +335,19 @@ def select_gcs_bucket():
     else:
         console.print("  [dim]Skipped[/dim]\n")
     return bucket or None
+
+
+def select_model():
+    """Select the default model for the agent."""
+    console.print("[bold]6. Model[/bold]")
+
+    model = inquirer.text(
+        message="Enter model name:",
+        default="gemini-3.1-flash-live",
+    ).execute()
+
+    console.print(f"  Selected: [green]{model}[/green]\n")
+    return model
 
 
 def review_and_confirm(config):
@@ -448,8 +475,8 @@ def main():
     location = select_location()
     app_id, app_name = select_app(project_id, location)
     modality = select_modality()
+    gcs_bucket = select_gcs_bucket(modality)
     model = select_model()
-    gcs_bucket = select_gcs_bucket()
 
     # Build config
     config = {
@@ -606,6 +633,14 @@ def main_non_interactive(args):
     modality = args.modality or "audio"
     model = args.model or "gemini-3.1-flash-live"
     gcs_bucket = args.gcs_bucket or None
+
+    if modality == "audio" and not gcs_bucket:
+        console.print(
+            "[red]--gcs-bucket is required for audio modality.[/red] "
+            "Audio evals need evaluationAudioRecordingConfig.gcsBucket — "
+            "without it, eval runs return HTTP 400."
+        )
+        sys.exit(1)
 
     console.print(f"  Project: [green]{project_id}[/green]")
     console.print(f"  Location: [green]{location}[/green]")
