@@ -159,9 +159,40 @@ callbacks.create_callback(
 - `callback_context.state` (dict) for variables -- NOT `.session`
 - Return `None` from before_model to proceed -- do NOT return `llm_request`
 - Platform types (`Part`, `Content`, `LlmResponse`, `LlmRequest`, `CallbackContext`) are auto-provided as globals -- do NOT import them. Everything else (including `from typing import Optional, Iterator`) must be explicitly imported or the callback will fail at push time.
-- `llm_request.messages` (plural) NOT `.message`
+- `llm_request.contents` is the conversation history (a list of `Content` objects with `.role` and `.parts`). NOT `.messages`, NOT `.message` — those raise `'LlmRequest' object has no attribute ...` at platform runtime. To iterate model/user turns, walk `llm_request.contents`. See the template's `before_model_callbacks_01/python_code.py` for a working example.
 - Parse counters safely: `int(state.get("x") or 0)`
 - **CRITICAL: `before_agent_callback` fires on EVERY turn**, not just when the agent starts. Any state initialization in this callback MUST have an early-return guard (e.g., `if state.get("auth_status"): return None`) to avoid resetting state on every turn.
+
+**Common callback patterns (the model can't infer these from training data — they're platform-specific):**
+
+```python
+# 1. Construct a response (text + tool calls) from before_model
+return LlmResponse.from_parts(parts=[
+    Part(text="I'll transfer you to a specialist now."),
+    Part(function_call=Part.FunctionCall(
+        name="transfer_to_agent",
+        args={"agent": "billing_agent"},
+    )),
+])
+
+# 2. Access the user's most recent input (parts list — text, audio, events)
+for part in callback_context.get_last_user_input():
+    if part.text == "<event>session start</event>":
+        return LlmResponse.from_parts(parts=[Part(text="Hi, how can I help?")])
+
+# 3. Walk full session event history (used by after_model to dedupe text
+#    across multiple model calls within one turn)
+for event in reversed(callback_context.events):
+    # event has .author, .content (with .parts), .timestamp, etc.
+    ...
+
+# 4. Call a tool FROM a callback (NOT a tool call by the agent — direct invocation)
+#    Python function tools: tools.<function_name>(args)
+#    API connector tools:   tools.<DisplayName>_<OperationId>(args)
+response = tools.lookup_account(account_id="123", customer_id="456")
+# or:
+response = tools.Read_Customer_Datastore_readDatastore(record_id="...")
+```
 
 **Key methods:** `create_callback` (appends), `update_callback(index=0)`, `delete_callback(index=0)`, `list_callbacks`
 

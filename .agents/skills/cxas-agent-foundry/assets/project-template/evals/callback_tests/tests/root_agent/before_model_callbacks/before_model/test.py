@@ -172,19 +172,18 @@ class TestEscalationTrigger:
 
     def test_escalation_resolves_state_references(self):
         """Payload args starting with '_' are resolved from state."""
-        result = before_model_callback(self._escalation_ctx(
+        python_code.tools.reset_mock()
+        before_model_callback(self._escalation_ctx(
             _escalation_reason="Billing dispute",
             _escalation_topic="billing",
         ), llm_request=MagicMock())
 
-        # Find the payload_update_tool call and verify args
-        for part in result.content.parts:
-            fc = getattr(part, "function_call", None)
-            if fc and fc.name == "payload_update_tool":
-                assert fc.args["escalation_reason"] == "Billing dispute"
-                assert fc.args["main_topic"] == "billing"
-                return
-        assert False, "payload_update_tool not found in response"
+        # payload_update_tool is called directly via tools global, not emitted
+        # as Part.from_function_call — verify it was called with resolved args
+        python_code.tools.payload_update_tool.assert_called_once()
+        call_args = python_code.tools.payload_update_tool.call_args[0][0]
+        assert call_args["escalation_reason"] == "Billing dispute"
+        assert call_args["main_topic"] == "billing"
 
 
 class TestApiFailurePath:

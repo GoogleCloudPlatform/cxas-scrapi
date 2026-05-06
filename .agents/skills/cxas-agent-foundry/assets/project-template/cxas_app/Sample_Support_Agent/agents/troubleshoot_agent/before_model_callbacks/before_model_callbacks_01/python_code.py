@@ -85,12 +85,12 @@ def before_model_callback(callback_context: CallbackContext, llm_request: LlmReq
         else:
             payload_args[key] = value
 
+    # Call payload_update_tool directly in the callback rather than emitting
+    # it as Part.from_function_call, so it doesn't need to be LLM-visible.
+    tools.payload_update_tool(payload_args)
+
     return LlmResponse.from_parts(parts=[
         Part.from_text(text=escalation["text"]),
-        Part.from_function_call(
-            name="payload_update_tool",
-            args=payload_args,
-        ),
         Part.from_function_call(
             name="end_session",
             args={"session_escalated": True},

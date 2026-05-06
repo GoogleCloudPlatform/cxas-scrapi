@@ -52,7 +52,7 @@ Uses SCRAPI's Sessions API with Gemini as the sim user to test flows where the c
 
 **Use for:** troubleshooting cadence, multi-step failures, knowledge base queries, any flow where tool responses determine the agent's path.
 
-**Default filter:** `run-and-report.py` runs sims with `--priority P0` by default. To run all priorities, pass `--priority P0,P1,P2` to the script.
+**Default filter:** `run-and-report.py` runs sims with `--priority P0` by default. To run other priorities, pass `--priority P1` (single) or `--priority P0,P1,P2` (comma-separated) to the script — the value is forwarded through `run-all-evals.py` to `scrapi-sim-runner.py`.
 
 ### 3. Tool Tests -- isolated tool validation (runs locally)
 Tests individual tools with specific inputs and validates outputs. These run against the deployed app via SCRAPI -- not pushed to the platform as eval objects.
@@ -79,7 +79,7 @@ results_df = cb.test_all_callbacks_in_app_dir(app_dir="<project>/evals/callback_
 
 ```bash
 # Single command: run evals + triage + generate iteration report
-python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "what changed" --auto-revert
+python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "Describe what changed and why" --auto-revert
 ```
 
 The script reads the channel from `gecx-config.json` automatically. It runs all eval types, triages failures, and generates an iteration report -- no need to run triage separately.

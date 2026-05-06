@@ -7,7 +7,7 @@ Generated automatically by `run-and-report.py` after each eval run. Shows what c
 
 ```bash
 # Automatic (recommended) -- runs evals + triage + report in one command
-python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "what changed" --runs 5
+python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "Describe what changed and why" --runs 5
 
 # Manual -- generate report from existing results
 python .agents/skills/cxas-agent-foundry/scripts/generate-iteration-report.py report --message "Fixed X by doing Y"
@@ -34,7 +34,7 @@ Output: HTML report in `<project>/eval-reports/combined/`. Includes:
 - Regression detection
 
 ### 3. Coverage Analysis
-On-demand analysis of eval coverage against agent architecture. No script -- generate manually by reading agent config and evals, then cross-referencing. See the Coverage Report Template below.
+On-demand analysis of eval coverage against agent architecture. **Dispatch the `agents/coverage-analyst.md` sub-agent** with `app_dir`, `evals_dir`, and `output_path`. It reads every agent instruction, every eval, every tool, and every callback, then produces the markdown report following the template below. This is intentionally a sub-agent — doing it inline burns several thousand tokens per invocation.
 
 ## Interpreting Results
 
@@ -57,7 +57,9 @@ The triage script (`triage-results.py`) categorizes each failure:
 | TOOL_MISSING | Wrong tool or missing tool call | Fix instruction, check tool availability, use trigger pattern |
 | EXPECTATION_FAIL | Custom LLM judge expectation not met | Read judge explanation -- fix agent or rephrase expectation |
 | EXTRA_TURNS | Agent produces output after golden ends | End golden before transfer, or extend to cover sub-agent |
-| SCORES_PASS_BUT_FAIL | Platform scorer bug -- all scores pass but result is FAIL | Not fixable -- platform issue. Exclude from adjusted pass rate |
+| HALLUCINATION | Agent fabricates info not in tool output | Remove example phrases from instructions. Add grounding constraint. |
+| EVAL_ERROR | Golden config error (empty inputs, invalid args, runtime error) | Fix the golden YAML -- check session params, user turns, tool references |
+| SCORES_PASS_BUT_FAIL | Platform scorer bug -- all scores pass, no hallucination, but result is FAIL | Not fixable -- platform issue. Exclude from adjusted pass rate |
 | TIMEOUT | Eval timed out | Increase max_turns, check tool latency |
 
 ### When to Adjust vs When to Fix

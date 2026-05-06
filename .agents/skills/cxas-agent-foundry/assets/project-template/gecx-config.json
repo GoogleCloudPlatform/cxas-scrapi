@@ -12,6 +12,13 @@
     "  DO NOT use the full Google Cloud resource path (projects/.../apps/...).",
     "  The SDK automatically constructs the full path during push and eval operations."
   ],
+  "_comment_gcs_bucket": [
+    "GCS BUCKET (REQUIRED for audio agents, omit for text):",
+    "  The platform's evaluationAudioRecordingConfig needs a bucket to record",
+    "  and store audio eval artifacts. Without it, every audio eval run returns",
+    "  HTTP 400. Format: gs://<bucket-name>.",
+    "  For text agents, DELETE this field entirely (don't leave as null)."
+  ],
   "gcp_project_id": "YOUR_PROJECT_ID",
   "location": "us",
   "app_name": "your-app-name",
@@ -19,5 +26,6 @@
   "app_dir": "cxas_app/",
   "model": "gemini-3.1-flash-live",
   "modality": "audio",
-  "default_channel": "audio"
+  "default_channel": "audio",
+  "gcs_bucket": "gs://YOUR_BUCKET_NAME"
 }

@@ -245,25 +245,33 @@ def poll_golden_results(config, run_name, timeout=GOLDEN_TIMEOUT):
     return run_id_short
 
 
-def run_sims(channel):
-    """Run local sims via scrapi-sim-runner.py."""
+def run_sims(channel, runs, priority):
+    """Run local sims via scrapi-sim-runner.py.
+
+    Sims are LLM-driven so individual runs vary. Pass `runs > 1` (default
+    matches the suite's golden runs) so the sim runner repeats each sim N
+    times and aggregates pass rate — same stability signal as goldens.
+    Tool tests and callback tests are deterministic and always run once
+    regardless of `--runs`.
+    """
     print("\n" + "=" * 60)
-    print("PHASE 4: Local Simulations")
+    print(f"PHASE 4: Local Simulations ({runs} run{'s' if runs != 1 else ''} per sim, priority={priority})")
     print("=" * 60)
 
     runner_script = os.path.join(SCRIPTS_DIR, "scrapi-sim-runner.py")
     cmd = [
         sys.executable, runner_script, "run",
-        "--priority", "P0",
+        "--priority", priority,
         "--parallel", "3",
         "--channel", channel,
+        "--runs", str(runs),
     ]
 
     print(f"  Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=False, text=True, cwd=resolve_project_dir())
 
     if result.returncode != 0:
-        print(f"  WARNING: Sims exited with code {result.returncode}")
+        print(f"  ERROR: Sims exited with code {result.returncode}")
         return None
 
     # Find the most recent sim results JSON
@@ -277,7 +285,7 @@ def run_sims(channel):
             print(f"  Sim results: {sim_files[0]}")
             return str(sim_files[0])
 
-    print("  WARNING: No sim results file found")
+    print("  ERROR: No sim results file found")
     return None
 
 
@@ -339,7 +347,7 @@ def main():
     )
     parser.add_argument(
         "--runs", type=int, default=5,
-        help="Number of golden runs (default: 5)"
+        help="Trials per golden AND per sim (default: 5). Tool tests and callback tests are deterministic and always run once."
     )
     parser.add_argument(
         "--skip-sims", action="store_true",
@@ -348,6 +356,10 @@ def main():
     parser.add_argument(
         "--skip-goldens", action="store_true",
         help="Skip golden evals (just run local tests + sims)"
+    )
+    parser.add_argument(
+        "--priority", default="P0",
+        help="Sim priority filter forwarded to scrapi-sim-runner (e.g., P0, or P0,P1,P2). Default: P0."
     )
     args = parser.parse_args()
 
@@ -386,7 +398,7 @@ def main():
     # --- Step 4: Run sims ---
     sim_results_path = None
     if not args.skip_sims:
-        sim_results_path = run_sims(channel)
+        sim_results_path = run_sims(channel, args.runs, args.priority)
 
     # --- Step 5: Generate combined report ---
     report_path = generate_combined_report(
@@ -414,6 +426,7 @@ def main():
         ("Goldens", golden_run_id if golden_run_id else None),
         ("Sims", sim_results_path),
     ]
+    failed_phases = []
     for label, result in status_lines:
         if args.skip_goldens and label == "Goldens":
             status = "SKIPPED"
@@ -423,14 +436,21 @@ def main():
             status = f"DONE ({result})" if isinstance(result, str) else "DONE"
         else:
             status = "FAILED / NOT RUN"
+            failed_phases.append(label)
         print(f"  {label:20s} {status}")
 
     if report_path:
         print(f"\n  Combined report: {report_path}")
     else:
         print("\n  No combined report generated.")
+        failed_phases.append("Combined report")
 
     print()
+
+    if failed_phases:
+        print(f"FAILED: {len(failed_phases)} phase(s) did not complete: {', '.join(failed_phases)}")
+        print("Exit code 1 — downstream consumers (run-and-report.py, CI) should treat this run as failed.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

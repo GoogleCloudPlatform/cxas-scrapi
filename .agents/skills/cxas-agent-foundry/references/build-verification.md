@@ -47,77 +47,50 @@ GOOGLE_CLOUD_PROJECT=$PROJECT_ID .venv/bin/cxas pull \
 ```
 The `--to` flag in `cxas push` MUST use the full resource path `projects/.../apps/$APP_ID` -- not just the UUID. Using the wrong path or omitting `--to` may create a new app.
 
-## Gate 2: Agent hierarchy
-```python
-agents_map = agents_client.get_agents_map(reverse=True)
-print(agents_map)  # Verify root + all sub-agents exist, count matches TDD
+## Gates 2-6: run them via gate-check.py
+
+```bash
+# Gates 1-5 (Gate 6 skipped by default — needs prompts file)
+python .agents/skills/cxas-agent-foundry/scripts/gate-check.py
+
+# Include Gate 6 by passing a prompts file
+python .agents/skills/cxas-agent-foundry/scripts/gate-check.py \
+  --multi-turn /tmp/gate6-prompts.json
+
+# Skip Gate 1's push round-trip (verify only, don't modify the platform)
+python .agents/skills/cxas-agent-foundry/scripts/gate-check.py --skip-push
 ```
 
-## Gate 3: Tool associations (including system tools)
-```python
-tools_map = {t.display_name: t.name for t in tools_client.list_tools()}
-print(f"Tools on platform: {list(tools_map.keys())}")
+The script prints a per-gate pass/fail and writes a JSON summary to `<project>/eval-reports/gate-check-<timestamp>.json` for sub-agent consumption. Read the JSON for structured findings; read the stdout for a human-readable trace.
 
-# Get root agent name from app config
-app = apps_client.get_app(APP_NAME)
-root_agent_name = app.root_agent.split("/")[-1] if app.root_agent else None
-
-for name, resource in agents_map.items():
-    agent = agents_client.get_agent(resource)
-    tool_ids = [t.split('/')[-1] for t in (agent.tools or [])]
-    is_root = (resource == app.root_agent) or (name == root_agent_name)
-    has_end = any("end_session" in t for t in (agent.tools or []))
-    flag = ""
-    if is_root and not has_end:
-        flag = " WARNING: ROOT MISSING end_session"
-    print(f"  {name}: {tool_ids}{flag}")
-```
-ALL agents MUST have `end_session` listed in their `tools` array in the agent JSON config. Without it, the platform throws `Tool not found: end_session` when the agent or its callbacks try to end the session. This includes sub-agents -- even if they typically transfer back to root, the LLM or callbacks may call `end_session` (e.g., for escalation or silence handling).
-
-## Gate 4: Callback inventory
-```python
-for name, resource in agents_map.items():
-    cbs = cb_client.list_callbacks(resource)
-    for cb_type, cb_list in cbs.items():
-        if cb_list:
-            count = len(cb_list)
-            print(f"  {name}/{cb_type}: {count}")
+`--multi-turn <file.json>` accepts a JSON list of prompts to run sequentially in one session. Example:
+```json
+[
+  {"text": "I need help with my account"},
+  {"text": "July 12, 1948"},
+  {"text": "30033"},
+  {"text": "H123456"},
+  {"text": "Why was my last claim denied?"}
+]
 ```
 
-## Gate 5: Single-turn smoke test
-```python
-import uuid
-from cxas_scrapi.core.sessions import Sessions
-sessions = Sessions(app_name=APP_NAME)
-r = sessions.run(session_id=f"gate5-{uuid.uuid4().hex[:8]}", text="Hello")
-sessions.parse_result(r)
-# Must get a response, no callback crash
-```
+**The gate semantics (what each gate checks and why) are described below.** The script implements all of these — read this section if a gate fails and you need to understand the failure, or if you need to extend the script.
 
-## Gate 6: Multi-turn smoke test
-Test natural conversational pacing -- provide info ONE piece at a time, like a real caller:
-```python
-sid = f"gate6-{uuid.uuid4().hex[:8]}"
-r1 = sessions.run(session_id=sid, text="<intent matching a CUJ from TDD>")
-sessions.parse_result(r1)
-# CHECK: agent should ask for ONE thing (e.g., DOB), not dump all questions at once
+### Gate 2: Agent hierarchy
+Verifies `app.root_agent` is set and that every agent listed by `get_agents_map()` is reachable. Fails if the app has no root agent or if `root_agent` points at a name that doesn't appear in the agents list.
 
-r2 = sessions.run(session_id=sid, text="<first piece of auth info, e.g., DOB>")
-sessions.parse_result(r2)
-# CHECK: agent should acknowledge and ask for the NEXT thing (e.g., ZIP), not two more
+### Gate 3: Tool associations (including system tools)
+Lists each agent's tools and warns if **any** agent (root or sub) is missing `end_session`. ALL agents MUST have `end_session` in their `tools` array. Without it, the platform throws `Tool not found: end_session` when the agent or its callbacks try to end the session — even sub-agents, which may call `end_session` for escalation or silence handling.
 
-r3 = sessions.run(session_id=sid, text="<second piece, e.g., ZIP>")
-sessions.parse_result(r3)
-# CHECK: agent asks for ONE more thing (e.g., member ID)
+### Gate 4: Callback inventory
+Counts callbacks per agent per type. Informational — there's no failure condition (callbacks are optional), but the inventory should match what's documented in the TDD.
 
-r4 = sessions.run(session_id=sid, text="<third piece, e.g., member ID>")
-sessions.parse_result(r4)
-# CHECK: agent authenticates, then handles the original intent
+### Gate 5: Single-turn smoke test
+Sends "Hello" and confirms the agent responds without a callback crash.
 
-r5 = sessions.run(session_id=sid, text="<specific question the sub-agent should handle>")
-sessions.parse_result(r5)
-# Must: route to sub-agent, call correct tool, return data
-```
+### Gate 6: Multi-turn smoke test
+Test natural conversational pacing -- provide info ONE piece at a time, like a real caller. The script runs each prompt sequentially in one session and reports any errors. **You must still read the printed agent responses** to confirm pacing — the script can't tell whether the agent asked for DOB + ZIP + ID in one turn (which would be wrong) or asked for them one at a time (correct).
+
 **If the agent asks for DOB + ZIP + ID in a single turn, STOP and fix the instruction before proceeding.** Add: `<rule>Ask for ONE piece of information per turn.</rule>`
 
 **Only proceed to writing evals after ALL 6 gates pass.**

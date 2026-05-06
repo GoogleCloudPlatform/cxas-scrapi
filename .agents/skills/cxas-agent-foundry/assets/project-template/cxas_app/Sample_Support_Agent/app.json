@@ -29,8 +29,7 @@
     "rootAgent": "root_agent",
     "tools": [
         "lookup_account",
-        "set_session_state",
-        "payload_update_tool"
+        "set_session_state"
     ],
 
     "_comment_model_settings": [
