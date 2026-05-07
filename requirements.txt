@@ -8,6 +8,7 @@ google-auth
 protobuf
 pydantic
 jsonpath-ng
+Jinja2
 pandas
 gspread
 gspread-dataframe

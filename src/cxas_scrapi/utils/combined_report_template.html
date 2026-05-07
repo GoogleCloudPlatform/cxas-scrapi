@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Combined Eval Report - {{ ts }}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f8f9fa; }
+  h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+  h2 { color: #1a1a2e; margin-top: 30px; }
+  .summary { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+  .summary-top { display: flex; gap: 24px; align-items: center; margin-bottom: 12px; }
+  .summary .big { font-size: 2em; font-weight: bold; }
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+  .summary-card { padding: 8px 12px; border-radius: 6px; background: #f8f9fa; text-align: center; }
+  .summary-card .label { font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px; color: #888; }
+  .summary-card .value { font-size: 1.3em; font-weight: bold; margin-top: 2px; }
+  .mixed { color: #f57c00; }
+  .failure-group { background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 15px 0; padding: 16px; }
+  .failure-group h3 { margin: 0 0 8px 0; color: #c0392b; font-size: 0.95em; }
+  .failure-group .affected { font-size: 0.85em; color: #555; margin: 4px 0; }
+  .failure-group .affected-item { display: inline-block; padding: 2px 8px; margin: 2px; border-radius: 4px; background: #fdecea; font-size: 0.8em; }
+  .pass { color: #27ae60; } .fail { color: #e74c3c; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #ddd; }
+  th { background: #2c3e50; color: white; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: #eef; }
+  .eval-card { background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 15px 0; overflow: hidden; }
+  .eval-header { padding: 12px 16px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+  .eval-header.pass-bg { background: #d4edda; border-left: 4px solid #27ae60; }
+  .eval-header.fail-bg { background: #f8d7da; border-left: 4px solid #e74c3c; }
+  .eval-body { padding: 0 16px 16px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; }
+  .badge.pass, .badge.met { background: #d4edda; color: #155724; }
+  .badge.fail, .badge.not-met { background: #f8d7da; color: #721c24; }
+  .badge.golden { background: #fff3e0; color: #e65100; }
+  .badge.sim { background: #e8eaf6; color: #283593; }
+  .badge.tool { background: #e0f2f1; color: #004d40; }
+  .badge.callback { background: #fce4ec; color: #880e4f; }
+  .meta { color: #666; font-size: 0.85em; }
+  details { margin: 4px 0; }
+  summary { cursor: pointer; font-weight: bold; padding: 4px 0; }
+  .run-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 3px; cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s; }
+  .run-dot:hover { border-color: #333; }
+  .run-dot.p { background: #27ae60; } .run-dot.f { background: #e74c3c; }
+  .session-link { font-size: 0.85em; color: #3498db; margin: 4px 0; }
+  .session-link a { color: #3498db; text-decoration: none; }
+  .session-link a:hover { text-decoration: underline; }
+
+  .turn-row { margin: 6px 0; padding: 10px; background: #fafafa; border-radius: 6px; border-left: 3px solid #bbb; font-size: 0.85em; }
+  .turn-row.match { border-left-color: #27ae60; }
+  .turn-row.mismatch { border-left-color: #e74c3c; background: #fef5f5; }
+  .turn-header { font-weight: bold; margin-bottom: 4px; }
+  .comparison { margin: 4px 0; padding: 6px 8px; border-radius: 4px; }
+  .comparison.pass-bg { background: #edf7ed; }
+  .comparison.fail-bg { background: #fdecea; }
+  .comp-label { font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.5px; color: #888; }
+  .comp-text { margin-top: 2px; }
+  .sem-score { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 0.75em; font-weight: bold; }
+  .sem-4 { background: #d4edda; color: #155724; }
+  .sem-3 { background: #d4edda; color: #155724; }
+  .sem-2 { background: #fff3cd; color: #856404; }
+  .sem-1 { background: #f8d7da; color: #721c24; }
+  .sem-0 { background: #f8d7da; color: #721c24; }
+
+  .transcript { background: #f8f9fa; border-radius: 6px; padding: 12px; margin: 8px 0; font-size: 0.9em; }
+  .transcript .user { color: #2980b9; margin: 6px 0; }
+  .transcript .agent { color: #27ae60; margin: 6px 0; }
+  .transcript .system { color: #e67e22; margin: 4px 0; font-size: 0.85em; }
+  .expectation { margin: 6px 0; padding: 8px; background: #f0f0f0; border-radius: 4px; }
+  .step { margin: 6px 0; padding: 8px; border-left: 3px solid #3498db; background: #f0f8ff; }
+  .tool-details { margin: 4px 0; padding: 4px 8px; background: #f3e8ff; border-radius: 4px; border-left: 3px solid #8e44ad; }
+  .tool-summary { font-weight: normal; font-size: 0.9em; color: #6c3483; padding: 2px 0; }
+  .tool-data { margin: 4px 0; padding: 8px; background: #faf5ff; border-radius: 4px; font-size: 0.8em; white-space: pre-wrap; word-break: break-word; }
+  .tool-section { font-size: 0.85em; color: #555; margin-top: 6px; }
+  .controls { display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
+  .controls button { padding: 6px 14px; border: 1px solid #ccc; border-radius: 6px; background: white; cursor: pointer; font-size: 0.85em; transition: all 0.15s; }
+  .controls button:hover { background: #eee; }
+  .controls button.active { background: #2c3e50; color: white; border-color: #2c3e50; }
+  tr.hidden-row { display: none; }
+  .eval-card.hidden-card { display: none; }
+
+  @media (prefers-color-scheme: dark) {
+    body { background: #121212; color: #e0e0e0; }
+    h1, h2 { color: #e0e0e0; }
+    h1 { border-bottom-color: #e94560; }
+    .summary { background: #1e1e1e; box-shadow: 0 2px 4px rgba(255,255,255,0.05); }
+    .summary-card { background: #2d2d2d; }
+    .summary-card .label { color: #aaa; }
+    .failure-group { background: #1e1e1e; box-shadow: 0 2px 4px rgba(255,255,255,0.05); }
+    .failure-group h3 { color: #cf6679; }
+    .failure-group .affected { color: #bbb; }
+    .failure-group .affected-item { background: #331e1e; color: #e57373; }
+    table { color: #e0e0e0; }
+    th { background: #332940; }
+    td { border-bottom-color: #333; }
+    tr.clickable:hover { background: #252538; }
+    .eval-card { background: #1e1e1e; box-shadow: 0 2px 4px rgba(255,255,255,0.05); }
+    .eval-header.pass-bg { background: #1b382b; border-left-color: #27ae60; color: #e0e0e0; }
+    .eval-header.fail-bg { background: #3d1e22; border-left-color: #e74c3c; color: #e0e0e0; }
+    .badge.pass, .badge.met { background: #1b382b; color: #81c784; }
+    .badge.fail, .badge.not-met { background: #3d1e22; color: #e57373; }
+    .badge.golden { background: #332211; color: #ffb74d; }
+    .badge.sim { background: #1a237e; color: #9fa8da; }
+    .badge.tool { background: #004d40; color: #80cbc4; }
+    .badge.callback { background: #880e4f; color: #f48fb1; }
+    .meta { color: #aaa; }
+    .run-dot:hover { border-color: #e0e0e0; }
+    .turn-row { background: #252525; border-left-color: #555; }
+    .turn-row.match { border-left-color: #27ae60; }
+    .turn-row.mismatch { background: #2d1f21; border-left-color: #e74c3c; }
+    .comparison.pass-bg { background: #1b382b; }
+    .comparison.fail-bg { background: #3d1e22; }
+    .comp-label { color: #aaa; }
+    .sem-4, .sem-3 { background: #1b382b; color: #81c784; }
+    .sem-2 { background: #332c00; color: #ffd54f; }
+    .sem-1, .sem-0 { background: #3d1e22; color: #e57373; }
+    .transcript { background: #252525; }
+    .transcript .user { color: #64b5f6; }
+    .transcript .agent { color: #81c784; }
+    .transcript .system { color: #ffb74d; }
+    .expectation { background: #2d2d2d; }
+    .step { background: #1a2a3a; border-left-color: #3498db; }
+    .tool-details { background: #2c1d3a; border-left-color: #8e44ad; }
+    .tool-summary { color: #d1c4e9; }
+    .tool-data { background: #1f1425; color: #e0e0e0; }
+    .tool-section { color: #bbb; }
+    .controls button { background: #2d2d2d; border-color: #444; color: #e0e0e0; }
+    .controls button:hover { background: #3d3d3d; }
+    .controls button.active { background: #e94560; color: white; border-color: #e94560; }
+    div[style*="background:#eef5ff"] { background: #1a2a3a !important; color: #64b5f6 !important; }
+    div[style*="background:#f8f9fa"] { background: #2d2d2d !important; }
+  }
+</style>
+<script>
+var failuresOnly = false;
+
+function jumpTo(evalName) {
+  var card = document.getElementById('eval-' + evalName);
+  if (!card) return;
+  var details = card.querySelectorAll('details.run-detail');
+  var opened = false;
+  details.forEach(function(d) {
+    if (!opened && d.dataset.failed === 'true') {
+      d.setAttribute('open', '');
+      opened = true;
+    } else {
+      d.removeAttribute('open');
+    }
+  });
+  if (!opened && details.length > 0) details[0].setAttribute('open', '');
+  setTimeout(function() { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
+}
+
+function jumpToRun(evalName, runIdx) {
+  var card = document.getElementById('eval-' + evalName);
+  if (!card) return;
+  var details = card.querySelectorAll('details.run-detail');
+  details.forEach(function(d) { d.removeAttribute('open'); });
+  if (details[runIdx]) { details[runIdx].setAttribute('open', ''); }
+  setTimeout(function() { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
+}
+
+function toggleFailures() {
+  failuresOnly = !failuresOnly;
+  var btn = document.getElementById('btn-failures');
+  btn.classList.toggle('active', failuresOnly);
+  document.querySelectorAll('tr[data-passed]').forEach(function(row) {
+    if (failuresOnly && row.dataset.passed === 'true') {
+      row.classList.add('hidden-row');
+    } else {
+      row.classList.remove('hidden-row');
+    }
+  });
+  document.querySelectorAll('.eval-card[data-passed]').forEach(function(card) {
+    if (failuresOnly && card.dataset.passed === 'true') {
+      card.classList.add('hidden-card');
+    } else {
+      card.classList.remove('hidden-card');
+    }
+  });
+}
+
+function expandAll() {
+  document.querySelectorAll('details').forEach(function(d) { d.setAttribute('open', ''); });
+}
+
+function collapseAll() {
+  document.querySelectorAll('details').forEach(function(d) { d.removeAttribute('open'); });
+}
+</script>
+</head><body>
+<h1>Combined Eval Report</h1>
+<div class="summary">
+  <div class="summary-top">
+    <div class="big {{ 'pass' if pct >= 90 else 'fail' }}">{{ "%.0f" | format(pct) }}%</div>
+    <div><b>{{ passed }}/{{ total }}</b> total passed<br><span class="meta">Generated {{ ts }}</span></div>
+  </div>
+  <div class="summary-grid">
+    {% if golden_results %}
+      {% set g_cls = "pass" if g_passed == g_total else "fail" %}
+      <div class="summary-card" onclick="document.getElementById('section-goldens').scrollIntoView({behavior:'smooth'})" style="cursor:pointer">
+        <div class="label">Goldens ({{ golden_modality }})</div>
+        <div class="value {{ g_cls }}">{{ g_passed }}/{{ g_total }}</div>
+        {% if g_duration > 0 %}
+          <br><span class='meta'>{{ _fmt_duration(g_duration) }}</span>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if sim_results %}
+      {% set s_cls = "pass" if s_passed == s_total else "fail" %}
+      {% set s_time = "" %}
+      <div class="summary-card" onclick="document.getElementById('section-sims').scrollIntoView({behavior:'smooth'})" style="cursor:pointer">
+        <div class="label">Sims ({{ sim_modality }})</div>
+        <div class="value {{ s_cls }}">{{ s_passed }}/{{ s_total }}</div>
+        {% if sim_wall_clock_s %}
+          <br><span class='meta'>{{ _fmt_duration(sim_wall_clock_s) }}</span>
+        {% elif s_dur > 0 %}
+          <br><span class='meta'>~{{ _fmt_duration(s_dur) }}</span>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if tool_results %}
+      {% set t_cls = "pass" if t_passed == t_total else "fail" %}
+      <div class="summary-card" onclick="document.getElementById('section-tools').scrollIntoView({behavior:'smooth'})" style="cursor:pointer">
+        <div class="label">Tool Tests</div>
+        <div class="value {{ t_cls }}">{{ t_passed }}/{{ t_total }}</div>
+      </div>
+    {% endif %}
+
+    {% if callback_results %}
+      {% set c_cls = "pass" if c_passed == c_total else "fail" %}
+      <div class="summary-card" onclick="document.getElementById('section-callbacks').scrollIntoView({behavior:'smooth'})" style="cursor:pointer">
+        <div class="label">Callback Tests</div>
+        <div class="value {{ c_cls }}">{{ c_passed }}/{{ c_total }}</div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="controls">
+  <button id="btn-failures" onclick="toggleFailures()">Show Failures Only</button>
+  <button onclick="expandAll()">Expand All</button>
+  <button onclick="collapseAll()">Collapse All</button>
+</div>
+
+<h2>All Evals</h2>
+<table>
+  <tr><th>Result</th><th>Type</th><th>Eval</th><th>Detail</th></tr>
+  {% for u in unified %}
+    {% set type_cls = u["type"] %}
+    {% set safe_name = u["name"] | replace("'", "\\'") %}
+    {% set passed_str = "true" if u["passed"] else "false" %}
+
+    <tr class="clickable" data-passed="{{ passed_str }}" onclick="jumpTo('{{ safe_name }}')">
+      <td>
+        {% if u["type"] == "sim" and "run_results" in u %}
+          {% set p = u["run_results"] | selectattr('passed') | list | length %}
+          {% set t = u["run_results"] | length %}
+          {% if p == t %}
+            <span class="pass"><b>PASSED</b></span>
+          {% elif p == 0 %}
+            <span class="fail"><b>FAILED</b></span>
+          {% else %}
+            <span class="mixed"><b>MIXED</b></span> <span class="meta">{{ p }}/{{ t }}</span>
+          {% endif %}
+        {% elif u["passed"] %}
+          <span class="pass"><b>PASSED</b></span>
+        {% else %}
+          <span class="fail"><b>FAILED</b></span>
+        {% endif %}
+      </td>
+      <td><span class="badge {{ type_cls }}">{{ u["type"] }}</span></td>
+      <td>{{ u["name"] | escape }}</td>
+      <td>
+        {% if u["type"] == "sim" and "run_results" in u %}
+          {% for r in u["run_results"] %}
+            {% set dot_cls = "p" if r.get("passed") else "f" %}
+            <span class="run-dot {{ dot_cls }}" title="Run {{ r.get('run','?') }}" onclick="event.stopPropagation(); jumpToRun('{{ safe_name }}', {{ loop.index0 }})"></span>
+          {% endfor %}
+        {% else %}
+          {{ u["detail"] | escape }}
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+</table>
+
+{% if failure_groups %}
+  <h2>Failure Patterns</h2>
+  {% for reason, evals in failure_groups.items() | sort(attribute='1', reverse=true) %}
+    <div class="failure-group">
+      <h3>{{ reason | escape }}</h3>
+      <div class="affected">{{ evals | length }} eval(s):
+        {% for e in evals | sort %}
+          <span class="affected-item" style="cursor:pointer" onclick="jumpTo('{{ e | replace("'", "\\'") }}')">{{ e | escape }}</span>
+        {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+{% endif %}
+
+{% if golden_results %}
+  {% set g_pct_str = "%.0f%%" | format(100 * g_passed / g_total) if g_total else "0%" %}
+  <h2 id="section-goldens">Goldens <span class="meta">({{ g_passed }}/{{ g_total }} — {{ g_pct_str }})</span></h2>
+  {% for r in golden_results | sort(attribute='name') | sort(attribute='passed') %}
+    {% set cls = "pass-bg" if r["passed"] else "fail-bg" %}
+    {% set status = "PASS" if r["passed"] else "FAIL" %}
+    {% set failed_str = "false" if r["passed"] else "true" %}
+    {% set passed_str = "true" if r["passed"] else "false" %}
+
+    <div class="eval-card" id="eval-{{ r['name'] }}" data-passed="{{ passed_str }}">
+      <div class="eval-header {{ cls }}">
+        <span>{{ r["name"] | escape }} <span class="badge golden">golden</span></span>
+        <span class="badge {{ 'pass' if r['passed'] else 'fail' }}">{{ status }}</span>
+      </div>
+      <div class="eval-body">
+        <details class="run-detail" data-failed="{{ failed_str }}">
+          <summary>Golden Evaluation — <span class="{{ 'pass' if r['passed'] else 'fail' }}">{{ status }}</span> | {{ r.get('turns',[]) | length }} turns{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}</summary>
+
+          {% if r.get('session_id') %}
+            <div class="session-link">Session:
+              {% if ces_base %}
+                <a href="{{ ces_base }}?panel=conversation_list&id={{ r['session_id'] }}&source=EVAL" target="_blank"><code>{{ r['session_id'] }}</code></a>
+              {% else %}
+                <code>{{ r['session_id'] }}</code>
+              {% endif %}
+            </div>
+          {% endif %}
+
+          {% if r.get('session_parameters') %}
+            <details class="tool-details">
+              <summary class="tool-summary">&#9881; <b>Session Parameters</b></summary>
+              <pre class="tool-data">{{ json.dumps(r['session_parameters'], indent=2) | escape }}</pre>
+            </details>
+          {% endif %}
+
+          <details open><summary>Conversation &amp; Comparison</summary>
+            {% for turn in r.get('turns', []) %}
+              {% set sem = turn.get('semantic_score') %}
+              {% set sem_cls = "sem-" ~ sem if sem is not none else "" %}
+              {% set any_fail = turn.get('comparisons', []) | selectattr('outcome', 'equalto', 'FAIL') | list | length > 0 %}
+              {% set row_cls = "mismatch" if any_fail else "match" %}
+
+              <div class="turn-row {{ row_cls }}">
+                <div class="turn-header">Turn {{ turn["index"] }}
+                  {% if sem is not none %}
+                    <span class="sem-score {{ sem_cls }}">{{ sem }}/4</span>
+                  {% endif %}
+                </div>
+
+                {% if turn.get('user_input') %}
+                  <div style="color:#2980b9;margin:4px 0;padding:4px 8px;background:#eef5ff;border-radius:4px;"><b>User:</b> {{ turn['user_input'] | escape }}</div>
+                {% endif %}
+
+                {% for comp in turn.get('comparisons', []) %}
+                  {% set c_cls = "pass-bg" if comp["outcome"] != "FAIL" else "fail-bg" %}
+                  {% set badge_cls = "pass" if comp["outcome"] != "FAIL" else "fail" %}
+                  {% set ctype = comp.get('type', '?') %}
+                  {% set icon = {"text": "&#128172;", "tool_call": "&#128295;", "transfer": "&#128256;"}.get(ctype, "") %}
+
+                  <div class="comparison {{ c_cls }}">
+                    <span class="badge {{ badge_cls }}">{{ comp["outcome"] }}</span> {{ icon | safe }} <b>{{ ctype }}</b><br>
+                    <span class="comp-label">Expected:</span> <span class="comp-text">{{ comp.get('expected', '') | string | truncate(150) | escape }}</span><br>
+                    <span class="comp-label">Actual:</span> <span class="comp-text">{{ comp.get('actual', '') | string | truncate(150) | escape }}</span>
+
+                    {% if ctype == "tool_call" and (comp.get('expected_args') or comp.get('actual_args')) %}
+                      <details style="margin-top:4px;"><summary style="cursor:pointer;font-size:0.85em;color:#666;">Tool call args</summary>
+                        <div style="font-size:0.82em;background:#f8f9fa;padding:6px 10px;border-radius:4px;margin-top:4px;">
+                          {% if comp.get('expected_args') %}
+                            <div><span class="comp-label">Expected args:</span><pre style="margin:2px 0;white-space:pre-wrap;">{{ json.dumps(comp['expected_args'], indent=2, default=str) | escape }}</pre></div>
+                          {% endif %}
+                          {% if comp.get('actual_args') %}
+                            <div><span class="comp-label">Actual args:</span><pre style="margin:2px 0;white-space:pre-wrap;">{{ json.dumps(comp['actual_args'], indent=2, default=str) | escape }}</pre></div>
+                          {% endif %}
+                        </div>
+                      </details>
+                    {% endif %}
+                  </div>
+                {% endfor %}
+              </div>
+            {% endfor %}
+          </details>
+
+          {% for exp in r.get('expectations', []) %}
+            {% set e_cls = "met" if exp["status"] == "Met" else "not-met" %}
+            <div class="expectation">
+              <span class="badge {{ e_cls }}">{{ exp["status"] | escape }}</span> {{ exp["expectation"] | string | truncate(150) | escape }}
+              {% if exp.get('justification') %}
+                <br><span class="meta">{{ exp['justification'] | string | truncate(250) | escape }}</span>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </details>
+      </div>
+    </div>
+  {% endfor %}
+{% endif %}
+
+{% if sim_results %}
+  {% set s_pct_str = "%.0f%%" | format(100 * s_passed / s_total) if s_total else "0%" %}
+  <h2 id="section-sims">Simulations <span class="meta">({{ s_passed }}/{{ s_total }} — {{ s_pct_str }})</span></h2>
+
+  {# We group simulations by name in template or pass them grouped. Let's assume unified has grouped them for summary, but for detail we can loop over sorted results #}
+  {% set grouped_sims = {} %}
+  {% for r in sim_results %}
+    {% if r.name not in grouped_sims %}
+      {% set _ = grouped_sims.update({r.name: {"pass": 0, "total": 0, "runs": []}}) %}
+    {% endif %}
+    {% set _ = grouped_sims[r.name].update({"total": grouped_sims[r.name]["total"] + 1}) %}
+    {% if r.get("passed") %}
+      {% set _ = grouped_sims[r.name].update({"pass": grouped_sims[r.name]["pass"] + 1}) %}
+    {% endif %}
+    {% set _ = grouped_sims[r.name]["runs"].append(r) %}
+  {% endfor %}
+
+  {% for name, s in grouped_sims.items() | sort(attribute='1.pass', reverse=false) %}
+    {% set score = s['pass'] ~ '/' ~ s['total'] %}
+    {% set cls = "pass-bg" if s['pass'] == s['total'] else "fail-bg" %}
+    {% set passed_str = "true" if s['pass'] == s['total'] else "false" %}
+
+    <div class="eval-card" id="eval-{{ name }}" data-passed="{{ passed_str }}">
+      <div class="eval-header {{ cls }}">
+        <span>{{ name | escape }} <span class="badge sim">sim</span></span>
+        <span>{{ score }}</span>
+      </div>
+      <div class="eval-body">
+        {% for r in s["runs"] %}
+          {% set run_cls = "pass" if r.get("passed") else "fail" %}
+          {% set failed_str = "false" if r.get("passed") else "true" %}
+
+          <details class="run-detail" data-failed="{{ failed_str }}">
+            <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }} | turns: {{ r.get('turns','?') }}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}</summary>
+
+            {% if r.get('session_id') and ces_base %}
+              <div class="session-link">Session: <a href="{{ ces_base }}?panel=conversation_list&id={{ r['session_id'] }}&source=EVAL" target="_blank"><code>{{ r['session_id'] }}</code></a></div>
+            {% endif %}
+
+            {% if r.get('session_parameters') %}
+              <details class="tool-details">
+                <summary class="tool-summary">&#9881; <b>Session Parameters</b></summary>
+                <pre class="tool-data">{{ json.dumps(r['session_parameters'], indent=2) | escape }}</pre>
+              </details>
+            {% endif %}
+
+            {% if "error" in r %}
+              <div class="expectation"><b>Error:</b> {{ r["error"] | escape }}</div>
+            {% else %}
+              {% for step in r.get('step_details', []) %}
+                {% set s_cls = "pass" if step["status"] == "Completed" else "fail" %}
+                <div class="step">
+                  <b>Goal:</b> {{ step["goal"] | escape }}<br>
+                  <b>Criteria:</b> {{ step["success_criteria"] | escape }}<br>
+                  <b>Status:</b> <span class="badge {{ s_cls | replace('pass','met') | replace('fail','not-met') }}">{{ step["status"] | escape }}</span>
+                  {% if step.get('justification') %}
+                    <br><b>Justification:</b> {{ step["justification"] | escape }}
+                  {% endif %}
+                </div>
+              {% endfor %}
+
+              {% for exp in r.get('expectation_details', []) %}
+                {% set e_cls = "met" if exp["status"] == "Met" else "not-met" %}
+                <div class="expectation">
+                  <span class="badge {{ e_cls }}">{{ exp["status"] | escape }}</span> {{ exp["expectation"] | escape }}
+                  {% if exp.get('justification') %}
+                    <br><b>Justification:</b> {{ exp["justification"] | escape }}
+                  {% endif %}
+                </div>
+              {% endfor %}
+
+              {% if r.get('_processed_trace') %}
+                <details open><summary>Conversation Trace ({{ r.get('turns','?') }} turns)</summary>
+                  <div class="transcript">
+                    {% for item in r['_processed_trace'] %}
+                      {% set kind = item[0] %}
+                      {% if kind == "user" %}
+                        <div class="user"><b>User:</b> {{ item[1] | escape }}</div>
+                      {% elif kind == "agent" %}
+                        <div class="agent"><b>Agent:</b> {{ item[1] | escape }}</div>
+                      {% elif kind in ("tool_call", "tool_pair") %}
+                        {% set lbl, _, args = item[1].partition(" with args ") %}
+                        {% set lbl = lbl.replace("Tool Call: ", "").replace("Tool Call (Output): ", "").split("/")[-1] %}
+                        <details class="tool-details">
+                          <summary class="tool-summary">&#128295; <b>{{ lbl | escape }}</b></summary>
+                          {% if args %}
+                            <div class="tool-section"><b>Input:</b></div><pre class="tool-data">{{ args | escape }}</pre>
+                          {% endif %}
+                          {% if kind == "tool_pair" %}
+                            {% set _, _, result = item[2].partition(" with result ") %}
+                            {% if result %}
+                              <div class="tool-section"><b>Output:</b></div><pre class="tool-data">{{ result | escape }}</pre>
+                            {% endif %}
+                          {% endif %}
+                        </details>
+                      {% elif kind == "tool_resp" %}
+                        {% set lbl, _, result = item[1].partition(" with result ") %}
+                        {% set lbl = lbl.replace("Tool Response: ", "").split("/")[-1] %}
+                        <details class="tool-details">
+                          <summary class="tool-summary">&#128228; <b>{{ lbl | escape }}</b></summary>
+                          {% if result %}
+                            <pre class="tool-data">{{ result | escape }}</pre>
+                          {% endif %}
+                        </details>
+                      {% else %}
+                        <div class="system">{{ item[1] | escape }}</div>
+                      {% endif %}
+                    {% endfor %}
+                  </div>
+                </details>
+              {% endif %}
+            {% endif %}
+          </details>
+        {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+{% endif %}
+
+{% if tool_results %}
+  {% set t_pct = 100 * t_passed / t_total if t_total else 0 %}
+  <h2 id="section-tools">Tool Tests <span class="meta">({{ t_passed }}/{{ t_total }} — {{ "%.0f" | format(t_pct) }}%)</span></h2>
+  <table>
+    <tr><th>Result</th><th>Tool</th><th>Test</th><th>Latency</th><th>Errors</th></tr>
+    {% for r in tool_results | sort(attribute='passed') %}
+      {% set cls = "pass" if r["passed"] else "fail" %}
+      {% set passed_str = "true" if r["passed"] else "false" %}
+      {% set lat = "%.0fms" | format(r["latency_ms"]) if r.get("latency_ms") else "-" %}
+      <tr data-passed="{{ passed_str }}">
+        <td class="{{ cls }}"><b>{{ r["status"] }}</b></td>
+        <td>{{ r["tool"] | escape }}</td>
+        <td>{{ r["name"] | escape }}</td>
+        <td>{{ lat }}</td>
+        <td>{{ r.get("errors", "") | string | truncate(100) | escape }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+{% endif %}
+
+{% if callback_results %}
+  {% set c_pct = 100 * c_passed / c_total if c_total else 0 %}
+  <h2 id="section-callbacks">Callback Tests <span class="meta">({{ c_passed }}/{{ c_total }} — {{ "%.0f" | format(c_pct) }}%)</span></h2>
+  <table>
+    <tr><th>Result</th><th>Agent</th><th>Callback</th><th>Test</th><th>Error</th></tr>
+    {% for r in callback_results | sort(attribute='passed') %}
+      {% set cls = "pass" if r["passed"] else "fail" %}
+      {% set passed_str = "true" if r["passed"] else "false" %}
+      <tr data-passed="{{ passed_str }}">
+        <td class="{{ cls }}"><b>{{ r["status"] }}</b></td>
+        <td>{{ r["agent"] | escape }}</td>
+        <td>{{ r["callback_type"] | escape }}</td>
+        <td>{{ r["name"] | escape }}</td>
+        <td>{{ r.get("error", "") | string | truncate(100) | escape }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+{% endif %}
+</body></html>

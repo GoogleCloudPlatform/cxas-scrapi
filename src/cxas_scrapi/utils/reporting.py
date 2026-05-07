@@ -14,11 +14,23 @@
 
 """Utility functions for generating reports."""
 
+import glob
 import json
+import os
 from datetime import datetime
 from typing import Any, Dict, List
 
+import pandas as pd
+import yaml
+from jinja2 import Template
+
+from cxas_scrapi.cli.main import wait_for_evaluation_completion
+from cxas_scrapi.core.evaluations import Evaluations
 from cxas_scrapi.core.tools import Tools
+from cxas_scrapi.evals.callback_evals import CallbackEvals
+from cxas_scrapi.evals.simulation_evals import SimulationEvals
+from cxas_scrapi.evals.tool_evals import ToolEvals
+from cxas_scrapi.utils.eval_utils import EvalUtils
 from cxas_scrapi.utils.gcs_utils import GCSUtils
 
 
@@ -623,3 +635,878 @@ def generate_html_report(
     with open(output_path, "w") as f:
         f.write(html)
     print(f"Report saved locally to: {output_path}")
+
+
+def generate_combined_html_report(
+    golden_results=None,
+    sim_results=None,
+    tool_results=None,
+    callback_results=None,
+    output_path="",
+    app_name="",
+    golden_modality="text",
+    sim_modality="text",
+    sim_wall_clock_s=None,
+):
+    """Generate combined HTML report based on results from multiple sources."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    g_total = len(golden_results) if golden_results else 0
+    g_passed = (
+        sum(1 for r in golden_results if r.get("passed"))
+        if golden_results
+        else 0
+    )
+    s_total = len(sim_results) if sim_results else 0
+    s_passed = (
+        sum(1 for r in sim_results if r.get("passed")) if sim_results else 0
+    )
+    t_total = len(tool_results) if tool_results else 0
+    t_passed = (
+        sum(1 for r in tool_results if r.get("passed")) if tool_results else 0
+    )
+    c_total = len(callback_results) if callback_results else 0
+    c_passed = (
+        sum(1 for r in callback_results if r.get("passed"))
+        if callback_results
+        else 0
+    )
+    total = g_total + s_total + t_total + c_total
+    passed = g_passed + s_passed + t_passed + c_passed
+    pct = 100 * passed / total if total else 0
+
+    unified = []
+    if golden_results:
+        for r in golden_results:
+            scores = [
+                t["semantic_score"]
+                for t in r.get("turns", [])
+                if t.get("semantic_score") is not None
+            ]
+            avg_sem = sum(scores) / len(scores) if scores else None
+            unified.append(
+                {
+                    "name": r["name"],
+                    "type": "golden",
+                    "passed": r.get("passed", False),
+                    "score": "PASS" if r.get("passed") else "FAIL",
+                    "detail": f"sem {avg_sem:.1f}/4"
+                    if avg_sem is not None
+                    else "",
+                    "runs": 1,
+                }
+            )
+    if sim_results:
+        sim_stats = {}
+        for r in sim_results:
+            n = r["name"]
+            if n not in sim_stats:
+                sim_stats[n] = {"pass": 0, "total": 0, "runs": []}
+            sim_stats[n]["total"] += 1
+            if r.get("passed"):
+                sim_stats[n]["pass"] += 1
+            sim_stats[n]["runs"].append(r)
+        for name, s in sim_stats.items():
+            unified.append(
+                {
+                    "name": name,
+                    "type": "sim",
+                    "passed": s["pass"] == s["total"],
+                    "score": f"{s['pass']}/{s['total']}",
+                    "detail": "",
+                    "runs": s["total"],
+                    "run_results": s["runs"],
+                }
+            )
+
+    if tool_results:
+        for r in tool_results:
+            unified.append(
+                {
+                    "name": r["name"],
+                    "type": "tool",
+                    "passed": r.get("passed", False),
+                    "score": r.get("status", "?"),
+                    "detail": (
+                        f"{r.get('latency_ms', 0):.0f}ms"
+                        if r.get("latency_ms")
+                        else ""
+                    ),
+                    "runs": 1,
+                }
+            )
+
+    if callback_results:
+        for r in callback_results:
+            unified.append(
+                {
+                    "name": r["name"],
+                    "type": "callback",
+                    "passed": r.get("passed", False),
+                    "score": r.get("status", "?"),
+                    "detail": r.get("callback_type", ""),
+                    "runs": 1,
+                }
+            )
+
+    unified.sort(key=lambda x: (x["passed"], x["name"]))
+
+    parts = app_name.split("/") if app_name else []
+    project_id = parts[1] if len(parts) > 1 else ""
+    location = parts[3] if len(parts) > 3 else ""
+    app_id = parts[5] if len(parts) > 5 else ""
+    ces_base = (
+        f"https://ces.cloud.google.com/projects/{project_id}/locations/{location}/apps/{app_id}"
+        if app_id
+        else ""
+    )
+
+    # Compute summary cards data
+    g_duration = (
+        sum(r.get("duration_s", 0) or 0 for r in golden_results)
+        if golden_results
+        else 0
+    )
+    s_dur = (
+        sum(r.get("duration_s", 0) or 0 for r in sim_results)
+        if sim_results
+        else 0
+    )
+
+    # --- FAILURE GROUPING ---
+    failure_groups = {}
+
+    # Collect golden failures
+    if golden_results:
+        for r in golden_results:
+            if r.get("passed"):
+                continue
+            for turn in r.get("turns", []):
+                for comp in turn.get("comparisons", []):
+                    if comp.get("outcome") == "FAIL":
+                        ctype = comp.get("type", "?")
+                        expected = str(comp.get("expected", ""))[:60]
+                        actual = str(comp.get("actual", ""))[:60]
+                        if ctype == "transfer":
+                            if actual == "(missed)":
+                                reason = (
+                                    f"Routing missed: expected transfer to "
+                                    f"{expected}"
+                                )
+                            else:
+                                reason = (
+                                    f"Wrong routing: expected {expected}, "
+                                    f"got {actual}"
+                                )
+                        elif ctype == "tool_call" and actual == "(missed)":
+                            if expected:
+                                reason = f"Tool not called: {expected}"
+                            else:
+                                continue
+                        elif ctype == "tool_call" and expected != actual:
+                            reason = (
+                                f"Wrong tool: expected {expected}, got {actual}"
+                            )
+                        elif ctype == "text":
+                            reason = "Semantic similarity too low"
+                        else:
+                            continue
+                        failure_groups.setdefault(reason, set()).add(r["name"])
+            for exp in r.get("expectations", []):
+                if exp.get("status") == "Not Met":
+                    reason = str(exp.get("expectation", ""))[:80]
+                    failure_groups.setdefault(
+                        f"Expectation not met: {reason}", set()
+                    ).add(r["name"])
+
+    # Collect sim failures
+    if sim_results:
+        for r in sim_results:
+            if r.get("passed"):
+                continue
+            for step in r.get("step_details", []):
+                if step.get("status") != "Completed":
+                    reason = f"Goal not completed: {step.get('goal', '')[:60]}"
+                    failure_groups.setdefault(reason, set()).add(r["name"])
+            for exp in r.get("expectation_details", []):
+                if exp.get("status") == "Not Met":
+                    reason = (
+                        f"Expectation not met: "
+                        f"{exp.get('expectation', '')[:60]}"
+                    )
+                    failure_groups.setdefault(reason, set()).add(r["name"])
+
+    # Collect tool test failures
+    if tool_results:
+        for r in tool_results:
+            if r.get("passed"):
+                continue
+            errors = str(r.get("errors", ""))
+            if (
+                "operator='Operator.CONTAINS'" in errors
+                and "expected='PASSED'" in errors
+            ):
+                reason = (
+                    "Default expectation: $.result contains PASSED "
+                    "(needs customization)"
+                )
+            elif "operator='Operator" in errors:
+                reason = (
+                    errors.split(",", maxsplit=1)[0][:80]
+                    if "," in errors
+                    else errors[:80]
+                )
+            else:
+                reason = errors[:80]
+            failure_groups.setdefault(reason, set()).add(r["name"])
+
+    # Collect callback failures
+    if callback_results:
+        for r in callback_results:
+            if r.get("passed"):
+                continue
+            reason = str(r.get("error", "Unknown error"))[:80]
+            failure_groups.setdefault(f"Callback: {reason}", set()).add(
+                r["name"]
+            )
+
+    # Prepare tools map for template if needed
+    tools_map = {}
+    if app_name:
+        try:
+            tools_map = Tools(app_name=app_name).get_tools_map()
+        except Exception:
+            pass
+
+    # Process traces for simulation results to simplify template
+    if sim_results:
+        for r in sim_results:
+            trace = r.get("detailed_trace", [])
+            if trace:
+                parsed = []
+                for entry in trace:
+                    for raw_line in entry.split("\n"):
+                        line = raw_line.strip()
+                        if not line or line.startswith("Agent Text (Diag):"):
+                            continue
+                        for path, dname in tools_map.items():
+                            line = line.replace(path, dname)
+                        if line.startswith("Agent Text:"):
+                            parsed.append(
+                                ("agent", line[len("Agent Text:") :].strip())
+                            )
+                        elif line.startswith("User:"):
+                            parsed.append(("user", line[5:].strip()))
+                        elif line.startswith("Tool Call"):
+                            parsed.append(("tool_call", line))
+                        elif line.startswith("Tool Response"):
+                            parsed.append(("tool_resp", line))
+                        else:
+                            parsed.append(("system", line))
+
+                merged = []
+                for kind, text in parsed:
+                    if kind == "agent" and merged and merged[-1][0] == "agent":
+                        merged[-1] = ("agent", merged[-1][1] + " " + text)
+                    elif (
+                        kind == "tool_resp"
+                        and merged
+                        and merged[-1][0] == "tool_call"
+                    ):
+                        merged[-1] = ("tool_pair", merged[-1][1], text)
+                    else:
+                        merged.append((kind, text))
+                r["_processed_trace"] = merged
+
+    template_path = os.path.join(
+        os.path.dirname(__file__), "combined_report_template.html"
+    )
+    with open(template_path, "r") as f:
+        template_content = f.read()
+    template = Template(template_content)
+    html = template.render(
+        ts=ts,
+        pct=pct,
+        passed=passed,
+        total=total,
+        unified=unified,
+        golden_results=golden_results or [],
+        sim_results=sim_results or [],
+        tool_results=tool_results or [],
+        callback_results=callback_results or [],
+        ces_base=ces_base,
+        golden_modality=golden_modality,
+        sim_modality=sim_modality,
+        sim_wall_clock_s=sim_wall_clock_s,
+        failure_groups=failure_groups,
+        g_passed=g_passed,
+        g_total=g_total,
+        g_duration=g_duration,
+        s_passed=s_passed,
+        s_total=s_total,
+        s_dur=s_dur,
+        t_passed=t_passed,
+        t_total=t_total,
+        c_passed=c_passed,
+        c_total=c_total,
+        _escape=_escape,
+        _fmt_duration=_fmt_duration,
+        json=json,
+    )
+
+    if output_path:
+        with open(output_path, "w") as f:
+            f.write(html)
+
+    return html
+
+
+def _outcome_str(val):
+    if isinstance(val, int):
+        return {0: "UNSPECIFIED", 1: "PASS", 2: "FAIL"}.get(val, f"?{val}")
+    return str(val) if val else "?"
+
+
+def load_golden_results(run_id, app_name, include=None):
+    """Fetch golden results and parse into report-friendly format."""
+    if include is None:
+        include = ["goldens", "scenarios"]
+
+    utils = EvalUtils(app_name=app_name)
+    full_run_id = (
+        run_id
+        if run_id.startswith("projects/")
+        else f"{app_name}/evaluationRuns/{run_id}"
+    )
+
+    raw_results = utils.list_evaluation_results_by_run(full_run_id)
+
+    evals_map = utils.get_evaluations_map(app_name, reverse=False)
+    name_lookup = {}
+    for cat in ["goldens", "scenarios"]:
+        for resource, display in evals_map.get(cat, {}).items():
+            name_lookup[resource] = display
+
+    tools_map = {}
+    try:
+        tools_map = Tools(app_name=app_name).get_tools_map()
+    except Exception:
+        pass
+
+    def _resolve_tool(name):
+        if name in tools_map:
+            return tools_map[name]
+        return name.split("/")[-1] if "/" in name else name
+
+    results = []
+    for r in raw_results:
+        rd = type(r).to_dict(r)
+        result_name = rd.get("name", "")
+        eval_resource = "/".join(result_name.split("/")[:-2])
+
+        is_golden = eval_resource in evals_map.get("goldens", {})
+        is_scenario = eval_resource in evals_map.get("scenarios", {})
+
+        if is_golden and "goldens" not in include:
+            continue
+        if is_scenario and "scenarios" not in include:
+            continue
+
+        display_name = name_lookup.get(
+            eval_resource, eval_resource.split("/")[-1]
+        )
+
+        status_raw = rd.get("evaluation_status", 0)
+        passed = (
+            (status_raw == 1)
+            if isinstance(status_raw, int)
+            else str(status_raw).upper() == "PASS"
+        )
+
+        golden = rd.get("golden_result", {})
+
+        turns = []
+        for i, turn in enumerate(golden.get("turn_replay_results", [])):
+            sem = turn.get("semantic_similarity_result", {})
+            turn_data = {
+                "index": i + 1,
+                "semantic_score": sem.get("score"),
+                "comparisons": [],
+            }
+            for o in turn.get("expectation_outcome", []):
+                exp = o.get("expectation", {})
+                outcome = _outcome_str(o.get("outcome"))
+                comp = {"outcome": outcome}
+
+                if "agent_response" in exp:
+                    chunks = exp["agent_response"].get("chunks", [])
+                    comp["type"] = "text"
+                    comp["expected"] = (
+                        chunks[0].get("text", "") if chunks else ""
+                    )
+                    obs = o.get("observed_agent_response", {})
+                    comp["actual"] = (
+                        obs.get("chunks", [{}])[0].get("text", "")
+                        if obs
+                        else "(missed)"
+                    )
+                elif "tool_call" in exp:
+                    tc = exp["tool_call"]
+                    comp["type"] = "tool_call"
+                    comp["expected"] = (
+                        tc.get("display_name")
+                        or tc.get("tool", "").split("/")[-1]
+                    )
+                    comp["expected_args"] = tc.get("args", {})
+                    obs = o.get("observed_tool_call", {})
+                    comp["actual"] = (
+                        (
+                            obs.get("display_name")
+                            or obs.get("tool", "").split("/")[-1]
+                        )
+                        if obs
+                        else "(missed)"
+                    )
+                    comp["actual_args"] = obs.get("args", {}) if obs else {}
+                elif "tool_response" in exp:
+                    continue
+                elif "agent_transfer" in exp:
+                    at = exp["agent_transfer"]
+                    comp["type"] = "transfer"
+                    comp["expected"] = at.get(
+                        "display_name",
+                        at.get("target_agent", "").split("/")[-1],
+                    )
+                    obs = o.get("observed_agent_transfer", {})
+                    comp["actual"] = (
+                        obs.get(
+                            "display_name",
+                            obs.get("target_agent", "").split("/")[-1],
+                        )
+                        if obs
+                        else "(missed)"
+                    )
+                else:
+                    continue
+
+                turn_data["comparisons"].append(comp)
+            turns.append(turn_data)
+
+        expectations = []
+        for ee in golden.get("evaluation_expectation_results", []):
+            result_val = ee.get("result")
+            exp_text = ee.get("prompt", ee.get("evaluation_expectation", ""))
+            explanation = ee.get("explanation", "")
+            met = (
+                result_val == 1
+                if isinstance(result_val, int)
+                else str(result_val).upper() == "PASS"
+            )
+            expectations.append(
+                {
+                    "expectation": exp_text,
+                    "status": "Met" if met else "Not Met",
+                    "justification": explanation,
+                }
+            )
+
+        session_id = ""
+        if golden.get("turn_replay_results"):
+            conv_path = golden["turn_replay_results"][0].get("conversation", "")
+            if conv_path:
+                # Extract the conversation ID (e.g. "evaluation-xxxx")
+                session_id = conv_path.split("/")[-1]
+
+        session_params = {}
+        # One entry per golden turn: ("text", "...") or ("event", "...")
+        turn_inputs = []
+        try:
+            ev_obj = utils.get_evaluation(eval_resource)
+            evd = type(ev_obj).to_dict(ev_obj)
+            golden_def = evd.get("golden", {})
+            for turn_def in golden_def.get("turns", []):
+                turn_input = None
+                for step in turn_def.get("steps", []):
+                    ui = step.get("user_input", {})
+                    if "variables" in ui:
+                        session_params.update(ui["variables"])
+                    if "text" in ui:
+                        turn_input = ("text", ui["text"])
+                    elif "event" in ui:
+                        turn_input = ("event", str(ui["event"]))
+                if turn_input:
+                    turn_inputs.append(turn_input)
+        except Exception:
+            pass
+
+        for i, turn in enumerate(turns):
+            if i < len(turn_inputs):
+                kind, text = turn_inputs[i]
+                turn["user_input"] = text if kind == "text" else None
+            else:
+                turn["user_input"] = None
+
+        total_latency_s = 0
+        for turn_result in golden.get("turn_replay_results", []):
+            lat = turn_result.get("turn_latency", "")
+            if isinstance(lat, str) and lat.endswith("s"):
+                try:
+                    total_latency_s += float(lat.replace("s", ""))
+                except ValueError:
+                    pass
+            elif isinstance(lat, dict):
+                total_latency_s += lat.get("seconds", 0) + (
+                    lat.get("nanos", 0) / 1e9
+                )
+
+        results.append(
+            {
+                "name": display_name,
+                "passed": passed,
+                "turns": turns,
+                "expectations": expectations,
+                "session_id": session_id,
+                "session_parameters": session_params,
+                "duration_s": (
+                    round(total_latency_s, 1) if total_latency_s > 0 else None
+                ),
+            }
+        )
+
+    return results
+
+
+def load_sim_results(json_path, sim_evals_yaml=None):
+    """Load sim results from JSON file.
+
+    Handles both old (list) and new (envelope) formats.
+    """
+    with open(json_path) as f:
+        data = json.load(f)
+
+    wall_clock_s = None
+    # New envelope format: {"wall_clock_s": N, "results": [...]}
+    # Old format: [...]
+    if isinstance(data, dict):
+        wall_clock_s = data.get("wall_clock_s")
+        results = data.get("results", [])
+    else:
+        results = data
+
+    # Backfill session_parameters if missing
+    if sim_evals_yaml:
+        try:
+            with open(sim_evals_yaml) as f:
+                templates = {
+                    e["name"]: e for e in yaml.safe_load(f).get("evals", [])
+                }
+            for r in results:
+                if "session_parameters" not in r and r.get("name") in templates:
+                    r["session_parameters"] = templates[r["name"]].get(
+                        "session_parameters", {}
+                    )
+        except Exception:
+            pass
+
+    return results, wall_clock_s
+
+
+def load_tool_test_results(csv_or_json_path):
+    """Load tool test results from a CSV or JSON file."""
+    if csv_or_json_path.endswith(".csv"):
+        df = pd.read_csv(csv_or_json_path)
+    else:
+        df = pd.read_json(csv_or_json_path)
+    results = []
+    for _, row in df.iterrows():
+        results.append(
+            {
+                "name": row.get("test_name", row.get("test", "?")),
+                "tool": row.get("tool", "?"),
+                "passed": row.get("status", "").upper() == "PASSED",
+                "status": row.get("status", "?"),
+                "latency_ms": row.get("latency (ms)", 0),
+                "errors": row.get("errors", ""),
+            }
+        )
+    return results
+
+
+def load_callback_test_results(csv_or_json_path):
+    """Load callback test results from a CSV or JSON file."""
+    if csv_or_json_path.endswith(".csv"):
+        df = pd.read_csv(csv_or_json_path)
+    else:
+        df = pd.read_json(csv_or_json_path)
+    results = []
+    for _, row in df.iterrows():
+        results.append(
+            {
+                "name": row.get("test_name", "?"),
+                "agent": row.get("agent_name", "?"),
+                "callback_type": row.get("callback_type", "?"),
+                "passed": row.get("status", "").upper() == "PASSED",
+                "status": row.get("status", "?"),
+                "error": row.get("error_message", ""),
+            }
+        )
+    return results
+
+
+def generate_combined_report_from_dir(
+    evals_dir,
+    golden_run=None,
+    app_name=None,
+    output_path=None,
+    run=False,
+    app_dir=None,
+    tool_test_file=None,
+    golden_file=None,
+    simulation_dir=None,
+    format="html",
+    include=None,
+):
+    """Load results from directory and generate combined HTML report."""
+    if not os.path.isdir(evals_dir):
+        raise ValueError(f"{evals_dir} is not a directory.")
+
+    if include is None or "all" in include:
+        include = ["sims", "goldens", "scenarios"]
+
+    sim_results = []
+    tool_results = []
+    callback_results = []
+    golden_results = []
+
+    if run:
+        run_results = run_all_evals(
+            app_name=app_name,
+            app_dir=app_dir,
+            tool_test_file=tool_test_file,
+            golden_file=golden_file,
+            simulation_dir=simulation_dir,
+            evals_dir=evals_dir,
+        )
+        sim_results = run_results["simulation"] if "sims" in include else []
+        # Map tool results to expected format if needed
+        if "scenarios" in include:
+            for r in run_results["tool"]:
+                tool_results.append(
+                    {
+                        "name": r.get("test_name", r.get("test", "?")),
+                        "tool": r.get("tool", "?"),
+                        "passed": r.get("status", "").upper()
+                        in ("PASSED", "PASS"),
+                        "status": r.get("status", "?"),
+                        "latency_ms": r.get("latency (ms)", 0),
+                        "errors": r.get("errors", ""),
+                    }
+                )
+            # Map callback results
+            for r in run_results["callback"]:
+                callback_results.append(
+                    {
+                        "name": r.get("test_name", "?"),
+                        "agent": r.get("agent_name", "?"),
+                        "callback_type": r.get("callback_type", "?"),
+                        "passed": r.get("status", "").upper()
+                        in ("PASSED", "PASS"),
+                        "status": r.get("status", "?"),
+                        "error": r.get("error_message", ""),
+                    }
+                )
+        golden_results = run_results["golden"]
+    else:
+        sim_files = []
+        if "sims" in include:
+            sim_files = glob.glob(os.path.join(evals_dir, "sim_results*.json"))
+
+        tool_files = []
+        callback_files = []
+        if "scenarios" in include:
+            tool_files = glob.glob(os.path.join(evals_dir, "tool_results*.csv"))
+            tool_files.extend(
+                glob.glob(os.path.join(evals_dir, "tool_results*.json"))
+            )
+            callback_files = glob.glob(
+                os.path.join(evals_dir, "callback_results*.csv")
+            )
+            callback_files.extend(
+                glob.glob(os.path.join(evals_dir, "callback_results*.json"))
+            )
+
+        if sim_files:
+            with open(sim_files[0]) as f:
+                data = json.load(f)
+                # New envelope format: {"wall_clock_s": N, "results": [...]}
+                # Old format: [...]
+                if isinstance(data, dict):
+                    sim_results = data.get("results", [])
+                else:
+                    sim_results = data
+            print(f"Loaded {len(sim_results)} sim results from {sim_files[0]}")
+
+        if tool_files:
+            tf = tool_files[0]
+            if tf.endswith(".csv"):
+                df = pd.read_csv(tf)
+            else:
+                df = pd.read_json(tf)
+            for _, row in df.iterrows():
+                tool_results.append(
+                    {
+                        "name": row.get("test_name", row.get("test", "?")),
+                        "tool": row.get("tool", "?"),
+                        "passed": row.get("status", "").upper()
+                        in ("PASSED", "PASS"),
+                        "status": row.get("status", "?"),
+                        "latency_ms": row.get("latency (ms)", 0),
+                        "errors": row.get("errors", ""),
+                    }
+                )
+            print(f"Loaded {len(tool_results)} tool results from {tf}")
+
+        if callback_files:
+            cf = callback_files[0]
+            if cf.endswith(".csv"):
+                df = pd.read_csv(cf)
+            else:
+                df = pd.read_json(cf)
+            for _, row in df.iterrows():
+                callback_results.append(
+                    {
+                        "name": row.get("test_name", "?"),
+                        "agent": row.get("agent_name", "?"),
+                        "callback_type": row.get("callback_type", "?"),
+                        "passed": row.get("status", "").upper()
+                        in ("PASSED", "PASS"),
+                        "status": row.get("status", "?"),
+                        "error": row.get("error_message", ""),
+                    }
+                )
+            print(f"Loaded {len(callback_results)} callback results from {cf}")
+
+        if golden_run:
+            if not app_name:
+                raise ValueError(
+                    "--app-name is required when golden_run is specified."
+                )
+            golden_results = load_golden_results(
+                golden_run, app_name, include=include
+            )
+
+    if not output_path:
+        output_path = os.path.join(evals_dir, "combined_report.html")
+
+    return generate_combined_html_report(
+        golden_results=golden_results,
+        sim_results=sim_results,
+        tool_results=tool_results,
+        callback_results=callback_results,
+        output_path=output_path,
+        app_name=app_name or "",
+    )
+
+
+def run_all_evals(
+    app_name,
+    app_dir=None,
+    tool_test_file=None,
+    golden_file=None,
+    simulation_dir=None,
+    evals_dir=None,
+):
+    """Runs all 4 types of evaluations and returns aggregated results."""
+    results = {"callback": [], "tool": [], "golden": [], "simulation": []}
+
+    # 1. Callback tests
+    if not app_dir and app_name:
+        app_dir = f"cxas_app/{app_name.split('/')[-1]}"
+    if app_dir and os.path.exists(app_dir):
+        print(f"Running callback tests in {app_dir}")
+        callback_evals = CallbackEvals()
+        df = callback_evals.test_all_callbacks_in_app_dir(app_dir=app_dir)
+        results["callback"] = df.to_dict(orient="records")
+        if evals_dir:
+            df.to_csv(
+                os.path.join(evals_dir, "callback_results.csv"), index=False
+            )
+
+    # 2. Tool tests
+    if not tool_test_file:
+        tool_test_file = "evals/tool_tests/order_tests.yaml"
+    if app_name and os.path.exists(tool_test_file):
+        print(f"Running tool tests with {tool_test_file}")
+        tool_evals = ToolEvals(app_name=app_name)
+        test_cases = tool_evals.load_tool_test_cases_from_file(tool_test_file)
+        df = tool_evals.run_tool_tests(test_cases)
+        results["tool"] = df.to_dict(orient="records")
+        if evals_dir:
+            df.to_csv(os.path.join(evals_dir, "tool_results.csv"), index=False)
+
+    # 3. Platform goldens
+    if not golden_file:
+        golden_file = "evals/goldens/order_lookup.yaml"
+    if app_name and os.path.exists(golden_file):
+        print(f"Running platform goldens with {golden_file}")
+        eval_client = Evaluations(app_name=app_name)
+        eval_utils = EvalUtils(app_name=app_name)
+
+        df_initial = eval_utils.evals_to_dataframe().get(
+            "summary", pd.DataFrame()
+        )
+        old_result_ids = set()
+        if not df_initial.empty and "eval_result_id" in df_initial.columns:
+            old_result_ids = set(df_initial["eval_result_id"].unique())
+
+        print(f"Pushing golden file {golden_file}")
+        eval_client.push_evaluation(file_path=golden_file, app_name=app_name)
+
+        prefix = os.path.splitext(os.path.basename(golden_file))[0]
+        all_evals = eval_client.list_evaluations(app_name=app_name)
+        evaluations_to_run = [
+            e.name for e in all_evals if e.display_name.startswith(prefix)
+        ]
+
+        if evaluations_to_run:
+            print(f"Running evaluations: {evaluations_to_run}")
+            eval_client.run_evaluation(
+                evaluations=evaluations_to_run, app_name=app_name
+            )
+            df_new_run = wait_for_evaluation_completion(
+                eval_utils,
+                old_result_ids,
+                app_name,
+                expected_count=len(evaluations_to_run),
+            )
+            if not df_new_run.empty and "eval_result_id" in df_new_run.columns:
+                new_ids = (
+                    set(df_new_run["eval_result_id"].unique()) - old_result_ids
+                )
+                if new_ids:
+                    new_id = list(new_ids)[0]
+                    results["golden"] = load_golden_results(new_id, app_name)
+
+    # 4. Local simulations
+    if not simulation_dir:
+        simulation_dir = "evals/simulations/"
+    if app_name and os.path.exists(simulation_dir):
+        sim_files = glob.glob(os.path.join(simulation_dir, "*.yaml"))
+        if sim_files:
+            print(f"Running {len(sim_files)} simulations")
+            sim_evals = SimulationEvals(app_name=app_name)
+            test_cases = []
+            for sf in sim_files:
+                with open(sf) as f:
+                    cases = yaml.safe_load(f)
+                    if isinstance(cases, list):
+                        test_cases.extend(cases)
+            if test_cases:
+                sim_results = sim_evals.run_simulations(test_cases)
+                results["simulation"] = sim_results
+                if evals_dir:
+                    save_path = os.path.join(evals_dir, "sim_results.json")
+                    with open(save_path, "w") as f:
+                        json.dump(sim_results, f, indent=2)
+
+    return results

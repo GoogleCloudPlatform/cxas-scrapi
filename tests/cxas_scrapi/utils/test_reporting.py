@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import os
 from unittest.mock import mock_open, patch
+
+import pandas as pd
 
 from cxas_scrapi.utils.reporting import (
     _escape,
@@ -20,6 +24,8 @@ from cxas_scrapi.utils.reporting import (
     _format_trace_line,
     _resolve_tool_name,
     _upload_to_gcs,
+    generate_combined_html_report,
+    generate_combined_report_from_dir,
     generate_html_report,
 )
 
@@ -167,3 +173,159 @@ def test_format_trace_line():
   line = "Tool Call: path/to/tool with args {}"
   assert "GreatTool" in _format_trace_line(line, tools_map)
   assert "Unrelated" in _format_trace_line("Unrelated", tools_map)
+
+
+def test_generate_combined_html_report(tmp_path):
+    output_path = os.path.join(tmp_path, "report.html")
+
+    golden_results = [{
+        "name": "test_golden",
+        "passed": True,
+        "turns": [{
+            "index": 1,
+            "semantic_score": 4,
+            "comparisons": [{
+                "outcome": "PASS",
+                "type": "text",
+                "expected": "hello",
+                "actual": "hello"
+            }]
+        }],
+        "expectations": [],
+        "session_id": "sess_1",
+        "session_parameters": {},
+        "duration_s": 1.0
+    }]
+
+    sim_results = [{
+        "name": "test_sim",
+        "passed": True,
+        "run": 1,
+        "duration_s": 2.0,
+        "goals": 1,
+        "expectations": 0,
+        "turns": 1,
+        "session_id": "sess_2",
+        "session_parameters": {},
+        "step_details": [{
+            "goal": "test goal",
+            "success_criteria": "test criteria",
+            "status": "Completed",
+            "justification": "done"
+        }],
+        "expectation_details": [],
+        "detailed_trace": ["User: hi", "Agent Text: hello"]
+    }]
+
+    tool_results = [{
+        "name": "test_tool",
+        "tool": "my_tool",
+        "passed": True,
+        "status": "PASSED",
+        "latency_ms": 50,
+        "errors": ""
+    }]
+
+    callback_results = [{
+        "name": "test_callback",
+        "agent": "my_agent",
+        "callback_type": "my_callback",
+        "passed": True,
+        "status": "PASSED",
+        "error": ""
+    }]
+
+    generate_combined_html_report(
+        golden_results=golden_results,
+        sim_results=sim_results,
+        tool_results=tool_results,
+        callback_results=callback_results,
+        output_path=output_path,
+        app_name="projects/test-proj/locations/global/apps/test-app"
+    )
+
+    assert os.path.exists(output_path)
+    with open(output_path, "r") as f:
+        content = f.read()
+        assert "Combined Eval Report" in content
+        assert "test_golden" in content
+        assert "test_sim" in content
+        assert "test_tool" in content
+        assert "test_callback" in content
+
+
+def test_generate_combined_report_from_dir(tmp_path):
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    # Create dummy files
+    sim_file = evals_dir / "sim_results.json"
+    sim_file.write_text(json.dumps([{"name": "test_sim", "passed": True}]))
+
+    tool_file = evals_dir / "tool_results.csv"
+    df_tool = pd.DataFrame([{
+        "test_name": "test_tool",
+        "tool": "my_tool",
+        "status": "PASSED",
+        "latency (ms)": 50,
+        "errors": ""
+    }])
+    df_tool.to_csv(tool_file, index=False)
+
+    callback_file = evals_dir / "callback_results.csv"
+    df_callback = pd.DataFrame([{
+        "test_name": "test_callback",
+        "agent_name": "my_agent",
+        "callback_type": "my_callback",
+        "status": "PASSED",
+        "error_message": ""
+    }])
+    df_callback.to_csv(callback_file, index=False)
+
+    output_path = evals_dir / "combined_report.html"
+
+    generate_combined_report_from_dir(
+        evals_dir=str(evals_dir),
+        output_path=str(output_path)
+    )
+
+    assert os.path.exists(output_path)
+    with open(output_path, "r") as f:
+        content = f.read()
+        assert "Combined Eval Report" in content
+        assert "test_sim" in content
+        assert "test_tool" in content
+        assert "test_callback" in content
+
+
+def test_generate_combined_report_from_dir_include_all(tmp_path):
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    # Create dummy files
+    sim_file = evals_dir / "sim_results.json"
+    sim_file.write_text(json.dumps([{"name": "test_sim", "passed": True}]))
+
+    tool_file = evals_dir / "tool_results.csv"
+    df_tool = pd.DataFrame([{
+        "test_name": "test_tool",
+        "tool": "my_tool",
+        "status": "PASSED",
+        "latency (ms)": 50,
+        "errors": ""
+    }])
+    df_tool.to_csv(tool_file, index=False)
+
+    output_path = evals_dir / "combined_report.html"
+
+    generate_combined_report_from_dir(
+        evals_dir=str(evals_dir),
+        output_path=str(output_path),
+        include=["all"]
+    )
+
+    assert os.path.exists(output_path)
+    with open(output_path, "r") as f:
+        content = f.read()
+        assert "test_sim" in content
+        assert "test_tool" in content
