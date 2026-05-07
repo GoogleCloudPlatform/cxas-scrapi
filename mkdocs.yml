@@ -172,6 +172,7 @@ nav:
       - Installing Skills: guides/skills/installation.md
       - Agent Foundry: guides/skills/agent-foundry.md
       - Build Skill: guides/skills/build.md
+      - Review Skill: guides/skills/review.md
       - Run Skill: guides/skills/run.md
       - Debug Skill: guides/skills/debug.md
       - Hooks Reference: guides/skills/hooks.md

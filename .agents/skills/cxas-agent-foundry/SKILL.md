@@ -63,8 +63,10 @@ Read what the user wants and load the appropriate sub-skill:
 | "Why is this eval failing", "get to 90%" | Debug | `references/debug.md` |
 | "Fix the failing evals", "debug the agent" | Debug | `references/debug.md` |
 | "Tool test is failing", "callback test broke" | Debug | `references/debug.md` |
+| "Review the agent prompts", "analyze instruction logic", "lint prompts" | Review | `references/review/review.md` |
+| "Locate semantic issues", "audit instructions" | Review | `references/review/review.md` |
 
-If the intent is unclear, ask: "Are you looking to **build/create** evals, **run** them, or **debug** failures?"
+If the intent is unclear, ask: "Are you looking to **build/create** evals, **run** them, **debug** failures, or **review** prompt instructions?"
 
 ## Step Tracking
 

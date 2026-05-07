@@ -56,12 +56,13 @@ Skills are also registered in `.gemini/settings.json`. Invoke from Gemini CLI wi
 
 ## The main skill: `cxas-agent-foundry`
 
-`cxas-agent-foundry` is the composite skill that covers the full agent development lifecycle. It's actually an umbrella for three sub-skills:
+`cxas-agent-foundry` is the composite skill that covers the full agent development lifecycle. It's actually an umbrella for four sub-skills:
 
 | Sub-skill | What it does |
 |-----------|-------------|
 | **Build** | Runs a PRD interview, defines test cases, creates evals, and creates the agent on the platform |
-| **Run** | Runs all four eval types and generates a combined report |
+| **Review**| Audits instructions for logic issues, security risks, and consistency |
+| **Run**   | Runs all four eval types and generates a combined report |
 | **Debug** | Analyzes failures, proposes fixes, and iterates until a target pass rate is achieved |
 
 The foundry skill acts as a router — when you invoke it, it checks the current state of the environment and routes you to the appropriate sub-skill.
