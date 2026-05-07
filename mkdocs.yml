@@ -233,4 +233,5 @@ nav:
     - contributing/index.md
     - Development Setup: contributing/development-setup.md
     - Code Style: contributing/code-style.md
+    - Skill Evals: contributing/skill-evals.md
     - Submitting PRs: contributing/pull-requests.md
