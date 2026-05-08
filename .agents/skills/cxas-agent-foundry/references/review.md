@@ -1,14 +1,18 @@
 # Agent Reviewer
 A set of rules and automated procedures for identifying semantic issues, inconsistencies, and logical design flaws in conversational agent instructions and prompt logic.
 
-# Read Issue Definitions
-Prior to starting, read all of the issue definitions below:
+# CRITICAL - Reference files
+Prior to starting, read all of the issue definitions and design guide below:
 
 | Category | Load |
 |-------------|-------|
-| Instruction Logic | `instruction-logic.md` |
-| Security | `security.md` |
-| Multi-Agent | `multi-agent.md` |
+| Instruction Logic Issue Definitions | `instruction-logic.md` |
+| Security Issue Definitions | `security.md` |
+| Multi-Agent Issue Definitions | `multi-agent.md` |
+| GECX Design Guide (DES) | `gecx-design-guide.md` |
+
+For any design that you find that does not follow GECX Design Guide best practices, note it down as an issue with a prefix of DES.
+
 
 ## Issue Severity Definitions
 For each of the issues, the severity is defined as follows. If the issue already has a predefined severity, use it. If it has a range of severity such as Medium-Critical, determine the appropriate severity level.

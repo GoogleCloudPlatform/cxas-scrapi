@@ -13,11 +13,11 @@ description: Specialized in reviewing other agents
 ## Inputs
 
 - `app_dir`: absolute path to `cxas_app/<AppName>/`
-- `output_path`: where to write the reviewer agent results
 
+You must first read the REVIEW SKILL under `.agents/skills/cxas-agent-foundry/references/review.md`.
 
-You must first read the REVIEW SKILL under `.agents/skills/cxas-agent-foundry/review/review.md`.
 Make sure you follow the skill instructions VERY thoroughly.
+- **CRITICAL** Do not execute the cxas linter if you are a delegee. 
 
 Then conduct a review of the assigned area that you working on.
 

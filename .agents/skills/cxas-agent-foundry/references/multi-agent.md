@@ -19,3 +19,16 @@ Agent A upon receiving the request, sees that condition x is true and hands it b
 
 # At this point, a circular handoff is created and will continue until the request is completed or a safety stop is triggered
 ```
+
+### MULT002: State Variables Synchronization Issues
+
+**Severity:** High
+
+**Description:** When multiple agents are involved in a process, the state variables must be handled between agents correctly and consistently.
+
+
+#### Invalid Example - Unexpected variable modification
+```text
+Agent A modifies variable_a during the conversation, then invokes Agent B
+Agent B expects variable_a to have different contents than what Agent A set it to. 
+```

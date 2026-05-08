@@ -28,4 +28,20 @@ Identify any logic issues in any prompt to the model in a markdown table with th
 Based on your analysis, provide detailed observations and recommendations.
 </section>
 
+<section>
+## GECX Design Guide Review (DES)
+Add observations and recommendations here related to the GECX Design Guide
+</section>
+
+If there is a multi-agent system analysis, add the following section:
+<section>
+## Multi-Agent System Analysis
+Add observations and recommendations here
+</section>
+
+
 ## Linter Results
+```text
+The linter results are appended here, make sure to add the closing backticks.
+
+```
