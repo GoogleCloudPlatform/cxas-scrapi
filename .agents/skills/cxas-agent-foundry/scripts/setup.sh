@@ -151,6 +151,31 @@ else
   pip install rich InquirerPy --quiet 2>/dev/null
 fi
 
+# --- Step 2.5: Ensure gemini-cli can discover the skill's sub-agents ---
+# gemini-cli scans .gemini/agents/ for sub-agent definitions. Our canonical
+# location is .agents/skills/cxas-agent-foundry/agents/. Symlink so gemini sees them.
+GEMINI_AGENTS_DIR="$WORKSPACE_ROOT/.gemini/agents"
+SKILL_AGENTS_DIR="$SKILL_ROOT/agents"
+if [ -d "$SKILL_AGENTS_DIR" ]; then
+  mkdir -p "$WORKSPACE_ROOT/.gemini"
+  if [ -L "$GEMINI_AGENTS_DIR" ]; then
+    # Already a symlink; check target
+    current_target="$(readlink "$GEMINI_AGENTS_DIR")"
+    if [ "$current_target" != "$SKILL_AGENTS_DIR" ]; then
+      echo "  Updating $GEMINI_AGENTS_DIR symlink → $SKILL_AGENTS_DIR"
+      rm "$GEMINI_AGENTS_DIR"
+      ln -s "$SKILL_AGENTS_DIR" "$GEMINI_AGENTS_DIR"
+    fi
+  elif [ -e "$GEMINI_AGENTS_DIR" ]; then
+    echo "  WARN: $GEMINI_AGENTS_DIR exists but is not a symlink. Sub-agent discovery may fail."
+    echo "        Move/remove it and re-run, or symlink manually:"
+    echo "          ln -s $SKILL_AGENTS_DIR $GEMINI_AGENTS_DIR"
+  else
+    echo "  Linking $GEMINI_AGENTS_DIR → $SKILL_AGENTS_DIR (so gemini-cli discovers sub-agents)"
+    ln -s "$SKILL_AGENTS_DIR" "$GEMINI_AGENTS_DIR"
+  fi
+fi
+
 # --- Step 3: Run configuration wizard ---
 if [ "$SKIP_CONFIG" = false ]; then
   echo "[3/3] Running configuration wizard..."

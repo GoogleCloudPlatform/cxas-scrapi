@@ -39,14 +39,17 @@ from cxas_scrapi.cli.app import (
 )
 from cxas_scrapi.cli.create_local import handle_local_create
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
+from cxas_scrapi.cli.migration_cli import MigrationCLI
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
 from cxas_scrapi.core.github import init_github_action
 from cxas_scrapi.evals.callback_evals import CallbackEvals
 from cxas_scrapi.evals.tool_evals import ToolEvals
+from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
 from cxas_scrapi.utils.eval_utils import EvalUtils
 
 logger = logging.getLogger(__name__)
+
 
 
 def export_eval(args: argparse.Namespace) -> None:
@@ -75,6 +78,13 @@ def export_eval(args: argparse.Namespace) -> None:
     except Exception as e:
         print(f"Failed to export evaluation: {e}")
         sys.exit(1)
+
+
+def run_migration_dashboard(args: argparse.Namespace) -> None:
+    """Handles the 'dfcx-cxas migrate' command."""
+    dashboard = MigrationCLI()
+    cx_api = ConversationalAgentsAPI()
+    dashboard.run(default_agent_name=args.default_agent_name, cx_api=cx_api)
 
 
 def push_eval(args: argparse.Namespace) -> None:
@@ -778,6 +788,26 @@ def get_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(
         title="Commands", dest="command", required=True
     )
+
+    # Parser for 'migrate'
+    parser_migrate = subparsers.add_parser(
+        "migrate", help="Migration tools."
+    )
+    migrate_subparsers = parser_migrate.add_subparsers(
+        title="Migration Commands", dest="migrate_command", required=True
+    )
+
+    parser_migrate_dfcx = migrate_subparsers.add_parser(
+        "dfcx", help="Launch the interactive migration dashboard for DFCX."
+    )
+    parser_migrate_dfcx.add_argument(
+        "--default-agent-name",
+        default="migrated-agent",
+        help="Default name for the target agent.",
+    )
+    parser_migrate_dfcx.set_defaults(func=run_migration_dashboard)
+    # TODO: Add flags for non-interactive mode (e.g., --headless, --config)
+    # to bypass the interactive dashboard.
 
     # Parser for 'init-github-action'
     parser_init_gh = subparsers.add_parser(

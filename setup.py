@@ -96,6 +96,7 @@ setup(
         "graphviz",
         "rich",
         "google-cloud-dialogflow-cx",
+        "google-cloud-storage",
         "nest_asyncio",
     ],
     entry_points={

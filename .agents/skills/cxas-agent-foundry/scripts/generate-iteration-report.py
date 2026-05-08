@@ -39,6 +39,22 @@ ITERATIONS_DIR = get_project_path("eval-reports", "iterations")
 DIFF_EXTENSIONS = {".txt", ".py"}
 
 
+def _load_triage_module():
+    """Load triage-results.py (hyphenated, can't be imported normally)."""
+    try:
+        import triage_results  # type: ignore
+        return triage_results
+    except ImportError:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "triage_results",
+            os.path.join(os.path.dirname(__file__), "triage-results.py"),
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -193,26 +209,11 @@ def _fetch_eval_results() -> Optional[Dict[str, Any]]:
         return None
 
     # Import triage helpers — they live in the same scripts directory
-    try:
-        from triage_results import (
-            get_golden_evals,
-            get_results_for_eval,
-            get_latest_run_results,
-            triage_results,
-        )
-    except ImportError:
-        # Fall back to importing with hyphenated module workaround
-        import importlib
-        spec = importlib.util.spec_from_file_location(
-            "triage_results",
-            os.path.join(os.path.dirname(__file__), "triage-results.py"),
-        )
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        get_golden_evals = mod.get_golden_evals
-        get_results_for_eval = mod.get_results_for_eval
-        get_latest_run_results = mod.get_latest_run_results
-        triage_results = mod.triage_results
+    mod = _load_triage_module()
+    get_golden_evals = mod.get_golden_evals
+    get_results_for_eval = mod.get_results_for_eval
+    get_latest_run_results = mod.get_latest_run_results
+    triage_results = mod.triage_results
 
     # Build eval name lookup
     try:
@@ -496,6 +497,114 @@ def _get_prev_results(iteration: int) -> Optional[Tuple[int, int]]:
         return None
 
 
+def _load_previous_per_eval(iteration: int) -> Dict[Tuple[str, str], Dict[str, int]]:
+    """Load previous iteration's per_eval, keyed by (eval_type, eval_name).
+
+    Returns ``{(eval_type, eval_name): {"pass": int, "total": int}}`` —
+    only the fields needed to determine "was previously passing." Empty
+    dict if no prior iteration exists or the results.json is malformed.
+    """
+    if iteration <= 1:
+        return {}
+    prev_results = os.path.join(_iteration_dir(iteration - 1), "results.json")
+    if not os.path.isfile(prev_results):
+        return {}
+    try:
+        with open(prev_results) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    out: Dict[Tuple[str, str], Dict[str, int]] = {}
+    by_type = data.get("per_eval_by_type")
+    if isinstance(by_type, dict):
+        for eval_type, per_eval in by_type.items():
+            if not isinstance(per_eval, dict):
+                continue
+            for name, info in per_eval.items():
+                if not isinstance(info, dict):
+                    continue
+                out[(eval_type, name)] = {
+                    "pass": int(info.get("pass", 0)),
+                    "total": int(info.get("total", 0)),
+                }
+    else:
+        # Backward compat: old results.json format only had golden per_eval.
+        per_eval = data.get("per_eval", {})
+        if isinstance(per_eval, dict):
+            for name, info in per_eval.items():
+                if not isinstance(info, dict):
+                    continue
+                out[("golden", name)] = {
+                    "pass": int(info.get("pass", 0)),
+                    "total": int(info.get("total", 0)),
+                }
+    return out
+
+
+def _load_previous_typed_pass_rates(iteration: int) -> Dict[str, Tuple[int, int]]:
+    """Load prior iteration's pass/total per eval type.
+
+    Returns ``{type: (passed, total)}`` for each type present in the prior
+    iteration's ``per_eval_by_type`` block. Empty dict on missing/legacy data.
+    Used by ``_do_auto_revert`` to detect tool/callback test regressions
+    (golden uses ``_get_prev_results`` for back-compat with older iterations).
+    """
+    if iteration <= 1:
+        return {}
+    prev_results = os.path.join(_iteration_dir(iteration - 1), "results.json")
+    if not os.path.isfile(prev_results):
+        return {}
+    try:
+        with open(prev_results) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    out: Dict[str, Tuple[int, int]] = {}
+    by_type = data.get("per_eval_by_type")
+    if not isinstance(by_type, dict):
+        return out
+    for eval_type, per_eval in by_type.items():
+        if not isinstance(per_eval, dict):
+            continue
+        total = sum(int(info.get("total", 0)) for info in per_eval.values()
+                    if isinstance(info, dict))
+        passed = sum(int(info.get("pass", 0)) for info in per_eval.values()
+                     if isinstance(info, dict))
+        if total > 0:
+            out[eval_type] = (passed, total)
+    return out
+
+
+def _extract_iteration_message(iteration: int) -> Optional[str]:
+    """Pull the ``--message`` for ``iteration`` from experiment_log.md.
+
+    The log is structured as ``## Iteration N — YYYY-MM-DD`` followed by a
+    ``**Change:** <message>`` line. Returns the message text or None.
+    """
+    log_path = get_project_path("experiment_log.md")
+    if not os.path.isfile(log_path):
+        return None
+    target_header = f"## Iteration {iteration} "
+    capture_next = False
+    try:
+        with open(log_path) as f:
+            for line in f:
+                if line.startswith(target_header) or line.startswith(f"## Iteration {iteration}\n"):
+                    capture_next = True
+                    continue
+                if capture_next:
+                    stripped = line.strip()
+                    if stripped.startswith("**Change:**"):
+                        return stripped[len("**Change:**"):].strip()
+                    # If we hit the next iteration header before finding Change:, give up.
+                    if stripped.startswith("## Iteration "):
+                        return None
+    except OSError:
+        return None
+    return None
+
+
 def _compute_status(iteration: int, passed: int, total: int) -> Tuple[str, int, Optional[str]]:
     """Compute status, delta, and comparison string.
 
@@ -518,34 +627,67 @@ def _compute_status(iteration: int, passed: int, total: int) -> Tuple[str, int, 
 
 def _get_latest_callback_results() -> Optional[Tuple[int, int]]:
     """Read callback test results and return (passed, total)."""
-    path = get_project_path("eval-reports", "callback_test_results.json")
-    if not os.path.isfile(path):
+    rows = _load_callback_test_rows()
+    if not rows:
         return None
-    try:
-        with open(path) as f:
-            data = json.load(f)
-        results = data if isinstance(data, list) else data.get("results", [])
-        total = len(results)
-        passed = sum(1 for r in results if not r.get("error_message"))
-        return (passed, total) if total > 0 else None
-    except (json.JSONDecodeError, OSError):
-        return None
+    total = len(rows)
+    passed = sum(1 for r in rows if not r.get("error_message"))
+    return (passed, total) if total > 0 else None
 
 
 def _get_latest_tool_test_results() -> Optional[Tuple[int, int]]:
     """Read tool test results and return (passed, total)."""
-    path = get_project_path("eval-reports", "tool_test_results.json")
-    if not os.path.isfile(path):
+    rows = _load_tool_test_rows()
+    if not rows:
         return None
+    total = len(rows)
+    passed = sum(1 for r in rows if r.get("passed", False) or r.get("status") == "PASSED")
+    return (passed, total) if total > 0 else None
+
+
+def _load_callback_test_rows() -> list:
+    """Load raw callback_test_results.json rows for downstream triage."""
+    path = get_project_path("eval-reports", "callback_test_results.json")
+    if not os.path.isfile(path):
+        return []
     try:
         with open(path) as f:
             data = json.load(f)
-        results = data if isinstance(data, list) else data.get("results", [])
-        total = len(results)
-        passed = sum(1 for r in results if r.get("passed", False) or r.get("status") == "PASSED")
-        return (passed, total) if total > 0 else None
+        return data if isinstance(data, list) else data.get("results", [])
     except (json.JSONDecodeError, OSError):
-        return None
+        return []
+
+
+def _load_tool_test_rows() -> list:
+    """Load raw tool_test_results.json rows for downstream triage."""
+    path = get_project_path("eval-reports", "tool_test_results.json")
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else data.get("results", [])
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _load_sim_rows() -> list:
+    """Load the most recent sim_results_*.json results array."""
+    reports_dir = get_project_path("eval-reports")
+    if not os.path.isdir(reports_dir):
+        return []
+    sim_files = sorted(
+        [f for f in os.listdir(reports_dir) if f.startswith("sim_results_") and f.endswith(".json")],
+        reverse=True,
+    )
+    if not sim_files:
+        return []
+    try:
+        with open(os.path.join(reports_dir, sim_files[0])) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else data.get("results", [])
+    except (json.JSONDecodeError, OSError):
+        return []
 
 
 def _next_log_iteration() -> int:
@@ -740,60 +882,87 @@ def _get_latest_sim_pass_rate() -> Optional[Tuple[int, int]]:
         return None
 
 
+def _format_regressions(
+    golden_regression: bool, golden_prev_pct: float, golden_curr_pct: float, agent_failures: int,
+    tool_regression: bool, tool_prev: Optional[Tuple[int, int]], tool_now: Optional[Tuple[int, int]],
+    cb_regression: bool, cb_prev: Optional[Tuple[int, int]], cb_now: Optional[Tuple[int, int]],
+) -> str:
+    """Build a human-readable summary of which eval types regressed."""
+    parts = []
+    if golden_regression:
+        parts.append(
+            f"goldens {golden_prev_pct:.0f}% → {golden_curr_pct:.0f}% "
+            f"({agent_failures} real failure(s))"
+        )
+    if tool_regression and tool_prev and tool_now:
+        parts.append(f"tool tests {tool_prev[0]}/{tool_prev[1]} → {tool_now[0]}/{tool_now[1]}")
+    if cb_regression and cb_prev and cb_now:
+        parts.append(f"callback tests {cb_prev[0]}/{cb_prev[1]} → {cb_now[0]}/{cb_now[1]}")
+    return ", ".join(parts) if parts else "(none)"
+
+
 def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any]]):
     """Revert cxas_app/ to previous iteration snapshot if a REAL regression occurred.
 
-    REVERT CONDITIONS (ALL must be true):
-    1. Golden pass rate dropped compared to previous iteration
-    2. The golden failures are REAL agent issues (TOOL_MISSING, TEXT_MISMATCH, EXPECTATION_FAIL),
-       not platform issues (TIMEOUT, SCORES_PASS_BUT_FAIL)
-    3. Sim pass rate also dropped or stayed the same (if sim data is available)
+    Triggers on ANY of these regressions (each gated independently):
+      - **Goldens** dropped AND failures are REAL agent issues (TOOL_MISSING,
+        TEXT_MISMATCH, EXPECTATION_FAIL) — not platform issues (TIMEOUT,
+        SCORES_PASS_BUT_FAIL, UNKNOWN).
+      - **Tool tests** dropped (deterministic — no platform-issue exclusion).
+      - **Callback tests** dropped (deterministic — same).
 
-    DO NOT REVERT when:
-    - First iteration (baseline)
-    - Golden pass rate improved or stayed the same
-    - All golden failures are platform issues
-    - Goldens regressed BUT sims improved (mixed signal — investigate, don't revert)
-    - No triage data available
+    Sims act as a counter-signal regardless of which type triggered: if sim
+    pass rate improved while something else regressed, that's a mixed signal
+    (the change probably helped real conversations) — investigate, don't
+    revert. Sims do NOT trigger a revert on their own (too noisy: sim user
+    is itself stochastic).
 
     Returns True if a revert was performed, False otherwise.
     """
     if not triage:
         return False
 
-    passed = triage.get("passed", 0)
-    total = triage.get("total", 0)
-
     prev = _get_prev_results(iteration)
     if prev is None:
         return False
 
     prev_passed, prev_total = prev
+    passed = triage.get("passed", 0)
+    total = triage.get("total", 0)
     prev_pct = 100 * prev_passed / prev_total if prev_total else 0
     curr_pct = 100 * passed / total if total else 0
 
-    if curr_pct >= prev_pct:
-        return False
-
-    # Check failure categories — only revert on REAL agent failures
     failures = triage.get("failures", {})
     agent_failures = (len(failures.get("TOOL_MISSING", []))
                       + len(failures.get("TEXT_MISMATCH", []))
                       + len(failures.get("EXPECTATION_FAIL", [])))
-    platform_failures = (len(failures.get("TIMEOUT", []))
-                        + len(failures.get("SCORES_PASS_BUT_FAIL", []))
-                        + len(failures.get("UNKNOWN", [])))
 
-    if agent_failures == 0:
-        print(f"Goldens dropped ({prev_pct:.0f}% → {curr_pct:.0f}%) but all "
-              f"{platform_failures} failure(s) are platform issues. "
-              f"NOT reverting — not an agent regression.")
+    golden_dropped = curr_pct < prev_pct
+    golden_regression = golden_dropped and agent_failures > 0
+
+    # Foundation regressions: any drop in pass count is a real bug — these
+    # tests are deterministic, no platform-issue category to exclude.
+    prev_typed = _load_previous_typed_pass_rates(iteration)
+    tool_now = _get_latest_tool_test_results()
+    cb_now = _get_latest_callback_results()
+    tool_prev = prev_typed.get("tool_test")
+    cb_prev = prev_typed.get("callback_test")
+    tool_regression = bool(tool_now and tool_prev and tool_now[0] < tool_prev[0])
+    cb_regression = bool(cb_now and cb_prev and cb_now[0] < cb_prev[0])
+
+    if not (golden_regression or tool_regression or cb_regression):
+        if golden_dropped and agent_failures == 0:
+            platform_failures = (len(failures.get("TIMEOUT", []))
+                                 + len(failures.get("SCORES_PASS_BUT_FAIL", []))
+                                 + len(failures.get("UNKNOWN", [])))
+            print(f"Goldens dropped ({prev_pct:.0f}% → {curr_pct:.0f}%) but all "
+                  f"{platform_failures} failure(s) are platform issues. "
+                  f"NOT reverting — not an agent regression.")
         return False
 
-    # Check sims — if sims improved while goldens regressed, don't auto-revert
-    # (mixed signal means the change helped real conversations but broke a golden expectation)
-    prev_results_path = os.path.join(_iteration_dir(iteration - 1), "results.json")
+    # Sim counter-signal applies to ALL regression types.
     prev_sim = None
+    prev_results_path = os.path.join(_iteration_dir(iteration - 1), "results.json")
     if os.path.isfile(prev_results_path):
         try:
             with open(prev_results_path) as f:
@@ -801,19 +970,23 @@ def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any
             prev_sim = prev_data.get("sim_pass_rate")
         except (json.JSONDecodeError, OSError):
             pass
-
     curr_sim = _get_latest_sim_pass_rate()
     if prev_sim is not None and curr_sim is not None:
         prev_sim_pct = 100 * prev_sim[0] / prev_sim[1] if prev_sim[1] else 0
         curr_sim_pct = 100 * curr_sim[0] / curr_sim[1] if curr_sim[1] else 0
         if curr_sim_pct > prev_sim_pct:
-            print(f"Goldens regressed ({prev_pct:.0f}% → {curr_pct:.0f}%) but sims improved "
+            regs = _format_regressions(
+                golden_regression, prev_pct, curr_pct, agent_failures,
+                tool_regression, tool_prev, tool_now,
+                cb_regression, cb_prev, cb_now,
+            )
+            print(f"{regs} regressed but sims improved "
                   f"({prev_sim_pct:.0f}% → {curr_sim_pct:.0f}%). "
                   f"NOT reverting — mixed signal. Investigate: the change may help real "
-                  f"conversations but the golden expectation may need updating.")
+                  f"conversations but the test expectation may need updating.")
             return False
 
-    # Both regressed (or sims unavailable) + real agent failures — revert
+    # Real regression + no sim improvement → revert.
     prev_snapshot = _snapshot_dir(iteration - 1)
     app_dir = _get_app_dir(config)
     if not os.path.isdir(prev_snapshot):
@@ -821,11 +994,15 @@ def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any
         return False
 
     shutil.copytree(prev_snapshot, app_dir, dirs_exist_ok=True)
+    regs = _format_regressions(
+        golden_regression, prev_pct, curr_pct, agent_failures,
+        tool_regression, tool_prev, tool_now,
+        cb_regression, cb_prev, cb_now,
+    )
     sim_note = ""
-    if curr_sim is not None:
-        sim_note = f" Sims also {'dropped' if prev_sim and curr_sim[0] < prev_sim[0] else 'unavailable for comparison'}."
-    print(f"AGENT REGRESSION: Goldens dropped {prev_pct:.0f}% → {curr_pct:.0f}% "
-          f"with {agent_failures} real failure(s).{sim_note} "
+    if curr_sim is not None and prev_sim is not None:
+        sim_note = f" Sims {'dropped' if curr_sim[0] < prev_sim[0] else 'flat'}."
+    print(f"REGRESSION: {regs}.{sim_note} "
           f"Reverted {app_dir}/ to iteration {iteration - 1} snapshot.")
 
     # Update experiment_log.md — replace the status line for this iteration
@@ -862,7 +1039,294 @@ def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any
     return True
 
 
-def do_report(config: dict, iteration: Optional[int] = None, message: Optional[str] = None, auto_revert: bool = False):
+PLATFORM_FAILURE_CATEGORIES = ("TIMEOUT", "EVAL_ERROR", "SCORES_PASS_BUT_FAIL")
+
+
+def _was_previously_passing(prev_per_eval: Dict[Tuple[str, str], Dict[str, int]],
+                            eval_type: str, eval_name: str) -> bool:
+    """True iff the eval existed in the prior iteration and ran 100% pass."""
+    info = prev_per_eval.get((eval_type, eval_name))
+    if info is None:
+        return False
+    total = info.get("total", 0)
+    if total <= 0:
+        return False
+    return info.get("pass", 0) == total
+
+
+def _split_clusters_by_regression(
+    clusters: List[Dict[str, Any]],
+    iteration: Optional[int],
+) -> List[Dict[str, Any]]:
+    """Tag clusters with regression metadata and split mixed clusters in two.
+
+    A cluster member is a "regression" iff it passed every run in the prior
+    iteration. Three outcomes per input cluster:
+
+    - **Pure new failures** (none regressed): cluster is unchanged except for
+      ``regression_status: "new"``.
+    - **Pure regressions** (every member regressed): cluster is unchanged
+      except for ``regression_status: "regression"`` + ``regression_context``,
+      and ``priority_score`` is bumped (regressions signal an active fix
+      conflict and deserve attention before new failures of the same severity).
+    - **Mixed**: split into two clusters with the same discriminator — one
+      "regression", one "new". Both retain the same category and discriminator;
+      the main thread dispatches them as two distinct triage tasks.
+    """
+    if iteration is None or iteration <= 1:
+        # Baseline iteration — nothing to compare against.
+        for c in clusters:
+            c["regression_status"] = "new"
+        return clusters
+
+    prev_per_eval = _load_previous_per_eval(iteration)
+    if not prev_per_eval:
+        for c in clusters:
+            c["regression_status"] = "new"
+        return clusters
+
+    prior_message = _extract_iteration_message(iteration - 1)
+    prior_snapshot = _snapshot_dir(iteration - 1)
+    regression_context_template = {
+        "previous_iteration": iteration - 1,
+        "previous_message": prior_message,
+        "previous_snapshot_dir": prior_snapshot if os.path.isdir(prior_snapshot) else None,
+    }
+
+    out: List[Dict[str, Any]] = []
+    for cluster in clusters:
+        eval_type = cluster.get("eval_type", "golden")
+        regressed = [n for n in cluster.get("eval_names", [])
+                     if _was_previously_passing(prev_per_eval, eval_type, n)]
+        new_failing = [n for n in cluster.get("eval_names", []) if n not in regressed]
+
+        if regressed and not new_failing:
+            cluster["regression_status"] = "regression"
+            cluster["regressed_evals"] = regressed
+            cluster["regression_context"] = dict(regression_context_template)
+            cluster["priority_score"] = cluster.get("priority_score", 0) + 50_000
+            out.append(cluster)
+        elif new_failing and not regressed:
+            cluster["regression_status"] = "new"
+            out.append(cluster)
+        else:
+            # Mixed: split into one regression cluster + one new-failure cluster.
+            reg_cluster = dict(cluster)
+            reg_cluster["eval_names"] = regressed
+            reg_cluster["eval_count"] = len(regressed)
+            reg_cluster["regression_status"] = "regression"
+            reg_cluster["regressed_evals"] = regressed
+            reg_cluster["regression_context"] = dict(regression_context_template)
+            reg_cluster["priority_score"] = cluster.get("priority_score", 0) + 50_000
+            if "eval_pass_rates" in cluster:
+                reg_cluster["eval_pass_rates"] = {
+                    k: v for k, v in cluster["eval_pass_rates"].items() if k in regressed
+                }
+
+            new_cluster = dict(cluster)
+            new_cluster["eval_names"] = new_failing
+            new_cluster["eval_count"] = len(new_failing)
+            new_cluster["regression_status"] = "new"
+            if "eval_pass_rates" in cluster:
+                new_cluster["eval_pass_rates"] = {
+                    k: v for k, v in cluster["eval_pass_rates"].items() if k in new_failing
+                }
+
+            out.append(reg_cluster)
+            out.append(new_cluster)
+    return out
+
+
+def _build_run_summary(
+    triage: Optional[Dict[str, Any]],
+    reverted: bool,
+    revert_reason: Optional[str],
+    message: Optional[str],
+    iteration: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build the structured run summary that callers consume programmatically.
+
+    Triages failures from all four eval types (golden, sim, tool_test,
+    callback_test) into one unified `failure_clusters` pool tagged with
+    `eval_type`, so the triage-failure sub-agent dispatch sees every failure
+    mode regardless of type. Foundation tests (tool/callback) outrank
+    application tests (golden/sim) of equivalent severity via the
+    `category_priority` dict.
+    """
+    g_total = triage.get("total", 0) if triage else 0
+    g_passed = triage.get("passed", 0) if triage else 0
+    failures = triage.get("failures", {}) if triage else {}
+
+    # Run typed-triage on the other three eval types. Each returns the same
+    # shape as triage_results() so the merge below is uniform.
+    tr = _load_triage_module()
+    sim_rows = _load_sim_rows()
+    tool_rows = _load_tool_test_rows()
+    cb_rows = _load_callback_test_rows()
+    sim_triage = tr.triage_sim_results(sim_rows) if sim_rows else None
+    tool_triage = tr.triage_tool_test_results(tool_rows) if tool_rows else None
+    cb_triage = tr.triage_callback_test_results(cb_rows) if cb_rows else None
+
+    by_type = {
+        "golden": {"passed": g_passed, "failed": g_total - g_passed, "total": g_total},
+    }
+    if sim_triage:
+        by_type["sim"] = {
+            "passed": sim_triage["passed"],
+            "failed": sim_triage["total"] - sim_triage["passed"],
+            "total": sim_triage["total"],
+        }
+    if tool_triage:
+        by_type["tool_test"] = {
+            "passed": tool_triage["passed"],
+            "failed": tool_triage["total"] - tool_triage["passed"],
+            "total": tool_triage["total"],
+        }
+    if cb_triage:
+        by_type["callback_test"] = {
+            "passed": cb_triage["passed"],
+            "failed": cb_triage["total"] - cb_triage["passed"],
+            "total": cb_triage["total"],
+        }
+
+    total = sum(t["total"] for t in by_type.values())
+    passed = sum(t["passed"] for t in by_type.values())
+    failed = total - passed
+
+    # Foundation categories (TOOL_TEST_FAIL, CALLBACK_TEST_FAIL) sit just below
+    # EVAL_ERROR — they're deterministic, isolated, easy to fix, and cascade
+    # into golden/sim failures. Sim-specific categories sit lower; SIM_USER_OFF_SCRIPT
+    # and SIM_TASK_INCOMPLETE are usually eval-side fixes.
+    category_priority = {
+        "EVAL_ERROR": 0,
+        "TOOL_TEST_FAIL": 1,
+        "CALLBACK_TEST_FAIL": 2,
+        "TOOL_MISSING": 3,
+        "EXPECTATION_FAIL": 4,
+        "HALLUCINATION": 5,
+        "TEXT_MISMATCH": 6,
+        "EXTRA_TURNS": 7,
+        "SIM_MAX_TURNS_EXCEEDED": 8,
+        "SIM_USER_OFF_SCRIPT": 9,
+        "SIM_TASK_INCOMPLETE": 10,
+        "TIMEOUT": 11,
+        "SCORES_PASS_BUT_FAIL": 12,
+        "UNKNOWN": 13,
+    }
+
+    # Build flat_failures across all four eval types, tagging each with eval_type.
+    # top_failures is an INDEX (eval_name + category + run_id + eval_type) for
+    # prioritization and to feed into triage-failure dispatches. It deliberately
+    # does NOT carry a "reason" / "detail" field — that field looked diagnostic
+    # but was just a one-line classification, and models were treating it as a
+    # real diagnosis and skipping the triage-failure sub-agent. Diagnoses live
+    # in the triage-failure JSON output, not here.
+    run_id = triage.get("run_short", "") if triage else ""
+    flat_failures = []
+
+    def _accumulate(eval_type: str, per_eval_dict: Dict[str, Any]):
+        for eval_name, info in per_eval_dict.items():
+            for category, _detail in info.get("failures", []):
+                flat_failures.append({
+                    "eval_name": eval_name,
+                    "eval_type": eval_type,
+                    "category": category,
+                    "run_id": run_id,
+                })
+
+    _accumulate("golden", (triage or {}).get("per_eval", {}))
+    if sim_triage:
+        _accumulate("sim", sim_triage.get("per_eval", {}))
+    if tool_triage:
+        _accumulate("tool_test", tool_triage.get("per_eval", {}))
+    if cb_triage:
+        _accumulate("callback_test", cb_triage.get("per_eval", {}))
+    flat_failures.sort(key=lambda f: category_priority.get(f["category"], 99))
+    top_failures = flat_failures[:10]
+
+    # failure_clusters: groups failures sharing a (category, discriminator).
+    # Built from all four typed-triage outputs, tagged with eval_type so the
+    # main thread knows which transcripts/files to point the sub-agent at.
+    # priority_score puts higher-priority categories ahead of lower-priority
+    # ones unconditionally, then sorts by cluster size within category.
+    failure_clusters = []
+
+    def _accumulate_clusters(eval_type: str, raw_clusters: Dict[str, list]):
+        for category, clusters in raw_clusters.items():
+            cat_pri = category_priority.get(category, 99)
+            for c in clusters:
+                eval_count = len(c.get("eval_names", []))
+                entry = {
+                    "category": category,
+                    "eval_type": eval_type,
+                    "discriminator": c.get("discriminator"),
+                    "discriminator_kind": c.get("discriminator_kind", "none"),
+                    "eval_count": eval_count,
+                    "eval_names": c.get("eval_names", []),
+                    "run_id": run_id,
+                    "priority_score": (15 - cat_pri) * 1000 + min(eval_count, 999),
+                }
+                if c.get("eval_pass_rates"):
+                    entry["eval_pass_rates"] = c["eval_pass_rates"]
+                failure_clusters.append(entry)
+
+    _accumulate_clusters("golden", (triage or {}).get("failure_clusters", {}) or {})
+    if sim_triage:
+        _accumulate_clusters("sim", sim_triage.get("failure_clusters", {}) or {})
+    if tool_triage:
+        _accumulate_clusters("tool_test", tool_triage.get("failure_clusters", {}) or {})
+    if cb_triage:
+        _accumulate_clusters("callback_test", cb_triage.get("failure_clusters", {}) or {})
+
+    # Phase 3: regression detection. For each cluster member, look up the
+    # previous iteration's pass rate. An eval was "previously passing" iff its
+    # prior pass rate was 100% (all runs passed). When a cluster mixes
+    # previously-passing (regression) and never-passing (new failure) members
+    # with the same discriminator, split — they need different remediation
+    # paths even though the surface symptom is identical. Regression clusters
+    # carry `regression_context` so the triage subagent reads the prior
+    # iteration's `--message` and instruction diff before flipping the fix.
+    failure_clusters = _split_clusters_by_regression(failure_clusters, iteration)
+
+    failure_clusters.sort(key=lambda c: -c["priority_score"])
+    failure_clusters = failure_clusters[:10]
+
+    platform_errors = [
+        {"category": cat, "count": len(failures.get(cat, []))}
+        for cat in PLATFORM_FAILURE_CATEGORIES
+        if failures.get(cat)
+    ]
+
+    if triage is None:
+        status = "errored"
+    elif total == 0:
+        status = "errored"
+    elif platform_errors and passed == 0:
+        status = "errored"
+    elif platform_errors:
+        status = "partial"
+    else:
+        status = "complete"
+
+    return {
+        "status": status,
+        "ran_at": datetime.now().isoformat(timespec="seconds"),
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "pass_rate": (passed / total) if total else 0.0,
+        "by_type": by_type,
+        "top_failures": top_failures,
+        "failure_clusters": failure_clusters,
+        "total_failures": len(flat_failures),
+        "platform_errors": platform_errors,
+        "reverted": reverted,
+        "revert_reason": revert_reason,
+        "message": message,
+    }
+
+
+def do_report(config: dict, iteration: Optional[int] = None, message: Optional[str] = None, auto_revert: bool = False, json_summary: Optional[str] = None):
     """Generate an iteration report, auto-snapshotting if needed."""
     app_dir = _get_app_dir(config)
 
@@ -912,6 +1376,26 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
         # Also capture sim pass rate for cross-comparison in auto-revert
         sim_pass_rate = _get_latest_sim_pass_rate()
 
+        # Capture per_eval for non-golden types too so future iterations can
+        # detect regressions across all eval types (Phase 3 ping-pong defense).
+        tr = _load_triage_module()
+        sim_rows = _load_sim_rows()
+        tool_rows = _load_tool_test_rows()
+        cb_rows = _load_callback_test_rows()
+        sim_triage = tr.triage_sim_results(sim_rows) if sim_rows else None
+        tool_triage = tr.triage_tool_test_results(tool_rows) if tool_rows else None
+        cb_triage = tr.triage_callback_test_results(cb_rows) if cb_rows else None
+
+        def _ser_per_eval(p: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                name: {
+                    "pass": info["pass"],
+                    "total": info["total"],
+                    "failures": [(cat, detail) for cat, detail in info.get("failures", [])],
+                }
+                for name, info in (p or {}).items()
+            }
+
         serializable = {
             "total": triage["total"],
             "passed": triage["passed"],
@@ -922,13 +1406,13 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
                 cat: [(name, detail) for name, detail in items]
                 for cat, items in triage.get("failures", {}).items()
             },
-            "per_eval": {
-                name: {
-                    "pass": info["pass"],
-                    "total": info["total"],
-                    "failures": [(cat, detail) for cat, detail in info.get("failures", [])],
-                }
-                for name, info in triage.get("per_eval", {}).items()
+            "per_eval": _ser_per_eval(triage.get("per_eval", {})),
+            # Phase 3: typed per_eval blocks so regression detection can span types.
+            "per_eval_by_type": {
+                "golden": _ser_per_eval(triage.get("per_eval", {})),
+                "sim": _ser_per_eval(sim_triage.get("per_eval") if sim_triage else {}),
+                "tool_test": _ser_per_eval(tool_triage.get("per_eval") if tool_triage else {}),
+                "callback_test": _ser_per_eval(cb_triage.get("per_eval") if cb_triage else {}),
             },
         }
         with open(results_path, "w") as f:
@@ -952,10 +1436,23 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
     _append_results_tsv(iteration, triage, message)
 
     # Auto-revert if regression detected
+    reverted = False
+    revert_reason = None
     if auto_revert and triage:
         total = triage.get("total", 0)
         passed = triage.get("passed", 0)
-        _do_auto_revert(config, iteration, triage)
+        reverted = _do_auto_revert(config, iteration, triage)
+        if reverted:
+            revert_reason = f"Golden pass rate regressed at iteration {iteration}; reverted to iteration {iteration - 1} snapshot."
+
+    # Structured summary for programmatic callers (the iteration loop reads this
+    # instead of parsing stdout).
+    if json_summary:
+        summary = _build_run_summary(triage, reverted, revert_reason, message, iteration=iteration)
+        os.makedirs(os.path.dirname(os.path.abspath(json_summary)), exist_ok=True)
+        with open(json_summary, "w") as f:
+            json.dump(summary, f, indent=2)
+        print(f"\nJSON summary: {json_summary}")
 
 
 # ---------------------------------------------------------------------------
@@ -985,6 +1482,10 @@ def main():
         "--auto-revert", action="store_true", default=False,
         help="Automatically revert cxas_app/ to previous snapshot if pass rate regressed"
     )
+    report_parser.add_argument(
+        "--json-summary", default=None,
+        help="Write a structured run summary (status, pass rate, by_type, top_failures, reverted) to this path. Used by the debug iteration loop to read results without parsing stdout."
+    )
 
     args = parser.parse_args()
 
@@ -1001,7 +1502,7 @@ def main():
     if args.command == "snapshot":
         do_snapshot(config)
     elif args.command == "report":
-        do_report(config, iteration=args.iteration, message=args.message, auto_revert=args.auto_revert)
+        do_report(config, iteration=args.iteration, message=args.message, auto_revert=args.auto_revert, json_summary=args.json_summary)
 
 
 if __name__ == "__main__":

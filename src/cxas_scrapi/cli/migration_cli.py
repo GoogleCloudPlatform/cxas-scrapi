@@ -17,15 +17,20 @@
 import asyncio
 import logging
 import os
-from typing import Any, Dict
+from typing import Any
 
+from google.cloud.dialogflowcx_v3beta1 import services as cx_services
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from cxas_scrapi.migration.config import AGENT_MODELS, DEFAULT_MODEL
-from cxas_scrapi.migration.data_models import MigrationConfig, MigrationIR
+from cxas_scrapi.migration.data_models import (
+    DFCXAgentIR,
+    MigrationConfig,
+    MigrationIR,
+)
 from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
 from cxas_scrapi.migration.main_visualizer import MainVisualizer
 from cxas_scrapi.migration.service import MigrationService
@@ -33,7 +38,7 @@ from cxas_scrapi.migration.service import MigrationService
 logger = logging.getLogger(__name__)
 
 
-class CLIDashboard:
+class MigrationCLI:
     """Handles interactive CLI prompts and status reporting."""
 
     def __init__(self):
@@ -46,6 +51,37 @@ class CLIDashboard:
             datefmt="[%X]",
             handlers=[RichHandler(console=self.console, rich_tracebacks=True)],
         )
+
+    def check_auth(self) -> bool:
+        """Checks if valid credentials are available."""
+        self.console.print("[bold blue]Checking authentication...[/]")
+        try:
+            # Try to instantiate a client to trigger mTLS check
+            cx_services.agents.AgentsClient()
+            self.console.print("[green]✅ Authentication successful.[/]")
+            return True
+        except Exception as e:
+            self.console.print("[red]❌ Authentication failed.[/]")
+            self.console.print(f"[yellow]Error details:[/] {e}")
+            self.console.print("\n[bold]To fix this, please ensure:[/]")
+            self.console.print(
+                "  1. You have run [cyan]gcloud auth application-default "
+                "login[/]."
+            )
+            self.console.print(
+                "  2. Your account has read access to the source DFCX project."
+            )
+            self.console.print(
+                "  3. Your account has admin/editor access to the target "
+                "CXAS project."
+            )
+            self.console.print(
+                "  4. Set the [cyan]CXAS_OAUTH_TOKEN[/] environment "
+                "variable if needed."
+            )
+            return False
+
+
 
     def compose_config(self, default_agent_name: str) -> MigrationConfig:
         """Prompt user for configuration and return a MigrationConfig object."""
@@ -100,7 +136,7 @@ class CLIDashboard:
             optimize_for_cxas=optimize_for_cxas,
         )
 
-    def select_resources(self, agent_data: Any) -> Dict[str, Any]:
+    def select_resources(self, agent_data: DFCXAgentIR) -> DFCXAgentIR:
         """Prompt user to select resources to migrate."""
         self.console.print("\n[bold blue]=== Resource Selection ===[/]\n")
 
@@ -130,27 +166,28 @@ class CLIDashboard:
             self.console.print(f"  {i}. [{res_type}] {name}")
 
         self.console.print("\nOptions:")
-        self.console.print("  - Press Enter to start with ALL selected")
+        self.console.print("  - Enter 'all' to start with ALL selected")
         self.console.print("  - Enter 'none' to start with NONE selected")
         self.console.print(
-            "  - Enter comma-separated numbers to EXCLUDE/INCLUDE"
+            "(you can specify to exclude/include specific resources by their "
+            "numbers and ranges in next turn)"
         )
 
-        mode = Prompt.ask("Your choice", default="")
+        mode = Prompt.ask("Your choice", choices=["all", "none"], default="all")
 
         if mode.lower() == "none":
-            self.console.print(
-                "\n[bold]Enter comma-separated numbers to INCLUDE (e.g., 1,3) "
-                "or Enter to finish:[/]"
+            answer = Prompt.ask(
+                "Enter comma-separated numbers or ranges to INCLUDE "
+                "(e.g., 1,3 or 1-5) or Enter to finish",
+                default="",
             )
-            answer = Prompt.ask("Include numbers", default="")
             is_include = True
         else:
-            self.console.print(
-                "\n[bold]Enter comma-separated numbers to EXCLUDE (e.g., 1,3) "
-                "or Enter to finish:[/]"
+            answer = Prompt.ask(
+                "Enter comma-separated numbers or ranges to EXCLUDE "
+                "(e.g., 1,3 or 1-5) or Enter to finish",
+                default="",
             )
-            answer = Prompt.ask("Exclude numbers", default="")
             is_include = False
 
         if not answer:
@@ -202,12 +239,12 @@ class CLIDashboard:
                 return data_dict
 
     def run_dependency_analysis(
-        self, full_data: Dict[str, Any], filtered_data: Dict[str, Any]
+        self, agent_data: DFCXAgentIR, filtered_data: DFCXAgentIR
     ):
         """Run dependency analysis and show results."""
         self.console.print("\n[bold blue]=== Dependency Analysis ===[/]\n")
 
-        analyzer = DependencyAnalyzer(full_data)
+        analyzer = DependencyAnalyzer(agent_data)
 
         selected_ids = []
         for pb in filtered_data.playbooks:
@@ -273,17 +310,22 @@ class CLIDashboard:
         self.console.print(
             "[bold green]Welcome to the CXAS Migration Tool![/bold green]"
         )
+
+        if not self.check_auth():
+            if not Confirm.ask(
+                "Do you want to proceed anyway? (May fail later)", default=False
+            ):
+                return
+
         self.console.print(
-            "This tool helps you migrate DFCX agents to CXAS by extracting "
-            "resources,"
-        )
-        self.console.print(
-            "generating instructions and tools, and deploying them.\n"
+            "This tool performs optimized best-practices DFCX to CXAS agents "
+            "migration by extracting resources, analyzing inputs, converting "
+            "and generating new instructions and tools, and deploying them.\n"
         )
 
         # 1. Load Source Agent
         choice = Prompt.ask(
-            "Load source agent from",
+            "Which source type to load the agent from",
             choices=["ID", "Zip File"],
             default="Zip File",
         )
@@ -313,13 +355,7 @@ class CLIDashboard:
 
         self.console.print("[green]Agent data loaded successfully.[/]")
 
-        # Convert Pydantic model to dict if needed for internal use
-        if hasattr(agent_data, "model_dump"):
-            data_dict = agent_data.model_dump()
-        elif hasattr(agent_data, "dict"):
-            data_dict = agent_data.dict()
-        else:
-            data_dict = agent_data
+
 
         while True:
             # 2. Configure
@@ -328,7 +364,9 @@ class CLIDashboard:
             # Initialize MigrationService with the provided project_id
 
             migration_service = MigrationService(
-                project_id=config.project_id, location="global"
+                project_id=config.project_id,
+                location="us",
+                default_model=config.model,
             )
 
             # 3. Select Resources
@@ -336,7 +374,7 @@ class CLIDashboard:
 
             # 4. Dependency Analysis
             if Confirm.ask("Run Dependency Analysis?", default=True):
-                self.run_dependency_analysis(data_dict, filtered_data)
+                self.run_dependency_analysis(agent_data, filtered_data)
 
             # 5. Visualization
             if Confirm.ask(
@@ -353,7 +391,9 @@ class CLIDashboard:
             self.console.print(
                 f"Selected Playbooks: {len(filtered_data.playbooks)}"
             )
-            self.console.print(f"Selected Flows: {len(filtered_data.flows)}")
+            self.console.print(
+                f"Selected Flows: {len(filtered_data.flows)}"
+            )
 
             if Confirm.ask("Proceed to Migration?", default=True):
                 break

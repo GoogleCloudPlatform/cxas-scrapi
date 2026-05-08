@@ -227,7 +227,15 @@ def before_model_callback(callback_context: CallbackContext, llm_request: LlmReq
             payload_args[key] = value
 
     # -------------------------------------------------------------------------
-    # RETURN DETERMINISTIC RESPONSE: Text + payload_update + end_session.
+    # CALL PAYLOAD_UPDATE_TOOL DIRECTLY: Execute the tool in the callback
+    # rather than emitting it as a Part.from_function_call. This lets us
+    # remove payload_update_tool from the LLM-visible tools list, preventing
+    # the LLM from calling it directly with empty {} args.
+    # -------------------------------------------------------------------------
+    tools.payload_update_tool(payload_args)
+
+    # -------------------------------------------------------------------------
+    # RETURN DETERMINISTIC RESPONSE: Text + end_session.
     #
     # WHY always include text?
     # The LLM sometimes calls end_session without saying anything. By always
@@ -236,10 +244,6 @@ def before_model_callback(callback_context: CallbackContext, llm_request: LlmReq
     # -------------------------------------------------------------------------
     return LlmResponse.from_parts(parts=[
         Part.from_text(text=escalation["text"]),
-        Part.from_function_call(
-            name="payload_update_tool",
-            args=payload_args,
-        ),
         Part.from_function_call(
             name="end_session",
             args={"session_escalated": True},

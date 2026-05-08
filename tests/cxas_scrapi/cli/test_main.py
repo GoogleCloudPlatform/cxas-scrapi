@@ -15,6 +15,7 @@
 """Tests for the main CLI entry point."""
 
 import subprocess
+import sys
 
 import pytest
 
@@ -49,7 +50,7 @@ def test_cli_installed_help():
             "main()"
         )
         result = subprocess.run(
-            ["python3", "-c", py_code, "--help"],
+            [sys.executable, "-c", py_code, "--help"],
             capture_output=True,
             text=True,
             check=True,

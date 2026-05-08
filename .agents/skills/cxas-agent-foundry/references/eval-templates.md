@@ -208,13 +208,17 @@ Test agent callbacks (before_agent, before_model, after_model, etc.) in isolatio
 
 ```
 evals/callback_tests/
-|---- agents/                    # Raw callback code from platform
-|   `---- <agent>/<callback_type>/<name>/python_code.py
-`---- tests/                     # Pytest assertions (symlinked into agents/ for SCRAPI)
-    `---- <agent>/<callback_type>/<name>/test.py
+|---- agents/                              # Callback source + symlinks for SCRAPI discovery
+|   `---- <agent>/<callback_type>/<base>/
+|       |---- python_code.py               # Copy of the callback source
+|       `---- test.py                      # Symlink → ../../../../tests/.../test.py
+`---- tests/                               # Pytest assertions (you author here)
+    `---- <agent>/<callback_type>/<base>/test.py
 ```
 
-SCRAPI's `test_all_callbacks_in_app_dir` expects `test.py` alongside `python_code.py`, so tests are symlinked into `agents/`. Edit tests in `tests/`, update agent code in `agents/`.
+`<callback_type>` is the snake_case JSON field name, e.g. `before_model_callbacks` (with the trailing `_callbacks`). `<base>` is the type with `_callbacks` stripped, e.g. `before_model`. If the agent has multiple callbacks of the same type, append `_<idx>` to the base (`before_model_0`, `before_model_1`).
+
+**Critical:** SCRAPI's `test_all_callbacks_in_app_dir` globs `agents/<agent>/*_callbacks/<base>/test.py` and SILENTLY SKIPS any test whose `python_code.py` isn't in the same directory. The `agents/` symlink + same-dir `python_code.py` is non-optional; tests in `tests/` alone are unreachable. Use `scripts/sync-callbacks.py --from-local <agent_dir>` (pre-push) or `scripts/sync-callbacks.py` (post-push) to populate `agents/` and create the symlinks.
 
 ### Running
 
@@ -225,42 +229,61 @@ cb = CallbackEvals()
 results_df = cb.test_all_callbacks_in_app_dir(app_dir="evals/callback_tests")
 ```
 
-### Test pattern -- mock injection
+### Test pattern — mock injection
+
+The mock pattern has three parts and the order matters. **Do NOT replace `sys.modules['python_code']` with a MagicMock — that swaps in a mock module and the function under test never runs.** Instead, add the python_code directory to `sys.path`, import the real module, attach mocks to its globals, then import the function under test.
 
 ```python
-import python_code
-from unittest.mock import MagicMock, patch
+import sys
+import os
+from unittest.mock import MagicMock
 
-# Inject mock for the 'tools' global that GECX provides at runtime
+# 1. sys.path.insert points at evals/callback_tests/agents/<agent>/<type>/<base>/
+#    Path is relative to this test.py at evals/callback_tests/tests/<agent>/<type>/<base>/test.py.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(__file__),
+    "..", "..", "..", "..", "agents", "<agent>",
+    "<callback_type>", "<base>",
+))
+
+# 2. Import the real module and inject mocks for GECX-provided globals
+#    (`tools`, `StatusError`, etc.) BEFORE importing the callback function.
+import python_code  # noqa: E402
 python_code.tools = MagicMock()
 python_code.StatusError = Exception
 
-from python_code import before_agent_callback
-from cxas_scrapi.utils.callback_libs import CallbackContext
+# 3. Now import the function under test and any helpers.
+from python_code import before_agent_callback  # noqa: E402
+from cxas_scrapi.utils.callback_libs import CallbackContext  # noqa: E402
+
 
 def test_returns_early_when_authenticated():
-    ctx = CallbackContext(state={"auth_status": "authenticated", ...})
+    ctx = CallbackContext(state={"auth_status": "authenticated"})
     result = before_agent_callback(ctx)
     assert result is None
 
+
 def test_extracts_customer_id_from_datastore():
     python_code.tools.Read_Customer_Datastore_readDatastore.return_value = mock_resp
+    ctx = CallbackContext(state={"auth_status": "unauthenticated"})
     before_agent_callback(ctx)
     assert ctx.state["customer_id"] == "999888"
 ```
 
+For a complete worked example with multiple test classes per branch, see `assets/project-template/evals/callback_tests/tests/root_agent/before_model_callbacks/before_model/test.py`.
+
 ### Adding a new callback test
 
-1. Save the raw callback code to `agents/<agent>/<type>/<name>/python_code.py`
-2. Write the test file in `tests/<agent>/<type>/<name>/test.py`
-3. Symlink: `ln -sf $(pwd)/evals/callback_tests/tests/...test.py agents/.../test.py`
+1. Write the test file at `tests/<agent>/<callback_type>/<base>/test.py`.
+2. Make sure `agents/<agent>/<callback_type>/<base>/python_code.py` exists (copy from the local `cxas_app/<App>/agents/<agent>/<callback_type>/<dir>/python_code.py` if pre-push; pull from platform with `sync-callbacks.py` if post-push).
+3. Run `python scripts/sync-callbacks.py --from-local <agent_dir>` (pre-push) or `python scripts/sync-callbacks.py` (post-push). It populates `agents/` and creates the `agents/.../test.py` symlink. Verify the symlink exists — without it, the runner won't discover the test.
 
 ### Update tests when callbacks change
 
 When you modify a callback (add logic, change tool calls, add a new early-return path), untested changes silently break -- so follow up with:
-1. Sync the updated code from the platform to the local `python_code.py`
-2. Add tests covering the new/changed behavior
-3. Run all callback tests to verify no regressions
+1. Sync the updated code: `python scripts/sync-callbacks.py` (pulls from platform) or `--from-local <agent_dir>` (pre-push). This refreshes `agents/.../python_code.py` and re-creates any missing symlinks.
+2. Add tests covering the new/changed behavior.
+3. Run all callback tests to verify no regressions.
 
 ### What to test per callback type
 
@@ -288,6 +311,37 @@ Audio evals run through the full voice pipeline (TTS -> agent -> STT). Audio is 
 
 - **Same YAML definitions** -- no changes needed to eval files for audio vs text
 - **Increase `max_turns`** -- audio needs 4-6 extra turns due to TTS/STT overhead
+
+### Audio-Specific Debugging Gotchas
+
+- **`expect_tools` silently fails in audio mode.** Tool expectations in sim YAML (`expect_tools`) don't work for audio — the platform doesn't return tool call data in audio transcripts. Use `expect_criteria` (LLM-judged behavioral expectations) instead: `"The agent must check for outages"` rather than `expect_tools: ["check_outages_tool"]`.
+- **Audio needs more turns.** Silence handling, filler acknowledgments, and chunked speech inflate turn count. Add 4-6 extra turns to `max_turns` to avoid false TIMEOUT failures.
+- **Semantic similarity scores differently for spoken language.** Audio output is transcribed before scoring, so contractions and filler words can drag down similarity. If a golden shows TEXT_MISMATCH with `sem_score` 2.0-3.0 and the transcript looks correct when read, lower the similarity threshold for that eval rather than changing the agent.
+- **Never run audio agents in text mode for evals.** The runner enforces this (fatal error on `--channel text` for audio apps). Audio agents have voice-specific instructions (pronunciation, cadence, filler handling) that produce unnatural text responses.
+
+---
+
+## Component Test Failures
+
+Component tests (tool tests, callback tests) are deterministic — they should pass 100% of the time. Failures indicate bugs in code, not LLM variance.
+
+**Tool test failures:**
+1. Read the failing test's expected output and the actual output from the test results
+2. Read the tool's source: `<project>/cxas_app/<AppName>/tools/<tool_name>/python_function/python_code.py`
+3. Common causes:
+   - Return dict keys don't match expectations (check exact key names)
+   - Tool depends on external API that returned unexpected data
+   - Tool uses `context` variables not set in the test's `session_params`
+4. Fix the tool code or update the test's `session_params` to provide required context
+
+**Callback test failures:**
+1. Sync the latest callback code: `python scripts/sync-callbacks.py`
+2. Read the failing test in `<project>/evals/callback_tests/agents/<agent>/`
+3. Common causes:
+   - Callback logic changed on the platform but tests weren't updated
+   - Mock objects don't match the real `CallbackContext` shape
+   - Callback imports something the test environment doesn't provide (`Part`, `Content`, `LlmResponse`, `LlmRequest`, `CallbackContext` are auto-provided globals on the platform)
+4. Fix the test mocks or the callback code, then re-run with pytest
 
 ---
 

@@ -66,7 +66,18 @@ object containing the `next_user_utterance` and the fully updated
 
 3.  **Process Turn and Update Progress:**
 
-    *   **A. If the Active Step is a `goal` type:**
+    *   **A. If the Active Step contains a `static_utterance` field (i.e., it
+        is a static utterance type):**
+        *   The `next_user_utterance` MUST be the EXACT string provided in
+            `static_utterance`.
+        *   **CRITICAL**: Do NOT try to generate a realistic response or follow
+            a goal. You must robotically repeat the `static_utterance` string.
+            If `static_utterance` is empty, use the exact string
+            `event: user_inactive`.
+        *   Update its `status` to `"completed"`.
+
+    *   **B. If the Active Step is a `goal` type (does not contain
+        `static_utterance`):**
 
         *   **Case 1: Is its status `not started`? (Initiating the Goal)**
             *   Your `next_user_utterance` must introduce the problem
@@ -142,13 +153,7 @@ object containing the `next_user_utterance` and the fully updated
             *   Your `next_user_utterance` should introduce the next goal from
                 the script.
             *   Update the *next* step's `status` to `"in progress"`.
-            *   Update the *current* step's `status` to `"completed"`.
-
-    *   **B. If the Active Step is a `static_utterance` type:**
-        *   The `next_user_utterance` is the exact string from
-            `static_utterance`. If `static_utterance` is empty, use the exact
-            string `event: user_inactive`. Update its `status` to
-            `"completed"`.
+            *   Update the *current* step's `status` to `"completed"`
 
 4.  **Generate the Output JSON:**
     *   Construct a JSON object with `next_user_utterance` and the fully

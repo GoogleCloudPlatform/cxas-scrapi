@@ -105,6 +105,18 @@ def _find_entry_function(content: str, expected_fn: str) -> re.Match | None:
     return entry
 
 
+def _get_args(content: str, fn_name: str) -> list[str] | None:
+    """Return argument names of fn_name using AST, or None if not found."""
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == fn_name:
+            return [arg.arg for arg in node.args.args]
+    return None
+
+
 @rule("callbacks")
 class WrongFunctionName(Rule):
     id = "C001"
@@ -170,17 +182,9 @@ class WrongArgCount(Rule):
         if not entry:
             return []
 
-        args_match = re.search(
-            r"def\s+" + re.escape(expected_fn) + r"\s*\(([^)]*)\)", content
-        )
-        if not args_match:
+        args = _get_args(content, expected_fn)
+        if args is None:
             return []
-
-        args = [
-            a.strip().split(":")[0].strip()
-            for a in args_match.group(1).split(",")
-            if a.strip()
-        ]
         if len(args) != len(expected_args):
             return [
                 self.make_result(

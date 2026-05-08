@@ -6,9 +6,9 @@ Prior to starting, read all of the issue definitions below:
 
 | Category | Load |
 |-------------|-------|
-| Instruction Logic | `definitions/instruction-logic.md` |
-| Security | `definitions/security.md` |
-| Multi-Agent | `definitions/multi-agent.md` |
+| Instruction Logic | `instruction-logic.md` |
+| Security | `security.md` |
+| Multi-Agent | `multi-agent.md` |
 
 ## Issue Severity Definitions
 For each of the issues, the severity is defined as follows. If the issue already has a predefined severity, use it. If it has a range of severity such as Medium-Critical, determine the appropriate severity level.
@@ -26,14 +26,14 @@ Read the following templates;
 
 | Name | Description | Path |
 | :--- | :--- | :--- |
-| `results-template.md` | The template for the results | `definitions/results-template.md` |
+| Results Template | The template for the results | `results-template.md` |
 
 # Sub reviewer agents
 If you are able to invoke sub-agents, read the sub agent definition below:
 
 | Name | Description | Path | 
 | --- | --- | --- |
-| Reviewer | The reviewer agent that will be doing the review work. | `.gemini/agents/reviewer.md` | 
+| Reviewer | The reviewer agent that will be doing the review work. | `.agents/skills/cxas-agent-foundry/agents/reviewer.md` | 
 
 # ALWAYS DELEGATE IF POSSIBLE
 If you are able to delegate to other agents, read `.gemini/agents/reviewer.md` which is a sub-agent doing the review work. Delegate one reviewer per sub-agent that you are analyzing. For example, if you have 3 sub-agents, delegate 3 reviewers. Once you have the results from each of the reviewer, comibne them into the final results template. In your implementation plan, make sure you outline the delegation.

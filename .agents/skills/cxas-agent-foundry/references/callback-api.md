@@ -2,6 +2,8 @@
 
 The GECX sandbox auto-provides these globals. Do NOT import them. Use ONLY the methods listed here -- do not guess at additional attributes or constructors.
 
+`typing` types (`Optional`, `Iterator`, `List`, `Dict`, etc.) are NOT auto-provided — they must be explicitly imported. Missing typing imports cause errors at push time.
+
 ## Part
 
 **Creating Parts** -- always use factory methods, never raw constructors:
