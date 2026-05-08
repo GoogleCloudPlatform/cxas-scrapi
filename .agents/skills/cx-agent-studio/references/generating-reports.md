@@ -7,10 +7,10 @@ Generated automatically by `run-and-report.py` after each eval run. Shows what c
 
 ```bash
 # Automatic (recommended) -- runs evals + triage + report in one command
-python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "Describe what changed and why" --runs 5
+python .agents/skills/cx-agent-studio/scripts/run-and-report.py --message "Describe what changed and why" --runs 5
 
 # Manual -- generate report from existing results
-python .agents/skills/cxas-agent-foundry/scripts/generate-iteration-report.py report --message "Fixed X by doing Y"
+python .agents/skills/cx-agent-studio/scripts/generate-iteration-report.py report --message "Fixed X by doing Y"
 ```
 
 Output: HTML report in `<project>/eval-reports/iterations/iteration-N/`. Includes:
@@ -25,7 +25,7 @@ Output: HTML report in `<project>/eval-reports/iterations/iteration-N/`. Include
 Cross-iteration trend analysis showing pass rate progression over time.
 
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/generate-combined-report.py
+python .agents/skills/cx-agent-studio/scripts/generate-combined-report.py
 ```
 
 Output: HTML report in `<project>/eval-reports/combined/`. Includes:

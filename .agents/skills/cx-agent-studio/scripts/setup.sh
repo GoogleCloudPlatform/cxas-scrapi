@@ -18,16 +18,16 @@
 # and runs the interactive configuration wizard to create gecx-config.json.
 #
 # Usage:
-#   .agents/skills/cxas-agent-foundry/scripts/setup.sh                  # Full setup (install + configure)
-#   .agents/skills/cxas-agent-foundry/scripts/setup.sh --configure      # Skip install, run configuration wizard only
-#   .agents/skills/cxas-agent-foundry/scripts/setup.sh --skip-config    # Install only, skip configuration wizard
+#   .agents/skills/cx-agent-studio/scripts/setup.sh                  # Full setup (install + configure)
+#   .agents/skills/cx-agent-studio/scripts/setup.sh --configure      # Skip install, run configuration wizard only
+#   .agents/skills/cx-agent-studio/scripts/setup.sh --skip-config    # Install only, skip configuration wizard
 
 set -euo pipefail
 
 # Resolve paths relative to the script location.
 # Supports two layouts:
-#   1. cxas-scrapi/skills/cxas-agent-foundry/scripts/setup.sh  (skill inside scrapi)
-#   2. .agents/skills/cxas-agent-foundry/scripts/setup.sh       (skill alongside scrapi)
+#   1. cxas-scrapi/skills/cx-agent-studio/scripts/setup.sh  (skill inside scrapi)
+#   2. .agents/skills/cx-agent-studio/scripts/setup.sh       (skill alongside scrapi)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -64,7 +64,7 @@ else
     fi
   done
   if [ -z "$WORKSPACE_ROOT" ]; then
-    # Fallback: 3 levels up from skill root (.agents/skills/cxas-agent-foundry -> workspace)
+    # Fallback: 3 levels up from skill root (.agents/skills/cx-agent-studio -> workspace)
     WORKSPACE_ROOT="$(cd "$SKILL_ROOT/../../.." && pwd)"
   fi
 fi
@@ -153,7 +153,7 @@ fi
 
 # --- Step 2.5: Ensure gemini-cli can discover the skill's sub-agents ---
 # gemini-cli scans .gemini/agents/ for sub-agent definitions. Our canonical
-# location is .agents/skills/cxas-agent-foundry/agents/. Symlink so gemini sees them.
+# location is .agents/skills/cx-agent-studio/agents/. Symlink so gemini sees them.
 GEMINI_AGENTS_DIR="$WORKSPACE_ROOT/.gemini/agents"
 SKILL_AGENTS_DIR="$SKILL_ROOT/agents"
 if [ -d "$SKILL_AGENTS_DIR" ]; then

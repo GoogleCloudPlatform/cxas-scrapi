@@ -17,7 +17,7 @@
 # Source this file, then call resolve_project_dir.
 #
 # Usage:
-#   source "$(dirname "$0")/../../.agents/skills/cxas-agent-foundry/scripts/resolve-project.sh"
+#   source "$(dirname "$0")/../../.agents/skills/cx-agent-studio/scripts/resolve-project.sh"
 #   project_dir=$(resolve_project_dir)
 #   config_file="${project_dir}/gecx-config.json"
 

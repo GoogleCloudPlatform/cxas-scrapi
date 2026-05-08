@@ -1,6 +1,6 @@
 # GECX Project Template
 
-A reference template encoding best practices from the cxas-agent-foundry skill for building GECX (Google Customer Experience) conversational agents.
+A reference template encoding best practices from the cx-agent-studio skill for building GECX (Google Customer Experience) conversational agents.
 
 ## What This Template Demonstrates
 
@@ -55,6 +55,6 @@ These are the core principles encoded in this template. See the reference docs f
 
 For deeper guidance on each topic:
 
-- **Instruction design, callback patterns, anti-patterns:** `.agents/skills/cxas-agent-foundry/references/gecx-design-guide.md`
-- **Eval YAML formats and test patterns:** `.agents/skills/cxas-agent-foundry/references/eval-templates.md`
-- **TDD structure, golden vs sim decisions:** `.agents/skills/cxas-agent-foundry/references/interview-guide.md`
+- **Instruction design, callback patterns, anti-patterns:** `.agents/skills/cx-agent-studio/references/gecx-design-guide.md`
+- **Eval YAML formats and test patterns:** `.agents/skills/cx-agent-studio/references/eval-templates.md`
+- **TDD structure, golden vs sim decisions:** `.agents/skills/cx-agent-studio/references/interview-guide.md`

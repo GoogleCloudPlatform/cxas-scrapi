@@ -17,7 +17,7 @@ SCRAPI installs three shell script hooks when you run `cxas init`. These hooks i
 | `pre-agent-push.sh` | Before `cxas push` | Detects drift between local and platform, blocks if stale |
 | `post-agent-update.sh` | After agent updates | Pulls fresh state and syncs callbacks |
 
-All three hooks live in `.agents/skills/cxas-agent-foundry/scripts/hooks/`.
+All three hooks live in `.agents/skills/cx-agent-studio/scripts/hooks/`.
 
 ---
 
@@ -87,12 +87,12 @@ Hooks are registered in `.claude/settings.json` (for Claude Code) and `.gemini/s
         "hooks": [
           {
             "type": "command",
-            "command": ".agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push.sh",
+            "command": ".agents/skills/cx-agent-studio/scripts/hooks/pre-agent-push.sh",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": ".agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push-lint.sh",
+            "command": ".agents/skills/cx-agent-studio/scripts/hooks/pre-agent-push-lint.sh",
             "timeout": 30
           }
         ]
@@ -104,7 +104,7 @@ Hooks are registered in `.claude/settings.json` (for Claude Code) and `.gemini/s
         "hooks": [
           {
             "type": "command",
-            "command": ".agents/skills/cxas-agent-foundry/scripts/hooks/post-agent-update.sh",
+            "command": ".agents/skills/cx-agent-studio/scripts/hooks/post-agent-update.sh",
             "timeout": 5
           }
         ]
@@ -125,15 +125,15 @@ Similar configuration, using Gemini CLI's `BeforeTool`/`AfterTool` hooks with th
 If you want to temporarily disable a hook (e.g., you're doing a bulk update and don't want to wait for drift checks on every push), the simplest way is to rename the file:
 
 ```bash
-mv .agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push.sh \
-   .agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push.sh.disabled
+mv .agents/skills/cx-agent-studio/scripts/hooks/pre-agent-push.sh \
+   .agents/skills/cx-agent-studio/scripts/hooks/pre-agent-push.sh.disabled
 ```
 
 The hook framework only executes files that match the expected name. Restore it when you're done:
 
 ```bash
-mv .agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push.sh.disabled \
-   .agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push.sh
+mv .agents/skills/cx-agent-studio/scripts/hooks/pre-agent-push.sh.disabled \
+   .agents/skills/cx-agent-studio/scripts/hooks/pre-agent-push.sh
 ```
 
 !!! tip "Bypassing for a single push"

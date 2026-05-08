@@ -139,7 +139,7 @@ echo "Golden evals passed"
 
 # 4. Local simulations (slowest — run last)
 # Use the skills system's sim runner for parallel execution:
-python .agents/skills/cxas-agent-foundry/scripts/scrapi-sim-runner.py run --parallel 5
+python .agents/skills/cx-agent-studio/scripts/scrapi-sim-runner.py run --parallel 5
 echo "Simulation evals passed"
 
 echo "All evaluations passed!"

@@ -21,18 +21,15 @@ Run this from your project root. It creates the following structure:
 your-project/
 ├── .agents/
 │   └── skills/
-│       ├── cxas-agent-foundry/
+│       ├── cx-agent-studio/
 │       │   ├── SKILL.md
-│       │   ├── references/          # Sub-skill definitions (build, run, debug)
+│       │   ├── references/          # Routed workflows
 │       │   ├── scripts/
 │       │   │   └── hooks/           # Hook scripts for pre-push and post-update
 │       │   │       ├── pre-agent-push-lint.sh
 │       │   │       ├── pre-agent-push.sh
 │       │   │       └── post-agent-update.sh
-│       │   ├── hooks/               # Legacy hook scripts
 │       │   └── assets/              # Project templates
-│       └── cxas-sim-eval/
-│           └── SKILL.md
 ├── .claude/
 │   └── settings.json          # Registers hooks with Claude Code
 ├── .gemini/
@@ -65,6 +62,8 @@ cxas init --force
 ```
 
 `--force` overwrites skill files but does not overwrite `gecx-config.json` — your project configuration is preserved.
+
+If you previously installed the old `cxas-agent-foundry` or `cxas-sim-eval` skills, the update path installs the consolidated `cx-agent-studio` skill. The old slash command `/cxas-agent-foundry` is replaced by `/cx-agent-studio`.
 
 ---
 
@@ -106,18 +105,18 @@ Contains the skill definition files. Each `SKILL.md` is a Markdown file with YAM
 
 ```markdown
 ---
-name: cxas-agent-foundry
+name: cx-agent-studio
 description: Composite skill for building, running, and debugging CX Agent Studio agents
 ---
 
-# CXAS Agent Foundry
+# CX Agent Studio
 
 You are an expert CX Agent Studio engineer...
 ```
 
-The AI reads this file as part of its context when the skill is invoked. The foundry loads sub-skills (build, run, debug) from `references/` as needed.
+The AI reads this file as part of its context when the skill is invoked. The router loads setup, build, run, debug, or simulation-eval conversion references as needed.
 
-### `.agents/skills/cxas-agent-foundry/scripts/hooks/`
+### `.agents/skills/cx-agent-studio/scripts/hooks/`
 
 Shell scripts that run at key points in the development loop. These are registered with the AI assistant's tool execution framework via `.claude/settings.json` and `.gemini/settings.json`.
 
@@ -138,12 +137,12 @@ Registers hooks with Claude Code:
         "hooks": [
           {
             "type": "command",
-            "command": ".agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push.sh",
+            "command": ".agents/skills/cx-agent-studio/scripts/hooks/pre-agent-push.sh",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": ".agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push-lint.sh",
+            "command": ".agents/skills/cx-agent-studio/scripts/hooks/pre-agent-push-lint.sh",
             "timeout": 30
           }
         ]
@@ -155,7 +154,7 @@ Registers hooks with Claude Code:
         "hooks": [
           {
             "type": "command",
-            "command": ".agents/skills/cxas-agent-foundry/scripts/hooks/post-agent-update.sh",
+            "command": ".agents/skills/cx-agent-studio/scripts/hooks/post-agent-update.sh",
             "timeout": 5
           }
         ]
@@ -193,7 +192,7 @@ I want to build a new CX agent
 
 In Gemini CLI:
 ```
-/cxas-agent-foundry
+/cx-agent-studio
 ```
 
-You should see the foundry skill respond with an environment readiness check and prompt for what you'd like to do.
+You should see the `cx-agent-studio` skill respond with an environment readiness check and prompt for what you'd like to do.

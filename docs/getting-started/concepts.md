@@ -174,8 +174,7 @@ SCRAPI's built-in skills include:
 
 | Skill | What it does |
 |---|---|
-| `cxas-agent-foundry` | Composite skill for the full agent lifecycle — builds agents from requirements, runs evaluations, and debugs failures. Routes to internal build, run, and debug sub-skills as needed. |
-| `cxas-sim-eval` | Converts and runs simulation evaluations |
+| `cx-agent-studio` | Router skill for the full agent lifecycle: setup, build, run, debug, and converting CXAS golden evaluations to SCRAPI SimulationEvals. |
 
 [Skills Guide →](../guides/skills/index.md)
 

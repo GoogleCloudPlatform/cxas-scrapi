@@ -15,7 +15,7 @@ When the readiness check identifies a first-time user (no `.venv/`):
    ```
 2. **Collect project details** -- see Configuration below.
 3. Confirm with the user: "Your environment is set up. You're connected to **[app_name]** on **[project_id]**."
-4. If the user's original request was "build me an agent" -> proceed to the build sub-skill. If they connected to an existing app -> ask: "Do you want to create evals for this existing agent, or build something new?" Otherwise -> proceed with their original request.
+4. If the user's original request was "build me an agent" -> proceed to `references/build.md`. If they connected to an existing app -> ask: "Do you want to create evals for this existing agent, or build something new?" Otherwise -> proceed with their original request.
 
 ## Configuration
 
@@ -57,7 +57,7 @@ Omit the `gcs_bucket` field entirely for text agents (don't write `null` — lea
 
 Once you have both, run the setup script to pull the app and auto-detect modality:
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/setup-project.py \
+python .agents/skills/cx-agent-studio/scripts/setup-project.py \
   --project-id <gcp_project> \
   --app-id <app_id>
 ```

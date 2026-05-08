@@ -51,14 +51,14 @@ The `--to` flag in `cxas push` MUST use the full resource path `projects/.../app
 
 ```bash
 # Gates 1-5 (Gate 6 skipped by default — needs prompts file)
-python .agents/skills/cxas-agent-foundry/scripts/gate-check.py
+python .agents/skills/cx-agent-studio/scripts/gate-check.py
 
 # Include Gate 6 by passing a prompts file
-python .agents/skills/cxas-agent-foundry/scripts/gate-check.py \
+python .agents/skills/cx-agent-studio/scripts/gate-check.py \
   --multi-turn /tmp/gate6-prompts.json
 
 # Skip Gate 1's push round-trip (verify only, don't modify the platform)
-python .agents/skills/cxas-agent-foundry/scripts/gate-check.py --skip-push
+python .agents/skills/cx-agent-studio/scripts/gate-check.py --skip-push
 ```
 
 The script prints a per-gate pass/fail and writes a JSON summary to `<project>/eval-reports/gate-check-<timestamp>.json` for sub-agent consumption. Read the JSON for structured findings; read the stdout for a human-readable trace.
