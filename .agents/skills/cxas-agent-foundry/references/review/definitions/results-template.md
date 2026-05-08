@@ -16,7 +16,8 @@ Identify any logic issues in any prompt to the model in a markdown table with th
 
 | Column | Format | Description |
 | :--- | :--- | :--- |
-| **reference** | `filename:lines:"snippet"` | The file name, line number range, and the text snippet where the issue occurs. Ensure the text snippet is complete and includes the entire phrase or sentence that causes the issue. |
+| **location** | `filename:lines` | The file name, line number range, and the text snippet where the issue occurs. Ensure the text snippet is complete and includes the entire phrase or sentence that causes the issue. |
+| **snippet** | `text_snippet` | The verbatim text snippet that is the issue
 | **issue_id** | `issue_id` | The ID of the issue category. |
 | **issue_name** | `issue_name` | The issue name. |
 | **severity** | `severity` | The severity of the issue. |

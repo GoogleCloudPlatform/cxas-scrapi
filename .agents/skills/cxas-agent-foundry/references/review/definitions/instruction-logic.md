@@ -239,3 +239,11 @@ To reference a variable, {<variable_name>}. For example, {my_var}
 ```text
 Once you have received the order number from the user, use the tool {@TOOL: get_order}. For now just use order number 123456789.
 ```
+
+### IL011: Redundant Statements
+
+**Severity**: Low
+
+**Description**: Statements that are redundant and can be removed without affecting the functionality of the agent. This can be redundant information within the same instruction or is repeated in the global instruction.
+
+**Remediation**: Remove or combine redundant statements.
