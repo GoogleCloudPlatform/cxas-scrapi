@@ -116,7 +116,7 @@ def resolve_project_dir():
         sys.exit(1)
 
     print("Error: No project found. Create a project folder with gecx-config.json:")
-    print("  mkdir myproject && python .agents/skills/cxas-agent-foundry/scripts/configure.py")
+    print("  mkdir myproject && python .agents/skills/cx-agent-studio/scripts/configure.py")
     sys.exit(1)
 
 

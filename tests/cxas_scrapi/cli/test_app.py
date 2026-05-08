@@ -127,6 +127,46 @@ def test_apps_get(
     assert "Test Desc" in captured.out
 
 
+def test_app_init_force_installs_consolidated_skill_and_removes_stale(
+    tmp_path, capsys
+):
+    prefix = tmp_path / "prefix"
+    skills_root = prefix / "share" / "cxas-scrapi" / "skills"
+    bundled_skills = skills_root / ".agents" / "skills"
+    bundled_skills.mkdir(parents=True)
+    (bundled_skills / "cx-agent-studio").mkdir()
+    (bundled_skills / "cx-agent-studio" / "SKILL.md").write_text(
+        "---\nname: cx-agent-studio\ndescription: test\n---\n",
+        encoding="utf-8",
+    )
+    # Simulate a package/update path that leaves stale data files in the
+    # bundled share directory.
+    (bundled_skills / "cxas-agent-foundry").mkdir()
+    (bundled_skills / "cxas-agent-foundry" / "SKILL.md").write_text(
+        "old foundry",
+        encoding="utf-8",
+    )
+    (bundled_skills / "cxas-sim-eval").mkdir()
+    (bundled_skills / "cxas-sim-eval" / "SKILL.md").write_text(
+        "old sim eval",
+        encoding="utf-8",
+    )
+
+    target = tmp_path / "target"
+    args = argparse.Namespace(target_dir=str(target), force=True)
+
+    with mock.patch.object(cli_app.sys, "prefix", str(prefix)):
+        cli_app.app_init(args)
+
+    assert (target / ".agents" / "skills" / "cx-agent-studio").is_dir()
+    assert not (target / ".agents" / "skills" / "cxas-agent-foundry").exists()
+    assert not (target / ".agents" / "skills" / "cxas-sim-eval").exists()
+
+    output = capsys.readouterr().out
+    assert "Removed stale skill: cxas-agent-foundry" in output
+    assert "Removed stale skill: cxas-sim-eval" in output
+
+
 def test_app_pull(
     mock_apps_client,
     mock_common_get_project_id,

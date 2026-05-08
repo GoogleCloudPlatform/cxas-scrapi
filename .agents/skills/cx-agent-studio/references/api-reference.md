@@ -1,6 +1,6 @@
 # GECX API Reference (SCRAPI)
 
-SCRAPI backstop for when the bundled scripts don't cover your use case. For most operations, use the scripts in `.agents/skills/cxas-agent-foundry/scripts/` instead.
+SCRAPI backstop for when the bundled scripts don't cover your use case. For most operations, use the scripts in `.agents/skills/cx-agent-studio/scripts/` instead.
 
 For exact field names, enum values, or threshold structures, see the schema files in `api-schemas/`.
 

@@ -170,7 +170,7 @@ nav:
     - AI Skills:
       - guides/skills/index.md
       - Installing Skills: guides/skills/installation.md
-      - Agent Foundry: guides/skills/agent-foundry.md
+      - CX Agent Studio Skill: guides/skills/agent-foundry.md
       - Build Skill: guides/skills/build.md
       - Run Skill: guides/skills/run.md
       - Debug Skill: guides/skills/debug.md

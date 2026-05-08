@@ -195,10 +195,10 @@ When a previously-passing eval starts failing after a change:
 When goldens fail despite correct agent behavior (verified by reading transcripts), the scoring may be too strict. Use `app-thresholds.py` to view and adjust:
 
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/app-thresholds.py show
-python .agents/skills/cxas-agent-foundry/scripts/app-thresholds.py set --similarity 2      # lower text matching (1-4)
-python .agents/skills/cxas-agent-foundry/scripts/app-thresholds.py set --extra-tools allow  # allow extra tool calls
-python .agents/skills/cxas-agent-foundry/scripts/app-thresholds.py set --hallucination disabled
+python .agents/skills/cx-agent-studio/scripts/app-thresholds.py show
+python .agents/skills/cx-agent-studio/scripts/app-thresholds.py set --similarity 2      # lower text matching (1-4)
+python .agents/skills/cx-agent-studio/scripts/app-thresholds.py set --extra-tools allow  # allow extra tool calls
+python .agents/skills/cx-agent-studio/scripts/app-thresholds.py set --hallucination disabled
 ```
 
 **When to use each threshold:**

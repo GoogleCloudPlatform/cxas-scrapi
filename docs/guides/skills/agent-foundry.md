@@ -1,98 +1,94 @@
 ---
-title: Agent Foundry Skill
-description: Overview of the cxas-agent-foundry composite skill and how it routes to sub-skills.
+title: CX Agent Studio Skill
+description: Overview of the cx-agent-studio router skill and how it routes to workflow references.
 ---
 
-# Agent Foundry Skill
+# CX Agent Studio Skill
 
-`cxas-agent-foundry` is the main skill you'll interact with. It acts as an intelligent router, checking the current state of your environment and directing you to the right sub-skill for what you need to do.
+`cx-agent-studio` is the main skill for CX Agent Studio work. It replaces the
+older `cxas-agent-foundry` and `cxas-sim-eval` skills with one router that
+loads focused references for setup, build, run, debug, and simulation-eval
+conversion.
 
-Think of it as a senior engineer who knows the full development lifecycle — they'll assess where you are, ask clarifying questions, and then take over the appropriate next steps.
+The page path is preserved for existing docs links, but the Gemini CLI command
+is now:
+
+```
+/cx-agent-studio
+```
 
 ---
 
-## Invoking the foundry
+## Invoking the skill
 
-In [Claude Code](https://code.claude.com/docs/en/overview), the skill is automatically triggered when the AI detects relevant intent (e.g., building, testing, or debugging a CX agent). You can also reference it conversationally:
+In [Claude Code](https://code.claude.com/docs/en/overview), the skill is
+automatically triggered when the AI detects relevant intent, such as building,
+testing, converting evals, or debugging a CX agent.
 
-```
-I want to build a new CX Agent Studio agent
-```
-
-In [Gemini CLI](https://geminicli.com/docs/get-started/installation/):
+You can also describe the task conversationally:
 
 ```
-/cxas-agent-foundry
+I want to build a new CX Agent Studio agent for handling billing questions
 ```
 
-Or just describe what you want — if the AI has the skill loaded, it will route to the foundry when appropriate:
+In [Gemini CLI](https://geminicli.com/docs/get-started/installation/), invoke:
 
 ```
-I want to build a new agent for handling billing questions
+/cx-agent-studio
 ```
 
 ---
 
 ## What happens when you invoke it
 
-The foundry runs an *environment readiness check* before doing anything else:
+The skill starts with an environment readiness check:
 
-1. **Checks for `gecx-config.json`** — if it's missing, it walks you through creating it
-2. **Checks credentials** — verifies ADC or OAuth token is available
-3. **Checks for an existing app** — determines if this is a new project or an iteration on an existing one
-4. **Checks for existing eval files** — determines where you are in the development lifecycle
+1. Checks for `.venv/`.
+2. Checks `.active-project` and `gecx-config.json`.
+3. Checks whether local `cxas_app/` content exists.
+4. Routes the request to the matching reference.
 
-Based on this check, the foundry presents an onboarding flow:
-
-```
-Environment check complete. Here's what I found:
-
-  Project: my-gcp-project (us)
-  App: "My Support Agent" — exists on platform
-  Agents: 2 (support-root, billing-agent)
-  Tool tests: 4 files, 12 tests
-  Goldens: 2 files, 8 conversations
-  Simulations: 1 file, 3 evals
-
-What would you like to do?
-  1. Build a new agent or add a new capability
-  2. Run all evaluations and see the current pass rate
-  3. Debug evaluation failures
-```
+If setup is missing, it loads the setup reference first. Otherwise it routes
+directly to the requested workflow.
 
 ---
 
 ## Intent routing
 
-After the onboarding check, the foundry routes to one of three sub-skills based on your intent:
-
 | User intent | Routes to |
 |-------------|-----------|
-| "Build a new agent", "Add a tool", "Create an eval" | [Build skill](build.md) |
-| "Run evals", "What's the pass rate?", "Test the agent" | [Run skill](run.md) |
-| "Evals are failing", "Fix the instruction", "Debug this failure" | [Debug skill](debug.md) |
+| "Set this project up", "connect to an app" | Setup reference |
+| "Build a new agent", "add a tool", "create an eval" | [Build skill](build.md) |
+| "Run evals", "what's the pass rate?", "test the agent" | [Run skill](run.md) |
+| "Evals are failing", "fix the instruction", "debug this failure" | [Debug skill](debug.md) |
+| "Convert golden evals to simulations" | Simulation-evals reference inside the skill |
 
-The routing is done by the AI, not by a hard-coded decision tree. If your intent is ambiguous, the foundry will ask a clarifying question.
+The routing is done by the AI from the request intent. If the intent is
+ambiguous, the skill asks whether you want to build/create, run, debug, or
+convert evaluations.
 
 ---
 
 ## Shared scripts
 
-The foundry and its sub-skills share a set of hook scripts in `.agents/skills/cxas-agent-foundry/scripts/hooks/`:
+The skill includes hook and helper scripts in
+`.agents/skills/cx-agent-studio/scripts/`:
 
-| Script | Used by | Purpose |
-|--------|---------|---------|
-| `scripts/hooks/pre-agent-push-lint.sh` | All sub-skills, hooks | Runs `cxas lint` before pushing |
-| `scripts/hooks/pre-agent-push.sh` | Build, Debug | Checks for platform drift before pushing |
-| `scripts/hooks/post-agent-update.sh` | All sub-skills | Syncs local files after any platform update |
+| Script | Purpose |
+|--------|---------|
+| `scripts/hooks/pre-agent-push-lint.sh` | Runs `cxas lint` before pushing |
+| `scripts/hooks/pre-agent-push.sh` | Checks for platform drift before pushing |
+| `scripts/hooks/post-agent-update.sh` | Syncs local files after platform updates |
+| `scripts/simulation-evals/*` | Converts and runs simulation evals generated from CXAS goldens |
 
-These scripts are registered with Claude Code's and Gemini CLI's hook frameworks (via `.claude/settings.json` and `.gemini/settings.json`) so they run automatically before/after relevant Bash commands.
+These scripts are registered through `.claude/settings.json` and
+`.gemini/settings.json`.
 
 ---
 
 ## The `gecx-config.json` role
 
-The foundry reads `gecx-config.json` at startup to understand your environment. All three sub-skills inherit this configuration. If the config is missing or incomplete, the foundry prompts you to fill it in before proceeding.
+The skill reads `gecx-config.json` to understand your environment:
 
 ```json
 {
@@ -105,29 +101,5 @@ The foundry reads `gecx-config.json` at startup to understand your environment. 
 }
 ```
 
----
-
-## Using the foundry iteratively
-
-The power of the foundry is in the iterative loop:
-
-```
-You: I'd like to work on my agent evals
-
-Foundry: [checks environment] Looks like you have 2 agents and some failing evals.
-         What would you like to do?
-
-You: Run the evals and tell me the pass rate
-
-Foundry: [routes to Run skill, runs all evals, reports results]
-         Current pass rate: 6/8 goldens passing (75%), 2 tool tests failing.
-         Would you like me to debug the failures?
-
-You: Yes, fix the instruction for the order lookup flow
-
-Foundry: [routes to Debug skill, analyzes failures, proposes changes]
-         I've updated the instruction. Pushing changes and re-running evals...
-         Pass rate is now 8/8 goldens (100%). Done!
-```
-
-This loop — run, analyze, fix, re-run — is what the foundry is designed to facilitate.
+All routed references share this configuration. If the config is missing or
+incomplete, the setup route walks you through filling it in before continuing.

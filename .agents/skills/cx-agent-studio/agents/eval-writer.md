@@ -121,7 +121,7 @@ Each callback produces THREE files (the SCRAPI runner needs all three to discove
 
 The easy way to do all three steps is to write the test files first, then run the helper script:
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/sync-callbacks.py --from-local <agent_dir>
+python .agents/skills/cx-agent-studio/scripts/sync-callbacks.py --from-local <agent_dir>
 ```
 This copies every `python_code.py` from the local app dir to `evals/callback_tests/agents/...` and creates the symlinks for any tests already present in `evals/callback_tests/tests/...`. Run it AFTER you've written the tests; tests without a matching symlink at the end are unreachable.
 
@@ -184,7 +184,7 @@ Other structural rules:
 
 For all three, the file's top-level may also include shared blocks (`common_session_parameters` for goldens) — write those once at the top of each file, not per CUJ. When splitting goldens or tool tests across multiple files, repeat the shared block in each file (it's per-file scoped).
 
-**Per-callback mode (callback_test):** for each callback you produce THREE artifacts (see "Naming and on-disk layout" in the Process section above): `tests/<agent>/<callback_type>/<base>/test.py` (you author this), `agents/<agent>/<callback_type>/<base>/python_code.py` (copy from the local app dir), and `agents/<agent>/<callback_type>/<base>/test.py` (symlink → the test you authored). The easy way to produce the second and third is to run `python .agents/skills/cxas-agent-foundry/scripts/sync-callbacks.py --from-local <agent_dir>` after writing all the test.py files. Bundling doesn't apply — pytest discovers files, and callback structure already gives you the granularity. Total file count = 3 × total callbacks across all agents. The pre-write checklist in the Process section is your enforcement mechanism — count callbacks before you write, count files after, reconcile.
+**Per-callback mode (callback_test):** for each callback you produce THREE artifacts (see "Naming and on-disk layout" in the Process section above): `tests/<agent>/<callback_type>/<base>/test.py` (you author this), `agents/<agent>/<callback_type>/<base>/python_code.py` (copy from the local app dir), and `agents/<agent>/<callback_type>/<base>/test.py` (symlink → the test you authored). The easy way to produce the second and third is to run `python .agents/skills/cx-agent-studio/scripts/sync-callbacks.py --from-local <agent_dir>` after writing all the test.py files. Bundling doesn't apply — pytest discovers files, and callback structure already gives you the granularity. Total file count = 3 × total callbacks across all agents. The pre-write checklist in the Process section is your enforcement mechanism — count callbacks before you write, count files after, reconcile.
 
 **Single-CUJ legacy mode:** one file at `output_path` with a single-entry array. Same shape as the YAML modes, just N=1. Same per-type rules apply (sims still must land in `simulations.yaml`).
 

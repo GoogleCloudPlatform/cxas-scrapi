@@ -249,7 +249,7 @@
     },
     {
       "type": "arrow",
-      "id": "arr-cli-foundry",
+      "id": "arr-cli-studio",
       "x": 610,
       "y": 240,
       "width": 120,
@@ -292,7 +292,7 @@
     },
     {
       "type": "rectangle",
-      "id": "foundry",
+      "id": "studio",
       "x": 730,
       "y": 170,
       "width": 280,
@@ -322,12 +322,12 @@
     },
     {
       "type": "text",
-      "id": "foundry-label",
+      "id": "studio-label",
       "x": 735,
       "y": 218,
       "width": 270,
       "height": 50,
-      "text": "cxas-agent-foundry",
+      "text": "cx-agent-studio",
       "fontSize": 20,
       "fontFamily": 1,
       "textAlign": "center",
@@ -353,7 +353,7 @@
       "locked": false,
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "cxas-agent-foundry",
+      "originalText": "cx-agent-studio",
       "autoResize": true,
       "lineHeight": 2.5
     },

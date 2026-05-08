@@ -545,7 +545,28 @@ def app_init(args: argparse.Namespace) -> None:
         copied += 1
         print(f"  Installed: {item.name}")
 
+    removed = _remove_stale_skill_dirs(target_dir)
+    for name in removed:
+        print(f"  Removed stale skill: {name}")
+
     print(f"\nDone. {copied} installed, {skipped} skipped.")
+
+
+def _remove_stale_skill_dirs(target_dir: Path) -> list[str]:
+    """Remove superseded skill folders after cx-agent-studio is installed."""
+    skills_dir = target_dir / ".agents" / "skills"
+    if not (skills_dir / "cx-agent-studio").is_dir():
+        return []
+
+    removed = []
+    for name in ("cxas-agent-foundry", "cxas-sim-eval"):
+        stale_dir = skills_dir / name
+        if stale_dir.is_dir():
+            import shutil  # noqa: PLC0415
+
+            shutil.rmtree(stale_dir)
+            removed.append(name)
+    return removed
 
 
 def _prompt_overwrite(name: str) -> str:

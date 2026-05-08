@@ -1,6 +1,6 @@
 ---
 title: Build Skill
-description: The cxas-agent-build skill — PRD interview, TDD, eval creation, and agent bootstrapping.
+description: Build route for cx-agent-studio: PRD interview, TDD, eval creation, and agent bootstrapping.
 ---
 
 # Build Skill
@@ -13,14 +13,14 @@ By the time the Build skill finishes, you have a fully wired-up agent with a pop
 
 ## Invoking the Build skill
 
-The foundry routes you to Build when you express an intent like:
+The `cx-agent-studio` router sends you to Build when you express an intent like:
 
 - "Build a new agent"
 - "Add a new capability to the agent"
 - "Create an agent that handles X"
 - "Add a tool for Y"
 
-The Build skill is a sub-skill of the [Agent Foundry](agent-foundry.md) — it is automatically routed to when the foundry detects a build intent.
+Build is a routed reference inside [`cx-agent-studio`](agent-foundry.md). It is loaded automatically when the router detects a build intent.
 
 ---
 

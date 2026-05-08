@@ -76,12 +76,12 @@ cxas push --app-dir <project>/cxas_app/<AppName> \
 
 (First-time push only: replace `--to` with `--display-name "My App"` — `cxas push` auto-creates. `configure.py` normally pre-creates the app, so `--to` is the standard case.)
 
-Then verify: `python .agents/skills/cxas-agent-foundry/scripts/gate-check.py` (or `--skip-push` for a faster smoke check).
+Then verify: `python .agents/skills/cx-agent-studio/scripts/gate-check.py` (or `--skip-push` for a faster smoke check).
 
 ### Run Baseline (post-gate-6)
 
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "Initial baseline" --runs 3
+python .agents/skills/cx-agent-studio/scripts/run-and-report.py --message "Initial baseline" --runs 3
 ```
 
 **Don't claim "baseline run" without checking the report.** Read `<project>/eval-reports/iterations/<latest>` and surface pass rates and any platform errors to the user — the script can succeed with all evals failing.
@@ -127,7 +127,7 @@ The standard edit-test cycle for an agent that's already on the platform:
    ```
 5. **Run evals** to verify no regressions:
    ```bash
-   python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "Describe what changed and why" --runs 5
+   python .agents/skills/cx-agent-studio/scripts/run-and-report.py --message "Describe what changed and why" --runs 5
    ```
 
 For structural edits (new agent, new tool, new `childAgents` entry), also run `python scripts/gate-check.py` after step 5 — eval results don't surface platform-side issues like dropped sub-agents or orphaned tools.

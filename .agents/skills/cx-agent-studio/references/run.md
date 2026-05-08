@@ -79,7 +79,7 @@ results_df = cb.test_all_callbacks_in_app_dir(app_dir="<project>/evals/callback_
 
 ```bash
 # Single command: run evals + triage + generate iteration report
-python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "Describe what changed and why" --auto-revert
+python .agents/skills/cx-agent-studio/scripts/run-and-report.py --message "Describe what changed and why" --auto-revert
 ```
 
 The script reads the channel from `gecx-config.json` automatically. It runs all eval types, triages failures, and generates an iteration report -- no need to run triage separately.
@@ -87,8 +87,8 @@ The script reads the channel from `gecx-config.json` automatically. It runs all 
 To re-triage with different options (e.g., averaging across multiple runs), use the triage script directly:
 
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/triage-results.py           # latest run
-python .agents/skills/cxas-agent-foundry/scripts/triage-results.py --last 3  # average across runs
+python .agents/skills/cx-agent-studio/scripts/triage-results.py           # latest run
+python .agents/skills/cx-agent-studio/scripts/triage-results.py --last 3  # average across runs
 ```
 
 This categorizes each failure (timeout, tool missing, text mismatch, scoring inconsistency) so you know what to fix vs what's a platform issue.
@@ -113,7 +113,7 @@ All commands support `--priority P0` and `--tag <tag>`.
 
 **For a combined cross-iteration trend report:**
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/generate-combined-report.py
+python .agents/skills/cx-agent-studio/scripts/generate-combined-report.py
 ```
 
 This produces an HTML report in `<project>/eval-reports/combined/` showing pass rate trends, per-eval stability, and regression detection across all iterations.

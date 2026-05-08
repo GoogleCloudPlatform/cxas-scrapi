@@ -43,8 +43,8 @@ if echo "$cmd" | grep -qE 'update_agent'; then
 
   # Auto-sync callbacks from platform to local test dirs
   sync_msg=""
-  if [ -f ".agents/skills/cxas-agent-foundry/scripts/sync-callbacks.py" ]; then
-    sync_output=$(python3 .agents/skills/cxas-agent-foundry/scripts/sync-callbacks.py 2>&1) && \
+  if [ -f ".agents/skills/cx-agent-studio/scripts/sync-callbacks.py" ]; then
+    sync_output=$(python3 .agents/skills/cx-agent-studio/scripts/sync-callbacks.py 2>&1) && \
       sync_msg="AUTO-SYNC: Callbacks synced to evals/callback_tests/. " || true
   fi
 

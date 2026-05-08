@@ -136,7 +136,7 @@ results = evals.list_evaluation_results_by_run(evaluation_run_id="<run_id>")
 **Captured transcripts (when per-turn scores aren't enough):** `capture-golden-transcripts.py` replays the golden against the live agent and saves the full conversation to `<project>/evals/goldens/transcripts/`. Use only when you need the full agent/tool/callback trace beyond what the run results contain.
 
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/capture-golden-transcripts.py --eval golden_auth_failure
+python .agents/skills/cx-agent-studio/scripts/capture-golden-transcripts.py --eval golden_auth_failure
 ```
 
 **What to look for in transcripts:**

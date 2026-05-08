@@ -9,7 +9,7 @@
 """Tests for the failure-clustering helpers in triage-results.py.
 
 Run from the project root or this directory:
-    python -m pytest .agents/skills/cxas-agent-foundry/scripts/tests/test_cluster_failures.py
+    python -m pytest .agents/skills/cx-agent-studio/scripts/tests/test_cluster_failures.py
 """
 
 import importlib.util

@@ -262,7 +262,7 @@ def _create_new_app(project_id, location):
 
     except Exception as e:
         console.print(f"  [red]Failed to create app: {e}[/red]")
-        console.print("  [yellow]Create the app manually, then re-run .agents/skills/cxas-agent-foundry/scripts/setup.sh --configure[/yellow]")
+        console.print("  [yellow]Create the app manually, then re-run .agents/skills/cx-agent-studio/scripts/setup.sh --configure[/yellow]")
 
         return None, display_name
 

@@ -1,6 +1,6 @@
 ---
 title: Run Skill
-description: The cxas-agent-run skill — running all four eval types and generating combined reports.
+description: Run route for cx-agent-studio: running eval types and generating combined reports.
 ---
 
 # Run Skill
@@ -11,14 +11,14 @@ The Run skill executes all four evaluation types against your agent and produces
 
 ## Invoking the Run skill
 
-The foundry routes you to Run when you express an intent like:
+The `cx-agent-studio` router sends you to Run when you express an intent like:
 
 - "Run the evals"
 - "What's the pass rate?"
 - "Test the agent"
 - "How is the agent performing?"
 
-The Run skill is a sub-skill of the [Agent Foundry](agent-foundry.md) — it is automatically routed to when the foundry detects a run/test intent.
+Run is a routed reference inside [`cx-agent-studio`](agent-foundry.md). It is loaded automatically when the router detects a run/test intent.
 
 ---
 
@@ -141,7 +141,7 @@ These files are useful for tracking trends over time. If you commit `test-result
 
 The Debug skill uses the pass rate from the Run skill to determine when to stop iterating. By default, it targets 100% for tool tests and callback tests, and 80% for goldens and simulations (to account for natural language variability).
 
-You can adjust the target by telling the foundry what you want:
+You can adjust the target by telling the router what you want:
 
 ```
 Run the evals and then debug until we're at 90% or better

@@ -1,6 +1,6 @@
 ---
 title: Debug Skill
-description: The cxas-agent-debug skill — analyzing failures, fixing agents, and iterating to a target pass rate.
+description: Debug route for cx-agent-studio: analyzing failures, fixing agents, and iterating to a target pass rate.
 ---
 
 # Debug Skill
@@ -11,16 +11,16 @@ The Debug skill analyzes evaluation failures and fixes them. It reads the failur
 
 ## Invoking the Debug skill
 
-The foundry routes you to Debug when you express an intent like:
+The `cx-agent-studio` router sends you to Debug when you express an intent like:
 
 - "The evals are failing"
 - "Fix the instruction"
 - "The agent isn't calling the right tool"
 - "Debug these failures"
 
-The Debug skill is a sub-skill of the [Agent Foundry](agent-foundry.md) — it is automatically routed to when the foundry detects a debug intent.
+Debug is a routed reference inside [`cx-agent-studio`](agent-foundry.md). It is loaded automatically when the router detects a debug intent.
 
-If you've just run the Run skill and it found failures, the foundry often asks:
+If you've just run the Run skill and it found failures, the router often asks:
 
 ```
 3 evals are failing. Would you like me to debug them?
