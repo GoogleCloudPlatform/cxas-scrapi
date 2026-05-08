@@ -104,6 +104,91 @@ def push_eval(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def migrate_evals(args: argparse.Namespace) -> None:
+    """Handles the 'migrate-evals' command."""
+    print(
+        f"Migrating evaluations from App: {args.source_app_name} "
+        f"-> {args.target_app_name}"
+    )
+
+    source_client = Evaluations(app_name=args.source_app_name)
+    target_client = Evaluations(app_name=args.target_app_name)
+
+    try:
+        all_evals = source_client.list_evaluations(
+            app_name=args.source_app_name
+        )
+    except Exception as e:
+        print(f"Failed to list evaluations from source app: {e}")
+        sys.exit(1)
+
+    if not all_evals:
+        print("No evaluations found in the source app.")
+        return
+
+    evals_to_migrate = []
+    if getattr(args, "evaluation_id", None):
+        evals_to_migrate = [
+            e for e in all_evals if e.name == args.evaluation_id
+        ]
+        if not evals_to_migrate:
+            print(
+                f"Evaluation '{args.evaluation_id}' not found in source app."
+            )
+            sys.exit(1)
+    elif getattr(args, "display_name_prefix", None):
+        evals_to_migrate = [
+            e
+            for e in all_evals
+            if e.display_name.startswith(args.display_name_prefix)
+        ]
+        if not evals_to_migrate:
+            print(
+                f"No evaluations with prefix "
+                f"'{args.display_name_prefix}' found."
+            )
+            return
+    else:
+        evals_to_migrate = all_evals
+
+    print(f"Found {len(evals_to_migrate)} evaluation(s) to migrate.")
+
+    if getattr(args, "dry_run", False):
+        for eval_obj in evals_to_migrate:
+            print(f"  [dry-run] Would migrate: '{eval_obj.display_name}'")
+        return
+
+    success_count = 0
+    for eval_obj in evals_to_migrate:
+        try:
+            yaml_content = source_client.export_evaluation(
+                evaluation_id=eval_obj.name,
+                output_format=ExportFormat.YAML,
+            )
+            import yaml as _yaml
+
+            eval_data = _yaml.safe_load(yaml_content)
+            if not eval_data:
+                print(f"  ⚠ Skipping '{eval_obj.display_name}': empty export.")
+                continue
+
+            eval_data.pop("name", None)
+
+            res = target_client.update_evaluation(
+                evaluation=eval_data,
+                app_name=args.target_app_name,
+            )
+            print(f"  ✅ Migrated: '{res.display_name}' -> {res.name}")
+            success_count += 1
+        except Exception as e:
+            print(f"  ❌ Failed to migrate '{eval_obj.display_name}': {e}")
+
+    print(
+        f"\nMigration complete: "
+        f"{success_count}/{len(evals_to_migrate)} evaluation(s) migrated."
+    )
+
+
 def wait_for_evaluation_completion(
     eval_utils: EvalUtils,
     old_result_ids: List[str],
@@ -1014,6 +1099,39 @@ def get_parser() -> argparse.ArgumentParser:
         help="Path to the YAML file containing evaluation definitions.",
     )
     parser_push_eval.set_defaults(func=push_eval)
+
+    # Parser for 'migrate-evals'
+    parser_migrate_evals = subparsers.add_parser(
+        "migrate-evals",
+        help="Migrate evaluations from one agent (app) to another.",
+    )
+    parser_migrate_evals.add_argument(
+        "--source-app-name",
+        required=True,
+        help="Source CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_migrate_evals.add_argument(
+        "--target-app-name",
+        required=True,
+        help="Target CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_migrate_evals.add_argument(
+        "--evaluation-id",
+        default=None,
+        help="Migrate only this evaluation resource name.",
+    )
+    parser_migrate_evals.add_argument(
+        "--display-name-prefix",
+        default=None,
+        help="Migrate only evaluations whose display name starts with this.",
+    )
+    parser_migrate_evals.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="List what would be migrated without making any changes.",
+    )
+    parser_migrate_evals.set_defaults(func=migrate_evals)
 
     # Parser for 'run'
     parser_run = subparsers.add_parser(
