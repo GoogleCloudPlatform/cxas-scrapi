@@ -28,6 +28,9 @@ import json
 import os
 import shutil
 import sys
+
+os.environ["CXAS_CALLER_CONTEXT"] = "skill:cxas-agent-foundry:generate-iteration-report"
+
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 

@@ -28,6 +28,8 @@ from google import genai
 
 import threading
 
+os.environ["CXAS_CALLER_CONTEXT"] = "skill:cxas-sim-eval:run_evals"
+
 class ThreadLocalStream:
     def __init__(self, default_stream):
         self.default_stream = default_stream
@@ -71,11 +73,11 @@ def run_single_eval(item, evals_dir, app_name, run_index, skip_analysis=False, m
     passed = False
     os.environ["FORCE_COLOR"] = "1"
     os.environ["CLICOLOR_FORCE"] = "1"
-    
+
     import io
     log_stream = io.StringIO()
     thread_local_stdout.set_stream(log_stream)
-    
+
     try:
         print(f"\n==================================================")
         print(f"Running test case: {item}")
@@ -88,37 +90,37 @@ def run_single_eval(item, evals_dir, app_name, run_index, skip_analysis=False, m
         eval_conv = sim_evals.simulate_conversation(
             test_case=test_case, console_logging=True, session_id=session_id, modality=modality
         )
-        
+
         report = eval_conv.generate_report()
-        
+
         # Print full report
         print("\n=== Full Report ===")
         print(report)
-        
+
         # Determine pass/fail
         all_goals_completed = all(report.goals_df['status'] == 'Completed')
         all_expectations_met = True
         if report.expectations_df is not None:
             all_expectations_met = all(report.expectations_df['status'] == 'Met')
-        
+
         passed = all_goals_completed and all_expectations_met
-        
+
         colored_trace = log_stream.getvalue()
-        
+
         # Write stripped log to file
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         stripped_content = ansi_escape.sub('', colored_trace)
         with open(log_path, "w", encoding="utf-8") as f:
             f.write(stripped_content)
-            
+
     finally:
         thread_local_stdout.clear_stream()
-        
+
         # Strip the goal progress from the trace for HTML
         trace_marker = "--- Conversation Complete ---"
         if trace_marker in colored_trace:
             colored_trace = colored_trace.split(trace_marker)[0]
-        
+
         # Read log file for analysis if failed
         analysis_results = []
         llm_suggestions = ""
@@ -142,7 +144,7 @@ def run_single_eval(item, evals_dir, app_name, run_index, skip_analysis=False, m
                                 })
                             except Exception as e:
                                 pass
-                    
+
                     for call in calls:
                         monologue = call['internal_monologue'] or ""
                         length = len(monologue)
@@ -151,22 +153,22 @@ def run_single_eval(item, evals_dir, app_name, run_index, skip_analysis=False, m
                             issues.append("Severe overthinking (> 600 chars)")
                         elif length > 350:
                             issues.append("Moderate overthinking (> 350 chars)")
-                            
+
                         hedging = re.findall(r"\b(might|guess|assume|maybe|unsure)\b", monologue, re.IGNORECASE)
                         if hedging:
                             issues.append(f"Detected hedging: {list(set(hedging))}")
-                            
+
                         backtracking = re.findall(r"\b(wait|actually|on second thought)\b", monologue, re.IGNORECASE)
                         if backtracking:
                             issues.append(f"Detected backtracking: {list(set(backtracking))}")
-                            
+
                         analysis_results.append({
                             "agent": call['agent'],
                             "planned_action": call['planned_action'],
                             "monologue": monologue,
                             "issues": issues
                         })
-                        
+
                     # Perform LLM analysis if calls were found
                     if calls:
                         try:
@@ -176,7 +178,7 @@ def run_single_eval(item, evals_dir, app_name, run_index, skip_analysis=False, m
                             if os.path.exists(global_inst_path):
                                 with open(global_inst_path, 'r', encoding='utf-8') as f:
                                     global_inst = f.read()
-                                    
+
                             agent_instructions = {}
                             agent_names = set(c['agent'] for c in calls)
                             for agent_name in agent_names:
@@ -184,7 +186,7 @@ def run_single_eval(item, evals_dir, app_name, run_index, skip_analysis=False, m
                                 if os.path.exists(inst_path):
                                     with open(inst_path, 'r', encoding='utf-8') as f:
                                         agent_instructions[agent_name] = f.read()
-                                        
+
                             # Construct prompt
                             prompt = f"""
 You are an expert AI developer task with analyzing failed CXAS simulation evaluations.
@@ -230,7 +232,7 @@ Output your analysis and suggestions in a clear, structured markdown format.
                             location = parts[3] if len(parts) > 3 else "us-central1"
                             if location == "us":
                                 location = "us-central1"
-                                
+
                             client = genai.Client(vertexai=True, project=project, location=location)
                             response = client.models.generate_content(
                                 model="gemini-2.5-flash",
@@ -240,7 +242,7 @@ Output your analysis and suggestions in a clear, structured markdown format.
                         except Exception as e:
                             print(f"Error calling Gemini for {item}: {e}")
                             llm_suggestions = f"Error calling Gemini for analysis: {e}"
-                            
+
             except Exception as e:
                 print(f"Error analyzing log for {item}: {e}")
 
@@ -264,7 +266,7 @@ Output your analysis and suggestions in a clear, structured markdown format.
 def ansi_to_html(text):
     import html
     escaped = html.escape(text)
-    
+
     span_open = False
     def replace_ansi(match):
         nonlocal span_open
@@ -273,7 +275,7 @@ def ansi_to_html(text):
             res = '</span>' if span_open else ''
             span_open = False
             return res
-            
+
         styles = []
         for code in codes:
             if code == '1': styles.append('font-weight: bold;')
@@ -284,13 +286,13 @@ def ansi_to_html(text):
             elif code == '35': styles.append('color: magenta;')
             elif code == '36': styles.append('color: cyan;')
             elif code == '90': styles.append('color: gray;')
-            
+
         if styles:
             prefix = '</span>' if span_open else ''
             span_open = True
             return f'{prefix}<span style="{" ".join(styles)}">'
         return ''
-        
+
     result = re.sub(r'\x1b\[([0-9;]*)m', replace_ansi, escaped)
     if span_open:
         result += '</span>'
@@ -325,7 +327,7 @@ def generate_html_report(results, output_path, app_name):
             .pass { color: #10b981; font-weight: 600; }
             .fail { color: #ef4444; font-weight: 600; }
             .mixed { color: #f59e0b; font-weight: 600; }
-            
+
             /* Card style for details */
             details.eval-details {
                 background-color: #fff;
@@ -356,7 +358,7 @@ def generate_html_report(results, output_path, app_name):
             .eval-status { padding: 4px 8px; border-radius: 4px; font-size: 0.9em; }
             .eval-status.pass { background-color: #d1fae5; color: #065f46; }
             .eval-status.fail { background-color: #fee2e2; color: #991b1b; }
-            
+
             pre { background-color: #1e293b; color: #f8fafc; padding: 15px; border-radius: 6px; max-height: 500px; overflow-y: auto; font-family: monospace; font-size: 0.9em; }
         </style>
         <script>
@@ -375,7 +377,7 @@ def generate_html_report(results, output_path, app_name):
     </head>
     <body>
         <h1>Simulation Run Results</h1>
-        
+
         <h2>Summary</h2>
         <table>
             <tr>
@@ -385,7 +387,7 @@ def generate_html_report(results, output_path, app_name):
                 <th>Session Link</th>
             </tr>
     """
-    
+
     grouped_results = {}
     for res in results:
         if res['name'] not in grouped_results:
@@ -397,14 +399,14 @@ def generate_html_report(results, output_path, app_name):
         total_runs = len(runs)
         status_text = f"{passed_count}/{total_runs} Pass" if total_runs > 1 else ("Pass" if runs[0]['passed'] else "Fail")
         status_class = "pass" if passed_count == total_runs else ("fail" if passed_count == 0 else "mixed")
-        
+
         log_links = []
         session_links = []
         for r in runs:
             run_idx = r.get('run_index', 1)
             log_rel_path = os.path.join("sim_evals", os.path.basename(r['log_path']))
             log_links.append(f'<a href="{log_rel_path}" target="_blank">Run {run_idx}</a>')
-            
+
             parts = app_name.split("/")
             project = parts[1]
             location = parts[3]
@@ -412,9 +414,9 @@ def generate_html_report(results, output_path, app_name):
             session_id = r['session_id']
             console_link = f"https://ces.cloud.google.com/projects/{project}/locations/{location}/apps/{app_id}?panel=conversation_list&id={session_id}&source=LIVE"
             session_links.append(f'<a href="{console_link}" target="_blank">Run {run_idx}</a>')
-            
+
         anchor = name.replace(" ", "_").replace(".", "_")
-        
+
         html_content += f"""
             <tr>
                 <td>{name}</td>
@@ -423,21 +425,21 @@ def generate_html_report(results, output_path, app_name):
                 <td>{", ".join(session_links)}</td>
             </tr>
         """
-        
+
     html_content += """
         </table>
-        
+
         <h2>Detailed Status</h2>
     """
-    
+
     for name, runs in grouped_results.items():
         anchor = name.replace(" ", "_").replace(".", "_")
-        
+
         passed_count = sum(1 for r in runs if r['passed'])
         total_runs = len(runs)
         status_text = f"{passed_count}/{total_runs} Pass" if total_runs > 1 else ("Pass" if runs[0]['passed'] else "Fail")
         status_class = "pass" if passed_count == total_runs else ("fail" if passed_count == 0 else "mixed")
-        
+
         html_content += f"""
         <details class="eval-details" id="{anchor}">
             <summary class="eval-summary">
@@ -446,24 +448,24 @@ def generate_html_report(results, output_path, app_name):
             </summary>
             <div class="eval-content">
         """
-        
+
         for r in runs:
             run_idx = r.get('run_index', 1)
             run_status = "Pass" if r['passed'] else "Fail"
             run_class = "pass" if r['passed'] else "fail"
-            
+
             goals_html = r.get('goals_html', '<div>No goal data available due to error.</div>')
             goals_html = goals_html.replace('<td>Completed</td>', '<td class="pass">Completed</td>')
             goals_html = goals_html.replace('<td>In Progress</td>', '<td class="pass">In Progress</td>')
             goals_html = goals_html.replace('<td>Not Started</td>', '<td class="fail">Not Started</td>')
-            
+
             exp_html = r.get('expectations_html', '')
             if exp_html:
                 exp_html = exp_html.replace('<td>Met</td>', '<td class="pass">Met</td>')
                 exp_html = exp_html.replace('<td>Not Met</td>', '<td class="fail">Not Met</td>')
-                
+
             escaped_log = ansi_to_html(r['colored_trace'])
-            
+
             html_content += f"""
                 <details style="margin-bottom: 10px; border: 1px solid #e2e8f0; border-radius: 4px;">
                     <summary style="padding: 10px; background-color: #f8fafc; cursor: pointer;">
@@ -474,13 +476,13 @@ def generate_html_report(results, output_path, app_name):
                         <h4>Goal Progress</h4>
                         {goals_html}
             """
-            
+
             if exp_html:
                 html_content += f"""
                         <h4>Expectations</h4>
                         {exp_html}
                 """
-                
+
             analysis_results = r.get('analysis_results', [])
             if analysis_results:
                 analysis_html = "<h4>Cognitive Diagnostics</h4><ul>"
@@ -498,35 +500,35 @@ def generate_html_report(results, output_path, app_name):
                     </li>
                     """
                 analysis_html += "</ul>"
-                
+
                 html_content += f"""
                         {analysis_html}
                 """
-                
+
             llm_suggestions = r.get('llm_suggestions', '')
             if llm_suggestions:
                 html_content += f"""
                         <h4>Actionable Suggestions</h4>
                         <pre style="background-color: #f0fdf4; color: #166534; padding: 15px; border: 1px solid #bbf7d0; border-radius: 5px; white-space: pre-wrap; font-family: inherit;">{llm_suggestions}</pre>
                 """
-                
+
             html_content += f"""
                         <h4>Conversation Trace</h4>
                         <pre>{escaped_log}</pre>
                     </div>
                 </details>
             """
-            
+
         html_content += """
             </div>
         </details>
         """
-        
+
     html_content += """
     </body>
     </html>
     """
-    
+
     if output_path.startswith("gs://"):
         mtls_url = _upload_to_gcs(output_path, html_content)
         if mtls_url:
@@ -569,7 +571,7 @@ def main():
 
     files = sorted([f for f in os.listdir(evals_dir) if f.endswith(".json")])
     files_to_run = files[args.start_index:args.end_index]
-    
+
     print(f"Running evaluations from index {args.start_index} to {args.end_index} (total files: {len(files)})")
 
     results_list = []
@@ -579,7 +581,7 @@ def main():
             for run_idx in range(1, args.runs_per_eval + 1):
                 future = executor.submit(run_single_eval, item, evals_dir, args.app_name, run_idx, args.skip_analysis, args.modality)
                 future_to_item[future] = (item, run_idx)
-                
+
         for future in concurrent.futures.as_completed(future_to_item):
             item, run_idx = future_to_item[future]
             try:

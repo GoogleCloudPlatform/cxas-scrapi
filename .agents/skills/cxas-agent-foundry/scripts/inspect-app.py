@@ -26,6 +26,9 @@ import argparse
 import json
 import os
 import sys
+
+os.environ["CXAS_CALLER_CONTEXT"] = "skill:cxas-agent-foundry:inspect-app"
+
 import textwrap
 
 from config import load_app_name

@@ -16,7 +16,8 @@
 """Generate a combined HTML report for golden + simulation eval results.
 
 Usage:
-  python scripts/generate-combined-report.py --golden-run <RUN_ID> --sim-results <JSON_PATH>
+  python scripts/generate-combined-report.py --golden-run <RUN_ID>
+      --sim-results <JSON_PATH>
   python scripts/generate-combined-report.py --golden-run <RUN_ID>
   python scripts/generate-combined-report.py --sim-results <JSON_PATH>
 """
@@ -24,9 +25,14 @@ Usage:
 import argparse
 import os
 import sys
+
+os.environ["CXAS_CALLER_CONTEXT"] = "skill:cxas-agent-foundry:generate-combined-report"
+
+
 from datetime import datetime
 
 from config import get_project_path
+
 from cxas_scrapi.utils.reporting import (
     generate_combined_html_report,
     load_callback_test_results,
@@ -41,10 +47,12 @@ SIM_EVALS_YAML = get_project_path("evals", "simulations", "simulations.yaml")
 
 def main():
     try:
-        import cxas_scrapi  # noqa: F401
+        import cxas_scrapi  # noqa: F401, PLC0415
     except ImportError:
         print(
-            "Error: cxas-scrapi not installed. Activate venv (source .venv/bin/activate) and install cxas-scrapi first."
+            "Error: cxas-scrapi not installed. "
+            "Activate venv (source .venv/bin/activate) and "
+            "install cxas-scrapi first."
         )
         sys.exit(1)
 
@@ -62,7 +70,10 @@ def main():
     parser.add_argument(
         "--app-name",
         default=None,
-        help="App resource name. If not provided, reads from gecx-config.json via config.py.",
+        help=(
+            "App resource name. If not provided, reads from "
+            "gecx-config.json via config.py."
+        ),
     )
     parser.add_argument(
         "--golden-modality",
@@ -91,7 +102,7 @@ def main():
     # Resolve app_name from gecx-config.json if not provided
     if not args.app_name and args.golden_run:
         try:
-            from config import load_app_name
+            from config import load_app_name  # noqa: PLC0415
 
             args.app_name = load_app_name()
         except Exception:

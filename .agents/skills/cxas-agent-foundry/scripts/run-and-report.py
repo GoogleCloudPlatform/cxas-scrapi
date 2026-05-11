@@ -31,6 +31,8 @@ import os
 import subprocess
 import sys
 
+os.environ["CXAS_CALLER_CONTEXT"] = "skill:cxas-agent-foundry:run-and-report"
+
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 

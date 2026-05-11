@@ -29,6 +29,8 @@ import argparse
 import json
 import os
 import sys
+
+os.environ["CXAS_CALLER_CONTEXT"] = "skill:cxas-agent-foundry:scrapi-sim-runner"
 import time
 import uuid
 import yaml

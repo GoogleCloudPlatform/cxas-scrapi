@@ -100,7 +100,9 @@ class Common:
         except importlib.metadata.PackageNotFoundError:
             sdk_version = "unknown"
 
-        self.client_info = ClientInfo(user_agent=f"cxas-scrapi/{sdk_version}")
+        caller_context = os.environ.get("CXAS_CALLER_CONTEXT", "base-python")
+        user_agent = f"cxas-scrapi/{sdk_version} context/{caller_context}"
+        self.client_info = ClientInfo(user_agent=user_agent)
 
     @staticmethod
     def empty_to_dict(v: Any) -> Any:

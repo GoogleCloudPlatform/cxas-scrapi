@@ -31,6 +31,9 @@ import json
 import os
 import subprocess
 import sys
+
+os.environ["CXAS_CALLER_CONTEXT"] = "skill:cxas-agent-foundry:gate-check"
+
 import uuid
 
 from config import load_config, get_project_path

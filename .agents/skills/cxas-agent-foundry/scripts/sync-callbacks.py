@@ -43,6 +43,8 @@ import shutil
 import sys
 import yaml
 
+os.environ["CXAS_CALLER_CONTEXT"] = "skill:cxas-agent-foundry:sync-callbacks"
+
 from config import load_app_name, get_project_path
 
 

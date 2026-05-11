@@ -482,7 +482,6 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     )
     print(f"Combined report generated at {output_path}")
 
-
 def test_tools(args: argparse.Namespace) -> None:
     """Handles the 'test-tools' command."""
 
@@ -1520,6 +1519,7 @@ def get_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    os.environ["CXAS_CALLER_CONTEXT"] = "cli"
     parser = get_parser()
     args = parser.parse_args()
 

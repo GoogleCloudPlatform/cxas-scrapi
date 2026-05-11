@@ -27,6 +27,9 @@ import argparse
 import os
 import subprocess
 import sys
+
+os.environ["CXAS_CALLER_CONTEXT"] = "skill:cxas-agent-foundry:run-all-evals"
+
 import time
 from pathlib import Path
 
