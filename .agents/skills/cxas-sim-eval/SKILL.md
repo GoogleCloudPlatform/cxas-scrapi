@@ -47,6 +47,15 @@ Fetch the list of tools and toolsets used by the agent and save the configuratio
 ### 6. Convert Evaluations
 Run the conversion script (`convert_eval.py`) to process the fetched evaluations and save the converted test cases under `[output_dir]/sim_evals/`.
 
+## Audio Evaluations
+
+To run audio evaluations, you must ensure the following prerequisites are met:
+
+1.  **Enable Text-to-Speech (TTS) API**: The evaluation process may require converting text inputs to speech to simulate audio interaction. Ensure the TTS API is enabled in your GCP project.
+2.  **Configure GCS Bucket**: Audio evaluations often require a Cloud Storage bucket to store recordings. Ensure a bucket is created and its URI is configured in your evaluation settings.
+
+Failure to set these up may cause audio evaluations to fail during the execution phase.
+
 ## Automation Scripts
 
 Three scripts are available to automate the process:
@@ -125,4 +134,3 @@ When running evaluations with the `intercept_and_score_reasoning` tool enabled, 
    - **Symptom**: Use of words like "wait", "actually", "on second thought".
    - **Meaning**: The agent is abandoning a plan mid-turn or correcting itself, indicating unclear triggers.
    - **Fix**: Clarify triggers and state transitions in instructions.
-
