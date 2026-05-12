@@ -36,6 +36,39 @@ def test_get_parser():
     assert args.location == "us"
 
 
+def test_create_app_id_alias():
+    """Test that --app-id is an alias for --app-name in 'create' command."""
+    parser = get_parser()
+
+    # Test with --app-name
+    args = parser.parse_args(
+        [
+            "create",
+            "My App",
+            "--app-name",
+            "custom-name",
+            "--project-id",
+            "p",
+            "--location",
+            "l",
+        ]
+    )
+    assert args.app_name == "custom-name"
+
+    # Test with --app-id
+    args = parser.parse_args(
+        [
+            "create",
+            "My App",
+            "--app-id",
+            "custom-id",
+            "--project-id",
+            "p",
+            "--location",
+            "l",
+        ]
+    )
+    assert args.app_name == "custom-id"
 def test_cli_installed_help():
     """Test that the 'cxas' command is installed and executable (verifies
     setup.py)."""
