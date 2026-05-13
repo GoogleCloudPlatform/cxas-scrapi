@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.2.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.1.0...v1.2.0) (2026-05-13)
+
+
+### Features
+
+* Add Slot Filling DAG Framework documentation and Bella Notte ex… ([e8d9fa2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e8d9fa2a82ca11bb7bf2c19011d71252385a1b0f))
+* Add Slot Filling DAG Framework documentation and Bella Notte example ([b91d048](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b91d04872cdf8792add9bb72b6917426e1c5d119))
+* bella-notte: replace with full CXAS app structure ([055240b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/055240bd72802a8075facf4e2ff76b2f1226ee3b))
+* **bella-notte:** auto-confirm, stall gating, fresh-pending setter h… ([8a021be](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8a021be307dfc3ecea7e967e017c705361db8219))
+* **bella-notte:** auto-confirm, stall gating, fresh-pending setter hiding ([b0ddd35](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b0ddd359ba106ed31cddff8c787ccad6971de886))
+* **cli:** add directory support, async execution, runs flag, and modality support to evals report ([819cb29](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/819cb291612f54b2755d3cf07b9602845a6f813c))
+* **cli:** add directory support, async execution, runs flag, and modality support to evals report ([36f07be](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/36f07bec8a26f292e0fddec3b505273bbed94b41))
+* **cli:** add directory support, filtering, and robust expectation check to evals report ([9f39cfc](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/9f39cfcc3b709c910b21107b88f16412e6e44b22))
+* **cli:** add directory support, filtering, and robust expectation check to evals report ([6e247e9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6e247e900afaf810e08baa2f5e8bd082b625217a))
+* comprehensive DFCX to CXAS migration optimization, Stage 1 and 2, and minor enhancements ([#93](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/93)) ([625f464](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/625f464aade7b0ed84594f98a248f07bfce2dc99))
+* Fix fresh_pending to detect new slots added mid-readback ([3a5c17f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3a5c17feaaf2bb6e7e3a1c749387d69a06e100a4))
+* implement GCS storage support for combined evaluation reports and add CLI flag ([bf85a6c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bf85a6c9906880e4a63176e7958a590bd18a3a18))
+* implement GCS storage support for combined evaluation reports and add CLI flag ([c17b9a8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c17b9a83acbf422c24bd8dea85aad0c7dc76d077))
+* integrate migration into Scrapi CLI ([#59](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/59)) ([ee6320c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ee6320c71e859b93a26c49eec182365e2ce29373))
+* update agent-foundry skill to use subagents to improve context management ([a9a1227](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a9a12272c9d79bb20103e714673fcc2daada2709))
+
+
+### Bug Fixes
+
+* add missing google-cloud-storage dependency ([7bef179](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7bef17958e72502e57f1b53d10a84d0cbf38d139))
+* Add missing google-cloud-storage dependency ([12ba121](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/12ba1211363f2f7df979ae06daa0c63a471defeb))
+* add noqa comments for ruff lint (F821, I001) ([747787d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/747787d3d942673a4f62cc1c1bec845b6007dbc8))
+* **C002:** shorten _get_args docstring to satisfy line length linter ([a095f2e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a095f2e476ccecd47baf718291fd81e5cf177c47))
+* **C002:** use AST to count callback args instead of regex splitting ([70d1e5d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/70d1e5d35c2548f8c530787609267611bec8b482))
+* init-github-action nested app dirs ([0710e2e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/0710e2e551249843ec28ae165c5eb3a1c7d65734))
+* **linter:** remove app.json tools check and update tests ([a516fa6](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a516fa652b3d630c11d8fcfa9f66673da3d79df1))
+* **linter:** remove app.json tools check and update tests ([a3abc4e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a3abc4e7b984b4ffab3819832b1110ed996edf98))
+
+
+### Documentation
+
+* add Design Guide, Patterns, and Tutorials sections ([c836509](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c836509fda7a65433043f18b5bf616149b128043))
+* **agent-development:** add team collaboration guide for multi-developer Git workflow ([eabedd0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/eabedd07f1d1a4d7594e831822386f6e23122bc5))
+* **agent-development:** add team collaboration guide for multi-developer Git workflow ([cd3c520](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/cd3c520b5f06d529c0c16feddeab7617cce11b39)), closes [#90](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/90)
+* Docs/design guide patterns tutorials ([c40c375](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c40c37539d3e278412cab8f0f082dd40d86a30ab))
+* scope DAG slot manager state to prevent cross-DAG-agent contamination ([4e5b0b0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4e5b0b0a322034065e038732627cf986145644c0))
+* scope DAG slot manager state to prevent cross-DAG-agent contamination ([7749ded](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7749ded6b08798840b30d9e6c638d8e81288796d))
+* **skills:** add multilingual agent patterns to cxas-agent-foundry s… ([23b70e4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/23b70e48326482c598ba7a5f1d46ca35e2e0d4cf))
+* **skills:** add multilingual agent patterns to cxas-agent-foundry skill ([e827656](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e8276567d2811bdd50d1e7157abaedd35cc7092a))
+* **skills:** add speech rate and pacing guidance to cxas-agent-found… ([4a85484](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4a8548437280e5030be39f2cdc3510fcd52e625c))
+* **skills:** add speech rate and pacing guidance to cxas-agent-foundry skill ([90835bc](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/90835bc750a971d10ab749424d49c369129e33c8))
+
 ## [1.1.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.0.0...v1.1.0) (2026-05-05)
 
 
