@@ -87,13 +87,17 @@ def test_app_create_with_app_name(
     )
 
     mock_app_response = mock.MagicMock()
-    mock_app_response.name = "projects/test-project/locations/us/apps/custom-app-id"
+    mock_app_response.name = (
+        "projects/test-project/locations/us/apps/custom-app-id"
+    )
     mock_apps_client.create_app.return_value = mock_app_response
 
     cli_app.app_create(args)
 
     mock_apps_client.create_app.assert_called_once_with(
-        app_id="custom-app-id", display_name="Test App", description="A test app"
+        app_id="custom-app-id",
+        display_name="Test App",
+        description="A test app",
     )
 
 

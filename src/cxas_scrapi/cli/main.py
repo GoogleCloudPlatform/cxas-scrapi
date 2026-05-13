@@ -1427,7 +1427,13 @@ def get_parser() -> argparse.ArgumentParser:
         "--description", help="Description for the new app."
     )
     parser_create.add_argument(
-        "--app-name", "--app-id", dest="app_name", help="The requested CXAS App ID. If omitted, a random UUID is generated."
+        "--app-name",
+        "--app-id",
+        dest="app_name",
+        help=(
+            "The requested CXAS App ID. "
+            "If omitted, a random UUID is generated."
+        ),
     )
     _add_project_location_args(parser_create)
     parser_create.set_defaults(func=app_create)
