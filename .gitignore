@@ -7,6 +7,10 @@ z_adhoc/
 .agent/
 *.tar
 
+# `cxas trace` workspace — local audio downloads, smoke-test outputs,
+# and per-developer trace.yaml. Users create their own.
+.cxas/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

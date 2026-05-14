@@ -51,6 +51,7 @@ dependencies = [
   "rich",
   "google-cloud-dialogflow-cx",
   "google-cloud-storage",
+  "google-cloud-logging",
   "nest_asyncio",
   "jinja2",
 ]
@@ -89,7 +90,7 @@ packages = ["src/cxas_scrapi"]
 [tool.ruff]
 line-length = 80
 target-version = "py310"
-extend-exclude = ["*.ipynb", ".agents/skills/cxas-agent-foundry/assets/project-template/", ".agents/skills/cxas-agent-foundry/scripts", ".agents/skills/cxas-sim-eval/scripts", "examples/"]
+extend-exclude = ["*.ipynb", ".agents/skills/cxas-agent-foundry/assets/project-template/", ".agents/skills/cxas-agent-foundry/scripts", ".agents/skills/cxas-sim-eval/scripts", ".agents/skills/cxas-cuj-report-generator/", "examples/"]
 
 [tool.ruff.lint]
 select = [
@@ -114,6 +115,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/cxas_scrapi/migration/prompts.py" = ["E501"]
+# Audio-analysis prompts are verbatim text intended for Gemini and must not be
+# reflowed; line-length doesn't apply to prompt content.
+"src/cxas_scrapi/utils/tracing/audio_analysis.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

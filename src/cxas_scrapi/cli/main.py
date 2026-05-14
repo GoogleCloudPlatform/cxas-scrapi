@@ -40,6 +40,7 @@ from cxas_scrapi.cli.app import (
 from cxas_scrapi.cli.create_local import handle_local_create
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
 from cxas_scrapi.cli.migration_cli import MigrationCLI
+from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
 from cxas_scrapi.core.github import init_github_action
@@ -1564,6 +1565,9 @@ def get_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawTextHelpFormatter,
     )
     populate_insights_parser(parser_insights)
+
+    # Subparsers for 'trace' — observability/debugging for past conversations.
+    register_trace_subparser(subparsers)
 
     return parser
 

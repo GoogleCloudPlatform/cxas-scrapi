@@ -65,6 +65,7 @@ class GeminiGenerate:
         response_mime_type: Optional[str] = None,
         response_schema: Optional[Any] = None,
         temperature: Optional[float] = 1.0,
+        thinking_level: Optional[str] = None,
     ) -> Optional[Any]:
         """Generates content using the Gemini model.
 
@@ -77,6 +78,8 @@ class GeminiGenerate:
             response_schema: Optional Pydantic model or schema for structured
               output.
             temperature: Optional temperature setting. Defaults to 1.0.
+            thinking_level: Optional Vertex `ThinkingConfig` budget; one of
+              "low" / "medium" / "high". `None` disables thinking entirely.
 
         Returns:
             The generated text response or parsed object, or None on failure.
@@ -92,6 +95,10 @@ class GeminiGenerate:
             config_args["response_schema"] = response_schema
         if temperature is not None:
             config_args["temperature"] = temperature
+        if thinking_level:
+            config_args["thinking_config"] = genai.types.ThinkingConfig(
+                thinking_level=thinking_level
+            )
 
         config = None
         if config_args:
@@ -107,6 +114,72 @@ class GeminiGenerate:
             return response.text
         except Exception as e:
             logger.error(f"Gemini generation failed: {e}")
+            return None
+
+    def generate_with_parts(
+        self,
+        parts: list[Any],
+        system_prompt: Optional[str] = None,
+        model_name: Optional[str] = None,
+        response_mime_type: Optional[str] = None,
+        response_schema: Optional[Any] = None,
+        temperature: Optional[float] = 1.0,
+        thinking_level: Optional[str] = None,
+    ) -> Optional[Any]:
+        """Generates content from a list of multimodal Parts.
+
+        Useful for audio analysis where one part is a `genai.types.Part`
+        constructed via `from_uri(gs://..., mime_type='audio/wav')` or
+        `from_bytes(data=..., mime_type=...)`, and another part is a text
+        prompt.
+
+        Args:
+            parts: List of `genai.types.Part` (or strings — converted to text
+              parts automatically).
+            system_prompt: Optional system instruction.
+            model_name: Optional override for the model name.
+            response_mime_type: Optional MIME type (e.g. 'application/json').
+            response_schema: Optional schema for structured output.
+            temperature: Sampling temperature.
+            thinking_level: Optional Vertex `ThinkingConfig` budget; one of
+              "low" / "medium" / "high". `None` disables thinking entirely.
+        """
+        target_model = model_name or self.model_name
+
+        contents = []
+        for part in parts:
+            if isinstance(part, str):
+                contents.append(genai.types.Part.from_text(text=part))
+            else:
+                contents.append(part)
+
+        config_args = {}
+        if system_prompt:
+            config_args["system_instruction"] = system_prompt
+        if response_mime_type:
+            config_args["response_mime_type"] = response_mime_type
+        if response_schema:
+            config_args["response_schema"] = response_schema
+        if temperature is not None:
+            config_args["temperature"] = temperature
+        if thinking_level:
+            config_args["thinking_config"] = genai.types.ThinkingConfig(
+                thinking_level=thinking_level
+            )
+
+        config = None
+        if config_args:
+            config = genai.types.GenerateContentConfig(**config_args)
+
+        try:
+            response = self.client.models.generate_content(
+                model=target_model, contents=contents, config=config
+            )
+            if response_mime_type == "application/json" and response_schema:
+                return response.parsed
+            return response.text
+        except Exception as e:
+            logger.error(f"Gemini multimodal generation failed: {e}")
             return None
 
     async def generate_async(
