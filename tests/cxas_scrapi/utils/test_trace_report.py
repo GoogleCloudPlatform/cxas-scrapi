@@ -398,7 +398,6 @@ def test_duration_ms_paths():
 
 
 def test_to_dt_paths():
-    import datetime
     assert tr._to_dt(None) is None
     assert tr._to_dt("invalid") is None
     dt = datetime.datetime(2026, 5, 1)
