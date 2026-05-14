@@ -195,6 +195,14 @@ nav:
     - Insights:
       - guides/insights/index.md
       - Scorecards: guides/insights/scorecards.md
+  - VS Code Extension:
+    - vscode/index.md
+    - Installation: vscode/installation.md
+    - Quickstart: vscode/quickstart.md
+    - Authoring Features: vscode/authoring.md
+    - Evaluations: vscode/evaluations.md
+    - Importing from CES: vscode/importing.md
+    - Settings & Troubleshooting: vscode/settings.md
   - CLI Reference:
     - cli/index.md
     - cxas pull: cli/pull.md
