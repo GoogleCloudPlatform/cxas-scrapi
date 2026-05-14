@@ -57,3 +57,4 @@ When you pass a display name (e.g., `"My Support Agent"`) instead of a resource 
 | [`cxas lint`](lint.md) | Lint your app directory for best-practice violations. |
 | [`cxas init`](init.md) | Bootstrap a project with AI agent development skills. |
 | [`cxas insights`](insights.md) | Manage QA scorecards via the Insights API. |
+| [`cxas trace`](trace.md) | Inspect, analyze, and report on individual conversations (deployed/build/eval) — list, fetch report, merge Cloud Logs, download/analyze audio with Gemini, replay against current agent, aggregate stats, and flag platform bugs. |

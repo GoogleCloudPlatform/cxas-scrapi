@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from typing import Any
 
 from google.cloud import storage
@@ -70,15 +71,7 @@ class GCSUtils(Common):
         Raises:
             ValueError: If the GCS URI is invalid.
         """
-        if not gcs_uri.startswith("gs://"):
-            raise ValueError(f"Invalid GCS URI: {gcs_uri}")
-
-        # Remove gs:// and split into bucket and blob path
-        parts = gcs_uri[5:].split("/", 1)
-        if len(parts) < 2:
-            raise ValueError(f"Invalid GCS URI: {gcs_uri}")
-
-        bucket_name, blob_path = parts
+        bucket_name, blob_path = self._parse_gcs_uri(gcs_uri)
         bucket = self.client.get_bucket(bucket_name)
         blob = bucket.blob(blob_path)
         blob.upload_from_string(content, content_type=content_type)
@@ -86,3 +79,78 @@ class GCSUtils(Common):
         return (
             f"https://storage.mtls.cloud.google.com/{bucket_name}/{blob_path}"
         )
+
+    def upload_file(
+        self,
+        gcs_uri: str,
+        local_path: str,
+        content_type: str | None = None,
+    ) -> str:
+        """Uploads a local file to a GCS URI and returns the mtls URL."""
+        bucket_name, blob_path = self._parse_gcs_uri(gcs_uri)
+        bucket = self.client.get_bucket(bucket_name)
+        blob = bucket.blob(blob_path)
+        blob.upload_from_filename(local_path, content_type=content_type)
+        return (
+            f"https://storage.mtls.cloud.google.com/{bucket_name}/{blob_path}"
+        )
+
+    def download_blob(self, gcs_uri: str) -> bytes:
+        """Downloads a blob from GCS and returns its raw bytes."""
+        bucket_name, blob_path = self._parse_gcs_uri(gcs_uri)
+        bucket = self.client.bucket(bucket_name)
+        blob = bucket.blob(blob_path)
+        return blob.download_as_bytes()
+
+    def download_string(self, gcs_uri: str, encoding: str = "utf-8") -> str:
+        """Downloads a blob from GCS and decodes it as text."""
+        return self.download_blob(gcs_uri).decode(encoding)
+
+    def download_to_file(self, gcs_uri: str, dest_path: str) -> str:
+        """Downloads a blob from GCS to a local file path.
+
+        Creates parent directories as needed. Returns the absolute dest path.
+        """
+        bucket_name, blob_path = self._parse_gcs_uri(gcs_uri)
+        bucket = self.client.bucket(bucket_name)
+        blob = bucket.blob(blob_path)
+        os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
+        blob.download_to_filename(dest_path)
+        return os.path.abspath(dest_path)
+
+    def exists(self, gcs_uri: str) -> bool:
+        """Returns True if the GCS object exists."""
+        bucket_name, blob_path = self._parse_gcs_uri(gcs_uri)
+        bucket = self.client.bucket(bucket_name)
+        return bucket.blob(blob_path).exists(self.client)
+
+    def find_first(
+        self,
+        gcs_bucket_uri: str,
+        suffix: str,
+        max_results: int = 5000,
+    ) -> str | None:
+        """Lists the bucket and returns the first object whose name ends with
+        `suffix` (a fragment like `{conversation_id}/full-session.wav`).
+        Returns the full `gs://...` URI or None.
+        """
+        if gcs_bucket_uri.startswith("gs://"):
+            bucket_name = gcs_bucket_uri[5:].split("/", 1)[0]
+        else:
+            bucket_name = gcs_bucket_uri
+        for blob in self.client.list_blobs(
+            bucket_name, max_results=max_results
+        ):
+            if blob.name.endswith(suffix):
+                return f"gs://{bucket_name}/{blob.name}"
+        return None
+
+    @staticmethod
+    def _parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
+        """Splits a gs:// URI into (bucket, blob_path)."""
+        if not gcs_uri.startswith("gs://"):
+            raise ValueError(f"Invalid GCS URI: {gcs_uri}")
+        parts = gcs_uri[5:].split("/", 1)
+        if len(parts) < 2 or not parts[1]:
+            raise ValueError(f"Invalid GCS URI: {gcs_uri}")
+        return parts[0], parts[1]

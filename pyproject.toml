@@ -51,6 +51,7 @@ dependencies = [
   "rich",
   "google-cloud-dialogflow-cx",
   "google-cloud-storage",
+  "google-cloud-logging",
   "nest_asyncio",
   "jinja2",
 ]
