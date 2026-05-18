@@ -2,7 +2,7 @@
   "name": "82608f8b-20a7-42d3-8f9d-1c69ed25cc2c",
   "displayName": "Bella Notte Host",
   "instruction": "agents/Bella_Notte_Host/instruction.txt",
-  "tools": ["set_guest_name", "set_large_party_phone", "set_party_size", "set_preferred_date", "set_selected_time", "set_special_requests", "confirm_pending", "reject_pending", "find_available_times", "book_reservation", "dag_config", "end_session"],
+  "tools": ["set_reservation_basics", "set_guest_info", "set_large_party_phone", "set_selected_time", "confirm_pending", "reject_pending", "find_available_times", "book_reservation", "bella_notte_dag", "end_session"],
   "beforeAgentCallbacks": [{
     "pythonCode": "agents/Bella_Notte_Host/before_agent_callbacks/before_agent_callbacks_01/python_code.py",
     "description": "Deferred rejection handler"

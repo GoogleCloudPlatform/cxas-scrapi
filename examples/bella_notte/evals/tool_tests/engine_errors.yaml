@@ -145,6 +145,13 @@ _config: &config
     on_exhaust:
       say: "I'm having trouble completing your reservation. Please call us at 555-0100."
       then: escalate
+  steer_back:
+    soft_after: 2
+    hard_after: 4
+    escalate_after: 6
+    on_exhaust:
+      say: "I'm having trouble completing your reservation. Please call us at 555-0100."
+      then: escalate
 
 tests:
 # ═══════════════════════════════════════════════════════════════════
@@ -317,7 +324,7 @@ tests:
         filled:
           welcome: true
         pending: {}
-        _progress_turns: 3
+        _steer_back_turns: 5
         _last_state:
           filled:
             welcome: true
@@ -344,7 +351,7 @@ tests:
           welcome: true
           party_size: 4
         pending: {}
-        _progress_turns: 3
+        _steer_back_turns: 3
         _last_state:
           filled:
             welcome: true
@@ -353,7 +360,7 @@ tests:
       last_user_text: ""
   expectations:
     response:
-    - path: "$.result.sm._progress_turns"
+    - path: "$.result.sm._steer_back_turns"
       operator: equals
       value: 0
 
@@ -396,9 +403,7 @@ tests:
           welcome: true
         pending:
           party_size: 4
-        _readback_stall: 2
-        _retries:
-          readback: 1
+        _steer_back_turns: 5
         _last_state:
           filled:
             welcome: true
@@ -584,8 +589,7 @@ tests:
           welcome: true
         pending:
           party_size: 4
-        _readback_stall: 2
-        _retries: {}
+        _steer_back_turns: 3
         _last_state:
           filled:
             welcome: true
@@ -601,6 +605,6 @@ tests:
     - path: "$.result.action.force_preempt"
       operator: equals
       value: true
-    - path: "$.result.sm.pending"
-      operator: equals
-      value: {}
+    - path: "$.result.action.message"
+      operator: contains
+      value: "Is that correct?"

@@ -1,9 +1,0 @@
-{
-  "name": "eb8d0482-6430-463e-abe0-076817409daf",
-  "pythonFunction": {
-    "name": "set_preferred_date",
-    "pythonCode": "tools/set_preferred_date/python_function/python_code.py",
-    "description": "Record the preferred date in YYYY-MM-DD format. Convert natural language ('this Friday', 'July 4th', 'tomorrow') to YYYY-MM-DD. If year is omitted, assume nearest future occurrence. Call immediately when a date is mentioned, even alongside other info in the same message."
-  },
-  "displayName": "set_preferred_date"
-}

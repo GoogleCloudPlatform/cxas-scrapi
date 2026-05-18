@@ -1,0 +1,9 @@
+{
+  "name": "59d55694-444b-45aa-88c3-b2e1daf1d59d",
+  "pythonFunction": {
+    "name": "set_guest_info",
+    "pythonCode": "tools/set_guest_info/python_function/python_code.py",
+    "description": "Record the guest's name and/or special requests. Call this tool whenever the guest mentions their name OR special requests / dietary needs, even if only one value is provided. Accept any name format (first, last, full, nickname). If the guest says 'none' for special requests, pass that text as-is. Call immediately, even alongside other info."
+  },
+  "displayName": "set_guest_info"
+}

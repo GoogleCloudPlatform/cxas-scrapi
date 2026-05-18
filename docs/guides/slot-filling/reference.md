@@ -5,21 +5,20 @@ description: Complete field reference for slot-filling DAG configuration — slo
 
 # Configuration Reference
 
-This page documents every field in the `dag_config` dictionary. Use it alongside the [Tutorial](tutorial.md) and [Advanced Patterns](advanced.md) for context on how each field is used in practice.
+This page documents every field in the `{config_id}_dag` dictionary. Use it alongside the [Tutorial](tutorial.md) and [Advanced Patterns](advanced.md) for context on how each field is used in practice.
 
 ---
 
 ## Top-level structure
 
-The `dag_config()` function returns a dictionary with these top-level keys:
+The `{config_id}_dag()` function (e.g. `bella_notte_dag()`) returns a dictionary with these top-level keys:
 
 ```python
 {
     "slots": [ ... ],                     # Required
     "tasks": [ ... ],                     # Required (can be empty list)
     "confirm_transition_prefix": [ ... ], # Optional
-    "readback_retry": { ... },            # Optional
-    "progress_stall": { ... },            # Optional
+    "steer_back": { ... },               # Optional
 }
 ```
 
@@ -28,8 +27,7 @@ The `dag_config()` function returns a dictionary with these top-level keys:
 | `slots` | list[dict] | Yes | Ordered list of slot definitions. Order determines question priority. |
 | `tasks` | list[dict] | Yes | Ordered list of task definitions. Order determines firing priority. |
 | `confirm_transition_prefix` | list[str] | No | Transition phrases used after readback confirmation. One is picked randomly. |
-| `readback_retry` | dict | No | Safety config for readback stall detection. |
-| `progress_stall` | dict | No | Safety config for conversation progress stall detection. |
+| `steer_back` | dict | No | 3-tier steer-back config for off-topic conversations (soft directive, hard preempt, escalate). |
 
 ---
 
@@ -70,6 +68,7 @@ These fields apply when `source` is `"user"` or includes `"user"` in a list.
 | `response` | list[dict] | No | Rich response parts (payloads, chips) delivered alongside the slot's question. See [Rich Response Payloads](advanced.md#rich-response-payloads). |
 | `validation` | dict | No | Validation error messages, retry limits, and escalation. See [validation config](#validation-config). |
 | `validate_against` | dict | No | Cross-slot validation. See [cross-slot validation](#cross-slot-validation). |
+| `setter_field` | str | No | For multi-slot setters. Identifies which field of the multi-slot tool maps to this slot. The tool returns `{"values": {...}, "field_errors": {...}}` instead of `{"value": ...}`. |
 
 ### Event-sourced slot fields
 
@@ -235,7 +234,7 @@ The `on_failure` field on a task controls retry behavior when the task fails.
 
 ## Escalation config
 
-The `on_exhaust` field appears in slot validation, task failure, readback retry, and progress stall configs. It always has the same structure:
+The `on_exhaust` field appears in slot validation, task failure, and steer-back configs. It always has the same structure:
 
 ```python
 "on_exhaust": {
@@ -258,49 +257,36 @@ The `on_exhaust` field appears in slot validation, task failure, readback retry,
 
 ---
 
-## Global: readback retry
+## Global: steer-back
 
-Controls the readback stall detection safety net.
-
-```python
-"readback_retry": {
-    "max_retries": 2,
-    "on_exhaust": {
-        "say": "Having trouble processing your details.",
-        "then": {"tool": "end_session", "args": {"reason": "readback_stall"}},
-    },
-},
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `max_retries` | int | Yes | How many times to re-ask after auto-rejecting stalled readback. |
-| `on_exhaust` | dict | Yes | Action when readback retries are exhausted. |
-
-**How it works:** When pending values exist but the LLM fails to call `confirm_pending` or `reject_pending` for 3 consecutive cycles, the framework auto-rejects all pending values and re-asks. Each auto-reject counts as one retry.
-
----
-
-## Global: progress stall
-
-Controls the global progress stall detection.
+Controls the 3-tier steer-back mechanism for off-topic conversations.
 
 ```python
-"progress_stall": {
-    "max_turns": 4,
+"steer_back": {
+    "soft_after": 2,
+    "hard_after": 4,
+    "escalate_after": 6,
     "on_exhaust": {
         "say": "Having trouble completing your request.",
-        "then": {"tool": "end_session", "args": {"reason": "progress_stall"}},
+        "then": {"tool": "end_session", "args": {"reason": "steer_back_exhausted"}},
     },
 },
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `max_turns` | int | Yes | Consecutive turns with no forward progress before escalation. |
-| `on_exhaust` | dict | Yes | Action when progress stalls for too long. |
+| `soft_after` | int | Yes | Consecutive off-topic turns before injecting a steering directive in the system instruction. |
+| `hard_after` | int | Yes | Consecutive off-topic turns before preempting with the next question (or readback re-ask). |
+| `escalate_after` | int | Yes | Consecutive off-topic turns before escalation. |
+| `on_exhaust` | dict | Yes | Action when steer-back reaches the escalate tier. |
 
-**What counts as progress:** Any new slot filled, any task completed, or any readback confirmed resets the progress counter.
+**How it works:**
+
+- **Soft (tier 1):** After `soft_after` turns, the engine adds a `<steer_back>` directive to the system instruction. The LLM still runs and can incorporate the guidance.
+- **Hard (tier 2):** After `hard_after` turns, the engine preempts — re-asks the readback question or the next collection question. Then yields one turn so the LLM can process the user's response.
+- **Escalate (tier 3):** After `escalate_after` turns, fires `on_exhaust`. Typically ends the session or transfers to a human.
+
+The counter resets to 0 whenever forward progress occurs (new slot filled, value confirmed, etc.).
 
 ---
 
@@ -326,10 +312,9 @@ All framework state lives in `callback_context.state["sm"]`. You generally don't
 | `pending` | dict[str, Any] | Values awaiting readback confirmation. |
 | `deferred` | dict[str, Any] | Values held for grouped readback (deferred mode). |
 | `task_results` | dict[str, dict] | Full response from each completed task. |
-| `_retries` | dict[str, int] | Retry counters. Keys: `"TaskName"` (task), `"slot:name"` (validation), `"readback"`. |
+| `_retries` | dict[str, int] | Retry counters. Keys: `"TaskName"` (task), `"slot:name"` (validation). |
 | `_slot_errors` | list[dict] | Validation errors from the current turn's setter calls. |
-| `_readback_stall` | int | Consecutive cycles with stuck readback. Resets on state change. |
-| `_progress_turns` | int | Consecutive turns with no forward progress. |
+| `_steer_back_turns` | int | Consecutive off-topic turns since last forward progress. Drives the 3-tier steer-back mechanism. |
 | `_system_message` | str | Next message for the LLM (set by engine, consumed by callback). |
 | `_pending_payloads` | list[dict] | Announce-slot response parts stashed for `after_model_callback` injection. |
 | `_pending_question_payloads` | dict | Question-slot response parts with `slot` name for conditional injection. |
@@ -369,6 +354,18 @@ return {"stored": True, "value": "7:30 PM", "display_value": "7:30 PM"}
 
 The `after_tool_callback` checks `response["display_value"]` against `filled["available_times"]`.
 
+### Multi-slot success response
+
+```python
+return {"stored": True, "values": {"party_size": 4, "preferred_date": "2026-06-19"}}
+```
+
+When a slot has `setter_field` in the config, the `after_tool_callback` reads the matching field from `values`. Each field is routed independently — valid fields go to `pending` even if other fields have errors:
+
+```python
+return {"stored": True, "values": {"party_size": 4}, "field_errors": {"preferred_date": "past_date"}}
+```
+
 ---
 
 ## Executor tool protocol
@@ -407,7 +404,7 @@ Copy this template to start a new slot-filling agent. Replace the slot and task 
 from typing import Any
 
 
-def dag_config() -> dict[str, Any]:
+def my_agent_dag() -> dict[str, Any]:
     """Return the slot-filling DAG configuration."""
     return {
         "slots": [

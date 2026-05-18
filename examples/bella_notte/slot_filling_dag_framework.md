@@ -24,7 +24,7 @@ The LLM never decides "should I call the booking API now?" or "have I collected 
 
 A **slot** is a named piece of data the conversation needs to collect or derive. Each slot has a **source**:
 
-- `"user"` — collected from the user via a setter tool (e.g., the user says "4 people" and the LLM calls `set_party_size(4)`)
+- `"user"` — collected from the user via a setter tool (e.g., the user says "4 people" and the LLM calls `set_reservation_basics(party_size=4)`)
 - `"task:TaskName"` — populated automatically when a backend task succeeds (e.g., `available_times` is filled when `FindAvailableTimes` returns)
 - `"event"` — pre-filled from external signals (telephony data, web forms, CRM lookups) injected as session variables. Requires `"event_key"` (the key in `event_data`). Pre-filled slots are written directly to `sm["filled"]` by `before_model_callback`, so the framework skips asking for them. See Section 12.1.
 - `"announce"` — framework-controlled slot that delivers text (greeting, disclosure, status message) and fills a completion bit (`True`). No setter, no readback. See Section 12.3.
@@ -69,7 +69,8 @@ Key properties:
 | `requires_readback` | If `True`, values stay in `pending` for user confirmation before moving to `filled`. If `False` or absent, the framework auto-promotes to `filled` immediately. |
 | `readback_fmt` | Format spec for readback text. Can be: a built-in name (`"date"`, `"time"`), a dict spec (`{"type": "plural", "one": "guest", "other": "guests"}`), or a lambda string (`"lambda v: f'custom {v}'"`). Compiled to a callable once at startup by `_compile_config()`. Built-in dict types: `prefix` (prepend text), `plural` (count + singular/plural noun), `none_sub` (replace none-like values). |
 | `condition` | Optional lambda string (e.g., `"lambda filled: int(filled.get('party_size', 0)) >= 5"`) compiled to a callable once at startup. When present, the slot is only active if the condition returns `True`. Inactive slots are skipped and don't block tasks. See Section 4.4. |
-| `hint` | Short description shown in the `<slot_filling_protocol>` block. Used with `setter` to generate the tool-selection guide the LLM sees (e.g., `"Party size / number of users" → set_party_size`). |
+| `hint` | Short description shown in the `<slot_filling_protocol>` block. Used with `setter` to generate the tool-selection guide the LLM sees (e.g., `"Party size / number of users" → set_reservation_basics`). |
+| `setter_field` | For multi-slot setters only. Identifies which field of the multi-slot tool maps to this slot. When present, the tool returns `{"values": {"field_name": val}, "field_errors": {"field_name": "code"}}` instead of `{"value": val}`. The `after_tool_callback` routes each field independently to its mapped slot. |
 | `validate_against` | Optional cross-slot validation spec: `{"response_field": "display_value", "filled_slot": "available_times", "error_code": "not_available"}`. The `after_tool_callback` checks that the setter's response field matches one of the comma-separated options in the referenced filled slot; on mismatch it signals a `_slot_errors` entry. See Section 6a. |
 | `validation` | Optional dict with `errors` (code → message mapping), `max_retries`, and `on_exhaust` config. See Section 5b. |
 
@@ -118,10 +119,8 @@ Key properties:
 | `success_check` | Key in the result dict that must be truthy for the task to count as successful. |
 | `terminal` | If `True`, successful completion ends the conversation (sets `status = "complete"`). |
 | `readback_inputs` | Defer slot readback to grouped confirmation (7a). |
-| `then_say` | Message template shown on success. Supports `{slot_name}` placeholders from filled slots AND `{key}` placeholders from the task's result dict. For example, if the task tool returns `{"success": True, "symbolName": "Apple Inc.", "lastTradeValue": "$180.00"}`, you can write `"then_say": "{symbolName} is trading at {lastTradeValue}."`. See Section 12.5. |
-| `then_response` | Structured response list for channel-aware payloads. Same substitution rules as `then_say` — both filled slots and task result keys are available. See Section 12.5. |
+| `then_say` | Message template shown on success. Supports `{slot_name}` placeholders. |
 | `condition` | Optional lambda string compiled to a callable. When present, the task only fires if the condition returns `True`. Inactive tasks are skipped during DAG evaluation. Same compilation as slot conditions. |
-| `on_complete` | Optional dict with `clear_slots` (list of slot names). When present on a terminal task, after success the engine clears the specified slots, removes the task result, and resets `status` to `"in_progress"` — enabling conversation restart. See Section 12.6. |
 | `on_failure` | Retry and escalation configuration (see Section 5). |
 
 ### 2.3 The DAG
@@ -178,8 +177,7 @@ sm = {
     "_retries":       {},    # failure counts: {"CheckAvailability": 1, "slot:num_guests": 2, "readback": 1}
     "_slot_errors":   [],    # validation errors from setter tools: [{"slot": "...", "code": "..."}]
     "_last_state":    {},    # filled/pending/deferred snapshot
-    "_readback_stall": 0,    # consecutive callback cycles with non-empty pending and no confirm/reject
-    "_progress_turns": 0,    # callback cycles since last forward progress (slot fill, task fire, readback)
+    "_steer_back_turns": 0,  # user turns since last forward progress — drives 3-tier steer-back
     "_system_message": "",   # next message for the LLM to relay (written by the callback adapter)
     "_debug_log":     [],    # structured event log (opt-in via debug flag) — see Section 19.4
     "status":         "in_progress",  # "in_progress" | "complete" | "escalated"
@@ -190,7 +188,7 @@ The `_retries` dict uses a triple-namespace key scheme:
 
 - **Task retries**: bare task names (`"CheckAvailability"`) — tracks backend operation failures.
 - **Slot validation retries**: `"slot:"` prefix (`"slot:num_guests"`) — tracks invalid user input for a specific slot.
-- **Readback retries**: literal key `"readback"` — tracks how many times the readback stall detector has rejected pending values (see Section 7.5).
+- **Readback retries**: literal key `"readback"` — reserved for future use.
 
 No collision between the three namespaces.
 
@@ -200,10 +198,10 @@ No collision between the three namespaces.
 
 The framework is structured as five components split across CES tools and callbacks:
 
-1. **`dag_config` tool** — agent-specific: slots, tasks (with `tool` keys), format specs, conditions. Returns pure serializable data (no callables). Replace this per project.
+1. **`{config_id}_dag` tool** — per-agent: each agent has its own parameterless DAG tool (e.g., `bella_notte_dag`, `billing_dag`). Returns pure serializable data (no callables): slots, tasks (with `tool` keys), format specs, conditions.
 2. **`slot_filling_engine` tool** — the CES-agnostic orchestrator. Takes `{raw_config, sm, last_user_text, event_data}`, validates/compiles config on first call, runs `_run_slot_filling()`, and returns `{"action": {...}, "sm": {...}}`. The `action` dict contains: `hide_tools`, `preempt`, `force_preempt`, `message`, `function_call` (for task fires and auto-confirm), `si_suffix` (system instruction hints), and `inline_confirmed`. Never touches CES types.
-3. **`before_model_callback`** — thin CES adapter. Calls `tools.dag_config()` and `tools.slot_filling_engine()`, applies tool visibility via `llm_request.config.hide_tool()`, manipulates system instruction (strips stale tags, appends SI suffix, swaps readback→collection on inline confirm), and optionally preempts via `LlmResponse.from_parts()` with text and/or `function_call` parts.
-4. **`before_agent_callback`** — runs once per user turn before static variable substitution. Initializes `sm`, processes deferred rejections (`_rejection_snapshot`), and populates three static prompt variables (`slot_filling_protocol`, `readback_protocol`, `system_directive`) based on the current phase.
+3. **`before_model_callback`** — CES adapter and SI assembler. Calls `tools.{config_id}_dag()` (via `getattr`) and `tools.slot_filling_engine()`, applies tool visibility via `llm_request.config.hide_tool()`, assembles a phase-specific system instruction suffix (`_build_phase_suffix`) that includes only the protocol block relevant to the current phase (collection OR readback, never both), injects it via a sentinel-based replacement (`_inject_phase_suffix`), and optionally preempts via `LlmResponse.from_parts()` with text and/or `function_call` parts.
+4. **`before_agent_callback`** — runs once per user turn. Initializes `sm`, resolves `config_id`, and processes deferred rejections (`_rejection_snapshot`). Does NOT set prompt variables — SI assembly is handled entirely by `before_model_callback`.
 5. **`after_tool_callback`** — routes setter and executor tool results into `sm` state. Reads config-derived mappings from `sm` (`_setter_slots`, `_slot_requires`, `_slot_validates`, `_executor_tasks`) to determine how to handle each tool's response. See Section 6a.
 
 CES calls the callback before EACH model invocation, including after tool results within the same turn. This re-invocation is what lets the framework see state changes from setter tools and react immediately (e.g., fire a DAG task as soon as its inputs are filled).
@@ -217,33 +215,25 @@ User message arrives
 ┌──────────────────────┐
 │ before_agent_callback │  (once per turn)
 │  • Initialize sm      │
+│  • Resolve config_id  │
 │  • Process deferred   │
 │    rejections         │
-│  • Set prompt vars:   │
-│    slot_filling_      │
-│    protocol,          │
-│    readback_protocol, │
-│    system_directive   │
 └────────┬─────────────┘
-         │
-         ▼
-   Static variable substitution
-   ({{slot_filling_protocol}} etc. baked into instruction)
          │
          ▼
 ┌──────────────────────────┐
 │ before_model_callback     │  (before EACH model call)
-│  • Hide dag_config,       │
+│  • Hide {config_id}_dag,  │
 │    slot_filling_engine    │
 │  • Terminal state? → OK   │
-│  • tools.dag_config()     │
+│  • tools.{config_id}_dag()│
 │  • tools.slot_filling_    │
 │    engine()               │
 │  • Apply hide_tools       │
-│  • Apply SI suffix        │
-│  • Inline confirm?        │
-│    → swap readback→       │
-│      collection in SI     │
+│  • Build phase suffix     │
+│    (collection OR readback│
+│     — never both)         │
+│  • Inject via sentinel    │
 │  • Preempt? → LlmResponse │
 │    (text + function_call) │
 └────────┬─────────────────┘
@@ -293,9 +283,7 @@ Inside `slot_filling_engine`, the orchestrator `_run_slot_filling()` runs this p
 ├─────────────────────┤
 │ Slot errors          │  Check _slot_errors from setter validation
 ├─────────────────────┤
-│ Readback stall       │  Detect stuck readback cycles
-├─────────────────────┤
-│ Progress stall       │  Detect no-progress conversations
+│ Steer-back           │  3-tier recovery: soft SI → hard preempt → escalate
 ├─────────────────────┤
 │ Post-executor        │  Process _task_just_completed results
 ├─────────────────────┤
@@ -306,6 +294,16 @@ Inside `slot_filling_engine`, the orchestrator `_run_slot_filling()` runs this p
 │ Build SI suffix      │  readback_scope / deferred_collection hints
 └─────────────────────┘
 ```
+
+### 3.0a Gate-Slot Context Preservation
+
+When a config specifies a `gate_slot`, `before_model_callback` returns early (skipping the engine) until that slot is filled. Three mechanisms improve multi-slot extraction during the gate phase:
+
+1. **Tool selection hints**: The gate early return builds tool hints from the config's slot definitions (`hint → setter`) and includes them in the collection block, so the LLM knows which setter to call for each piece of information.
+
+2. **User text capture**: During the gate early return, the callback saves the user's original message to `callback_context.state["_gate_user_text"]`. On the first post-gate engine invocation, this text is injected as a `<user_context>` block in the SI suffix, reminding the LLM to extract slot values from the original message rather than re-asking.
+
+3. **Forward-only `last_user_text`**: The general `last_user_text` extraction only checks `contents[-1]` (not a backward scan), so post-tool re-invocations correctly get empty `last_user_text` — this prevents the steer-back counter from double-incrementing within a single user turn. The backward scan is used ONLY for the `_gate_user_text` capture in the gate early return.
 
 ### 3.1 compute_dag_state() — The Pure Decision Function
 
@@ -396,7 +394,7 @@ Example cascade:
 
 1. User provides `num_guests` and `date`.
 2. DAG evaluator sees `CheckAvailability` has all inputs → fires it.
-3. `CheckAvailability` succeeds → fills `open_slots` → `execute_dag_step` cascades.
+3. `CheckAvailability` succeeds → fills `open_slots` → DAG re-evaluates and cascades.
 4. Cascaded DAG evaluation: `open_slots` is now filled, so `chosen_time` (which `requires: ["open_slots"]`) becomes the next question.
 5. The system message becomes "We have 6 PM, 7:30 PM. Which time?" — all in one callback invocation, no extra round-trip.
 
@@ -451,7 +449,7 @@ When the user has provided values that are awaiting confirmation:
 
 When a setter tool just created pending values (the prior invocation had no pending, this one does), the framework also hides `confirm_pending` and `reject_pending`. This forces the LLM to read back the values to the user before confirming. Without this, the LLM sometimes calls `reject_pending` → setter → `confirm_pending` all in one turn, skipping the readback step entirely.
 
-Additionally, during fresh pending the **setter for each slot already in `pending`** is also hidden. This prevents the LLM from re-calling the same setter during the readback phase (e.g., `set_special_requests` right after `set_special_requests` just ran), which would otherwise push the pending state from "fresh" to "awaiting_confirmation" and allow `confirm_pending` to fire on the next invocation — skipping the readback entirely.
+Additionally, during fresh pending the **setter for each slot already in `pending`** is also hidden. This prevents the LLM from re-calling the same setter during the readback phase (e.g., `set_guest_info` right after `set_guest_info` just ran), which would otherwise push the pending state from "fresh" to "awaiting_confirmation" and allow `confirm_pending` to fire on the next invocation — skipping the readback entirely.
 
 ### 4.4 Conditional Slots
 
@@ -465,7 +463,24 @@ Slots can have a `condition` — a lambda string compiled to a callable at start
 
 The framework also handles **auto-deactivation**: if a slot was previously filled but its condition becomes `False` (e.g., user corrects party size from 6 to 3), the framework removes the value from `filled`/`pending` so the DAG doesn't wait for it.
 
-### 4.5 Why Tool Visibility Matters
+### 4.5 Multi-Slot Setters
+
+A **multi-slot setter** is a single tool that maps to multiple slots. For example, `set_reservation_basics` fills both `party_size` and `preferred_date`, with each parameter optional. This reduces the number of tools the LLM sees and improves call accuracy.
+
+**Config**: Each slot has a `setter_field` that names its parameter within the multi-slot tool:
+
+```python
+{"name": "party_size",    "setter": "set_reservation_basics", "setter_field": "party_size", ...}
+{"name": "preferred_date","setter": "set_reservation_basics", "setter_field": "preferred_date", ...}
+```
+
+**Return format**: Multi-slot setters return `{"stored": True, "values": {...}, "field_errors": {...}}` instead of `{"stored": True, "value": ...}`. Each field is routed independently — valid fields go to `pending` even if other fields have errors.
+
+**Tool hiding**: A multi-slot setter stays visible as long as ANY of its mapped slots still needs filling. It's only hidden when ALL mapped slots are filled, inactive, or pending (during fresh readback).
+
+**State**: The `_multi_setter_slots` mapping (`tool_name → {field_name: slot_name}`) is built during config loading alongside `_setter_slots`.
+
+### 4.6 Why Tool Visibility Matters
 
 Without tool visibility, the LLM might:
 
@@ -565,7 +580,7 @@ Retry counts live in `sm["_retries"]`, a dict with triple-namespace keys:
 
 - **Task retries**: `{"CheckAvailability": 1}` — bare task name.
 - **Slot validation retries**: `{"slot:num_guests": 2}` — `"slot:"` prefix prevents collision with task names.
-- **Readback retries**: `{"readback": 1}` — literal key tracking how many times the readback stall detector has rejected pending values (see Section 7.6).
+- **Readback retries**: `{"readback": 1}` — reserved for future use.
 
 This field:
 
@@ -708,6 +723,8 @@ When a setter tool is called:
 
 3. **Write to pending**: If both checks pass, write `pending[slot_name] = value`.
 
+4. **Process inferred slots**: If the tool result includes an `"inferred"` dict (e.g., `{"inferred": {"service_type": "Internet"}}`), write each inferred slot to `pending` if it's not already in `filled`. This enables one setter to auto-fill related slots — for example, `set_issue_description("modem not turning on")` can infer `service_type = "Internet"` from the device keyword. The inferred values go through readback like any other pending value.
+
 ### 6a.2 Executor Result Routing
 
 When an executor tool (e.g., `find_available_times`, `book_reservation`) is called:
@@ -778,9 +795,8 @@ def _is_affirmative(text: str) -> bool:
 
 If `_is_affirmative` returns `True`, the engine's `_try_auto_confirm` returns a preemptive result:
 
-1. Sets `sm["_auto_confirm_pending"] = True` (prevents the upcoming state change from resetting the progress counter).
-2. Increments `sm["_progress_turns"]` (counts the auto-confirm as a user turn).
-3. Returns a `function_call` for `confirm_pending` — the CES adapter builds a `LlmResponse` with `Part.from_function_call(name="confirm_pending", args={})`. CES then executes `confirm_pending`, which merges `pending → filled` and sets `_readback_transition = True`.
+1. Sets `sm["_auto_confirm_pending"] = True` (prevents the upcoming state change from resetting the steer-back counter).
+2. Returns a `function_call` for `confirm_pending` — the CES adapter builds a `LlmResponse` with `Part.from_function_call(name="confirm_pending", args={})`. CES then executes `confirm_pending`, which merges `pending → filled` and sets `_readback_transition = True`.
 4. The next `before_model_callback` invocation sees the state change from `confirm_pending` and processes the transition (next question or task fire).
 
 The auto-confirm gate **only fires when the phase is `awaiting_confirmation`** (pending slots exist from a prior turn) **and** `last_user_text` is non-empty. Post-tool re-invocations (where the last content is a function response, not a user message) never trigger auto-confirm, preventing double-firing within the same turn.
@@ -813,7 +829,7 @@ def _starts_affirmative(text: str) -> bool:
    - Resets phase to `"collection"` so the LLM gets setter instructions.
    - Returns `inline_confirmed = True`.
 3. The DAG evaluates and sees a `"fire"` action (task prerequisites are met), but the **task fire is deferred** when `inline_confirmed` is `True` — the LLM needs to run first to call setters for the new content.
-4. The `before_model_callback` sees `inline_confirmed` and **swaps the system instruction** — removing the `<readback_protocol>` block and injecting the `<slot_filling_protocol>` collection block. This is necessary because `before_agent_callback` already baked readback-only instructions into the SI earlier in the turn (when `pending` was still non-empty).
+4. The `before_model_callback` sees `inline_confirmed` and assembles a collection-phase SI suffix via `_build_phase_suffix`. The sentinel-based injection (`_inject_phase_suffix`) replaces the previous readback suffix with the collection protocol, so the LLM gets collection instructions instead of readback.
 5. The LLM runs with collection instructions, calls the appropriate setter(s), and the task fires on the next callback cycle.
 
 **Why not just use auto-confirm?** Auto-confirm preempts with a `confirm_pending` tool call, which skips the LLM entirely. The new content in the user's message ("shellfish allergy") would be lost — no setter would be called for it.
@@ -845,94 +861,70 @@ During readback (non-fresh), tool visibility ensures appropriate actions are ava
 
 During fresh readback, `confirm_pending`/`reject_pending` AND the setters for slots in pending are additionally hidden (see Section 4.3).
 
-### 7.6 Readback Stall Detection
+### 7.6 Steer-Back (Unified Stall Recovery)
 
-A safety net for the case where the LLM fails to call `confirm_pending` or `reject_pending` despite pending values existing. This can happen when complex conversation context confuses the LLM into generating a response without using either readback tool.
+A 3-tier mechanism that progressively recovers conversations making no forward progress — whether the user is off-topic, confused, or the LLM missed a tool call.
 
-**The problem:** Without stall detection, a stuck readback creates an infinite loop — the callback sets `_system_message` to the readback prompt every turn, but the LLM never acts on it.
+**The problem:** Conversations stall for many reasons (off-topic chat, vague answers, missed tool calls, stuck readback). A single threshold that escalates immediately is too blunt — most stalls recover with a nudge.
 
-**How it works:**
+**How it works — 3 tiers:**
 
-1. On each callback invocation, after popping `_readback_transition`, if `pending` is non-empty and `_readback_transition` was not set (meaning neither `confirm_pending` nor `reject_pending` was called this cycle), increment `sm["_readback_stall"]`.
-2. When `_readback_stall >= 3` (threshold), the framework **rejects** all pending values (clears `sm["pending"]`), resets the stall counter, and increments `sm["_retries"]["readback"]`.
-3. The readback retry count is checked against the `readback_retry` config (part of the config dict returned by `_get_config()`):
+| Tier | Trigger | Action | LLM runs? |
+|------|---------|--------|-----------|
+| Soft | `soft_after` turns (default 2) | Inject `<steer_back>` directive in SI | Yes — LLM rephrases |
+| Hard | `hard_after` turns (default 4) | Preempt with the next question | No — engine generates |
+| Escalate | `escalate_after` turns (default 6) | End session + escalation message | No — preempted |
+
+1. On each callback invocation where `last_user_text` is non-empty, increment `sm["_steer_back_turns"]`. Post-tool and post-preemption callbacks (where `last_user_text` is empty) do **not** increment — only genuine user turns count.
+
+2. **Tier 1 (soft):** When `_steer_back_turns >= soft_after`, the engine returns a `steer_back_directive` string (e.g. `"The conversation has drifted — steer back. Ask for the date."`). The `before_model_callback` appends this as a `<steer_back>` tag in the SI suffix. The LLM still runs and can incorporate the guidance naturally.
+
+3. **Tier 2 (hard):** When `_steer_back_turns >= hard_after`, the engine preempts — if pending, it re-asks the readback confirmation; otherwise it preempts with the next question from `_find_next_question`. No LLM call. **Yield:** After preempting, the engine sets `_hard_steer_yielded = True`. On the *next* user turn, this flag is popped and the engine returns `None` without incrementing the counter — the LLM runs normally so it can process the user's response to the forced question. If the user provides valid info, the state change resets the counter and recovery succeeds. If not, the counter advances on the turn after the yield.
+
+4. **Tier 3 (escalate):** When `_steer_back_turns >= escalate_after`, the engine fires `on_exhaust` — preempts with the escalation message and optional `function_call` (e.g. `end_session`). Sets `sm["status"] = "escalated"`.
+
+**Config:**
 
 ```python
-"readback_retry": {
-    "max_retries": 2,
+"steer_back": {
+    "soft_after": 2,
+    "hard_after": 4,
+    "escalate_after": 6,
     "on_exhaust": {
-        "say": "I'm having trouble processing your details. "
+        "say": "I'm having trouble completing your reservation. "
                "Please call us at 555-0100 and we'll help you directly.",
-        "then": "escalate",
+        "then": {
+            "tool": "end_session",
+            "args": {"reason": "retry_exhausted", "session_escalated": True},
+        },
     },
 }
 ```
-
-4. If readback retries are exhausted, the `on_exhaust` path fires — the escalation message is preempted and `status` is set to `"escalated"`.
-5. If retries remain, the rejected slots re-enter the DAG as unfilled, and the framework re-asks for them on the next pass.
-
-**Why reject, not auto-confirm?** Auto-confirming stalled values would silently commit potentially incorrect data (the user may have said "no" but the LLM failed to call `reject_pending`). Rejecting is always safe — it asks the user again, and the retry budget bounds how many times this can happen.
-
-**Counter resets:** The stall counter is reset via state-change detection in `_handle_state_change`:
-
-- **Any state change** (new slot in `filled`, new slot in `pending`, pending cleared by confirmation or rejection) resets `_readback_stall` to `None`. This means `confirm_pending`, `reject_pending`, and all setter tools implicitly reset the stall counter by changing state.
-- **`confirm_pending`** additionally resets `_retries["readback"]` on success (via the state-change logic clearing retries for newly-filled slots).
-- This is critical for inline corrections during readback — when the user says "actually, make it 6," the setter call changes `pending` state, which resets the stall counter. Without this, the stall counter would accumulate across the initial setter, the user's correction message, and the correction setter, hitting the threshold of 3 and falsely rejecting the pending values.
-
-### 7.7 Global Progress Stall Detection
-
-A broader safety net that catches **any** conversation making no forward progress — not just readback loops. The readback stall detector (Section 7.6) handles one specific failure mode; the progress stall detector is global.
-
-**The problem:** The LLM could loop on off-topic chat, repeat the same question without the user providing new info, or otherwise spin without advancing through the DAG. Without a global bound, these conversations run indefinitely.
-
-**How it works:**
-
-1. On each callback invocation where `last_user_text` is non-empty, increment `sm["_progress_turns"]`. Post-tool and post-preemption callbacks (where `last_user_text` is empty) do **not** increment the counter — only genuine user turns count toward the stall limit. Without this gate, auto-confirm preemption would add an extra count every time it fired, making the effective limit unreliable.
-2. When `_progress_turns >= max_turns` (default 8), the framework escalates via the `progress_stall` config (part of the config dict returned by `_get_config()`):
-
-```python
-"progress_stall": {
-    "max_turns": 4,
-    "on_exhaust": {
-        "say": "I'm having trouble completing your request. "
-               "Please call us at 555-0100 and we'll help you directly.",
-        "then": "escalate",
-    },
-}
-```
-
-3. On escalation, the exhaust message is preempted and `status` is set to `"escalated"`.
 
 **Counter resets (any forward progress resets to 0):**
 
 The framework compares `filled`, `pending`, and `deferred`
 against a snapshot from the prior invocation (`_last_state`).
 Any change (new slot filled, new value pending, pending
-cleared by confirmation) resets `_progress_turns` to 0. This
-means setters, `confirm_pending`, `reject_pending`, and task
-execution all implicitly reset the counter -- any state
+cleared by confirmation) resets `_steer_back_turns` to 0.
+This means setters, `confirm_pending`, `reject_pending`, and
+task execution all implicitly reset the counter — any state
 change counts as progress. Exception: when
 `_auto_confirm_pending` is set (auto-confirm just fired), the
 state change from `confirm_pending` does NOT reset the
-counter -- auto-confirm already incremented it, and resetting
+counter — auto-confirm already incremented it, and resetting
 would lose that increment.
 
-**Why 4 turns?** This is tight enough to catch the LLM
-going off the rails quickly -- 4 consecutive turns with no
-slot fill, task fire, or readback action means the
-conversation is stuck. The counter resets on every meaningful
-state change, so normal flows (including corrections and
-brief off-topic detours) never approach this limit. Agents
-with more complex flows may increase this.
-
-**Relationship to readback stall:** The two detectors are
-independent. The readback stall fires at 3 cycles when
-pending is non-empty and no readback tool is called. The
-progress stall fires at 4 turns with no state change of any
-kind. A conversation can trigger the readback stall (which
-rejects pending, counting as a state change that resets the
-progress counter) without ever hitting the progress stall.
-See Section 7.6 for readback stall details.
+**Why this replaces readback stall + progress stall:** The old
+system had two independent detectors — readback stall (3
+cycles with non-empty pending) that destructively rejected
+values, and progress stall (N turns with no state change)
+that immediately escalated. Both were blunt: readback stall
+threw away pending data, and progress stall had no recovery
+attempt. The unified steer-back tries softer interventions
+first (SI injection, then preemption) before escalating,
+recovering most stalls without data loss or session
+termination.
 
 ---
 
@@ -1090,7 +1082,7 @@ or dietary needs?
 
 This prevents the LLM from reading back a value that the
 framework deliberately deferred. Without it, the LLM would
-see that it just called `set_guest_name` and naturally want
+see that it just called `set_guest_info` and naturally want
 to confirm the name.
 
 **`<readback_scope>`** -- Injected when values promoted from
@@ -1113,14 +1105,16 @@ LLM tends to read back only the last value it set (e.g.,
 just the special requests) and silently drop the earlier
 deferred values (e.g., the name).
 
-**Hint lifecycle**: Previous hints are stripped via
-`_strip_stale_tags()` in `before_model_callback` before
-new ones are appended. This function uses compiled regex
-patterns to remove `<readback_scope>`, `<deferred_collection>`,
-and `<system_directive>` tags. This is critical because
+**Hint lifecycle**: The `before_model_callback` uses a
+sentinel-based approach (`_FRAMEWORK_SENTINEL =
+"<!-- slot-framework -->"`) to cleanly replace the
+previous framework suffix on each invocation.
+`_inject_phase_suffix` finds the sentinel in the system
+instruction, strips everything after it, and appends the
+new phase-specific content. This is critical because
 `system_instruction` is the same object across
 `before_model_callback` invocations within a turn. Without
-stripping, a `<deferred_collection>` from an earlier
+replacing, a `<deferred_collection>` from an earlier
 invocation (saying "don't read back") would persist
 alongside a later `<readback_scope>` (saying "MUST read
 back") -- contradictory instructions that confuse the LLM.
@@ -1195,7 +1189,7 @@ Turn 1-4: Collect party_size, date, time (normal flow with readback)
             available_times: "...", selected_time: "20:30"}
 
 Turn 5: User provides name
-  LLM calls: set_guest_name("Chen")
+  LLM calls: set_guest_info(guest_name="Chen")
   pending = {guest_name: "Chen"}
   _auto_promote_and_route:
     guest_name is deferred-eligible → deferred = {guest_name: "Chen"}
@@ -1206,7 +1200,7 @@ Turn 5: User provides name
   LLM: "Any special requests or dietary needs?"
 
 Turn 6: User says "No"
-  LLM calls: set_special_requests("None")
+  LLM calls: set_guest_info(special_requests="None")
   pending = {special_requests: "None"}
   _auto_promote_and_route:
     special_requests is deferred-eligible
@@ -1252,9 +1246,8 @@ The framework preempts the LLM in these situations:
 2. **Auto-confirm**: The user's message is a pure affirmative during readback. The engine returns a `function_call` for `confirm_pending` with `force_preempt: True`.
 3. **Slot validation error**: A setter tool signaled an error via `_slot_errors`, and `_handle_slot_errors()` resolved the message from the slot's `validation.errors` config. The error message is delivered verbatim.
 4. **Readback transition**: `confirm_pending` (via LLM call or auto-confirm) just committed values, and the DAG's next action is `next_question`. The message is delivered with a randomly chosen prefix from `confirm_transition_prefix` (e.g. `"Wonderful!"`, `"Perfect!"`, `"Great!"`) for warmth.
-5. **Readback stall (exhausted)**: The readback stall detector has rejected pending values too many times and `readback_retry.on_exhaust` fires. The escalation message is delivered verbatim.
-6. **Readback stall (retries remain)**: The stall detector rejects pending, recomputes the next question, and preempts with `force_preempt: True`.
-7. **Progress stall**: The global progress counter has exceeded `progress_stall.max_turns` with no forward progress. The escalation message is delivered verbatim.
+5. **Steer-back (hard)**: The steer-back counter has reached `hard_after` turns with no forward progress. The engine preempts with the next question (or readback re-ask) via `force_preempt: True`.
+6. **Steer-back (escalate)**: The steer-back counter has reached `escalate_after` turns. The escalation message is delivered verbatim with an optional `function_call` (e.g. `end_session`).
 8. **Announce slots** with `preempt: True`: Delivered verbatim via `force_preempt`. Announce slots with `preempt: False` use `_system_message` guidance instead.
 
 All use `LlmResponse.from_parts()` to skip the model call. Preemption fires when `preempt` is True AND either `contents > 1` (not the first turn) OR `force_preempt` is True (bypasses the first-turn guard).
@@ -1264,13 +1257,13 @@ All use `LlmResponse.from_parts()` to skip the model call. Preemption fires when
 - **First turn**: the LLM should generate a natural greeting, not a canned "How many guests?" (checked via `len(llm_request.contents) > 1`).
 - **After reject_pending**: the LLM handles rejections naturally, producing warm responses like "Okay, my apologies! How many people will be in your party?"
 - **Setter success**: after a setter writes to pending, the readback prompt is set as `_system_message` and the LLM wraps it in natural language.
-- **Readback stall (not exhausted)**: when the stall detector rejects pending but retries remain, the framework preempts with `force_preempt: True` — it recomputes hidden tools for the now-empty pending state, finds the next question via `_find_next_question`, and returns the question as a forced preemption to ensure the conversation moves forward.
+- **Steer-back (soft)**: when the steer-back counter reaches `soft_after`, the engine does NOT preempt — it injects a `<steer_back>` directive in the SI suffix and lets the LLM run. The LLM can incorporate the guidance naturally. Only tiers 2 (hard) and 3 (escalate) preempt.
 
 ### 8.4 The Directive Contract
 
-The orchestrator (`_run_slot_filling`) returns the message in its result dict. When a message is present, `slot_filling_engine` writes it to `sm["_next_directive"]`. The `before_agent_callback` reads `_next_directive` and wraps it in a `<system_directive>` XML tag, which is injected into the instruction via static variable substitution (`{{system_directive}}`).
+The orchestrator (`_run_slot_filling`) returns the message in its result dict. The `before_model_callback` wraps it in a `<system_directive>` XML tag as part of the phase-specific SI suffix assembled by `_build_phase_suffix`.
 
-The agent's instruction template includes `{{system_directive}}` at the end. When populated, the LLM sees:
+The LLM sees directives appended to the end of the instruction via sentinel-based injection:
 
 ```
 <system_directive>
@@ -1280,7 +1273,7 @@ We have availability at 6:00 PM, 7:30 PM, 9:00 PM. Which time works best?
 
 The `<slot_filling_protocol>` block tells the LLM to "relay it to the user naturally — include exact values or confirmation numbers." This gives the LLM freedom to add personality while ensuring the framework's content is delivered.
 
-The engine also returns an `si_suffix` field containing `<readback_scope>` and `<deferred_collection>` XML tags. The `before_model_callback` appends the suffix to the system instruction after stripping stale tags from prior invocations. This ensures readback hints are always current and don't accumulate.
+The engine also returns an `si_suffix` field containing `<readback_scope>` and `<deferred_collection>` XML tags. The `_build_phase_suffix` function includes these in the appropriate phase suffix, and `_inject_phase_suffix` replaces any previous framework suffix via the sentinel marker. This ensures readback hints are always current and don't accumulate.
 
 ---
 
@@ -1305,7 +1298,7 @@ Each response part has a `type` field that maps to a CES
 | `"end_session"` | `Part.from_end_session(...)` | `ResponseMessage.end_interaction` |
 | `"transfer"` | `Part.from_agent_transfer(...)` | `ResponseMessage.live_agent_handoff` |
 
-### Declaring Responses in dag_config
+### Declaring Responses in the DAG Config
 
 Any message-producing location in the config can define a
 `response` list — an ordered sequence of response parts. A
@@ -1378,43 +1371,12 @@ instruction directives and logging.
 |----------|-----------|----------------|
 | Announce slot | `message` | `response` |
 | User slot (ask) | `ask` | `response` |
-| Readback confirmation | (generated) | `readback_response` (top-level) |
-| Task success (terminal) | `then_say` | `then_response` |
-| Task success (non-terminal) | `then_say` | `then_response` |
+| Task success | `then_say` | `then_response` |
 | Task retry | `retry_say` | `retry_response` |
 | Task exhaust | `on_exhaust.say` | `on_exhaust.response` |
 | Validation error | `errors[code]` | `error_responses[code]` |
 | Readback exhaust | `on_exhaust.say` | `on_exhaust.response` |
 | Progress exhaust | `on_exhaust.say` | `on_exhaust.response` |
-
-### Readback Confirmation Response
-
-When the engine generates a readback prompt ("Just to confirm —
-3 guests, on June 15th. Is that correct?"), you can attach
-payloads via a top-level `readback_response` config field. This
-is useful for showing a summary card or confirm/reject chips
-during readback.
-
-```python
-{
-    "readback_response": [
-        {"type": "payload", "data": {
-            "richContent": [[
-                {"type": "chips", "options": [
-                    {"text": "Confirm"},
-                    {"text": "Change something"},
-                ]},
-            ]],
-        }},
-    ],
-}
-```
-
-The response supports `{slot_name}` substitution from both
-filled and pending values (since pending values are what the
-readback is confirming). Delivery uses the unconditional stash
-path (`sm["_pending_payloads"]`), so the after_model_callback
-injects the payload alongside the LLM's natural readback text.
 
 ### Channel-Aware Responses
 
@@ -1520,10 +1482,6 @@ This means payloads are delivered at these moments:
 On non-preempted turns, payloads are delivered via the
 **after_model_callback injection** path (see below).
 
-Non-terminal task `then_response` and readback `readback_response`
-payloads are always stashed to `sm["_pending_payloads"]` (since
-the LLM runs after both) and injected by the after_model_callback.
-
 **CES output format:** CES maps `Part.from_text()` to
 `output.text` and `Part.from_json()` to `output.payload`.
 Multiple parts in a single `LlmResponse` produce multiple
@@ -1595,7 +1553,7 @@ No task fires until ALL its active input slots AND active `requires` slots are i
 A task will fail at most `max_retries` times before the `on_exhaust` path is taken. The framework counts failures in `_retries`, and this count is never reset except by a successful execution of that same task. The same guarantee applies to:
 
 - **Slot validation retries** (tracked under `"slot:<name>"` keys) — a slot will reject at most `max_retries` times before escalation.
-- **Readback retries** (tracked under `"readback"` key) — the readback stall detector will reject pending values at most ``readback_retry.max_retries`` times before escalation. This bounds the total number of times the conversation can get stuck in a readback loop.
+- **Steer-back escalation** — the 3-tier steer-back mechanism (Section 8) escalates after `escalate_after` consecutive off-topic turns, bounding how long the conversation can stall.
 
 ### 9.5 Terminal State Guarantee
 
@@ -1624,7 +1582,7 @@ When a non-terminal task succeeds and fills output slots, the framework re-evalu
 | Handling off-topic conversation | LLM | Responds naturally, returns to slot-filling on next callback |
 | Deciding what to ask next | Python | `compute_dag_state` → `_find_next_question` |
 | Deciding when to fire a task | Python | `compute_dag_state` → input readiness check |
-| Executing backend operations | Python | `execute_dag_step` → executor function |
+| Executing backend operations | Python | `function_call` return → CES tool dispatch → `_handle_post_executor` |
 | Counting retries | Python | `_retries` dict in session state |
 | Deciding when to escalate | Python | `retries >= max_retries` check |
 | Enforcing slot dependencies | Python | `requires` check + tool visibility |
@@ -1634,17 +1592,17 @@ When a non-terminal task succeeds and fills output slots, the framework re-evalu
 | Short-circuiting confirmation for clear affirmatives | Python | `_is_affirmative()` + auto-confirm in `_try_auto_confirm` — preempts with `function_call(confirm_pending)` without LLM call |
 | Confirming + processing new content in one message | Python + LLM | `_starts_affirmative()` + `_apply_inline_confirm` silently confirms, then LLM runs with collection instructions to call setters |
 | Handling slot validation errors | Python | `_handle_slot_errors` resolves message from config, tracks retries |
-| Detecting readback stalls | Python | `_readback_stall` counter, reject-on-stall, retry via `readback_retry` config |
+| Detecting conversation drift | Python | `_steer_back_turns` counter, 3-tier recovery via `steer_back` config (soft SI → hard preempt → escalate) |
 | Validating task output shape | Python | `after_tool_callback` checks declared `outputs` keys are present in executor result |
 | Routing setter results to state | Python | `after_tool_callback` reads setter results, writes to `pending` or `_slot_errors`, enforces prerequisites and cross-slot validation |
-| Writing directives to state | Python | Engine writes to `sm["_next_directive"]`; `before_agent_callback` wraps in `<system_directive>` for instruction |
-| Managing instruction phases | Python | `before_agent_callback` sets `slot_filling_protocol` (collection) or clears it (readback) based on `pending` state |
+| Writing directives to state | Python | Engine returns `message` in result; `before_model_callback` wraps in `<system_directive>` via `_build_phase_suffix` |
+| Managing instruction phases | Python | `before_model_callback` assembles phase-specific SI suffix (collection OR readback) via `_build_phase_suffix` based on engine result and SM state |
 | Transitioning after confirmation | Python | `_readback_transition` flag triggers preemption with next question |
 | Config validation | Python | `_validate_config()` called by engine on first invocation — catches misconfig early |
-| Detecting global progress stalls | Python | `_progress_turns` counter, escalation via `progress_stall` config |
+| Escalating stuck conversations | Python | `_steer_back_turns >= escalate_after` triggers `on_exhaust` via `steer_back` config |
 | Deferred routing | Python | Deferred eligibility + group completion |
 | Deferred hints | Python | `<deferred_collection>`, `<readback_scope>` hints in `si_suffix` |
-| Deferred rejections | Python | `reject_pending` sets `_rejection_snapshot`; `before_agent_callback` processes it on the next turn |
+| Deferred rejections | Python | `reject_pending` sets `_rejection_snapshot`; `before_agent_callback` processes it at the start of the next turn |
 | Observability | Python | `_log()` emits structured `[slot-filling:tag]` print lines for each engine event |
 
 The key insight: **the LLM is a language interface, not a state machine.** It translates between human language and structured tool calls. Python handles everything else.
@@ -1702,7 +1660,7 @@ Agent instructions should tell the LLM what it owns (Section 10): parsing user i
 | "Don't call X before Y" | Tool is hidden until deps are met | `_compute_hidden_tools` + `requires` |
 | "If the tool returns error, show the error message" | Error is preempted before the LLM responds | `_handle_slot_errors` + preemption |
 | "Don't call other tools after a setter" | Irrelevant tools are hidden | `_compute_hidden_tools` (fresh pending) |
-| "Only accept parties of 1-8" | Setter validates, config has error msg | `set_party_size` code + `validation.errors` |
+| "Only accept parties of 1-8" | Setter validates, config has error msg | `set_reservation_basics` code + `validation.errors` |
 | "Escalate after 3 failed attempts" | Retry counter + exhaust logic | `_retries` + `on_exhaust` config |
 
 Each of these instructions is a constraint the LLM must track, weigh against the conversation, and potentially act on — all for behavior the framework already guarantees. Removing them makes the prompt shorter, reduces the chance of the LLM overriding the framework, and lets the LLM focus on what it's good at: language.
@@ -1723,8 +1681,9 @@ Rules 3-5 describe things only the LLM can do. Rules 1-2 describe things the LLM
 
 ## 12. Adding a New Agent
 
-To create a new agent with this framework, replace the
-`dag_config` tool's Python code. This tool returns a dict
+To create a new agent with this framework, create a new
+`{config_id}_dag` tool directory under `tools/`. The tool
+should be a parameterless function returning a config dict
 containing:
 
 1. **Slots** -- what data to collect, in what order, with
@@ -1732,8 +1691,8 @@ containing:
 2. **Tasks** -- what backend operations to fire, with a
    `tool` key naming the CES tool, inputs, outputs, success
    checks, and retry config.
-3. **Readback retry** and **progress stall** configs --
-   escalation rules for stuck conversations.
+3. **Steer-back** config -- 3-tier recovery rules for
+   stuck conversations (soft SI, hard preempt, escalate).
 
 The `confirm_pending` and `reject_pending` readback tools
 are hardcoded in the framework -- they don't appear in the
@@ -1748,9 +1707,12 @@ callables once at startup by `_compile_config()`.
 
 The `slot_filling_engine` tool, the three callbacks
 (`before_agent_callback`, `before_model_callback`,
-`after_tool_callback`), the `confirm_pending` and
-`reject_pending` tools, and the instruction template are
-framework components — copied unchanged per project.
+`after_tool_callback`), and the `confirm_pending` and
+`reject_pending` tools are framework components — copied
+unchanged per project. The agent's `instruction.txt`
+contains only agent-specific content (role, persona,
+rules/guidelines); protocol blocks are injected
+dynamically by `before_model_callback`.
 
 ### 12.1 Event-Driven Slot Pre-Filling
 
@@ -1784,7 +1746,8 @@ present:
     "name": "party_size",
     "source": ["event", "user"],
     "event_key": "party_size",
-    "setter": "set_party_size",
+    "setter": "set_reservation_basics",
+    "setter_field": "party_size",
     "ask": "How many guests will be dining?",
     ...
 }
@@ -1801,9 +1764,8 @@ like `"user"` remain backward compatible.
 
 Event pre-fill runs inside `slot_filling_engine`, after
 config compilation but before DAG evaluation. It runs
-on **every engine call** — no persistent guard is needed
-because `fill_slots()` is idempotent for already-filled
-slots (it returns `"skipped"` and moves on):
+on every engine call but is idempotent — `fill_slots()`
+skips slots that are already filled:
 
 ```python
 if event_data:
@@ -1823,42 +1785,22 @@ if event_data:
             sm["_event_prefilled_this_turn"] = True
 ```
 
-> **Why no guard?** An earlier version used an
-> `_events_checked` flag to run event processing only once.
-> This caused a bug: when new events arrived on later turns
-> (e.g., button presses injected as `ia_event_name`), the
-> flag was already `True` and the events were silently
-> ignored. Since `fill_slots()` skips already-filled slots,
-> re-processing the same event data is a no-op, making
-> the guard unnecessary.
-
 Event pre-fill uses `fill_slots()` (Section 12.2) with
 `skip_readback=True` (the default), writing trusted event
 data directly to `filled`.
 
-#### Timing: stale instruction patching
+#### Timing: instruction assembly
 
-**The timing problem**: `before_agent_callback` bakes
-the instruction template (with `_tool_selection`,
-`_slot_ordering`) via static variable substitution BEFORE
-`before_model_callback` runs. On the first turn with
-event data, the baked instruction still mentions the
-pre-filled slot.
-
-**The fix**: When `event_prefilled` is set in the engine
-result, `before_model_callback`:
-
-1. Strips the stale `<slot_filling_protocol>` block from
-   `system_instruction` (which still lists the pre-filled
-   slot).
-2. Appends the engine's `si_suffix`, which includes a
-   `<system_directive>` with the correct next question
-   (computed from the DAG, which now sees the slot as
-   filled).
-
-On subsequent turns, `before_agent_callback` regenerates
-the instruction from the updated `sm` state, so the
-stale-instruction problem is a first-turn-only issue.
+Since `before_model_callback` assembles the SI suffix
+after running the engine, it always has up-to-date
+information. When `event_prefilled` is set, the engine's
+result includes `si_suffix` with the correct next
+question (computed from the DAG, which sees the
+event-filled slot). The `_build_phase_suffix` function
+handles this via the `event_prefilled` flag — it skips
+the standard directive injection and uses the engine's
+`si_suffix` directly, which already contains the
+`<system_directive>` with the correct next question.
 
 #### Tool visibility for event-sourced slots
 
@@ -1882,9 +1824,9 @@ and confirm — the data is authoritative. Writing to
 
 #### Idempotency
 
-The `_events_checked` flag ensures pre-fill runs once
-per session. The `if name in filled` guard prevents
-overwriting values that were already set. If the user
+Event pre-fill runs on every engine call, but
+`fill_slots()` skips slots already in `filled`, so
+re-processing the same event data is safe. If the user
 later corrects a pre-filled value via a setter tool, the
 correction takes precedence.
 
@@ -2091,174 +2033,6 @@ a non-argument slot is via transitive slot `requires` —
 which doesn't work when the gate comes AFTER all input
 slots are collected but BEFORE the task fires.
 
-### 12.5 Task Result Substitution in `then_say` / `then_response`
-
-By default, `then_say` and `then_response` templates
-substitute from filled slots. Task result substitution
-extends this: the task tool's return dict is merged into
-the substitution context, so templates can reference
-**both** filled slots and task result keys.
-
-```python
-{
-    "name": "FulfillQuote",
-    "tool": "fulfill_quote",
-    "inputs": ["action", "symbol"],
-    "terminal": True,
-    "then_say": "As of {quoteDate}, {symbolName} ({symbol}) is trading at {lastTradeValue}.",
-}
-```
-
-Here `symbol` comes from filled slots, while `quoteDate`,
-`symbolName`, and `lastTradeValue` come from the
-`fulfill_quote` tool's return dict (e.g.,
-`{"success": True, "quoteDate": "2024-01-15",
-"symbolName": "Apple Inc.", "lastTradeValue": "$180.00"}`).
-
-The same substitution applies to `then_response` payloads:
-
-```python
-{
-    "name": "FulfillQuote",
-    "tool": "fulfill_quote",
-    "inputs": ["action", "symbol"],
-    "terminal": True,
-    "then_response": [
-        {"type": "payload", "data": {
-            "text": "{symbolName} ({symbol}) is {upDownPercent}, "
-                    "trading at {lastTradeValue}.",
-        }},
-    ],
-}
-```
-
-**Implementation:** In `_handle_post_executor()`, after
-a successful task, the engine builds
-`sub_context = {**filled, **result}` and uses it for
-both `then_say` format and `_resolve_response()` calls.
-If a key exists in both `filled` and `result`, the task
-result takes precedence (dict merge order).
-
-### 12.6 DAG Restart via `on_complete`
-
-By default, when a terminal task succeeds, the engine
-sets `status = "complete"` and the conversation ends.
-The `on_complete` field enables **conversation restart**
-— after a terminal task completes, specified slots are
-cleared and the DAG resets to `"in_progress"`, ready
-for the next query.
-
-```python
-{
-    "name": "FulfillQuote",
-    "tool": "fulfill_quote",
-    "inputs": ["action", "symbol"],
-    "condition": "lambda filled: filled.get('action') == 'Quote'",
-    "terminal": True,
-    "then_say": "{symbolName} is trading at {lastTradeValue}.",
-    "on_complete": {
-        "clear_slots": ["action", "symbol"],
-    },
-}
-```
-
-**Behavior:** After the task succeeds and `then_say` is
-delivered:
-
-1. Each slot in `clear_slots` is removed from `filled`.
-2. The task's result entry is removed from
-   `sm["_task_results"]`.
-3. `sm["status"]` is reset to `"in_progress"`.
-4. `sm["_events_checked"]` is reset to `False` (allowing
-   event re-processing if applicable).
-
-The DAG re-enters collection mode and asks for the next
-unfilled slot. If the user provides new values (e.g.,
-"what about MSFT?"), the same or a different conditional
-task can fire.
-
-**Use case:** Multi-action flows where the user can
-perform several operations in one session (e.g., get a
-stock quote, then a rating, then set a price alert).
-Each action is a conditional terminal task with
-`on_complete` clearing the action-specific slots.
-
-**Without `on_complete`:** The task sets
-`status = "complete"` and the conversation freezes. The
-user cannot start a new query without a new session.
-
-### 12.7 Event Mappings: CES Event Name → Slot Values
-
-CES UI elements (buttons, cards) can fire named events
-(e.g., `alert_last_price`, `alert_bid_price`). The
-`event_mappings` config maps these event names to slot
-values, keeping business logic out of callbacks.
-
-#### Config syntax
-
-Add `event_mappings` at the top level of your DAG config:
-
-```python
-{
-    "slots": [...],
-    "tasks": [...],
-    "event_mappings": {
-        "alert_last_price": {"alert_price_type": "last"},
-        "alert_bid_price": {"alert_price_type": "bid"},
-        "alert_ask_price": {"alert_price_type": "ask"},
-        "alert_rises_above": {"alert_price_direction": "rises above"},
-        "alert_drops_below": {"alert_price_direction": "drops below"},
-    },
-}
-```
-
-When the engine receives `event_data` with an
-`ia_event_name` key matching one of the mapping entries,
-the mapped slot values are injected into `event_data`
-before normal event pre-fill processing.
-
-#### Callback passthrough
-
-The standard `before_model_callback` passes
-`ia_event_name` through `event_data` so the engine can
-process it:
-
-```python
-event_data = callback_context.state.get("event_data", {})
-ia_event = callback_context.state.get("ia_event_name")
-if ia_event:
-    event_data["ia_event_name"] = ia_event
-```
-
-This is framework-level code (not agent-specific) and is
-already included in the standard `before_model_callback`.
-
-#### How it works
-
-In `slot_filling_engine()`, before event pre-fill:
-
-1. Read `event_mappings` from the compiled config.
-2. Check for `ia_event_name` in `event_data`.
-3. If a match is found, merge the mapped values into
-   `event_data`.
-4. Normal event pre-fill then processes the enriched
-   `event_data`, writing matched values to `filled`.
-
-Unmatched event names are ignored — the engine falls
-through to normal slot collection.
-
-#### Declaring `ia_event_name` in `app.json`
-
-CES only exposes declared variables. Add to
-`variableDeclarations`:
-
-```json
-{
-    "name": "ia_event_name",
-    "schema": {"type": "STRING", "default": ""}
-}
-```
-
 ---
 
 ## 13. Worked Example: Happy Path
@@ -2408,7 +2182,7 @@ Problems: non-deterministic retry behavior, no guaranteed retry bound, the LLM m
 
 ## 17. Design Decisions and Trade-offs
 
-### 17.1 Why Pure compute_dag_state + Effectful execute_dag_step?
+### 17.1 Why Pure compute_dag_state + Effectful Execution?
 
 Separating the decision from the execution makes the system testable. You can unit-test `compute_dag_state` with plain dicts — no mocks, no state setup, no side effects. The tests are fast and deterministic.
 
@@ -2469,13 +2243,16 @@ def _log(tag, **data):
 | `task` | `_handle_post_executor` | `name`, `ok` | Task executor result processed |
 | `task_exhaust` | `_handle_post_executor` | `name` | Task retries exhausted → escalation |
 | `slot_deactivated` | `_deactivate_conditional_slots` | `slot`, `source` | Conditional slot removed from filled/pending/deferred |
-| `readback_stall` | `_handle_readback_stall` | `retries` | Readback stall counter hit threshold, pending rejected |
-| `progress_stall` | `_handle_progress_stall` | `turns` | Global progress counter hit threshold, escalating |
+| `steer_back_soft` | `_handle_steer_back` | `turns`, `directive` | Soft steer-back: SI directive injected |
+| `steer_back_hard` | `_handle_steer_back` | `turns`, `msg` | Hard steer-back: preempted with question/readback |
+| `steer_back_escalate` | `_handle_steer_back` | `turns` | Steer-back exhausted → escalation |
+| `steer_back_yield` | `_handle_steer_back` | `turns` | Post-hard-steer yield: LLM runs normally to process user's response |
 | `auto_confirm` | `_try_auto_confirm` | `user_msg` | Pure affirmative detected → function_call(confirm_pending) |
 | `auto_confirm_inline` | `_apply_inline_confirm` | `committed` | Inline confirm: pending slots silently committed |
 | `announce` | `_run_slot_filling` | `slot` | Announce slot fired |
 | `fill_slots` | `fill_slots` | `slot`, `value` | Programmatic slot fill (event pre-fill, etc.) |
 | `re_deferred` | `_run_slot_filling` | `slot`, `task` | Promoted-from-deferred slot re-deferred because a different task is about to fire |
+| `payload_route` | `_run_slot_filling` | `path`, `count` | Rich response payload routing decision (preempt_dispatch, stash_unconditional, stash_question, none) |
 
 ### 19.3 Usage
 

@@ -5,6 +5,9 @@ description: Build Bella Notte — a complete restaurant reservation agent using
 
 # Tutorial: Restaurant Reservation Agent
 
+!!! tip "Recommended: Framework-based tutorial"
+    This tutorial teaches the **manual approach** to slot filling — setters manage state directly, and you write the callback DAG logic by hand. For new agents, we recommend the **[Slot Filling DAG Framework Tutorial](../guides/slot-filling/tutorial.md)**, which uses a declarative config and framework callbacks that handle state management, readback, validation, and error recovery automatically.
+
 In this tutorial you'll build **Bella Notte**, the reservation agent for a fine-dining Italian restaurant. The agent collects a party size, preferred date, available times (from a mock API), selected time, guest name, and special requests — then books the reservation and returns a confirmation number.
 
 Bella Notte is the canonical reference implementation of the [Slot Filling Pattern](../patterns/slot-filling.md). Every architectural decision in this tutorial is explained with reference to that pattern.
@@ -788,7 +791,7 @@ A golden eval checks exact tool calls and specific response content. A scenario 
 
 You now have a working Bella Notte agent with a full eval suite. The natural extensions are:
 
-- **[Stabilization gotchas](../patterns/slot-filling.md#the-7-stabilization-gotchas)** — read the full set of 7 gotchas in the Slot Filling pattern for the advanced edge cases (readback stall detection, progress stall, conditional slots).
+- **[Stabilization gotchas](../patterns/slot-filling.md#the-7-stabilization-gotchas)** — read the full set of 7 gotchas in the Slot Filling pattern for advanced edge cases (steer-back, conditional slots).
 - **Conditional slots** — the Bella Notte agent can be extended with a `contact_phone` slot that only appears for parties of 5 or more. See the `condition` field in the [DAG config concept](../patterns/slot-filling.md#dag-config-concept).
 - **Real availability API** — replace the mock `_find_available_times` function with a real HTTP call to your reservation system.
 - **[Dynamic Prompting](../patterns/dynamic-prompting.md)** — add a different, shorter instruction for the post-booking phase so the LLM doesn't keep trying to collect reservation details after booking is complete.

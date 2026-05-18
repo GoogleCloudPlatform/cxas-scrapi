@@ -47,6 +47,14 @@
         "type": "OBJECT",
         "default": {}
       }
+    },
+    {
+      "name": "agent_config_map",
+      "description": "Maps agent display names to DAG config IDs for the slot-filling framework",
+      "schema": {
+        "type": "STRING",
+        "default": "{\"Bella Notte Host\": \"bella_notte\"}"
+      }
     }
   ],
   "evaluationMetricsThresholds": {

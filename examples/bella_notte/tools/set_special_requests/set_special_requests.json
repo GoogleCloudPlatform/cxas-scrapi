@@ -1,9 +1,0 @@
-{
-  "name": "0022dd19-228b-4f42-93ed-98a68ac75af9",
-  "pythonFunction": {
-    "name": "set_special_requests",
-    "pythonCode": "tools/set_special_requests/python_function/python_code.py",
-    "description": "Record special requests, dietary needs, or seating preferences. If the guest says 'none' or equivalent, pass that text as-is. Call immediately when the user responds about special requests, even if the answer is 'no' or 'nothing'."
-  },
-  "displayName": "set_special_requests"
-}

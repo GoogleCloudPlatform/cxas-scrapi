@@ -1,9 +1,0 @@
-{
-  "name": "a0c38e0d-de84-4564-a6b4-667bc4156f20",
-  "pythonFunction": {
-    "name": "dag_config",
-    "pythonCode": "tools/dag_config/python_function/python_code.py",
-    "description": "Returns the slot filling DAG configuration."
-  },
-  "displayName": "dag_config"
-}
