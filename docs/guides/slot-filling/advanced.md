@@ -155,7 +155,8 @@ Declare a slot with multiple sources in priority order:
     "name": "party_size",
     "source": ["event", "user"],
     "event_key": "party_size",
-    "setter": "set_party_size",
+    "setter": "set_reservation_basics",
+    "setter_field": "party_size",
     "ask": "How many guests will be dining?",
     ...
 },
@@ -297,8 +298,8 @@ When the framework knows exactly what to say, it skips the LLM entirely. This is
 | Auto-confirm | Pure affirmative during readback → `confirm_pending` fires |
 | Validation error | Setter returned error → config-driven error message |
 | Readback transition | After confirm, next question delivered with transition prefix |
-| Readback stall | LLM failed to confirm/reject for 3+ turns → auto-reject |
-| Progress stall | No progress for `max_turns` → escalation message |
+| Steer-back (hard) | Off-topic for `hard_after` turns → forced re-ask |
+| Steer-back (escalate) | Off-topic for `escalate_after` turns → escalation |
 | Announce (preempt) | Announce slot with `preempt: True` → verbatim message |
 
 ### First-turn guard
@@ -309,7 +310,7 @@ The engine never preempts on the very first turn of a conversation. This lets th
 
 ## Rich Response Payloads
 
-The framework can deliver **rich response parts** — info cards, suggestion chips, description panels — alongside the LLM's text output. These are declared in `dag_config` and delivered automatically.
+The framework can deliver **rich response parts** — info cards, suggestion chips, description panels — alongside the LLM's text output. These are declared in the DAG config and delivered automatically.
 
 ### Where response fields go
 
@@ -351,7 +352,7 @@ Response parts take different paths depending on whether the engine preempts:
 
 ```
                      ┌─────────────┐
-                     │  dag_config │
+                     │  DAG config │
                      │  response   │
                      └──────┬──────┘
                             │
@@ -427,29 +428,41 @@ The `after_model_callback` includes a guard to prevent duplicate payload injecti
 
 ---
 
-## Stall detection
+## Steer-back: conversation drift recovery
 
-The framework includes two safety nets for conversations that get stuck:
+The framework includes a 3-tier mechanism for conversations that go off-topic — the **steer-back** system. It uses a single counter (`_steer_back_turns`) that increments on every user turn that doesn't produce forward progress, and resets to 0 when the conversation advances.
 
-### Readback stall
+### The three tiers
 
-When pending values exist but the LLM fails to call `confirm_pending` or `reject_pending` for 3 consecutive engine cycles:
+| Tier | Trigger | Behavior | LLM runs? |
+|------|---------|----------|-----------|
+| Soft | `soft_after` turns (default 2) | Inject `<steer_back>` directive in system instruction | Yes — LLM incorporates guidance |
+| Hard | `hard_after` turns (default 4) | Preempt with next question or readback re-ask | No — verbatim message |
+| Escalate | `escalate_after` turns (default 6) | Fire `on_exhaust` (end session, transfer) | No — escalation |
 
-1. The framework auto-rejects all pending values
-2. Increments the readback retry counter
-3. If retries remain, re-asks for the rejected slots
-4. If exhausted, fires `readback_retry.on_exhaust`
+### Configuration
 
-This prevents the agent from getting stuck in a readback loop where the LLM ignores the confirmation tools.
+```python
+"steer_back": {
+    "soft_after": 2,
+    "hard_after": 4,
+    "escalate_after": 6,
+    "on_exhaust": {
+        "say": "I'm having trouble completing your reservation. Please call us at 555-0100.",
+        "then": {"tool": "end_session", "args": {"reason": "steer_back_exhausted"}},
+    },
+},
+```
 
-### Progress stall
+### How it works
 
-When the conversation makes no forward progress — no new slots filled, no tasks completed — for `progress_stall.max_turns` consecutive turns:
+1. On each user turn with non-empty text, `_steer_back_turns` increments.
+2. **Soft:** When `_steer_back_turns >= soft_after`, the engine returns a `steer_back_directive` — a natural-language instruction like "The conversation has drifted — steer back. Ask for the date." The `before_model_callback` appends it as a `<steer_back>` tag in the system instruction. The LLM runs normally and can incorporate the guidance.
+3. **Hard:** When `_steer_back_turns >= hard_after`, the engine preempts. If pending values exist, it re-asks the readback confirmation. If not, it preempts with the next question. After a hard preempt, the engine sets `_hard_steer_yielded = True` — on the next user turn, the engine yields (doesn't increment the counter), letting the LLM process the user's response to the forced question.
+4. **Escalate:** When `_steer_back_turns >= escalate_after`, the engine fires `on_exhaust` — delivering the escalation message and calling the configured tool (typically `end_session`).
+5. The counter resets to 0 whenever forward progress occurs: a new slot is filled, a value is confirmed, a task completes, etc.
 
-1. The framework fires `progress_stall.on_exhaust`
-2. Typically escalates to a human agent or ends the session
-
-This prevents infinite off-topic conversations where the user never provides the needed information.
+This replaces the older `readback_retry` and `progress_stall` mechanisms with a single unified counter and 3-tier response.
 
 ---
 
@@ -497,12 +510,12 @@ Use this for:
 
 ## Putting it all together
 
-Here's the complete `dag_config` for Bella Notte with all advanced features — conditional slots, announce slots, deferred readback, and full error handling:
+Here's the complete `bella_notte_dag` config with all advanced features — conditional slots, announce slots, deferred readback, and full error handling:
 
-??? note "Complete dag_config (click to expand)"
+??? note "Complete bella_notte_dag config (click to expand)"
 
     ```python
-    def dag_config() -> dict[str, Any]:
+    def bella_notte_dag() -> dict[str, Any]:
         return {
             "slots": [
                 {
@@ -518,7 +531,8 @@ Here's the complete `dag_config` for Bella Notte with all advanced features — 
                     "name": "party_size",
                     "source": ["event", "user"],
                     "event_key": "party_size",
-                    "setter": "set_party_size",
+                    "setter": "set_reservation_basics",
+                    "setter_field": "party_size",
                     "hint": "Party size / number of guests",
                     "ask": "How many guests will be dining?",
                     "readback_fmt": {
@@ -566,7 +580,8 @@ Here's the complete `dag_config` for Bella Notte with all advanced features — 
                 {
                     "name": "preferred_date",
                     "source": "user",
-                    "setter": "set_preferred_date",
+                    "setter": "set_reservation_basics",
+                    "setter_field": "preferred_date",
                     "hint": "Date",
                     "ask": "What date would you like to come in?",
                     "readback_fmt": "date",
@@ -619,7 +634,8 @@ Here's the complete `dag_config` for Bella Notte with all advanced features — 
                 {
                     "name": "guest_name",
                     "source": "user",
-                    "setter": "set_guest_name",
+                    "setter": "set_guest_info",
+                    "setter_field": "guest_name",
                     "hint": "Name (any format)",
                     "ask": "What name should I put the reservation under?",
                     "readback_fmt": {"type": "prefix", "text": "under the name"},
@@ -638,7 +654,8 @@ Here's the complete `dag_config` for Bella Notte with all advanced features — 
                 {
                     "name": "special_requests",
                     "source": "user",
-                    "setter": "set_special_requests",
+                    "setter": "set_guest_info",
+                    "setter_field": "special_requests",
                     "hint": "Special requests or 'none'",
                     "ask": "Do you have any special requests or dietary needs?",
                     "readback_fmt": {"type": "none_sub", "default": "no special requests"},
@@ -696,18 +713,13 @@ Here's the complete `dag_config` for Bella Notte with all advanced features — 
                 },
             ],
             "confirm_transition_prefix": ["Wonderful!", "Perfect!", "Great!", "Excellent!"],
-            "readback_retry": {
-                "max_retries": 2,
-                "on_exhaust": {
-                    "say": "Trouble processing details. Please call 555-0100.",
-                    "then": {"tool": "end_session", "args": {"reason": "retry_exhausted"}},
-                },
-            },
-            "progress_stall": {
-                "max_turns": 4,
+            "steer_back": {
+                "soft_after": 2,
+                "hard_after": 4,
+                "escalate_after": 6,
                 "on_exhaust": {
                     "say": "Trouble completing reservation. Please call 555-0100.",
-                    "then": {"tool": "end_session", "args": {"reason": "retry_exhausted"}},
+                    "then": {"tool": "end_session", "args": {"reason": "steer_back_exhausted"}},
                 },
             },
         }

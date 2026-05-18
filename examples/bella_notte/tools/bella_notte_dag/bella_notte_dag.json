@@ -1,0 +1,9 @@
+{
+  "name": "0ed99308-1e00-45b5-97e1-1b59d9ed7c2e",
+  "pythonFunction": {
+    "name": "bella_notte_dag",
+    "pythonCode": "tools/bella_notte_dag/python_function/python_code.py",
+    "description": "Returns the slot filling DAG configuration for the Bella Notte Host."
+  },
+  "displayName": "bella_notte_dag"
+}

@@ -1,40 +1,91 @@
-"""After-tool callback — setter and executor tool state management.
+"""After-tool callback — setter and executor state management.
 
-FRAMEWORK CODE — shared across all agents using the slot-filling engine.
-Do not add agent-specific logic here; customize behavior via dag_config.
-
-Pure framework callback with no agent-specific knowledge. Reads config
-from sm (populated by before_model_callback from _get_config()):
-  _setter_slots:    tool name → slot name mapping
-  _slot_requires:   slot name → list of prerequisite slot names
-  _slot_validates:  slot name → {response_field, filled_slot, error_code}
-  _executor_tasks:  tool name → {task_name, outputs, success_check, terminal}
-
-Setter tools return {stored, value} or {error, error_code} directly to
-the LLM. This callback reads those results as side effects: writing
-sm["pending"] on success and sm["_slot_errors"] on failure.
-
-Executor tools (fired by before_model_callback via preemption) return
-task results. This callback stores results in sm["task_results"],
-maps outputs to sm["filled"], and sets sm["_task_just_completed"]
-for before_model_callback to process on re-invocation.
+FRAMEWORK CODE — fully generic across all agents.
+Config-driven: reads bootstrap config from SM
+(stashed by before_model).
 """
+# pylint: disable=undefined-variable
 
 from typing import Any, Optional
 
 
-def after_tool_callback(  # pylint: disable=undefined-variable
+_SM_KEY = "sm"
+
+
+def after_tool_callback(
     tool: Tool,
     tool_input: dict[str, Any],  # pylint: disable=unused-argument
     callback_context: CallbackContext,
     tool_response: dict[str, Any],
 ) -> Optional[dict[str, Any]]:
   """Route setter tool results to sm state."""
-  sm = callback_context.state.get("sm", {})
+  sm = callback_context.state.get(_SM_KEY, {})
+
+  # Bootstrap: config-driven pre-engine tool handling.
+  # _bootstrap is stashed in SM by before_model_callback on first run.
+  bootstrap = sm.get("_bootstrap")
+  if bootstrap and tool.name == bootstrap["tool"]:
+    response_data = tool_response.get("result", tool_response)
+    if response_data.get("stored"):
+      slot_name = bootstrap["slot"]
+      if (bootstrap.get("reset_on_complete")
+          and sm.get("status") in ("complete", "escalated")):
+        sm["status"] = "in_progress"
+        sm["task_results"] = {}
+        sm["pending"] = {}
+      sm.setdefault("filled", {})[slot_name] = response_data["value"]
+      callback_context.state[_SM_KEY] = sm
+    return None
+
   setter_slots = sm.get("_setter_slots", {})
 
   slot_name = setter_slots.get(tool.name)
   if slot_name is None:
+    multi_setter_slots = sm.get("_multi_setter_slots", {})
+    field_map = multi_setter_slots.get(tool.name)
+    if field_map:
+      response_data = tool_response.get("result", tool_response)
+      filled = sm.get("filled", {})
+      field_errors = response_data.get("field_errors", {})
+      for field_name, error_code in field_errors.items():
+        mapped_slot = field_map.get(field_name)
+        if mapped_slot:
+          sm.setdefault("_slot_errors", []).append(
+              {"slot": mapped_slot, "code": error_code},
+          )
+      for field_name, value in response_data.get("values", {}).items():
+        mapped_slot = field_map.get(field_name)
+        if not mapped_slot:
+          continue
+        slot_requires = sm.get("_slot_requires", {})
+        prereq_fail = False
+        for req in slot_requires.get(mapped_slot, []):
+          if req not in filled:
+            sm.setdefault("_slot_errors", []).append(
+                {"slot": mapped_slot, "code": "prereq_not_met"},
+            )
+            prereq_fail = True
+            break
+        if prereq_fail:
+          continue
+        slot_validates = sm.get("_slot_validates", {})
+        validation = slot_validates.get(mapped_slot)
+        if validation:
+          check_value = response_data.get(
+              validation["response_field"], "",
+          )
+          against_raw = filled.get(validation["filled_slot"], "")
+          valid_options = [t.strip() for t in against_raw.split(",")]
+          if check_value not in valid_options:
+            sm.setdefault("_slot_errors", []).append(
+                {"slot": mapped_slot,
+                 "code": validation.get("error_code", "invalid")},
+            )
+            continue
+        sm.setdefault("pending", {})[mapped_slot] = value
+      callback_context.state[_SM_KEY] = sm
+      return None
+
     executor_tasks = sm.get("_executor_tasks", {})
     task_info = executor_tasks.get(tool.name)
     if task_info:
@@ -87,5 +138,12 @@ def after_tool_callback(  # pylint: disable=undefined-variable
         return None
 
     sm.setdefault("pending", {})[slot_name] = value
+
+    inferred = response_data.get("inferred", {})
+    for inf_slot, inf_value in inferred.items():
+      if inf_slot not in sm.get("filled", {}):
+        sm["pending"][inf_slot] = inf_value
+
+    callback_context.state[_SM_KEY] = sm
 
   return None

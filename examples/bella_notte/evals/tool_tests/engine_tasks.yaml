@@ -986,6 +986,96 @@ tests:
       operator: contains
       value: "Done for AAPL"
 
+- name: on_complete_clears_all_task_results
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config:
+        slots:
+        - name: action
+          source: user
+          setter: set_action
+          hint: "Action"
+          ask: "Quote or Alert?"
+          requires_readback: false
+        - name: symbol
+          source: user
+          setter: set_symbol
+          hint: "Stock symbol"
+          ask: "Which symbol?"
+          requires_readback: false
+        - name: quote_data
+          source: "task:FetchData"
+        - name: result
+          source: "task:ExecuteAction"
+        tasks:
+        - name: FetchData
+          tool: fetch_data
+          inputs: ["symbol"]
+          outputs:
+            data: quote_data
+          success_check: success
+        - name: ExecuteAction
+          tool: execute_action
+          inputs: ["action", "symbol", "quote_data"]
+          outputs:
+            result: result
+          success_check: success
+          terminal: true
+          then_say: "Done for {symbol}."
+          on_complete:
+            clear_slots: ["action", "symbol", "quote_data"]
+        confirm_transition_prefix: ""
+        readback_retry:
+          max_retries: 2
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+        progress_stall:
+          max_turns: 4
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+      sm:
+        filled:
+          action: "Quote"
+          symbol: "AAPL"
+          quote_data: "AAPL at $200"
+          result: "done"
+        pending: {}
+        task_results:
+          FetchData:
+            success: true
+            data: "AAPL at $200"
+          ExecuteAction:
+            success: true
+            result: "done"
+        _task_just_completed: "ExecuteAction"
+        _last_state:
+          filled:
+            action: "Quote"
+            symbol: "AAPL"
+            quote_data: "AAPL at $200"
+            result: "done"
+          pending: {}
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.sm.status"
+      operator: equals
+      value: "in_progress"
+    - path: "$.result.sm.filled.action"
+      operator: is_null
+    - path: "$.result.sm.filled.symbol"
+      operator: is_null
+    - path: "$.result.sm.filled.quote_data"
+      operator: is_null
+    - path: "$.result.sm.task_results.FetchData"
+      operator: is_null
+    - path: "$.result.sm.task_results.ExecuteAction"
+      operator: is_null
+
 - name: on_complete_absent_sets_complete
   tool: slot_filling_engine
   args:

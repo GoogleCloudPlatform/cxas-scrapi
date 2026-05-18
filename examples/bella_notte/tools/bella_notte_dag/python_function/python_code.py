@@ -1,10 +1,10 @@
-"""Agent-specific slot/task configuration for the DAG engine."""
+"""Slot-filling DAG configuration for the Bella Notte Host."""
 
 from typing import Any
 
 
-def dag_config() -> dict[str, Any]:
-  """Return the slot-filling DAG configuration."""
+def _bella_notte_config() -> dict[str, Any]:
+  """Reservation flow for the Bella Notte Host."""
   return {
       "slots": [
           {
@@ -36,7 +36,8 @@ def dag_config() -> dict[str, Any]:
               "name": "party_size",
               "source": ["event", "user"],
               "event_key": "party_size",
-              "setter": "set_party_size",
+              "setter": "set_reservation_basics",
+              "setter_field": "party_size",
               "hint": "Party size / number of users",
               "ask": "How many guests will be dining?",
               "readback_fmt": {
@@ -159,7 +160,8 @@ def dag_config() -> dict[str, Any]:
           {
               "name": "preferred_date",
               "source": "user",
-              "setter": "set_preferred_date",
+              "setter": "set_reservation_basics",
+              "setter_field": "preferred_date",
               "hint": "Date",
               "ask": (
                   "What date would you like to come in?"
@@ -171,14 +173,12 @@ def dag_config() -> dict[str, Any]:
                   "errors": {
                       "invalid_format": (
                           "Could you provide the date?"
-                          " For example, 2026-06-17"
-                          " for June 17th."
+                          " For example, June 17th."
                       ),
                       "past_date": (
                           "That date is in the past."
                           " Could you provide a future"
-                          " date? For example, 2026-06-17"
-                          " for June 17th."
+                          " date?"
                       ),
                   },
                   "on_exhaust": {
@@ -221,11 +221,6 @@ def dag_config() -> dict[str, Any]:
                   " works best for you?"
               ),
               "response": [
-                  {"type": "text", "text": (
-                      "We have availability at"
-                      " {available_times}. Which time"
-                      " works best for you?"
-                  )},
                   {"type": "payload", "data": {
                       "richContent": [[{
                           "type": "description",
@@ -278,7 +273,8 @@ def dag_config() -> dict[str, Any]:
           {
               "name": "guest_name",
               "source": "user",
-              "setter": "set_guest_name",
+              "setter": "set_guest_info",
+              "setter_field": "guest_name",
               "hint": (
                   "Name (any format, don't ask for"
                   " a specific format)"
@@ -321,7 +317,8 @@ def dag_config() -> dict[str, Any]:
           {
               "name": "special_requests",
               "source": "user",
-              "setter": "set_special_requests",
+              "setter": "set_guest_info",
+              "setter_field": "special_requests",
               "hint": 'Special requests or "none"',
               "ask": (
                   "Do you have any special requests"
@@ -350,11 +347,7 @@ def dag_config() -> dict[str, Any]:
                   "available_times": "available_times",
               },
               "success_check": "success",
-              "then_say": (
-                  "Great choice! We have availability"
-                  " at {available_times}. Which time"
-                  " works best for you?"
-              ),
+              "then_say": "Great choice!",
               "on_failure": {
                   "retry_say": (
                       "I'm sorry, we don't have"
@@ -407,13 +400,6 @@ def dag_config() -> dict[str, Any]:
                   " Bella Notte!"
               ),
               "then_response": [
-                  {"type": "text", "text": (
-                      "Your reservation is confirmed."
-                      " Your confirmation number is"
-                      " {confirmation_number}. We look"
-                      " forward to welcoming you to"
-                      " Bella Notte!"
-                  )},
                   {"type": "payload", "data": {
                       "richContent": [[{
                           "type": "info",
@@ -461,26 +447,10 @@ def dag_config() -> dict[str, Any]:
           "Wonderful!", "Perfect!", "Great!",
           "Excellent!", "Lovely!",
       ],
-      "readback_retry": {
-          "max_retries": 2,
-          "on_exhaust": {
-              "say": (
-                  "I'm having trouble processing"
-                  " your reservation details. Please"
-                  " call us at 555-0100 and we'll"
-                  " help you directly."
-              ),
-              "then": {
-                  "tool": "end_session",
-                  "args": {
-                      "reason": "retry_exhausted",
-                      "session_escalated": True,
-                  },
-              },
-          },
-      },
-      "progress_stall": {
-          "max_turns": 4,
+      "steer_back": {
+          "soft_after": 2,
+          "hard_after": 4,
+          "escalate_after": 6,
           "on_exhaust": {
               "say": (
                   "I'm having trouble completing"
@@ -498,3 +468,8 @@ def dag_config() -> dict[str, Any]:
           },
       },
   }
+
+
+def bella_notte_dag() -> dict[str, Any]:
+  """Return the DAG config for the Bella Notte Host."""
+  return _bella_notte_config()

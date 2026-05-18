@@ -79,10 +79,12 @@ All slot filling state lives in a single session-scoped dict named `sm`. You dec
 {
   "filled":         {},
   "pending":        {},
+  "deferred":       {},
   "task_results":   {},
   "_retries":       {},
   "_slot_errors":   [],
   "_system_message": "",
+  "_steer_back_turns": 0,
   "status":         "in_progress"
 }
 ```
@@ -91,10 +93,12 @@ All slot filling state lives in a single session-scoped dict named `sm`. You dec
 |---|---|
 | `filled` | Confirmed slot values: `{"party_size": 4, "preferred_date": "2026-06-17"}` |
 | `pending` | Values awaiting user confirmation (readback) before moving to `filled` |
+| `deferred` | Values held for grouped readback (deferred mode) before task-level confirmation |
 | `task_results` | Successful task outputs: `{"FindAvailableTimes": {"times": "6 PM, 7:30 PM"}}` |
 | `_retries` | Failure counts — task retries (`"CheckAvailability": 1`) and slot validation retries (`"slot:party_size": 2`) |
 | `_slot_errors` | Validation errors from setter tools: `[{"slot": "party_size", "code": "out_of_range"}]` |
 | `_system_message` | The next message for the LLM to relay — written by the callback, read via `{{system_message}}` in the instruction |
+| `_steer_back_turns` | Consecutive off-topic turns since last forward progress — drives 3-tier steer-back |
 | `status` | `"in_progress"` \| `"complete"` \| `"escalated"` |
 
 !!! tip "The `sm` variable is the source of truth"
@@ -247,46 +251,72 @@ This callback is pure framework code — copy it unchanged from the reference im
 
 ## Setter tool template
 
-Each user-collected slot gets one Python setter tool. The tool validates the input, stores the value to `sm`, and returns the next question via `_system_message`.
+Each user-collected slot gets one Python setter tool (or a multi-slot setter covering related slots). The tool validates the input and returns a structured result. The `after_tool_callback` handles all state routing — setters never access `sm` directly.
+
+**Single-slot setter:**
 
 ```python
-def set_party_size(size: int) -> dict:
-    """Record the number of guests.
+def set_party_size(party_size: str) -> dict:
+    """Record the number of guests (1-8).
 
-    Parse natural language: 'just me'=1, 'a couple'=2, 'four of us'=4.
-    Call immediately when party size is mentioned.
+    Convert natural language: 'just me'=1, 'a couple'=2, 'four of us'=4.
     """
-    sm = context.state['sm']  # (1)
+    try:
+        count = int(party_size)
+    except (ValueError, TypeError):
+        return {"error": True, "error_code": "parse_error"}
 
-    # Validate — signal errors via _slot_errors, not return messages
-    if not isinstance(size, int):
-        try:
-            size = int(size)
-        except (ValueError, TypeError):
-            sm.setdefault('_slot_errors', []).append(
-                {'slot': 'party_size', 'code': 'parse_error'}
-            )
-            return {'error': True}
+    if count < 1 or count > 8:
+        return {"error": True, "error_code": "out_of_range"}
 
-    if not (1 <= size <= 8):
-        sm.setdefault('_slot_errors', []).append(
-            {'slot': 'party_size', 'code': 'out_of_range'}
-        )
-        return {'error': True}
-
-    # Store to pending (framework promotes to filled after readback)
-    sm.setdefault('pending', {})['party_size'] = size  # (2)
-
-    return {'stored': True, 'value': size}
+    return {"stored": True, "value": count}
 ```
 
-1. `context` is a CXAS built-in — it's available in all Python tools without import.
-2. Write to `pending`, not `filled`. The callback moves values to `filled` after the user confirms the readback. Slots without readback are auto-promoted immediately.
+**Multi-slot setter:**
+
+```python
+def set_reservation_basics(
+    party_size: int = 0,
+    preferred_date: str = "",
+) -> dict:
+    """Record party size and/or preferred date.
+
+    Parse natural language for party size and dates.
+    Call when the guest mentions either value.
+    """
+    values = {}
+    field_errors = {}
+
+    if party_size:
+        try:
+            size = int(party_size)
+        except (ValueError, TypeError):
+            field_errors["party_size"] = "parse_error"
+            size = None
+        if size is not None:
+            if not (1 <= size <= 8):
+                field_errors["party_size"] = "out_of_range"
+            else:
+                values["party_size"] = size
+
+    if preferred_date:
+        # validation logic...
+        values["preferred_date"] = str(preferred_date).strip()
+
+    if not values and not field_errors:
+        return {"error": True, "error_code": "no_input"}
+
+    result = {"stored": True, "values": values}
+    if field_errors:
+        result["field_errors"] = field_errors
+    return result
+```
 
 **Key design principles for setters:**
 
 - **Setters are thin.** No DAG logic, no control flow, no knowledge of other slots.
-- **Setters signal errors, not messages.** Append to `_slot_errors` with a code; the callback resolves the user-facing message from your config.
+- **Setters return structured results.** `{"stored": True, "value": ...}` for single-slot, `{"stored": True, "values": {...}}` for multi-slot. The `after_tool_callback` handles all state routing.
+- **Setters signal errors, not messages.** Return `{"error": True, "error_code": "..."}` with a code; the callback resolves the user-facing message from your config.
 - **The LLM does the parsing.** The setter for `preferred_date` expects `YYYY-MM-DD` — the LLM converts "next Thursday" to `"2026-07-17"` before calling the tool. This plays to the LLM's strength while keeping the setter deterministic.
 
 ---
@@ -335,7 +365,8 @@ For more complex agents, you can declare the slot/task dependency graph explicit
 config = {
     'slots': [
         {'name': 'party_size',    'source': 'user',
-         'setter': 'set_party_size',
+         'setter': 'set_reservation_basics',
+         'setter_field': 'party_size',
          'ask': 'How many guests will be joining you?',
          'requires_readback': True,
          'validation': {
@@ -346,7 +377,8 @@ config = {
              'max_retries': 3,
          }},
         {'name': 'preferred_date', 'source': 'user',
-         'setter': 'set_preferred_date',
+         'setter': 'set_reservation_basics',
+         'setter_field': 'preferred_date',
          'ask': 'What date were you thinking?',
          'requires_readback': True},
         {'name': 'available_times', 'source': 'task:FindAvailableTimes'},
@@ -356,11 +388,13 @@ config = {
          'ask': 'We have {available_times}. Which time works for you?',
          'requires_readback': True},
         {'name': 'guest_name',      'source': 'user',
-         'setter': 'set_guest_name',
+         'setter': 'set_guest_info',
+         'setter_field': 'guest_name',
          'ask': 'What name should I put the reservation under?',
          'requires_readback': True},
         {'name': 'special_requests', 'source': 'user',
-         'setter': 'set_special_requests',
+         'setter': 'set_guest_info',
+         'setter_field': 'special_requests',
          'ask': 'Any special requests, or shall I note none?',
          'requires_readback': True},
     ],
@@ -425,8 +459,8 @@ User message
 1. **Task fires** — task result message delivered verbatim.
 2. **Slot validation error** — error message from config delivered verbatim.
 3. **Readback transition** — after `confirm_pending`, the next question is delivered with a warm prefix.
-4. **Readback stall exhaustion** — stall detector has rejected pending values too many times.
-5. **Progress stall** — no forward progress for N turns.
+4. **Steer-back (hard)** — off-topic for `hard_after` turns; forced re-ask of question/readback.
+5. **Steer-back (escalate)** — off-topic for `escalate_after` turns; escalation.
 
 ---
 
@@ -455,7 +489,7 @@ User message
 
 === "Step 3 — Write setter tools"
 
-    One Python tool per user-collected slot. Follow the template: validate → write to `sm['pending']` → return `{"stored": True}`. For invalid input, append to `_slot_errors` and return `{"error": True}`.
+    One Python tool per user-collected slot (or a multi-slot setter covering related slots). Follow the template: validate → return `{"stored": True, "value": ...}` (or `{"values": {...}}` for multi-slot). For invalid input, return `{"error": True, "error_code": "..."}`.
 
     Keep docstrings to 2 sentences: format + trigger phrase.
 
@@ -602,7 +636,7 @@ The Bella Notte restaurant reservation agent is the canonical reference implemen
 
 - 9 slots: `welcome`, `party_size`, `large_party_phone`, `preferred_date`, `available_times`, `selected_time`, `guest_name`, `special_requests`, `confirmation_number`
 - 2 tasks: `FindAvailableTimes` (fires after `party_size` + `preferred_date`), `BookReservation` (terminal, fires after all required slots)
-- 6 setter tools: `set_party_size`, `set_preferred_date`, `set_guest_name`, `set_selected_time`, `set_special_requests`, `set_large_party_phone`
+- 4 setter tools: `set_reservation_basics` (multi-slot: party_size + preferred_date), `set_guest_info` (multi-slot: guest_name + special_requests), `set_selected_time`, `set_large_party_phone`
 - Rich response payloads: welcome cards, suggestion chips, confirmation info cards
 - 20+ golden evals, 5+ scenario evals
 
@@ -617,4 +651,4 @@ For a hands-on, step-by-step walkthrough of building a slot-filling agent — fr
 - [Slot Filling Overview](../guides/slot-filling/index.md) — mental model, key concepts, and architecture
 - [Tutorial: Building an Agent](../guides/slot-filling/tutorial.md) — progressive tutorial using the Bella Notte example
 - [Advanced Patterns](../guides/slot-filling/advanced.md) — conditional slots, event pre-filling, announce slots, deferred readback
-- [Configuration Reference](../guides/slot-filling/reference.md) — complete field-by-field reference for `dag_config`
+- [Configuration Reference](../guides/slot-filling/reference.md) — complete field-by-field reference for the DAG config

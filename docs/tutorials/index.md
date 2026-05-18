@@ -43,7 +43,7 @@ Work through the tutorial in order — each step builds on the previous one.
 | 1 — Project setup | Create `gecx-config.json`, understand the folder structure |
 | 2 — Agent instruction | Write the XML-tagged instruction with the slot filling protocol |
 | 3 — Slot DAG | Define the 7 slots and 2 tasks |
-| 4 — Setter tools | Write `set_party_size.py` and the other setter tools |
+| 4 — Setter tools | Write the setter tools for each slot |
 | 5 — The callback | Write `before_model_callback` with DAG evaluation and preemption |
 | 6 — Variables | Declare the `sm` variable in your app |
 | 7 — Evaluations | Write one golden eval and one scenario eval |

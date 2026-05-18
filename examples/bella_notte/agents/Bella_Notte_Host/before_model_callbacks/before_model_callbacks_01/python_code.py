@@ -1,39 +1,88 @@
-"""Before-model callback — thin CES adapter for the slot-filling engine.
+"""Before-model callback — DAG engine orchestration.
 
-FRAMEWORK CODE — shared across all agents using the slot-filling engine.
-Do not add agent-specific logic here; customize behavior via dag_config.
+FRAMEWORK CODE — fully generic across all agents.
+Config-driven: reads config_id from state (set by before_agent),
+bootstrap/gate from {config_id}_dag (stashed in SM on first load).
 
-Calls the slot_filling_engine tool to compute the next action, then
-applies CES-specific operations: tool visibility, system instruction
-manipulation, and preemption.
-
-Config is loaded from dag_config; engine logic lives in
-slot_filling_engine. This callback is pure CES glue.
+Assembles phase-specific system instruction suffix after running the
+engine, so the LLM only sees protocol blocks relevant to the current
+phase (collection OR readback, never both).
 """
+# pylint: disable=undefined-variable
 
 import json as json_lib
 import re
 from typing import Optional
 
 
-_RAW_CONFIG = None
+_SM_KEY = "sm"
 
-_STALE_TAG_PATTERNS = [
-    re.compile(r"\n\n<readback_scope>.*?</readback_scope>", re.DOTALL),
-    re.compile(
-        r"\n\n<deferred_collection>.*?</deferred_collection>", re.DOTALL,
-    ),
-    re.compile(
-        r"\n\n<system_directive>.*?</system_directive>", re.DOTALL,
-    ),
-]
-_EVENT_PREFILL_PATTERN = re.compile(
-    r"<slot_filling_protocol>.*?</slot_filling_protocol>", re.DOTALL,
-)
-_READBACK_PROTOCOL_PATTERN = re.compile(
-    r"<readback_protocol>.*?</readback_protocol>", re.DOTALL,
-)
+_RAW_CONFIGS = {}
+
+_FRAMEWORK_SENTINEL = "<!-- slot-framework -->"
+
 _EVENT_TAG_PATTERN = re.compile(r"<event>(.*?)</event>")
+
+_TRANSFER_MARKERS = ("transfer_to_agent", "<context>", "</context>")
+
+
+def _is_real_user_text(txt):
+  """Filter out CES transfer markers and empty strings."""
+  stripped = txt.strip()
+  if not stripped:
+    return False
+  for marker in _TRANSFER_MARKERS:
+    if marker in stripped:
+      return False
+  return True
+
+
+def _prefill_from_conversation(sm, contents, slots):
+  """Scan conversation history and pre-fill slots with scan_keywords."""
+  filled = sm.get("filled", {})
+  pending = sm.get("pending", {})
+  for slot_def in slots:
+    scan_kw = slot_def.get("scan_keywords")
+    if not scan_kw:
+      continue
+    slot_name = slot_def["name"]
+    if slot_name in filled or slot_name in pending:
+      continue
+    cond_str = slot_def.get("condition")
+    if cond_str:
+      try:
+        if not eval(cond_str)(filled):  # pylint: disable=eval-used
+          continue
+      except Exception:  # pylint: disable=broad-except
+        continue
+    for content in (contents or []):
+      if getattr(content, "role", "") != "user":
+        continue
+      for part in getattr(content, "parts", []):
+        txt = getattr(part, "text", "")
+        if not _is_real_user_text(txt):
+          continue
+        lower = txt.lower()
+        for keyword, value in scan_kw.items():
+          if keyword in lower:
+            sm.setdefault("pending", {})[slot_name] = value
+            return
+
+_READBACK_BLOCK = """\
+<readback_protocol>
+After calling setter tools, the values in <readback_scope> below need
+your confirmation with the guest before continuing.
+
+Read back the pending values naturally in one sentence and ask
+"Is that correct?" Use digits for numbers. Then STOP — do not ask
+any new questions or move to the next topic.
+
+- "yes" → call confirm_pending
+- "no" without correction → call reject_pending
+- User corrects or adds info → call the appropriate setter first
+
+Always capture new information, even alongside a yes/no.
+</readback_protocol>"""
 
 
 def _make_collection_block(
@@ -46,70 +95,215 @@ def _make_collection_block(
   prereq = f" {prereq_note}" if prereq_note else ""
   return f"""\
 <slot_filling_protocol>
-You are operating in SLOT FILLING mode. Follow these rules strictly:
+1. CALL TOOLS FIRST: After each user message, call ALL matching setter tools
+   BEFORE generating text. Never defer a setter call when info is available.
+   Call setters even for invalid input — the system validates automatically.
+   Look at the FULL conversation — if the user already provided information
+   that maps to an unfilled slot, call the setter now. Do not re-ask.
 
-1. TOOL-DRIVEN CONVERSATION: After each user message, identify EVERY piece
-   of information the user provided and call ALL corresponding setter tools
-   in the SAME response. Never defer a setter call to a later turn when
-   the user already gave the information.
+2. NEXT STEP: If a system directive appears below, it describes the next
+   needed value. If the conversation already contains enough information
+   to determine that value, call the setter tool directly — do not ask
+   the user to repeat themselves. Otherwise, rephrase the directive in
+   your own words to ask the user.
 
-2. FOLLOW THE SYSTEM'S NEXT-STEP GUIDANCE: The system provides a directive
-   below. Relay it to the user naturally — include exact values or
-   confirmation numbers. Do NOT substitute generic information.
-
-3. TOOL SELECTION — call ONLY the setter that matches:
+3. TOOL SELECTION:
 {ts}
 
-4. ALWAYS CALL TOOLS — NEVER SKIP: Call the setter for EVERY piece of
-   information, even if out of range or invalid. The system validates all
-   inputs and handles errors automatically.
-
-5. NATURAL CONVERSATION: Answer off-topic questions helpfully, then return
-   to the main flow.
-
-6. ORDERING: Natural flow is {ordering}.
-   Accept info out of order.{prereq}
-
-7. HANDLING UNAVAILABLE REQUESTS: If no matching tool is visible, guide
-   the user to provide information for one of the available slots instead.
+4. ORDERING: {ordering}. Accept info out of order.{prereq}
 </slot_filling_protocol>"""
 
 
-def _strip_stale_tags(text: str, event_prefilled: bool) -> str:
-  """Remove stale SI tags before appending fresh suffix."""
-  for pattern in _STALE_TAG_PATTERNS:
-    text = pattern.sub("", text)
-  if event_prefilled:
-    text = _EVENT_PREFILL_PATTERN.sub("", text)
-  return text
+def _build_phase_suffix(sm, result):
+  """Build minimal phase-specific SI suffix from engine result."""
+  status = sm.get("status", "in_progress")
+  if status in ("complete", "escalated"):
+    return ""
+
+  si_suffix = result.get("si_suffix", "")
+  msg = result.get("message", "")
+  inline_confirmed = result.get("inline_confirmed", False)
+  event_prefilled = result.get("event_prefilled", False)
+  has_readback = "<readback_scope>" in si_suffix
+  has_pending = bool(sm.get("pending"))
+
+  parts = []
+
+  if (has_readback or has_pending) and not inline_confirmed:
+    parts.append(_READBACK_BLOCK)
+    if si_suffix:
+      parts.append(si_suffix)
+  else:
+    parts.append(_make_collection_block(
+        sm.get("_tool_selection", ""),
+        sm.get("_slot_ordering", ""),
+        sm.get("_prereq_note", ""),
+    ))
+    if si_suffix:
+      parts.append(si_suffix)
+
+    if event_prefilled and si_suffix:
+      if "<system_directive>" not in "\n".join(parts):
+        parts.append(si_suffix)
+
+    if msg and "<system_directive>" not in "\n".join(parts):
+      parts.append(
+          f"\n<system_directive>\n{msg}\n</system_directive>"
+      )
+
+  steer_directive = result.get("steer_back_directive", "")
+  if steer_directive:
+    parts.append(f"\n<steer_back>\n{steer_directive}\n</steer_back>")
+
+  return "\n".join(parts)
 
 
-def before_model_callback(  # pylint: disable=undefined-variable
+def _inject_phase_suffix(llm_request, phase_suffix):
+  """Replace any previous framework suffix with the new one."""
+  sentinel_suffix = f"\n\n{_FRAMEWORK_SENTINEL}\n{phase_suffix}"
+  si = llm_request.config.system_instruction
+  if si:
+    if hasattr(si, "parts") and si.parts:
+      text = si.parts[0].text or ""
+      idx = text.find(_FRAMEWORK_SENTINEL)
+      if idx >= 0:
+        text = text[:idx]
+      si.parts[0].text = text + sentinel_suffix
+    elif isinstance(si, str):
+      idx = si.find(_FRAMEWORK_SENTINEL)
+      if idx >= 0:
+        si = si[:idx]
+      llm_request.config.system_instruction = si + sentinel_suffix
+
+
+def before_model_callback(
     callback_context: CallbackContext,
     llm_request: LlmRequest,
 ) -> Optional[LlmResponse]:
   """CES entry point: run DAG engine before each LLM call."""
-  global _RAW_CONFIG  # pylint: disable=global-statement
-
-  # ── Hide internal tools from model ──────────────────────────
-  llm_request.config.hide_tool("dag_config")
   llm_request.config.hide_tool("slot_filling_engine")
 
-  sm = callback_context.state.get("sm", {})
+  sm = callback_context.state.get(_SM_KEY, {})
+
+  # ── Resolve config_id from state (set by before_agent) ──────
+  config_id = callback_context.state.get("_active_config_id")
+  if not config_id:
+    return {"decision": "OK"}
+
+  llm_request.config.hide_tool(f"{config_id}_dag")
+
+  # ── Load raw config (cached per config_id) ─────────────────
+  if config_id not in _RAW_CONFIGS:
+    dag_tool = getattr(tools, f"{config_id}_dag")
+    _RAW_CONFIGS[config_id] = dag_tool({}).json()["result"]
+  raw_config = _RAW_CONFIGS[config_id]
+
+  if "_bootstrap" not in sm:
+    sm["_bootstrap"] = raw_config.get("bootstrap")
+    sm["_gate_slot"] = raw_config.get("gate_slot")
+  if "_setter_slots" not in sm:
+    setter_slots = {}
+    multi_setter_slots = {}
+    slot_requires = {}
+    slot_validates = {}
+    for slot_def in raw_config.get("slots", []):
+      setter = slot_def.get("setter")
+      setter_field = slot_def.get("setter_field")
+      if setter:
+        if setter_field:
+          multi_setter_slots.setdefault(
+              setter, {},
+          )[setter_field] = slot_def["name"]
+        else:
+          setter_slots[setter] = slot_def["name"]
+      if slot_def.get("requires"):
+        slot_requires[slot_def["name"]] = slot_def["requires"]
+      if slot_def.get("validate_against"):
+        slot_validates[slot_def["name"]] = slot_def["validate_against"]
+    sm["_setter_slots"] = setter_slots
+    sm["_multi_setter_slots"] = multi_setter_slots
+    sm["_slot_requires"] = slot_requires
+    sm["_slot_validates"] = slot_validates
+    executor_tasks = {}
+    for task_def in raw_config.get("tasks", []):
+      tool_name = task_def.get("tool")
+      if tool_name:
+        executor_tasks[tool_name] = {
+            "task_name": task_def["name"],
+            "outputs": task_def.get("outputs", {}),
+            "success_check": task_def.get("success_check", "success"),
+            "terminal": task_def.get("terminal", False),
+        }
+    sm["_executor_tasks"] = executor_tasks
+  callback_context.state[_SM_KEY] = sm
+
+  # ── Gate: skip engine until gate_slot is filled ─────────────
+  gate_slot = raw_config.get("gate_slot")
+  if gate_slot and not sm.get("filled", {}).get(gate_slot):
+    if llm_request.contents:
+      for content in reversed(llm_request.contents):
+        if getattr(content, "role", "") == "user":
+          for part in getattr(content, "parts", []):
+            txt = getattr(part, "text", "")
+            if _is_real_user_text(txt):
+              callback_context.state["_gate_user_text"] = txt
+              break
+          if callback_context.state.get("_gate_user_text"):
+            break
+    ts_lines = []
+    for slot_def in raw_config.get("slots", []):
+      setter = slot_def.get("setter")
+      hint = slot_def.get("hint", slot_def["name"])
+      if setter:
+        ts_lines.append(f"   - {hint} → {setter}")
+    ts = "\n".join(ts_lines)
+    phase_suffix = _make_collection_block(ts, "", "")
+    _inject_phase_suffix(llm_request, phase_suffix)
+    llm_request.config.hide_tool("end_session")
+    return {"decision": "OK"}
 
   if sm.get("status") in ("complete", "escalated"):
     return {"decision": "OK"}
 
-  # ── Load raw config (cached after first call) ───────────────
-  if _RAW_CONFIG is None:
-    _RAW_CONFIG = tools.dag_config(  # pylint: disable=undefined-variable
-        {},
-    ).json()["result"]
+  # Flow active — only the engine can end the session (via preemption)
+  llm_request.config.hide_tool("end_session")
 
-  # ── Debug mode (opt-in via sm._debug_mode state variable) ──
+  # ── Transfer slots: read structured data from Root Agent ───
+  transfer_slots = callback_context.state.get("_transfer_slots", {})
+  if transfer_slots and raw_config:
+    filled = sm.get("filled", {})
+    consumed = []
+    for slot_def in raw_config.get("slots", []):
+      sn = slot_def["name"]
+      if sn not in transfer_slots:
+        continue
+      if sn in filled or sn in sm.get("pending", {}):
+        consumed.append(sn)
+        continue
+      cond_str = slot_def.get("condition")
+      if cond_str:
+        try:
+          if not eval(cond_str)(filled):  # pylint: disable=eval-used
+            continue
+        except Exception:  # pylint: disable=broad-except
+          continue
+      sm.setdefault("pending", {})[sn] = transfer_slots[sn]
+      consumed.append(sn)
+    for sn in consumed:
+      transfer_slots.pop(sn, None)
+    if not transfer_slots:
+      callback_context.state.pop("_transfer_slots", None)
+    else:
+      callback_context.state["_transfer_slots"] = transfer_slots
+
+  # ── Fallback: pre-fill from conversation history ───────────
+  _prefill_from_conversation(
+      sm, llm_request.contents, raw_config.get("slots", []),
+  )
+  callback_context.state[_SM_KEY] = sm
+
   debug = sm.get("_debug_mode", False)
 
-  # ── Extract last user text ──────────────────────────────────
   last_user_text = ""
   if llm_request.contents:
     last_content = llm_request.contents[-1]
@@ -120,7 +314,6 @@ def before_model_callback(  # pylint: disable=undefined-variable
           last_user_text = txt
           break
 
-  # ── Call the engine ─────────────────────────────────────────
   event_data = callback_context.state.get("event_data", {})
   ia_event = callback_context.state.get("ia_event_name")
   if not ia_event and last_user_text:
@@ -129,12 +322,14 @@ def before_model_callback(  # pylint: disable=undefined-variable
       ia_event = m.group(1)
   if ia_event:
     event_data["ia_event_name"] = ia_event
-  engine_result = tools.slot_filling_engine(  # pylint: disable=undefined-variable
+
+  engine_result = tools.slot_filling_engine(
       {"input_data": {
-          "raw_config": _RAW_CONFIG,
+          "raw_config": raw_config,
           "sm": sm,
           "last_user_text": last_user_text,
           "event_data": event_data,
+          "config_id": config_id,
           **({"debug": True} if debug else {}),
       }},
   ).json()["result"]
@@ -145,61 +340,25 @@ def before_model_callback(  # pylint: disable=undefined-variable
   if debug:
     sm["_debug_log"] = engine_result.get("_debug_log", [])
 
-  callback_context.state["sm"] = sm
+  callback_context.state[_SM_KEY] = sm
 
-  # ── Clear prompt variables on completion ────────────────────
-  status = sm.get("status", "in_progress")
-  if status in ("complete", "escalated"):
-    callback_context.state["slot_filling_protocol"] = ""
-    callback_context.state["readback_protocol"] = ""
-    callback_context.state["system_directive"] = ""
-
-  # ── Hide tools ──────────────────────────────────────────────
   for tool_name in result.get("hide_tools", []):
     llm_request.config.hide_tool(tool_name)
 
-  # ── Inline confirm: swap readback → collection in SI ────────
-  # When the user confirms AND provides new info in the same
-  # message ("Yea, also shellfish allergy"), the engine silently
-  # confirmed pending slots and is letting the LLM run to call
-  # setters for the new content. But before_agent_callback
-  # already baked readback-only instructions into the SI
-  # (because pending was non-empty at that point). We need to
-  # replace those with collection instructions so the LLM knows
-  # to call setters instead of reading back values.
-  inline_confirmed = result.get("inline_confirmed", False)
-  if inline_confirmed:
-    collection_block = _make_collection_block(
-        sm.get("_tool_selection", ""),
-        sm.get("_slot_ordering", ""),
-        sm.get("_prereq_note", ""),
-    )
-    si = llm_request.config.system_instruction
-    if si:
-      if hasattr(si, "parts") and si.parts:
-        text = si.parts[0].text or ""
-        text = _READBACK_PROTOCOL_PATTERN.sub("", text)
-        text = _strip_stale_tags(text, False)
-        si.parts[0].text = text + "\n\n" + collection_block
-      elif isinstance(si, str):
-        text = _READBACK_PROTOCOL_PATTERN.sub("", si)
-        text = _strip_stale_tags(text, False)
-        llm_request.config.system_instruction = (
-            text + "\n\n" + collection_block
-        )
+  # ── Assemble phase-specific SI suffix ───────────────────────
+  gate_user_text = callback_context.state.pop("_gate_user_text", "")
+  phase_suffix = _build_phase_suffix(sm, result)
 
-  # ── Apply system instruction suffix ─────────────────────────
-  si_suffix = result.get("si_suffix", "")
-  event_prefilled = result.get("event_prefilled", False)
-  if si_suffix or event_prefilled:
-    si = llm_request.config.system_instruction
-    if si:
-      if hasattr(si, "parts") and si.parts:
-        text = _strip_stale_tags(si.parts[0].text or "", event_prefilled)
-        si.parts[0].text = text + si_suffix
-      elif isinstance(si, str):
-        text = _strip_stale_tags(si, event_prefilled)
-        llm_request.config.system_instruction = text + si_suffix
+  if gate_user_text and phase_suffix:
+    phase_suffix += (
+        f"\n<user_context>\nThe user's original message: \"{gate_user_text}\"\n"
+        "Extract ALL slot values from this message before "
+        "asking new questions. "
+        "Call setter tools for any information you can infer.\n</user_context>"
+    )
+
+  if phase_suffix:
+    _inject_phase_suffix(llm_request, phase_suffix)
 
   # ── Preemption ──────────────────────────────────────────────
   if (result.get("preempt")
@@ -207,46 +366,35 @@ def before_model_callback(  # pylint: disable=undefined-variable
       and (len(llm_request.contents) > 1 or result.get("force_preempt"))):
     parts = []
     if result.get("message"):
-      parts.append(Part.from_text(  # pylint: disable=undefined-variable
-          text=result["message"],
-      ))
+      parts.append(
+          Part.from_text(text=result["message"]))
     response_parts = result.get("response")
     if response_parts:
       for rp in response_parts:
         rp_type = rp.get("type", "text")
         if rp_type == "text":
-          parts.append(Part.from_text(  # pylint: disable=undefined-variable
-              text=rp.get("text", ""),
-          ))
+          parts.append(
+              Part.from_text(text=rp.get("text", "")))
         elif rp_type == "payload":
-          parts.append(Part.from_json(  # pylint: disable=undefined-variable
-              json_lib.dumps(rp["data"]),
-          ))
-        elif rp_type == "audio":
-          parts.append(Part.from_audio(  # pylint: disable=undefined-variable
-              audio_uri=rp["uri"],
-              cancellable=rp.get("cancellable", False),
-              interruptible=rp.get("interruptible", True),
-          ))
+          parts.append(
+              Part.from_json(
+                  json_lib.dumps(rp["data"])))
         elif rp_type == "end_session":
-          parts.append(Part.from_end_session(  # pylint: disable=undefined-variable
+          parts.append(Part.from_end_session(
               reason=rp.get("reason", "completed"),
               escalated=rp.get("escalated", False),
           ))
         elif rp_type == "transfer":
-          parts.append(Part.from_agent_transfer(  # pylint: disable=undefined-variable
-              agent=rp["agent"],
-          ))
+          parts.append(
+              Part.from_agent_transfer(
+                  agent=rp["agent"]))
     fc = result.get("function_call")
     if fc:
-      fn_call = Part.from_function_call(  # pylint: disable=undefined-variable
+      fn_call = Part.from_function_call(
           name=fc["name"],
           args=fc.get("args", {}),
       )
       parts.append(fn_call)
     if parts:
-      return LlmResponse.from_parts(  # pylint: disable=undefined-variable
-          parts=parts,
-      )
-
+      return LlmResponse.from_parts(parts=parts)
   return {"decision": "OK"}

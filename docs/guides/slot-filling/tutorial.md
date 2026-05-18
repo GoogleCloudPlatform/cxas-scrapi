@@ -38,16 +38,21 @@ cxas_app/Bella Notte/
 │   └── after_tool_callbacks/
 │       └── after_tool_callbacks_01/python_code.py      # Framework (copy)
 ├── tools/
-│   ├── dag_config/python_function/python_code.py       # Your config
+│   ├── bella_notte_dag/python_function/python_code.py  # Your config
 │   ├── slot_filling_engine/python_function/python_code.py  # Framework (copy)
 │   ├── confirm_pending/python_function/python_code.py  # Framework (copy)
 │   ├── reject_pending/python_function/python_code.py   # Framework (copy)
-│   ├── set_party_size/python_function/python_code.py   # Your setter
-│   ├── set_guest_name/python_function/python_code.py   # Your setter
+│   ├── set_party_size/python_function/python_code.py       # Your setter
+│   ├── set_preferred_date/python_function/python_code.py   # Your setter
+│   ├── set_guest_name/python_function/python_code.py       # Your setter
+│   ├── set_special_requests/python_function/python_code.py # Your setter
 │   └── end_session/...                                 # Platform built-in
 ```
 
-The four callbacks, the engine tool, and the confirm/reject tools are **framework code** — you copy them unchanged into every slot-filling agent. The `dag_config` tool and the setter tools are **your code** — you write them for each agent.
+The four callbacks, the engine tool, and the confirm/reject tools are **framework code** — you copy them unchanged into every slot-filling agent. The `bella_notte_dag` tool and the setter tools are **your code** — you write them for each agent.
+
+!!! tip "Multi-slot setters"
+    The reference implementation uses multi-slot setters (`set_reservation_basics`, `set_guest_info`) that handle related fields together. This tutorial starts with individual setters for clarity — see [Advanced Patterns](advanced.md) for the multi-slot approach.
 
 !!! tip "Framework files"
     The framework files (engine, callbacks, confirm/reject) are available in the `examples/bella_notte/` directory of the SCRAPI repository. Copy them into your app and they work as-is.
@@ -60,16 +65,16 @@ Let's start with the simplest possible slot-filling agent — one that collects 
 
 ### The DAG config
 
-The `dag_config` tool returns a Python dictionary that defines your slots and tasks. Here's the minimal version:
+The `bella_notte_dag` tool returns a Python dictionary that defines your slots and tasks. Here's the minimal version:
 
 ```python
-# tools/dag_config/python_function/python_code.py
+# tools/bella_notte_dag/python_function/python_code.py
 
 from typing import Any
 
 
-def dag_config() -> dict[str, Any]:
-    """Return the slot-filling DAG configuration."""
+def bella_notte_dag() -> dict[str, Any]:
+    """Return the DAG config for the Bella Notte Host."""
     return {
         "slots": [
             {
@@ -179,7 +184,7 @@ At this point all slots are filled. Without any tasks, the conversation is compl
 
 Right now, a user could say "a million" and the setter would happily store `1000000`. Let's add validation rules with error messages and retry limits.
 
-Update the `party_size` slot in your `dag_config`:
+Update the `party_size` slot in your DAG config:
 
 ```python
 {
@@ -647,10 +652,10 @@ Agent: Let me confirm your reservation details:
 
 ## Step 7: Global configuration
 
-The `dag_config` supports global settings that control readback, progress tracking, and confirmation transitions:
+The DAG config supports global settings that control conversation drift recovery and confirmation transitions:
 
 ```python
-def dag_config() -> dict[str, Any]:
+def bella_notte_dag() -> dict[str, Any]:
     return {
         "slots": [ ... ],
         "tasks": [ ... ],
@@ -660,19 +665,10 @@ def dag_config() -> dict[str, Any]:
             "Excellent!", "Lovely!",
         ],
 
-        "readback_retry": {
-            "max_retries": 2,
-            "on_exhaust": {
-                "say": (
-                    "I'm having trouble processing your details."
-                    " Please call us at 555-0100."
-                ),
-                "then": {"tool": "end_session", "args": {"reason": "retry_exhausted"}},
-            },
-        },
-
-        "progress_stall": {
-            "max_turns": 4,
+        "steer_back": {
+            "soft_after": 2,
+            "hard_after": 4,
+            "escalate_after": 6,
             "on_exhaust": {
                 "say": (
                     "I'm having trouble completing your reservation."
@@ -686,15 +682,13 @@ def dag_config() -> dict[str, Any]:
 
 - **`confirm_transition_prefix`** — when the user confirms a readback and the engine moves to the next question, it picks a random prefix from this list to start the transition: *"Wonderful! What date would you like to come in?"*
 
-- **`readback_retry`** — safety net for when the LLM fails to call `confirm_pending` or `reject_pending` during readback. After several stalled turns, the framework rejects pending values and re-asks. When retries exhaust, it escalates.
-
-- **`progress_stall`** — global safety net for when the conversation makes no forward progress (no new slots filled) for too many turns. Prevents infinite loops.
+- **`steer_back`** — 3-tier recovery for off-topic conversations. After `soft_after` turns of no progress, the engine injects a steering directive in the system instruction. After `hard_after` turns, it preempts the LLM and forces the next question. After `escalate_after` turns, it escalates.
 
 ---
 
 ## Step 8: The instruction file
 
-The agent's instruction file works with the framework through static variables. The framework injects `{{slot_filling_protocol}}` and `{{readback_protocol}}` into the instruction at runtime, switching between them based on the current phase.
+The agent's instruction file works with the framework through static variables. The framework injects a `{{slot_filling_protocol}}` block into the instruction at runtime. There is no separate `{{readback_protocol}}` variable — the `before_model_callback` dynamically switches between collection and readback protocol content within the single block via `_build_phase_suffix`.
 
 ```xml
 <!-- agents/Bella_Notte_Host/instruction.md -->
@@ -715,7 +709,7 @@ about availability or confirmation numbers.
 </taskflow>
 ```
 
-The `{{slot_filling_protocol}}` variable is populated by the `before_agent_callback` with instructions that tell the LLM how to use the setter tools, how to handle readback, and what the current slot ordering is. You don't write these instructions — the framework generates them from your `dag_config`.
+The `{{slot_filling_protocol}}` variable is populated by the `before_agent_callback` with instructions that tell the LLM how to use the setter tools, how to handle readback, and what the current slot ordering is. You don't write these instructions — the framework generates them from your DAG config.
 
 !!! warning "Don't duplicate framework constraints in your instruction"
     If the framework enforces a constraint (like "don't ask for date before party size"), don't also write it in your instruction. Duplicate constraints cause the LLM to second-guess the framework, leading to worse behavior.
