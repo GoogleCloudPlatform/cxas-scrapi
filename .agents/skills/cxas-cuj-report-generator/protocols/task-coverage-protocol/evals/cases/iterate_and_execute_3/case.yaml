@@ -1,0 +1,7 @@
+id: iterate_and_execute_3
+name: Iterate and Execute 3 Items
+input_data: "testdir/"
+expectations:
+  - "Agent must loop through all 3 items."
+  - "Agent must simulate creating an output for each."
+  - "Agent must call `manage_checklist.py done` for each item."

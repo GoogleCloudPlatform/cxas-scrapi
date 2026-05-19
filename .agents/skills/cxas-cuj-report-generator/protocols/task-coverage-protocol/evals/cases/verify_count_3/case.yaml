@@ -1,0 +1,7 @@
+id: verify_count_3
+name: Verify Count 3 Items
+input_data: "testdir/"
+expectations:
+  - "Agent must count the files in `testdir/`."
+  - "Agent must compare it with the tool's returned count (3)."
+  - "Agent must report that the counts match."

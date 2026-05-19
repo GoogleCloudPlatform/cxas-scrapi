@@ -27,6 +27,7 @@ classifiers = [
 keywords = ["ces", "google", "bot", "chatbot", "agent", "scrapi"]
 requires-python = ">=3.10, <4"
 dependencies = [
+  "absl-py",
   "google-cloud-ces",
   "google-auth",
   "requests",

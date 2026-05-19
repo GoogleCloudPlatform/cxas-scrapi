@@ -1,6 +1,6 @@
 ---
 name: cxas-cuj-report-generator
-description: "Orchestrates the extraction of transcripts and generation of coverage reports following the Robust Extraction Protocol."
+description: "Orchestrates the extraction of transcripts and generation of coverage reports following the Robust Extraction and Two-Phase Ingestion Protocols."
 ---
 
 # CX Transcript Generation & Reporting Skill
@@ -12,10 +12,12 @@ from a directory containing many customer files.
 
 To ensure 100% coverage and zero data loss, you MUST follow these core rules:
 
-*   **Robust Extraction**: Follow the protocol defined in the
-    `cxas-protocol-robust-extraction` skill.
-*   **Checklist Mandate**: The orchestrator and all subagents MUST follow the
-    `agent-protocol-checklist` protocol to maintain a local
+*   **Robust Extraction**: Follow the protocol defined in the nested
+    `protocols/cxas-protocol-robust-extraction/` sub-protocol.
+*   **Two-Phase Ingestion**: Follow the protocol defined in the nested
+    `protocols/cxas-protocol-two-phase-ingestion/` sub-protocol.
+*   **Checklist Mandate**: The orchestrator and all subagents MUST follow the nested
+    `protocols/task-coverage-protocol/` checklist protocol to maintain a local
     `./resources/task_checklist.md` file, ensuring they track their progress and
     do not lose coverage during execution.
 *   **Auditing**: The orchestrator MUST periodically check the subagent's
@@ -113,8 +115,9 @@ By default, this workflow is long-running and requires autonomous execution. You
 MUST follow these guardrails:
 
 1.  **Automatic Watchdog**: Upon starting the task, you MUST automatically
-    schedule a recurring timer (e.g., every 5 minutes using the `schedule` tool)
-    to interrupt and check for stuck subagents or tasks.
+    establish an execution timeout monitor or schedule regular sanity checks (using
+    available local background scheduler hooks or background task processes)
+    to check for stuck subagents or tasks.
 2.  **Initial Confirmation**: In your very first response to the user, you MUST
     explicitly state that you are applying the Robust Extraction Protocol and
     that you have set a watchdog timer.

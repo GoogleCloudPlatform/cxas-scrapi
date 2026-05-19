@@ -6,7 +6,8 @@ Typical usage example:
 
 from __future__ import annotations
 
-import fcntl
+import contextlib
+import os
 import pathlib
 import sys
 
@@ -16,6 +17,32 @@ from typing import Any
 
 import yaml
 from absl import app, flags, logging
+
+
+@contextlib.contextmanager
+def file_lock(lock_file_path: pathlib.Path):
+    lock_file_path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(lock_file_path, "w")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_RLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(f, fcntl.LOCK_UN)
+        except Exception:
+            pass
+        f.close()
 
 _TRANSCRIPT_FILE = flags.DEFINE_string(
     "transcript_file",
@@ -67,7 +94,7 @@ def process_append_turn(
         raise ValueError("Input file must contain 'speaker' and 'text'")
 
     text = (
-        turn_input["text"]
+        str(turn_input["text"])
         .replace("’", "'")
         .replace("‘", "'")
         .replace("“", '"')
@@ -111,9 +138,7 @@ def main(argv: Sequence[str]) -> None:
         sys.exit(1)
 
     try:
-        lock_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_file, "w") as lf:
-            fcntl.flock(lf, fcntl.LOCK_EX)
+        with file_lock(lock_file):
 
             transcript_data = {}
             if transcript_file.exists():
