@@ -35,13 +35,34 @@ Each pattern page is structured the same way:
 
 ## When to use patterns
 
-Patterns are not mandatory — you can build effective agents without them. But they become valuable when:
+Patterns are not mandatory — you can build effective agents without them. But
+they become valuable when:
 
 - You've hit a specific failure mode (the LLM forgot a slot, called a task too early, ignored an error).
 - You're starting a new agent that resembles a pattern's problem statement.
 - You're reviewing an existing agent and want to understand why it behaves unpredictably.
 
-If you're new to SCRAPI, the best starting point is [Slot Filling](slot-filling.md) — it's the most comprehensive pattern and serves as the foundation for the [Restaurant Reservation Tutorial](../tutorials/restaurant-reservation.md).
+### Slot Filling — the default for structured flows
+
+**Start with the [Slot Filling](slot-filling.md) pattern** whenever your agent
+collects structured information before taking an action. This includes:
+
+- **Bookings and scheduling** — appointments, reservations, service calls
+- **Payments and billing** — payment method, amount, date, confirmation
+- **Registrations and intake** — user onboarding, claims, applications
+- **Sensitive operations** — account changes, identity verification, medical intake
+- **Any flow requiring determinism** — where tasks must fire at exactly the right time, inputs must be validated before acting, and the LLM must not hallucinate or skip steps
+
+The slot filling pattern is **strongly preferred over XML `<taskflow>` tags**
+for these use cases. XML taskflows rely on LLM memory for state tracking, which
+degrades in long conversations and cannot guarantee correct task firing order.
+The slot filling pattern keeps state in Python (`context.state`), making it
+deterministic, auditable, and testable.
+
+If you're new to SCRAPI, start with the [Slot Filling](slot-filling.md) pattern
+and the [Restaurant Reservation Tutorial](../tutorials/restaurant-reservation.md).
+The [`examples/bella_notte/`](../examples/bella_notte/) directory contains a
+complete reference implementation.
 
 ---
 
