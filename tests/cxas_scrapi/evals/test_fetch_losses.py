@@ -16,7 +16,6 @@ import json
 import os
 import sys
 from unittest.mock import MagicMock, patch
-import pytest
 
 # Add the skill directory to sys.path so we can import fetch_losses
 sys.path.append(
@@ -49,9 +48,15 @@ def test_ccai_to_cxas_dict():
     result = fetch_losses.ccai_to_cxas_dict(ccai_conv)
     assert len(result["turns"]) == 2
     assert result["turns"][0]["messages"][0]["role"] == "user"
-    assert result["turns"][0]["messages"][0]["chunks"][0]["text"] == "hello, I need help with my bill"
+    assert (
+        result["turns"][0]["messages"][0]["chunks"][0]["text"]
+        == "hello, I need help with my bill"
+    )
     assert result["turns"][1]["messages"][0]["role"] == "agent"
-    assert result["turns"][1]["messages"][0]["chunks"][0]["text"] == "sure, I can help with that"
+    assert (
+        result["turns"][1]["messages"][0]["chunks"][0]["text"]
+        == "sure, I can help with that"
+    )
 
 
 @patch("cxas_scrapi.core.insights.Insights")
@@ -86,11 +91,26 @@ def test_main_end_to_end(mock_argv, mock_insights_class, tmp_path):
 
     # Mock list_conversations: 2 contained, 3 non-contained
     mock_insights.list_conversations.return_value = [
-        {"name": "projects/p/locations/l/conversations/c1", "labels": {"sessionContained": "true"}},
-        {"name": "projects/p/locations/l/conversations/c2", "labels": {"sessionContained": "false"}},
-        {"name": "projects/p/locations/l/conversations/c3", "labels": {"sessionContained": "true"}},
-        {"name": "projects/p/locations/l/conversations/c4", "labels": {}},  # missing = loss
-        {"name": "projects/p/locations/l/conversations/c5", "labels": {"sessionContained": "false"}},
+        {
+            "name": "projects/p/locations/l/conversations/c1",
+            "labels": {"sessionContained": "true"},
+        },
+        {
+            "name": "projects/p/locations/l/conversations/c2",
+            "labels": {"sessionContained": "false"},
+        },
+        {
+            "name": "projects/p/locations/l/conversations/c3",
+            "labels": {"sessionContained": "true"},
+        },
+        {
+            "name": "projects/p/locations/l/conversations/c4",
+            "labels": {},
+        },  # missing = loss
+        {
+            "name": "projects/p/locations/l/conversations/c5",
+            "labels": {"sessionContained": "false"},
+        },
     ]
 
     # Mock get_conversation for details
@@ -100,9 +120,12 @@ def test_main_end_to_end(mock_argv, mock_insights_class, tmp_path):
             "name": name,
             "transcript": {
                 "transcriptSegments": [
-                    {"segmentParticipant": {"role": "CUSTOMER"}, "text": f"utterance from {conv_id}"}
+                    {
+                        "segmentParticipant": {"role": "CUSTOMER"},
+                        "text": f"utterance from {conv_id}",
+                    }
                 ]
-            }
+            },
         }
 
     mock_insights.get_conversation.side_effect = mock_get_conv

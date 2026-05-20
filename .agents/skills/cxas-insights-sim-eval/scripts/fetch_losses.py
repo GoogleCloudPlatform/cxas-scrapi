@@ -18,7 +18,8 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
+
 import yaml
 
 from cxas_scrapi.core.conversation_history import ConversationHistory
@@ -33,7 +34,7 @@ USER_AGENT_EXTENSION = "skill/cxas-insights-sim-eval/fetch-losses"
 
 
 def ccai_to_cxas_dict(ccai_conv: Dict[str, Any]) -> Dict[str, Any]:
-    """Converts a CCAI Insights conversation dict to a CXAS-like conversation dict."""
+    """Converts a CCAI Insights conversation dict to CXAS-like format."""
     segments = ccai_conv.get("transcript", {}).get("transcriptSegments", [])
     turns = []
     for seg in segments:
@@ -52,7 +53,7 @@ def ccai_to_cxas_dict(ccai_conv: Dict[str, Any]) -> Dict[str, Any]:
 def extract_transcript(
     client: Insights, conv_summary: Dict[str, Any]
 ) -> Optional[Dict[str, str]]:
-    """Processes a single conversation to extract its transcript and formats to YAML."""
+    """Extracts conversation transcript and formats to YAML."""
     conv_name = conv_summary.get("name")
     conv_id = conv_name.split("/")[-1]
     logger.info(f"Fetching detailed transcript for {conv_id}...")
@@ -76,7 +77,10 @@ def extract_transcript(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fetch non-contained (loss) transcripts from CCAI Insights for agent analysis."
+        description=(
+            "Fetch non-contained (loss) transcripts from "
+            "CCAI Insights for agent analysis."
+        )
     )
     parser.add_argument("--project-id", required=True, help="GCP Project ID")
     parser.add_argument(
@@ -108,7 +112,9 @@ def main():
     args = parser.parse_args()
 
     logger.info(
-        f"Initializing Insights client for project {args.project_id}, location {args.location}..."
+        "Initializing Insights client for project %s, location %s...",
+        args.project_id,
+        args.location,
     )
     insights_client = Insights(
         project_id=args.project_id,
@@ -141,7 +147,9 @@ def main():
             losses.append(c)
 
     total_losses = len(losses)
-    logger.info(f"Identified {total_losses} non-contained conversations (losses).")
+    logger.info(
+        "Identified %d non-contained conversations (losses).", total_losses
+    )
 
     if not losses:
         logger.warning("No non-contained conversations found for this app.")
