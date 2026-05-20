@@ -18,25 +18,17 @@
         "steps": [
           {
             "userInput": {
-              "text": "I need a table for 4 this Friday"
+              "text": "I need a table for 4 on June 20th"
             }
           },
           {
             "expectation": {
-              "note": "Check_SetPartySize_Called",
+              "note": "Check_set_reservation_basics_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 4.0
+                  "party_size": 4.0
                 }
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_SetPreferredDate_Called",
-              "toolCall": {
-                "tool": "set_preferred_date"
               }
             }
           },
@@ -94,7 +86,7 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },
@@ -132,7 +124,7 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name"
+                "tool": "set_guest_info"
               }
             }
           },

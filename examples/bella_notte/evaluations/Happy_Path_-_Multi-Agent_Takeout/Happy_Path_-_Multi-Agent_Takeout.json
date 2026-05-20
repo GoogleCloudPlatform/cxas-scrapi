@@ -1,0 +1,135 @@
+{
+  "name": "multi-agent-happy-path-takeout",
+  "displayName": "Happy Path - Multi-Agent Takeout",
+  "description": "Verifies the end-to-end routed multi-agent takeout order flow with correct deferred readbacks.",
+  "tags": [
+    "multi-agent",
+    "happy-path",
+    "takeout"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "I'd like to order some food for takeout"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Set_Active_Flow_Called_For_Takeout",
+              "toolCall": {
+                "tool": "set_active_flow",
+                "args": {
+                  "flow": "takeout"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "a pepperoni pizza please"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetTakeoutItems_Called",
+              "toolCall": {
+                "tool": "set_takeout_items",
+                "args": {
+                  "items": "pepperoni pizza"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "6 PM please"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPickupTime_Called",
+              "toolCall": {
+                "tool": "set_pickup_time",
+                "args": {
+                  "time": "6:00 PM"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "John Smith"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetTakeoutGuestName_Called",
+              "toolCall": {
+                "tool": "set_takeout_guest_name",
+                "args": {
+                  "name": "John Smith"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "5195910659"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetTakeoutPhone_Called",
+              "toolCall": {
+                "tool": "set_takeout_phone",
+                "args": {
+                  "phone": "5195910659"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes, book my order"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Takeout_Complete",
+              "toolCall": {
+                "tool": "confirm_pending",
+                "args": {}
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

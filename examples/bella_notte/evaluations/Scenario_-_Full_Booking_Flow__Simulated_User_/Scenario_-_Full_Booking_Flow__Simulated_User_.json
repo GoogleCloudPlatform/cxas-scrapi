@@ -22,9 +22,9 @@
       {
         "toolExpectation": {
           "expectedToolCall": {
-            "tool": "set_party_size",
+            "tool": "set_reservation_basics",
             "args": {
-              "size": 4.0
+              "party_size": 4.0
             }
           }
         }
@@ -39,9 +39,9 @@
       {
         "toolExpectation": {
           "expectedToolCall": {
-            "tool": "set_preferred_date",
+            "tool": "set_reservation_basics",
             "args": {
-              "date": "2026-06-17"
+              "preferred_date": "2026-06-17"
             }
           }
         }
@@ -56,9 +56,9 @@
       {
         "toolExpectation": {
           "expectedToolCall": {
-            "tool": "set_guest_name",
+            "tool": "set_guest_info",
             "args": {
-              "name": "Garcia"
+              "guest_name": "Garcia"
             }
           }
         }
@@ -66,7 +66,7 @@
       {
         "toolExpectation": {
           "expectedToolCall": {
-            "tool": "set_special_requests"
+            "tool": "set_guest_info"
           }
         }
       }

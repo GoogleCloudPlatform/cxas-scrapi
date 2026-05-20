@@ -1,13 +1,12 @@
 {
   "name": "046e9d15-2eeb-4a4e-a3ff-ebba394cfe32",
   "displayName": "Multi-Slot Input - Date and Party Size Together",
-  "description": "User provides party size and date in a single message. Both setter tools fire, then batched readback confirmation, then FindAvailableTimes auto-executes. Name is deferred (BookReservation input) \u2014 no individual readback. After both name and requests are collected, a combined group readback fires.",
+  "description": "User provides party size and date in a single message. Multi-slot setter fires once with both params, then batched readback confirmation, then FindAvailableTimes auto-executes. Name is deferred (BookReservation input) — no individual readback. After both name and requests are collected, a combined group readback fires.",
   "tags": [
     "slot-machine",
     "multi-slot",
     "readback",
     "deferred-readback",
-    "parallel-tools",
     "critical"
   ],
   "evaluationDatasets": [
@@ -24,22 +23,12 @@
           },
           {
             "expectation": {
-              "note": "Check_SetPartySize_Called",
+              "note": "Check_SetReservationBasics_Called_With_Both",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 4.0
-                }
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_SetPreferredDate_Called",
-              "toolCall": {
-                "tool": "set_preferred_date",
-                "args": {
-                  "date": "2026-06-17"
+                  "party_size": 4.0,
+                  "preferred_date": "2026-06-17"
                 }
               }
             }
@@ -128,11 +117,11 @@
           },
           {
             "expectation": {
-              "note": "Check_SetGuestName_Called",
+              "note": "Check_SetGuestInfo_Called",
               "toolCall": {
-                "tool": "set_guest_name",
+                "tool": "set_guest_info",
                 "args": {
-                  "name": "Chen"
+                  "guest_name": "Chen"
                 }
               }
             }
@@ -165,7 +154,7 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },

@@ -1,7 +1,7 @@
 {
-  "name": "df92f4dc-f1a1-43dc-b3ad-75d05539cf22",
+  "name": "80d64508-8e53-4452-9942-8443e623d892",
   "displayName": "Bella Notte Restaurant Reservations",
-  "rootAgent": "Bella Notte Host",
+  "rootAgent": "Bella_Notte_Host",
   "loggingSettings": {
     "conversationLoggingSettings": {
       "retentionWindow": "31536000s"
@@ -18,15 +18,15 @@
     },
     {
       "name": "slot_filling_protocol",
-      "description": "Collection-phase slot filling rules \u2014 shown during collection, empty during readback",
+      "description": "Collection-phase slot filling rules — shown during collection, empty during readback",
       "schema": {
         "type": "STRING",
-        "default": "<slot_filling_protocol>\nYou are operating in SLOT FILLING mode. Follow these rules strictly:\n\n1. TOOL-DRIVEN CONVERSATION: After each user message, identify EVERY piece\n   of information the user provided and call ALL corresponding setter tools\n   in the SAME response. Never defer a setter call to a later turn when\n   the user already gave the information.\n\n2. FOLLOW THE SYSTEM'S NEXT-STEP GUIDANCE: The system provides a directive\n   below. Relay it to the user naturally \u2014 include exact values or\n   confirmation numbers. Do NOT substitute generic information.\n\n3. TOOL SELECTION \u2014 call ONLY the setter that matches:\n   (Determine the correct setter from tool names and descriptions.)\n\n4. ALWAYS CALL TOOLS \u2014 NEVER SKIP: Call the setter for EVERY piece of\n   information, even if out of range or invalid. The system validates all\n   inputs and handles errors automatically.\n\n5. NATURAL CONVERSATION: Answer off-topic questions helpfully, then return\n   to the main flow.\n\n6. ORDERING: Accept info in any order.\n\n7. HANDLING UNAVAILABLE REQUESTS: If no matching tool is visible, guide\n   the user to provide information for one of the available slots instead.\n</slot_filling_protocol>"
+        "default": "<slot_filling_protocol>\nYou are operating in SLOT FILLING mode. Follow these rules strictly:\n\n1. TOOL-DRIVEN CONVERSATION: After each user message, identify EVERY piece\n   of information the user provided and call ALL corresponding setter tools\n   in the SAME response. Never defer a setter call to a later turn when\n   the user already gave the information.\n\n2. FOLLOW THE SYSTEM'S NEXT-STEP GUIDANCE: The system provides a directive\n   below. Relay it to the user naturally — include exact values or\n   confirmation numbers. Do NOT substitute generic information.\n\n3. TOOL SELECTION — call ONLY the setter that matches:\n   (Determine the correct setter from tool names and descriptions.)\n\n4. ALWAYS CALL TOOLS — NEVER SKIP: Call the setter for EVERY piece of\n   information, even if out of range or invalid. The system validates all\n   inputs and handles errors automatically.\n\n5. NATURAL CONVERSATION: Answer off-topic questions helpfully, then return\n   to the main flow.\n\n6. ORDERING: Accept info in any order.\n\n7. HANDLING UNAVAILABLE REQUESTS: If no matching tool is visible, guide\n   the user to provide information for one of the available slots instead.\n</slot_filling_protocol>"
       }
     },
     {
       "name": "readback_protocol",
-      "description": "Readback and confirmation rules \u2014 shown during collection and readback phases, empty when complete",
+      "description": "Readback and confirmation rules — shown during collection and readback phases, empty when complete",
       "schema": {
         "type": "STRING",
         "default": ""
@@ -34,7 +34,7 @@
     },
     {
       "name": "system_directive",
-      "description": "System directive for the current turn \u2014 next question or readback prompt",
+      "description": "System directive for the current turn — next question or readback prompt",
       "schema": {
         "type": "STRING",
         "default": ""
@@ -53,7 +53,7 @@
       "description": "Maps agent display names to DAG config IDs for the slot-filling framework",
       "schema": {
         "type": "STRING",
-        "default": "{\"Bella Notte Host\": \"bella_notte\"}"
+        "default": "{\"Reservation_Agent\": \"bella_notte\", \"Takeout_Agent\": \"takeout\"}"
       }
     }
   ],

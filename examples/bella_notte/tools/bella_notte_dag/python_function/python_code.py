@@ -6,6 +6,13 @@ from typing import Any
 def _bella_notte_config() -> dict[str, Any]:
   """Reservation flow for the Bella Notte Host."""
   return {
+      "bootstrap": {
+          "tool": "set_active_flow",
+          "slot": "active_flow",
+          "reset_on_complete": True,
+          "welcome_slot": "welcome",
+      },
+      "gate_slot": "active_flow",
       "slots": [
           {
               "name": "welcome",
@@ -223,14 +230,8 @@ def _bella_notte_config() -> dict[str, Any]:
               "response": [
                   {"type": "payload", "data": {
                       "richContent": [[{
-                          "type": "description",
-                          "title": (
-                              "Available times for"
-                              " {preferred_date}"
-                          ),
-                          "text": [
-                              "{available_times}",
-                          ],
+                          "type": "chips",
+                          "options_from": "available_times",
                       }]],
                   }},
               ],
@@ -446,6 +447,17 @@ def _bella_notte_config() -> dict[str, Any]:
       "confirm_transition_prefix": [
           "Wonderful!", "Perfect!", "Great!",
           "Excellent!", "Lovely!",
+      ],
+      "readback_response": [
+          {"type": "payload", "data": {
+              "richContent": [[{
+                  "type": "chips",
+                  "options": [
+                      {"text": "Yes, that's correct"},
+                      {"text": "No, let me change something"},
+                  ],
+              }]],
+          }},
       ],
       "steer_back": {
           "soft_after": 2,

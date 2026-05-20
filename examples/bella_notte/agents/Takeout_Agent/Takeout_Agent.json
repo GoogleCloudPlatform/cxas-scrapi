@@ -1,0 +1,34 @@
+{
+  "name": "c184573b-5f26-47fb-9259-6389db656a0d",
+  "displayName": "Takeout_Agent",
+  "instruction": "agents/Takeout_Agent/instruction.txt",
+  "tools": [
+    "set_takeout_items",
+    "set_pickup_time",
+    "set_takeout_guest_name",
+    "set_takeout_phone",
+    "confirm_pending",
+    "reject_pending",
+    "place_takeout_order",
+    "takeout_dag",
+    "slot_filling_engine",
+    "set_active_flow",
+    "end_session"
+  ],
+  "beforeAgentCallbacks": [{
+    "pythonCode": "agents/Takeout_Agent/before_agent_callbacks/before_agent_callbacks_01/python_code.py",
+    "description": "SM initialization and config resolution"
+  }],
+  "beforeModelCallbacks": [{
+    "pythonCode": "agents/Takeout_Agent/before_model_callbacks/before_model_callbacks_01/python_code.py",
+    "description": "DAG engine orchestration"
+  }],
+  "afterToolCallbacks": [{
+    "pythonCode": "agents/Takeout_Agent/after_tool_callbacks/after_tool_callbacks_01/python_code.py",
+    "description": "Setter and executor state management"
+  }],
+  "afterModelCallbacks": [{
+    "pythonCode": "agents/Takeout_Agent/after_model_callbacks/after_model_callbacks_01/python_code.py",
+    "description": "Payload injection for non-preempted turns"
+  }]
+}

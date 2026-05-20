@@ -125,7 +125,19 @@ def _substitute_response(
     response: list[dict[str, Any]],
     filled: dict[str, Any],
 ) -> list[dict[str, Any]]:
-  """Recursively substitute {slot_name} in all string values."""
+  """Recursively substitute {slot_name} in all string values.
+
+  Supports ``options_from`` on chip objects: splits a filled slot
+  value by ", " to generate individual chip options.  Optional
+  ``event_name`` on the same object wraps each option with an event.
+
+  Args:
+    response: List of response part dicts to substitute into.
+    filled: Mapping of slot names to their filled values.
+
+  Returns:
+    A deep copy of response with all substitutions applied.
+  """
   def _sub(obj):
     if isinstance(obj, str):
       try:
@@ -133,7 +145,29 @@ def _substitute_response(
       except KeyError:
         return obj
     elif isinstance(obj, dict):
-      return {k: _sub(v) for k, v in obj.items()}
+      result = {k: _sub(v) for k, v in obj.items()}
+      if "options_from" in result:
+        source_slot = result.pop("options_from")
+        event_name = result.pop("event_name", None)
+        source_val = filled.get(source_slot, "")
+        if isinstance(source_val, list):
+          items = source_val
+        else:
+          items = str(source_val).split(",")
+        options = []
+        for v in items:
+          v = str(v).strip()
+          if not v:
+            continue
+          opt = {"text": v}
+          if event_name:
+            opt["event"] = {
+                "name": event_name,
+                "parameters": {event_name: v},
+            }
+          options.append(opt)
+        result["options"] = options
+      return result
     elif isinstance(obj, list):
       return [_sub(v) for v in obj]
     return obj
@@ -1404,11 +1438,45 @@ def _compute_hidden_tools(
 
 
 def _build_si_suffix(
-    slots, pending, filled, fresh_pending,
+    config, slots, pending, filled, fresh_pending,
     promoted_from_deferred, deferred_hint,
 ):
   """Build the system instruction suffix from engine state."""
   si_suffix = ""
+
+  # Structured ground-truth filled state injection
+  confirmed_parts = []
+  gate_slot = config.get("gate_slot")
+
+  for slot_def in slots:
+    name = slot_def["name"]
+    if name not in filled:
+      continue
+    if not _is_slot_active(slot_def, filled):
+      continue
+    # Skip active gate slot
+    if name == gate_slot:
+      continue
+    # Only include user or event sourced slots (skip announce and task-sourced
+    # slots)
+    sources = _normalize_sources(slot_def.get("source", "user"))
+    if "announce" in sources or any(s.startswith("task:") for s in sources):
+      continue
+
+    formatter = _resolve_formatter(slot_def.get("readback_fmt"))
+    val = formatter(filled[name]) if formatter else str(filled[name])
+    confirmed_parts.append(f"- {slot_def.get('hint', name)}: {val}")
+
+  if confirmed_parts:
+    confirmed_summary = "\n".join(confirmed_parts)
+    si_suffix += (
+        f"\n\n<confirmed_details>"
+        f"\nThe user has already provided and confirmed the following details:"
+        f"\n{confirmed_summary}"
+        f"\nDo NOT re-ask the user for these details, and do NOT call setter tools for them."
+        f"\n</confirmed_details>"
+    )
+
   readback_hint = _build_readback_hint(
       slots, pending, filled, fresh_pending,
       promoted_from_deferred=promoted_from_deferred,
@@ -1434,6 +1502,7 @@ def _build_si_suffix(
         f"\n</deferred_collection>"
     )
   return si_suffix
+
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -1491,7 +1560,7 @@ def _run_slot_filling(
       "deferred": dict(deferred),
   }
   last_pending = last_state.get("pending", {})
-  fresh_pending = bool(set(pending) - set(last_pending))
+  fresh_pending = pending != last_pending
   last_deferred = last_state.get("deferred", {})
   fresh_deferred = bool(set(deferred) - set(last_deferred))
   promoted_from_deferred = bool(
@@ -1514,6 +1583,10 @@ def _run_slot_filling(
       slots, filled, pending, readback_tools, slot_map,
       fresh_pending=fresh_pending, executor_tools=executor_tool_names,
   )
+  bootstrap_tool = config.get("bootstrap", {}).get("tool")
+  if bootstrap_tool and bootstrap_tool in hide_tools:
+    while bootstrap_tool in hide_tools:
+      hide_tools.remove(bootstrap_tool)
 
   error_msg, _, error_fc, error_resp = _handle_slot_errors(
       sm, slots, channel=channel,
@@ -1681,7 +1754,7 @@ def _run_slot_filling(
       )
 
   si_suffix = _build_si_suffix(
-      slots, pending, filled, fresh_pending,
+      config, slots, pending, filled, fresh_pending,
       promoted_from_deferred, deferred_hint,
   )
 
@@ -1702,30 +1775,35 @@ def _run_slot_filling(
   }
   if steer_result and steer_result.get("steer_back_directive"):
     final["steer_back_directive"] = steer_result["steer_back_directive"]
+
+  sm.pop("_pending_payloads", None)
+  sm.pop("_pending_question_payloads", None)
+
+  unconditional = announce_responses or []
+  if task_resp:
+    unconditional = unconditional + task_resp
+  awaiting_rb = dag_result.get("action") == "awaiting_readback"
+  if dag_response and awaiting_rb and fresh_pending:
+    unconditional = unconditional + dag_response
+  if unconditional:
+    sm["_pending_payloads"] = unconditional
+    _log("payload_route", path="stash_unconditional",
+         n_parts=len(unconditional))
+  if dag_response and not awaiting_rb:
+    sm["_pending_question_payloads"] = {
+        "slot": dag_result.get("slot_name"),
+        "parts": dag_response,
+    }
+    _log("payload_route", path="stash_question",
+         slot=dag_result.get("slot_name"),
+         n_parts=len(dag_response))
+  if not unconditional and not dag_response:
+    _log("payload_route", path="none")
+
   if preempt and combined_response:
     final["response"] = combined_response
     _log("payload_route", path="preempt_dispatch",
          n_parts=len(combined_response))
-  else:
-    unconditional = announce_responses or []
-    if task_resp:
-      unconditional = unconditional + task_resp
-    if dag_response and dag_result.get("action") == "awaiting_readback":
-      unconditional = unconditional + dag_response
-    if unconditional:
-      sm["_pending_payloads"] = unconditional
-      _log("payload_route", path="stash_unconditional",
-           n_parts=len(unconditional))
-    if dag_response and dag_result.get("action") != "awaiting_readback":
-      sm["_pending_question_payloads"] = {
-          "slot": dag_result.get("slot_name"),
-          "parts": dag_response,
-      }
-      _log("payload_route", path="stash_question",
-           slot=dag_result.get("slot_name"),
-           n_parts=len(dag_response))
-    if not unconditional and not dag_response:
-      _log("payload_route", path="none")
   return final
 
 

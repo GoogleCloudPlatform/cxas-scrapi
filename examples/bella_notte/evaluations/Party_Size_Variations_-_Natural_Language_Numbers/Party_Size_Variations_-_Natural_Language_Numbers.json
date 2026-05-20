@@ -24,9 +24,9 @@
             "expectation": {
               "note": "Check_Parses_Two_People",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
+                  "party_size": 2.0
                 }
               }
             }

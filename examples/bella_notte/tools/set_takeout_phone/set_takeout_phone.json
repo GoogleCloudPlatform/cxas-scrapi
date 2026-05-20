@@ -1,0 +1,9 @@
+{
+  "name": "6a7039c9-5a75-4084-be83-e798c10ca57c",
+  "pythonFunction": {
+    "name": "set_takeout_phone",
+    "pythonCode": "tools/set_takeout_phone/python_function/python_code.py",
+    "description": "Record the contact phone number for the takeout order."
+  },
+  "displayName": "set_takeout_phone"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "3a7039c9-5a75-4084-be83-e798c10ca57c",
+  "pythonFunction": {
+    "name": "set_takeout_items",
+    "pythonCode": "tools/set_takeout_items/python_function/python_code.py",
+    "description": "Record the food items the guest wants to order for takeout."
+  },
+  "displayName": "set_takeout_items"
+}

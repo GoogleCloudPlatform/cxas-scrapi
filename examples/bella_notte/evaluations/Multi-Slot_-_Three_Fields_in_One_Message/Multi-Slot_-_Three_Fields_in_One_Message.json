@@ -1,12 +1,11 @@
 {
   "name": "d18b89d2-d0b9-48f2-b32d-8d18cf313724",
   "displayName": "Multi-Slot - Three Fields in One Message",
-  "description": "User provides party size, date, AND name in a single message. All three setter tools must fire, then batched readback of all three values, then confirm_pending commits all.",
+  "description": "User provides party size, date, AND name in a single message. Multi-slot setters fire (set_reservation_basics with both, set_guest_info with name), then batched readback of all three values, then confirm_pending commits all.",
   "tags": [
     "slot-machine",
     "multi-slot",
     "readback",
-    "parallel-tools",
     "critical"
   ],
   "evaluationDatasets": [
@@ -23,22 +22,12 @@
           },
           {
             "expectation": {
-              "note": "Check_SetPartySize_Called",
+              "note": "Check_SetReservationBasics_Called_With_Both",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
-                }
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_SetPreferredDate_Called",
-              "toolCall": {
-                "tool": "set_preferred_date",
-                "args": {
-                  "date": "2026-06-20"
+                  "party_size": 2.0,
+                  "preferred_date": "2026-06-20"
                 }
               }
             }
@@ -47,9 +36,9 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name",
+                "tool": "set_guest_info",
                 "args": {
-                  "name": "Johnson"
+                  "guest_name": "Johnson"
                 }
               }
             }
@@ -61,7 +50,9 @@
                 "sm": {
                   "pending": {
                     "party_size": 2,
-                    "preferred_date": "2026-06-20",
+                    "preferred_date": "2026-06-20"
+                  },
+                  "deferred": {
                     "guest_name": "Johnson"
                   }
                 }
@@ -84,7 +75,9 @@
                 "sm": {
                   "filled": {
                     "party_size": 2,
-                    "preferred_date": "2026-06-20",
+                    "preferred_date": "2026-06-20"
+                  },
+                  "deferred": {
                     "guest_name": "Johnson"
                   }
                 }
@@ -154,7 +147,7 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },

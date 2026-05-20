@@ -24,9 +24,9 @@
             "expectation": {
               "note": "Check_SetPartySize_Called_6",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 6.0
+                  "party_size": 6.0
                 }
               }
             }
@@ -94,7 +94,7 @@
             "expectation": {
               "note": "Check_SetPreferredDate_Called",
               "toolCall": {
-                "tool": "set_preferred_date"
+                "tool": "set_reservation_basics"
               }
             }
           },
@@ -182,7 +182,7 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name"
+                "tool": "set_guest_info"
               }
             }
           },
@@ -211,7 +211,7 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },

@@ -1,7 +1,7 @@
 {
   "name": "a98f4684-f24f-4378-bd16-8cf3494b20f5",
   "displayName": "Error Recovery - Party Size Too Large",
-  "description": "User requests party of 15 (exceeds max 8). Agent should call set_party_size, get error, and direct user to events team. Then recover when user provides valid size, readback, and confirm.",
+  "description": "User requests party of 15 (exceeds max 8). Agent should call set_reservation_basics, get error, and direct user to events team. Then recover when user provides valid size, readback, and confirm.",
   "tags": [
     "slot-machine",
     "error-handling",
@@ -24,9 +24,9 @@
             "expectation": {
               "note": "Check_SetPartySize_Called_With_15",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 15.0
+                  "party_size": 15.0
                 }
               }
             }
@@ -55,9 +55,9 @@
             "expectation": {
               "note": "Check_SetPartySize_Called_With_4",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 4.0
+                  "party_size": 4.0
                 }
               }
             }

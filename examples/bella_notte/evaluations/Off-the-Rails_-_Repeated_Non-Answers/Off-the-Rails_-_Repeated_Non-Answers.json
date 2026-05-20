@@ -1,12 +1,12 @@
 {
   "name": "ba6c34fc-d2a9-4edb-ae30-1060cffa7832",
   "displayName": "Off-the-Rails - Repeated Non-Answers",
-  "description": "User provides a valid party size and confirms, but then gives 3 consecutive non-actionable responses when asked for a date. Progress stall counter hits threshold and agent escalates.",
+  "description": "User provides a valid party size and confirms, but then gives 8 consecutive non-actionable responses. Steer-back progresses through soft, hard (with yield), and escalation.",
   "tags": [
     "slot-machine",
     "off-the-rails",
     "stall-detection",
-    "progress-stall"
+    "steer-back"
   ],
   "evaluationDatasets": [
     "Bella Notte Slot Machine - Full Suite"
@@ -24,9 +24,9 @@
             "expectation": {
               "note": "Check_SetPartySize_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
+                  "party_size": 2.0
                 }
               }
             }
@@ -94,7 +94,7 @@
           },
           {
             "expectation": {
-              "note": "Check_Still_In_Progress_Turn4",
+              "note": "Check_Still_In_Progress_Turn4_SoftSteer",
               "updatedVariables": {
                 "sm": {
                   "status": "in_progress"
@@ -109,6 +109,101 @@
           {
             "userInput": {
               "text": "Maybe some other time"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Still_In_Progress_Turn5_SoftSteer",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "I don't know, it depends"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Still_In_Progress_Turn6_HardSteer",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Can we talk about something else?"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Still_In_Progress_Turn7_Yield",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "I really just don't know"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Still_In_Progress_Turn8_HardSteer",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "I'm just browsing"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Still_In_Progress_Turn9_Yield",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Forget it"
             }
           },
           {

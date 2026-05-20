@@ -1,0 +1,35 @@
+{
+  "name": "f184573b-5f26-47fb-9259-6389db656a0d",
+  "displayName": "Reservation_Agent",
+  "instruction": "agents/Reservation_Agent/instruction.txt",
+  "tools": [
+    "set_reservation_basics",
+    "set_guest_info",
+    "set_large_party_phone",
+    "set_selected_time",
+    "confirm_pending",
+    "reject_pending",
+    "find_available_times",
+    "book_reservation",
+    "bella_notte_dag",
+    "slot_filling_engine",
+    "set_active_flow",
+    "end_session"
+  ],
+  "beforeAgentCallbacks": [{
+    "pythonCode": "agents/Reservation_Agent/before_agent_callbacks/before_agent_callbacks_01/python_code.py",
+    "description": "SM initialization and config resolution"
+  }],
+  "beforeModelCallbacks": [{
+    "pythonCode": "agents/Reservation_Agent/before_model_callbacks/before_model_callbacks_01/python_code.py",
+    "description": "DAG engine orchestration"
+  }],
+  "afterToolCallbacks": [{
+    "pythonCode": "agents/Reservation_Agent/after_tool_callbacks/after_tool_callbacks_01/python_code.py",
+    "description": "Setter and executor state management"
+  }],
+  "afterModelCallbacks": [{
+    "pythonCode": "agents/Reservation_Agent/after_model_callbacks/after_model_callbacks_01/python_code.py",
+    "description": "Payload injection for non-preempted turns"
+  }]
+}

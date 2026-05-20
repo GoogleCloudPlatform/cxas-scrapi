@@ -1,0 +1,209 @@
+{
+  "name": "multi-agent-happy-path-reservation",
+  "displayName": "Happy Path - Multi-Agent Reservation",
+  "description": "Verifies the end-to-end routed multi-agent reservation flow with correct deferred readbacks.",
+  "tags": [
+    "multi-agent",
+    "happy-path",
+    "reservation"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "I'd like to make a reservation"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Set_Active_Flow_Called",
+              "toolCall": {
+                "tool": "set_active_flow",
+                "args": {
+                  "flow": "reservation"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "4 guests please"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called",
+              "toolCall": {
+                "tool": "set_reservation_basics",
+                "args": {
+                  "party_size": 4.0
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes, that's correct"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Confirm_Pending_Called",
+              "toolCall": {
+                "tool": "confirm_pending",
+                "args": {}
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "June 17th"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPreferredDate_Called",
+              "toolCall": {
+                "tool": "set_reservation_basics",
+                "args": {
+                  "preferred_date": "2026-06-17"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Confirm_Pending_Called_For_Date",
+              "toolCall": {
+                "tool": "confirm_pending",
+                "args": {}
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "7 PM"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSelectedTime_Called",
+              "toolCall": {
+                "tool": "set_selected_time",
+                "args": {
+                  "time": "19:00"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes, correct"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Confirm_Pending_Called_For_Time",
+              "toolCall": {
+                "tool": "confirm_pending",
+                "args": {}
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "John Smith"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetGuestName_Called",
+              "toolCall": {
+                "tool": "set_guest_info",
+                "args": {
+                  "guest_name": "John Smith"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "None"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSpecialRequests_Called",
+              "toolCall": {
+                "tool": "set_guest_info",
+                "args": {
+                  "special_requests": "None"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes, book my reservation"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Booking_Complete",
+              "toolCall": {
+                "tool": "confirm_pending",
+                "args": {}
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

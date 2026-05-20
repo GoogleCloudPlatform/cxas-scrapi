@@ -1,7 +1,7 @@
 {
   "name": "a5151027-8d2b-45c7-8fb2-c4bddce58f42",
   "displayName": "No Special Requests - Says None",
-  "description": "User explicitly says they have no special requests. Name is deferred (BookReservation input with readback_inputs: True). After both name and 'none' special requests are collected, a combined group readback fires. Agent should still call set_special_requests, and booking completes after group confirmation.",
+  "description": "User explicitly says they have no special requests. Name is deferred (BookReservation input with readback_inputs: True). After both name and 'none' special requests are collected, a combined group readback fires. Agent should still call set_guest_info, and booking completes after group confirmation.",
   "tags": [
     "slot-machine",
     "happy-path",
@@ -25,9 +25,9 @@
             "expectation": {
               "note": "Check_SetPartySize_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
+                  "party_size": 2.0
                 }
               }
             }
@@ -66,9 +66,9 @@
             "expectation": {
               "note": "Check_SetPreferredDate_Called",
               "toolCall": {
-                "tool": "set_preferred_date",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "date": "2026-06-20"
+                  "preferred_date": "2026-06-20"
                 }
               }
             }
@@ -157,9 +157,9 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name",
+                "tool": "set_guest_info",
                 "args": {
-                  "name": "Smith"
+                  "guest_name": "Smith"
                 }
               }
             }
@@ -192,7 +192,7 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },

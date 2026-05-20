@@ -1,0 +1,9 @@
+{
+  "name": "2a7039c9-5a75-4084-be83-e798c10ca57c",
+  "pythonFunction": {
+    "name": "set_active_flow",
+    "pythonCode": "tools/set_active_flow/python_function/python_code.py",
+    "description": "Classify the user's request and route to the right specialist. Valid flows: 'reservation' (book a table) and 'takeout' (order takeout/delivery)."
+  },
+  "displayName": "set_active_flow"
+}

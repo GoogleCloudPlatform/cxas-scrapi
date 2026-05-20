@@ -1,6 +1,6 @@
 {
   "displayName": "Readback - New Slot Added Mid-Readback",
-  "description": "User provides name, date, and party size in one message. Name is deferred (BookReservation input), so readback covers only party size and date. User then adds special requests \u2014 completing the deferred group (name + requests). Since the confirm also fires FindAvailableTimes, the executor takes priority. On the next turn (time selection), all pending values (time + name + requests) are read back together. Verifies that deferred values accumulate correctly and surface in the combined readback.",
+  "description": "User provides name, date, and party size in one message. Name is deferred (BookReservation input), so readback covers only party size and date. User then adds special requests — completing the deferred group (name + requests). Since the confirm also fires FindAvailableTimes, the executor takes priority. On the next turn (time selection), all pending values (time + name + requests) are read back together. Verifies that deferred values accumulate correctly and surface in the combined readback.",
   "tags": [
     "slot-machine",
     "readback",
@@ -23,22 +23,12 @@
           },
           {
             "expectation": {
-              "note": "Check_SetPartySize_Called",
+              "note": "Check_set_reservation_basics_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
-                }
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_SetPreferredDate_Called",
-              "toolCall": {
-                "tool": "set_preferred_date",
-                "args": {
-                  "date": "2026-06-17"
+                  "party_size": 2.0,
+                  "preferred_date": "2026-06-17"
                 }
               }
             }
@@ -47,9 +37,9 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name",
+                "tool": "set_guest_info",
                 "args": {
-                  "name": "John Smith"
+                  "guest_name": "John Smith"
                 }
               }
             }
@@ -80,7 +70,7 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },

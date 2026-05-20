@@ -24,9 +24,9 @@
             "expectation": {
               "note": "Check_SetPartySize_Called_2",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
+                  "party_size": 2.0
                 }
               }
             }
@@ -58,14 +58,14 @@
         "steps": [
           {
             "userInput": {
-              "text": "This Saturday"
+              "text": "July 4th"
             }
           },
           {
             "expectation": {
               "note": "Check_SetPreferredDate_Called",
               "toolCall": {
-                "tool": "set_preferred_date"
+                "tool": "set_reservation_basics"
               }
             }
           }
@@ -141,7 +141,7 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name"
+                "tool": "set_guest_info"
               }
             }
           },
@@ -170,7 +170,7 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },

@@ -1,22 +1,15 @@
 {
   "name": "82608f8b-20a7-42d3-8f9d-1c69ed25cc2c",
-  "displayName": "Bella Notte Host",
+  "displayName": "Bella_Notte_Host",
   "instruction": "agents/Bella_Notte_Host/instruction.txt",
-  "tools": ["set_reservation_basics", "set_guest_info", "set_large_party_phone", "set_selected_time", "confirm_pending", "reject_pending", "find_available_times", "book_reservation", "bella_notte_dag", "end_session"],
-  "beforeAgentCallbacks": [{
-    "pythonCode": "agents/Bella_Notte_Host/before_agent_callbacks/before_agent_callbacks_01/python_code.py",
-    "description": "Deferred rejection handler"
-  }],
+  "tools": ["set_active_flow", "end_session"],
+  "childAgents": ["Reservation_Agent", "Takeout_Agent"],
   "beforeModelCallbacks": [{
     "pythonCode": "agents/Bella_Notte_Host/before_model_callbacks/before_model_callbacks_01/python_code.py",
-    "description": "DAG Evaluator"
-  }],
-  "afterModelCallbacks": [{
-    "pythonCode": "agents/Bella_Notte_Host/after_model_callbacks/after_model_callbacks_01/python_code.py",
-    "description": "Payload injection for non-preempted turns"
+    "description": "Root Agent before_model_callback"
   }],
   "afterToolCallbacks": [{
     "pythonCode": "agents/Bella_Notte_Host/after_tool_callbacks/after_tool_callbacks_01/python_code.py",
-    "description": "Setter state management"
+    "description": "Root Agent after_tool_callback"
   }]
 }

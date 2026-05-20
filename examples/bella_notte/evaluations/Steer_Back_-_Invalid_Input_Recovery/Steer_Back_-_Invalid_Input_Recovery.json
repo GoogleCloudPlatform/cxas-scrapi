@@ -1,0 +1,98 @@
+{
+  "name": "15d49e04-24a9-4e29-9b4e-ca97c4222dca",
+  "displayName": "Steer Back - Invalid Input Recovery",
+  "description": "Simulated user gives an invalid party size (50 people) first, then corrects after agent guidance. Tests that validation errors and steer-back work together to recover and complete the booking.",
+  "tags": [
+    "slot-machine",
+    "scenario",
+    "steer-back"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "scenario": {
+    "task": "Make a dinner reservation at Bella Notte for 3 people on July 4th, 2026. When asked for a time, choose 7 PM. The reservation name is Torres. No special requests. IMPORTANT: When first asked for party size, say '50 people' (an invalid number). When the agent tells you that's too large, correct yourself and say '3 people'. Then cooperate normally for the rest of the reservation.",
+    "rubrics": [
+      "The agent must handle the invalid party size gracefully and guide the user to provide a valid number.",
+      "The agent must successfully complete the reservation after the correction.",
+      "The agent must collect all required information: party size, date, time, name, and special requests."
+    ],
+    "scenarioExpectations": [
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_reservation_basics",
+            "args": {
+              "party_size": 3.0
+            }
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_reservation_basics",
+            "args": {
+              "preferred_date": "2026-07-04"
+            }
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_selected_time"
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_guest_info",
+            "args": {
+              "guest_name": "Torres"
+            }
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_guest_info"
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "book_reservation"
+          }
+        }
+      }
+    ],
+    "userFacts": [
+      {
+        "name": "party_size",
+        "value": "3"
+      },
+      {
+        "name": "preferred_date",
+        "value": "July 4th, 2026"
+      },
+      {
+        "name": "preferred_time",
+        "value": "7 PM"
+      },
+      {
+        "name": "guest_name",
+        "value": "Torres"
+      },
+      {
+        "name": "special_requests",
+        "value": "none"
+      }
+    ],
+    "maxTurns": 16,
+    "userGoalBehavior": "USER_GOAL_IGNORED"
+  }
+}
