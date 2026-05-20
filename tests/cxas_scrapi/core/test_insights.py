@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from unittest.mock import MagicMock, patch
+
 import pytest
+
 from cxas_scrapi.core.insights import Insights
 
 
@@ -87,8 +89,8 @@ def test_get_conversation(mock_request, mock_google_auth):
         timeout=60.0,
     )
 
-    # Test with full name
     res2 = client.get_conversation("projects/p/locations/l/conversations/c2")
+    assert res2["name"] == "projects/p/locations/l/conversations/c1"
     mock_request.assert_called_with(
         method="GET",
         url="https://l-contactcenterinsights.googleapis.com/v1/projects/p/locations/l/conversations/c2",

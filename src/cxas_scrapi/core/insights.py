@@ -145,4 +145,3 @@ class Insights(Common):
         if not name.startswith("projects/"):
             name = f"{self.parent}/conversations/{name}"
         return self._request("GET", name)
-
