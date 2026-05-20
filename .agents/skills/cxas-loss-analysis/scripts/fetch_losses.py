@@ -160,12 +160,16 @@ def main():
     if len(losses) > args.loss_limit:
         target_losses = random.sample(losses, args.loss_limit)
         logger.info(
-            f"Randomly sampled {len(target_losses)} losses from {len(losses)} total losses for extraction..."
+            "Randomly sampled %d losses from %d total losses for "
+            "extraction...",
+            len(target_losses),
+            len(losses),
         )
     else:
         target_losses = losses
         logger.info(
-            f"Selecting all {len(target_losses)} available losses for extraction..."
+            "Selecting all %d available losses for extraction...",
+            len(target_losses),
         )
 
     # Download detailed transcripts in parallel
@@ -191,7 +195,7 @@ def main():
     # Chunk size
     chunk_size = 10
     chunks = []
-    
+
     for i in range(0, len(extracted_data), chunk_size):
         chunk_data = extracted_data[i:i + chunk_size]
         chunk_num = (i // chunk_size) + 1
@@ -199,7 +203,7 @@ def main():
         name, ext = os.path.splitext(base_name)
         chunk_file_name = f"{name}_chunk_{chunk_num}{ext}"
         chunk_file_path = os.path.join(output_dir, chunk_file_name)
-        
+
         logger.info(f"Writing chunk {chunk_num} to {chunk_file_path}...")
         with open(chunk_file_path, "w") as f:
             json.dump(chunk_data, f, indent=2)
@@ -208,7 +212,9 @@ def main():
     total_inspected = len(conversations)
     containment_rate = 0.0
     if total_inspected > 0:
-        containment_rate = round(((total_inspected - total_losses) / total_inspected) * 100, 2)
+        containment_rate = round(
+            ((total_inspected - total_losses) / total_inspected) * 100, 2
+        )
 
     output_payload = {
         "total_inspected": total_inspected,

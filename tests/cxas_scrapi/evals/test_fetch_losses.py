@@ -22,7 +22,7 @@ sys.path.append(
     os.path.abspath(
         os.path.join(
             os.path.dirname(__file__),
-            "../../../.agents/skills/cxas-insights-sim-eval/scripts",
+            "../../../.agents/skills/cxas-loss-analysis/scripts",
         )
     )
 )
@@ -160,12 +160,20 @@ def test_main_end_to_end(mock_argv, mock_insights_class, tmp_path):
         data = json.load(f)
         assert data["total_inspected"] == 5
         assert data["total_losses"] == 3
-        assert len(data["transcripts"]) == 3
+        assert data["containment_rate"] == 40.0
+        assert len(data["chunks"]) == 1
 
-        # Verify records downloaded are the losses
-        conv_ids = [t["conversation_id"] for t in data["transcripts"]]
-        assert "c2" in conv_ids
-        assert "c4" in conv_ids
-        assert "c5" in conv_ids
-        assert "c1" not in conv_ids
-        assert "c3" not in conv_ids
+        chunk_file = data["chunks"][0]
+        assert os.path.exists(chunk_file)
+
+        with open(chunk_file) as cf:
+            chunk_data = json.load(cf)
+            assert len(chunk_data) == 3
+
+            # Verify records downloaded are the losses
+            conv_ids = [t["conversation_id"] for t in chunk_data]
+            assert "c2" in conv_ids
+            assert "c4" in conv_ids
+            assert "c5" in conv_ids
+            assert "c1" not in conv_ids
+            assert "c3" not in conv_ids
