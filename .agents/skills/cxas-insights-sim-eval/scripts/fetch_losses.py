@@ -13,24 +13,23 @@
 # limitations under the License.
 
 import argparse
+import concurrent.futures
 import json
 import logging
 import os
 import sys
 from typing import Any, Dict, List, Optional
-
 import yaml
 
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.insights import Insights
 
-# Ensure standard output is logging friendly
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-USER_AGENT_EXTENSION = "skill/cxas-insights-sim-eval/generate-evals"
+USER_AGENT_EXTENSION = "skill/cxas-insights-sim-eval/fetch-losses"
 
 
 def ccai_to_cxas_dict(ccai_conv: Dict[str, Any]) -> Dict[str, Any]:
@@ -43,15 +42,9 @@ def ccai_to_cxas_dict(ccai_conv: Dict[str, Any]) -> Dict[str, Any]:
         if not text:
             continue
 
-        # Map CCAI roles to CXAS roles
         cxas_role = "user" if role in ("CUSTOMER", "END_USER") else "agent"
-
         turns.append(
-            {
-                "messages": [
-                    {"role": cxas_role, "chunks": [{"text": text}]}
-                ]
-            }
+            {"messages": [{"role": cxas_role, "chunks": [{"text": text}]}]}
         )
     return {"turns": turns}
 
@@ -83,7 +76,7 @@ def extract_transcript(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Mine CCAI Insights candidate transcripts for evaluation generation."
+        description="Fetch non-contained (loss) transcripts from CCAI Insights for agent analysis."
     )
     parser.add_argument("--project-id", required=True, help="GCP Project ID")
     parser.add_argument(
@@ -97,14 +90,21 @@ def main():
     parser.add_argument(
         "--limit",
         type=int,
-        default=5,
-        help="Max candidate transcripts to extract",
+        default=1000,
+        help="Max raw conversations to inspect (default: 1000)",
+    )
+    parser.add_argument(
+        "--loss-limit",
+        type=int,
+        default=100,
+        help="Max loss transcripts to extract (default: 100)",
     )
     parser.add_argument(
         "--output-file",
-        default="./candidate_transcripts.json",
-        help="Output JSON file path containing extracted data array",
+        required=True,
+        help="Output JSON file path to save the array of transcripts",
     )
+
     args = parser.parse_args()
 
     logger.info(
@@ -118,53 +118,70 @@ def main():
 
     filter_arg = f'agent_id="{args.app_id}"'
     logger.info(
-        f"Fetching recent conversations with server filter: {filter_arg}..."
+        f"Fetching recent conversations (target limit raw: {args.limit})..."
     )
+
+    max_pages = (args.limit + 99) // 100
     conversations = insights_client.list_conversations(
-        filter_str=filter_arg, max_pages=10
+        filter_str=filter_arg, page_size=100, max_pages=max_pages
     )
 
     if not conversations:
         logger.warning("No conversations returned from Insights API.")
         sys.exit(0)
 
-    # Client-side filter for containment
-    logger.info(
-        f"Filtering {len(conversations)} agent conversations for sessionContained=true..."
-    )
-    filtered_convs = []
+    conversations = conversations[: args.limit]
+    logger.info(f"Retrieved {len(conversations)} raw conversation summaries.")
+
+    # Filter for non-contained conversations (losses)
+    losses = []
     for c in conversations:
-        if (
-            c.get("labels", {}).get("sessionContained") == "true"
-            or c.get("labels", {}).get("sessionContained") is True
-        ):
-            filtered_convs.append(c)
+        contained = c.get("labels", {}).get("sessionContained")
+        if contained != "true" and contained is not True:
+            losses.append(c)
 
-    logger.info(f"Found {len(filtered_convs)} candidate conversations.")
+    total_losses = len(losses)
+    logger.info(f"Identified {total_losses} non-contained conversations (losses).")
 
-    target_convs = filtered_convs[: args.limit]
-
-    if not target_convs:
-        logger.warning(
-            "No matching contained conversations found for this app."
-        )
+    if not losses:
+        logger.warning("No non-contained conversations found for this app.")
         sys.exit(0)
 
-    extracted_data = []
-    for conv in target_convs:
-        res = extract_transcript(insights_client, conv)
-        if res:
-            extracted_data.append(res)
+    target_losses = losses[: args.loss_limit]
+    logger.info(
+        f"Selecting first {len(target_losses)} losses for extraction..."
+    )
 
+    # Download detailed transcripts in parallel
+    extracted_data = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [
+            executor.submit(extract_transcript, insights_client, conv)
+            for conv in target_losses
+        ]
+        for fut in concurrent.futures.as_completed(futures):
+            res = fut.result()
+            if res:
+                extracted_data.append(res)
+
+    logger.info(
+        f"Successfully downloaded {len(extracted_data)} loss transcripts."
+    )
+
+    # Save to output JSON file
     os.makedirs(
         os.path.dirname(os.path.abspath(args.output_file)), exist_ok=True
     )
-    with open(args.output_file, "w") as f:
-        json.dump(extracted_data, f, indent=2)
+    output_payload = {
+        "total_inspected": len(conversations),
+        "total_losses": total_losses,
+        "transcripts": extracted_data,
+    }
 
-    logger.info(
-        f"Extraction complete. Saved {len(extracted_data)} transcripts to {args.output_file}."
-    )
+    with open(args.output_file, "w") as f:
+        json.dump(output_payload, f, indent=2)
+
+    logger.info(f"Saved fetched transcripts payload to {args.output_file}")
 
 
 if __name__ == "__main__":

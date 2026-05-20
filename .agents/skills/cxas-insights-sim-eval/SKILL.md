@@ -1,65 +1,106 @@
 ---
 name: cxas-insights-sim-eval
 description: >-
-  Extracts successful CCAI Insights conversations and automatically reverse-engineers SCRAPI SimulationEvals test cases.
-  Use when you need to mine contained production or experimental sessions to expand your evaluation suite.
+  Retrieves non-contained CCAI Insights conversations (losses), uses agent intelligence to cluster them into common failure patterns, generates a markdown report, and creates representative SimulationEvals test cases.
+  Use when you need to analyze failure patterns and build targeted regression/evaluation suites to verify bug fixes.
 ---
 
-# Insights Simulation Evaluation Generator
+# Insights Loss Analysis & Simulation Evaluation Generator
 
-This skill defines instructions for the agent to automatically reverse-engineer high-level, goal-oriented simulation test cases from successful CCAI Insights interactions.
+This skill instructs you (the AI Agent) to retrieve recent conversations from CCAI Insights, isolate escalated/non-contained sessions (losses), analyze their root causes to group them into failure patterns, write a professional Markdown report, and automatically reverse-engineer representative Simulation Evals test cases.
 
 ---
 
 ## Execution Routine
 
-When the user invokes this skill, follow these explicit execution steps in order:
+Follow these steps in exact sequence:
 
-### 1. Parameter Verification
-Ensure you have the following required details from the user:
+### Step 1: Parameter Verification
+Verify that the user has provided the following required parameters:
 - `project_id`: GCP Project ID hosting Insights.
 - `location`: Insights location (e.g., `us`).
-- `app_id`: The target CXAS App ID to filter conversations for (e.g., `db9ee866-28db-458b-b835-78137c974779`).
-- `output_dir`: Base output directory where the `sim_evals/` folder will be populated.
-- `limit`: Maximum candidate transcripts to extract (default: 5).
+- `app_id`: Target CXAS App ID (e.g., `db9ee866-28db-458b-b835-78137c974779`).
+- `output_dir`: Directory where the final report and test cases will be saved.
+- `limit`: Maximum raw conversations to inspect (default: 1000).
+- `loss_limit`: Maximum loss transcripts to fetch and analyze (default: 100).
 
-### 2. Mine Candidate Transcripts
-Run the underlying extraction script to query Insights and dump candidate transcripts. Output the file to a temporary local path (e.g., `./candidate_transcripts.json`).
+### Step 2: Extract Loss Transcripts
+Run the lightweight data-extraction script to dump the loss transcripts into a combined JSON file in your workspace.
 
 **Command Template**:
 ```bash
-python .agents/skills/cxas-insights-sim-eval/scripts/generate_evals.py \
+python -P .agents/skills/cxas-insights-sim-eval/scripts/fetch_losses.py \
   --project-id "{project_id}" \
   --location "{location}" \
   --app-id "{app_id}" \
   --limit {limit} \
-  --output-file "./candidate_transcripts.json"
+  --loss-limit {loss_limit} \
+  --output-file "{output_dir}/raw_losses.json"
 ```
 
-### 3. Read Extracted Data
-Read the array of JSON objects dumped by the script in `./candidate_transcripts.json`. Each object has a `conversation_id` and a `transcript` string.
+*Note: Always run python using the virtual environment's executable with the `-P` flag (e.g., `.venv/bin/python -P`) to avoid path pollution.*
 
-### 4. Evaluation Generation Loop
-For each conversation object retrieved, act autonomously to generate the evaluation schema. Analyze the `transcript` using the **Generation Instructions** below.
+### Step 3: Read Transcripts & Summarize Escalations
+Use the `view_file` or other file-reading tools to read the generated `{output_dir}/raw_losses.json` file. Extract the `total_inspected`, `total_losses`, and the array of `transcripts` (containing `conversation_id` and `transcript`).
 
-### 5. Save Output Files
-Parse the JSON output. Save each resulting schema as a separate `.json` file inside the `sim_evals/` sub-folder of the user's requested `output_dir`. 
-- **File Naming**: Create a clean filename using the short name and conversation ID: `[output_dir]/sim_evals/[safe_goal_name]_[conversation_id].json`.
+For each conversation transcript:
+1. Analyze the conversation between the customer (`user`) and the virtual agent (`agent`).
+2. Identify why the conversation escalated or was not contained.
+3. Formulate a concise, **1-sentence primary reason for failure/escalation** (max 20 words). E.g., *"Virtual agent failed to authenticate the user due to repeated pin entry errors."*
+
+### Step 4: Cluster Failures into Loss Patterns
+Review the complete list of failure reasons you generated in Step 3. Using your analytical capabilities, group these failure reasons into **3 to 7 distinct, mutually exclusive failure patterns**.
+
+For each pattern, define:
+1. **Pattern ID**: A simple key (e.g., `pattern_1`, `pattern_2`, ...).
+2. **Name**: A short, descriptive name (e.g., *"Authentication Loop"*, *"Unsupported Customer Intent"*, *"Agent Transfer on Disambiguation"*).
+3. **Description**: A clear 1-2 sentence description explaining the pattern and what triggers it.
+
+### Step 5: Categorize All Sessions
+Map every analyzed `conversation_id` to one of the defined patterns. Keep track of this mapping for the final report.
+
+### Step 6: Write the Markdown Report
+Compile your analysis into a structured Markdown report and write it to `{output_dir}/loss_patterns_report.md`. Use the following structure:
+
+```markdown
+# Loss Patterns Analysis Report
+
+**Project**: `{project_id}`
+**App ID**: `{app_id}`
+
+## Executive Summary
+
+- **Total Conversations Inspected**: {total_inspected}
+- **Non-Contained Conversations (Losses)**: {total_losses}
+- **Containment Rate**: {containment_rate}%
+
+## Loss Patterns Distribution
+
+| Pattern ID | Name | Count | Percentage |
+| --- | --- | --- | --- |
+| `pattern_1` | Pattern Name | Count | Pct% |
+
+## Detailed Patterns Breakdown
+
+### `pattern_1`: Pattern Name
+
+**Description**: Pattern description.
+**Total Conversations**: Count
+
+#### Examples & Failure Reasons:
+- **Session `{conversation_id_1}`**: Failure reason from Step 3.
+- **Session `{conversation_id_2}`**: Failure reason from Step 3.
 
 ---
+```
 
-## Generation Instructions
+### Step 7: Generate Representative Simulation Evals
+For each identified failure pattern:
+1. Select the **first conversation ID** mapped to it as the representative session.
+2. Analyze the original transcript again to reverse-engineer a `SimulationEval` JSON test case representing the user's **intended goal** and the **successful resolution path** (so that when the bug is fixed, the simulator can verify it can be successfully completed).
+3. Save the JSON file to `{output_dir}/sim_evals/[safe_pattern_name]_[conversation_id].json`.
 
-Use the following instructions to analyze each extracted transcript and generate its corresponding evaluation test case:
-
-You are an advanced Test Case Generator AI. Your purpose is to analyze the transcript of a successful customer service conversation and reverse-engineer a simulation test case.
-
-You will receive a conversation transcript between an `END_USER` and an `AUTOMATED_AGENT`. This conversation was flagged as successfully contained by the agent.
-
-Your task is to extract the user's overarching goal, break it down into logical steps, and identify key agent expectations to create a test case for a User Simulator.
-
-**Output Requirements:**
-You must output a single JSON object representing the evaluation test case. The JSON must adhere to this structure:
+Ensure the JSON adheres precisely to this structure:
 
 ```json
 {
@@ -71,22 +112,14 @@ You must output a single JSON object representing the evaluation test case. The 
       "success_criteria": "<How the user knows the agent successfully handled this step (e.g., 'Agent provided the balance')>",
       "response_guide": "<Instructions for the user simulator on how to respond to agent questions (e.g., 'Provide the account number if asked')>",
       "max_turns": 10,
-      "static_utterance": "<Optional: The exact first message from the user in the transcript, to seed the conversation>"
+      "static_utterance": "<Optional: The exact first user message from the transcript, to seed the conversation>"
     }
   ],
   "expectations": [
-    "<Global expectation 1 for the agent (e.g., 'Agent must use the lookup_account tool')>",
-    "<Global expectation 2 for the agent (e.g., 'Agent must not transfer to a human')>"
+    "<Global expectation for the agent (e.g., 'Agent must successfully resolve the issue without escalating')>"
   ]
 }
 ```
 
-**Guidelines for Generation:**
-1. **`steps`**: 
-   - For most straightforward interactions, a single step is sufficient.
-   - If the conversation clearly had distinct phases (e.g., Phase 1: Authenticate, Phase 2: Request Refund), you can create multiple steps.
-   - The `static_utterance` in the first step should be the user's actual first message from the transcript.
-2. **`expectations`**:
-   - Look at what the agent *actually* did successfully. If it called a specific tool (indicated by `[Tool Call]` or tool names in the text), add an expectation that the agent must use that tool.
-   - Since this was a contained session, include an expectation like "Agent must successfully resolve the issue without escalating".
-3. **Output format**: Output ONLY the JSON object. Do not include markdown formatting or explanatory text.
+### Step 8: Present Summary to User
+Present a clear summary of your findings directly in the chat, pointing the user to `{output_dir}/loss_patterns_report.md` and the generated evaluations inside `{output_dir}/sim_evals/`.
