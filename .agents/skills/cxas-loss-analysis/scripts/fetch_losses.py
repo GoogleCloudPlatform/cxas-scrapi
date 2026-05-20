@@ -160,8 +160,7 @@ def main():
     if len(losses) > args.loss_limit:
         target_losses = random.sample(losses, args.loss_limit)
         logger.info(
-            "Randomly sampled %d losses from %d total losses for "
-            "extraction...",
+            "Randomly sampled %d losses from %d total losses for extraction...",
             len(target_losses),
             len(losses),
         )
@@ -197,7 +196,7 @@ def main():
     chunks = []
 
     for i in range(0, len(extracted_data), chunk_size):
-        chunk_data = extracted_data[i:i + chunk_size]
+        chunk_data = extracted_data[i : i + chunk_size]
         chunk_num = (i // chunk_size) + 1
         base_name = os.path.basename(args.output_file)
         name, ext = os.path.splitext(base_name)
