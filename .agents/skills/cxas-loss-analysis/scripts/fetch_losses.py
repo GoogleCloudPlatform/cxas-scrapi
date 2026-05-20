@@ -17,6 +17,7 @@ import concurrent.futures
 import json
 import logging
 import os
+import random
 import sys
 from typing import Any, Dict, Optional
 
@@ -30,7 +31,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-USER_AGENT_EXTENSION = "skill/cxas-insights-sim-eval/fetch-losses"
+USER_AGENT_EXTENSION = "skill/cxas-loss-analysis/fetch-losses"
 
 
 def ccai_to_cxas_dict(ccai_conv: Dict[str, Any]) -> Dict[str, Any]:
@@ -155,10 +156,17 @@ def main():
         logger.warning("No non-contained conversations found for this app.")
         sys.exit(0)
 
-    target_losses = losses[: args.loss_limit]
-    logger.info(
-        f"Selecting first {len(target_losses)} losses for extraction..."
-    )
+    # Randomly sample losses
+    if len(losses) > args.loss_limit:
+        target_losses = random.sample(losses, args.loss_limit)
+        logger.info(
+            f"Randomly sampled {len(target_losses)} losses from {len(losses)} total losses for extraction..."
+        )
+    else:
+        target_losses = losses
+        logger.info(
+            f"Selecting all {len(target_losses)} available losses for extraction..."
+        )
 
     # Download detailed transcripts in parallel
     extracted_data = []
@@ -176,20 +184,43 @@ def main():
         f"Successfully downloaded {len(extracted_data)} loss transcripts."
     )
 
-    # Save to output JSON file
-    os.makedirs(
-        os.path.dirname(os.path.abspath(args.output_file)), exist_ok=True
-    )
+    # Save to output JSON file and chunk transcripts
+    output_dir = os.path.dirname(os.path.abspath(args.output_file))
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Chunk size
+    chunk_size = 10
+    chunks = []
+    
+    for i in range(0, len(extracted_data), chunk_size):
+        chunk_data = extracted_data[i:i + chunk_size]
+        chunk_num = (i // chunk_size) + 1
+        base_name = os.path.basename(args.output_file)
+        name, ext = os.path.splitext(base_name)
+        chunk_file_name = f"{name}_chunk_{chunk_num}{ext}"
+        chunk_file_path = os.path.join(output_dir, chunk_file_name)
+        
+        logger.info(f"Writing chunk {chunk_num} to {chunk_file_path}...")
+        with open(chunk_file_path, "w") as f:
+            json.dump(chunk_data, f, indent=2)
+        chunks.append(chunk_file_path)
+
+    total_inspected = len(conversations)
+    containment_rate = 0.0
+    if total_inspected > 0:
+        containment_rate = round(((total_inspected - total_losses) / total_inspected) * 100, 2)
+
     output_payload = {
-        "total_inspected": len(conversations),
+        "total_inspected": total_inspected,
         "total_losses": total_losses,
-        "transcripts": extracted_data,
+        "containment_rate": containment_rate,
+        "chunks": chunks,
     }
 
     with open(args.output_file, "w") as f:
         json.dump(output_payload, f, indent=2)
 
-    logger.info(f"Saved fetched transcripts payload to {args.output_file}")
+    logger.info(f"Saved fetched transcripts metadata to {args.output_file}")
 
 
 if __name__ == "__main__":
