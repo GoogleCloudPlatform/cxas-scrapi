@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT
 from cxas_scrapi.core.tools import Tools
 
 
@@ -274,7 +275,7 @@ def test_execute_tool(mock_client_cls, mock_post):
     args, kwargs = mock_post.call_args
     assert (
         args[0]
-        == "https://ces.googleapis.com/v1beta/projects/p/locations/l/apps/A:executeTool"
+        == f"https://{DEFAULT_API_ENDPOINT}/v1beta/projects/p/locations/l/apps/A:executeTool"
     )
     assert kwargs["json"]["tool"] == "projects/p/locations/l/apps/A/tools/t1"
     assert kwargs["json"]["args"] == {"query": "test"}
@@ -320,7 +321,7 @@ def test_execute_toolset(mock_client_cls, mock_post):
     args, kwargs = mock_post.call_args
     assert (
         args[0]
-        == "https://ces.googleapis.com/v1beta/projects/p/locations/l/apps/A:executeTool"
+        == f"https://{DEFAULT_API_ENDPOINT}/v1beta/projects/p/locations/l/apps/A:executeTool"
     )
     assert (
         kwargs["json"]["toolsetTool"]["toolset"]
@@ -390,7 +391,7 @@ def test_execute_tool_with_context(mock_client_cls, mock_post):
     args, kwargs = mock_post.call_args
     assert (
         args[0]
-        == "https://ces.googleapis.com/v1beta/projects/p/locations/l/apps/A:executeTool"
+        == f"https://{DEFAULT_API_ENDPOINT}/v1beta/projects/p/locations/l/apps/A:executeTool"
     )
     assert kwargs["json"]["tool"] == "projects/p/locations/l/apps/A/tools/t1"
     assert kwargs["json"]["args"] == {"query": "test"}

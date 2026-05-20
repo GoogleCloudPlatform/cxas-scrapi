@@ -39,7 +39,7 @@ except ImportError:
     HAS_IPYTHON = False
 
 from cxas_scrapi.core.audio_transformer import AudioTransformer
-from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class Modality(str, Enum):
 
 
 BIDI_SESSION_URI = (
-    "wss://ces.googleapis.com/ws/"
+    f"wss://{DEFAULT_API_ENDPOINT}/ws/"
     "google.cloud.ces.v1.SessionService/BidiRunSession/locations/"
 )
 AUDIO_CHUNK_SIZE = 3200

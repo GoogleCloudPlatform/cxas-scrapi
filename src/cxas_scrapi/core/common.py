@@ -33,6 +33,8 @@ GLOBAL_SCOPES = [
     "https://www.googleapis.com/auth/generative-language.retriever",
 ]
 
+DEFAULT_API_ENDPOINT = "ces.googleapis.com"
+
 
 class Common:
     """Core Class for managing Auth and shared functions in CX Agent Studio."""
@@ -158,7 +160,7 @@ class Common:
             return {}
 
         # Using global endpoint mapping for CXAS v1beta
-        api_endpoint = "ces.googleapis.com"
+        api_endpoint = DEFAULT_API_ENDPOINT
         return {"api_endpoint": api_endpoint}
 
     @staticmethod
@@ -351,7 +353,7 @@ class Common:
         """Creates a customer gRPC transport for CXAS SCRAPI calls."""
         transport_class = client_class.get_transport_class("grpc")
 
-        host = "ces.googleapis.com"
+        host = DEFAULT_API_ENDPOINT
         client_opts = getattr(self, "client_options", None)
         if client_opts and "api_endpoint" in client_opts:
             host = self.client_options["api_endpoint"]
