@@ -19,9 +19,10 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
-import google.auth
-from google.auth.transport.requests import Request
-import requests
+import yaml
+
+from cxas_scrapi.core.conversation_history import ConversationHistory
+from cxas_scrapi.core.insights import Insights
 
 # Ensure standard output is logging friendly
 logging.basicConfig(
@@ -29,102 +30,51 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+USER_AGENT_EXTENSION = "skill/cxas-insights-sim-eval/generate-evals"
 
-class InsightsSimpleClient:
-    """Simple wrapper to fetch data from CCAI Insights."""
 
-    def __init__(self, project_id: str, location: str):
-        self.project_id = project_id
-        self.location = location
-        self.scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+def ccai_to_cxas_dict(ccai_conv: Dict[str, Any]) -> Dict[str, Any]:
+    """Converts a CCAI Insights conversation dict to a CXAS-like conversation dict."""
+    segments = ccai_conv.get("transcript", {}).get("transcriptSegments", [])
+    turns = []
+    for seg in segments:
+        role = seg.get("segmentParticipant", {}).get("role", "UNKNOWN")
+        text = seg.get("text", "")
+        if not text:
+            continue
 
-        try:
-            self.creds, _ = google.auth.default(scopes=self.scopes)
-            self.creds.refresh(Request())
-        except Exception as e:
-            logger.error(f"Authentication failed: {e}")
-            sys.exit(1)
+        # Map CCAI roles to CXAS roles
+        cxas_role = "user" if role in ("CUSTOMER", "END_USER") else "agent"
 
-        base_endpoint = "contactcenterinsights.googleapis.com"
-        if location != "global":
-            self.base_url = f"https://{location}-{base_endpoint}/v1"
-        else:
-            self.base_url = f"https://{base_endpoint}/v1"
-
-    def _get_headers(self) -> Dict[str, str]:
-        if getattr(self.creds, "expired", False) or not getattr(
-            self.creds, "token", None
-        ):
-            self.creds.refresh(Request())
-        return {
-            "Authorization": f"Bearer {self.creds.token}",
-            "Content-Type": "application/json",
-            "x-goog-user-project": self.project_id,
-        }
-
-    def get_conversations(
-        self, parent: str, filter_str: Optional[str] = None, max_pages: int = 5
-    ) -> List[Dict[str, Any]]:
-        """Fetches recent conversations."""
-        results = []
-        url = f"{self.base_url}/{parent}/conversations"
-        params = {"pageSize": 100}
-        if filter_str:
-            params["filter"] = filter_str
-        page_token = None
-
-        pages = 0
-
-        while pages < max_pages:
-            if page_token:
-                params["pageToken"] = page_token
-            res = requests.get(
-                url, headers=self._get_headers(), params=params, timeout=60
-            )
-            res.raise_for_status()
-            data = res.json()
-            results.extend(data.get("conversations", []))
-            page_token = data.get("nextPageToken")
-            pages += 1
-            if not page_token:
-                break
-        return results
-
-    def get_conversation_details(self, name: str) -> Dict[str, Any]:
-        """Fetches a single full conversation."""
-        url = f"{self.base_url}/{name}"
-        res = requests.get(url, headers=self._get_headers(), timeout=60)
-        res.raise_for_status()
-        return res.json()
+        turns.append(
+            {
+                "messages": [
+                    {"role": cxas_role, "chunks": [{"text": text}]}
+                ]
+            }
+        )
+    return {"turns": turns}
 
 
 def extract_transcript(
-    client: InsightsSimpleClient, conv_summary: Dict[str, Any]
+    client: Insights, conv_summary: Dict[str, Any]
 ) -> Optional[Dict[str, str]]:
-    """Processes a single conversation to extract its transcript."""
+    """Processes a single conversation to extract its transcript and formats to YAML."""
     conv_name = conv_summary.get("name")
     conv_id = conv_name.split("/")[-1]
     logger.info(f"Fetching detailed transcript for {conv_id}...")
 
     try:
-        details = client.get_conversation_details(conv_name)
-        segments = (
-            details.get("transcript", {}).get("transcriptSegments", [])
+        details = client.get_conversation(conv_name)
+        cxas_dict = ccai_to_cxas_dict(details)
+
+        # Leverage ConversationHistory to format to FDE YAML structure
+        yaml_dict = ConversationHistory.conversation_dict_to_yaml(cxas_dict)
+        transcript_yaml = yaml.dump(
+            yaml_dict, sort_keys=False, allow_unicode=True
         )
 
-        if not segments:
-            logger.warning(f"No transcript segments found for {conv_id}.")
-            return None
-
-        lines = []
-        for seg in segments:
-            role = seg.get("segmentParticipant", {}).get("role", "UNKNOWN")
-            text = seg.get("text", "")
-            if text:
-                lines.append(f"{role}: {text}")
-
-        transcript_str = "\n".join(lines)
-        return {"conversation_id": conv_id, "transcript": transcript_str}
+        return {"conversation_id": conv_id, "transcript": transcript_yaml}
 
     except Exception as e:
         logger.error(f"Failed extracting {conv_id}: {e}")
@@ -145,7 +95,10 @@ def main():
         help="Target CXAS App ID to filter conversations for",
     )
     parser.add_argument(
-        "--limit", type=int, default=5, help="Max candidate transcripts to extract"
+        "--limit",
+        type=int,
+        default=5,
+        help="Max candidate transcripts to extract",
     )
     parser.add_argument(
         "--output-file",
@@ -154,14 +107,21 @@ def main():
     )
     args = parser.parse_args()
 
-    parent = f"projects/{args.project_id}/locations/{args.location}"
-    logger.info(f"Initializing Insights client for {parent}...")
-    insights_client = InsightsSimpleClient(args.project_id, args.location)
+    logger.info(
+        f"Initializing Insights client for project {args.project_id}, location {args.location}..."
+    )
+    insights_client = Insights(
+        project_id=args.project_id,
+        location=args.location,
+        user_agent_extension=USER_AGENT_EXTENSION,
+    )
 
     filter_arg = f'agent_id="{args.app_id}"'
-    logger.info(f"Fetching recent conversations with server filter: {filter_arg}...")
-    conversations = insights_client.get_conversations(
-        parent, filter_str=filter_arg, max_pages=10
+    logger.info(
+        f"Fetching recent conversations with server filter: {filter_arg}..."
+    )
+    conversations = insights_client.list_conversations(
+        filter_str=filter_arg, max_pages=10
     )
 
     if not conversations:
@@ -185,7 +145,9 @@ def main():
     target_convs = filtered_convs[: args.limit]
 
     if not target_convs:
-        logger.warning("No matching contained conversations found for this app.")
+        logger.warning(
+            "No matching contained conversations found for this app."
+        )
         sys.exit(0)
 
     extracted_data = []
@@ -194,7 +156,9 @@ def main():
         if res:
             extracted_data.append(res)
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.output_file)), exist_ok=True)
+    os.makedirs(
+        os.path.dirname(os.path.abspath(args.output_file)), exist_ok=True
+    )
     with open(args.output_file, "w") as f:
         json.dump(extracted_data, f, indent=2)
 
@@ -205,4 +169,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

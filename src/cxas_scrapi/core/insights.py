@@ -113,3 +113,36 @@ class Insights(Common):
             if not page_token:
                 break
         return results
+
+    def list_conversations(
+        self,
+        filter_str: Optional[str] = None,
+        page_size: int = 100,
+        max_pages: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Lists conversations in the configured parent location."""
+        path = f"{self.parent}/conversations"
+        params = {"pageSize": page_size}
+        if filter_str:
+            params["filter"] = filter_str
+
+        results = []
+        page_token = None
+        pages = 0
+        while pages < max_pages:
+            if page_token:
+                params["pageToken"] = page_token
+            res = self._request("GET", path, params=params)
+            results.extend(res.get("conversations", []))
+            page_token = res.get("nextPageToken")
+            pages += 1
+            if not page_token:
+                break
+        return results
+
+    def get_conversation(self, name: str) -> Dict[str, Any]:
+        """Gets a single conversation by name or ID."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/conversations/{name}"
+        return self._request("GET", name)
+
