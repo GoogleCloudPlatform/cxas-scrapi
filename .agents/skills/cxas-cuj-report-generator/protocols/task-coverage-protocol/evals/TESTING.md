@@ -5,10 +5,12 @@ This guide instructs the parent agent on how to execute the evaluations for the
 
 ## General Setup
 
-For each evaluation case: 1. Navigate to the case directory:
-`eval_results/agent-protocol-checklist/1/{case_name}/`. 2. Run `python3
-setup.py` to prepare the test data (unzip files, etc.). 3. Read the `case.yaml`
-file to understand the expectations.
+For each evaluation case:
+
+1.  Navigate to the case directory:
+    `eval_results/agent-protocol-checklist/1/{case_name}/`.
+2.  Run `python3 setup.py` to prepare the test data (unzip files, etc.).
+3.  Read the `case.yaml` file to understand the expectations.
 
 ## Case Specific Instructions
 
