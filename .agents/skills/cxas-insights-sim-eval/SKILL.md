@@ -19,7 +19,7 @@ Follow these steps in exact sequence:
 Verify that the user has provided the following required parameters:
 - `project_id`: GCP Project ID hosting Insights.
 - `location`: Insights location (e.g., `us`).
-- `app_id`: Target CXAS App ID (e.g., `db9ee866-28db-458b-b835-78137c974779`).
+- `agent_id`: Target CXAS Agent ID (e.g., `db9ee866-28db-458b-b835-78137c974779`).
 - `output_dir`: Directory where the final report and test cases will be saved.
 - `limit`: Maximum raw conversations to inspect (default: 1000).
 - `loss_limit`: Maximum loss transcripts to fetch and analyze (default: 100).
@@ -32,7 +32,7 @@ Run the lightweight data-extraction script to dump the loss transcripts into a c
 python -P .agents/skills/cxas-insights-sim-eval/scripts/fetch_losses.py \
   --project-id "{project_id}" \
   --location "{location}" \
-  --app-id "{app_id}" \
+  --agent-id "{agent_id}" \
   --limit {limit} \
   --loss-limit {loss_limit} \
   --output-file "{output_dir}/raw_losses.json"
@@ -66,7 +66,7 @@ Compile your analysis into a structured Markdown report and write it to `{output
 # Loss Patterns Analysis Report
 
 **Project**: `{project_id}`
-**App ID**: `{app_id}`
+**Agent ID**: `{agent_id}`
 
 ## Executive Summary
 

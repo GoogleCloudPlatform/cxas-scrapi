@@ -87,9 +87,9 @@ def main():
         "--location", required=True, help="Insights Location (e.g. us)"
     )
     parser.add_argument(
-        "--app-id",
+        "--agent-id",
         required=True,
-        help="Target CXAS App ID to filter conversations for",
+        help="Target CXAS Agent ID to filter conversations for",
     )
     parser.add_argument(
         "--limit",
@@ -122,7 +122,7 @@ def main():
         user_agent_extension=USER_AGENT_EXTENSION,
     )
 
-    filter_arg = f'agent_id="{args.app_id}"'
+    filter_arg = f'agent_id="{args.agent_id}"'
     logger.info(
         f"Fetching recent conversations (target limit raw: {args.limit})..."
     )
