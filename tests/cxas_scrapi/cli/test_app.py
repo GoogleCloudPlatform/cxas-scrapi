@@ -17,6 +17,7 @@
 import argparse
 import io
 import os
+import sys
 import time
 import zipfile
 from unittest import mock
@@ -600,3 +601,36 @@ def test_app_push_create_version(mock_versions_cls, mock_apps_client, tmp_path):
     mock_versions_inst.create_version.assert_called_once()
     expected = "projects/test-project/locations/us/apps/new-id/versions/v1"
     assert args.created_version_name == expected
+
+
+def test_app_init_headless_failure(monkeypatch, capsys, tmp_path):
+    # Mock isatty to return False (headless environment)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    # Mock sys.prefix to point to a temporary directory with a dummy skill
+    fake_prefix = tmp_path / "prefix"
+    skills_root = fake_prefix / "share" / "cxas-scrapi" / "skills"
+    skills_root.mkdir(parents=True)
+    (skills_root / "existing_file.txt").touch()
+    monkeypatch.setattr(sys, "prefix", str(fake_prefix))
+
+    # Create the target directory and file so it triggers the overwrite prompt
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    (target_dir / "existing_file.txt").touch()
+
+    args = argparse.Namespace(
+        target_dir=str(target_dir), force=False, no_input=False
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_init(args)
+
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    expected_msg = (
+        "ERROR: 'existing_file.txt' already exists. "
+        "Non-interactive environment detected or --no-input specified."
+    )
+    assert expected_msg in captured.err
+    assert "Use --force to overwrite." in captured.err

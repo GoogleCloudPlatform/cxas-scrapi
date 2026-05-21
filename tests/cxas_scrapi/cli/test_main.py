@@ -22,7 +22,7 @@ from unittest import mock
 import pytest
 
 from cxas_scrapi.cli import main as main_cli
-from cxas_scrapi.cli.main import get_parser
+from cxas_scrapi.cli.main import get_parser, run_session
 
 
 def test_get_parser():
@@ -349,3 +349,18 @@ def test_run_eval_modality(mock_eval_utils_cls, mock_eval_cls):
         app_name=args.app_name,
         modality="audio",
     )
+
+
+def test_run_session_headless_failure(monkeypatch, capsys):
+    # Mock isatty to return False (headless environment)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    args = argparse.Namespace(app_name="dummy_app", modality="TEXT")
+
+    with pytest.raises(SystemExit) as excinfo:
+        run_session(args)
+
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    expected_msg = "ERROR: 'run-session' requires an interactive terminal."
+    assert expected_msg in captured.err
