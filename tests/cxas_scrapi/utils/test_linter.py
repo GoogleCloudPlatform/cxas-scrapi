@@ -474,11 +474,7 @@ def test_discovery_filtering(tmp_path):
     # Add a callback to root_agent and billing_agent
     for agent in ["root_agent", "billing_agent"]:
         cb_dir = (
-            tmp_path
-            / "agents"
-            / agent
-            / "before_model_callbacks"
-            / "greet_01"
+            tmp_path / "agents" / agent / "before_model_callbacks" / "greet_01"
         )
         cb_dir.mkdir(parents=True)
         (cb_dir / "python_code.py").write_text("def cb(ctx, req): pass")
