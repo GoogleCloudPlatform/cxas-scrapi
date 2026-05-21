@@ -1443,6 +1443,14 @@ def get_parser() -> argparse.ArgumentParser:
         help="Run only structure and config rules.",
     )
     parser_lint.add_argument(
+        "--agents",
+        help="Only discover/lint specific agents (comma-separated list).",
+    )
+    parser_lint.add_argument(
+        "--tools",
+        help="Only discover/lint specific tools (comma-separated list).",
+    )
+    parser_lint.add_argument(
         "--agent",
         help="Validate a single agent directory against CES schema.",
     )

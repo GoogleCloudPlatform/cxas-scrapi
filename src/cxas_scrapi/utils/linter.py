@@ -374,9 +374,17 @@ class Discovery:
     Scans an app directory for all resources.
     """
 
-    def __init__(self, app_dir: Path, evals_dir: Path):
+    def __init__(
+        self,
+        app_dir: Path,
+        evals_dir: Path,
+        limit_agents: Optional[set[str]] = None,
+        limit_tools: Optional[set[str]] = None,
+    ):
         self.app_dir = app_dir
         self.evals_dir = evals_dir
+        self.limit_agents = limit_agents
+        self.limit_tools = limit_tools
         self.app_root = self._find_app_root()
 
     def _find_app_root(self) -> Optional[Path]:
@@ -415,6 +423,11 @@ class Discovery:
         result = {}
         for d in sorted(agents_dir.iterdir()):
             if d.is_dir():
+                if (
+                    self.limit_agents is not None
+                    and d.name not in self.limit_agents
+                ):
+                    continue
                 inst = d / "instruction.txt"
                 if inst.exists():
                     result[d.name] = inst
@@ -434,6 +447,11 @@ class Discovery:
         result = {}
         for d in sorted(tools_dir.iterdir()):
             if d.is_dir():
+                if (
+                    self.limit_tools is not None
+                    and d.name not in self.limit_tools
+                ):
+                    continue
                 code = d / "python_function" / "python_code.py"
                 if code.exists():
                     result[d.name] = code
@@ -461,6 +479,11 @@ class Discovery:
         ]
         for agent_dir in sorted(agents_dir.iterdir()):
             if not agent_dir.is_dir():
+                continue
+            if (
+                self.limit_agents is not None
+                and agent_dir.name not in self.limit_agents
+            ):
                 continue
             for cb_type in cb_types:
                 cb_dir = agent_dir / cb_type
@@ -502,6 +525,11 @@ class Discovery:
         result = {}
         for d in sorted(agents_dir.iterdir()):
             if d.is_dir():
+                if (
+                    self.limit_agents is not None
+                    and d.name not in self.limit_agents
+                ):
+                    continue
                 json_file = d / f"{d.name}.json"
                 if json_file.exists():
                     result[d.name] = json_file

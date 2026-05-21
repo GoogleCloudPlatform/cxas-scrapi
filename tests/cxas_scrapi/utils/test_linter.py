@@ -463,6 +463,60 @@ def test_discovery_tool_callbacks(tmp_path):
     assert len(tool_cbs) == 1
 
 
+def test_discovery_filtering(tmp_path):
+    """Discovery filters agents, tools, callbacks, and configs if limited."""
+    _make_app(
+        tmp_path,
+        agents=["root_agent", "billing_agent", "support_agent"],
+        tools=["get_balance", "transfer_funds", "check_status"],
+    )
+
+    # Add a callback to root_agent and billing_agent
+    for agent in ["root_agent", "billing_agent"]:
+        cb_dir = (
+            tmp_path
+            / "agents"
+            / agent
+            / "before_model_callbacks"
+            / "greet_01"
+        )
+        cb_dir.mkdir(parents=True)
+        (cb_dir / "python_code.py").write_text("def cb(ctx, req): pass")
+
+    # Discovery with limited agents and tools
+    discovery = Discovery(
+        tmp_path,
+        tmp_path / "evals",
+        limit_agents={"root_agent", "billing_agent"},
+        limit_tools={"get_balance"},
+    )
+
+    # 1. Verify agents
+    agents = discovery.discover_agents()
+    assert "root_agent" in agents
+    assert "billing_agent" in agents
+    assert "support_agent" not in agents
+
+    # 2. Verify tools
+    tools = discovery.discover_tools()
+    assert "get_balance" in tools
+    assert "transfer_funds" not in tools
+    assert "check_status" not in tools
+
+    # 3. Verify callbacks
+    callbacks = discovery.discover_callbacks()
+    agent_names_in_callbacks = {cb[0] for cb in callbacks}
+    assert "root_agent" in agent_names_in_callbacks
+    assert "billing_agent" in agent_names_in_callbacks
+    assert "support_agent" not in agent_names_in_callbacks
+
+    # 4. Verify agent configs
+    configs = discovery.discover_agent_configs()
+    assert "root_agent" in configs
+    assert "billing_agent" in configs
+    assert "support_agent" not in configs
+
+
 # ── Runner ───────────────────────────────────────────────────────────────
 
 

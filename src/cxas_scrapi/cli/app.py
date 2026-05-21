@@ -436,7 +436,23 @@ def app_lint(args: argparse.Namespace) -> None:  # noqa: C901
 
     app_dir = project_root / config.app_dir
     evals_dir = project_root / config.evals_dir
-    discovery = Discovery(app_dir, evals_dir)
+
+    limit_agents = None
+    agents_arg = getattr(args, "agents", None)
+    if agents_arg:
+        limit_agents = set(a.strip() for a in agents_arg.split(","))
+
+    limit_tools = None
+    tools_arg = getattr(args, "tools", None)
+    if tools_arg:
+        limit_tools = set(t.strip() for t in tools_arg.split(","))
+
+    discovery = Discovery(
+        app_dir,
+        evals_dir,
+        limit_agents=limit_agents,
+        limit_tools=limit_tools,
+    )
 
     if not discovery.app_root:
         if not json_output:
