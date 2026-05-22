@@ -85,7 +85,7 @@ Initialize your `todo.md` with the following. Items start unchecked; check only 
 
 1. [ ] Verify prerequisites (above)
 2. [ ] Lint (`agents/lint-fixer.md`) + `cxas push` agent code
-3. [ ] Run evals: `python scripts/run-and-report.py --runs 5 --auto-revert --json-summary <path> --message "<describe change>" > <project>/eval-reports/last-run.log 2>&1`, then read `<path>`. If the script errors (non-zero exit, or `status: "errored"` in the summary), read `<project>/eval-reports/last-run.log` for the underlying stack — no re-run needed.
+3. [ ] Run evals — **target first, then broaden** (see `references/run.md` → "Eval Execution Strategy"). When fixing a specific failure, run only the eval(s) where the problem surfaces until they pass, then run the full suite for regressions. Full-suite command: `python scripts/run-and-report.py --runs 5 --auto-revert --json-summary <path> --message "<describe change>" > <project>/eval-reports/last-run.log 2>&1`, then read `<path>`. If the script errors (non-zero exit, or `status: "errored"` in the summary), read `<project>/eval-reports/last-run.log` for the underlying stack — no re-run needed.
 4. [ ] Read `failure_clusters` from the JSON summary. Pick the top 5 clusters by `priority_score` and dispatch `agents/triage-failure.md` once per cluster, in parallel. Aggregate the returned diagnoses (a cluster may return one shared diagnosis covering N evals, or split into per-eval diagnoses with `cluster_split: true`).
 5. [ ] Plan fix from the aggregated diagnoses + `<project>/experiment_log.md`
 6. [ ] Apply fix; back to step 2 until adjusted pass rate ≥ target
