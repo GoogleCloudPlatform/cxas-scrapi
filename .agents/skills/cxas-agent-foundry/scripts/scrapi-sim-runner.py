@@ -28,6 +28,7 @@ Usage:
 import argparse
 import json
 import os
+import random
 import sys
 import time
 import uuid
@@ -128,7 +129,11 @@ class EnhancedSimRunner(SimulationEvals):
             test_case=test_case,
         )
 
-        session_params = test_case.get("session_parameters", {})
+        session_params = dict(test_case.get("session_parameters", {}))
+        # Inject a randomized virtual caller ANI to completely isolate session state storage across concurrent threads
+        session_params["ANI"] = f"888{random.randint(1000000, 9999999)}"
+        if console_logging:
+            print(f"  Generated ANI: {session_params['ANI']}")
 
         if console_logging:
             print("Starting simulated conversation...")
@@ -150,6 +155,7 @@ class EnhancedSimRunner(SimulationEvals):
                         "session_id": session_id,
                         "text": user_utterance,
                         "modality": modality,
+                        "current_turn_index": eval_conv.current_turn - 1,
                     }
                     # Inject variables on first turn only
                     if first_turn and session_params:
@@ -187,9 +193,13 @@ class EnhancedSimRunner(SimulationEvals):
                         "escalat" in criteria
                         or "transfer" in criteria
                         or "being transferred" in criteria
+                        or "hang up" in criteria
+                        or "failure" in criteria
+                        or "ends the session" in criteria
+                        or "session ends" in criteria
                     ):
                         prog.status = StepStatus.COMPLETED
-                        prog.justification = "Agent ended session via escalation/transfer — matches success criteria."
+                        prog.justification = "Agent ended session — matches success criteria."
                 break
 
             result = eval_conv.next_user_utterance(agent_text)
@@ -377,7 +387,7 @@ def generate_html_report(
     if app_name:
         try:
             from cxas_scrapi.core.tools import Tools
-            tools_map = Tools(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION).get_tools_map()
+            tools_map = Tools(app_name=app_name).get_tools_map()
         except Exception:
             pass
 
@@ -623,7 +633,7 @@ def _run_single_eval(app_name, tc, run_idx, runs, model, modality, verbose):
         # Each thread gets its own SimRunner instance (separate session client)
         import time as _time
         _start = _time.time()
-        sim = EnhancedSimRunner(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+        sim = EnhancedSimRunner(app_name=app_name)
         conv = sim.simulate_conversation(
             test_case=tc,
             model=model,
@@ -760,11 +770,37 @@ def cmd_run(args):
     all_results = []
     _batch_start = time.time()
 
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+    report_path = getattr(args, "gcs_report_path", None) or os.path.join(
+        REPORTS_DIR, f"sim_report_{ts}.html"
+    )
+    
+    print(f"\n[INFO] Live HTML report will be incrementally updated at:\n  file://{os.path.abspath(report_path)}\n")
+    
+    _last_update = 0.0
+    _UPDATE_INTERVAL = 15.0
+
+    def _on_progress():
+        nonlocal _last_update
+        curr = time.time()
+        if curr - _last_update >= _UPDATE_INTERVAL:
+            generate_html_report(
+                all_results,
+                report_path,
+                modality,
+                model,
+                app_name,
+                wall_clock_s=round(curr - _batch_start, 1),
+            )
+            _last_update = curr
+
     if parallel <= 1:
         # Sequential execution
         for tc, run_idx in jobs:
             result = _run_single_eval(app_name, tc, run_idx, runs, model, modality, args.verbose)
             all_results.append(result)
+            _on_progress()
     else:
         # Parallel execution
         with ThreadPoolExecutor(max_workers=parallel) as executor:
@@ -779,6 +815,7 @@ def cmd_run(args):
             for future in as_completed(futures):
                 result = future.result()
                 all_results.append(result)
+                _on_progress()
 
     # Summary
     print(f"\n{'=' * 60}")
@@ -822,9 +859,7 @@ def cmd_run(args):
     with open(json_path, "w") as f:
         json.dump(output, f, indent=2, default=str)
 
-    report_path = getattr(args, "gcs_report_path", None) or os.path.join(
-        REPORTS_DIR, f"sim_report_{ts}.html"
-    )
+    # Force one final report generation
     generate_html_report(
         all_results,
         report_path,

@@ -718,6 +718,7 @@ class SimulationEvals(Apps):
         model: str,
         modality: str,
         verbose: bool,
+        progress_callback: Optional[Any] = None,
     ) -> List[Dict[str, Any]]:
         """Aggregates results from multiple simulation jobs."""
         results = []
@@ -740,6 +741,8 @@ class SimulationEvals(Apps):
                         )
                     )
                     progress.update(task_id, advance=1)
+                    if progress_callback:
+                        progress_callback(results)
             else:
                 max_workers = min(parallel, 25)
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -759,6 +762,8 @@ class SimulationEvals(Apps):
                     for future in as_completed(futures):
                         results.append(future.result())
                         progress.update(task_id, advance=1)
+                        if progress_callback:
+                            progress_callback(results)
 
         return results
 
@@ -770,6 +775,7 @@ class SimulationEvals(Apps):
         model: str = _DEFAULT_GEMINI_MODEL,
         modality: str = "text",
         verbose: bool = False,
+        progress_callback: Optional[Any] = None,
     ) -> List[Dict[str, Any]]:
         """Runs multiple simulations, optionally in parallel.
 
@@ -780,10 +786,11 @@ class SimulationEvals(Apps):
             model: Gemini model to use.
             modality: 'text' or 'audio'.
             verbose: Whether to log to console (only active if parallel=1).
+            progress_callback: Optional callback to invoke after each job completes.
         """
         jobs = self._prepare_simulation_jobs(test_cases, runs)
         return self._aggregate_simulation_results(
-            jobs, runs, parallel, model, modality, verbose
+            jobs, runs, parallel, model, modality, verbose, progress_callback
         )
 
     def _add_agent_text(self, turn: Turn, text: str) -> None:
