@@ -171,6 +171,9 @@ nav:
       - Pull & Push Workflow: guides/agent-development/pull-push-workflow.md
       - Branching Apps: guides/agent-development/branching.md
       - Team Collaboration: guides/agent-development/team-collaboration.md
+    - Agent Migration & Optimization:
+      - guides/migration/index.md
+      - DFCX to CXAS Migration: guides/migration/dfcx-migration.md
     - Testing & Evaluation:
       - guides/evaluation/index.md
       - Platform Goldens: guides/evaluation/platform-goldens.md
@@ -184,6 +187,11 @@ nav:
       - Configuration: guides/linting/configuration.md
       - Rule Reference: guides/linting/rules.md
       - CI Integration: guides/linting/ci-integration.md
+    - Slot Filling:
+      - guides/slot-filling/index.md
+      - "Tutorial: Building an Agent": guides/slot-filling/tutorial.md
+      - Advanced Patterns: guides/slot-filling/advanced.md
+      - Configuration Reference: guides/slot-filling/reference.md
     - AI Skills:
       - guides/skills/index.md
       - Installing Skills: guides/skills/installation.md
@@ -195,6 +203,14 @@ nav:
     - Insights:
       - guides/insights/index.md
       - Scorecards: guides/insights/scorecards.md
+  - VS Code Extension:
+    - vscode/index.md
+    - Installation: vscode/installation.md
+    - Quickstart: vscode/quickstart.md
+    - Authoring Features: vscode/authoring.md
+    - Evaluations: vscode/evaluations.md
+    - Importing from CES: vscode/importing.md
+    - Settings & Troubleshooting: vscode/settings.md
   - CLI Reference:
     - cli/index.md
     - cxas pull: cli/pull.md

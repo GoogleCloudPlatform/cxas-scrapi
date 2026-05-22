@@ -32,7 +32,7 @@ history.
 ---
 
 ## Built With
-* Python 3.11+
+* Python 3.10+
 
 
 <!-- AUTHENTICATION -->
@@ -118,9 +118,8 @@ gcloud auth application-default login
 gcloud config set project <project name>
 ```
 ```sh
-python3 -m venv .venv
-source ./.venv/bin/activate
-pip install -r requirements.txt
+uv sync
+source .venv/bin/activate
 ```
 
 ## Usage
@@ -166,14 +165,11 @@ The official documentation is hosted online at [https://googlecloudplatform.gith
 The documentation site is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/). To run it locally:
 
 ```sh
-# Install docs dependencies (inside your virtualenv)
-pip install -r requirements-docs.txt
-
-# Install the package so API reference pages can render
-pip install -e .
+# Install dependencies including docs extras
+uv sync --extra docs
 
 # Start the local dev server
-mkdocs serve
+uv run mkdocs serve
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser. Changes to files in `docs/` will reload automatically.

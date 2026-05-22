@@ -411,7 +411,12 @@ def generate_html_report(
   .summary .big {{ font-size: 2em; font-weight: bold; }}
   .pass {{ color: #27ae60; }} .fail {{ color: #e74c3c; }} .error {{ color: #e67e22; }}
   table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
-  th, td {{ text-align: left; padding: 8px 12px; border-bottom: 1px solid #ddd; }}
+  th,
+  td {{
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid #ddd;
+  }}
   th {{ background: #2c3e50; color: white; }}
   tr:hover {{ background: #f5f5f5; }}
   .eval-card {{ background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 15px 0; overflow: hidden; }}
@@ -536,6 +541,7 @@ function jumpToRun(evalName, runIdx) {{
 
                     parsed_lines = []
                     for entry in trace:
+                        last_kind = "system"
                         for line in entry.split("\n"):
                             line = line.strip()
                             if not line:
@@ -544,19 +550,25 @@ function jumpToRun(evalName, runIdx) {{
                             if line.startswith("Agent Text (Diag):"):
                                 continue
                             elif line.startswith("Agent Text:"):
-                                parsed_lines.append(("agent", line[len("Agent Text:"):].strip()))
+                                last_kind = "agent"
+                                parsed_lines.append((last_kind, line[len("Agent Text:"):].strip()))
                             elif line.startswith("User:"):
-                                parsed_lines.append(("user", line[5:].strip()))
+                                last_kind = "user"
+                                parsed_lines.append((last_kind, line[5:].strip()))
                             elif line.startswith("Tool Call"):
-                                parsed_lines.append(("tool_call", line))
+                                last_kind = "tool_call"
+                                parsed_lines.append((last_kind, line))
                             elif line.startswith("Tool Response"):
-                                parsed_lines.append(("tool_resp", line))
+                                last_kind = "tool_resp"
+                                parsed_lines.append((last_kind, line))
                             elif line.startswith("Agent Transfer:"):
-                                parsed_lines.append(("agent_transfer", line[len("Agent Transfer:"):].strip()))
+                                last_kind = "agent_transfer"
+                                parsed_lines.append((last_kind, line[len("Agent Transfer:"):].strip()))
                             elif line.startswith("Custom Payload:"):
-                                parsed_lines.append(("custom_payload", line[len("Custom Payload:"):].strip()))
+                                last_kind = "custom_payload"
+                                parsed_lines.append((last_kind, line[len("Custom Payload:"):].strip()))
                             else:
-                                parsed_lines.append(("system", line))
+                                parsed_lines.append((last_kind, line))
 
                     merged = []
                     for kind, text in parsed_lines:

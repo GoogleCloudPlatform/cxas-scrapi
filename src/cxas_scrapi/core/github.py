@@ -142,7 +142,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          enable-cache: true
 
 {auth_step}
 
@@ -150,10 +155,9 @@ jobs:
 
       - name: Install cxas-scrapi CLI
         run: |
-          python -m pip install --upgrade pip
           wget https://storage.googleapis.com/gassets-api-ai/ces-client-libraries/v1beta/ces-v1beta-py.tar
-          pip install ces-v1beta-py.tar --quiet
-          pip install cxas-scrapi
+          uv pip install ces-v1beta-py.tar --quiet
+          uv pip install cxas-scrapi
 
       - name: Deploy to CX Agent Studio
         run: |
@@ -196,7 +200,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          enable-cache: true
 
 {auth_step}
 
@@ -204,10 +213,9 @@ jobs:
 
       - name: Install cxas-scrapi CLI
         run: |
-          python -m pip install --upgrade pip
           wget https://storage.googleapis.com/gassets-api-ai/ces-client-libraries/v1beta/ces-v1beta-py.tar
-          pip install ces-v1beta-py.tar --quiet
-          pip install cxas-scrapi
+          uv pip install ces-v1beta-py.tar --quiet
+          uv pip install cxas-scrapi
 
       - name: Run Cleanup
         run: |
@@ -219,8 +227,12 @@ jobs:
 
 
 DOCKERFILE_TEMPLATE = """# Use an official Python runtime as a parent image
-FROM python:3.11-slim
+FROM python:3.10-slim
 
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvbin --link
+ENV PATH="/uvbin:${PATH}"
 
 # Set the working directory to /app
 WORKDIR /app
@@ -232,15 +244,15 @@ RUN apt-get update && apt-get install -y git wget && rm -rf /var/lib/apt/lists/*
 RUN URL="https://storage.googleapis.com/gassets-api-ai/" && \\
     URL="${URL}ces-client-libraries/v1beta/ces-v1beta-py.tar" && \\
     wget $URL && \\
-    pip install ces-v1beta-py.tar --quiet && \\
+    uv pip install --system ces-v1beta-py.tar --quiet && \\
     rm ces-v1beta-py.tar
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
 # Install dependencies and local CLI wheel
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install cxas-scrapi
+RUN uv pip install --system --no-cache-dir -r requirements.txt && \
+    uv pip install --system cxas-scrapi
 
 # Copy the agent code into the container
 COPY . .

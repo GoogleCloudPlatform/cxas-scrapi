@@ -21,6 +21,7 @@ from cxas_scrapi.core.audio_transformer import AudioTransformer
 
 class TestAudioTransformer:
     def setup_method(self):
+        AudioTransformer._client = None
         self.transformer = AudioTransformer()
 
     @patch("cxas_scrapi.core.audio_transformer.texttospeech")

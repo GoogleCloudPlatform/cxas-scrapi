@@ -14,16 +14,27 @@
 
 import asyncio
 import io
+import json
 import logging
 import re
 import uuid
-from typing import Any, Dict
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict
 
+import google.protobuf.duration_pb2
+from google.cloud.ces_v1beta import types
 from rich.console import Console
 
 from cxas_scrapi.core.agents import Agents
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.tools import Tools
+from cxas_scrapi.core.versions import Versions
+from cxas_scrapi.migration import (
+    integrity_checks,
+    ir_bundle,
+    structural_consolidator,
+    topology_wirer,
+)
 from cxas_scrapi.migration.ai_augment import AIAugment
 from cxas_scrapi.migration.artifacts_builder import CXASAsyncArtifactBuilder
 from cxas_scrapi.migration.code_block_migrator import CodeBlockMigrator
@@ -37,6 +48,7 @@ from cxas_scrapi.migration.data_models import (
     MigrationStatus,
 )
 from cxas_scrapi.migration.designer import AsyncAgentDesigner
+from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
 from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
 from cxas_scrapi.migration.dfcx_migration_reporter import DFCXMigrationReporter
 from cxas_scrapi.migration.dfcx_parameter_extractor import (
@@ -49,8 +61,13 @@ from cxas_scrapi.migration.flow_visualizer import (
     FlowDependencyResolver,
     FlowTreeVisualizer,
 )
+from cxas_scrapi.migration.optimization_reporter import OptimizationReporter
+from cxas_scrapi.migration.structural_consolidator import StructuralConsolidator
 from cxas_scrapi.utils.gemini import GeminiGenerate
 from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
+
+if TYPE_CHECKING:
+    from cxas_scrapi.migration.ir_bundle import IRBundle
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +115,7 @@ class MigrationService:
             location=gemini_location,
             credentials=credentials,
             model_name="gemini-3.1-pro-preview",
+            max_concurrent_requests=3,
         )
 
         self.exporter = ConversationalAgentsAPI()
@@ -123,6 +141,606 @@ class MigrationService:
 
         self.ir = {}
         self.source_agent_data = None
+
+    @classmethod
+    def restore_from_bundle(
+        cls,
+        bundle,
+        *,
+        project_id: str | None = None,
+        location: str | None = None,
+    ) -> "MigrationService":
+        """Recreate a `MigrationService` from a persisted :class:`IRBundle`.
+
+        Used by stage1 / stage2 / stage3 to resume work against an already
+        deployed app without going through a full :meth:`run_migration`
+        cycle. Populates the runtime attributes that `run_migration` would
+        normally set up after creating the app:
+
+          * `ir` and `source_agent_data` from the bundle
+          * `deployment_state` flagged as already deployed (so update-pass
+            deploys don't try to create the app again)
+          * `ps_agents` / `ps_tools` clients scoped to the existing app
+          * `topology_linker.ps_agents` / `code_block_migrator.ps_tools`
+            wired through to the new per-app clients
+          * `eval_generator` ready for unit-test regeneration
+
+        Args:
+            bundle: The :class:`IRBundle` to restore from.
+            project_id: Override the bundle's project ID. Defaults to
+                `bundle.config.project_id`.
+            location: Override the bundle's location. Defaults to whatever
+                :meth:`IRBundle.resolve_location` returns (parsed from
+                `bundle.app_url`, else "us").
+
+        Returns:
+            A `MigrationService` ready for update-pass deploys + Stage N
+            optimizer calls.
+        """
+        pid = project_id or bundle.config.project_id
+        loc = location or bundle.resolve_location()
+
+        service = cls(
+            project_id=pid,
+            location=loc,
+            default_model=bundle.config.model,
+        )
+        service.ir = bundle.ir
+        service.source_agent_data = bundle.source_agent_data
+        service.deployment_state = {
+            "app_created": True,
+            "vars_deployed": True,
+            "app_timeout_configured": True,
+            "app_model_configured": True,
+        }
+        service.eval_generator = DeterministicEvalGenerator(service.ir)
+
+        app_resource = service.ir.metadata.app_resource_name
+        if app_resource:
+            service.ps_agents = Agents(app_name=app_resource)
+            service.ps_tools = Tools(app_name=app_resource)
+            if getattr(service, "topology_linker", None) is not None:
+                service.topology_linker.ps_agents = service.ps_agents
+            if getattr(service, "code_block_migrator", None) is not None:
+                service.code_block_migrator.ps_tools = service.ps_tools
+
+        return service
+
+    # ------------------------------------------------------------------
+    # Stage-level public methods
+    #
+    # These are the single source of truth for each post-migration stage.
+    # `run_migration`'s `optimize_for_cxas` branch delegates to
+    # `run_stage1` + `run_stage2`. Stage subcommands and skill scripts
+    # call the same methods to avoid pipeline duplication.
+    # ------------------------------------------------------------------
+
+    async def run_stage1(
+        self,
+        *,
+        consolidate: bool = False,
+        bundle: "IRBundle | None" = None,
+        gemini_client: GeminiGenerate | None = None,
+        grouping_callback: Callable[..., Awaitable[dict | None]] | None = None,
+        grouping_json_path: str | None = None,
+        on_integrity_fail: str = "abort",
+        version_label: str | None = "0.0.1",
+        persist_bundle_path: str | None = None,
+        console: Console | None = None,
+    ) -> dict | None:
+        """Run Stage 1: variable dedup + optional Gemini consolidation.
+
+        Args:
+            consolidate: Opt-in flag for Gemini-driven N→M structural
+                consolidation. Default ``False`` preserves the historical
+                ``run_migration`` behavior (variable dedup only).
+            bundle: Required when ``consolidate=True`` — used to snapshot
+                ``pre_consolidation_ir`` and persist the accepted grouping.
+            gemini_client: Override the service's default Gemini client.
+            grouping_callback: Async callable invoked after the consolidator
+                proposes groupings, before integrity check + consolidate +
+                deploy. Called with kwargs ``ir``, ``groupings``,
+                ``consolidator``, ``root_key``, ``dep_summary`` so the
+                callback can preview consolidation via
+                ``consolidator.consolidate(...)`` and re-propose via
+                ``consolidator.propose_groupings(...)``. Returns the
+                accepted ``groupings`` dict (possibly edited) or ``None``
+                to abort the consolidation step. The Stage 1 variable
+                dedup still applies regardless. See
+                :func:`cxas_scrapi.migration.grouping_review.interactive_review`
+                for the canonical TUI implementation.
+            grouping_json_path: If set, load groupings from this JSON file
+                instead of calling Gemini.
+            on_integrity_fail: How to handle ``check_consolidation_integrity``
+                blocking errors. ``"abort"`` raises ``RuntimeError`` (default,
+                safe). ``"warn"`` logs and continues. ``"ignore"`` is silent.
+            version_label: CXAS Version ``display_name`` to create after
+                the stage. ``None`` skips the checkpoint.
+            persist_bundle_path: If set, save the updated bundle to this
+                path after the stage.
+            console: Rich console for progress output. Defaults to a fresh
+                ``Console()`` (writes to stderr).
+
+        Returns:
+            The accepted grouping dict when ``consolidate=True`` and the
+            user accepted; otherwise ``None``.
+        """
+        if consolidate and bundle is None:
+            raise ValueError("run_stage1(consolidate=True) requires bundle=...")
+
+        from cxas_scrapi.migration import stage_runner  # noqa: PLC0415
+
+        console = console or Console()
+        gemini = gemini_client or self.gemini_client
+
+        # --- Variable dedup (always runs) -----------------------------------
+        optimizer = await stage_runner.run_stage_with_redeploy(
+            self, stage=1, console=console
+        )
+        stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage1")
+
+        # --- Optional Gemini consolidation ----------------------------------
+        accepted_groupings: dict | None = None
+        if consolidate:
+            accepted_groupings = await self._run_stage1_consolidation(
+                bundle=bundle,
+                gemini=gemini,
+                grouping_callback=grouping_callback,
+                grouping_json_path=grouping_json_path,
+                on_integrity_fail=on_integrity_fail,
+                console=console,
+            )
+
+        # --- CXAS Version checkpoint ----------------------------------------
+        if version_label and self.ir.metadata.app_resource_name:
+            description = "Stage 1: variable dedup" + (
+                " + consolidation" if consolidate and accepted_groupings else ""
+            )
+            try:
+                Versions(self.ir.metadata.app_resource_name).create_version(
+                    display_name=version_label, description=description
+                )
+                logger.info(
+                    "Created CXAS Version %s (%s).", version_label, description
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to create CXAS Version %s: %s",
+                    version_label,
+                    exc,
+                )
+
+        # --- Optional bundle persist ----------------------------------------
+        if persist_bundle_path and bundle is not None:
+            self.persist_bundle(
+                bundle, persist_bundle_path, phase="stage1", status="ok"
+            )
+
+        return accepted_groupings
+
+    async def _run_stage1_consolidation(
+        self,
+        *,
+        bundle: "IRBundle",
+        gemini: GeminiGenerate,
+        grouping_callback: (
+            Callable[[MigrationIR, dict], Awaitable[dict | None]] | None
+        ),
+        grouping_json_path: str | None,
+        on_integrity_fail: str,
+        console: Console,
+    ) -> dict | None:
+        """The Gemini consolidation block of Stage 1. Returns the accepted
+        groupings, or ``None`` if the user aborted."""
+        # 1. Build dep summary + detect root.
+        analyzer = DependencyAnalyzer(self.source_agent_data)
+        dep_summary = {
+            "name_map": analyzer.name_map,
+            "type_map": analyzer.type_map,
+        }
+        root_key = structural_consolidator.detect_root_key(
+            self.ir, self.source_agent_data
+        )
+
+        # 2. Load or propose groupings.
+        consolidator = StructuralConsolidator(
+            self.ir, gemini, source_data=self.source_agent_data
+        )
+        if grouping_json_path:
+            groupings = structural_consolidator.load_grouping(
+                grouping_json_path
+            )
+            console.print(
+                f"[cyan]Loaded groupings from {grouping_json_path}[/]"
+            )
+        else:
+            console.print("[cyan]Asking Gemini to propose agent groupings…[/]")
+            groupings = await consolidator.propose_groupings(
+                root_key=root_key, dep_summary=dep_summary
+            )
+
+        # 3. Optional interactive review. The callback receives everything
+        # it needs to preview consolidation + re-propose, all via kwargs so
+        # it can pick out whichever args it actually uses.
+        if grouping_callback is not None:
+            reviewed = await grouping_callback(
+                ir=self.ir,
+                groupings=groupings,
+                consolidator=consolidator,
+                root_key=root_key,
+                dep_summary=dep_summary,
+            )
+            if reviewed is None:
+                logger.warning(
+                    "Grouping review aborted — Stage 1 dedup applied, "
+                    "consolidation skipped."
+                )
+                return None
+            groupings = reviewed
+
+        # 4. Validate.
+        structural_consolidator.validate_groupings(self.ir, groupings, root_key)
+
+        # 5. Snapshot pre-consolidation IR (for integrity check + rollback).
+        bundle.pre_consolidation_ir = self.ir.model_copy(deep=True)
+
+        # 6. Consolidate IR + persist grouping.
+        pre_consolidation_ir = bundle.pre_consolidation_ir
+        self.ir = consolidator.consolidate(groupings)
+        bundle.grouping = groupings
+        try:
+            grouping_path = f"{bundle.config.target_name}_grouping.json"
+            structural_consolidator.persist_grouping(groupings, grouping_path)
+            logger.info("Persisted grouping → %s", grouping_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to persist grouping JSON: %s", exc)
+
+        # 7. Synthesize per-group PIF instructions.
+        status = await consolidator.synthesize_instructions(
+            self.ir, groupings, per_group_timeout_s=600
+        )
+        ok_count = sum(1 for v in status.values() if v == "ok")
+        timeout_count = sum(1 for v in status.values() if v == "timeout")
+        error_count = len(status) - ok_count - timeout_count
+        logger.info(
+            "Synthesis complete: %d ok, %d timeout, %d error",
+            ok_count,
+            timeout_count,
+            error_count,
+        )
+
+        # 7b. Heal trivial tool-ref drift before integrity check.
+        # The 2B prompt now receives the full tool registry, but Gemini
+        # still occasionally over-applies the ``_wrapper`` / ``_tool``
+        # suffix pattern. This pass strips a suffix when the base ID
+        # exists and the suffixed form doesn't — strictly safe
+        # rewrites. Genuine hallucinations (refs with no near match)
+        # are left for integrity_checks to surface.
+        rewrites, unhealed = structural_consolidator.heal_tool_refs(self.ir)
+        if rewrites:
+            logger.info(
+                "Healed %d tool-ref mismatches (e.g. %s)",
+                len(rewrites),
+                ", ".join(f"{k}→{v}" for k, v in list(rewrites.items())[:3]),
+            )
+
+        # 8. Pre-deploy integrity check.
+        blocking, warnings = integrity_checks.check_consolidation_integrity(
+            self.ir, pre_consolidation_ir
+        )
+        if warnings:
+            for w in warnings:
+                logger.warning("integrity warning: %s", w)
+        if blocking:
+            for b in blocking:
+                logger.error("integrity blocking: %s", b)
+            if on_integrity_fail == "abort":
+                raise RuntimeError(
+                    f"Integrity check found {len(blocking)} blocking "
+                    f"error(s). Set on_integrity_fail='warn' or 'ignore' "
+                    f"to proceed anyway. First: {blocking[0]}"
+                )
+            elif on_integrity_fail == "warn":
+                logger.warning(
+                    "%d blocking integrity errors — continuing under "
+                    "on_integrity_fail='warn'.",
+                    len(blocking),
+                )
+            # "ignore" → silent continuation
+
+        # 9. Deploy consolidated agents.
+        console.print("\n[cyan]Pushing consolidated agents to CXAS…[/]")
+        await self._deploy_base_resources(is_update_pass=True)
+        await self._deploy_pending_agents(is_update_pass=True)
+
+        # 10. Topology link + set root + orphan cleanup.
+        try:
+            self.topology_linker.link_and_finalize_topology(
+                self.ir, self.source_agent_data
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Topology linking failed: %s", exc)
+
+        ok, msg = topology_wirer.set_app_root_agent(bundle)
+        if ok:
+            logger.info(msg)
+        elif msg:
+            logger.warning(msg)
+
+        keep_resources = {
+            a.resource_name for a in self.ir.agents.values() if a.resource_name
+        }
+        if self.ir.metadata.app_resource_name and keep_resources:
+            deleted, remaining = topology_wirer.delete_orphan_agents(
+                self.ir.metadata.app_resource_name,
+                keep_resources=keep_resources,
+            )
+            if deleted or remaining:
+                logger.info(
+                    "Orphan cleanup: %d deleted, %d remaining.",
+                    deleted,
+                    remaining,
+                )
+
+        return groupings
+
+    async def run_stage2(
+        self,
+        *,
+        version_label: str | None = "0.0.2",
+        generate_unit_tests: bool = False,
+        unit_tests_path: str | None = None,
+        run_lint: bool = False,
+        write_report_to: str | None = None,
+        bundle: "IRBundle | None" = None,
+        persist_bundle_path: str | None = None,
+        console: Console | None = None,
+    ) -> None:
+        """Run Stage 2: instruction state machines + tool mocks.
+
+        Optionally regenerates deterministic unit tests, runs
+        ``cxas pull`` + ``cxas lint``, and writes an
+        :class:`OptimizationReporter` audit markdown.
+        """
+        from cxas_scrapi.migration import (  # noqa: PLC0415
+            post_deploy_lint,
+            stage_runner,
+        )
+
+        console = console or Console()
+
+        # --- Optimize Stage 2 + redeploy ------------------------------------
+        optimizer = await stage_runner.run_stage_with_redeploy(
+            self, stage=2, console=console
+        )
+        stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage2")
+
+        # --- CXAS Version checkpoint ----------------------------------------
+        if version_label and self.ir.metadata.app_resource_name:
+            try:
+                Versions(self.ir.metadata.app_resource_name).create_version(
+                    display_name=version_label,
+                    description=(
+                        "Stage 2: instruction state machines + tool mocks"
+                    ),
+                )
+                logger.info("Created CXAS Version %s.", version_label)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to create CXAS Version %s: %s",
+                    version_label,
+                    exc,
+                )
+
+        # --- Optional unit-test regeneration --------------------------------
+        test_counts: dict[str, int] = {}
+        if generate_unit_tests:
+            try:
+                gen = DeterministicEvalGenerator(self.ir)
+                by_agent: dict[str, list] = {}
+                for agent_name in self.ir.agents:
+                    cases = gen.generate_tests_for_agent(agent_name)
+                    if cases:
+                        by_agent[agent_name] = [
+                            tc.model_dump(mode="json") for tc in cases
+                        ]
+                test_counts = {n: len(v) for n, v in by_agent.items()}
+                if unit_tests_path:
+                    with open(unit_tests_path, "w") as f:
+                        json.dump(by_agent, f, indent=2, default=str)
+                    logger.info(
+                        "Regenerated %d tests for %d agents → %s",
+                        sum(test_counts.values()),
+                        len(test_counts),
+                        unit_tests_path,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Unit test regeneration failed: %s", exc)
+
+        # --- Optional post-deploy lint --------------------------------------
+        lint_passed: bool | None = None
+        lint_output = ""
+        if run_lint:
+            try:
+                (
+                    lint_passed,
+                    lint_output,
+                ) = await post_deploy_lint.run_post_deploy_lint(self, console)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Lint did not run: %s", exc)
+
+        # --- Optional OptimizationReporter audit markdown -------------------
+        if write_report_to:
+            try:
+                stage1_logs = self.ir.optimization_logs.get("stages", {}).get(
+                    "stage1"
+                )
+                stage2_logs = self.ir.optimization_logs.get("stages", {}).get(
+                    "stage2"
+                )
+                reporter = OptimizationReporter()
+                target_name = (
+                    bundle.config.target_name if bundle else "(unknown)"
+                )
+                reporter.set_app_info(
+                    "(see bundle)",
+                    target_name,
+                    self.ir.metadata.app_resource_name or "",
+                    bundle.app_url if bundle else "",
+                )
+                if bundle and bundle.grouping:
+                    before_count = len(
+                        bundle.source_agent_data.playbooks
+                    ) + len(bundle.source_agent_data.flows)
+                    reporter.set_grouping(
+                        bundle.grouping,
+                        before_count=before_count,
+                        after_count=len(self.ir.agents),
+                        path=f"{target_name}_grouping.json",
+                    )
+                reporter.set_optimizer_logs(stage1_logs, stage2_logs)
+                if bundle and bundle.version_checkpoints:
+                    reporter.set_version_checkpoints(bundle.version_checkpoints)
+                if test_counts:
+                    reporter.set_unit_test_summary(
+                        test_counts, unit_tests_path or ""
+                    )
+                if lint_passed is not None:
+                    reporter.set_lint_result(lint_passed, lint_output)
+                reporter.export(write_report_to)
+                logger.info("Optimization report → %s", write_report_to)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Report generation failed: %s", exc)
+
+        # --- Optional bundle persist ----------------------------------------
+        if persist_bundle_path and bundle is not None:
+            self.persist_bundle(
+                bundle, persist_bundle_path, phase="stage2", status="ok"
+            )
+
+    async def run_stage3(
+        self,
+        *,
+        bundle: "IRBundle",
+        mode: str = "hub",
+        set_root: bool = True,
+        dry_run: bool = False,
+        persist_bundle_path: str | None = None,
+    ) -> tuple[int, int, int]:
+        """Stage 3: parent-child topology wiring for consolidated agents.
+
+        Requires a consolidated bundle (``bundle.grouping`` must be set).
+        Returns ``(updated, skipped, failed)`` counts from
+        :func:`topology_wirer.apply_topology`.
+        """
+        if not bundle.grouping:
+            raise RuntimeError(
+                "Stage 3 requires consolidated bundle.grouping; run "
+                "stage1 with consolidate=True first."
+            )
+
+        children = topology_wirer.compute_group_children(bundle, mode=mode)
+        updated, skipped, failed = topology_wirer.apply_topology(
+            bundle, children, dry_run=dry_run
+        )
+        logger.info(
+            "Stage 3 wiring: updated=%d skipped=%d failed=%d",
+            updated,
+            skipped,
+            failed,
+        )
+
+        if set_root and not dry_run:
+            ok, msg = topology_wirer.set_app_root_agent(bundle)
+            if ok:
+                logger.info(msg)
+            elif msg:
+                logger.warning(msg)
+
+        if persist_bundle_path and not dry_run:
+            self.persist_bundle(
+                bundle,
+                persist_bundle_path,
+                phase="stage3",
+                status="ok" if failed == 0 else "partial",
+                notes=(f"updated={updated} skipped={skipped} failed={failed}"),
+            )
+
+        return updated, skipped, failed
+
+    def persist_bundle(
+        self,
+        bundle: "IRBundle",
+        path: str,
+        *,
+        phase: str | None = None,
+        status: str = "ok",
+        notes: str = "",
+    ) -> str:
+        """Snapshot ``self.ir`` into the bundle and write it to ``path``.
+
+        Optionally appends a stage_history entry when ``phase`` is set.
+        Synchronous — pure local I/O. Returns ``path``.
+        """
+        bundle.ir = self.ir
+        if phase:
+            ir_bundle.append_stage(
+                bundle,
+                phase,
+                status,
+                started_at=datetime.now(),
+                notes=notes,
+            )
+        ir_bundle.save(bundle, path)
+        return path
+
+    def _inject_system_variables(self, dynamic_params: list = None):
+        """Injects global system variables required by migration tooling and
+        callbacks.
+        """
+        system_vars = [
+            {
+                "name": "mock_mode",
+                "description": (
+                    "Global toggle. If true, Python tool wrappers will "
+                    "return mock data instead of executing "
+                    "real backend API calls."
+                ),
+                "schema": {"type": "BOOLEAN", "default": False},
+            },
+            {
+                "name": "first_turn",
+                "description": (
+                    "Tracks whether this is first turn of conversation. "
+                    "Used by callbacks for deterministic greetings."
+                ),
+                "schema": {"type": "BOOLEAN", "default": True},
+            },
+            {
+                "name": "no_input_retry_count",
+                "description": (
+                    "Tracks the number of consecutive times the user has "
+                    "provided no input (silence). Used by callbacks."
+                ),
+                "schema": {"type": "INTEGER", "default": 0},
+            },
+        ]
+
+        if dynamic_params:
+            for param in dynamic_params:
+                system_vars.append(
+                    {
+                        "name": param,
+                        "description": f"Dynamic routing parameter: {param}",
+                        "schema": {"type": "STRING"},
+                    }
+                )
+
+        for sys_var in system_vars:
+            name = sys_var["name"]
+            if name not in self.ir.parameters:
+                logger.info(f"  -> Injecting global '{name}' variable.")
+                self.ir.parameters[name] = sys_var
 
     async def run_migration(
         self,
@@ -210,22 +828,21 @@ class MigrationService:
             )
         )
         for param in final_declarations:
+            if len(self.ir.parameters) >= 90:
+                logger.warning(
+                    f"    - Variable limit reached! Stashing parameter "
+                    f"'{param['name']}' for later LLM optimization pass."
+                )
+                unregistered = self.ir.optimization_logs.setdefault(
+                    "unregistered_parameters", []
+                )
+                if param["name"] not in unregistered:
+                    unregistered.append(param["name"])
+                continue
+
             self.ir.parameters[param["name"]] = param
 
-        if "mock_mode" not in self.ir.parameters:
-            logger.info(
-                "  -> Injecting global 'mock_mode' boolean variable for tool "
-                "testing."
-            )
-            self.ir.parameters["mock_mode"] = {
-                "name": "mock_mode",
-                "description": (
-                    "Global toggle. If true, Python tool wrappers will "
-                    "return mock data instead of executing "
-                    "real backend API calls."
-                ),
-                "schema": {"type": "BOOLEAN", "default": {"bool_value": False}},
-            }
+        self._inject_system_variables()
 
         # --- 4. Populate Standard Tools & Webhooks into IR ---
         logger.info("Processing Standard Tools and Webhooks...")
@@ -340,6 +957,8 @@ class MigrationService:
                     extracted_tools,
                     action_to_tool_map,
                     referenced_toolsets,
+                    discovered_parameters,
+                    routing_parameters,
                 ) = self.code_block_migrator.extract_functions_to_ir(
                     code,
                     existing_tool_ids,
@@ -348,7 +967,42 @@ class MigrationService:
                     self.ir.tools,
                     tool_display_name_map,
                     target_app_resource_name,
+                    set(self.ir.parameters.keys()),
                 )
+
+                # Register newly discovered parameters subject to 95-limit
+                for param_name in discovered_parameters:
+                    if param_name not in self.ir.parameters:
+                        if len(self.ir.parameters) >= 95:
+                            logger.warning(
+                                f"    - Skipping registration for discovered "
+                                f"parameter '{param_name}' due to CXAS "
+                                f"variable limit. Saving for later pass."
+                            )
+                            unregistered = self.ir.optimization_logs.setdefault(
+                                "unregistered_parameters", []
+                            )
+                            if param_name not in unregistered:
+                                unregistered.append(param_name)
+                            continue
+                        logger.info(
+                            f"    - Registering newly discovered parameter "
+                            f"from code block: {param_name}"
+                        )
+                        self.ir.parameters[param_name] = {
+                            "name": param_name,
+                            "description": (
+                                "Auto-discovered parameter from code block."
+                            ),
+                            "schema": {
+                                "type": "STRING"
+                            },  # Default to STRING for unknown types
+                        }
+
+                # Explicitly inject routing parameters to bypass limits
+                if routing_parameters:
+                    self._inject_system_variables(list(routing_parameters))
+
                 for tool in extracted_tools:
                     self.ir.tools[tool["id"]] = IRTool(
                         id=tool["id"],
@@ -431,7 +1085,7 @@ class MigrationService:
                 status=MigrationStatus.COMPILED,
             )
 
-        # --- 7. FAST DEPLOY (Phase 1) ---
+        # --- 6. FAST DEPLOY (Phase 1) ---
         logger.info("FAST DEPLOY: Pushing Base Resources to CXAS...")
         await self._deploy_base_resources()
         await self._deploy_pending_agents()
@@ -456,26 +1110,67 @@ class MigrationService:
             )
 
             tasks = [
-                self._process_single_flow(flow, target_app_resource_name)
+                self._process_single_flow(
+                    flow, target_app_resource_name, parameter_name_map
+                )
                 for flow in flows
             ]
             await asyncio.gather(*tasks)
 
-        # --- 7. Finalization & Topology Linking (Phase 4) ---
-        logger.info("FINAL DEPLOYMENT & TOPOLOGY LINKING")
+        # --- 10. Finalization & Topology Linking (Phase 4) ---
+        logger.info("DEPLOYMENT & TOPOLOGY LINKING")
         self.topology_linker.link_and_finalize_topology(
             self.ir, self.source_agent_data
         )
 
-        logger.info("MIGRATION COMPLETE!")
+        logger.info("MIGRATION STAGE COMPLETE, STARTING OPTIMIZATION")
         app_url = f"https://ces.cloud.google.com/projects/{self.project_id}/locations/{self.location}/apps/{self.ir.metadata.app_id}"
         logger.info(f"ACCESS YOUR CXAS AGENT HERE:\n{app_url}")
+
+        # --- 11. OPTIMIZATION MODULE (Track 3) ---
+        if config.optimize_for_cxas:
+            # Pre-optimization snapshot — kept inline because it represents
+            # "state before any stage", not a stage output. The numbered
+            # stage Versions are created inside run_stage1 / run_stage2.
+            logger.info("\n--- Creating Pre-Optimization Backup Version ---")
+            try:
+                Versions(target_app_resource_name).create_version(
+                    display_name="0.0.1",
+                    description="Initial agent version",
+                )
+                logger.info(
+                    "Successfully created pre-optimization version backup "
+                    "in CXAS."
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to create pre-optimization version backup: {e}"
+                )
+
+            logger.info("\n--- Executing Hybrid Optimization Module ---")
+            # Stage 1: variable dedup only (no Gemini consolidation —
+            # consolidate=False default preserves the historical behavior
+            # of this branch). Version label "0.0.2" preserved for
+            # back-compat with the existing 0.0.1 / 0.0.2 / 0.0.3 scheme.
+            await self.run_stage1(version_label="0.0.2")
+            # Stage 2: instruction state machines + tool mocks.
+            # Version label "0.0.3" preserved for back-compat.
+            await self.run_stage2(version_label="0.0.3")
+
+        logger.info("\n" + "=" * 50)
+        logger.info("MIGRATION COMPLETE!")
+        app_url = (
+            f"https://ces.cloud.google.com/projects/{self.project_id}"
+            f"/locations/{self.location}/apps/{self.ir.metadata.app_id}"
+        )
+        logger.info(f"ACCESS YOUR CXAS AGENT HERE:\n{app_url}")
+        logger.info("=" * 50 + "\n")
 
         self.reporter.export_and_download(
             f"{config.target_name}_migration_report.md"
         )
 
-    async def _deploy_base_resources(self):
+    async def _deploy_base_resources(self, is_update_pass: bool = False):
         """Deploys App, Variables, and Tools from the IR."""
         app_id_uuid = self.ir.metadata.app_id
         app_name = self.ir.metadata.app_name
@@ -484,8 +1179,11 @@ class MigrationService:
         # 1. Create App (If not already created)
         if not self.deployment_state.get("app_created"):
             logger.info(f"\nCreating CXAS App: '{app_name}'...")
+            default_model = self.ir.metadata.default_model or "gemini-2.5-flash"
             ps_app = self.ps_apps.create_app(
-                app_id=app_id_uuid, display_name=app_name
+                app_id=app_id_uuid,
+                display_name=app_name,
+                model_settings=types.ModelSettings(model=default_model),
             )
             if not ps_app:
                 logger.error("❌ Failed to create App. Aborting deployment.")
@@ -499,15 +1197,106 @@ class MigrationService:
                 self.ps_tools = Tools(app_name=full_app_name)
                 self.code_block_migrator.ps_tools = self.ps_tools
 
-        # 2. Deploy Variables
-        if not self.deployment_state.get("vars_deployed"):
+        # 2. Deploy Consolidated App Configurations (Timeout, Variables)
+        app_updates = {}
+
+        # A. Speech Silence / Inactivity Timeout (WAI for CXAS/Polysynth)
+        if (
+            not self.deployment_state.get("app_timeout_configured")
+            or is_update_pass
+        ):
+            no_speech_timeout = "7s"
+            if (
+                hasattr(self.source_agent_data, "no_speech_timeout")
+                and self.source_agent_data.no_speech_timeout
+            ):
+                no_speech_timeout = self.source_agent_data.no_speech_timeout
+
+            seconds = 7
+            try:
+                seconds = int(no_speech_timeout.replace("s", ""))
+            except Exception:
+                pass
+
+            inactivity_duration = google.protobuf.duration_pb2.Duration(
+                seconds=seconds
+            )
+            app_updates["audio_processing_config"] = (
+                types.AudioProcessingConfig(
+                    inactivity_timeout=inactivity_duration
+                )
+            )
+
+        # B. Global Variables
+        if not self.deployment_state.get("vars_deployed") or is_update_pass:
             vars_list = list(self.ir.parameters.values())
             if vars_list:
-                logger.info(f"Deploying {len(vars_list)} Global Variables...")
-                self.ps_apps.update_app(
-                    full_app_name, variable_declarations=vars_list
+                app_updates["variable_declarations"] = vars_list
+
+        # C. Global App Model Settings (WAI for CXAS model compatibility)
+        if (
+            not self.deployment_state.get("app_model_configured")
+            or is_update_pass
+        ):
+            default_model = self.ir.metadata.default_model or "gemini-2.5-flash"
+            app_updates["model_settings"] = types.ModelSettings(
+                model=default_model
+            )
+
+        # D. Execute Unified App Update Call
+        if app_updates:
+            logger.info(
+                "\nApplying Consolidated App Configurations (Silence "
+                "Timeout, Global Variables, Model Settings)..."
+            )
+            try:
+                self.ps_apps.update_app(full_app_name, **app_updates)
+                logger.info(
+                    "   -> App Configurations deployed successfully in a "
+                    "single transaction!"
                 )
-            self.deployment_state["vars_deployed"] = True
+                if "audio_processing_config" in app_updates:
+                    self.deployment_state["app_timeout_configured"] = True
+                if "variable_declarations" in app_updates:
+                    self.deployment_state["vars_deployed"] = True
+                if "model_settings" in app_updates:
+                    self.deployment_state["app_model_configured"] = True
+            except Exception as e:
+                logger.error(
+                    f"❌ Failed to deploy consolidated App configurations: {e}"
+                )
+                # Graceful single-field fallback to prevent complete blocking
+                if "audio_processing_config" in app_updates:
+                    try:
+                        self.ps_apps.update_app(
+                            full_app_name,
+                            audio_processing_config=app_updates[
+                                "audio_processing_config"
+                            ],
+                        )
+                        self.deployment_state["app_timeout_configured"] = True
+                    except Exception:
+                        pass
+                if "variable_declarations" in app_updates:
+                    try:
+                        self.ps_apps.update_app(
+                            full_app_name,
+                            variable_declarations=app_updates[
+                                "variable_declarations"
+                            ],
+                        )
+                        self.deployment_state["vars_deployed"] = True
+                    except Exception:
+                        pass
+                if "model_settings" in app_updates:
+                    try:
+                        self.ps_apps.update_app(
+                            full_app_name,
+                            model_settings=app_updates["model_settings"],
+                        )
+                        self.deployment_state["app_model_configured"] = True
+                    except Exception:
+                        pass
 
         # 3. Deploy Tools
         pending_tools = [
@@ -558,22 +1347,67 @@ class MigrationService:
                             tool_type="data_store_tool",
                             description=payload.get("description", ""),
                         )
-
-                    if new_res and hasattr(new_res, "name"):
-                        tool.status = MigrationStatus.DEPLOYED
-                        self.reporter.log_tool(
-                            res_type, display_name, new_res.name
+                except Exception as e:
+                    if is_update_pass and (
+                        "409" in str(e) or "Already exists" in str(e)
+                    ):
+                        logger.info(
+                            f"    -> Tool '{display_name}' already exists. "
+                            "Updating instead..."
                         )
+                        try:
+                            # Update expects full resource name, construct it
+                            full_tool_name = (
+                                f"{full_app_name}/toolsets/{tool_id}"
+                                if res_type == "TOOLSET"
+                                else f"{full_app_name}/tools/{tool_id}"
+                            )
+                            if res_type == "TOOLSET":
+                                new_res = self.ps_tools.update_tool(
+                                    tool_name=full_tool_name,
+                                    display_name=display_name,
+                                    open_api_toolset=payload[
+                                        "open_api_toolset"
+                                    ],
+                                    description=payload.get("description", ""),
+                                )
+                            elif res_type == "PYTHON":
+                                new_res = self.ps_tools.update_tool(
+                                    tool_name=full_tool_name,
+                                    display_name=display_name,
+                                    python_function=payload.get(
+                                        "pythonFunction", {}
+                                    ),
+                                )
+                            else:
+                                new_res = self.ps_tools.update_tool(
+                                    tool_name=full_tool_name,
+                                    display_name=display_name,
+                                    data_store_tool=payload.get(
+                                        "data_store_tool", {}
+                                    ),
+                                )
+                        except Exception as update_e:
+                            logger.error(
+                                f"    -> Exception updating {res_type} "
+                                f"'{display_name}': {update_e}"
+                            )
+                            tool.status = MigrationStatus.FAILED
+                            continue
                     else:
                         logger.error(
-                            f"    -> Failed to create {res_type} "
-                            f"'{display_name}'."
+                            f"    -> Exception creating {res_type} "
+                            f"'{display_name}': {e}"
                         )
                         tool.status = MigrationStatus.FAILED
-                except Exception as e:
+                        continue
+
+                if new_res and hasattr(new_res, "name"):
+                    tool.status = MigrationStatus.DEPLOYED
+                    self.reporter.log_tool(res_type, display_name, new_res.name)
+                else:
                     logger.error(
-                        f"    -> Exception creating {res_type} "
-                        f"'{display_name}': {e}"
+                        f"    -> Failed to deploy {res_type} '{display_name}'."
                     )
                     tool.status = MigrationStatus.FAILED
 
@@ -596,7 +1430,7 @@ class MigrationService:
         fallback_name = re.sub(r"[_]+", " ", raw_name).strip()
         return f"{{@AGENT: {fallback_name}}}"
 
-    async def _deploy_pending_agents(self):
+    async def _deploy_pending_agents(self, is_update_pass: bool = False):
         """Deploys any agents in the IR that have been compiled but not yet
         deployed.
         """
@@ -629,11 +1463,238 @@ class MigrationService:
 
                 # Format Callbacks if they exist
                 callback_payload = {}
-                if agent.callbacks:
-                    for cb_type, cb_code in agent.callbacks.items():
-                        if cb_code:
-                            key = cb_type + "s"
-                            callback_payload[key] = [{"python_code": cb_code}]
+                cb_dict = agent.callbacks or {}
+
+                # Auto-inject universal system directives handler into
+                # before_model_callback
+                used_directives = set()
+                requires_end_session = False
+                tool_names_with_directives = set()
+                for t_ref in agent.tools:
+                    tool_id = t_ref.split("/")[-1]
+                    tool = self.ir.tools.get(tool_id)
+                    if not tool:
+                        for t in self.ir.tools.values():
+                            if t.name == t_ref:
+                                tool = t
+                                break
+
+                    if tool and tool.type == "PYTHON":
+                        code = tool.payload.get("pythonFunction", {}).get(
+                            "python_code", ""
+                        )
+                        tool_display_name = tool.payload.get(
+                            "displayName", tool_id
+                        )
+                        for directive in [
+                            "respond",
+                            "add_override",
+                            "done",
+                            "fail",
+                            "cancel",
+                            "escalate",
+                            "agentTransfer",
+                        ]:
+                            if re.search(
+                                rf"['\"]action['\"]\s*:\s*['\"]{directive}['\"]",
+                                code,
+                            ):
+                                used_directives.add(directive)
+                                tool_names_with_directives.add(
+                                    tool_display_name
+                                )
+
+                # Callback-driven system 'end_session' check
+                if used_directives.intersection(
+                    {
+                        "done",
+                        "fail",
+                        "cancel",
+                        "escalate",
+                        "agentTransfer",
+                        "add_override",
+                    }
+                ):
+                    requires_end_session = True
+
+                system_directive_snippet = ""
+                if used_directives and tool_names_with_directives:
+                    directive_blocks = []
+                    if "respond" in used_directives:
+                        directive_blocks.append(
+                            'if action == "respond":\n'
+                            '    text = directive.get("text", "")\n'
+                            "    parts_to_return.append(\n"
+                            "        Part.from_text(text=text)\n"
+                            "    )"
+                        )
+                    if "add_override" in used_directives:
+                        directive_blocks.append(
+                            'elif action == "add_override":\n'
+                            '    t_raw = str(directive.get("target", ""))\n'
+                            '    target = t_raw.split(".")[-1]\n'
+                            '    params = directive.get("parameters", {})\n'
+                            "    if isinstance(params, dict):\n"
+                            "        for k, v in params.items():\n"
+                            "            callback_context.variables[k] = v\n"
+                            '            print(f"Injected routing: {k}={v}")\n'
+                            '    print(f"Executing add_override: {target}")\n'
+                            '    if target in ["agentTransfer", "Transfer"]:\n'
+                            "        parts_to_return.append(\n"
+                            "            Part.from_end_session(\n"
+                            '                reason="escalate_to_human",\n'
+                            "                escalated=True,\n"
+                            "            )\n"
+                            "        )\n"
+                            "    else:\n"
+                            "        parts_to_return.append(\n"
+                            "            Part.from_agent_transfer(\n"
+                            "                agent=target\n"
+                            "            )\n"
+                            "        )"
+                        )
+                    if "done" in used_directives:
+                        directive_blocks.append(
+                            'elif action == "done":\n'
+                            "    parts_to_return.append(\n"
+                            "        Part.from_end_session(\n"
+                            '            reason="success"\n'
+                            "        )\n"
+                            "    )"
+                        )
+                    if "fail" in used_directives:
+                        directive_blocks.append(
+                            'elif action == "fail":\n'
+                            "    parts_to_return.append(\n"
+                            "        Part.from_end_session(\n"
+                            '            reason="failure"\n'
+                            "        )\n"
+                            "    )"
+                        )
+                    if "cancel" in used_directives:
+                        directive_blocks.append(
+                            'elif action == "cancel":\n'
+                            "    parts_to_return.append(\n"
+                            "        Part.from_end_session(\n"
+                            '            reason="cancelled"\n'
+                            "        )\n"
+                            "    )"
+                        )
+                    if "escalate" in used_directives:
+                        directive_blocks.append(
+                            'elif action == "escalate":\n'
+                            "    parts_to_return.append(\n"
+                            "        Part.from_end_session(\n"
+                            '            reason="escalated",\n'
+                            "            escalated=True,\n"
+                            "        )\n"
+                            "    )"
+                        )
+                    if "agentTransfer" in used_directives:
+                        directive_blocks.append(
+                            'elif action == "agentTransfer":\n'
+                            '    target = directive.get("target", "")\n'
+                            "    if target:\n"
+                            "        parts_to_return.append(\n"
+                            "            Part.from_agent_transfer(\n"
+                            "                agent=target\n"
+                            "            )\n"
+                            "        )\n"
+                            "    else:\n"
+                            "        parts_to_return.append(\n"
+                            "            Part.from_end_session(\n"
+                            '                reason="escalated",\n'
+                            "                escalated=True,\n"
+                            "            )\n"
+                            "        )"
+                        )
+
+                    raw_blocks = "\n".join(directive_blocks)
+                    indented_lines = [
+                        ("                            " + line if line else "")
+                        for line in raw_blocks.split("\n")
+                    ]
+                    directive_blocks = indented_lines
+
+                    combined_blocks = "\n".join(directive_blocks)
+                    combined_blocks = combined_blocks.replace(
+                        "                            elif",
+                        "                            if",
+                        1,
+                    )
+
+                    # Safely inject the tool names into the any() check
+                    tool_names_formatted = ", ".join(
+                        [f'"{name}"' for name in tool_names_with_directives]
+                    )
+
+                    system_directive_snippet = f"""
+    # --- MIGRATION AUTO-GENERATED: SYSTEM DIRECTIVES ---
+    if llm_request.contents and llm_request.contents[-1].parts:
+        for part in llm_request.contents[-1].parts:
+            if any(
+                part.has_function_response(t)
+                for t in [{tool_names_formatted}]
+            ):
+                if part.function_response and hasattr(
+                    part.function_response, "response"
+                ):
+                    response_data = part.function_response.response
+
+                    directives = []
+                    if isinstance(response_data, dict):
+                        if "__cxas_system_directives__" in response_data:
+                            directives = response_data[
+                                "__cxas_system_directives__"
+                            ]
+                        elif (
+                            "result" in response_data
+                            and isinstance(response_data["result"], dict)
+                            and "__cxas_system_directives__"
+                            in response_data["result"]
+                        ):
+                            directives = response_data["result"][
+                                "__cxas_system_directives__"
+                            ]
+
+                    if directives:
+                        parts_to_return = []
+                        for directive in directives:
+                            action = directive.get("action")
+{combined_blocks}
+                        if parts_to_return:
+                            return LlmResponse.from_parts(parts=parts_to_return)
+"""
+
+                if system_directive_snippet:
+                    existing_bmc = cb_dict.get("before_model_callback", "")
+                    if "def before_model_callback" in existing_bmc:
+                        # Inject right after the function definition
+                        new_bmc = re.sub(
+                            r"(def before_model_callback[^\n]*:)",
+                            r"\1" + system_directive_snippet,
+                            existing_bmc,
+                            count=1,
+                        )
+                        cb_dict["before_model_callback"] = new_bmc
+                    else:
+                        # Create the function from scratch
+                        new_bmc = (
+                            "def before_model_callback(\n"
+                            "    callback_context: CallbackContext,\n"
+                            "    llm_request: LlmRequest,\n"
+                            ") -> Optional[LlmResponse]:\n"
+                            + system_directive_snippet
+                            + "\n    return None\n"
+                        )
+                        cb_dict["before_model_callback"] = (
+                            new_bmc + "\n" + existing_bmc
+                        )
+
+                for cb_type, cb_code in cb_dict.items():
+                    if cb_code:
+                        key = cb_type + "s"
+                        callback_payload[key] = [{"python_code": cb_code}]
 
                 # --- Clean Instruction Syntax & Agent Names ---
                 instruction = agent.instruction
@@ -658,20 +1719,43 @@ class MigrationService:
 
                 # --- Attach system 'end_session' tool ---
                 end_session_resource = f"{full_app_name}/tools/end_session"
-                if re.search(
+                if requires_end_session or re.search(
                     r"{@TOOL:\s*end_session\s*}", instruction, re.IGNORECASE
                 ):
                     if end_session_resource not in resolved_tools:
                         resolved_tools.append(end_session_resource)
                         logger.info(
-                            "    - Detected 'end_session' in instructions. "
-                            "Attached system tool automatically."
+                            "    - Automatically attached 'end_session' "
+                            "system tool driven by active "
+                            "callback/instruction requirements."
+                        )
+
+                # --- Attach system 'set_session_variables' tool ---
+                set_vars_resource = (
+                    f"{full_app_name}/tools/set_session_variables"
+                )
+                if re.search(
+                    r"{@TOOL:\s*set_session_variables\s*}",
+                    instruction,
+                    re.IGNORECASE,
+                ):
+                    if set_vars_resource not in resolved_tools:
+                        resolved_tools.append(set_vars_resource)
+                        logger.info(
+                            "    - Detected 'set_session_variables' in "
+                            "instructions. Attached system tool "
+                            "automatically."
                         )
 
                 for t_ref in agent.tools:
                     if t_ref in ("end_session", end_session_resource):
                         if end_session_resource not in resolved_tools:
                             resolved_tools.append(end_session_resource)
+                        continue
+
+                    if t_ref in ("set_session_variables", set_vars_resource):
+                        if set_vars_resource not in resolved_tools:
+                            resolved_tools.append(set_vars_resource)
                         continue
 
                     if t_ref.startswith("projects/"):
@@ -756,11 +1840,58 @@ class MigrationService:
                     elif hasattr(ms, "model"):
                         model_to_use = ms.model
 
-                new_ps_agent = self.ps_agents.create_agent(
-                    display_name=display_name,
-                    model=model_to_use,
-                    **ps_agent_payload,
-                )
+                try:
+                    new_ps_agent = self.ps_agents.create_agent(
+                        display_name=display_name,
+                        model=model_to_use,
+                        **ps_agent_payload,
+                    )
+                except Exception as e:
+                    if is_update_pass and (
+                        "409" in str(e) or "Already exists" in str(e)
+                    ):
+                        logger.info(
+                            f"    -> Agent '{display_name}' already exists. "
+                            "Updating instead..."
+                        )
+                        try:
+                            # In cxas_scrapi.core.agents.py, update_agent
+                            # takes agent_name (full resource name)
+                            # Let's find the resource name from existing app
+                            existing_agent_map = self.ps_agents.get_agents_map(
+                                reverse=True
+                            )
+                            if display_name in existing_agent_map:
+                                agent_resource_name = existing_agent_map[
+                                    display_name
+                                ]
+                                update_payload = ps_agent_payload.copy()
+                                update_payload["model_settings"] = {
+                                    "model": model_to_use
+                                }
+                                new_ps_agent = self.ps_agents.update_agent(
+                                    agent_name=agent_resource_name,
+                                    **update_payload,
+                                )
+                            else:
+                                logger.error(
+                                    f"    -> Agent '{display_name}' "
+                                    "returned 409 but wasn't found in "
+                                    "get_agents_map()."
+                                )
+                                continue
+                        except Exception as update_e:
+                            logger.error(
+                                f"    -> Exception updating Agent "
+                                f"'{display_name}': {update_e}"
+                            )
+                            continue
+                    else:
+                        logger.error(
+                            f"    -> Exception creating Agent "
+                            f"'{display_name}': {e}"
+                        )
+                        continue
 
                 if new_ps_agent and hasattr(new_ps_agent, "name"):
                     logger.info("    -> Success!")
@@ -861,7 +1992,10 @@ class MigrationService:
         return data_structure
 
     async def _process_single_flow(
-        self, flow_wrapper: Dict[str, Any], target_app_resource_name: str
+        self,
+        flow_wrapper: Dict[str, Any],
+        target_app_resource_name: str,
+        parameter_name_map: Dict[str, str],
     ):
         """Processes a single DFCX flow: resolves dependencies, visualizes,
         generates instructions and tools, and deploys them.
@@ -899,6 +2033,46 @@ class MigrationService:
             instructions_xml, tools_callbacks_data = await asyncio.gather(
                 task_2b, task_2c
             )
+
+            # --- DETERMINISTIC VARIABLE NAME SANITIZATION IN TOOLS & ---
+            # --- CALLBACKS ---
+            python_var_pattern = re.compile(
+                r"(get_variable\s*\(\s*|set_variable\s*\(\s*|"
+                r"(?:state|variables|payload|kwargs)"
+                r"(?:\.get\s*\(\s*|\.set\s*\(\s*|\s*\[\s*))"
+                r"([\'\"])([a-zA-Z0-9_-]+)([\'\"])"
+            )
+
+            def flow_python_var_replacer(match):
+                prefix = match.group(1)
+                quote = match.group(2)
+                var_name = match.group(3)
+                closing_quote = match.group(4)
+
+                sanitized_name = parameter_name_map.get(var_name)
+                if not sanitized_name:
+                    sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", var_name)
+
+                return f"{prefix}{quote}{sanitized_name}{closing_quote}"
+
+            # 1. Sanitize generated tools
+            for tool in tools_callbacks_data.get("tools", []):
+                tool_code = tool.get("code", "")
+                if tool_code:
+                    tool_code = python_var_pattern.sub(
+                        flow_python_var_replacer, tool_code
+                    )
+                    tool["code"] = tool_code
+
+            # 2. Sanitize generated callbacks
+            for cb_type, cb_code in list(
+                tools_callbacks_data.get("callbacks", {}).items()
+            ):
+                if cb_code:
+                    new_cb_code = python_var_pattern.sub(
+                        flow_python_var_replacer, cb_code
+                    )
+                    tools_callbacks_data["callbacks"][cb_type] = new_cb_code
 
             # Robustly extract the description
             agent_meta = blueprint_2a.get("agent_metadata", {})
@@ -984,6 +2158,37 @@ class MigrationService:
                     m, valid_display_names
                 ),
                 instructions_xml,
+            )
+
+            # 1.6 DFCX TO CXAS VARIABLE MAPPINGS ALIGNMENT
+            var_pattern = re.compile(
+                r"\{([a-zA-Z0-9_-]+)\}|"
+                r"`\$(?:(?:session|page)\.params\.)?([a-zA-Z0-9_-]+)`|"
+                r"\$\`(?:(?:session|page)\.params\.)?([a-zA-Z0-9_-]+)\`|"
+                r"\$\{(?:(?:session|page)\.params\.)?([a-zA-Z0-9_-]+)\}|"
+                r"\$(?:(?:session|page)\.params\.)?([a-zA-Z0-9_-]+)"
+            )
+
+            def flow_var_replacer(match):
+                original_match = match.group(0)
+                var_name = next(g for g in match.groups() if g is not None)
+
+                sanitized_name = parameter_name_map.get(var_name)
+                if not sanitized_name:
+                    sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", var_name)
+
+                new_ref = f"{{{sanitized_name}}}"
+                self.reporter.log_transformation(
+                    "Variable Syntax",
+                    original_match,
+                    new_ref,
+                    "Updated DFCX variable reference in Flow "
+                    "instructions to CXAS {} format",
+                )
+                return new_ref
+
+            instructions_xml = var_pattern.sub(
+                flow_var_replacer, instructions_xml
             )
             self.ir.agents[flow_name].instruction = instructions_xml
 

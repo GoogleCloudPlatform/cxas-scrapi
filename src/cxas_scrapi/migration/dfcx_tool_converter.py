@@ -50,8 +50,9 @@ class DFCXToolConverter:
         """Converts a DFCX tool structure to a CXAS resource payload."""
         display_name = cx_tool.get("displayName", "unnamed_tool")
         description = cx_tool.get("description", "")
+        sanitized_display_name = re.sub(r"[^a-zA-Z0-9_-]", "_", display_name)
         sanitized_id = DFCXToolConverter.sanitize_resource_id(
-            display_name, min_len=5, max_len=36
+            sanitized_display_name, min_len=5, max_len=36
         )
 
         # --- OPENAPI TOOLSET MIGRATION ---
@@ -236,7 +237,7 @@ class DFCXToolConverter:
                         )
 
             toolset_payload = {
-                "display_name": display_name,
+                "display_name": sanitized_display_name,
                 "description": description,
                 "open_api_toolset": {"open_api_schema": open_api_schema_text},
             }
@@ -254,7 +255,10 @@ class DFCXToolConverter:
             }
 
         # --- DATA STORE TOOL MIGRATION ---
-        tool_payload = {"name": sanitized_id, "displayName": display_name}
+        tool_payload = {
+            "name": sanitized_id,
+            "display_name": sanitized_display_name,
+        }
 
         if "dataStoreSpec" in cx_tool or "dataStoreTool" in cx_tool:
             data_store_spec = cx_tool.get("dataStoreSpec") or cx_tool.get(
@@ -324,8 +328,9 @@ class DFCXToolConverter:
         Toolset payload.
         """
         display_name = cx_webhook.get("displayName", "unnamed_webhook")
+        sanitized_display_name = re.sub(r"[^a-zA-Z0-9_-]", "_", display_name)
         sanitized_id = DFCXToolConverter.sanitize_resource_id(
-            f"webhook_{display_name}", min_len=5, max_len=36
+            sanitized_display_name, min_len=5, max_len=36
         )
 
         gws = cx_webhook.get("genericWebService", {})
@@ -396,7 +401,7 @@ paths:
 """
 
         toolset_payload = {
-            "display_name": display_name,
+            "display_name": sanitized_display_name,
             "description": f"Backend webhook for {display_name}",
             "open_api_toolset": {"open_api_schema": openapi_schema},
         }

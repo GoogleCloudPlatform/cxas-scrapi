@@ -215,3 +215,109 @@ class RootAgentMissingEndSession(Rule):
                 )
             ]
         return []
+
+
+@rule("config")
+class AppRootAgentValidation(Rule):
+    id = "A006"
+    name = "config-root-agent"
+    description = (
+        "App config must have a valid rootAgent pointing to an "
+        "existing agent directory"
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+
+        if file_path.name != "app.json":
+            return []
+
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            return []
+
+        results = []
+
+        # 1. Check case sensitivity / incorrect snake_case
+        if "root_agent" in data:
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        "Found 'root_agent' in app.json, but CXAS strictly "
+                        "requires camelCase 'rootAgent'"
+                    ),
+                    fix="Rename 'root_agent' to 'rootAgent'",
+                )
+            )
+            return results
+
+        # 2. Check if rootAgent is missing
+        root_agent_name = data.get("rootAgent")
+        if not root_agent_name:
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        "Missing required field 'rootAgent' in app.json. "
+                        "An app must have a rootAgent to handle incoming "
+                        "sessions"
+                    ),
+                    fix="Add 'rootAgent': '<agent_directory_name>' to app.json",
+                )
+            )
+            return results
+
+        # 3. Check if rootAgent is not a string
+        if not isinstance(root_agent_name, str):
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        "Field 'rootAgent' in app.json must be a string, "
+                        f"got {type(root_agent_name).__name__}"
+                    ),
+                )
+            )
+            return results
+
+        # 4. Check if rootAgent exists under agents/
+        agent_dir = file_path.parent / "agents" / root_agent_name
+        if not agent_dir.exists() or not agent_dir.is_dir():
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        f"rootAgent '{root_agent_name}' specified in app.json "
+                        "does not exist under the agents/ directory"
+                    ),
+                    fix=(
+                        f"Create the directory 'agents/{root_agent_name}' "
+                        "or fix the 'rootAgent' reference in app.json"
+                    ),
+                )
+            )
+            return results
+
+        # 5. Check if <rootAgent>.json exists
+        agent_json = agent_dir / f"{root_agent_name}.json"
+        if not agent_json.exists():
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        f"Root agent '{root_agent_name}' exists but is "
+                        f"missing required '{root_agent_name}.json' file"
+                    ),
+                    fix=(
+                        f"Create file 'agents/"
+                        f"{root_agent_name}/{root_agent_name}.json'"
+                    ),
+                )
+            )
+
+        return results

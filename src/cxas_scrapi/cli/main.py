@@ -15,6 +15,7 @@
 """CLI script for running CXAS SCRAPI evaluations."""
 
 import argparse
+import json
 import logging
 import os
 import subprocess
@@ -24,6 +25,8 @@ import uuid
 from typing import Dict, List
 
 import pandas as pd
+from google.api_core.exceptions import NotFound
+from google.protobuf.json_format import MessageToDict
 
 from cxas_scrapi import Sessions
 from cxas_scrapi.cli.app import (
@@ -39,8 +42,17 @@ from cxas_scrapi.cli.app import (
 )
 from cxas_scrapi.cli.create_local import handle_local_create
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
-from cxas_scrapi.cli.migration_cli import MigrationCLI
+from cxas_scrapi.cli.migration_cli import (
+    MigrationCLI,
+)
+from cxas_scrapi.cli.migration_cli import (
+    register as register_dfcx_cxas_subparsers,
+)
+from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.conversation_history import ConversationHistory
+from cxas_scrapi.core.deployments import Deployments
 from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
 from cxas_scrapi.core.github import init_github_action
 from cxas_scrapi.evals.callback_evals import CallbackEvals
@@ -49,7 +61,6 @@ from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
 from cxas_scrapi.utils.eval_utils import EvalUtils
 
 logger = logging.getLogger(__name__)
-
 
 
 def export_eval(args: argparse.Namespace) -> None:
@@ -444,25 +455,21 @@ def run_eval(args: argparse.Namespace) -> None:  # noqa: C901
 
                 print("\nFINAL RESULT: FAIL")
                 sys.exit(1)
-
     except Exception as e:
         print(f"Failed to run evaluation: {e}")
         sys.exit(1)
 
 
-
-
-
 def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     """Handles the 'evals report' command."""
-    import os  # noqa: PLC0415
-
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
         generate_combined_report_from_dir,
     )
 
-    output_path = args.gcs_path or args.output or os.path.join(
-        args.output_dir, "combined_report.html"
+    output_path = (
+        args.gcs_path
+        or args.output
+        or os.path.join(args.output_dir, "combined_report.html")
     )
 
     include_list = args.include.split(",") if args.include else []
@@ -485,6 +492,9 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         if args.simulation_dir == "evals/simulations/":
             args.simulation_dir = os.path.join(args.input_dir, "simulations/")
 
+    sim_parallel = getattr(args, "sim_parallel", 5)
+    golden_timeout = getattr(args, "golden_timeout", 600)
+
     generate_combined_report_from_dir(
         output_dir=args.output_dir,
         golden_run=args.golden_run,
@@ -501,6 +511,8 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         runs=args.runs,
         filter_files=filter_files_list,
         filter_tags=filter_tags_list,
+        parallel=sim_parallel,
+        golden_timeout=golden_timeout,
     )
     print(f"Combined report generated at {output_path}")
 
@@ -808,6 +820,167 @@ def run_session(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def conversations_list(args: argparse.Namespace) -> None:
+    """Lists conversations for an app."""
+    print(f"Listing conversations for App: {args.app_name}")
+
+    # Extract and validate app_name
+    app_name = Common._get_app_name(args.app_name)
+    if not app_name:
+        print(
+            "Error: Invalid App Name format. Please use the full resource "
+            "name in the format 'projects/.../locations/.../apps/...'"
+        )
+        sys.exit(1)
+
+    project_id = Common._get_project_id(args.app_name)
+    location = Common._get_location(args.app_name)
+
+    apps_client = Apps(project_id=project_id, location=location)
+    ch_client = ConversationHistory(
+        app_name=args.app_name, creds=apps_client.creds
+    )
+    conversations = ch_client.list_conversations()
+
+    conversations_dict = []
+    for c in conversations:
+        try:
+            c_dict = MessageToDict(c._pb)
+        except AttributeError:
+            c_dict = MessageToDict(c)
+        conversations_dict.append(c_dict)
+
+    print(json.dumps(conversations_dict, indent=2))
+
+
+def conversations_get(args: argparse.Namespace) -> None:
+    """Gets details of a specific conversation."""
+    print(f"Getting conversation: {args.conversation_resource_name}")
+
+    # Extract and validate app_name
+    app_name = Common._get_app_name(args.conversation_resource_name)
+    if not app_name:
+        print(
+            "Error: Invalid Conversation Resource Name format. Please use the "
+            "full resource name in the format "
+            "'projects/.../locations/.../apps/.../conversations/...'"
+        )
+        sys.exit(1)
+
+    project_id = Common._get_project_id(args.conversation_resource_name)
+    location = Common._get_location(args.conversation_resource_name)
+
+    apps_client = Apps(project_id=project_id, location=location)
+    ch_client = ConversationHistory(app_name=app_name, creds=apps_client.creds)
+    conv = ch_client.get_conversation(
+        conversation_id=args.conversation_resource_name
+    )
+
+    try:
+        conv_dict = MessageToDict(conv._pb)
+    except AttributeError:
+        conv_dict = MessageToDict(conv)
+
+    print(json.dumps(conv_dict, indent=2))
+
+
+def deployments_list(args: argparse.Namespace) -> None:
+    """Lists deployments for an app."""
+    print(f"Listing deployments for App: {args.app_name}")
+
+    deployments_client = Deployments(app_name=args.app_name)
+    deployments = deployments_client.list_deployments()
+
+    try:
+        deployments_dict = []
+        for d in deployments:
+            try:
+                d_dict = MessageToDict(d._pb)
+            except AttributeError:
+                d_dict = MessageToDict(d)
+            deployments_dict.append(d_dict)
+        print(json.dumps(deployments_dict, indent=2))
+    except Exception:
+        # Fallback to string representation if serialization fails
+        print([str(d) for d in deployments])
+
+
+def deployments_create(args: argparse.Namespace) -> None:
+    """Creates a deployment."""
+    print(f"Creating deployment {args.deployment_id} for App: {args.app_name}")
+
+    deployments_client = Deployments(app_name=args.app_name)
+    deployment = deployments_client.create_deployment(
+        deployment_id=args.deployment_id,
+        display_name=args.deployment_id,
+        app_version=args.version_id,
+    )
+    print(f"Deployment created successfully: {deployment.name}")
+
+
+def deployments_promote(args: argparse.Namespace) -> None:
+    """Promotes app to live traffic."""
+    print(f"Promoting app {args.app_resource_name} to live traffic...")
+
+    # Step 1: Push and create version
+    push_args = argparse.Namespace(
+        app_dir=args.app_dir,
+        to=args.app_resource_name,
+        app_name=None,
+        display_name=None,
+        env_file=None,
+        project_id=None,
+        location=None,
+        create_version=True,
+        version_description=f"Promote {time.strftime('%Y%m%d%H%M%S')}",
+    )
+
+    try:
+        print("Calling app_push directly...")
+        app_name = app_push(push_args)
+        if not app_name:
+            print("Error: Push failed during promotion.")
+            sys.exit(1)
+
+        version_id = getattr(push_args, "created_version_name", None)
+        if not version_id:
+            print("Error: Could not get created version ID.")
+            sys.exit(1)
+
+        # Step 2: Update deployment
+        deployment_id = args.live_deployment_resource_name.split(
+            "/deployments/"
+        )[-1]
+
+        deployments_client = Deployments(app_name=args.app_resource_name)
+
+        try:
+            deployments_client.get_deployment(deployment_id=deployment_id)
+        except NotFound:
+            print(f"Error: Deployment '{deployment_id}' does not exist.")
+            print(
+                "`deployments promote` requires "
+                "promoting an existing deployment."
+            )
+            print(
+                "Please create the deployment first using `deployments create`."
+            )
+            sys.exit(1)
+
+        print(
+            f"Updating deployment {deployment_id} with version {version_id}..."
+        )
+        deployments_client.update_deployment(
+            deployment_id=deployment_id, app_version=version_id
+        )
+
+        print("Successfully promoted agent to live traffic.")
+
+    except Exception as e:
+        print(f"Error during promotion: {e}")
+        sys.exit(1)
+
+
 def get_parser() -> argparse.ArgumentParser:
     """Sets up the argument parser."""
     parser = argparse.ArgumentParser(
@@ -845,9 +1018,7 @@ def get_parser() -> argparse.ArgumentParser:
     )
 
     # Parser for 'migrate'
-    parser_migrate = subparsers.add_parser(
-        "migrate", help="Migration tools."
-    )
+    parser_migrate = subparsers.add_parser("migrate", help="Migration tools.")
     migrate_subparsers = parser_migrate.add_subparsers(
         title="Migration Commands", dest="migrate_command", required=True
     )
@@ -861,8 +1032,10 @@ def get_parser() -> argparse.ArgumentParser:
         help="Default name for the target agent.",
     )
     parser_migrate_dfcx.set_defaults(func=run_migration_dashboard)
-    # TODO: Add flags for non-interactive mode (e.g., --headless, --config)
-    # to bypass the interactive dashboard.
+
+    # Register the dfcx-cxas subcommand tree (run / stage1 / stage2 /
+    # stage3 / resume). Lives in its own module to keep main.py lean.
+    register_dfcx_cxas_subparsers(migrate_subparsers)
 
     # Parser for 'init-github-action'
     parser_init_gh = subparsers.add_parser(
@@ -1023,6 +1196,14 @@ def get_parser() -> argparse.ArgumentParser:
         help="Number of runs per golden and simulation test case.",
     )
     parser_report.add_argument(
+        "--sim-parallel",
+        type=int,
+        default=5,
+        help=(
+            "Number of parallel worker sessions for simulations. Defaults to 5."
+        ),
+    )
+    parser_report.add_argument(
         "--modality",
         choices=["text", "audio"],
         default="text",
@@ -1030,10 +1211,10 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_report.add_argument(
         "--include",
-        default="sims,goldens,scenarios",
+        default="sims,goldens,tools,callbacks",
         help=(
             "Categories to include (comma-separated, "
-            "default: sims,goldens,scenarios)."
+            "default: sims,goldens,tools,callbacks)."
         ),
     )
     parser_report.add_argument(
@@ -1043,6 +1224,12 @@ def get_parser() -> argparse.ArgumentParser:
     parser_report.add_argument(
         "--filter-tags",
         help="Optional: Comma-separated list of tags to include.",
+    )
+    parser_report.add_argument(
+        "--golden-timeout",
+        type=int,
+        default=600,
+        help="Timeout in seconds waiting for remote goldens. Defaults to 600.",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
@@ -1375,6 +1562,15 @@ def get_parser() -> argparse.ArgumentParser:
         help="Display name for a new App if --to is not provided.",
     )
     _add_project_location_args(parser_push, required=False)
+    parser_push.add_argument(
+        "--create-version",
+        action="store_true",
+        help="Create a version after successful push.",
+    )
+    parser_push.add_argument(
+        "--version-description",
+        help="Description for the created version.",
+    )
     parser_push.set_defaults(func=app_push)
 
     # Parser for 'lint'
@@ -1425,6 +1621,14 @@ def get_parser() -> argparse.ArgumentParser:
         "--validate-only",
         action="store_true",
         help="Run only structure and config rules.",
+    )
+    parser_lint.add_argument(
+        "--agents",
+        help="Only discover/lint specific agents (comma-separated list).",
+    )
+    parser_lint.add_argument(
+        "--tools",
+        help="Only discover/lint specific tools (comma-separated list).",
     )
     parser_lint.add_argument(
         "--agent",
@@ -1516,6 +1720,95 @@ def get_parser() -> argparse.ArgumentParser:
     _add_project_location_args(parser_apps_get, required=False)
     parser_apps_get.set_defaults(func=apps_get)
 
+    # Subparsers for 'conversations'
+    parser_convs = subparsers.add_parser(
+        "conversations", help="Manage conversations (list, get)."
+    )
+    convs_subparsers = parser_convs.add_subparsers(
+        title="Conversations Commands",
+        dest="conversations_command",
+        required=True,
+    )
+
+    parser_convs_list = convs_subparsers.add_parser(
+        "list", help="List conversations for an app."
+    )
+    parser_convs_list.add_argument(
+        "--app-name",
+        required=True,
+        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_convs_list.set_defaults(func=conversations_list)
+
+    parser_convs_get = convs_subparsers.add_parser(
+        "get", help="Get conversation details."
+    )
+    parser_convs_get.add_argument(
+        "conversation_resource_name",
+        help="The conversation resource name.",
+    )
+    parser_convs_get.set_defaults(func=conversations_get)
+
+    # Subparsers for 'deployments'
+    parser_deps = subparsers.add_parser(
+        "deployments", help="Manage deployments (list, create, promote)."
+    )
+    deps_subparsers = parser_deps.add_subparsers(
+        title="Deployments Commands",
+        dest="deployments_command",
+        required=True,
+    )
+
+    parser_deps_list = deps_subparsers.add_parser(
+        "list", help="List deployments for an app."
+    )
+    parser_deps_list.add_argument(
+        "--app-name",
+        required=True,
+        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_deps_list.set_defaults(func=deployments_list)
+
+    parser_deps_create = deps_subparsers.add_parser(
+        "create", help="Create a deployment."
+    )
+    parser_deps_create.add_argument(
+        "--app-name",
+        required=True,
+        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_deps_create.add_argument(
+        "--deployment-id",
+        required=True,
+        help="Deployment ID for create_deployment.",
+    )
+    parser_deps_create.add_argument(
+        "--version-id",
+        required=True,
+        help="Version ID for create_deployment.",
+    )
+    parser_deps_create.set_defaults(func=deployments_create)
+
+    parser_deps_promote = deps_subparsers.add_parser(
+        "promote", help="Promote app to live traffic."
+    )
+    parser_deps_promote.add_argument(
+        "--app-resource-name",
+        required=True,
+        help="Fully qualified CXAS app resource name.",
+    )
+    parser_deps_promote.add_argument(
+        "--app-dir",
+        required=True,
+        help="Path to the CXAS app directory.",
+    )
+    parser_deps_promote.add_argument(
+        "--live-deployment-resource-name",
+        required=True,
+        help="Fully qualified live deployment resource name.",
+    )
+    parser_deps_promote.set_defaults(func=deployments_promote)
+
     # Subparsers for 'local'
     parser_local = subparsers.add_parser(
         "local", help="Local workspace operations."
@@ -1568,6 +1861,9 @@ def get_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawTextHelpFormatter,
     )
     populate_insights_parser(parser_insights)
+
+    # Subparsers for 'trace' — observability/debugging for past conversations.
+    register_trace_subparser(subparsers)
 
     return parser
 

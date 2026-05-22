@@ -1,0 +1,83 @@
+:root {
+    color-scheme: light dark;
+    --primary: light-dark(#00263e, #8ab4f8);
+    --secondary: light-dark(#005a8c, #5c92c2);
+    --agent-color: light-dark(#d32f2f, #f28b82);
+    --user-color: light-dark(#1976d2, #8ab4f8);
+    --bg-color: light-dark(#f4f7f9, #202124);
+    --card-bg: light-dark(#ffffff, #292a2d);
+    --note-bg: light-dark(#fffde7, #3c4043);
+    --note-border: light-dark(#fbc02d, #5f6368);
+    --highlight-color: light-dark(rgba(255, 235, 59, 0.5), rgba(255, 235, 59, 0.2));
+    --border-color: light-dark(#ddd, #3c4043);
+    --text-primary: light-dark(#333, #e8eaed);
+    --text-secondary: light-dark(#666, #9aa0a6);
+}
+
+:root[data-theme="light"] {
+    color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: var(--text-primary);
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: var(--bg-color);
+}
+
+.container {
+    background-color: var(--card-bg);
+    padding: 40px;
+    border-radius: 0 0 8px 8px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+[contenteditable="true"]:focus {
+    outline: 2px solid var(--secondary);
+    background: var(--card-bg);
+    padding: 2px 5px;
+    border-radius: 3px;
+}
+
+.toast-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #323232;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    transition: opacity 0.3s, visibility 0.3s;
+}
+
+.toast-container.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.toast-container button {
+    background: none;
+    border: none;
+    color: #bb86fc;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0;
+    text-transform: uppercase;
+}
+
+.toast-container button:hover {
+    color: #e33371;
+}

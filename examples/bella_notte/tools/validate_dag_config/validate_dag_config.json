@@ -1,0 +1,9 @@
+{
+  "name": "ebbd5777-b617-463c-8d73-7fe80f6f748b",
+  "pythonFunction": {
+    "name": "validate_dag_config",
+    "pythonCode": "tools/validate_dag_config/python_function/python_code.py",
+    "description": "Validates a slot filling DAG configuration. Returns errors and warnings."
+  },
+  "displayName": "validate_dag_config"
+}

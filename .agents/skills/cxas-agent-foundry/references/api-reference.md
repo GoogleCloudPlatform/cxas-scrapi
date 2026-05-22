@@ -110,14 +110,90 @@ agents.update_agent(agent_name=root.name, child_agents=[sub.name])
 }
 ```
 
+### Toolsets (OpenAPI Toolsets)
+
+While standard Tools wrap a single function (like a Python sandboxed function), **Toolsets** allow you to expose multiple tools at once, typically by importing an external service specification like an OpenAPI schema.
+
+**Prefer `cxas push` over the `create_toolset` API.** Similar to tools, toolsets defined locally in the `toolsets/` directory are automatically pushed and managed.
+
+#### Local Folder Structure
+An OpenAPI toolset is defined by a directory in `toolsets/` containing a configuration JSON and the OpenAPI schema file:
+
+```
+toolsets/
+└── <toolset_name>/
+    ├── <toolset_name>.json  # Toolset configuration
+    └── open_api_toolset/
+        └── open_api_schema.yaml  # OpenAPI 3.0.0 schema
+```
+
+#### Toolset JSON Format (in `toolsets/<name>/<name>.json`):
+```json
+{
+  "displayName": "<toolset_name>",
+  "description": "Description of the toolset for the LLM.",
+  "openApiToolset": {
+    "openApiSchema": "toolsets/<toolset_name>/open_api_toolset/open_api_schema.yaml",
+    "apiAuthentication": {
+      "apiKeyConfig": {
+        "keyName": "Authorization",
+        "requestLocation": "HEADER",
+        "apiKeySecretVersion": "projects/my-project/secrets/my-api-key/versions/latest"
+      }
+    }
+  }
+}
+```
+*(Note: `apiAuthentication` is optional and supports `apiKeyConfig`, `oauthConfig`, `serviceAccountAuthConfig`, or `serviceAgentIdTokenAuthConfig`.)*
+
+#### Assigning Toolsets to an Agent (in Agent JSON)
+Unlike standard tools which are listed in the `tools` array, **toolsets are assigned to an agent using the `toolsets` array**.
+
+To assign a toolset to an agent, add an entry to the `toolsets` array in the agent's JSON file (`agents/<agent_name>/<agent_name>.json`). You can optionally restrict the agent's access to only specific tools (operations) within that toolset by providing their raw `operationId`s in the `toolIds` array:
+
+```json
+{
+  "displayName": "my_agent",
+  "tools": ["end_session"],
+  "toolsets": [
+    {
+      "toolset": "my_toolset",
+      "toolIds": ["listProducts", "getProductDetails"]
+    }
+  ]
+}
+```
+*   **`toolset`**: The local display name/ID of the toolset (e.g., `"my_toolset"`).
+*   **`toolIds`**: Optional list of raw `operationId`s from the OpenAPI schema. If omitted, the agent has access to ALL operations defined in the toolset's schema.
+
+#### Calling Toolset Tools from Callbacks
+When invoking a toolset tool directly from Python callback code (e.g., in `before_model` or `after_model`), use the combined name as a method on the `tools` global:
+
+```python
+# Call 'getProductDetails' from 'my_toolset'
+result = tools.my_toolset_getProductDetails(product_id="123")
+```
+
 **IMPORTANT -- tool naming:** Agent JSON files reference tools by `displayName`. Use **snake_case** for both `name` and `displayName` (e.g., `"lookup_benefits"`, NOT `"Lookup Benefits"`). The `displayName` must exactly match the string in the agent's `tools` array. Mismatched names cause `Reference not found` errors on push.
 
-**Tool Python code**: Tools access session state via the `context` global -- NOT as a function parameter. The platform injects `context` at runtime. Do NOT use `**kwargs` in tool function signatures -- GECX requires explicit named parameters to generate the tool schema. Do NOT use `None` as a default value for parameters (e.g., `member_id: str = None`) -- the platform requires defaults to be strictly type-matching JSON-serializable values (use `""` for strings, `0` for ints). Both `**kwargs` and `None` defaults cause tools to be silently dropped during import with no error.
+**Tool Python code**: Tools access session state via the `context` global -- NOT as a function parameter. The platform injects `context` at runtime. `context.state` and `context.variables` are interchangeable and point to the same object.
+
+You can also use these built-in shorthand functions available in the tool's global scope:
+- `get_variable(name: str, default: Any = None)`
+- `set_variable(name: str, value: Any)`
+- `remove_variable(name: str)`
+
+Do NOT use `**kwargs` in tool function signatures -- CXAS requires explicit named parameters to generate the tool schema. Do NOT use `None` as a default value for parameters (e.g., `member_id: str = None`) -- the platform requires defaults to be strictly type-matching JSON-serializable values (use `""` for strings, `0` for ints). Both `**kwargs` and `None` defaults cause tools to be silently dropped during import with no error.
+
 ```python
 def my_tool(arg1: str, arg2: str = "") -> dict:
-    # Access state via the context global -- do NOT add context as a parameter
+    # Access state via the context global
     auth = context.state.get("auth_status", "")
-    context.state["my_var"] = "value"
+    
+    # Or use shorthand functions
+    auth = get_variable("auth_status", "")
+    set_variable("my_var", "value")
+    
     return {"status": "success"}
 ```
 
@@ -128,11 +204,62 @@ System tools (`end_session`, `customize_response`, `transfer_to_agent`) are buil
 ## Variables
 
 ```python
+from cxas_scrapi.core.variables import Variables, VariableType
+
 variables = Variables(app_name=app_name)
-variables.create_variable(variable_name="auth_status", variable_type="STRING", variable_value="")
+
+# Use VariableType Enum or equivalent strings
+variables.create_variable(
+    variable_name="auth_status",
+    variable_type=VariableType.STRING,  # or "STRING"
+    variable_value="",
+)
 ```
 
-Valid types: `STRING`, `BOOLEAN` only. `INT`/`INTEGER`/`NUMBER` raise `ValueError`.
+Supported types (mapping to UI concepts):
+- `STRING` (Text)
+- `INTEGER` (Number)
+- `NUMBER` (Number)
+- `BOOLEAN` (True/False)
+- `OBJECT` (Custom schema)
+
+**Note on Arrays**: Any of the types above can be configured as an array (e.g., an array of strings).
+- `ARRAY`: Used to represent a list of items. The items within the array must be one of the other supported types (e.g., a list of strings or a list of objects). Note that nested arrays (array of arrays) are not supported in the UI and should be avoided in configuration.
+
+### Referencing Variables in Instructions
+
+The agent supports two types of variables in instructions:
+
+*   **Static Variables**: Compiled directly into the agent prompt *before* the model call. They act as a direct 1:1 text substitution.
+    *   **Syntax**: `{{variable_name}}` (double curly braces)
+    *   **Use case**: Configuration data, rigid business rules, or large contextual payloads that don't change during a conversation.
+    *   *Warning*: Updating static variable values invalidates prompt caching, potentially leading to higher latency.
+
+*   **Dynamic Variables**: Can be updated at any point during a conversation by tools, callbacks, or API requests. They are appended as `<state_update>` events to conversation history.
+    *   **Syntax**: `{variable_name}` (single curly braces)
+    *   **Use case**: Information extracted from the user, outputs from external APIs (tools), or mutating state.
+
+### Referencing Variables in OpenAPI Specs
+
+You can inject variables from the session context (like session ID or custom variables) into your OpenAPI requests using the `x-ces-session-context` extension field within the parameter definition.
+
+**Available values**:
+*   `$context.project_id`, `$context.project_number`, `$context.location`, `$context.app_id`, `$context.session_id`, `$context.turn_index` (for resource IDs and metadata).
+*   `$context.variables.variable_name` (for a specific custom variable).
+*   `$context.variables` (for all context variables as an object).
+
+**Example**:
+```yaml
+      parameters:
+        - name: X-SESSION
+          in: header
+          description: session id
+          required: true
+          schema:
+            type: string
+          # This extension injects the session ID
+          x-ces-session-context: $context.session_id
+```
 
 ## Callbacks
 
@@ -156,7 +283,11 @@ callbacks.create_callback(
 - `after_tool_callback(tool: Tool, input: dict[str, Any], callback_context: CallbackContext, tool_response: dict[str, Any]) -> Optional[dict[str, Any]]`
 
 **Callback runtime API (inside callback code):**
-- `callback_context.state` (dict) for variables -- NOT `.session`
+- `callback_context.state` (dict) for variables -- NOT `.session`. `callback_context.state` and `callback_context.variables` are interchangeable and point to the same object.
+- `CallbackContext` also provides shorthand methods for variables:
+  - `callback_context.get_variable(name: str, default: Any = None)`
+  - `callback_context.set_variable(name: str, value: Any)`
+  - `callback_context.remove_variable(name: str)`
 - Return `None` from before_model to proceed -- do NOT return `llm_request`
 - Platform types (`Part`, `Content`, `LlmResponse`, `LlmRequest`, `CallbackContext`) are auto-provided as globals -- do NOT import them. Everything else (including `from typing import Optional, Iterator`) must be explicitly imported or the callback will fail at push time.
 - `llm_request.contents` is the conversation history (a list of `Content` objects with `.role` and `.parts`). NOT `.messages`, NOT `.message` — those raise `'LlmRequest' object has no attribute ...` at platform runtime. To iterate model/user turns, walk `llm_request.contents`. See the template's `before_model_callbacks_01/python_code.py` for a working example.

@@ -33,6 +33,8 @@ GLOBAL_SCOPES = [
     "https://www.googleapis.com/auth/generative-language.retriever",
 ]
 
+DEFAULT_API_ENDPOINT = "ces.googleapis.com"
+
 
 class Common:
     """Core Class for managing Auth and shared functions in CX Agent Studio."""
@@ -107,6 +109,20 @@ class Common:
 
         self.client_info = ClientInfo(user_agent=self.user_agent)
 
+    @property
+    def token(self) -> Optional[str]:
+        if (
+            hasattr(self, "creds")
+            and self.creds
+            and hasattr(self.creds, "token")
+        ):
+            return self.creds.token
+        return getattr(self, "_token", None)
+
+    @token.setter
+    def token(self, value: Optional[str]):
+        self._token = value
+
     @staticmethod
     def empty_to_dict(v: Any) -> Any:
         return v if v is not None else {}
@@ -144,7 +160,7 @@ class Common:
             return {}
 
         # Using global endpoint mapping for CXAS v1beta
-        api_endpoint = "ces.googleapis.com"
+        api_endpoint = DEFAULT_API_ENDPOINT
         return {"api_endpoint": api_endpoint}
 
     @staticmethod
@@ -177,6 +193,24 @@ class Common:
                 and parts[2] == "locations"
             ):
                 return parts[3]
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _get_app_name(resource_name: str) -> Optional[str]:
+        """Extract fully-qualified app name from a resource string."""
+        if not resource_name:
+            return None
+        try:
+            parts = resource_name.split("/")
+            if (
+                len(parts) >= 6
+                and parts[0] == "projects"
+                and parts[2] == "locations"
+                and parts[4] == "apps"
+            ):
+                return "/".join(parts[:6])
         except Exception:
             pass
         return None
@@ -337,7 +371,7 @@ class Common:
         """Creates a customer gRPC transport for CXAS SCRAPI calls."""
         transport_class = client_class.get_transport_class("grpc")
 
-        host = "ces.googleapis.com"
+        host = DEFAULT_API_ENDPOINT
         client_opts = getattr(self, "client_options", None)
         if client_opts and "api_endpoint" in client_opts:
             host = self.client_options["api_endpoint"]
@@ -345,7 +379,7 @@ class Common:
         channel = transport_class.create_channel(
             host=host,
             credentials=self.creds,
-            options=[("grpc.primary_user_agent", self.user_agent)]
+            options=[("grpc.primary_user_agent", self.user_agent)],
         )
 
         return transport_class(channel=channel)

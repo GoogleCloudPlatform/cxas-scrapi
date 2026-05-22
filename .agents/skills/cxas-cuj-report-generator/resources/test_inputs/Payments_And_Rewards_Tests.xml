@@ -1,0 +1,55 @@
+<CyaraTestCases>
+  <TestCase id="payment_methods_full">
+    <Utterances>
+      <Utterance>What payment methods do you accept?</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: What payment methods do you accept?)</Step>
+      <Step>Provide_Payment_Methods (Agent: We accept all major credit cards, Apple Pay, Google Pay, and cash for dine-in or pickup.)</Step>
+      <Step>Ask_Specific_Method (User: Do you accept PayPal for online orders?)</Step>
+      <Step>Confirm_Specific_Method (Agent: Yes, we accept PayPal for orders placed through our website and app.)</Step>
+      <Step>Disconnect_State (Agent: Let me know if you need help placing an order!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="rewards_balance_full">
+    <Utterances>
+      <Utterance>How many points do I have in my rewards account?</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: How many points do I have in my rewards account?)</Step>
+      <Step>Ask_Identifier (Agent: I can look that up. What is the phone number associated with your account?)</Step>
+      <Step>Provide_Identifier (User: It's 555-9876.)</Step>
+      <Step>Check_Rewards_State</Step>
+      <Step>Provide_Points (Agent: You currently have 1200 points, which is enough for a free appetizer on your next visit!)</Step>
+      <Step>Goodbye_State (User: Oh nice! Thank you.)</Step>
+      <Step>Disconnect_State (Agent: You're welcome. See you soon!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="apply_coupon_full">
+    <Utterances>
+      <Utterance>I have a promo code I want to use.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: I have a promo code I want to use.)</Step>
+      <Step>Ask_Code (Agent: I can apply that for you. What is the promo code?)</Step>
+      <Step>Provide_Code (User: The code is SAVE20.)</Step>
+      <Step>Validate_Code_State</Step>
+      <Step>Confirm_Discount (Agent: Code SAVE20 has been applied successfully. You've received 20% off your order total.)</Step>
+      <Step>Disconnect_State (Agent: Perfect! Proceed to checkout whenever you are ready.)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="request_refund_full">
+    <Utterances>
+      <Utterance>I need a refund for an incorrect charge.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: I need a refund for an incorrect charge.)</Step>
+      <Step>Ask_Order_Number (Agent: I can look into that. What is the order number and the amount in question?)</Step>
+      <Step>Provide_Details (User: Order number is 1122 and I was charged twice for the drinks.)</Step>
+      <Step>Verify_Charge_State</Step>
+      <Step>Confirm_Refund (Agent: I see the duplicate charge. I have initiated a refund for the extra amount. It should appear on your statement in 3-5 days.)</Step>
+      <Step>Goodbye_State (User: Thank you for sorting that out.)</Step>
+      <Step>Disconnect_State (Agent: You're welcome. Have a great day.)</Step>
+    </ExpectedFlow>
+  </TestCase>
+</CyaraTestCases>

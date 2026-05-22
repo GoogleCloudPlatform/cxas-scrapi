@@ -1,0 +1,65 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" width="800" height="300">
+  <!-- svg-source:excalidraw -->
+  <rect x="0" y="0" width="800" height="300" fill="#ffffff"/>
+
+  <defs>
+    <marker id="ta" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#868e96"/>
+    </marker>
+    <marker id="ta-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2b8a3e"/>
+    </marker>
+  </defs>
+
+  <!-- Input slots -->
+  <rect x="30" y="40" width="120" height="40" rx="8" ry="8" fill="#b2f2bb" stroke="#2b8a3e" stroke-width="2"/>
+  <text x="90" y="65" font-family="Roboto Mono, monospace" font-size="12" fill="#1e1e1e" text-anchor="middle">party_size</text>
+  <text x="90" y="30" font-family="Google Sans, sans-serif" font-size="11" fill="#2b8a3e" text-anchor="middle">filled ✓</text>
+
+  <rect x="30" y="100" width="140" height="40" rx="8" ry="8" fill="#b2f2bb" stroke="#2b8a3e" stroke-width="2"/>
+  <text x="100" y="125" font-family="Roboto Mono, monospace" font-size="12" fill="#1e1e1e" text-anchor="middle">preferred_date</text>
+  <text x="100" y="90" font-family="Google Sans, sans-serif" font-size="11" fill="#2b8a3e" text-anchor="middle">filled ✓</text>
+
+  <!-- Arrow: inputs → check -->
+  <line x1="170" y1="70" x2="228" y2="90" stroke="#868e96" stroke-width="1.5" marker-end="url(#ta)"/>
+  <line x1="170" y1="120" x2="228" y2="100" stroke="#868e96" stroke-width="1.5" marker-end="url(#ta)"/>
+
+  <!-- Engine check -->
+  <rect x="230" y="70" width="160" height="55" rx="10" ry="10" fill="#dee2e6" stroke="#495057" stroke-width="2"/>
+  <text x="310" y="93" font-family="Google Sans, sans-serif" font-size="13" font-weight="600" fill="#1e1e1e" text-anchor="middle">Engine evaluates</text>
+  <text x="310" y="112" font-family="Google Sans, sans-serif" font-size="12" fill="#666666" text-anchor="middle">All inputs filled? → fire</text>
+
+  <!-- Arrow: check → preempt -->
+  <line x1="390" y1="97" x2="438" y2="97" stroke="#868e96" stroke-width="2" marker-end="url(#ta)"/>
+
+  <!-- Preempt -->
+  <rect x="440" y="70" width="150" height="55" rx="10" ry="10" fill="#ffd8a8" stroke="#e67700" stroke-width="2"/>
+  <text x="515" y="93" font-family="Google Sans, sans-serif" font-size="13" font-weight="600" fill="#1e1e1e" text-anchor="middle">Preempt LLM</text>
+  <text x="515" y="112" font-family="Roboto Mono, monospace" font-size="11" fill="#666666" text-anchor="middle">function_call</text>
+
+  <!-- Arrow: preempt → tool -->
+  <line x1="590" y1="97" x2="638" y2="97" stroke="#868e96" stroke-width="2" marker-end="url(#ta)"/>
+
+  <!-- Tool execution -->
+  <rect x="640" y="55" width="140" height="85" rx="10" ry="10" fill="#a5d8ff" stroke="#1c7ed6" stroke-width="2"/>
+  <text x="710" y="80" font-family="Google Sans, sans-serif" font-size="13" font-weight="600" fill="#1e1e1e" text-anchor="middle">Executor Tool</text>
+  <text x="710" y="100" font-family="Roboto Mono, monospace" font-size="10" fill="#666666" text-anchor="middle">find_available_times</text>
+  <text x="710" y="118" font-family="Roboto Mono, monospace" font-size="10" fill="#666666" text-anchor="middle">(party_size, date)</text>
+  <text x="710" y="133" font-family="Google Sans, sans-serif" font-size="11" fill="#2b8a3e" text-anchor="middle">→ {"success": true, ...}</text>
+
+  <!-- Arrow: tool → output slot -->
+  <line x1="710" y1="140" x2="710" y2="188" stroke="#2b8a3e" stroke-width="2" marker-end="url(#ta-green)"/>
+
+  <!-- Output slot -->
+  <rect x="640" y="190" width="140" height="40" rx="8" ry="8" fill="#b2f2bb" stroke="#2b8a3e" stroke-width="2"/>
+  <text x="710" y="215" font-family="Roboto Mono, monospace" font-size="12" fill="#1e1e1e" text-anchor="middle">available_times</text>
+  <text x="710" y="245" font-family="Google Sans, sans-serif" font-size="11" fill="#2b8a3e" text-anchor="middle">→ filled</text>
+
+  <!-- then_say -->
+  <rect x="430" y="190" width="180" height="40" rx="8" ry="8" fill="#fff3bf" stroke="#fab005" stroke-width="1.5"/>
+  <text x="520" y="210" font-family="Roboto Mono, monospace" font-size="11" fill="#866a00" text-anchor="middle">then_say → user</text>
+  <text x="520" y="224" font-family="Google Sans, sans-serif" font-size="10" fill="#866a00" text-anchor="middle">"Great! We have availability..."</text>
+
+  <!-- Bottom note -->
+  <text x="400" y="280" font-family="Google Sans, sans-serif" font-size="13" fill="#495057" text-anchor="middle">The LLM never calls executor tools directly — the engine preempts with a function_call when inputs are ready.</text>
+</svg>

@@ -8,7 +8,8 @@ This guide walks you through setting up a local development environment for cont
 
 ## Prerequisites
 
-- **Python 3.10 or later** — SCRAPI supports Python 3.10, 3.11, and 3.12.
+- **Python 3.10 or later** — SCRAPI supports Python 3.10, 3.11, 3.12, 3.13, 3.14.
+- **uv** — recommended for fast dependency management and environment isolation. [Install uv](https://docs.astral.sh/uv/getting-started/installation/).
 - **Git** — for version control.
 - **gcloud CLI** — recommended for authentication during development.
 
@@ -21,39 +22,19 @@ git clone https://github.com/<your-username>/cxas-scrapi.git
 cd cxas-scrapi
 ```
 
-## Set Up a Virtual Environment
-
-We recommend using a virtual environment to keep your dependencies isolated:
+We recommend using [uv](https://docs.astral.sh/uv/) to manage your development environment:
 
 ```bash
-python3 -m venv .venv
+uv sync --all-extras
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
-## Install in Editable Mode
-
-Install the package in editable mode so that your code changes are immediately reflected without reinstalling:
-
-```bash
-pip install -e .
-pip install -r requirements.txt
-```
-
-This installs SCRAPI along with all development dependencies (ruff, pytest, etc.) and additional runtime dependencies.
-
-If you also want to build the documentation locally:
-
-```bash
-pip install -r requirements-docs.txt
-```
-
-## Install Pre-commit Hooks
+This creates a virtual environment, installs the package in editable mode, and includes all development and documentation dependencies (ruff, pytest, mkdocs, etc.).
 
 We use pre-commit hooks to catch issues before they reach CI. Install them with:
 
 ```bash
-pip install pre-commit
-pre-commit install
+uv run pre-commit install
 ```
 
 This sets up automatic linting (via `ruff`) and test execution on every commit.
@@ -63,7 +44,7 @@ This sets up automatic linting (via `ruff`) and test execution on every commit.
 Run the test suite to make sure everything is working:
 
 ```bash
-pytest
+uv run pytest
 ```
 
 And verify the CLI is available:
@@ -79,7 +60,7 @@ You should see the full list of available commands.
 To preview documentation changes as you write:
 
 ```bash
-mkdocs serve
+uv run mkdocs serve
 ```
 
 This starts a local server at `http://127.0.0.1:8000` with live reload — any changes you save will appear in the browser automatically.

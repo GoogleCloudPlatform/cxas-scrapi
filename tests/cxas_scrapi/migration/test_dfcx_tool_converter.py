@@ -95,6 +95,6 @@ def test_convert_webhook_to_openapi_toolset():
     res = converter.convert_webhook_to_openapi_toolset(cx_webhook)
 
     assert res["type"] == "TOOLSET"
-    assert res["id"] == "webhook_Test_Webhook"
+    assert res["id"] == "Test_Webhook"
     assert "open_api_toolset" in res["payload"]
-    assert res["operation_ids"] == ["post_webhook_Test_Webhook"]
+    assert res["operation_ids"] == ["post_Test_Webhook"]

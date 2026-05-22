@@ -14,6 +14,7 @@
 
 """Core Variables class for CXAS Scrapi."""
 
+import enum
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,17 @@ from google.cloud.ces_v1beta import types
 from proto.marshal.collections import maps, repeated
 
 from cxas_scrapi.core.apps import Apps
+
+
+class VariableType(str, enum.Enum):
+    """Supported variable types at the proto/API level."""
+
+    STRING = "STRING"
+    INTEGER = "INTEGER"
+    NUMBER = "NUMBER"
+    BOOLEAN = "BOOLEAN"
+    OBJECT = "OBJECT"
+    ARRAY = "ARRAY"
 
 
 class Variables(Apps):
@@ -58,17 +70,12 @@ class Variables(Apps):
         self.resource_type = "variables"
 
     @staticmethod
-    def _check_schema_type(input_type: str):
+    def _check_schema_type(input_type: str | VariableType):
         # these are the only valid types mapping to
         # types.App.VariableDeclaration.Schema.Type
-        if input_type.upper() not in [
-            "STRING",
-            "INTEGER",
-            "NUMBER",
-            "BOOLEAN",
-            "OBJECT",
-            "ARRAY",
-        ]:
+        if isinstance(input_type, VariableType):
+            return
+        if input_type.upper() not in VariableType.__members__:
             raise ValueError(f"Invalid schema type: {input_type}")
 
     @staticmethod
@@ -128,11 +135,16 @@ class Variables(Apps):
     def create_variable(
         self,
         variable_name: str,
-        variable_type: str,
+        variable_type: str | VariableType,
         variable_value: Optional[Any],
     ) -> None:
         """Creates a new variable within a specified app."""
         self._check_schema_type(variable_type)
+        variable_type_str = (
+            variable_type.value
+            if isinstance(variable_type, VariableType)
+            else variable_type.upper()
+        )
         app = self.get_app(self.app_name)
         vars_list = list(app.variable_declarations)
 
@@ -143,7 +155,7 @@ class Variables(Apps):
 
         new_var = types.App.VariableDeclaration(
             name=variable_name,
-            schema={"type_": variable_type.upper(), "default": variable_value},
+            schema={"type_": variable_type_str, "default": variable_value},
         )
 
         vars_list.append(new_var)
@@ -153,7 +165,7 @@ class Variables(Apps):
     def update_variable(
         self,
         variable_name: str,
-        variable_type: str,
+        variable_type: str | VariableType,
         variable_value: Optional[Any],
     ) -> None:
         """Updates a variable within a specific app.
@@ -161,6 +173,11 @@ class Variables(Apps):
         Acceptable types: STRING, INTEGER, NUMBER, BOOLEAN, ARRAY, OBJECT
         """
         self._check_schema_type(variable_type)
+        variable_type_str = (
+            variable_type.value
+            if isinstance(variable_type, VariableType)
+            else variable_type.upper()
+        )
         app = self.get_app(self.app_name)
         vars_list = list(app.variable_declarations)
 
@@ -169,7 +186,7 @@ class Variables(Apps):
             if var.name == variable_name:
                 var.schema.type_ = getattr(
                     types.App.VariableDeclaration.Schema.Type,
-                    variable_type.upper(),
+                    variable_type_str,
                 )
                 var.schema.default = variable_value
                 updated = True
@@ -179,7 +196,7 @@ class Variables(Apps):
             new_var = types.App.VariableDeclaration(
                 name=variable_name,
                 schema={
-                    "type_": variable_type.upper(),
+                    "type_": variable_type_str,
                     "default": variable_value,
                 },
             )

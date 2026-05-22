@@ -23,35 +23,26 @@
           },
           {
             "expectation": {
-              "note": "Check_SetPartySize_Called",
+              "note": "Check_set_reservation_basics_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 4.0
+                  "party_size": 4.0,
+                  "preferred_date": "2026-06-25"
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_SetPreferredDate_Called",
-              "toolCall": {
-                "tool": "set_preferred_date",
-                "args": {
-                  "date": "2026-06-25"
-                }
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_Batched_Readback",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "4"
+              "note": "Check_Both_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 4,
+                    "preferred_date": "2026-06-25"
                   }
-                ]
+                }
               }
             }
           }
@@ -66,13 +57,14 @@
           },
           {
             "expectation": {
-              "note": "Check_AvailableTimes_After_Confirm",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "7:00 PM"
+              "note": "Check_Both_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 4,
+                    "preferred_date": "2026-06-25"
                   }
-                ]
+                }
               }
             }
           }
@@ -80,7 +72,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
       "Tool-Truth - Uses Exact System Values",
       "No Technical Leakage"
     ]

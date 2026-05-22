@@ -1,0 +1,17 @@
+subintent_id: billing-address-verification
+subintent_name: Billing Address Verification
+parent_cuj: General Customer Support
+turns:
+- speaker: User
+  text: I need to verify where to send paper claims.
+- speaker: Agent
+  text: I can help with that. Are you checking the billing address for a specific
+    provider or a general facility?
+- speaker: User
+  text: It's for the surgery center on Main St.
+- speaker: Agent
+  text: I've found the address. For paper claims, please mail them to 123 Main St,
+    Suite 400, City, State, Zip. Would you like me to send this to your email?
+  tool_call:
+    name: lookup_provider_address
+    parameters: {}

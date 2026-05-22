@@ -1,0 +1,68 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 320" width="820" height="320">
+  <!-- svg-source:excalidraw -->
+  <rect x="0" y="0" width="820" height="320" fill="#ffffff"/>
+
+  <defs>
+    <marker id="da" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#868e96"/>
+    </marker>
+    <marker id="da-lime" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#5c940d"/>
+    </marker>
+    <marker id="da-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#e67700"/>
+    </marker>
+  </defs>
+
+  <!-- Phase 1: Collection -->
+  <text x="130" y="30" font-family="Google Sans, sans-serif" font-size="16" font-weight="600" fill="#5c940d" text-anchor="middle">1. Collect silently</text>
+
+  <rect x="30" y="50" width="90" height="36" rx="6" ry="6" fill="#d8f5a2" stroke="#5c940d" stroke-width="1.5"/>
+  <text x="75" y="73" font-family="Roboto Mono, monospace" font-size="10" fill="#1e1e1e" text-anchor="middle">guest_name</text>
+
+  <rect x="130" y="50" width="110" height="36" rx="6" ry="6" fill="#d8f5a2" stroke="#5c940d" stroke-width="1.5"/>
+  <text x="185" y="73" font-family="Roboto Mono, monospace" font-size="10" fill="#1e1e1e" text-anchor="middle">special_reqs</text>
+
+  <rect x="30" y="100" width="120" height="36" rx="6" ry="6" fill="#d8f5a2" stroke="#5c940d" stroke-width="1.5"/>
+  <text x="90" y="123" font-family="Roboto Mono, monospace" font-size="10" fill="#1e1e1e" text-anchor="middle">selected_time</text>
+
+  <rect x="160" y="100" width="80" height="36" rx="6" ry="6" fill="#dee2e6" stroke="#adb5bd" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="200" y="123" font-family="Roboto Mono, monospace" font-size="10" fill="#adb5bd" text-anchor="middle">...</text>
+
+  <text x="130" y="160" font-family="Google Sans, sans-serif" font-size="12" fill="#5c940d" text-anchor="middle" font-style="italic">Values go to "deferred" state</text>
+  <text x="130" y="176" font-family="Google Sans, sans-serif" font-size="12" fill="#5c940d" text-anchor="middle" font-style="italic">No readback between slots</text>
+
+  <!-- Arrow Phase 1 → Phase 2 -->
+  <line x1="260" y1="100" x2="310" y2="100" stroke="#868e96" stroke-width="2" marker-end="url(#da)"/>
+  <text x="285" y="88" font-family="Google Sans, sans-serif" font-size="10" fill="#868e96">all</text>
+  <text x="285" y="118" font-family="Google Sans, sans-serif" font-size="10" fill="#868e96">done</text>
+
+  <!-- Phase 2: Promote -->
+  <text x="420" y="30" font-family="Google Sans, sans-serif" font-size="16" font-weight="600" fill="#e67700" text-anchor="middle">2. Promote to pending</text>
+
+  <rect x="320" y="50" width="200" height="105" rx="10" ry="10" fill="#ffd8a8" stroke="#e67700" stroke-width="2"/>
+  <text x="420" y="75" font-family="Roboto Mono, monospace" font-size="11" fill="#1e1e1e" text-anchor="middle">pending:</text>
+  <text x="420" y="95" font-family="Roboto Mono, monospace" font-size="10" fill="#666666" text-anchor="middle">guest_name: "Maria"</text>
+  <text x="420" y="111" font-family="Roboto Mono, monospace" font-size="10" fill="#666666" text-anchor="middle">selected_time: "7:30 PM"</text>
+  <text x="420" y="127" font-family="Roboto Mono, monospace" font-size="10" fill="#666666" text-anchor="middle">special_reqs: "none"</text>
+  <text x="420" y="145" font-family="Roboto Mono, monospace" font-size="10" fill="#666666" text-anchor="middle">...</text>
+
+  <!-- Arrow Phase 2 → Phase 3 -->
+  <line x1="520" y1="100" x2="568" y2="100" stroke="#868e96" stroke-width="2" marker-end="url(#da)"/>
+
+  <!-- Phase 3: Grouped readback -->
+  <text x="685" y="30" font-family="Google Sans, sans-serif" font-size="16" font-weight="600" fill="#1c7ed6" text-anchor="middle">3. Grouped readback</text>
+
+  <rect x="570" y="50" width="230" height="130" rx="10" ry="10" fill="#e7f5ff" stroke="#1c7ed6" stroke-width="2"/>
+  <text x="685" y="78" font-family="Google Sans, sans-serif" font-size="13" fill="#1e1e1e" text-anchor="middle" font-weight="600">Agent says:</text>
+  <text x="685" y="100" font-family="Google Sans, sans-serif" font-size="12" fill="#495057" text-anchor="middle">"Let me confirm: 4 guests,</text>
+  <text x="685" y="116" font-family="Google Sans, sans-serif" font-size="12" fill="#495057" text-anchor="middle">Friday June 19th, 7:30 PM,</text>
+  <text x="685" y="132" font-family="Google Sans, sans-serif" font-size="12" fill="#495057" text-anchor="middle">under the name Maria, no</text>
+  <text x="685" y="148" font-family="Google Sans, sans-serif" font-size="12" fill="#495057" text-anchor="middle">special requests. All correct?"</text>
+  <text x="685" y="172" font-family="Google Sans, sans-serif" font-size="11" fill="#1c7ed6" text-anchor="middle" font-style="italic">One confirmation for all values</text>
+
+  <!-- Bottom summary -->
+  <rect x="120" y="220" width="580" height="55" rx="8" ry="8" fill="#f8f9fa" stroke="#dee2e6" stroke-width="1"/>
+  <text x="410" y="243" font-family="Google Sans, sans-serif" font-size="13" fill="#495057" text-anchor="middle" font-weight="600">Individual readback: confirm each slot → verbose (N confirmations)</text>
+  <text x="410" y="263" font-family="Google Sans, sans-serif" font-size="13" fill="#2b8a3e" text-anchor="middle" font-weight="600">Deferred readback: confirm all at once → concise (1 confirmation)</text>
+</svg>

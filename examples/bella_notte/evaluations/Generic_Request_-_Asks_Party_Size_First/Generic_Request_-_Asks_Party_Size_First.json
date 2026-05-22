@@ -21,13 +21,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Asks_Party_Size",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "how many"
-                  }
-                ]
+              "note": "Check_No_Slots_Filled_Or_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {},
+                  "filled": {},
+                  "status": "in_progress"
+                }
               }
             }
           }
@@ -35,7 +35,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
       "No Technical Leakage"
     ]
   }

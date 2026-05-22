@@ -21,7 +21,7 @@ sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
 )
 
-from cxas_scrapi.core.common import Common  # noqa: E402
+from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common  # noqa: E402
 
 
 def test_common_init():
@@ -49,11 +49,11 @@ def test_common_auth(mock_auth):
 def test_client_options():
     us_id = "projects/my-project/locations/us/agents/my-agent"
     opts = Common._get_client_options(us_id)
-    assert opts["api_endpoint"] == "ces.googleapis.com"
+    assert opts["api_endpoint"] == DEFAULT_API_ENDPOINT
 
     eu_id = "projects/my-project/locations/eu/agents/my-agent"
     opts = Common._get_client_options(eu_id)
-    assert opts["api_endpoint"] == "ces.googleapis.com"
+    assert opts["api_endpoint"] == DEFAULT_API_ENDPOINT
 
 
 def test_project_id_extraction():
@@ -69,6 +69,20 @@ def test_location_extraction():
         Common._get_location("projects/test-proj/locations/us/apps/abc") == "us"
     )
     assert Common._get_location("invalid-format") is None
+
+
+def test_app_name_extraction():
+    assert (
+        Common._get_app_name(
+            "projects/test-proj/locations/us/apps/abc/conversations/123"
+        )
+        == "projects/test-proj/locations/us/apps/abc"
+    )
+    assert (
+        Common._get_app_name("projects/test-proj/locations/us/apps/abc")
+        == "projects/test-proj/locations/us/apps/abc"
+    )
+    assert Common._get_app_name("invalid-format") is None
 
 
 def test_unwrap_value():

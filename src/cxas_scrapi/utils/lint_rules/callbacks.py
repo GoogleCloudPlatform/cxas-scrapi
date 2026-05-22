@@ -14,7 +14,7 @@
 
 """Callback lint rules (C001-C008).
 
-Validates agent callback Python files against GECX conventions.
+Validates agent callback Python files against CXAS conventions.
 """
 
 import ast

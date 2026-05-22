@@ -52,7 +52,7 @@ class AsyncAgentDesigner:
         for t_id, t_data in ir_tools_dict.items():
             if t_data.type == "TOOLSET":
                 ops = t_data.operation_ids
-                name = t_data.payload.get("displayName", t_id)
+                name = t_data.payload.get("display_name", t_id)
                 # Webhook meta might be in payload or extra field in IRTool if
                 # we add it. For now, let's assume it might be in the payload
                 # under 'webhook_meta' or similar.
@@ -93,11 +93,65 @@ class AsyncAgentDesigner:
             else "None available."
         )
 
+    @staticmethod
+    def _get_available_tools_context(
+        ir_tools_dict: Dict[str, IRTool],
+    ) -> str:
+        """Render the FULL tool registry (TOOLSET + PYTHON + TOOL) as a
+        flat list of exact tool IDs the LLM may reference in
+        ``{@TOOL: …}`` and ``{@AGENT: …}`` directives.
+
+        Unlike :meth:`_get_available_toolsets_context` (which is OpenAPI-
+        only and lists tools by their human display_name), this helper
+        emits the *exact key* under which the tool lives in
+        ``MigrationIR.tools`` — the key Gemini must paste verbatim
+        without re-suffixing (``_wrapper``, ``_tool``) or paraphrasing.
+
+        Also includes the ``end_session`` sentinel that's always
+        auto-registered at deploy time.
+        """
+        by_type: Dict[str, list[str]] = {
+            "TOOLSET": [],
+            "PYTHON": [],
+            "TOOL": [],
+        }
+        for tool_id, tool in ir_tools_dict.items():
+            by_type.setdefault(tool.type, []).append(tool_id)
+
+        lines: list[str] = []
+        for kind in ("TOOLSET", "PYTHON", "TOOL"):
+            tids = sorted(by_type.get(kind, []))
+            if not tids:
+                continue
+            lines.append(f"### {kind} tools ({len(tids)}):")
+            for tid in tids:
+                lines.append(f"- {tid}")
+            lines.append("")
+
+        # SYSTEM-injected sentinels (always available at runtime).
+        lines.append("### SYSTEM tools (always available):")
+        lines.append("- end_session")
+        return "\n".join(lines).rstrip()
+
     async def run_step_2a(
-        self, flow_name: str, tree_view: str, target_ir: MigrationIR
+        self,
+        flow_name: str,
+        tree_view: str,
+        target_ir: MigrationIR,
+        available_groups: str | None = None,
+        self_group: str | None = None,
     ) -> Dict[str, Any]:
         """Runs the Principal Architect prompt to generate the JSON
-        Blueprint."""
+        Blueprint.
+
+        ``available_groups`` is an optional pre-rendered string listing
+        the other consolidated group names + their absorbed members.
+        When supplied (consolidation flow), the prompt includes it so
+        Gemini's blueprint references real group names in
+        ``exit_routes`` / transition targets. ``self_group`` is the
+        current group being synthesized, surfaced in the prompt so
+        Gemini doesn't recommend transferring to itself.
+        """
         AsyncAgentDesigner._validate_tree_view(tree_view)
         logger.info(
             f"[{flow_name}] Starting 2A: Architecture Expert Blueprinting"
@@ -113,12 +167,21 @@ class AsyncAgentDesigner:
         toolset_context = AsyncAgentDesigner._get_available_toolsets_context(
             target_ir.tools
         )
+        available_tools_context = (
+            AsyncAgentDesigner._get_available_tools_context(target_ir.tools)
+        )
 
         prompt_2a = Prompts.STEP_2A_ARCHITECTURE_EXPERT["template"].format(
             flow_name=flow_name,
             resource_visualization=tree_view,
             global_variables=global_vars_context,
             available_backend_toolsets=toolset_context,
+            available_tools=available_tools_context,
+            available_groups=(
+                available_groups
+                or "(consolidation context not applicable for this run)"
+            ),
+            self_group=self_group or flow_name,
         )
 
         response_raw = await self.gemini.generate_async(
@@ -153,20 +216,54 @@ class AsyncAgentDesigner:
         return blueprint
 
     async def run_step_2b_instructions(
-        self, flow_name: str, blueprint: Dict[str, Any], tree_view: str
+        self,
+        flow_name: str,
+        blueprint: Dict[str, Any],
+        tree_view: str,
+        target_ir: MigrationIR | None = None,
+        available_groups: str | None = None,
+        self_group: str | None = None,
     ) -> str:
-        """Runs the Instructions Expert prompt to generate the PIF XML."""
+        """Runs the Instructions Expert prompt to generate the PIF XML.
+
+        ``target_ir`` is used to render the exact tool registry into the
+        prompt so Gemini can only reference real tool IDs. Optional for
+        back-compat with callers that haven't been updated; when omitted,
+        the prompt falls back to a generic "use only blueprint tools"
+        directive (the historical behavior).
+
+        ``available_groups`` / ``self_group``: optional consolidated-
+        group context. When supplied, the prompt includes a list of
+        valid ``{@AGENT: …}`` transfer targets so Gemini stops inventing
+        agent names. Used by the StructuralConsolidator path; ignored
+        by 1:1 migration.
+        """
         AsyncAgentDesigner._validate_tree_view(tree_view)
         logger.info(
             f"[{flow_name}] Starting 2B: Instructions Expert (XML Generation)"
         )
 
         blueprint_json_str = json.dumps(blueprint, indent=2)
+        if target_ir is not None:
+            available_tools_context = (
+                AsyncAgentDesigner._get_available_tools_context(target_ir.tools)
+            )
+        else:
+            available_tools_context = (
+                "(not provided — use tools from the Architecture "
+                "Blueprint only)"
+            )
 
         prompt_2b = Prompts.STEP_2B_INSTRUCTIONS_EXPERT["template"].format(
             agent_name=flow_name,
             architecture_blueprint=blueprint_json_str,
             resource_visualization=tree_view,
+            available_tools=available_tools_context,
+            available_groups=(
+                available_groups
+                or "(consolidation context not applicable for this run)"
+            ),
+            self_group=self_group or flow_name,
         )
 
         response_raw = await self.gemini.generate_async(

@@ -46,7 +46,11 @@ def inspect(app_name, verbose=False):
     location = parts[3]
 
     # App
-    apps = Apps(project_id=project, location=location, user_agent_extension=USER_AGENT_EXTENSION)
+    apps = Apps(
+        project_id=project,
+        location=location,
+        user_agent_extension=USER_AGENT_EXTENSION,
+    )
     try:
         app = apps.get_app(app_name=app_name)
     except Exception as e:
@@ -70,25 +74,38 @@ def inspect(app_name, verbose=False):
         result["thresholds"] = {
             "semantic_similarity": turn.semantic_similarity_success_threshold,
             "tool_invocation": turn.overall_tool_invocation_correctness_threshold,
-            "extra_tool_behavior": getattr(gt.tool_matching_settings, "extra_tool_call_behavior", 0),
+            "extra_tool_behavior": getattr(
+                gt.tool_matching_settings, "extra_tool_call_behavior", 0
+            ),
             "hallucination": t.golden_hallucination_metric_behavior,
         }
 
     # Agents
-    agents_client = Agents(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+    agents_client = Agents(
+        app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+    )
     try:
         agent_list = agents_client.list_agents()
     except Exception as e:
         print(f"Error: Failed to list agents: {e}")
         agent_list = []
 
-    callbacks_client = Callbacks(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+    callbacks_client = Callbacks(
+        app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+    )
 
     for agent in agent_list:
         agent_info = {
             "name": agent.name,
             "display_name": agent.display_name,
             "tools": [t.split("/")[-1] for t in agent.tools],
+            "toolsets": [
+                {
+                    "toolset": ts.toolset.split("/")[-1],
+                    "tool_ids": list(ts.tool_ids) if ts.tool_ids else [],
+                }
+                for ts in getattr(agent, "toolsets", [])
+            ],
             "callbacks": {},
         }
 
@@ -99,7 +116,9 @@ def inspect(app_name, verbose=False):
         try:
             cb_map = callbacks_client.list_callbacks(agent.name)
         except Exception as e:
-            print(f"  Warning: Failed to list callbacks for '{agent.display_name}': {e}")
+            print(
+                f"  Warning: Failed to list callbacks for '{agent.display_name}': {e}"
+            )
             cb_map = {}
         for cb_type, cb_list in cb_map.items():
             if cb_list:
@@ -120,21 +139,25 @@ def inspect(app_name, verbose=False):
         result["agents"].append(agent_info)
 
     # Tools
-    tools_client = Tools(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+    tools_client = Tools(
+        app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+    )
     try:
         tools_map = tools_client.get_tools_map()
-        for display_name, tool in tools_map.items():
+        for tool_name, display_name in tools_map.items():
             tool_info = {
                 "display_name": display_name,
-                "name": tool.name,
-                "id": tool.name.split("/")[-1],
+                "name": tool_name,
+                "id": tool_name.split("/")[-1],
             }
             result["tools"].append(tool_info)
     except Exception as e:
         result["tools_error"] = str(e)
 
     # Existing evals
-    evals_client = Evaluations(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+    evals_client = Evaluations(
+        app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+    )
     try:
         evals_list = evals_client.list_evaluations()
         for ev in evals_list:
@@ -182,7 +205,18 @@ def format_text(data):
         is_root = agent["name"] == data.get("root_agent", "")
         root_marker = " (ROOT)" if is_root else ""
         lines.append(f"  {agent['display_name']}{root_marker}")
-        lines.append(f"    Tools: {len(agent['tools'])}")
+        tools_str = ", ".join(agent["tools"]) if agent["tools"] else "none"
+        lines.append(f"    Tools: {tools_str}")
+        ts_list = []
+        for ts in agent.get("toolsets", []):
+            ts_name = ts["toolset"]
+            if ts["tool_ids"]:
+                ts_formatted_ids = ", ".join(ts["tool_ids"])
+                ts_list.append(f"{ts_name} ({ts_formatted_ids})")
+            else:
+                ts_list.append(f"{ts_name} (none)")
+        ts_str = ", ".join(ts_list) if ts_list else "none"
+        lines.append(f"    Toolsets: {ts_str}")
         for cb_type, cbs in agent.get("callbacks", {}).items():
             for cb in cbs:
                 sig = cb.get("signature", "")
@@ -190,7 +224,9 @@ def format_text(data):
                 lines.append(f"    {cb_type}[{cb['index']}]{disabled}: {sig}")
 
         if "instruction" in agent:
-            lines.append(f"    Instruction ({len(agent['instruction'])} chars):")
+            lines.append(
+                f"    Instruction ({len(agent['instruction'])} chars):"
+            )
             preview = agent["instruction"][:200].replace("\n", " ")
             lines.append(f"      {preview}...")
         lines.append("")
@@ -204,10 +240,14 @@ def format_text(data):
     # Evals
     goldens = data["evals"]["goldens"]
     scenarios = data["evals"]["scenarios"]
-    lines.append(f"Existing Evals ({len(goldens)} goldens, {len(scenarios)} scenarios):")
+    lines.append(
+        f"Existing Evals ({len(goldens)} goldens, {len(scenarios)} scenarios):"
+    )
     for ev in goldens:
         tags = ", ".join(ev.get("tags", [])[:4])
-        lines.append(f"  [golden] {ev['display_name']} ({ev.get('turns', '?')} turns) [{tags}]")
+        lines.append(
+            f"  [golden] {ev['display_name']} ({ev.get('turns', '?')} turns) [{tags}]"
+        )
     for ev in scenarios:
         tags = ", ".join(ev.get("tags", [])[:4])
         lines.append(f"  [scenario] {ev['display_name']} [{tags}]")
@@ -224,16 +264,20 @@ def main():
     try:
         import cxas_scrapi
     except ImportError:
-        print("Error: cxas-scrapi not installed. Activate venv (source .venv/bin/activate) and install cxas-scrapi first.")
+        print(
+            "Error: cxas-scrapi not installed. Activate venv (source .venv/bin/activate) and install cxas-scrapi first."
+        )
         sys.exit(1)
 
     parser = argparse.ArgumentParser(description="Inspect a GECX app")
-    parser.add_argument("--verbose", "-v", action="store_true",
-                       help="Include instruction text and callback code")
-    parser.add_argument("--json", action="store_true",
-                       help="Output as JSON")
-    parser.add_argument("--save", default=None,
-                       help="Save output to file")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Include instruction text and callback code",
+    )
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--save", default=None, help="Save output to file")
     args = parser.parse_args()
 
     app_name = load_app_name()

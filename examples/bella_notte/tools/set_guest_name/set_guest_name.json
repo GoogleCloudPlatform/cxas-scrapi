@@ -1,9 +1,0 @@
-{
-  "name": "5ee6923c-2ad2-4731-8a83-c955833bbcbd",
-  "pythonFunction": {
-    "name": "set_guest_name",
-    "pythonCode": "tools/set_guest_name/python_function/python_code.py",
-    "description": "Record the guest's name exactly as provided. Accept ANY format (first name, last name, full name, nickname) without asking for clarification. Call immediately when a name is mentioned, even alongside other info in the same message."
-  },
-  "displayName": "set_guest_name"
-}

@@ -20,7 +20,12 @@ from cxas_scrapi import Sessions
 
 app_name = "projects/my-project/locations/us/apps/my-app-id"
 
-sessions = Sessions(app_name=app_name)
+from cxas_scrapi.utils.rate_limiter import RateLimiter
+
+# Optional: configure a rate limiter to prevent project API quota limits
+limiter = RateLimiter(requests_per_minute=60.0)
+
+sessions = Sessions(app_name=app_name, rate_limiter=limiter)
 
 # Start a conversation
 session_id = sessions.create_session_id()

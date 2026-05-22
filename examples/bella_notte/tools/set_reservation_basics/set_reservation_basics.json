@@ -1,0 +1,9 @@
+{
+  "name": "e6e74eee-a245-4adb-86e8-62efbde5a2ee",
+  "pythonFunction": {
+    "name": "set_reservation_basics",
+    "pythonCode": "tools/set_reservation_basics/python_function/python_code.py",
+    "description": "Record party size and/or preferred date for the reservation. Call this tool whenever the guest mentions how many people OR a date, even if only one value is provided. Parse natural language for party size ('just me'=1, 'a couple'=2, 'four of us'=4) and dates ('this Friday', 'July 4th', 'tomorrow' -> YYYY-MM-DD). Call immediately, even alongside other info in the same message."
+  },
+  "displayName": "set_reservation_basics"
+}

@@ -7,6 +7,10 @@ z_adhoc/
 .agent/
 *.tar
 
+# `cxas trace` workspace — local audio downloads, smoke-test outputs,
+# and per-developer trace.yaml. Users create their own.
+.cxas/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -100,7 +104,7 @@ ipython_config.py
 #   having no cross-platform support, pipenv may install dependencies that don't work, or not
 #   install all needed dependencies.
 #Pipfile.lock
-uv.lock
+
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow
 __pypackages__/

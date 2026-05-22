@@ -176,7 +176,7 @@ def main():
         eval_cmd.extend(["--channel", args.channel])
     if args.runs:
         eval_cmd.extend(["--runs", str(args.runs)])
-    if args.priority:
+    if args.priority is not None:
         eval_cmd.extend(["--priority", args.priority])
     result = _run(eval_cmd, "Step 3/5: Run all evals", dry_run=args.dry_run)
     if result.returncode != 0:

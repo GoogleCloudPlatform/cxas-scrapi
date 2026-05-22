@@ -44,13 +44,15 @@ def test_parse_code_block_with_ast(migrator):
     code = """import os
 from datetime import datetime
 
+@Action
 def func1():
     pass
 
+@Action
 def func2():
     pass
 """
-    imports, functions = migrator._parse_code_block_with_ast(code)
+    imports, functions, helpers = migrator._parse_code_block_with_ast(code)
     assert "import os" in imports
     assert "from datetime import datetime" in imports
     assert len(functions) == 2
@@ -59,9 +61,11 @@ def func2():
 
 
 def test_extract_functions_to_ir(migrator):
-    code = """def transfer_to_agent(arg1):
+    code = """@Action
+def transfer_to_agent(arg1):
     pass
 
+@Action
 def use_tool():
     tools.my_tool.my_op({"param": "value"})
 """
@@ -71,21 +75,25 @@ def use_tool():
             type="TOOLSET",
             name="projects/p1/locations/l1/apps/a1/tools/toolset_1",
             payload={},
-            status=MigrationStatus.COMPILED
+            status=MigrationStatus.COMPILED,
         )
     }
     tool_display_name_map = {"my_tool": "tool_1"}
 
-    extracted_tools, action_map, referenced_toolsets = (
-        migrator.extract_functions_to_ir(
-            code=code,
-            existing_tool_ids=set(),
-            migrated_function_names=set(),
-            function_name_to_tool_map={},
-            tool_map=tool_map,
-            tool_display_name_map=tool_display_name_map,
-            target_app_resource_name="projects/p1/locations/l1/apps/a1",
-        )
+    (
+        extracted_tools,
+        action_map,
+        referenced_toolsets,
+        disc_params,
+        rout_params,
+    ) = migrator.extract_functions_to_ir(
+        code=code,
+        existing_tool_ids=set(),
+        migrated_function_names=set(),
+        function_name_to_tool_map={},
+        tool_map=tool_map,
+        tool_display_name_map=tool_display_name_map,
+        target_app_resource_name="projects/p1/locations/l1/apps/a1",
     )
 
     assert len(extracted_tools) == 2

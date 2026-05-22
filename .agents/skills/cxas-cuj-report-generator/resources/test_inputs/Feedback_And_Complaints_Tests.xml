@@ -1,0 +1,58 @@
+<CyaraTestCases>
+  <TestCase id="missing_item_full">
+    <Utterances>
+      <Utterance>I just received my order and an item is missing.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: I just received my order and an item is missing.)</Step>
+      <Step>Ask_Order_Details (Agent: I apologize for the mistake. What was your order number and what item is missing?)</Step>
+      <Step>Provide_Details (User: Order number is 2468, and the Caesar salad is missing.)</Step>
+      <Step>Verify_Order_State</Step>
+      <Step>Offer_Resolution (Agent: I see the Caesar salad on your order. I can either have it sent out to you immediately or credit your account for the item.)</Step>
+      <Step>Choose_Resolution (User: Please just credit my account.)</Step>
+      <Step>Confirm_Credit (Agent: I have credited the cost of the Caesar salad to your account. Again, apologies for the error.)</Step>
+      <Step>Disconnect_State (Agent: Thank you for letting us know. Have a good day.)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="food_quality_complaint_full">
+    <Utterances>
+      <Utterance>The food I ordered was cold and didn't taste fresh.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: The food I ordered was cold and didn't taste fresh.)</Step>
+      <Step>Ask_Order_Number (Agent: I'm very sorry to hear that. Can you please provide your order number?)</Step>
+      <Step>Provide_Order_Number (User: It is order 1357.)</Step>
+      <Step>Log_Complaint_State</Step>
+      <Step>Offer_Compensation (Agent: I have logged this feedback for our kitchen. I'd like to offer you a 20% discount on your next order as an apology.)</Step>
+      <Step>Accept_Compensation (User: Okay, thank you. I appreciate that.)</Step>
+      <Step>Disconnect_State (Agent: Thank you for your feedback. We hope to serve you better next time.)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="delivery_delay_complaint_full">
+    <Utterances>
+      <Utterance>My order is over 30 minutes late. This is unacceptable.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: My order is over 30 minutes late. This is unacceptable.)</Step>
+      <Step>Ask_Order_Number (Agent: I understand your frustration. What is your order number so I can check on it?)</Step>
+      <Step>Provide_Order_Number (User: Order number 8642.)</Step>
+      <Step>Check_Driver_Status_State</Step>
+      <Step>Provide_Update (Agent: I see the driver got stuck in heavy traffic. They are about 5 minutes away now. I apologize for the delay.)</Step>
+      <Step>Acknowledge_Update (User: Okay, I'll wait a bit more then.)</Step>
+      <Step>Disconnect_State (Agent: Thank you for your patience.)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="positive_feedback_full">
+    <Utterances>
+      <Utterance>I just wanted to say the food was amazing tonight!</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: I just wanted to say the food was amazing tonight!)</Step>
+      <Step>Acknowledge_Feedback (Agent: That is wonderful to hear! Thank you so much for taking the time to share that with us.)</Step>
+      <Step>Ask_Review (Agent: Would you mind leaving a review on our website? It really helps us out.)</Step>
+      <Step>Agree_Review (User: Sure, I can do that.)</Step>
+      <Step>Provide_Link (Agent: Great! You can leave a review at example.com/reviews. Thank you again!)</Step>
+      <Step>Disconnect_State (Agent: Have a fantastic evening!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+</CyaraTestCases>

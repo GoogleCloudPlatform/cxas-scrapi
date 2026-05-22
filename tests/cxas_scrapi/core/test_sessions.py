@@ -446,6 +446,33 @@ def test_run_session_audio_modality_variables_all_turns(
         assert inputs[1]["audio"]["variables"] == {"v": "1"}
 
 
+@patch("cxas_scrapi.core.sessions.Sessions._check_audio_requirements")
+@patch("cxas_scrapi.core.sessions.SessionServiceClient")
+@patch("cxas_scrapi.core.sessions.Sessions.async_bidi_run_session")
+def test_run_session_audio_modality_variables_with_event(
+    mock_async_run, mock_client_cls, mock_check_reqs
+):
+    """Test Sessions.run attaches variables to inputs on event turns
+    in audio modality.
+    """
+    sessions = Sessions(app_name="projects/p/locations/l/apps/a")
+
+    sessions.run(
+        session_id="s1",
+        event="WELCOME",
+        modality=Modality.AUDIO,
+        variables={"disable_disclaimer": True},
+    )
+
+    mock_async_run.assert_called_once()
+    call_kwargs = mock_async_run.call_args[1]
+
+    inputs = call_kwargs["inputs"]
+    assert len(inputs) == 2  # noqa: PLR2004
+    assert inputs[0]["variables"] == {"disable_disclaimer": True}
+    assert inputs[1]["event"]["event"] == "WELCOME"
+
+
 @patch("cxas_scrapi.core.sessions.time.sleep")
 @patch("cxas_scrapi.core.sessions.json_format.MessageToJson")
 def test_bidi_session_handler_send_inputs_with_historical_contexts(
@@ -609,3 +636,35 @@ def test_check_audio_requirements_no_project_id_raises_error():
     with pytest.raises(ValueError) as exc_info:
         sessions._check_audio_requirements()
     assert "Project ID could not be determined" in str(exc_info.value)
+
+
+@patch("cxas_scrapi.core.sessions.SessionServiceClient")
+def test_sessions_rate_limiting(mock_client_cls):
+    """Test Sessions.run with rate limiting."""
+    mock_rate_limiter = MagicMock()
+
+    sessions = Sessions(
+        app_name="projects/p/locations/l/apps/a",
+        rate_limiter=mock_rate_limiter,
+    )
+
+    sessions.run(session_id="s1", text="hello")
+
+    # Verify rate limiter was called
+    mock_rate_limiter.wait_and_consume.assert_called_once()
+
+
+@patch("cxas_scrapi.core.sessions.SessionServiceClient")
+def test_sessions_rate_limiting_multi_turn(mock_client_cls):
+    """Test Sessions.run with rate limiting for multiple turns."""
+    mock_rate_limiter = MagicMock()
+
+    sessions = Sessions(
+        app_name="projects/p/locations/l/apps/a",
+        rate_limiter=mock_rate_limiter,
+    )
+
+    sessions.run(session_id="s1", text=["hello", "world"])
+
+    # Verify rate limiter was called twice
+    assert mock_rate_limiter.wait_and_consume.call_count == 2

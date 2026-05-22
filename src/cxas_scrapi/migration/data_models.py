@@ -73,6 +73,7 @@ class DFCXAgentIR(BaseModel):
     agent_transition_route_groups: List[Dict[str, Any]] = Field(
         default_factory=list
     )
+    no_speech_timeout: Optional[str] = "7s"
     code_blocks: List[Dict[str, Any]] = Field(default_factory=list)
 
 
@@ -146,4 +147,16 @@ class MigrationConfig(BaseModel):
     eval_runner_target: str = "Custom API Runner"
     migration_version: str = "2.0"
     optimize_for_cxas: bool = False
+    # Opt-in: run Gemini structural consolidation (N→M agent grouping) as a
+    # post-migration step. Requires optimize_for_cxas=True. Auto-accepts the
+    # Gemini-proposed grouping when invoked from MigrationCLI (the skill
+    # provides an interactive review TUI instead).
+    consolidate: bool = False
+    # Opt-in: run Stage 3 parent-child topology wiring after consolidation.
+    # Requires consolidate=True.
+    run_stage3: bool = False
+    # Opt-in: persist an IRBundle (<target>_ir.json) after migrate and after
+    # each post-migration stage so the run is resumable via the stage
+    # subcommands (cxas migrate dfcx-cxas {stage1,stage2,stage3,resume}).
+    persist_bundle: bool = False
     source_agent_data_override: Optional[DFCXAgentIR] = None

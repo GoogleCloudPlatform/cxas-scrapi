@@ -281,3 +281,26 @@ def test_export_app_validation(mock_client_cls):
             gcs_uri="gs://bucket/path",
             local_path="/fake/path.zip",
         )
+
+
+@patch("cxas_scrapi.core.apps.types.UpdateAppRequest")
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_update_app_sparse(mock_client_cls, mock_update_app_req):
+    apps_client = Apps(
+        project_id="mock-project", location="us", creds=MagicMock()
+    )
+
+    apps_client.update_app(
+        app_name="projects/mock-project/locations/us/apps/test-app",
+        display_name="Updated App Name",
+    )
+
+    # Verify that UpdateAppRequest was instantiated with a sparse App object
+    # containing only specified field
+    kwargs = mock_update_app_req.call_args[1]
+    app_arg = kwargs.get("app")
+    mask_arg = kwargs.get("update_mask")
+
+    assert app_arg.name == "projects/mock-project/locations/us/apps/test-app"
+    assert app_arg.display_name == "Updated App Name"
+    assert "display_name" in mask_arg.paths

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT
 from cxas_scrapi.core.tools import Tools
 
 
@@ -98,10 +99,9 @@ def test_get_tool(mock_client_cls, mock_ts_req_cls, mock_t_req_cls):
     )
 
 
-@patch("cxas_scrapi.core.tools.types.Tool")
 @patch("cxas_scrapi.core.tools.types.CreateToolRequest")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_create_tool(mock_client_cls, mock_req_cls, mock_tool_cls):
+def test_create_tool(mock_client_cls, mock_req_cls):
     mock_client = mock_client_cls.return_value
 
     def side_effect(**kwargs):
@@ -111,7 +111,6 @@ def test_create_tool(mock_client_cls, mock_req_cls, mock_tool_cls):
         return m
 
     mock_req_cls.side_effect = side_effect
-    mock_tool_cls.side_effect = side_effect
 
     t = Tools("projects/p/locations/l/apps/A")
 
@@ -274,7 +273,7 @@ def test_execute_tool(mock_client_cls, mock_post):
     args, kwargs = mock_post.call_args
     assert (
         args[0]
-        == "https://ces.googleapis.com/v1beta/projects/p/locations/l/apps/A:executeTool"
+        == f"https://{DEFAULT_API_ENDPOINT}/v1beta/projects/p/locations/l/apps/A:executeTool"
     )
     assert kwargs["json"]["tool"] == "projects/p/locations/l/apps/A/tools/t1"
     assert kwargs["json"]["args"] == {"query": "test"}
@@ -320,7 +319,7 @@ def test_execute_toolset(mock_client_cls, mock_post):
     args, kwargs = mock_post.call_args
     assert (
         args[0]
-        == "https://ces.googleapis.com/v1beta/projects/p/locations/l/apps/A:executeTool"
+        == f"https://{DEFAULT_API_ENDPOINT}/v1beta/projects/p/locations/l/apps/A:executeTool"
     )
     assert (
         kwargs["json"]["toolsetTool"]["toolset"]
@@ -390,7 +389,7 @@ def test_execute_tool_with_context(mock_client_cls, mock_post):
     args, kwargs = mock_post.call_args
     assert (
         args[0]
-        == "https://ces.googleapis.com/v1beta/projects/p/locations/l/apps/A:executeTool"
+        == f"https://{DEFAULT_API_ENDPOINT}/v1beta/projects/p/locations/l/apps/A:executeTool"
     )
     assert kwargs["json"]["tool"] == "projects/p/locations/l/apps/A/tools/t1"
     assert kwargs["json"]["args"] == {"query": "test"}

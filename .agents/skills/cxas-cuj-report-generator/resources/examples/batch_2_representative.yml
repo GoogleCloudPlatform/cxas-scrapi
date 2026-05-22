@@ -1,0 +1,29 @@
+subintent_id: account-lockout-resolution
+subintent_name: Account Lockout Resolution
+parent_cuj: General Customer Support
+turns:
+- speaker: Agent
+  text: Thank you for calling Customer Support. I see that your account has been locked
+    due to multiple failed login attempts. To help you get back in, I'll need to verify
+    your identity. May I have your account number?
+- speaker: User
+  text: Sure, it’s 1 2 3 4 5 6 7.
+- speaker: Agent
+  text: Thank you. I’ve sent a verification code to the phone number ending in 4 4
+    5 5. Please read that code back to me when you receive it.
+  tool_call:
+    name: VerifyAccountID
+    parameters:
+      id: '1234567'
+- speaker: User
+  text: I got it. It’s 8 8 9 9 0 0.
+- speaker: Agent
+  text: Perfect. I’ve unlocked your account. You should now be able to log in with
+    your existing password. Would you like me to help you reset your password as well,
+    just in case?
+  tool_call:
+    name: ValidateMFACode
+    parameters:
+      code: '889900'
+- speaker: User
+  text: No, I’m good now. Thanks.

@@ -1,0 +1,42 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 750 260" width="750" height="260">
+  <!-- svg-source:excalidraw -->
+  <rect x="0" y="0" width="750" height="260" fill="#ffffff"/>
+
+  <defs>
+    <marker id="ca" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#868e96"/>
+    </marker>
+  </defs>
+
+  <!-- party_size slot -->
+  <rect x="30" y="90" width="130" height="46" rx="8" ry="8" fill="#b2f2bb" stroke="#2b8a3e" stroke-width="2"/>
+  <text x="95" y="119" font-family="Roboto Mono, monospace" font-size="13" fill="#1e1e1e" text-anchor="middle">party_size</text>
+
+  <!-- Condition diamond -->
+  <polygon points="280,113 370,80 460,113 370,146" fill="#fff3bf" stroke="#fab005" stroke-width="2"/>
+  <text x="370" y="118" font-family="Google Sans, sans-serif" font-size="12" fill="#866a00" text-anchor="middle">≥ 5?</text>
+
+  <!-- Arrow: party_size → condition -->
+  <line x1="160" y1="113" x2="278" y2="113" stroke="#868e96" stroke-width="1.5" marker-end="url(#ca)"/>
+
+  <!-- Yes path -->
+  <line x1="460" y1="100" x2="508" y2="60" stroke="#2b8a3e" stroke-width="2" marker-end="url(#ca)"/>
+  <text x="475" y="72" font-family="Google Sans, sans-serif" font-size="12" fill="#2b8a3e" font-weight="600">Yes</text>
+
+  <!-- Active: large_party_phone visible -->
+  <rect x="510" y="30" width="210" height="60" rx="8" ry="8" fill="#a5d8ff" stroke="#1c7ed6" stroke-width="2"/>
+  <text x="615" y="55" font-family="Roboto Mono, monospace" font-size="12" fill="#1e1e1e" text-anchor="middle">large_party_phone</text>
+  <text x="615" y="75" font-family="Google Sans, sans-serif" font-size="11" fill="#1c7ed6" text-anchor="middle">setter visible, slot active</text>
+
+  <!-- No path -->
+  <line x1="460" y1="126" x2="508" y2="165" stroke="#c92a2a" stroke-width="2" marker-end="url(#ca)"/>
+  <text x="475" y="158" font-family="Google Sans, sans-serif" font-size="12" fill="#c92a2a" font-weight="600">No</text>
+
+  <!-- Inactive: large_party_phone hidden -->
+  <rect x="510" y="140" width="210" height="60" rx="8" ry="8" fill="#f1f3f5" stroke="#adb5bd" stroke-width="2" stroke-dasharray="6 3"/>
+  <text x="615" y="165" font-family="Roboto Mono, monospace" font-size="12" fill="#adb5bd" text-anchor="middle">large_party_phone</text>
+  <text x="615" y="185" font-family="Google Sans, sans-serif" font-size="11" fill="#adb5bd" text-anchor="middle">hidden, skipped, auto-cleared</text>
+
+  <!-- Bottom note -->
+  <text x="375" y="240" font-family="Google Sans, sans-serif" font-size="13" fill="#495057" text-anchor="middle">Conditional slots activate and deactivate dynamically based on filled values.</text>
+</svg>

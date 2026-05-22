@@ -130,7 +130,7 @@ The standard edit-test cycle for an agent that's already on the platform:
    python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "Describe what changed and why" --runs 5
    ```
 
-For structural edits (new agent, new tool, new `childAgents` entry), also run `python scripts/gate-check.py` after step 5 — eval results don't surface platform-side issues like dropped sub-agents or orphaned tools.
+For structural edits (new agent, new tool, new toolset, new `childAgents` entry), also run `python scripts/gate-check.py` after step 5 — eval results don't surface platform-side issues like dropped sub-agents or orphaned tools.
 
 Always pull before editing — pushing without pulling first overwrites whatever's on the platform.
 

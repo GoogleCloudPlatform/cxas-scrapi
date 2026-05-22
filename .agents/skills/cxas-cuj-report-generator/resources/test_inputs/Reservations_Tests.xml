@@ -1,0 +1,58 @@
+<CyaraTestCases>
+  <TestCase id="make_reservation_full">
+    <Utterances>
+      <Utterance>I'd like to make a reservation for tonight.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: I'd like to make a reservation for tonight.)</Step>
+      <Step>Ask_Party_Size (Agent: I can help with that. For how many people?)</Step>
+      <Step>Provide_Party_Size (User: A table for four, please.)</Step>
+      <Step>Ask_Time (Agent: And what time would you like to come in?)</Step>
+      <Step>Provide_Time (User: Do you have anything available at 7:30 PM?)</Step>
+      <Step>Check_Availability_State</Step>
+      <Step>Confirm_Reservation (Agent: Yes, I have a table for four at 7:30 PM. I've booked that for you.)</Step>
+      <Step>Disconnect_State (Agent: We look forward to seeing you tonight!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="cancel_reservation_full">
+    <Utterances>
+      <Utterance>I need to cancel my reservation for tomorrow.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: I need to cancel my reservation for tomorrow.)</Step>
+      <Step>Ask_Name (Agent: I can assist with that. What is the name on the reservation?)</Step>
+      <Step>Provide_Name (User: It's under John Doe.)</Step>
+      <Step>Find_Reservation_State</Step>
+      <Step>Confirm_Cancellation (Agent: I found your reservation for John Doe. I have cancelled it as requested.)</Step>
+      <Step>Goodbye_State (User: Thanks for your help.)</Step>
+      <Step>Disconnect_State (Agent: You're welcome. Have a good day.)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="modify_reservation_full">
+    <Utterances>
+      <Utterance>I want to change the time of my reservation.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: I want to change the time of my reservation.)</Step>
+      <Step>Ask_Details (Agent: I can help you modify that. What is the name on the booking and the new time you'd like?)</Step>
+      <Step>Provide_Details (User: It's for Jane Smith, and I'd like to change it to 8:00 PM instead of 7:00.)</Step>
+      <Step>Check_Availability_State</Step>
+      <Step>Confirm_Modification (Agent: I have successfully moved Jane Smith's reservation to 8:00 PM.)</Step>
+      <Step>Disconnect_State (Agent: Thank you. See you then!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="check_reservation_details_full">
+    <Utterances>
+      <Utterance>Can you confirm the details of my reservation?</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: Can you confirm the details of my reservation?)</Step>
+      <Step>Ask_Identifier (Agent: Sure. What is the phone number or name associated with the reservation?)</Step>
+      <Step>Provide_Identifier (User: My phone number is 555-1234.)</Step>
+      <Step>Find_Reservation_State</Step>
+      <Step>Provide_Details (Agent: I see a reservation for a party of 2 on Friday at 6:30 PM under your number.)</Step>
+      <Step>Goodbye_State (User: Perfect, that's what I needed. Thanks.)</Step>
+      <Step>Disconnect_State (Agent: You're welcome. Have a great day!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+</CyaraTestCases>

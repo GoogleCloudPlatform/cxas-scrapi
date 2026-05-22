@@ -27,6 +27,7 @@ from google.protobuf import field_mask_pb2
 from google.protobuf.json_format import MessageToDict
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT
 from cxas_scrapi.core.variables import Variables
 
 
@@ -264,11 +265,17 @@ class Tools(Apps):
             )
             return self.client.create_toolset(request=request)
         else:
+            from google.protobuf import json_format  # noqa: PLC0415
+
             if description and "description" not in payload_copy:
                 payload_copy["description"] = description
 
-            kwargs = {"display_name": display_name, tool_type: payload_copy}
-            tool = types.Tool(**kwargs)
+            tool = types.Tool(display_name=display_name)
+            tool_dict = {tool_type: payload_copy}
+            json_format.ParseDict(
+                tool_dict, tool._pb, ignore_unknown_fields=True
+            )
+
             request = types.CreateToolRequest(
                 parent=self.app_name, tool_id=tool_id, tool=tool
             )
@@ -332,9 +339,9 @@ class Tools(Apps):
         Returns:
             The tool execution response (JSON or Object).
         """
-        # Use HTTP REST request instead of SDK because the current SDK version
-        # is missing the 'variables' field in ExecuteToolRequest proto
-        url = f"https://ces.googleapis.com/v1beta/{self.app_name}:executeTool"
+        url = (
+            f"https://{DEFAULT_API_ENDPOINT}/v1beta/{self.app_name}:executeTool"
+        )
 
         headers = {
             "Authorization": f"Bearer {self.creds.token}",

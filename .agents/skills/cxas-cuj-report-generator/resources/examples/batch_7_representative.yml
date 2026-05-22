@@ -1,0 +1,30 @@
+subintent_id: delivery-setup
+subintent_name: Delivery Setup
+parent_cuj: General Customer Support
+turns:
+- speaker: User
+  text: Hi, I'd like to set up delivery for my weekly meal plan.
+- speaker: Agent
+  text: I can certainly help you with that. To get started, I'll check your rewards account for delivery eligibility.
+- speaker: Agent
+  text: Calling tool get_rewards_account
+  tool_call:
+    name: get_rewards_account
+    parameters:
+      customer_id: '12345'
+- speaker: Agent
+  text: Good news! Your plan supports free delivery for orders over $20. Which items would you like to order?
+- speaker: User
+  text: My Burgers and Fries.
+- speaker: Agent
+  text: Great. I'll initiate the order for those now. You'll receive a confirmation email once the kitchen processes the request.
+- speaker: Agent
+  text: Calling webhook setup_food_delivery
+  webhook_call:
+    endpoint: setup_food_delivery
+    payload_patch:
+      items:
+      - Burgers
+      - Fries
+- speaker: Agent
+  text: All set. Is there anything else I can assist you with today?

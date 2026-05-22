@@ -1,7 +1,106 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cxas-scrapi"
+version = "1.2.0"
+description = "A high level scripting API for CX Agent Studio developers."
+readme = "README.md"
+authors = [
+  { name = "Patrick Marlow", email = "pmarlow@google.com" },
+]
+license = { text = "Apache-2.0" }
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Communications :: Chat",
+  "Topic :: Software Development",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+keywords = ["ces", "google", "bot", "chatbot", "agent", "scrapi"]
+requires-python = ">=3.10, <4"
+dependencies = [
+  "absl-py",
+  "google-cloud-ces",
+  "google-auth",
+  "requests",
+  "protobuf",
+  "google-cloud-secret-manager",
+  "pydantic",
+  "jsonpath-ng",
+  "pandas",
+  "gspread",
+  "gspread-dataframe",
+  "ipython",
+  "PyYAML",
+  "google-genai",
+  "pandas-gbq",
+  "google-cloud-bigquery",
+  "pytest",
+  "google-cloud-texttospeech",
+  "websocket-client",
+  "certifi",
+  "json5",
+  "graphviz",
+  "rich",
+  "google-cloud-dialogflow-cx",
+  "google-cloud-storage",
+  "google-cloud-logging",
+  "nest_asyncio",
+  "jinja2",
+  "scikit-learn",
+  # InquirerPy powers the cxas-agent-foundry configure wizard and the
+  # structural-consolidation grouping review TUI at
+  # cxas_scrapi.migration.grouping_review. Imported lazily — only
+  # callers that explicitly opt into the TUI pay the cost; the CLI's
+  # `cxas migrate dfcx` interactive dashboard and `cxas migrate dfcx-cxas`
+  # subcommands do NOT pull it in.
+  "InquirerPy",
+  "ratelimit",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest-asyncio",
+  "pytest-xdist",
+  "pytest-cov",
+  "ruff",
+  "twine",
+  "pre-commit",
+]
+docs = [
+  "mkdocs-material[imaging]>=9.5",
+  "mkdocstrings[python]>=0.27",
+  "mkdocs-git-revision-date-localized-plugin>=1.2",
+  "mkdocs-minify-plugin>=0.8",
+  "mike>=2.0",
+]
+
+[project.scripts]
+cxas = "cxas_scrapi.cli.main:main"
+
+[tool.hatch.build.targets.wheel.shared-data]
+".agents" = "share/cxas-scrapi/skills/.agents"
+".claude" = "share/cxas-scrapi/skills/.claude"
+".gemini" = "share/cxas-scrapi/skills/.gemini"
+"AGENTS.md" = "share/cxas-scrapi/skills/AGENTS.md"
+"GEMINI.md" = "share/cxas-scrapi/skills/GEMINI.md"
+"examples/cxaslint.yaml" = "share/cxas-scrapi/skills/examples/cxaslint.yaml"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cxas_scrapi"]
+
 [tool.ruff]
 line-length = 80
 target-version = "py310"
-extend-exclude = ["*.ipynb", ".agents/skills/cxas-agent-foundry/assets/project-template/", ".agents/skills/cxas-agent-foundry/scripts", ".agents/skills/cxas-sim-eval/scripts", "examples/"]
+extend-exclude = ["*.ipynb", ".agents/skills/cxas-agent-foundry/assets/project-template/", ".agents/skills/cxas-agent-foundry/scripts", ".agents/skills/cxas-sim-eval/scripts", ".agents/skills/cxas-cuj-report-generator/", "examples/"]
 
 [tool.ruff.lint]
 select = [
@@ -26,8 +125,22 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/cxas_scrapi/migration/prompts.py" = ["E501"]
+# html_preview is dominated by HTML/CSS template strings; wrapping them would
+# hurt readability of the templates themselves. The Python code in this file
+# is line-length compliant; only template strings exceed.
+"src/cxas_scrapi/migration/html_preview.py" = ["E501"]
+# Skill-local visualizer is a thin re-export shim over html_preview; the same
+# exemption applies in case of any inline overrides.
+".agents/skills/cxas-dfcx-migration/scripts/_visualizer.py" = ["E501"]
+# Audio-analysis prompts are verbatim text intended for Gemini and must not be
+# reflowed; line-length doesn't apply to prompt content.
+"src/cxas_scrapi/utils/tracing/audio_analysis.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true

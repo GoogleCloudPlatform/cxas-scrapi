@@ -121,7 +121,6 @@ def test_create_deployment_with_options(mock_client_cls):
     assert wwc.theme == types.ChannelProfile.WebWidgetConfig.Theme.DARK
 
 
-
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
 def test_update_deployment(mock_client_cls):
     mock_client = mock_client_cls.return_value

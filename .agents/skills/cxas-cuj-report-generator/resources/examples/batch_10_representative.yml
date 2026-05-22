@@ -1,0 +1,18 @@
+subintent_id: pausehold-on
+subintent_name: Pause/Hold On
+parent_cuj: General Customer Support
+turns:
+- speaker: User
+  text: Hang on a second, I need to find my loyalty card.
+- speaker: Agent
+  text: No problem at all. I'll stay on the line. Just let me know when you're ready.
+- speaker: Agent
+  text: Calling webhook set_session_state
+  webhook_call:
+    endpoint: set_session_state
+    payload_patch:
+      status: waiting
+- speaker: User
+  text: Okay, I've got it now.
+- speaker: Agent
+  text: Great! Please go ahead with the information.

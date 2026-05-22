@@ -1,0 +1,106 @@
+{
+  "name": "ac0b4bc4-8bc0-4e92-8992-b6e9fe6d7d5d",
+  "displayName": "Payload - No Duplicate On Out-of-Order Input",
+  "description": "Reproduces the double-payload bug: user provides out-of-order info (name when party_size is being asked), causing two engine calls in one turn. The after_model_callback guard must prevent injecting the party_size chips payload twice. Turn 1: greeting. Turn 2: user gives name out of order — setter fires, second engine call happens, but chips should appear only once.",
+  "tags": [
+    "slot-machine",
+    "payload",
+    "regression",
+    "multi-model-call"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Hi there"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Welcome_Filled",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "welcome": true
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "My name is Sarah Chen"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetGuestName_Called",
+              "toolCall": {
+                "tool": "set_guest_info"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Name_Deferred_PartySize_Still_Next",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "welcome": true
+                  },
+                  "deferred": {
+                    "guest_name": "Sarah Chen"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "4 guests"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called",
+              "toolCall": {
+                "tool": "set_reservation_basics",
+                "args": {
+                  "party_size": 4.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_PartySize_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 4
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "No Technical Leakage"
+    ]
+  }
+}

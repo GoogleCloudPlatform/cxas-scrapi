@@ -14,7 +14,7 @@
 
 """Tool lint rules (T001-T008).
 
-Validates agent tool Python files against GECX conventions.
+Validates agent tool Python files against CXAS conventions.
 """
 
 import json
@@ -39,8 +39,12 @@ def _load_tool_config(file_path: Path) -> tuple[Optional[dict], Optional[Path]]:
     Tool layout: tools/<name>/python_function/python_code.py
     JSON config: tools/<name>/<name>.json
     """
-    tool_dir = file_path.parent.parent
-    json_path = tool_dir / f"{tool_dir.name}.json"
+    if file_path.suffix == ".json":
+        json_path = file_path
+    else:
+        tool_dir = file_path.parent.parent
+        json_path = tool_dir / f"{tool_dir.name}.json"
+
     if not json_path.exists():
         return None, json_path
     try:
@@ -61,6 +65,8 @@ class MissingAgentAction(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
+        if file_path.suffix != ".py":
+            return []
         rel = str(file_path.relative_to(context.project_root))
         if "agent_action" not in content:
             return [
@@ -87,6 +93,8 @@ class MissingDocstring(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
+        if file_path.suffix != ".py":
+            return []
         rel = str(file_path.relative_to(context.project_root))
         if '"""' not in content and "'''" not in content:
             return [
@@ -118,6 +126,8 @@ class MissingTypeHints(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
+        if file_path.suffix != ".py":
+            return []
         rel = str(file_path.relative_to(context.project_root))
         fn_match = FUNC_DEF_RE.search(content)
         if fn_match:
@@ -148,6 +158,8 @@ class FunctionNameMismatch(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
+        if file_path.suffix != ".py":
+            return []
         rel = str(file_path.relative_to(context.project_root))
         tool_dir_name = file_path.parent.parent.name
 
@@ -206,6 +218,8 @@ class HighCardinalityArgs(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
+        if file_path.suffix != ".py":
+            return []
         fn_match = FUNC_DEF_RE.search(content)
         if not fn_match:
             return []
@@ -258,6 +272,8 @@ class ExcessiveReturnData(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
+        if file_path.suffix != ".py":
+            return []
         rel = str(file_path.relative_to(context.project_root))
         return [
             self.make_result(file=rel, message=msg, fix=fix)
@@ -320,7 +336,10 @@ class ToolDisplayNameUnreferenced(Rule):
             return []
 
         # tools/<name>/python_function/python_code.py → 4 levels to app root
-        app_root = file_path.parent.parent.parent.parent
+        if file_path.suffix == ".json":
+            app_root = file_path.parent.parent.parent
+        else:
+            app_root = file_path.parent.parent.parent.parent
         agents_dir = app_root / "agents"
         if not agents_dir.exists():
             return []
@@ -372,6 +391,8 @@ class KwargsInSignature(Rule):
         content: str,
         context: LintContext,
     ) -> list[LintResult]:
+        if file_path.suffix != ".py":
+            return []
         rel = str(file_path.relative_to(context.project_root))
         fn_match = FUNC_DEF_RE.search(content)
         if fn_match and "**" in fn_match.group(2):
@@ -412,6 +433,8 @@ class ToolInvalidPythonSyntax(Rule):
         content: str,
         context: LintContext,
     ) -> list[LintResult]:
+        if file_path.suffix != ".py":
+            return []
         rel = str(file_path.relative_to(context.project_root))
         try:
             compile(content, rel, "exec")
@@ -449,6 +472,8 @@ class NoneDefaultValue(Rule):
         content: str,
         context: LintContext,
     ) -> list[LintResult]:
+        if file_path.suffix != ".py":
+            return []
         fn_match = FUNC_DEF_RE.search(content)
         if not fn_match:
             return []
@@ -486,7 +511,8 @@ class MissingToolDescriptionInJSON(Rule):
     id = "T012"
     name = "tool-json-missing-description"
     description = (
-        "Tool JSON configuration must include pythonFunction.description."
+        "Tool JSON configuration must include pythonFunction.description "
+        "or widgetTool.description."
     )
     default_severity = Severity.ERROR
 
@@ -497,8 +523,30 @@ class MissingToolDescriptionInJSON(Rule):
         if not tool_config:
             return []
 
-        python_function = tool_config.get("pythonFunction", {})
-        description = python_function.get("description")
+        python_function = tool_config.get("pythonFunction")
+        widget_tool = tool_config.get("widgetTool")
+
+        if python_function is not None:
+            description = python_function.get("description")
+            field_name = "pythonFunction.description"
+            fix_msg = (
+                "Add a 'description' key to the 'pythonFunction' "
+                "object in the tool's JSON file."
+            )
+        elif widget_tool is not None:
+            description = widget_tool.get("description")
+            field_name = "widgetTool.description"
+            fix_msg = (
+                "Add a 'description' key to the 'widgetTool' "
+                "object in the tool's JSON file."
+            )
+        else:
+            description = None
+            field_name = "pythonFunction or widgetTool description"
+            fix_msg = (
+                "Add a 'description' field within the 'pythonFunction' "
+                "or 'widgetTool' object in the tool's JSON file."
+            )
 
         if not description or not str(description).strip():
             rel = str(json_path.relative_to(context.project_root))
@@ -506,15 +554,12 @@ class MissingToolDescriptionInJSON(Rule):
                 self.make_result(
                     file=rel,
                     message=(
-                        "Tool JSON configuration is missing "
-                        "pythonFunction.description field. "
-                        "The LLM relies on this description to know when to "
-                        "call the tool."
+                        f"Tool JSON configuration is missing "
+                        f"{field_name} field. "
+                        f"The LLM relies on this description to know when to "
+                        f"call the tool."
                     ),
-                    fix=(
-                        "Add a 'description' key to the 'pythonFunction' "
-                        "object in the tool's JSON file."
-                    ),
+                    fix=fix_msg,
                 )
             ]
         return []

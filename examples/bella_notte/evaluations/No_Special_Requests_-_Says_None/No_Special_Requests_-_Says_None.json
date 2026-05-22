@@ -1,7 +1,7 @@
 {
   "name": "a5151027-8d2b-45c7-8fb2-c4bddce58f42",
   "displayName": "No Special Requests - Says None",
-  "description": "User explicitly says they have no special requests. Name is deferred (BookReservation input with readback_inputs: True). After both name and 'none' special requests are collected, a combined group readback fires. Agent should still call set_special_requests, and booking completes after group confirmation.",
+  "description": "User explicitly says they have no special requests. Name is deferred (BookReservation input with readback_inputs: True). After both name and 'none' special requests are collected, a combined group readback fires. Agent should still call set_guest_info, and booking completes after group confirmation.",
   "tags": [
     "slot-machine",
     "happy-path",
@@ -25,22 +25,22 @@
             "expectation": {
               "note": "Check_SetPartySize_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
+                  "party_size": 2.0
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_PartySize",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "2"
+              "note": "Check_PartySize_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 2
                   }
-                ]
+                }
               }
             }
           }
@@ -66,22 +66,22 @@
             "expectation": {
               "note": "Check_SetPreferredDate_Called",
               "toolCall": {
-                "tool": "set_preferred_date",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "date": "2026-06-20"
+                  "preferred_date": "2026-06-20"
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_Date",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "June"
+              "note": "Check_Date_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "preferred_date": "2026-06-20"
                   }
-                ]
+                }
               }
             }
           }
@@ -96,13 +96,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Times_Shown",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "6:00 PM"
+              "note": "Check_Date_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "preferred_date": "2026-06-20"
                   }
-                ]
+                }
               }
             }
           }
@@ -125,13 +125,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Readback_Time",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "6"
+              "note": "Check_Time_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "selected_time": "18:00"
                   }
-                ]
+                }
               }
             }
           }
@@ -157,22 +157,25 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name",
+                "tool": "set_guest_info",
                 "args": {
-                  "name": "Smith"
+                  "guest_name": "Smith"
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Asks_SpecialRequests_No_Name_Readback",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "special"
+              "note": "Check_Time_Confirmed_Name_Deferred",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "selected_time": "18:00"
+                  },
+                  "pending": {
+                    "guest_name": "Smith"
                   }
-                ]
+                }
               }
             }
           }
@@ -189,19 +192,19 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Group_Readback_Name",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "Smith"
+              "note": "Check_Name_Still_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "guest_name": "Smith"
                   }
-                ]
+                }
               }
             }
           }
@@ -216,13 +219,11 @@
           },
           {
             "expectation": {
-              "note": "Check_Confirmation_Number",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "BN-"
-                  }
-                ]
+              "note": "Check_Booking_Complete",
+              "updatedVariables": {
+                "sm": {
+                  "status": "complete"
+                }
               }
             }
           }
@@ -230,7 +231,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
       "Tool-Truth - Uses Exact System Values",
       "No Technical Leakage",
       "Slot-Filling Flow Progression"

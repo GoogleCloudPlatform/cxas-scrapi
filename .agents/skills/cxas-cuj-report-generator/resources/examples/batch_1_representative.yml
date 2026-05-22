@@ -1,0 +1,16 @@
+subintent_id: account-verification
+subintent_name: Account Verification
+parent_cuj: General Customer Support
+turns:
+- speaker: Agent
+  text: To get started, I'll need your account number. What is that number?
+- speaker: User
+  text: Sure, it's one two three four five six.
+- speaker: Agent
+  text: Calling tool verify_account
+  tool_call:
+    name: verify_account
+    parameters:
+      account_number: '123456'
+- speaker: Agent
+  text: Thank you. I've verified your account. How can I help you today?

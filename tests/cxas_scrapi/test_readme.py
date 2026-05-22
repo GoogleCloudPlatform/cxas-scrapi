@@ -5,19 +5,23 @@ import requests
 
 README_PATH = pathlib.Path(__file__).parent.parent.parent / "README.md"
 
+
 def extract_links(text):
     # Extract markdown links: [text](url)
-    markdown_links = re.findall(r'\[.*?\]\((.*?)\)', text)
+    markdown_links = re.findall(r"\[.*?\]\((.*?)\)", text)
     # Extract HTML links: <a href="url">...</a>
     html_links = re.findall(r'<a\s+(?:[^>]*?\s+)?href="([^"]*)"', text)
     return set(markdown_links + html_links)
 
+
 def is_external(url):
     return url.startswith("http://") or url.startswith("https://")
+
 
 def is_ignored(url):
     ignored_patterns = ["mailto:", "#", "127.0.0.1", "localhost"]
     return any(pattern in url for pattern in ignored_patterns)
+
 
 def test_readme_links():
     assert README_PATH.exists(), f"README.md not found at {README_PATH}"
@@ -36,7 +40,7 @@ def test_readme_links():
         if is_external(link):
             try:
                 # Using a browser-like User-Agent might help avoid some blocks
-                headers = {'User-Agent': 'Mozilla/5.0'}
+                headers = {"User-Agent": "Mozilla/5.0"}
                 response = requests.get(link, headers=headers, timeout=5)
                 if response.status_code >= 400:
                     broken_links.append(

@@ -1,0 +1,96 @@
+{
+  "name": "d40c4269-c699-4e4e-8a3b-07e4a23799c4",
+  "displayName": "Payload - Welcome Card and Chips Injection",
+  "description": "Verifies that the payload injection pipeline works on non-preempted turns. Turn 1 (greeting): welcome announce fills and party_size is asked. Turn 2 (party size): setter called, slot goes to pending for readback. Payloads (welcome card, chips) are injected by the after_model_callback alongside the LLM's natural text — this eval verifies the slot-filling flow remains correct with payloads enabled.",
+  "tags": [
+    "slot-machine",
+    "payload",
+    "after-model-callback"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Hi there"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Welcome_Filled_PartySize_Next",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "welcome": true
+                  },
+                  "pending": {}
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "3 people"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called",
+              "toolCall": {
+                "tool": "set_reservation_basics",
+                "args": {
+                  "party_size": 3.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_PartySize_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 3
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_PartySize_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 3
+                  },
+                  "pending": {}
+                }
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "No Technical Leakage"
+    ]
+  }
+}

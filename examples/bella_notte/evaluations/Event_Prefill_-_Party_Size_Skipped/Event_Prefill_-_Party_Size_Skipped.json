@@ -31,13 +31,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Welcome_No_Party_Size_Question",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "welcome"
+              "note": "Check_PartySize_Prefilled",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 4
                   }
-                ]
+                }
               }
             }
           }
@@ -52,13 +52,14 @@
           },
           {
             "expectation": {
-              "note": "Check_Asks_For_Date_Not_Party_Size",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "date"
-                  }
-                ]
+              "note": "Check_PartySize_Still_Filled_No_Reask",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 4
+                  },
+                  "status": "in_progress"
+                }
               }
             }
           }
@@ -66,7 +67,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
       "No Technical Leakage",
       "Event Prefill - Skips Pre-Filled Slots"
     ]

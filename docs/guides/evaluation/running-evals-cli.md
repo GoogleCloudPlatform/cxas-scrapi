@@ -49,7 +49,15 @@ Local simulations don't have a dedicated CLI command — you run them via Python
 ```python
 from cxas_scrapi.evals.simulation_evals import SimulationEvals
 
-sim_evals = SimulationEvals(app_name="projects/my-project/locations/us/apps/my-app")
+from cxas_scrapi.utils.rate_limiter import RateLimiter
+
+# Optional: configure a rate limiter to pace calls and avoid quota limits
+limiter = RateLimiter(requests_per_minute=30.0)
+
+sim_evals = SimulationEvals(
+    app_name="projects/my-project/locations/us/apps/my-app",
+    rate_limiter=limiter
+)
 
 test_case = {
     "steps": [

@@ -22,48 +22,52 @@ from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
 
 @pytest.fixture
 def sample_agent_data():
-    return DFCXAgentIR(**{
-        "name": "projects/p1/locations/l1/agents/a1",
-        "display_name": "Sample Agent",
-        "default_language_code": "en",
-        "playbooks": [
-            {
-                "name": "projects/p1/locations/l1/agents/a1/playbooks/pb1",
-                "displayName": "Playbook 1",
-                "referencedPlaybooks": [
-                    "projects/p1/locations/l1/agents/a1/playbooks/pb2"
-                ],
-                "instruction": {"steps": [{"text": "Go to ${FLOW:Flow 1}"}]},
-            },
-            {
-                "name": "projects/p1/locations/l1/agents/a1/playbooks/pb2",
-                "displayName": "Playbook 2",
-            },
-        ],
-        "flows": [
-            {
-                "flow_id": "projects/p1/locations/l1/agents/a1/flows/f1",
-                "flow_data": {
-                    "name": "projects/p1/locations/l1/agents/a1/flows/f1",
-                    "displayName": "Flow 1",
-                    "transitionRoutes": [
-                        {
-                            "targetFlow": (
-                                "projects/p1/locations/l1/agents/a1/flows/f2"
-                            )
-                        }
+    return DFCXAgentIR(
+        **{
+            "name": "projects/p1/locations/l1/agents/a1",
+            "display_name": "Sample Agent",
+            "default_language_code": "en",
+            "playbooks": [
+                {
+                    "name": "projects/p1/locations/l1/agents/a1/playbooks/pb1",
+                    "displayName": "Playbook 1",
+                    "referencedPlaybooks": [
+                        "projects/p1/locations/l1/agents/a1/playbooks/pb2"
                     ],
+                    "instruction": {
+                        "steps": [{"text": "Go to ${FLOW:Flow 1}"}]
+                    },
                 },
-            },
-            {
-                "flow_id": "projects1/locations/l1/agents/a1/flows/f2",
-                "flow_data": {
-                    "name": "projects/p1/locations/l1/agents/a1/flows/f2",
-                    "displayName": "Flow 2",
+                {
+                    "name": "projects/p1/locations/l1/agents/a1/playbooks/pb2",
+                    "displayName": "Playbook 2",
                 },
-            },
-        ],
-    })
+            ],
+            "flows": [
+                {
+                    "flow_id": "projects/p1/locations/l1/agents/a1/flows/f1",
+                    "flow_data": {
+                        "name": "projects/p1/locations/l1/agents/a1/flows/f1",
+                        "displayName": "Flow 1",
+                        "transitionRoutes": [
+                            {
+                                "targetFlow": (
+                                    "projects/p1/locations/l1/agents/a1/flows/f2"
+                                )
+                            }
+                        ],
+                    },
+                },
+                {
+                    "flow_id": "projects1/locations/l1/agents/a1/flows/f2",
+                    "flow_data": {
+                        "name": "projects/p1/locations/l1/agents/a1/flows/f2",
+                        "displayName": "Flow 2",
+                    },
+                },
+            ],
+        }
+    )
 
 
 def test_analyzer_init(sample_agent_data):

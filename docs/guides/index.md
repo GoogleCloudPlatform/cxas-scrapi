@@ -20,6 +20,14 @@ If you're new to SCRAPI, we recommend working through these guides in order:
 
     [:octicons-arrow-right-24: Start building](agent-development/index.md)
 
+-   **Agent Migration & Optimization**
+
+    ---
+
+    Automatically convert Dialogflow CX flows and playbooks into modular CXAS agents, complete with topology analysis and complete app optimization.
+
+    [:octicons-arrow-right-24: Start migrating](migration/index.md)
+
 -   **Testing & Evaluation**
 
     ---

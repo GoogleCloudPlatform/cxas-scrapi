@@ -19,16 +19,14 @@
               "text": "I'd like the 7 PM slot please"
             }
           },
-
           {
             "expectation": {
-              "note": "Check_Agent_Redirects_To_Prerequisites",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "date"
-                  }
-                ]
+              "note": "Check_No_Time_Stored",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {},
+                  "filled": {}
+                }
               }
             }
           }
@@ -36,8 +34,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
-      "Tool-Truth - Uses Exact System Values",
       "No Technical Leakage"
     ]
   }

@@ -1,0 +1,9 @@
+{
+  "name": "4a7039c9-5a75-4084-be83-e798c10ca57c",
+  "pythonFunction": {
+    "name": "set_pickup_time",
+    "pythonCode": "tools/set_pickup_time/python_function/python_code.py",
+    "description": "Record the pickup time for the takeout order."
+  },
+  "displayName": "set_pickup_time"
+}

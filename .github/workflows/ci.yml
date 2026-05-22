@@ -6,44 +6,56 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   lint:
-    name: Lint code
+    name: Lint & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
         with:
-          python-version: "3.14"
-          cache: 'pip'
+          enable-cache: true
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install ruff
+        run: uv sync --extra dev
       - name: Run Ruff Linter
-        run: |
-          ruff check .
+        run: uv run ruff check .
+      - name: Run Ruff Formatter
+        run: uv run ruff format --check .
+
+  build-check:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          enable-cache: true
+      - name: Build package
+        run: uv build
+      - name: Verify package metadata
+        run: uvx twine check dist/*
 
   test:
-    name: Run Unit Tests
+    name: Unit Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.13"]
+        python-version: ["3.10", "3.14"]
     steps:
       - uses: actions/checkout@v6
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          enable-cache: true
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-xdist
-          pip install -e .
+        run: uv sync --extra dev
       - name: Run tests with pytest
         run: |
-          pytest tests/ -n auto
+          uv run pytest tests/ -n auto

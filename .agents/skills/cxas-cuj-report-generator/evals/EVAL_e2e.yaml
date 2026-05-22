@@ -1,0 +1,24 @@
+suite_name: "cxas_scrapi_report_generator_e2e"
+timeout_seconds: 300
+cases:
+  - name: "simple_e2e_flow"
+    description: "Verify that the agent can process the mock files in `resources/test_inputs/` and generate transcripts and a report, expecting exactly 20 subintents and 5 CUJs."
+    prompt: "Using the 'cxas-scrapi-report-generator' skill, please analyze customer files at inputs/ directory. Extract exactly 20 subintents and group them into 5 CUJs, generate the YAML transcripts, and produce the final HTML report."
+    expectations:
+      - "The agent scans the `resources/test_inputs/` directory."
+      - "The agent identifies `.drawio`, `.xml`, `app.py`, `build.gradle`, and `README.md` files."
+      - "The agent extracts exactly 20 subintents and groups them into 5 CUJs."
+      - "The agent extracts intents and generates YAML transcripts."
+      - "The agent verifies that transcripts contain restaurant domain intents."
+      - "The agent runs `construct_report.py` to generate the final HTML report."
+
+  - name: "e2e_flow_unspecified_counts"
+    description: "Verify that the agent can process the mock files and generate transcripts and a report without being told the exact numbers."
+    prompt: "Using the 'cxas-scrapi-report-generator' skill, please analyze customer files at inputs/ directory. Extract all relevant subintents, group them into meaningful CUJs, generate the YAML transcripts, and produce the final HTML report."
+    expectations:
+      - "The agent scans the `resources/test_inputs/` directory."
+      - "The agent identifies `.drawio`, `.xml`, `app.py`, `build.gradle`, and `README.md` files."
+      - "The agent extracts relevant subintents and groups them into meaningful CUJs (figuring out the numbers itself)."
+      - "The agent extracts intents and generates YAML transcripts."
+      - "The agent verifies that transcripts contain restaurant domain intents."
+      - "The agent runs `construct_report.py` to generate the final HTML report."

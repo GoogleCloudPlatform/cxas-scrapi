@@ -1,12 +1,11 @@
 {
   "name": "d18b89d2-d0b9-48f2-b32d-8d18cf313724",
   "displayName": "Multi-Slot - Three Fields in One Message",
-  "description": "User provides party size, date, AND name in a single message. All three setter tools must fire, then batched readback of all three values, then confirm_pending commits all.",
+  "description": "User provides party size, date, AND name in a single message. Multi-slot setters fire (set_reservation_basics with both, set_guest_info with name), then batched readback of all three values, then confirm_pending commits all.",
   "tags": [
     "slot-machine",
     "multi-slot",
     "readback",
-    "parallel-tools",
     "critical"
   ],
   "evaluationDatasets": [
@@ -23,22 +22,12 @@
           },
           {
             "expectation": {
-              "note": "Check_SetPartySize_Called",
+              "note": "Check_SetReservationBasics_Called_With_Both",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
-                }
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_SetPreferredDate_Called",
-              "toolCall": {
-                "tool": "set_preferred_date",
-                "args": {
-                  "date": "2026-06-20"
+                  "party_size": 2.0,
+                  "preferred_date": "2026-06-20"
                 }
               }
             }
@@ -47,22 +36,26 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name",
+                "tool": "set_guest_info",
                 "args": {
-                  "name": "Johnson"
+                  "guest_name": "Johnson"
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_All_Three",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "Johnson"
+              "note": "Check_All_Three_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 2,
+                    "preferred_date": "2026-06-20"
+                  },
+                  "deferred": {
+                    "guest_name": "Johnson"
                   }
-                ]
+                }
               }
             }
           }
@@ -77,13 +70,17 @@
           },
           {
             "expectation": {
-              "note": "Check_AvailableTimes_Presented",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "6:00 PM"
+              "note": "Check_All_Three_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 2,
+                    "preferred_date": "2026-06-20"
+                  },
+                  "deferred": {
+                    "guest_name": "Johnson"
                   }
-                ]
+                }
               }
             }
           }
@@ -106,13 +103,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Readback_Time",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "6"
+              "note": "Check_Time_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "selected_time": "18:00"
                   }
-                ]
+                }
               }
             }
           }
@@ -127,13 +124,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Asks_For_Requests",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "special"
+              "note": "Check_Time_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "selected_time": "18:00"
                   }
-                ]
+                }
               }
             }
           }
@@ -150,19 +147,20 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_Requests",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "birthday"
-                  }
-                ]
+              "note": "Check_Time_Still_Filled",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "selected_time": "18:00"
+                  },
+                  "status": "in_progress"
+                }
               }
             }
           }
@@ -177,13 +175,11 @@
           },
           {
             "expectation": {
-              "note": "Check_Booking_Confirmed",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "BN-"
-                  }
-                ]
+              "note": "Check_Booking_Complete",
+              "updatedVariables": {
+                "sm": {
+                  "status": "complete"
+                }
               }
             }
           }
@@ -191,7 +187,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
       "Tool-Truth - Uses Exact System Values",
       "No Technical Leakage"
     ]

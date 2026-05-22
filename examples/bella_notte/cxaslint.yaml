@@ -1,0 +1,16 @@
+# cxaslint.yaml — Bella Notte Linter Configuration
+
+app_dir: .
+evals_dir: ../../evals/
+
+rules:
+  # Disable style checks and dynamic prompt restrictions
+  T001: "off"  # Missing agent_action error return pattern
+  T003: "off"  # Missing type hints
+  T004: "off"  # Function name matches directory name
+  I001: "off"  # XML structure checks
+  I006: "off"  # Hardcoded prices / phone patterns
+  I012: "off"  # Tool in JSON but not referenced in instruction (disabled due to dynamic slot-filling engine)
+  I014: "off"  # Missing current_date reference
+  V001: "off"  # App config schema validation (retentionWindow warnings)
+  V006: "off"  # Golden Turn schema validation (toolCalls field)

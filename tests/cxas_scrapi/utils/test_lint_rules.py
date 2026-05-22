@@ -1078,6 +1078,109 @@ def test_t011_no_none_default(tmp_path, context):
     assert len(results) == 0
 
 
+def test_t008_json_tool_unreferenced(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import ToolDisplayNameUnreferenced  # noqa: PLC0415,I001
+
+    rule = ToolDisplayNameUnreferenced()
+    # Create an orphaned json widget tool config directly
+    # (no python_function subdir)
+    (tmp_path / "tools" / "custom_slider").mkdir(parents=True)
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.write_text('{"name": "custom_slider", "displayName": "custom_slider"}')
+
+    # Create agent that doesn't reference it
+    (tmp_path / "agents" / "root_agent").mkdir(parents=True)
+    (tmp_path / "agents" / "root_agent" / "root_agent.json").write_text(
+        '{"displayName": "root_agent", "tools": ["other_tool"]}'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "custom_slider" in results[0].message
+
+
+def test_t004_json_tool_skipped(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import FunctionNameMismatch  # noqa: PLC0415,I001
+
+    rule = FunctionNameMismatch()
+    # A widget tool json should be skipped without complaining
+    # about missing Python functions
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t012_python_function_description(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import MissingToolDescriptionInJSON  # noqa: PLC0415,I001
+
+    rule = MissingToolDescriptionInJSON()
+
+    # Case 1: has pythonFunction description
+    f = tmp_path / "tools" / "my_func" / "my_func.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        '{"displayName": "my_func", "pythonFunction": '
+        '{"description": "A great tool"}}'
+    )
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+    # Case 2: missing pythonFunction description
+    f.write_text('{"displayName": "my_func", "pythonFunction": {}}')
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "pythonFunction.description" in results[0].message
+
+
+def test_t012_widget_tool_description(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import MissingToolDescriptionInJSON  # noqa: PLC0415,I001
+
+    rule = MissingToolDescriptionInJSON()
+
+    # Case 1: has widgetTool description
+    f = tmp_path / "tools" / "my_widget" / "my_widget.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        '{"displayName": "my_widget", "widgetTool": '
+        '{"description": "A cool slider widget"}}'
+    )
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+    # Case 2: missing widgetTool description
+    f.write_text('{"displayName": "my_widget", "widgetTool": {}}')
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "widgetTool.description" in results[0].message
+
+
+def test_t001_json_tool_skipped(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import MissingAgentAction  # noqa: PLC0415,I001
+
+    rule = MissingAgentAction()
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t010_json_tool_skipped(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import ToolInvalidPythonSyntax  # noqa: PLC0415,I001
+
+    rule = ToolInvalidPythonSyntax()
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
 # ── Eval Rules ───────────────────────────────────────────────────────────
 
 
@@ -1673,3 +1776,145 @@ def test_s004_child_agent_by_display_name(tmp_path, context):
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
+
+
+# --- Rules A006, S005, S006 Tests ---
+
+
+def test_a006_root_agent_snake_case(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.config import AppRootAgentValidation  # noqa: PLC0415,I001
+
+    rule = AppRootAgentValidation()
+    f = tmp_path / "app.json"
+    f.write_text('{"root_agent": "my_root"}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "Found 'root_agent' in app.json" in results[0].message
+
+
+def test_a006_root_agent_missing(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.config import AppRootAgentValidation  # noqa: PLC0415,I001
+
+    rule = AppRootAgentValidation()
+    f = tmp_path / "app.json"
+    f.write_text('{"displayName": "Hello App"}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "Missing required field 'rootAgent'" in results[0].message
+
+
+def test_a006_root_agent_not_string(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.config import AppRootAgentValidation  # noqa: PLC0415,I001
+
+    rule = AppRootAgentValidation()
+    f = tmp_path / "app.json"
+    f.write_text('{"rootAgent": 123}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "must be a string" in results[0].message
+
+
+def test_a006_root_agent_directory_missing(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.config import AppRootAgentValidation  # noqa: PLC0415,I001
+
+    rule = AppRootAgentValidation()
+    f = tmp_path / "app.json"
+    f.write_text('{"rootAgent": "non_existent"}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "does not exist under the agents/ directory" in results[0].message
+
+
+def test_a006_root_agent_valid(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.config import AppRootAgentValidation  # noqa: PLC0415,I001
+
+    rule = AppRootAgentValidation()
+    f = tmp_path / "app.json"
+    f.write_text('{"rootAgent": "billing_agent"}')
+
+    agent_dir = tmp_path / "agents" / "billing_agent"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    (agent_dir / "billing_agent.json").write_text("{}")
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_s005_agent_paths_valid(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import StrictAgentPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictAgentPathLayout()
+    f = tmp_path / "root_agent.json"
+    f.write_text(
+        '{"instruction": "agents/root_agent/instruction.txt", '
+        '"beforeModelCallbacks": [{'
+        '"pythonCode": "agents/root_agent/callbacks/my_cb.py"'
+        "}]}"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_s005_agent_paths_invalid_instruction(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import StrictAgentPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictAgentPathLayout()
+    f = tmp_path / "root_agent.json"
+    f.write_text('{"instruction": "instruction.txt"}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "Agent instruction path" in results[0].message
+    assert "agents/root_agent/" in results[0].message
+
+
+def test_s005_agent_paths_invalid_callback(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import StrictAgentPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictAgentPathLayout()
+    f = tmp_path / "root_agent.json"
+    f.write_text(
+        '{"beforeModelCallbacks": [{"pythonCode": "callbacks/my_cb.py"}]}'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "Agent callback pythonCode path" in results[0].message
+    assert "agents/root_agent/" in results[0].message
+
+
+def test_s006_tool_paths_valid(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import StrictToolPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictToolPathLayout()
+    tool_dir = tmp_path / "tools" / "get_balance"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    tool_json = tool_dir / "get_balance.json"
+    tool_json.write_text(
+        '{"pythonFunction": {'
+        '"pythonCode": "tools/get_balance/python_function/python_code.py"'
+        "}}"
+    )
+
+    results = rule.check(tool_dir, "", context)
+    assert len(results) == 0
+
+
+def test_s006_tool_paths_invalid(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import StrictToolPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictToolPathLayout()
+    tool_dir = tmp_path / "tools" / "get_balance"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    tool_json = tool_dir / "get_balance.json"
+    tool_json.write_text(
+        '{"pythonFunction": {"pythonCode": "python_function/python_code.py"}}'
+    )
+
+    results = rule.check(tool_dir, "", context)
+    assert len(results) == 1
+    assert "Tool pythonCode path" in results[0].message

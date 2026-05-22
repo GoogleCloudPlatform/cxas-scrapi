@@ -1,0 +1,32 @@
+subintent_id: reservation-inquiry
+subintent_name: Reservation Inquiry
+parent_cuj: General Customer Support
+turns:
+- speaker: User
+  text: Hi, I need to check if I have an active reservation for tonight.
+- speaker: Agent
+  text: I can help with that. Let me look up your reservation in the system.
+- speaker: Agent
+  text: Calling tool check_reservation_status
+  tool_call:
+    name: check_reservation_status
+    parameters:
+      customer_id: user123
+      date: TONIGHT
+- speaker: Agent
+  text: I see one active reservation for a party of 4 at 7:30 PM under the name Smith. Is that the one you were looking for?
+- speaker: User
+  text: Yes, that's it. Can we add a high chair to that reservation?
+- speaker: Agent
+  text: Let me update that for you.
+- speaker: Agent
+  text: Calling webhook update_reservation_details
+  webhook_call:
+    endpoint: update_reservation_details
+    payload_patch:
+      reservation_id: RES-98765
+      high_chair: true
+- speaker: Agent
+  text: I have added a high chair to your reservation. You should receive a confirmation email shortly.
+- speaker: User
+  text: Great, thank you.

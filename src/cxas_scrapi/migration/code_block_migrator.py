@@ -49,18 +49,68 @@ class ToolCallTransformer(ast.NodeTransformer):
             display_name.lower(): tool_id
             for display_name, tool_id in tool_display_name_map.items()
         }
+        self.uses_system_directives = False
+        self.discovered_parameters = set()
 
-    def _get_comment_node(self, node, prefix=""):
-        """Helper to create a string constant node for commented code."""
-        try:
-            original_code = ast.unparse(node)
-            comment_text = (
-                f"# MIGRATION_TODO [System Function]: {original_code}"
-            )
-        except Exception:
-            comment_text = f"# MIGRATION_TODO [System Function]: {prefix}..."
+    def _get_system_directive_node(self, call_node):
+        """Helper to create an AST node appending the system function call
+        to our directives list.
+        """
+        self.uses_system_directives = True
+        action_name = "unknown"
+        if isinstance(call_node.func, ast.Name):
+            action_name = call_node.func.id
+        elif isinstance(call_node.func, ast.Attribute):
+            action_name = call_node.func.attr
 
-        return ast.Expr(value=ast.Constant(value=comment_text))
+        # Sanitize arguments: convert flows.AgentName to string literals
+        new_args = []
+        for arg in call_node.args:
+            if isinstance(arg, ast.Attribute) and isinstance(
+                getattr(arg, "value", None), ast.Name
+            ):
+                if arg.value.id in ["flows", "playbooks", "agents"]:
+                    new_args.append(ast.Constant(value=arg.attr))
+                else:
+                    new_args.append(arg)
+            else:
+                new_args.append(arg)
+
+        keys = [ast.Constant(value="action")]
+        values = [ast.Constant(value=action_name)]
+
+        if action_name == "respond":
+            keys.append(ast.Constant(value="text"))
+            values.append(new_args[0] if new_args else ast.Constant(value=""))
+        elif action_name in [
+            "add_override",
+            "agentTransfer",
+            "PlaybookTransfer",
+            "AgentTransfer",
+        ]:
+            keys.append(ast.Constant(value="target"))
+            values.append(new_args[0] if new_args else ast.Constant(value=""))
+            if len(new_args) > 1:
+                keys.append(ast.Constant(value="parameters"))
+                values.append(new_args[1])
+
+                # Dynamically register these routing parameters for the agent
+                if isinstance(new_args[1], ast.Dict):
+                    for dict_key in new_args[1].keys:
+                        if isinstance(dict_key, ast.Constant):
+                            self.discovered_parameters.add(dict_key.value)
+
+        dict_node = ast.Dict(keys=keys, values=values)
+        append_call = ast.Call(
+            func=ast.Attribute(
+                value=ast.Name(id="__cxas_system_directives__", ctx=ast.Load()),
+                attr="append",
+                ctx=ast.Load(),
+            ),
+            args=[dict_node],
+            keywords=[],
+        )
+        return ast.Expr(value=append_call)
 
     def _is_system_function(self, call_node):
         """Checks if a Call node represents a DFCX system function to be
@@ -94,17 +144,26 @@ class ToolCallTransformer(ast.NodeTransformer):
         return False
 
     def visit_Expr(self, node):
-        # Handle standalone calls
         if self._is_system_function(node.value):
-            return self._get_comment_node(node)
+            return self._get_system_directive_node(node.value)
         return self.generic_visit(node)
 
     def visit_Return(self, node):
-        # Handle returns: return respond(...) or return
-        # playbooks.PlaybookTransfer(...)
+        self.generic_visit(node)
         if node.value and self._is_system_function(node.value):
-            return self._get_comment_node(node)
-        return self.generic_visit(node)
+            append_node = self._get_system_directive_node(node.value)
+            ret_node = ast.Return(
+                value=ast.Dict(
+                    keys=[ast.Constant(value="__cxas_system_directives__")],
+                    values=[
+                        ast.Name(
+                            id="__cxas_system_directives__", ctx=ast.Load()
+                        )
+                    ],
+                )
+            )
+            return [append_node, ret_node]
+        return node
 
     def visit_Call(self, node):
         # Check for structure: tools.A.B(...)
@@ -160,63 +219,197 @@ class ToolCallTransformer(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_FunctionDef(self, node):
+        self.uses_system_directives = False
         # 1. Visit children FIRST
         self.generic_visit(node)
 
         # Strip DFCX-specific decorators
         new_decorators = []
         for dec in node.decorator_list:
-            if isinstance(dec, ast.Name):
-                if dec.id in [
-                    "Action",
-                    "Handler",
-                    "system",
-                    "action",
-                    "handler",
-                ]:
-                    continue
-            elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
-                if dec.func.id in [
-                    "Action",
-                    "Handler",
-                    "system",
-                    "action",
-                    "handler",
-                ]:
-                    continue
+            if isinstance(dec, ast.Name) and dec.id in [
+                "Action",
+                "Handler",
+                "system",
+                "action",
+                "handler",
+            ]:
+                continue
+            elif (
+                isinstance(dec, ast.Call)
+                and isinstance(dec.func, ast.Name)
+                and dec.func.id
+                in ["Action", "Handler", "system", "action", "handler"]
+            ):
+                continue
             new_decorators.append(dec)
         node.decorator_list = new_decorators
 
         # 2. Fix/Add Return Type Annotation
-        should_set_dict = False
-
-        if node.returns is None:
-            should_set_dict = True
-        else:
-            is_none = False
-            if hasattr(ast, "Constant") and isinstance(
-                node.returns, ast.Constant
-            ):
-                is_none = node.returns.value is None
-            elif hasattr(ast, "NameConstant") and isinstance(
-                node.returns, ast.NameConstant
-            ):
-                is_none = node.returns.value is None
-
-            if is_none:
-                should_set_dict = True
-
-        if should_set_dict:
+        if (
+            node.returns is None
+            or (
+                hasattr(ast, "Constant")
+                and getattr(node.returns, "value", False) is None
+            )
+            or (
+                hasattr(ast, "NameConstant")
+                and getattr(node.returns, "value", False) is None
+            )
+        ):
             node.returns = ast.Name(id="dict", ctx=ast.Load())
 
         # Ensure it returns a dict at the end if it didn't have a return
-        # or returned None
         last_stmt = node.body[-1] if node.body else None
         if not isinstance(last_stmt, ast.Return):
             node.body.append(ast.Return(value=ast.Dict(keys=[], values=[])))
-        elif isinstance(last_stmt, ast.Return) and last_stmt.value is None:
+        elif (
+            isinstance(last_stmt, ast.Return)
+            and getattr(last_stmt, "value", None) is None
+        ):
             last_stmt.value = ast.Dict(keys=[], values=[])
 
+        # 3. Only inject directives tracker if used
+        if self.uses_system_directives:
+            for child in ast.walk(node):
+                if isinstance(child, ast.Return):
+                    if isinstance(child.value, ast.Dict):
+                        if not any(
+                            isinstance(k, ast.Constant)
+                            and k.value == "__cxas_system_directives__"
+                            for k in child.value.keys
+                        ):
+                            child.value.keys.append(
+                                ast.Constant(value="__cxas_system_directives__")
+                            )
+                            child.value.values.append(
+                                ast.Name(
+                                    id="__cxas_system_directives__",
+                                    ctx=ast.Load(),
+                                )
+                            )
+                    elif child.value is None:
+                        child.value = ast.Dict(
+                            keys=[
+                                ast.Constant(value="__cxas_system_directives__")
+                            ],
+                            values=[
+                                ast.Name(
+                                    id="__cxas_system_directives__",
+                                    ctx=ast.Load(),
+                                )
+                            ],
+                        )
+
+            init_node = ast.Assign(
+                targets=[
+                    ast.Name(id="__cxas_system_directives__", ctx=ast.Store())
+                ],
+                value=ast.List(elts=[], ctx=ast.Load()),
+            )
+
+            # Preserve Docstring position
+            inject_idx = 0
+            if (
+                node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            ):
+                inject_idx = 1
+            node.body.insert(inject_idx, init_node)
+
+        return node
+
+
+class GlobalStateTransformer(ast.NodeTransformer):
+    """Rewrites session.params.X and state['X'] to use get_variable and
+    set_variable.
+    """
+
+    def __init__(self, known_parameters):
+        super().__init__()
+        self.known_parameters = known_parameters
+        self.discovered_parameters = set()
+
+    def _create_get_variable(self, var_name):
+        return ast.Call(
+            func=ast.Name(id="get_variable", ctx=ast.Load()),
+            args=[ast.Constant(value=var_name)],
+            keywords=[],
+        )
+
+    def visit_Assign(self, node):
+        self.generic_visit(node)
+        if len(node.targets) == 1:
+            target = node.targets[0]
+            var_name = None
+
+            if (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Attribute)
+                and getattr(target.value.value, "id", "") == "session"
+                and target.value.attr == "params"
+            ):
+                var_name = target.attr
+                self.discovered_parameters.add(var_name)
+
+            elif (
+                isinstance(target, ast.Subscript)
+                and getattr(target.value, "id", "") == "state"
+            ):
+                if hasattr(target.slice, "value") and isinstance(
+                    target.slice.value, str
+                ):
+                    var_name = target.slice.value.replace(
+                        "$session.params.", ""
+                    )
+                    self.discovered_parameters.add(var_name)
+
+            elif (
+                isinstance(target, ast.Name)
+                and target.id in self.known_parameters
+            ):
+                var_name = target.id
+
+            if var_name is not None:
+                return ast.Expr(
+                    value=ast.Call(
+                        func=ast.Name(id="set_variable", ctx=ast.Load()),
+                        args=[ast.Constant(value=var_name), node.value],
+                        keywords=[],
+                    )
+                )
+        return node
+
+    def visit_Attribute(self, node):
+        self.generic_visit(node)
+        if isinstance(node.ctx, ast.Load):
+            if (
+                isinstance(node.value, ast.Attribute)
+                and getattr(node.value.value, "id", "") == "session"
+                and node.value.attr == "params"
+            ):
+                self.discovered_parameters.add(node.attr)
+                return self._create_get_variable(node.attr)
+        return node
+
+    def visit_Subscript(self, node):
+        self.generic_visit(node)
+        if isinstance(node.ctx, ast.Load):
+            if getattr(node.value, "id", "") == "state":
+                if hasattr(node.slice, "value") and isinstance(
+                    node.slice.value, str
+                ):
+                    var_name = node.slice.value.replace("$session.params.", "")
+                    self.discovered_parameters.add(var_name)
+                    return self._create_get_variable(var_name)
+        return node
+
+    def visit_Name(self, node):
+        self.generic_visit(node)
+        if isinstance(node.ctx, ast.Load):
+            if node.id in self.known_parameters:
+                return self._create_get_variable(node.id)
         return node
 
 
@@ -286,9 +479,10 @@ class CodeBlockMigrator:
     @staticmethod
     def _parse_code_block_with_ast(
         code_string: str,
-    ) -> Tuple[Set[str], List[Tuple[str, str]]]:
+    ) -> Tuple[Set[str], List[Tuple[str, str]], List[str]]:
         explicit_imports = set()
-        extracted_functions = []
+        entry_functions = []
+        helper_functions = []
         try:
             tree = ast.parse(code_string)
             for node in tree.body:
@@ -297,14 +491,43 @@ class CodeBlockMigrator:
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     func_text = ast.unparse(node)
                     if func_text:
-                        extracted_functions.append((node.name, func_text))
-            return explicit_imports, extracted_functions
+                        is_entry = False
+                        for dec in node.decorator_list:
+                            dec_name = ""
+                            if isinstance(dec, ast.Name):
+                                dec_name = dec.id
+                            elif isinstance(dec, ast.Call) and isinstance(
+                                dec.func, ast.Name
+                            ):
+                                dec_name = dec.func.id
+                            if dec_name in [
+                                "Action",
+                                "Handler",
+                                "system",
+                                "action",
+                                "handler",
+                                "BeforeActionTrigger",
+                                "BeforeModelTrigger",
+                                "PlaybookStartHandler",
+                                "EventTrigger",
+                            ]:
+                                is_entry = True
+                                break
+                        if is_entry:
+                            entry_functions.append((node.name, func_text))
+                        else:
+                            helper_functions.append(func_text)
+
+            if not entry_functions and helper_functions:
+                entry_functions.append(("main", helper_functions.pop()))
+
+            return explicit_imports, entry_functions, helper_functions
         except SyntaxError as e:
             logger.warning(
                 f"  - WARNING: Could not parse code block due to a syntax "
                 f"error: {e}"
             )
-            return set(), []
+            return set(), [], []
 
     def _sanitize_resource_id(
         self, name: str, min_len: int = 5, max_len: int = 36
@@ -337,15 +560,24 @@ class CodeBlockMigrator:
         tool_map: Dict[str, Any],
         tool_display_name_map: Dict[str, str],
         target_app_resource_name: str,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, str], Set[str]]:
+        known_parameters: Set[str] = None,
+    ) -> Tuple[
+        List[Dict[str, Any]], Dict[str, str], Set[str], Set[str], Set[str]
+    ]:
         """Extracts, transforms (AST), and compiles Python functions into IR
         tool payloads.
 
-        Returns: (extracted_tools_list, action_to_tool_map, referenced_toolsets)
+        Returns: (extracted_tools_list, action_to_tool_map,
+            referenced_toolsets, discovered_parameters, routing_parameters)
         """
+        if known_parameters is None:
+            known_parameters = set()
+
         extracted_tools = []
         action_to_tool_map = {}
         referenced_toolsets = set()
+        discovered_parameters = set()
+        routing_parameters = set()
 
         RESERVED_NAMES = {
             "transfer_to_agent",
@@ -354,12 +586,44 @@ class CodeBlockMigrator:
             "customize_response",
         }
 
-        shared_imports, extracted_functions = self._parse_code_block_with_ast(
-            code
+        shared_imports, extracted_functions, helper_functions = (
+            self._parse_code_block_with_ast(code)
         )
 
         if not extracted_functions:
-            return [], {}, set()
+            return [], {}, set(), discovered_parameters
+
+        # Process helper functions through transformers
+        processed_helpers = []
+        for helper_code in helper_functions:
+            try:
+                helper_tree = ast.parse(helper_code)
+                state_transformer = GlobalStateTransformer(known_parameters)
+                helper_tree = state_transformer.visit(helper_tree)
+                discovered_parameters.update(
+                    state_transformer.discovered_parameters
+                )
+
+                tool_transformer = ToolCallTransformer(
+                    tool_map, tool_display_name_map
+                )
+                helper_tree = tool_transformer.visit(helper_tree)
+                ast.fix_missing_locations(helper_tree)
+
+                if hasattr(ast, "unparse"):
+                    processed_helpers.append(ast.unparse(helper_tree))
+                else:
+                    processed_helpers.append(helper_code)
+                referenced_toolsets.update(tool_transformer.dependencies)
+            except Exception as e:
+                logger.warning(
+                    f"    - Warning: Failed to transform helper function: {e}"
+                )
+                processed_helpers.append(helper_code)
+
+        helpers_code_str = (
+            "\n\n".join(processed_helpers) + "\n\n" if processed_helpers else ""
+        )
 
         for original_func_name, function_code in extracted_functions:
             target_func_name = original_func_name
@@ -377,10 +641,17 @@ class CodeBlockMigrator:
                 if target_func_name != original_func_name:
                     func_tree.body[0].name = target_func_name
 
+                state_transformer = GlobalStateTransformer(known_parameters)
+                transformed_tree = state_transformer.visit(func_tree)
+                discovered_parameters.update(
+                    state_transformer.discovered_parameters
+                )
+
                 transformer = ToolCallTransformer(
                     tool_map, tool_display_name_map
                 )
-                transformed_tree = transformer.visit(func_tree)
+                transformed_tree = transformer.visit(transformed_tree)
+                routing_parameters.update(transformer.discovered_parameters)
                 ast.fix_missing_locations(transformed_tree)
 
                 if hasattr(ast, "unparse"):
@@ -417,8 +688,8 @@ class CodeBlockMigrator:
             existing_tool_ids.add(final_tool_id)
 
             final_function_code = (
-                f"{imports_header}\n\n{final_code}"
-                if imports_header
+                f"{imports_header}\n\n{helpers_code_str}{final_code}"
+                if imports_header or helpers_code_str
                 else final_code
             )
 
@@ -445,4 +716,10 @@ class CodeBlockMigrator:
             migrated_function_names.add(original_func_name)
             function_name_to_tool_map[original_func_name] = final_tool_id
 
-        return extracted_tools, action_to_tool_map, referenced_toolsets
+        return (
+            extracted_tools,
+            action_to_tool_map,
+            referenced_toolsets,
+            discovered_parameters,
+            routing_parameters,
+        )

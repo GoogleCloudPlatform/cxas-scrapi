@@ -1,0 +1,11 @@
+subintent_id: manager-review-request
+subintent_name: Manager Review Request
+parent_cuj: General Customer Support
+turns:
+- speaker: User
+  text: I want to talk to the manager about the service charge on my bill.
+- speaker: Agent
+  text: '"I can certainly help arrange that. I''ve initiated a request for a manager review. What is the best number for our manager to reach you?'
+  tool_call:
+    name: scheduling_manager_review
+    parameters: {}

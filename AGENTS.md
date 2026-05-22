@@ -26,7 +26,7 @@ Run the setup script to create a virtual environment and install the `cxas-scrap
 source .venv/bin/activate
 ```
 
-Requires Python 3.
+Requires Python 3.10+ and [astral-uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ## Available Skills
 

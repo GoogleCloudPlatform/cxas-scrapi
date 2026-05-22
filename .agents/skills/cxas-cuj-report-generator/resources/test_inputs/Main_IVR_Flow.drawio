@@ -1,0 +1,23 @@
+<mxfile>
+  <diagram>
+    <mxGraphModel>
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- Main Routing -->
+        <mxCell id="2" value="&lt;b&gt;State:&lt;/b&gt; Main Menu&lt;br&gt;&lt;b&gt;Agent:&lt;/b&gt; Welcome to Restaurant Support. Press or say: 1 for Ordering, 2 for Reservations, 3 for Menu Info, 4 for Feedback, 5 for Payments." parent="1"/>
+        <!-- Ordering & Delivery -->
+        <mxCell id="3" value="&lt;b&gt;State:&lt;/b&gt; Ordering &amp; Delivery&lt;br&gt;&lt;b&gt;User:&lt;/b&gt; I want to place an order.&lt;br&gt;&lt;b&gt;Agent:&lt;/b&gt; What can I get for you today?" parent="1"/>
+        <mxCell id="4" value="&lt;b&gt;State:&lt;/b&gt; Order Status&lt;br&gt;&lt;b&gt;User:&lt;/b&gt; Where is my order?&lt;br&gt;&lt;b&gt;Agent:&lt;/b&gt; Please provide your order number." parent="1"/>
+        <!-- Reservations -->
+        <mxCell id="5" value="&lt;b&gt;State:&lt;/b&gt; Reservations&lt;br&gt;&lt;b&gt;User:&lt;/b&gt; I'd like to book a table.&lt;br&gt;&lt;b&gt;Agent:&lt;/b&gt; For how many people and what time?" parent="1"/>
+        <!-- Menu Inquiries -->
+        <mxCell id="6" value="&lt;b&gt;State:&lt;/b&gt; Menu Inquiries&lt;br&gt;&lt;b&gt;User:&lt;/b&gt; Do you have gluten-free options?&lt;br&gt;&lt;b&gt;Agent:&lt;/b&gt; Yes, we do. Let me list them." parent="1"/>
+        <!-- Feedback & Complaints -->
+        <mxCell id="7" value="&lt;b&gt;State:&lt;/b&gt; Feedback &amp; Complaints&lt;br&gt;&lt;b&gt;User:&lt;/b&gt; My order was missing an item.&lt;br&gt;&lt;b&gt;Agent:&lt;/b&gt; I'm sorry about that. Let me check." parent="1"/>
+        <!-- Payments & Rewards -->
+        <mxCell id="8" value="&lt;b&gt;State:&lt;/b&gt; Payments &amp; Rewards&lt;br&gt;&lt;b&gt;User:&lt;/b&gt; How many points do I have?&lt;br&gt;&lt;b&gt;Agent:&lt;/b&gt; Please provide your phone number." parent="1"/>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

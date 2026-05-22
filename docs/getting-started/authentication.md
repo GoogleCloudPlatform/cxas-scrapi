@@ -30,16 +30,16 @@ Whichever auth method you use, the Google Cloud principal (user account or servi
 
 | Role | Use case |
 |---|---|
-| `roles/conversationalagents.admin` | Full access — create, read, update, delete all resources |
-| `roles/conversationalagents.viewer` | Read-only access — useful for CI pipelines that only evaluate |
-| `roles/conversationalagents.editor` | Read and write, but not delete — a reasonable middle ground |
+| `roles/ces.admin` | Full access — create, read, update, delete all resources |
+| `roles/ces.viewer` | Read-only access — useful for CI pipelines that only evaluate |
+| `roles/ces.agentEditor` | Read and write access to agent structures (instructions, tools, etc.) |
 
 Grant roles in the [IAM console](https://console.cloud.google.com/iam-admin/iam) or with:
 
 ```sh
 gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
   --member="user:you@example.com" \
-  --role="roles/conversationalagents.admin"
+  --role="roles/ces.admin"
 ```
 
 ---

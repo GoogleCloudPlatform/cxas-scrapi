@@ -14,15 +14,12 @@
 
 """Core Agents class for CXAS Scrapi."""
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
-import requests
-from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.cloud.ces_v1beta import AgentServiceClient, types
-from google.protobuf import field_mask_pb2, json_format
+from google.protobuf import field_mask_pb2
 
 from cxas_scrapi.core.apps import Apps
-from cxas_scrapi.core.workflows import WorkflowAgent
 
 
 class Agents(Apps):
@@ -92,12 +89,11 @@ class Agents(Apps):
         self,
         display_name: str,
         agent_id: str = "",
-        agent_type: str = "llm",  # llm, dfcx, workflow
+        agent_type: str = "llm",  # llm, dfcx
         model: Optional[str] = "gemini-2.5-flash",
         instruction: Optional[str] = None,
         timeout: Optional[float] = None,
         dfcx_agent_resource: Optional[str] = None,
-        workflow_config: Union[Dict[str, Any], WorkflowAgent, None] = None,
         **kwargs: Any,
     ) -> types.Agent:
         """Creates a new agent of the specified type.
@@ -105,13 +101,12 @@ class Agents(Apps):
         Args:
             display_name: Human readable name.
             agent_id: Optional agent ID.
-            agent_type: One of 'llm', 'dfcx', 'workflow'.
+            agent_type: One of 'llm', 'dfcx'.
             model: (LLM) Model name to use.
             instruction: (LLM) System instruction.
             timeout: (LLM) Timeout (not standard field yet? ignoring for
                 now or mapping to model_settings).
             dfcx_agent_resource: (DFCX) Full resource name of DFCX agent.
-            workflow_config: (Workflow) Dict config or WorkflowAgent object.
             **kwargs: Additional fields for types.Agent.
         """
         agent_data = {"display_name": display_name, **kwargs}
@@ -138,56 +133,8 @@ class Agents(Apps):
                 types.Agent.RemoteDialogflowAgent(agent=dfcx_agent_resource)
             )
 
-        elif agent_type == "workflow":
-            if workflow_config:
-                if isinstance(workflow_config, WorkflowAgent):
-                    agent_data["workflow_agent"] = workflow_config.to_dict()
-                else:
-                    agent_data["workflow_agent"] = workflow_config
-            else:
-                # Maybe empty workflow?
-                agent_data["workflow_agent"] = {}
-
         else:
             raise ValueError(f"Unknown agent_type: {agent_type}")
-
-        if agent_type == "workflow":
-            # REST Fallback for Workflow Agents to bypass local proto
-            # descriptor check internal "workflow_agent" field might be
-            # missing in local descriptors
-
-            # Construct URL
-            # Endpoint from self.client.transport.host works but standard
-            # is usually ces.googleapis.com
-            # We can use Common logic or just standard "https://ces.googleapis.com"
-            api_endpoint = "https://ces.googleapis.com"
-            url = f"{api_endpoint}/v1beta/{self.app_name}/agents"
-
-            # Refresh token just in case
-            if self.creds.expired:
-                self.creds.refresh(GoogleAuthRequest())
-
-            headers = {
-                "Authorization": f"Bearer {self.creds.token}",
-                "Content-Type": "application/json",
-                "x-goog-user-project": self.project_id or "",  # Best effort
-                "User-Agent": self.user_agent,
-            }
-
-            response = requests.post(url, headers=headers, json=agent_data)
-
-            if response.status_code != 200:
-                raise RuntimeError(
-                    f"Failed to create workflow agent via REST: {response.text}"
-                )
-
-            # Convert response JSON back to Agent object
-            # We use ignore_unknown_fields=True just in case response
-            # contains workflow_agent and we still can't parse it into the
-            # local object, but at least we return a valid base object.
-            return json_format.ParseDict(
-                response.json(), types.Agent(), ignore_unknown_fields=True
-            )
 
         request = types.CreateAgentRequest(
             parent=self.app_name, agent=agent_data, agent_id=agent_id

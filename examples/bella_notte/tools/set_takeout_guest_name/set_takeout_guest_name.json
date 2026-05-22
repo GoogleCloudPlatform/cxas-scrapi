@@ -1,0 +1,9 @@
+{
+  "name": "5a7039c9-5a75-4084-be83-e798c10ca57c",
+  "pythonFunction": {
+    "name": "set_takeout_guest_name",
+    "pythonCode": "tools/set_takeout_guest_name/python_function/python_code.py",
+    "description": "Record the name under which the takeout order should be placed."
+  },
+  "displayName": "set_takeout_guest_name"
+}

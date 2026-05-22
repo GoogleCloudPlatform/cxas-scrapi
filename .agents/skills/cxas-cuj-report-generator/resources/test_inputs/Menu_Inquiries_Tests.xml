@@ -1,0 +1,55 @@
+<CyaraTestCases>
+  <TestCase id="dietary_restrictions_full">
+    <Utterances>
+      <Utterance>Do you have any gluten-free options on the menu?</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: Do you have any gluten-free options on the menu?)</Step>
+      <Step>Provide_Options (Agent: Yes, we have several gluten-free items, including our gluten-free pasta and all salads.)</Step>
+      <Step>Ask_Further_Info (User: Are the pizzas available gluten-free too?)</Step>
+      <Step>Provide_Details (Agent: Yes, we can make any of our pizzas with a gluten-free crust for an extra $2.)</Step>
+      <Step>Goodbye_State (User: Great, thank you for the information.)</Step>
+      <Step>Disconnect_State (Agent: You're welcome. Let me know if you need anything else.)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="ingredient_details_full">
+    <Utterances>
+      <Utterance>What are the ingredients in the Caesar salad dressing?</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: What are the ingredients in the Caesar salad dressing?)</Step>
+      <Step>Check_Ingredients_State</Step>
+      <Step>Provide_Ingredients (Agent: Our Caesar dressing contains olive oil, egg yolk, lemon juice, anchovies, garlic, and parmesan cheese.)</Step>
+      <Step>Ask_Allergy (Agent: Are you asking due to an allergy?)</Step>
+      <Step>Provide_Allergy (User: Yes, I'm allergic to seafood.)</Step>
+      <Step>Advise_Caution (Agent: Since it contains anchovies, I would recommend avoiding the Caesar dressing. We have a great balsamic vinaigrette that is seafood-free.)</Step>
+      <Step>Disconnect_State (Agent: I hope that helps!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="ask_recommendations_full">
+    <Utterances>
+      <Utterance>What is good to eat here? Any recommendations?</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: What is good to eat here? Any recommendations?)</Step>
+      <Step>Provide_Recommendations (Agent: Our most popular items are the Truffle Mushroom Pasta and the BBQ Ribs. Both are excellent!)</Step>
+      <Step>Ask_Preference (Agent: Do you prefer pasta or meat dishes?)</Step>
+      <Step>Provide_Preference (User: I'm in the mood for pasta.)</Step>
+      <Step>Suggest_Item (Agent: Then I definitely recommend the Truffle Mushroom Pasta. It's a crowd favorite.)</Step>
+      <Step>Disconnect_State (Agent: Enjoy your meal!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="daily_specials_full">
+    <Utterances>
+      <Utterance>What are the specials today?</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: What are the specials today?)</Step>
+      <Step>Check_Specials_State</Step>
+      <Step>Provide_Specials (Agent: Today's special is a Grilled Salmon with a side of roasted asparagus and a lemon butter sauce.)</Step>
+      <Step>Ask_Ordering (Agent: Would you like to add that to an order?)</Step>
+      <Step>Decline_Ordering (User: Not right now, just checking. Thanks.)</Step>
+      <Step>Disconnect_State (Agent: No problem. Have a great day!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+</CyaraTestCases>

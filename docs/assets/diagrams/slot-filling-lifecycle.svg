@@ -1,0 +1,63 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 340" width="780" height="340">
+  <!-- svg-source:excalidraw -->
+  <rect x="0" y="0" width="780" height="340" fill="#ffffff"/>
+
+  <defs>
+    <marker id="a-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2b8a3e"/>
+    </marker>
+    <marker id="a-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#e67700"/>
+    </marker>
+    <marker id="a-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#c92a2a"/>
+    </marker>
+    <marker id="a-lime" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#5c940d"/>
+    </marker>
+  </defs>
+
+  <!-- Unfilled state -->
+  <ellipse cx="100" cy="155" rx="70" ry="35" fill="#dee2e6" stroke="#495057" stroke-width="2"/>
+  <text x="100" y="161" font-family="Google Sans, sans-serif" font-size="16" font-weight="600" fill="#1e1e1e" text-anchor="middle">Unfilled</text>
+
+  <!-- Pending state -->
+  <ellipse cx="380" cy="70" rx="70" ry="35" fill="#ffd8a8" stroke="#e67700" stroke-width="2"/>
+  <text x="380" y="76" font-family="Google Sans, sans-serif" font-size="16" font-weight="600" fill="#1e1e1e" text-anchor="middle">Pending</text>
+
+  <!-- Filled state -->
+  <ellipse cx="660" cy="155" rx="70" ry="35" fill="#b2f2bb" stroke="#2b8a3e" stroke-width="2"/>
+  <text x="660" y="161" font-family="Google Sans, sans-serif" font-size="16" font-weight="600" fill="#1e1e1e" text-anchor="middle">Filled</text>
+
+  <!-- Deferred state -->
+  <ellipse cx="380" cy="260" rx="70" ry="35" fill="#d8f5a2" stroke="#5c940d" stroke-width="2"/>
+  <text x="380" y="266" font-family="Google Sans, sans-serif" font-size="16" font-weight="600" fill="#1e1e1e" text-anchor="middle">Deferred</text>
+
+  <!-- Arrow: Unfilled → Pending (setter with readback) -->
+  <path d="M 155 132 Q 260 50 308 70" fill="none" stroke="#e67700" stroke-width="2" marker-end="url(#a-orange)"/>
+  <text x="200" y="68" font-family="Google Sans, sans-serif" font-size="12" fill="#e67700" font-style="italic">setter (readback)</text>
+
+  <!-- Arrow: Unfilled → Filled (setter without readback) -->
+  <path d="M 170 155 L 588 155" fill="none" stroke="#2b8a3e" stroke-width="2" marker-end="url(#a-green)"/>
+  <text x="380" y="148" font-family="Google Sans, sans-serif" font-size="12" fill="#2b8a3e" font-style="italic" text-anchor="middle">setter (no readback)</text>
+
+  <!-- Arrow: Pending → Filled (confirm) -->
+  <path d="M 448 82 Q 560 100 600 135" fill="none" stroke="#2b8a3e" stroke-width="2" marker-end="url(#a-green)"/>
+  <text x="530" y="86" font-family="Roboto Mono, monospace" font-size="11" fill="#2b8a3e">confirm_pending</text>
+
+  <!-- Arrow: Pending → Unfilled (reject) -->
+  <path d="M 310 62 Q 200 20 130 125" fill="none" stroke="#c92a2a" stroke-width="2" marker-end="url(#a-red)"/>
+  <text x="175" y="40" font-family="Roboto Mono, monospace" font-size="11" fill="#c92a2a">reject_pending</text>
+
+  <!-- Arrow: Unfilled → Deferred (setter, deferred eligible) -->
+  <path d="M 155 178 Q 260 270 308 260" fill="none" stroke="#5c940d" stroke-width="2" marker-end="url(#a-lime)"/>
+  <text x="162" y="238" font-family="Google Sans, sans-serif" font-size="12" fill="#5c940d" font-style="italic">setter (deferred)</text>
+
+  <!-- Arrow: Deferred → Pending (group complete) -->
+  <path d="M 420 228 Q 440 170 420 108" fill="none" stroke="#5c940d" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#a-lime)"/>
+  <text x="455" y="170" font-family="Google Sans, sans-serif" font-size="12" fill="#5c940d" font-style="italic">group complete</text>
+
+  <!-- Auto-confirm note -->
+  <rect x="490" y="25" width="200" height="30" rx="5" ry="5" fill="#fff3bf" stroke="#fab005" stroke-width="1"/>
+  <text x="590" y="45" font-family="Google Sans, sans-serif" font-size="11" fill="#866a00" text-anchor="middle">"yes" / "correct" → auto-confirm</text>
+</svg>

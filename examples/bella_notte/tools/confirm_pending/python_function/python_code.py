@@ -1,4 +1,9 @@
-"""Tool to commit pending slot values after user confirms readback."""
+"""Tool to commit pending slot values after user confirms readback.
+
+FRAMEWORK CODE — shared across all agents using the slot-filling engine.
+Do not add agent-specific logic here; customize behavior
+via the per-agent {config_id}_dag tool.
+"""
 
 from typing import Any
 

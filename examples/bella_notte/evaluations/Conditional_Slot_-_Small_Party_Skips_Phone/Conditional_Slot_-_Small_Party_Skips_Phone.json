@@ -24,22 +24,22 @@
             "expectation": {
               "note": "Check_SetPartySize_Called_2",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
+                  "party_size": 2.0
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_PartySize",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "2"
+              "note": "Check_PartySize_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 2
                   }
-                ]
+                }
               }
             }
           }
@@ -58,14 +58,14 @@
         "steps": [
           {
             "userInput": {
-              "text": "This Saturday"
+              "text": "July 4th"
             }
           },
           {
             "expectation": {
               "note": "Check_SetPreferredDate_Called",
               "toolCall": {
-                "tool": "set_preferred_date"
+                "tool": "set_reservation_basics"
               }
             }
           }
@@ -80,13 +80,13 @@
           },
           {
             "expectation": {
-              "note": "Check_AvailableTimes_Presented",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "PM"
+              "note": "Check_Date_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 2
                   }
-                ]
+                }
               }
             }
           }
@@ -109,13 +109,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Readback_Time",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "7:30"
+              "note": "Check_Time_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "selected_time": "19:30"
                   }
-                ]
+                }
               }
             }
           }
@@ -141,19 +141,19 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name"
+                "tool": "set_guest_info"
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Asks_SpecialRequests_No_Name_Readback",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "special"
+              "note": "Check_Time_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "selected_time": "19:30"
                   }
-                ]
+                }
               }
             }
           }
@@ -170,19 +170,19 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Group_Readback_Name",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "Chen"
+              "note": "Check_Group_Readback_State",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "guest_name": "Chen"
                   }
-                ]
+                }
               }
             }
           }
@@ -197,13 +197,11 @@
           },
           {
             "expectation": {
-              "note": "Check_Confirmation_Number",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "BN-"
-                  }
-                ]
+              "note": "Check_Booking_Complete",
+              "updatedVariables": {
+                "sm": {
+                  "status": "complete"
+                }
               }
             }
           }

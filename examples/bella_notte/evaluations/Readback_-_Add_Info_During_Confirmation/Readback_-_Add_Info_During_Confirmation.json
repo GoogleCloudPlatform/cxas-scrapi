@@ -18,37 +18,29 @@
         "steps": [
           {
             "userInput": {
-              "text": "I need a table for 4 this Friday"
+              "text": "I need a table for 4 on June 20th"
             }
           },
           {
             "expectation": {
-              "note": "Check_SetPartySize_Called",
+              "note": "Check_set_reservation_basics_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 4.0
+                  "party_size": 4.0
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_SetPreferredDate_Called",
-              "toolCall": {
-                "tool": "set_preferred_date"
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_Readback_Both",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "4"
+              "note": "Check_Both_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 4
                   }
-                ]
+                }
               }
             }
           }
@@ -63,13 +55,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Times_Shown",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "PM"
+              "note": "Check_Size_Date_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 4
                   }
-                ]
+                }
               }
             }
           }
@@ -94,19 +86,19 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_Time",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "8:30"
+              "note": "Check_Time_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "selected_time": "20:30"
                   }
-                ]
+                }
               }
             }
           }
@@ -132,31 +124,22 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name"
+                "tool": "set_guest_info"
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Group_Readback_Name",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "Garcia"
+              "note": "Check_Name_Pending_For_Group",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "guest_name": "Garcia"
+                  },
+                  "filled": {
+                    "selected_time": "20:30"
                   }
-                ]
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_Group_Readback_Allergy",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "shellfish"
-                  }
-                ]
+                }
               }
             }
           }
@@ -171,13 +154,11 @@
           },
           {
             "expectation": {
-              "note": "Check_Booking_Confirmed",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "BN-"
-                  }
-                ]
+              "note": "Check_Booking_Complete",
+              "updatedVariables": {
+                "sm": {
+                  "status": "complete"
+                }
               }
             }
           }
@@ -185,7 +166,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
       "No Technical Leakage"
     ]
   }

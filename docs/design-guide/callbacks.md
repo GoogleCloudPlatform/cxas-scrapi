@@ -286,3 +286,53 @@ When `before_model_callback` returns an `LlmResponse`, the platform treats it as
 
 !!! note "Preemption vs. guidance"
     Use `before_model_callback` preemption for transitions that must be deterministic: "when all slots are filled, always call `check_availability`." Use dynamic prompting (`before_agent_callback`) for behavioral guidance: "in the `gathering_details` stage, ask for one field at a time." The two patterns complement each other.
+
+---
+
+## `after_model_callback` for payload injection
+
+`after_model_callback` fires after the model generates a response and can modify or replace it. A key use case is **rich payload injection** — appending UI payloads (info cards, suggestion chips) to the model's text output on turns where the engine didn't preempt.
+
+```python
+import json as json_lib
+from typing import Optional
+
+
+def after_model_callback(
+    callback_context: CallbackContext,
+    llm_response: LlmResponse,
+) -> Optional[LlmResponse]:
+    """Append stashed payloads to the LLM's response."""
+    sm = callback_context.state.get("sm", {})
+
+    # Pop stashed payloads (written by before_model_callback)
+    payloads = sm.pop("_pending_payloads", None)
+    if not payloads:
+        return None
+
+    # Guard: skip if prior agent output exists in this turn
+    for event in reversed(callback_context.events):
+        if event.is_user():
+            break
+        if event.is_agent() and event.parts():
+            return None
+
+    # Extract payload parts and append to the LLM's output
+    extra_parts = []
+    for rp in payloads:
+        if rp.get("type") == "payload":
+            extra_parts.append(
+                Part.from_json(json_lib.dumps(rp["data"]))
+            )
+
+    if not extra_parts:
+        return None
+
+    combined = list(llm_response.content.parts) + extra_parts
+    return LlmResponse.from_parts(parts=combined)
+```
+
+The pattern works in tandem with `before_model_callback`: on preempted turns, `before_model_callback` includes payload parts directly in the returned `LlmResponse`. On non-preempted turns, it stashes them in session state for `after_model_callback` to pick up.
+
+!!! tip "Multi-model-call guard"
+    The guard checking `callback_context.events` prevents duplicate injection when the LLM makes multiple model calls in a single turn (e.g., calling a setter tool then generating text). Without this guard, payloads could be appended to every model response in the turn.

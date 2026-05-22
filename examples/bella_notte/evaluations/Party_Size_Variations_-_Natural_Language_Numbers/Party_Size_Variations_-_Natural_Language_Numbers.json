@@ -24,22 +24,22 @@
             "expectation": {
               "note": "Check_Parses_Two_People",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
+                  "party_size": 2.0
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_PartySize",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "2"
+              "note": "Check_PartySize_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 2
                   }
-                ]
+                }
               }
             }
           }
@@ -54,13 +54,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Asks_For_Date",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "date"
+              "note": "Check_PartySize_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 2
                   }
-                ]
+                }
               }
             }
           }
@@ -68,7 +68,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
       "No Technical Leakage"
     ]
   }

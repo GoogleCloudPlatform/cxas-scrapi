@@ -619,7 +619,7 @@ class ToolEvals:
             project_id=self.project_id,
             location=self.location,
             creds=self.creds,
-            user_agent_extension=self.user_agent_extension
+            user_agent_extension=self.user_agent_extension,
         )
         app = app_client.get_app(self.app_name)
         app_display_name = app.display_name if app else "Unknown App"

@@ -23,11 +23,13 @@ import re
 import uuid
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 import yaml
 from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
 from rich.progress import track
+from sklearn.metrics.pairwise import cosine_similarity
 
 from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.core.variables import Variables
@@ -37,6 +39,7 @@ from cxas_scrapi.utils.eval_utils import (
     evaluate_expectations,
 )
 from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +77,7 @@ class TurnOperator(str, enum.Enum):
     TOOL_OUTPUT = "tool_output"
     NO_TOOLS_CALLED = "no_tools_called"
     AGENT_TRANSFER = "agent_transfer"
+    FUZZY_MATCH = "fuzzy_match"
 
 
 class TurnExpectation(BaseModel):
@@ -121,17 +125,25 @@ class DependencyResolutionError(Exception):
 class TurnEvals:
     """Class to manage and execute single-turn assertions on CXAS Agents."""
 
-    def __init__(self, app_name: str, creds=None):
+    def __init__(
+        self,
+        app_name: str,
+        creds=None,
+        rate_limiter: Optional[RateLimiter] = None,
+    ):
         """Initializes the TurnEvals class.
 
         Args:
             app_name: CXAS App Name
             creds: Optional Google Cloud credentials
+            rate_limiter: Optional RateLimiter for API calls
         """
         self.app_name = app_name
         self.creds = creds
         self.sessions_client = Sessions(
-            app_name=self.app_name, creds=self.creds
+            app_name=self.app_name,
+            creds=self.creds,
+            rate_limiter=rate_limiter,
         )
         self.var_client = Variables(app_name=self.app_name, creds=self.creds)
 
@@ -462,11 +474,42 @@ class TurnEvals:
                     )
             elif op == TurnOperator.CONTAINS:
                 actual = full_text.strip()
-                if str(expected) not in actual:
+                if str(expected).lower() not in actual.lower():
                     status = "FAILURE"
                     justification = (
                         f"CONTAINS failed: '{expected}' not found in '{actual}'"
                     )
+            elif op == TurnOperator.FUZZY_MATCH:
+                THRESHOLD = 0.75
+                actual = full_text.strip()
+                embeddings = self.genai_client.generate_embeddings(
+                    contents=[actual, expected]
+                )
+                embeddings_length = len(
+                    [
+                        embedding
+                        for embedding in embeddings
+                        if embedding is not None
+                    ]
+                )
+                if embeddings_length != 2:
+                    status = "FAILURE"
+                    justification = (
+                        "FUZZY_MATCH failed: cannot generate similarity "
+                        f"between '{actual}' and '{expected}'"
+                    )
+                else:
+                    similarity_score = cosine_similarity(
+                        np.array(embeddings[0]).reshape(1, -1),
+                        np.array(embeddings[1]).reshape(1, -1),
+                    )[0][0]
+                    if similarity_score < THRESHOLD:
+                        status = "FAILURE"
+                        justification = (
+                            "FUZZY_MATCH failed: similarity between "
+                            f"'{actual}' and '{expected}' "
+                            f"is {similarity_score:.2f}"
+                        )
             elif op == TurnOperator.TOOL_CALLED:
                 actual = str(called_tools)
                 found = any(

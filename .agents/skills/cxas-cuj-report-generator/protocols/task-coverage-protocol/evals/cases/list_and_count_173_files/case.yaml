@@ -1,0 +1,6 @@
+id: list_and_count_173_files
+name: List and Count 173 Files
+input_data: "testdir/"
+expectations:
+  - "Agent must list all files recursively."
+  - "Agent must count the files and report exactly 173 files."

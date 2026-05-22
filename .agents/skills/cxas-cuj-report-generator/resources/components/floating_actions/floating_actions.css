@@ -1,0 +1,26 @@
+.floating-actions {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    z-index: 100;
+}
+
+.floating-actions button {
+    padding: 12px 24px;
+    border-radius: 30px;
+    border: none;
+    background: var(--primary);
+    color: light-dark(white, #00263e);
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    transition: transform 0.2s, background 0.2s;
+}
+
+.floating-actions button:hover {
+    transform: translateY(-2px);
+    background: var(--secondary);
+}

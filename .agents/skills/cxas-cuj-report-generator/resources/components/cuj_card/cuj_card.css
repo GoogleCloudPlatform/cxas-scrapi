@@ -1,0 +1,303 @@
+:root {
+    color-scheme: light dark;
+    --border-color: light-dark(#ddd, #3c4043);
+    --surface-color: light-dark(#fafafa, #292a2d);
+    --text-primary: light-dark(#333, #e8eaed);
+    --text-secondary: light-dark(#666, #9aa0a6);
+    --primary-color: light-dark(#00263e, #8ab4f8);
+    --bg-color: light-dark(#f4f7f9, #202124);
+    --card-bg: light-dark(#fff, #292a2d);
+    --note-bg: light-dark(#fff9c4, #3c4043);
+    --note-border: light-dark(#fbc02d, #5f6368);
+    --user-color: light-dark(#1976d2, #8ab4f8);
+    --agent-color: light-dark(#d32f2f, #f28b82);
+    --webhook-bg: light-dark(rgb(46, 125, 50), #0d5c24);
+    --webhook-text: light-dark(white, #81c995);
+    --webhook-border: light-dark(#c8e6c9, #137333);
+    --tool-bg: light-dark(#fff3e0, #5c430d);
+    --tool-text: light-dark(#ef6c00, #fdd663);
+    --tool-border: light-dark(#ffe0b2, #b05e00);
+    --toolbar-bg: light-dark(white, #3c4043);
+    --toolbar-border: light-dark(#ddd, #5f6368);
+    --btn-bg: light-dark(#f8f9fa, #3c4043);
+    --btn-text: light-dark(#555, #e8eaed);
+    --btn-hover-bg: light-dark(#e9ecef, #4b5563);
+    --row-hover-bg: light-dark(#f0f4f8, #2c2c2c);
+    --editable-focus-bg: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.1));
+}
+
+.card-summary {
+    cursor: pointer;
+    color: var(--primary-color);
+    font-weight: bold;
+    font-size: 1.2em;
+    padding: 10px;
+    background: var(--surface-color);
+    border-radius: 4px;
+}
+
+body {
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+}
+
+a {
+    color: var(--primary-color);
+}
+
+[contenteditable="true"]:focus {
+    background-color: var(--editable-focus-bg);
+    outline: 1px solid var(--primary-color);
+}
+
+/* Media query moved to bottom */
+
+.cuj-card {
+    display: flex;
+    gap: 20px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 25px;
+    margin-bottom: 40px;
+    background-color: var(--card-bg, #fff);
+    position: relative;
+    transition: box-shadow 0.3s;
+}
+
+.cuj-card:hover {
+    box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+}
+
+.main-content {
+    flex: 3;
+}
+
+.notes-sidebar {
+    flex: 1;
+    border-left: 1px solid var(--border-color);
+    padding-left: 20px;
+    max-width: 350px;
+}
+
+.transcript-container {
+    background-color: var(--surface-color);
+    padding: 20px;
+    border-radius: 5px;
+    margin: 20px 0;
+    border-left: 3px solid var(--border-color);
+    font-family: 'Courier New', Courier, monospace;
+}
+
+.transcript-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 8px;
+    padding: 5px;
+    border-radius: 4px;
+    transition: background 0.2s;
+    position: relative;
+}
+
+.transcript-row:hover {
+    background: var(--row-hover-bg);
+}
+
+.row-content {
+    flex-grow: 1;
+    margin: 0;
+    word-break: break-word;
+}
+
+.agent { color: var(--agent-color); font-weight: bold; }
+.user { color: var(--user-color); font-weight: bold; }
+
+.webhook {
+    background-color: var(--webhook-bg);
+    color: var(--webhook-text);
+    font-weight: bold;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    display: inline-block;
+    margin: 4px 0;
+    border: 1px solid var(--webhook-border);
+}
+
+.tool {
+    background-color: var(--tool-bg);
+    color: var(--tool-text);
+    font-weight: bold;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    display: inline-block;
+    margin: 4px 0;
+    border: 1px solid var(--tool-border);
+}
+
+.highlight {
+    background-color: var(--highlight-color);
+    border-bottom: 2px solid var(--note-border);
+    cursor: help;
+}
+
+.row-toolbar {
+    display: none;
+    gap: 4px;
+    position: absolute;
+    top: -25px;
+    left: 0;
+    background: var(--toolbar-bg);
+    padding: 2px 5px;
+    border: 1px solid var(--toolbar-border);
+    border-radius: 4px;
+    z-index: 10;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.transcript-row:hover .row-toolbar {
+    display: flex;
+}
+
+.row-toolbar button {
+    padding: 2px 6px;
+    font-size: 11px;
+    cursor: pointer;
+    border: 1px solid var(--toolbar-border);
+    background: var(--btn-bg);
+    border-radius: 3px;
+    color: var(--btn-text);
+}
+
+.row-toolbar button:hover {
+    background: var(--btn-hover-bg, #e9ecef);
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.notes-sidebar h4 {
+    margin-top: 0;
+    color: var(--primary-color);
+    border-bottom: 2px solid var(--primary-color);
+    padding-bottom: 5px;
+    font-size: 1.1em;
+}
+
+.note-item {
+    margin-bottom: 12px;
+    padding: 10px;
+    background: var(--note-bg);
+    border-left: 4px solid var(--note-border);
+    border-radius: 4px;
+    font-size: 0.9em;
+    position: relative;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.note-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+}
+
+.note-ref {
+    font-weight: bold;
+    color: var(--primary-color);
+    font-size: 0.8em;
+    text-transform: uppercase;
+}
+
+.note-actions {
+    display: flex;
+    gap: 5px;
+}
+
+.note-actions button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    color: #888;
+    padding: 0;
+}
+
+.note-actions button:hover {
+    color: var(--agent-color);
+}
+
+.note-text {
+    font-style: italic;
+    color: var(--text-primary);
+}
+
+.call-item {
+    margin: 15px 0 15px 20px;
+    padding: 15px; /* Increased from 10px */
+    border-radius: 6px;
+    font-family: inherit; /* Use standard UI font for structure */
+    font-size: 0.95em;
+    display: block;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+    transition: all 0.3s ease;
+}
+
+.call-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--primary-color);
+}
+
+.call-item.collapsed .call-item-content {
+    display: none; /* Hides the large payloads by default */
+}
+
+.call-item .section-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    margin-top: 12px;
+    margin-bottom: 4px;
+    font-weight: bold;
+}
+
+.call-item pre {
+    margin: 0;
+    background: var(--surface-color);
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    overflow-x: auto;
+    font-family: 'Courier New', Courier, monospace; /* Retain monospace only for data */
+    color: var(--text-primary);
+}
+
+.toggle-icon {
+    font-size: 0.8em;
+    transition: transform 0.3s;
+}
+
+.call-item:not(.collapsed) .toggle-icon {
+    transform: rotate(180deg); /* Flips arrow when expanded */
+}
+
+.call-item-webhook {
+    border-left: 4px solid var(--webhook-bg);
+}
+
+.call-item-tool {
+    border-left: 4px solid var(--tool-text);
+}
+
+.card-details {
+    margin-bottom: 20px;
+}
+.card-details .cuj-card {
+    margin-top: 10px;
+}

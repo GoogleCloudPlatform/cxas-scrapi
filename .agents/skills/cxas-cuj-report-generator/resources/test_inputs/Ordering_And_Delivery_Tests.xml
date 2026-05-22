@@ -1,0 +1,62 @@
+<CyaraTestCases>
+  <TestCase id="place_order_full">
+    <Utterances>
+      <Utterance>I'd like to place a takeout order.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: I'd like to place a takeout order.)</Step>
+      <Step>Ask_Items (Agent: Great! What would you like to order today?)</Step>
+      <Step>Provide_Items (User: I'll take a pepperoni pizza and a Caesar salad.)</Step>
+      <Step>Confirm_Order_State (Agent: Okay, that's one pepperoni pizza and one Caesar salad. Is that correct?)</Step>
+      <Step>User_Confirms (User: Yes, that's right.)</Step>
+      <Step>Ask_Payment_Method (Agent: Perfect. Will you be paying with card or cash on pickup?)</Step>
+      <Step>Provide_Payment (User: I'll pay with a card.)</Step>
+      <Step>Process_Order_State</Step>
+      <Step>Provide_Pickup_Time (Agent: Your order has been placed. It will be ready for pickup in 20 minutes.)</Step>
+      <Step>Disconnect_State (Agent: Thanks for ordering with us!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="check_order_status_full">
+    <Utterances>
+      <Utterance>Where is my delivery order?</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: Where is my delivery order?)</Step>
+      <Step>Ask_Order_Number (Agent: I can check that. What is your order number?)</Step>
+      <Step>Provide_Order_Number (User: It's order number 1234.)</Step>
+      <Step>Check_Status_State</Step>
+      <Step>Provide_Status (Agent: I see your order is with the driver and should arrive in about 10 minutes.)</Step>
+      <Step>Goodbye_State (User: Okay, great. Thank you.)</Step>
+      <Step>Disconnect_State (Agent: You're welcome. Enjoy your meal!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="cancel_order_full">
+    <Utterances>
+      <Utterance>I need to cancel the order I just placed.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: I need to cancel the order I just placed.)</Step>
+      <Step>Ask_Order_Number (Agent: I can help with that if it hasn't been prepared yet. What is your order number?)</Step>
+      <Step>Provide_Order_Number (User: It is 5678.)</Step>
+      <Step>Check_Cancelable_State</Step>
+      <Step>Confirm_Cancellation (Agent: The kitchen hasn't started on it yet, so I have cancelled order 5678 for you.)</Step>
+      <Step>Goodbye_State (User: Thanks for understanding.)</Step>
+      <Step>Disconnect_State (Agent: No problem. Have a good day.)</Step>
+    </ExpectedFlow>
+  </TestCase>
+  <TestCase id="modify_order_full">
+    <Utterances>
+      <Utterance>I want to add something to my order.</Utterance>
+    </Utterances>
+    <ExpectedFlow>
+      <Step>Greeting_State (User: I want to add something to my order.)</Step>
+      <Step>Ask_Order_Number (Agent: I can help with that if the order isn't finalized. What is the order number?)</Step>
+      <Step>Provide_Order_Number (User: It's 9999.)</Step>
+      <Step>Check_Modifiable_State</Step>
+      <Step>Ask_Modification (Agent: Yes, we can still modify it. What would you like to add or change?)</Step>
+      <Step>Provide_Modification (User: I want to add a side of fries.)</Step>
+      <Step>Confirm_Modification (Agent: I have added a side of fries to order 9999. Your new total is updated.)</Step>
+      <Step>Disconnect_State (Agent: Thank you. Have a great day!)</Step>
+    </ExpectedFlow>
+  </TestCase>
+</CyaraTestCases>

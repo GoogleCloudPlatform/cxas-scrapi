@@ -1,0 +1,176 @@
+{
+  "name": "df9fba3a-4f86-4070-9805-af164f9ffd7f",
+  "displayName": "Deferred Readback - Name And Requests Together Triggers Group",
+  "description": "User provides both name and special requests in a single message. Both are inputs to BookReservation (readback_inputs: True), so the group completes immediately and a single combined readback fires — one confirmation instead of two. Verifies that the deferred readback group fires as soon as all members are pending, even when collected simultaneously.",
+  "tags": [
+    "slot-machine",
+    "readback",
+    "deferred-readback",
+    "group-readback",
+    "multi-slot",
+    "critical"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Table for 4 on June 25th"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_set_reservation_basics_Called",
+              "toolCall": {
+                "tool": "set_reservation_basics",
+                "args": {
+                  "party_size": 4.0,
+                  "preferred_date": "2026-06-25"
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_PartySize_And_Date_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 4
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_PartySize_And_Date_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 4
+                  },
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "8:30 please"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSelectedTime_Called",
+              "toolCall": {
+                "tool": "set_selected_time"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Time_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {}
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Time_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 4
+                  },
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "It's Lee, and we'd like a booth if possible"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_set_guest_info_Called",
+              "toolCall": {
+                "tool": "set_guest_info",
+                "args": {
+                  "guest_name": "Lee"
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Name_And_Requests_Deferred_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "guest_name": "Lee"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Perfect, yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Booking_Complete",
+              "updatedVariables": {
+                "sm": {
+                  "status": "complete"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "Tool-Truth - Uses Exact System Values",
+      "No Technical Leakage"
+    ]
+  }
+}

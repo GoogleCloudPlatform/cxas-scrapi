@@ -24,22 +24,22 @@
             "expectation": {
               "note": "Check_SetPartySize_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 3.0
+                  "party_size": 3.0
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_PartySize",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "3"
+              "note": "Check_PartySize_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 3
                   }
-                ]
+                }
               }
             }
           }
@@ -62,13 +62,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Asks_For_Date",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "date"
+              "note": "Check_PartySize_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 3
                   }
-                ]
+                }
               }
             }
           }
@@ -83,13 +83,11 @@
           },
           {
             "expectation": {
-              "note": "Check_Answers_Helpfully",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "pasta"
-                  }
-                ]
+              "note": "Check_Still_In_Progress",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
               }
             }
           }
@@ -106,19 +104,17 @@
             "expectation": {
               "note": "Check_SetPreferredDate_Called",
               "toolCall": {
-                "tool": "set_preferred_date"
+                "tool": "set_reservation_basics"
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_Date",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "July"
-                  }
-                ]
+              "note": "Check_Date_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {}
+                }
               }
             }
           }
@@ -141,13 +137,14 @@
           },
           {
             "expectation": {
-              "note": "Check_Shows_Available_Times",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "PM"
-                  }
-                ]
+              "note": "Check_Date_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 3
+                  },
+                  "status": "in_progress"
+                }
               }
             }
           }
@@ -155,7 +152,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
       "Tool-Truth - Uses Exact System Values",
       "No Technical Leakage",
       "No False Escalation"

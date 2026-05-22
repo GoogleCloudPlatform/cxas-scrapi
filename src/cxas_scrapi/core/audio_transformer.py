@@ -14,6 +14,7 @@
 
 import io
 import logging
+import threading
 import wave
 
 from google.api_core import client_options
@@ -23,6 +24,9 @@ ClientOptions = client_options.ClientOptions
 
 
 class AudioTransformer:
+    _client = None
+    _lock = threading.Lock()
+
     def __init__(self):
         pass
 
@@ -32,10 +36,15 @@ class AudioTransformer:
         """Converts text to speech and returns a dictionary with text and
         audio bytes without saving to disk.
         """
-        client_options = ClientOptions(quota_project_id=project_id)
-        client = texttospeech.TextToSpeechClient(
-            credentials=credentials, client_options=client_options
-        )
+        if AudioTransformer._client is None:
+            with AudioTransformer._lock:
+                if AudioTransformer._client is None:
+                    client_options = ClientOptions(quota_project_id=project_id)
+                    AudioTransformer._client = texttospeech.TextToSpeechClient(
+                        credentials=credentials, client_options=client_options
+                    )
+
+        client = AudioTransformer._client
         synthesis_input = texttospeech.SynthesisInput(text=text)
         voice = texttospeech.VoiceSelectionParams(
             language_code="en-US", name="en-US-Standard-A"

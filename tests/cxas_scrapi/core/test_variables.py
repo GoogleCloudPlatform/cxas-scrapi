@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cxas_scrapi.core.variables import Variables
+from cxas_scrapi.core.variables import Variables, VariableType
 
 
 @patch("cxas_scrapi.core.variables.Variables.get_app")
@@ -166,3 +166,38 @@ def test_delete_variable_not_found():
         v.delete_variable("unknown_var")
 
         mock_update_app.assert_not_called()
+
+
+def test_check_schema_type_with_enum():
+    v = Variables("projects/p/locations/l/apps/A")
+    v._check_schema_type(VariableType.STRING)  # Should pass
+    v._check_schema_type("STRING")  # Should still pass
+    with pytest.raises(ValueError):
+        v._check_schema_type("INVALID")
+
+
+@patch("cxas_scrapi.core.variables.types.App.VariableDeclaration")
+@patch("cxas_scrapi.core.variables.Variables.update_app")
+@patch("cxas_scrapi.core.variables.Variables.get_app")
+def test_create_variable_with_enum(mock_get_app, mock_update_app, mock_vd):
+    def side_effect(**kwargs):
+        m = MagicMock()
+        for k, v in kwargs.items():
+            setattr(m, k, v)
+        return m
+
+    mock_vd.side_effect = side_effect
+
+    mock_app = MagicMock()
+    mock_app.variable_declarations = []
+    mock_get_app.return_value = mock_app
+
+    v = Variables("projects/p/locations/l/apps/A")
+    v.create_variable("my_var", VariableType.STRING, "val")
+
+    mock_update_app.assert_called_once()
+    args = mock_update_app.call_args[1]
+    assert "variable_declarations" in args
+    assert len(args["variable_declarations"]) == 1
+    new_var = args["variable_declarations"][0]
+    assert new_var.name == "my_var"

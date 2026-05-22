@@ -1,0 +1,9 @@
+{
+  "name": "7a7039c9-5a75-4084-be83-e798c10ca57c",
+  "pythonFunction": {
+    "name": "place_takeout_order",
+    "pythonCode": "tools/place_takeout_order/python_function/python_code.py",
+    "description": "Place the takeout order in the restaurant system. Requires takeout_items, pickup_time, guest_name, and contact_phone."
+  },
+  "displayName": "place_takeout_order"
+}

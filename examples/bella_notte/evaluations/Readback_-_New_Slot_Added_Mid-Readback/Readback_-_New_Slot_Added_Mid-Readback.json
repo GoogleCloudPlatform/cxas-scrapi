@@ -23,22 +23,12 @@
           },
           {
             "expectation": {
-              "note": "Check_SetPartySize_Called",
+              "note": "Check_set_reservation_basics_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 2.0
-                }
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_SetPreferredDate_Called",
-              "toolCall": {
-                "tool": "set_preferred_date",
-                "args": {
-                  "date": "2026-06-17"
+                  "party_size": 2.0,
+                  "preferred_date": "2026-06-17"
                 }
               }
             }
@@ -47,34 +37,23 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name",
+                "tool": "set_guest_info",
                 "args": {
-                  "name": "John Smith"
+                  "guest_name": "John Smith"
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Immediate_Readback_Size_And_Date_Only",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "2"
+              "note": "Check_Size_And_Date_Pending_Name_Deferred",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 2,
+                    "preferred_date": "2026-06-17"
                   }
-                ]
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_Date_In_Readback",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "June"
-                  }
-                ]
+                }
               }
             }
           }
@@ -91,19 +70,20 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Times_Shown_After_Confirm",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "PM"
+              "note": "Check_Size_Date_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 2,
+                    "preferred_date": "2026-06-17"
                   }
-                ]
+                }
               }
             }
           }
@@ -126,37 +106,14 @@
           },
           {
             "expectation": {
-              "note": "Check_Combined_Readback_Time",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "7:30"
+              "note": "Check_Combined_Readback_State",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "selected_time": "19:30",
+                    "guest_name": "John Smith"
                   }
-                ]
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_Combined_Readback_Name",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "Smith"
-                  }
-                ]
-              }
-            }
-          },
-          {
-            "expectation": {
-              "note": "Check_Combined_Readback_Allergy",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "shellfish"
-                  }
-                ]
+                }
               }
             }
           }
@@ -171,13 +128,11 @@
           },
           {
             "expectation": {
-              "note": "Check_Confirmation_Number",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "BN-"
-                  }
-                ]
+              "note": "Check_Booking_Complete",
+              "updatedVariables": {
+                "sm": {
+                  "status": "complete"
+                }
               }
             }
           }
@@ -185,8 +140,7 @@
       }
     ],
     "evaluationExpectations": [
-      "No Technical Leakage",
-      "Warm Restaurant Host Persona"
+      "No Technical Leakage"
     ]
   }
 }

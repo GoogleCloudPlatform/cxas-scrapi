@@ -1,0 +1,32 @@
+subintent_id: weight-management-programs
+subintent_name: Weight Management Programs
+parent_cuj: General Customer Support
+turns:
+- speaker: Agent
+  text: I can certainly help you with information on our weight management programs.
+    Are you looking for digital coaching, or would you prefer a program that includes
+    nutritional support?
+- speaker: User
+  text: I think a digital coaching program would work best for me.
+- speaker: Agent
+  text: Calling tool get_wellness_programs
+  tool_call:
+    name: get_wellness_programs
+    parameters:
+      category: weight_management
+      type: digital_coaching
+- speaker: Agent
+  text: Great choice. We offer the Real Appeal program, which provides online coaching
+    and tools to help you reach your goals. I can send a link to your email with more
+    details on how to enroll. Would you like that?
+- speaker: User
+  text: Yes, please do.
+- speaker: Agent
+  text: Calling webhook send_enrollment_link
+  webhook_call:
+    endpoint: send_enrollment_link
+    payload_patch:
+      program: Real Appeal
+- speaker: Agent
+  text: Sent! You should see that in your inbox shortly. Is there anything else I
+    can assist you with today?

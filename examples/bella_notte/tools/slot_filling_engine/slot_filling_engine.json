@@ -1,0 +1,9 @@
+{
+  "name": "f7e2c1a3-9d4b-4e6f-8a1c-3b5d7e9f0a2c",
+  "pythonFunction": {
+    "name": "slot_filling_engine",
+    "pythonCode": "tools/slot_filling_engine/python_function/python_code.py",
+    "description": "Internal slot-filling DAG engine. Do not call directly."
+  },
+  "displayName": "slot_filling_engine"
+}

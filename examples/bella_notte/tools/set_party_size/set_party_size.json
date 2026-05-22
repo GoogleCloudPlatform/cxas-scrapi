@@ -1,9 +1,0 @@
-{
-  "name": "05633104-030b-4353-9a92-b1d97215815e",
-  "pythonFunction": {
-    "name": "set_party_size",
-    "pythonCode": "tools/set_party_size/python_function/python_code.py",
-    "description": "Record the number of guests. Parse natural language: 'just me'=1, 'a couple'=2, 'four of us'=4. Call immediately when party size is mentioned, even alongside other info in the same message."
-  },
-  "displayName": "set_party_size"
-}

@@ -50,6 +50,22 @@ class Severity(Enum):
         return cls(str(s).lower())
 
 
+# ── Toolset Resolution ────────────────────────────────────────────────────
+
+
+class ToolsetValidationBehavior(Enum):
+    STRICT = "strict"  # Enforce strict operation-level checks (OpenAPI)
+    BYPASS = "bypass"  # Bypass operation-level checks (MCP/Connector)
+
+
+@dataclass
+class ToolsetResolution:
+    """Structured result of resolving a toolset offline."""
+
+    behavior: ToolsetValidationBehavior
+    tools: list[str] = field(default_factory=list)
+
+
 # ── Lint Result ──────────────────────────────────────────────────────────
 
 
@@ -256,6 +272,7 @@ class LintContext:
         default_factory=lambda: {"end_session", "customize_response"}
     )
     options: dict = field(default_factory=dict)
+    bypass_tool_prefixes: set = field(default_factory=set)
 
     @property
     def all_known_tools(self) -> set:
@@ -374,9 +391,17 @@ class Discovery:
     Scans an app directory for all resources.
     """
 
-    def __init__(self, app_dir: Path, evals_dir: Path):
+    def __init__(
+        self,
+        app_dir: Path,
+        evals_dir: Path,
+        limit_agents: Optional[set[str]] = None,
+        limit_tools: Optional[set[str]] = None,
+    ):
         self.app_dir = app_dir
         self.evals_dir = evals_dir
+        self.limit_agents = limit_agents
+        self.limit_tools = limit_tools
         self.app_root = self._find_app_root()
 
     def _find_app_root(self) -> Optional[Path]:
@@ -415,6 +440,11 @@ class Discovery:
         result = {}
         for d in sorted(agents_dir.iterdir()):
             if d.is_dir():
+                if (
+                    self.limit_agents is not None
+                    and d.name not in self.limit_agents
+                ):
+                    continue
                 inst = d / "instruction.txt"
                 if inst.exists():
                     result[d.name] = inst
@@ -434,6 +464,11 @@ class Discovery:
         result = {}
         for d in sorted(tools_dir.iterdir()):
             if d.is_dir():
+                if (
+                    self.limit_tools is not None
+                    and d.name not in self.limit_tools
+                ):
+                    continue
                 code = d / "python_function" / "python_code.py"
                 if code.exists():
                     result[d.name] = code
@@ -461,6 +496,11 @@ class Discovery:
         ]
         for agent_dir in sorted(agents_dir.iterdir()):
             if not agent_dir.is_dir():
+                continue
+            if (
+                self.limit_agents is not None
+                and agent_dir.name not in self.limit_agents
+            ):
                 continue
             for cb_type in cb_types:
                 cb_dir = agent_dir / cb_type
@@ -502,6 +542,11 @@ class Discovery:
         result = {}
         for d in sorted(agents_dir.iterdir()):
             if d.is_dir():
+                if (
+                    self.limit_agents is not None
+                    and d.name not in self.limit_agents
+                ):
+                    continue
                 json_file = d / f"{d.name}.json"
                 if json_file.exists():
                     result[d.name] = json_file
@@ -565,6 +610,63 @@ def build_registry() -> RuleRegistry:
     return registry
 
 
+def get_toolset_tools(
+    app_root: Path,
+    toolset_name: str,
+    allowed_tool_ids: list[str] = None,
+) -> ToolsetResolution:
+    """Parses toolset config and resolves its validation behavior and tools.
+
+    Returns a ToolsetResolution object.
+    """
+    # If allowed_tool_ids is explicitly empty, it means NO tools are assigned.
+    # We enforce STRICT validation with an empty tools list (no tools allowed).
+    if allowed_tool_ids is not None and not allowed_tool_ids:
+        return ToolsetResolution(behavior=ToolsetValidationBehavior.STRICT)
+
+    toolset_dir = app_root / "toolsets" / toolset_name
+    json_file = toolset_dir / f"{toolset_name}.json"
+    if not json_file.exists():
+        return ToolsetResolution(behavior=ToolsetValidationBehavior.STRICT)
+
+    try:
+        config = json.loads(json_file.read_text())
+    except Exception:
+        return ToolsetResolution(behavior=ToolsetValidationBehavior.STRICT)
+
+    # Handle OpenAPI toolset strictly
+    if "openApiToolset" in config or "open_api_toolset" in config:
+        schema_file = toolset_dir / "open_api_toolset" / "open_api_schema.yaml"
+        if not schema_file.exists():
+            return ToolsetResolution(behavior=ToolsetValidationBehavior.STRICT)
+
+        tools = []
+        try:
+            schema = yaml.safe_load(schema_file.read_text())
+            for _, methods in schema.get("paths", {}).items():
+                if not isinstance(methods, dict):
+                    continue
+                for _, details in methods.items():
+                    if not isinstance(details, dict):
+                        continue
+                    op_id = details.get("operationId")
+                    if op_id:
+                        if allowed_tool_ids and op_id not in allowed_tool_ids:
+                            continue
+                        tools.append(f"{toolset_name}_{op_id}")
+        except Exception:
+            pass
+        return ToolsetResolution(
+            behavior=ToolsetValidationBehavior.STRICT, tools=tools
+        )
+
+    # Default for all other toolsets (MCP, Connector, etc.)
+    # where tools cannot be resolved offline.
+    # We return BYPASS to signal that this prefix should bypass
+    # strict operation checks.
+    return ToolsetResolution(behavior=ToolsetValidationBehavior.BYPASS)
+
+
 def build_context(
     project_root: Path,
     config: LintConfig,
@@ -573,6 +675,20 @@ def build_context(
     """Build the shared lint context from discovered app resources."""
     agents = discovery.discover_agents()
     tools = discovery.discover_tools()
+    toolsets = discovery.discover_toolsets()
+
+    all_tool_names = set(tools.keys())
+    bypass_tool_prefixes = set()
+    app_root = discovery.app_root
+
+    if app_root:
+        for ts_name in toolsets:
+            res = get_toolset_tools(app_root, ts_name)
+            if res.behavior == ToolsetValidationBehavior.BYPASS:
+                # MCP/Connector toolset -> bypass validation of operation suffix
+                bypass_tool_prefixes.add(f"{ts_name}_")
+            elif res.tools:
+                all_tool_names.update(res.tools)
 
     return LintContext(
         project_root=project_root,
@@ -582,9 +698,10 @@ def build_context(
         all_agent_display_names={
             discovery.dir_name_to_display(name) for name in agents
         },
-        all_tool_names=set(tools.keys()),
+        all_tool_names=all_tool_names,
         all_tool_dirs={name: path.parent for name, path in tools.items()},
         options=config.options,
+        bypass_tool_prefixes=bypass_tool_prefixes,
     )
 
 

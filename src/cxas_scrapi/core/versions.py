@@ -75,6 +75,19 @@ class Versions(Apps):
 
         return versions_map
 
+    def create_version(
+        self, display_name: str = "", description: str = ""
+    ) -> types.AppVersion:
+        """Creates a new version of the app."""
+        app_version = types.AppVersion(
+            display_name=display_name, description=description
+        )
+        request = types.CreateAppVersionRequest(
+            parent=self.app_name, app_version=app_version
+        )
+        # Assuming generated client supports create_app_version natively
+        return self.client.create_app_version(request=request)
+
     def get_version(self, version_id: str) -> types.AppVersion:
         """Gets a specific version."""
         request = types.GetAppVersionRequest(

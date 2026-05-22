@@ -1,0 +1,18 @@
+subintent_id: dual-rewards-disambiguation
+subintent_name: Dual Rewards Disambiguation
+parent_cuj: General Customer Support
+turns:
+- speaker: User
+  text: Hi, I have two different loyalty programs and I'm not sure which one I should use for my upcoming order.
+- speaker: Agent
+  text: I see you have benefits through both your gold membership and a standard plan. To help you figure out which one is primary, could you tell me if the order is for yourself or a gift?
+  tool_call:
+    name: get_customer_status
+    parameters: {}
+- speaker: User
+  text: It's for me.
+- speaker: Agent
+  text: Based on your records, your gold membership is your primary account, and your other plan will act as secondary. I recommend providing both account numbers when placing the order.
+  tool_call:
+    name: determine_rewards_priority
+    parameters: {}

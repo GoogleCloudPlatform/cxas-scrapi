@@ -15,23 +15,31 @@ def test_combined_evals_report_cmd(tmp_path):
     sim_file.write_text(json.dumps([{"name": "test_sim", "passed": True}]))
 
     tool_file = evals_dir / "tool_results.csv"
-    df_tool = pd.DataFrame([{
-        "test_name": "test_tool",
-        "tool": "my_tool",
-        "status": "PASSED",
-        "latency (ms)": 50,
-        "errors": ""
-    }])
+    df_tool = pd.DataFrame(
+        [
+            {
+                "test_name": "test_tool",
+                "tool": "my_tool",
+                "status": "PASSED",
+                "latency (ms)": 50,
+                "errors": "",
+            }
+        ]
+    )
     df_tool.to_csv(tool_file, index=False)
 
     callback_file = evals_dir / "callback_results.csv"
-    df_callback = pd.DataFrame([{
-        "test_name": "test_callback",
-        "agent_name": "my_agent",
-        "callback_type": "my_callback",
-        "status": "PASSED",
-        "error_message": ""
-    }])
+    df_callback = pd.DataFrame(
+        [
+            {
+                "test_name": "test_callback",
+                "agent_name": "my_agent",
+                "callback_type": "my_callback",
+                "status": "PASSED",
+                "error_message": "",
+            }
+        ]
+    )
     df_callback.to_csv(callback_file, index=False)
 
     class Args:
@@ -74,7 +82,9 @@ def test_combined_evals_report_cmd(tmp_path):
             modality="text",
             runs=1,
             filter_files=[],
-            filter_tags=[]
+            filter_tags=[],
+            parallel=5,
+            golden_timeout=600,
         )
 
 
@@ -122,5 +132,7 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
             modality="audio",
             runs=5,
             filter_files=[],
-            filter_tags=[]
+            filter_tags=[],
+            parallel=5,
+            golden_timeout=600,
         )

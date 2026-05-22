@@ -1,7 +1,7 @@
 {
   "name": "a98f4684-f24f-4378-bd16-8cf3494b20f5",
   "displayName": "Error Recovery - Party Size Too Large",
-  "description": "User requests party of 15 (exceeds max 8). Agent should call set_party_size, get error, and direct user to events team. Then recover when user provides valid size, readback, and confirm.",
+  "description": "User requests party of 15 (exceeds max 8). Agent should call set_reservation_basics, get error, and direct user to events team. Then recover when user provides valid size, readback, and confirm.",
   "tags": [
     "slot-machine",
     "error-handling",
@@ -24,22 +24,21 @@
             "expectation": {
               "note": "Check_SetPartySize_Called_With_15",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 15.0
+                  "party_size": 15.0
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Events_Team_Redirect",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "events@bellanotte.com"
-                  }
-                ]
+              "note": "Check_No_PartySize_Stored",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {},
+                  "filled": {}
+                }
               }
             }
           }
@@ -56,22 +55,22 @@
             "expectation": {
               "note": "Check_SetPartySize_Called_With_4",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 4.0
+                  "party_size": 4.0
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_PartySize",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "4"
+              "note": "Check_PartySize_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 4
                   }
-                ]
+                }
               }
             }
           }
@@ -86,13 +85,14 @@
           },
           {
             "expectation": {
-              "note": "Check_Asks_For_Date_After_Recovery",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "date"
-                  }
-                ]
+              "note": "Check_PartySize_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 4
+                  },
+                  "pending": {}
+                }
               }
             }
           }

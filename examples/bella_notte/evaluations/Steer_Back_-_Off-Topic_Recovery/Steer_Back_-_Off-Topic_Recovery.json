@@ -1,0 +1,98 @@
+{
+  "name": "2441ef86-d291-4bb4-8e2d-24817aefcabe",
+  "displayName": "Steer Back - Off-Topic Recovery",
+  "description": "Simulated user goes off-topic for several turns (asks about parking, dress code) before resuming the reservation. Tests that the steer-back mechanism recovers the conversation and completes the booking.",
+  "tags": [
+    "slot-machine",
+    "scenario",
+    "steer-back"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "scenario": {
+    "task": "Make a dinner reservation at Bella Notte for 2 people on June 20th, 2026. When asked for a time, choose 7:30 PM. The reservation name is Kim. No special requests. IMPORTANT: After giving your party size and confirming it, go off-topic for 2 turns: first ask about parking near the restaurant, then ask about the dress code. After those 2 off-topic turns, cooperate normally with the agent for the rest of the reservation.",
+    "rubrics": [
+      "The agent must successfully complete the reservation despite the off-topic detours.",
+      "The agent must steer the conversation back to the reservation flow after the off-topic turns.",
+      "The agent must collect all required information: party size, date, time, name, and special requests."
+    ],
+    "scenarioExpectations": [
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_reservation_basics",
+            "args": {
+              "party_size": 2.0
+            }
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_reservation_basics",
+            "args": {
+              "preferred_date": "2026-06-20"
+            }
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_selected_time"
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_guest_info",
+            "args": {
+              "guest_name": "Kim"
+            }
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_guest_info"
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "book_reservation"
+          }
+        }
+      }
+    ],
+    "userFacts": [
+      {
+        "name": "party_size",
+        "value": "2"
+      },
+      {
+        "name": "preferred_date",
+        "value": "June 20th, 2026"
+      },
+      {
+        "name": "preferred_time",
+        "value": "7:30 PM"
+      },
+      {
+        "name": "guest_name",
+        "value": "Kim"
+      },
+      {
+        "name": "special_requests",
+        "value": "none"
+      }
+    ],
+    "maxTurns": 16,
+    "userGoalBehavior": "USER_GOAL_IGNORED"
+  }
+}

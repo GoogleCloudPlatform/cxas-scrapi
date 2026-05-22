@@ -396,8 +396,8 @@ class TestFlowTreeVisualizer:
             },
             "pages": [],
         }
-        ctx = FlowDependencyResolver(
-            DFCXAgentIR(**MINIMAL_AGENT_DATA)
-        ).resolve(DFCXFlowModel(**empty_flow))
+        ctx = FlowDependencyResolver(DFCXAgentIR(**MINIMAL_AGENT_DATA)).resolve(
+            DFCXFlowModel(**empty_flow)
+        )
         tree = FlowTreeVisualizer(ctx).build_tree()
         assert isinstance(tree, Tree)

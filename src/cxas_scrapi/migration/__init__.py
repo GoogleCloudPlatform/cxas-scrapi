@@ -15,6 +15,11 @@
 # limitations under the License.
 
 from cxas_scrapi.migration.ai_augment import AIAugment
+from cxas_scrapi.migration.dfcx_conversation_runner import (
+    ConversationTrace,
+    ConversationTurn,
+    DFCXConversationRunner,
+)
 from cxas_scrapi.migration.dfcx_exporter import (
     BaseDFCXClient,
     ConversationalAgentsAPI,
@@ -48,4 +53,7 @@ __all__ = [
     "MainVisualizer",
     "DFCXMigrationReporter",
     "AIAugment",
+    "DFCXConversationRunner",
+    "ConversationTrace",
+    "ConversationTurn",
 ]

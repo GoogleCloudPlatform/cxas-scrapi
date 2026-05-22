@@ -39,7 +39,7 @@ Agent development uses a **hybrid approach** -- local files in git for version c
 
 Each agent is managed within a dedicated `<project>` workspace folder containing:
 - **`gecx-config.json`** -- Centralized config (project ID, app ID, location, modality).
-- **`cxas_app/`** -- Local agent code (instructions, callbacks, tools). The canonical source for agent definitions.
+- **`cxas_app/`** -- Local agent code (instructions, callbacks, tools, toolsets). The canonical source for agent definitions.
 - **`tdd.md`** -- Technical Design Document (the source of truth for architecture).
 - **`evals/`** -- Test definitions:
   - `goldens/*.yaml` (Platform ideal conversations)
@@ -393,6 +393,17 @@ Utilize the following functional consolidation patterns:
 - **Contextual Filtering:** Prefer a specialized `search_logs` tool that isolates high-relevance log segments and diagnostic context over a raw, high-cardinality `list_logs` invocation and filtering in the instructions.
 - **State Aggregation:** Consolidate `get_customer_by_id`, `list_transactions` and `list_notes` into a single `get_customer_context` tool to provide a unified, structured data schema immediately.
 See our docs for more information.
+
+### OpenAPI Toolsets Design Guidelines
+
+Use **OpenAPI Toolsets** when your agent needs to connect to standard external RESTful services. Toolsets allow you to import an entire API specification rather than writing individual Python wrappers for every single endpoint.
+
+Adhere to the following best practices:
+- **Semantically Rich OpenAPI Schemas:** The LLM relies entirely on the `description` fields inside the OpenAPI schema (for paths, parameters, and schemas) to understand when and how to call each operation. Treat these descriptions as instructions.
+- **Explicit `operationId`:** Always provide unique, descriptive `operationId` values for all operations in your schema. The platform uses these to register the individual tools (formatted as `{toolset}_{operationId}`).
+- **Session Context Propagation (`x-ces-session-context`):** Use the `x-ces-session-context` extension in header or query parameters to automatically inject session variables (like `$context.session_id` or custom variables) into the outbound API request without requiring the LLM to supply them.
+- **Prefer Toolset Wrappers for Latency/Data Reduction:** If an OpenAPI endpoint returns large payloads that the LLM doesn't need, or if you need to chain multiple API calls, **do not** expose the raw OpenAPI tools directly to the agent. Instead, write a **Python Tool Wrapper** that calls the OpenAPI tools internally (using the `tools.{Toolset}_{OperationId}` syntax in Python), filters the results, and returns a clean, minimized JSON to the LLM.
+- **Authentication Handling:** Configure `apiAuthentication` in the toolset JSON using Secret Manager references rather than hardcoding keys. Ensure the Agent's Service Account has the necessary IAM permissions to access the secrets.
 
 ## Error Handling Guidelines
 

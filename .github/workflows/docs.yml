@@ -31,21 +31,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
         with:
-          python-version: '3.14'
-          cache: pip
+          python-version: '3.12'
+          enable-cache: true
 
-      - name: Install documentation dependencies
-        run: pip install -r requirements-docs.txt
-
-      - name: Install package for API reference
-        run: pip install -e .
+      - name: Install dependencies
+        run: uv sync --extra docs
 
       - name: Build docs (PR preview)
         if: github.event_name == 'pull_request'
-        run: mkdocs build --strict
+        run: uv run mkdocs build --strict
 
       - name: Configure git for deployment
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -56,5 +53,5 @@ jobs:
       - name: Deploy with mike
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          mike deploy --push --update-aliases latest stable
-          mike set-default --push stable
+          uv run mike deploy --push --update-aliases latest stable
+          uv run mike set-default --push stable

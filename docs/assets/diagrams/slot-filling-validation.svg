@@ -1,0 +1,64 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 280" width="860" height="280">
+  <!-- svg-source:excalidraw -->
+  <rect x="0" y="0" width="860" height="280" fill="#ffffff"/>
+
+  <defs>
+    <marker id="va" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#868e96"/>
+    </marker>
+    <marker id="va-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#c92a2a"/>
+    </marker>
+  </defs>
+
+  <!-- Step 1: Setter -->
+  <rect x="30" y="80" width="150" height="70" rx="10" ry="10" fill="#a5d8ff" stroke="#1c7ed6" stroke-width="2"/>
+  <text x="105" y="108" font-family="Google Sans, sans-serif" font-size="14" font-weight="600" fill="#1e1e1e" text-anchor="middle">Setter Tool</text>
+  <text x="105" y="130" font-family="Roboto Mono, monospace" font-size="11" fill="#666666" text-anchor="middle">{"error": true,</text>
+  <text x="105" y="144" font-family="Roboto Mono, monospace" font-size="11" fill="#666666" text-anchor="middle"> "error_code": "..."}</text>
+
+  <!-- Arrow 1→2 -->
+  <line x1="180" y1="115" x2="228" y2="115" stroke="#868e96" stroke-width="2" marker-end="url(#va)"/>
+
+  <!-- Step 2: after_tool_callback -->
+  <rect x="230" y="80" width="160" height="70" rx="10" ry="10" fill="#dee2e6" stroke="#495057" stroke-width="2"/>
+  <text x="310" y="108" font-family="Google Sans, sans-serif" font-size="13" font-weight="600" fill="#1e1e1e" text-anchor="middle">after_tool_callback</text>
+  <text x="310" y="130" font-family="Google Sans, sans-serif" font-size="12" fill="#666666" text-anchor="middle">Appends error to</text>
+  <text x="310" y="144" font-family="Roboto Mono, monospace" font-size="11" fill="#666666" text-anchor="middle">_slot_errors</text>
+
+  <!-- Arrow 2→3 -->
+  <line x1="390" y1="115" x2="438" y2="115" stroke="#868e96" stroke-width="2" marker-end="url(#va)"/>
+
+  <!-- Step 3: Engine -->
+  <rect x="440" y="80" width="170" height="70" rx="10" ry="10" fill="#b2f2bb" stroke="#2b8a3e" stroke-width="2"/>
+  <text x="525" y="105" font-family="Google Sans, sans-serif" font-size="13" font-weight="600" fill="#1e1e1e" text-anchor="middle">Engine</text>
+  <text x="525" y="122" font-family="Google Sans, sans-serif" font-size="12" fill="#666666" text-anchor="middle">Looks up error message</text>
+  <text x="525" y="138" font-family="Google Sans, sans-serif" font-size="12" fill="#666666" text-anchor="middle">Increments retry count</text>
+
+  <!-- Arrow 3→4 (success path) -->
+  <line x1="610" y1="100" x2="668" y2="80" stroke="#868e96" stroke-width="2" marker-end="url(#va)"/>
+
+  <!-- Step 4a: Preempt with message -->
+  <rect x="670" y="45" width="160" height="55" rx="10" ry="10" fill="#ffd8a8" stroke="#e67700" stroke-width="2"/>
+  <text x="750" y="68" font-family="Google Sans, sans-serif" font-size="13" font-weight="600" fill="#1e1e1e" text-anchor="middle">Preempt</text>
+  <text x="750" y="86" font-family="Google Sans, sans-serif" font-size="12" fill="#666666" text-anchor="middle">Error message → user</text>
+
+  <!-- Arrow 3→4b (exhaust path) -->
+  <line x1="610" y1="130" x2="668" y2="155" stroke="#c92a2a" stroke-width="2" marker-end="url(#va-red)"/>
+
+  <!-- Step 4b: Escalate -->
+  <rect x="670" y="130" width="160" height="55" rx="10" ry="10" fill="#ffc9c9" stroke="#c92a2a" stroke-width="2"/>
+  <text x="750" y="153" font-family="Google Sans, sans-serif" font-size="13" font-weight="600" fill="#1e1e1e" text-anchor="middle">Escalate</text>
+  <text x="750" y="171" font-family="Google Sans, sans-serif" font-size="12" fill="#666666" text-anchor="middle">on_exhaust fires</text>
+
+  <!-- Labels -->
+  <text x="650" y="65" font-family="Google Sans, sans-serif" font-size="11" fill="#868e96" font-style="italic">retries remain</text>
+  <text x="640" y="165" font-family="Google Sans, sans-serif" font-size="11" fill="#c92a2a" font-style="italic">max retries hit</text>
+
+  <!-- Retry loop arrow -->
+  <path d="M 750 45 Q 750 20 400 20 Q 105 20 105 78" fill="none" stroke="#e67700" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#va)"/>
+  <text x="400" y="15" font-family="Google Sans, sans-serif" font-size="11" fill="#e67700" font-style="italic" text-anchor="middle">user retries with new value</text>
+
+  <!-- Bottom label -->
+  <text x="430" y="240" font-family="Google Sans, sans-serif" font-size="14" fill="#495057" text-anchor="middle">The LLM never decides error messages or retry logic — the framework handles both deterministically.</text>
+</svg>

@@ -1,7 +1,7 @@
 {
   "name": "4f7266b2-8fa7-4e31-a449-6f9715a1ab70",
   "displayName": "Happy Path - Linear Reservation Flow",
-  "description": "Full linear reservation with readback confirmation: party_size \u2192 confirm \u2192 date \u2192 confirm \u2192 time \u2192 confirm \u2192 name \u2192 confirm \u2192 requests \u2192 confirm \u2192 booking. Verifies each setter tool, readback, and confirm_pending call.",
+  "description": "Full linear reservation with readback confirmation: party_size → confirm → date → confirm → time → confirm → name → confirm → requests → confirm → booking. Verifies each setter tool, readback, and confirm_pending call.",
   "tags": [
     "slot-machine",
     "happy-path",
@@ -22,24 +22,32 @@
           },
           {
             "expectation": {
+              "note": "Check_Transfer_To_Reservation",
+              "agentTransfer": {
+                "targetAgent": "Reservation_Agent"
+              }
+            }
+          },
+          {
+            "expectation": {
               "note": "Check_SetPartySize_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 4.0
+                  "party_size": 4.0
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_PartySize",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "4"
+              "note": "Check_PartySize_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 4
                   }
-                ]
+                }
               }
             }
           }
@@ -54,13 +62,14 @@
           },
           {
             "expectation": {
-              "note": "Check_Asks_For_Date",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "date"
-                  }
-                ]
+              "note": "Check_PartySize_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 4
+                  },
+                  "pending": {}
+                }
               }
             }
           }
@@ -77,22 +86,22 @@
             "expectation": {
               "note": "Check_SetPreferredDate_Called",
               "toolCall": {
-                "tool": "set_preferred_date",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "date": "2026-06-17"
+                  "preferred_date": "2026-06-17"
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_Date",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "June"
+              "note": "Check_Date_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "preferred_date": "2026-06-17"
                   }
-                ]
+                }
               }
             }
           }
@@ -107,13 +116,13 @@
           },
           {
             "expectation": {
-              "note": "Check_AvailableTimes_Presented",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "7:00 PM"
+              "note": "Check_Date_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "preferred_date": "2026-06-17"
                   }
-                ]
+                }
               }
             }
           }
@@ -139,13 +148,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Readback_Time",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "7"
+              "note": "Check_Time_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "selected_time": "19:00"
                   }
-                ]
+                }
               }
             }
           }
@@ -160,13 +169,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Asks_For_Name",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "name"
+              "note": "Check_Time_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "selected_time": "19:00"
                   }
-                ]
+                }
               }
             }
           }
@@ -183,22 +192,22 @@
             "expectation": {
               "note": "Check_SetGuestName_Called",
               "toolCall": {
-                "tool": "set_guest_name",
+                "tool": "set_guest_info",
                 "args": {
-                  "name": "Garcia"
+                  "guest_name": "Garcia"
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_Name",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "Garcia"
+              "note": "Check_Name_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "guest_name": "Garcia"
                   }
-                ]
+                }
               }
             }
           }
@@ -213,13 +222,13 @@
           },
           {
             "expectation": {
-              "note": "Check_Asks_For_Requests",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "special"
+              "note": "Check_Name_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "guest_name": "Garcia"
                   }
-                ]
+                }
               }
             }
           }
@@ -236,19 +245,20 @@
             "expectation": {
               "note": "Check_SetSpecialRequests_Called",
               "toolCall": {
-                "tool": "set_special_requests"
+                "tool": "set_guest_info"
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_Requests",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "window"
-                  }
-                ]
+              "note": "Check_Requests_In_Progress",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "guest_name": "Garcia"
+                  },
+                  "status": "in_progress"
+                }
               }
             }
           }
@@ -263,13 +273,11 @@
           },
           {
             "expectation": {
-              "note": "Check_Confirmation_Number_Present",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "BN-"
-                  }
-                ]
+              "note": "Check_Booking_Complete",
+              "updatedVariables": {
+                "sm": {
+                  "status": "complete"
+                }
               }
             }
           }
@@ -277,7 +285,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
       "Tool-Truth - Uses Exact System Values",
       "No Technical Leakage"
     ]

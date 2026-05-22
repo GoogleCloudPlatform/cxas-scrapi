@@ -19,7 +19,11 @@ AGENT_MODELS = [
     "gemini-3.0-pro-001",
     "gemini-2.5-flash-001",
     "gemini-2.5-flash-native-audio-preview",
+    "gemini-2.5-flash-voice-optimized",
+    "gemini-3.0-flash-native-audio-preview",
     "gemini-3-flash-native-audio",
+    "gemini-3.1-flash-live",
+    "gemini-3.1-pro-preview",
 ]
 
-DEFAULT_MODEL = "gemini-2.5-flash-001"
+DEFAULT_MODEL = "gemini-3.1-flash-live"

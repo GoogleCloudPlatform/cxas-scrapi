@@ -16,7 +16,7 @@ Before you install, make sure your environment meets these requirements:
 | Requirement | Version | Notes |
 |---|---|---|
 | **Python** | 3.10 or newer | Check with `python --version` or `python3 --version` |
-| **pip** | Any recent version | Usually comes with Python |
+| **uv** | Any recent version | Recommended for environment management. [Install uv](https://docs.astral.sh/uv/getting-started/installation/) |
 | **gcloud CLI** | Any recent version | Recommended for local auth; not strictly required |
 
 !!! tip "Why Python 3.10?"
@@ -36,6 +36,16 @@ python3 --version
 
 It's a good habit to install Python packages inside a virtual environment rather than into your global Python installation. This keeps your projects isolated from each other and makes it easy to manage dependencies.
 
+=== "uv (recommended)"
+
+    ```sh
+    # Create and sync the environment
+    uv sync
+
+    # Activate it
+    source .venv/bin/activate
+    ```
+
 === "venv (built-in)"
 
     ```sh
@@ -50,13 +60,6 @@ It's a good habit to install Python packages inside a virtual environment rather
     .venv\Scripts\activate
     ```
 
-=== "conda"
-
-    ```sh
-    conda create -n cxas-scrapi python=3.11
-    conda activate cxas-scrapi
-    ```
-
 Once your environment is active, you'll see the environment name in your terminal prompt. Everything you install from here goes into that environment, not your system Python.
 
 ---
@@ -66,10 +69,10 @@ Once your environment is active, you'll see the environment name in your termina
 With your virtual environment active, run:
 
 ```sh
-pip install cxas-scrapi
+uv pip install cxas-scrapi
 ```
 
-That's it. pip will download and install `cxas-scrapi` and all of its dependencies automatically.
+That's it. uv will download and install `cxas-scrapi` and all of its dependencies automatically.
 
 !!! note "Installation may take a moment"
     SCRAPI pulls in the official `google-cloud-ces` client and several other Google Cloud libraries. The first install can take 30–60 seconds depending on your connection speed.
@@ -86,8 +89,7 @@ git clone https://github.com/GoogleCloudPlatform/cxas-scrapi.git
 cd cxas-scrapi
 
 # Install in editable mode (changes to the source are reflected immediately)
-pip install -e .
-pip install -r requirements.txt
+uv sync
 ```
 
 The `-e` flag (editable install) means Python points directly to the source files in your cloned directory, so any edits you make are picked up immediately without reinstalling.

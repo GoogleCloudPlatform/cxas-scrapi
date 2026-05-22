@@ -46,6 +46,7 @@ from cxas_scrapi.utils.eval_utils import (
     evaluate_expectations,
 )
 from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 _FIRST_UTTERANCE = "event: welcome"
 _MAX_TURNS = 30
@@ -333,12 +334,19 @@ class SimulationEvals(Apps):
     max_retries: int = 3
     retry_delay_base: int = 2
 
-    def __init__(self, app_name: str, **kwargs):
+    def __init__(
+        self,
+        app_name: str,
+        rate_limiter: Optional[RateLimiter] = None,
+        **kwargs,
+    ):
         self.app_name = app_name
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
-        self.sessions_client = Sessions(app_name, **kwargs)
+        self.sessions_client = Sessions(
+            app_name, rate_limiter=rate_limiter, **kwargs
+        )
         self.tools_map = Tools(app_name=app_name, **kwargs).get_tools_map()
 
         # Vertex AI requires a specific region (e.g. global), whereas CXAS
@@ -565,13 +573,20 @@ class SimulationEvals(Apps):
 
         # Initialize the first turn manually
         user_utterance, variables = eval_conv.next_user_utterance()
+        accumulated_variables = {}
+        if variables:
+            accumulated_variables.update(variables)
 
         detailed_trace = []
         detailed_trace.append(f"User: {user_utterance}")
 
         while user_utterance:
             response = self._send_request_with_retry(
-                session_id, user_utterance, variables, modality, console_logging
+                session_id,
+                user_utterance,
+                accumulated_variables,
+                modality,
+                console_logging,
             )
             if not response:
                 break
@@ -585,6 +600,8 @@ class SimulationEvals(Apps):
             detailed_trace.append("\n".join(trace_chunks))
 
             if session_ended:
+                if agent_text:
+                    eval_conv._add_agent_response(agent_text)
                 if console_logging:
                     print(
                         "\nSession has been closed by the Agent via "
@@ -597,6 +614,8 @@ class SimulationEvals(Apps):
             user_utterance, variables = eval_conv.next_user_utterance(
                 agent_text
             )
+            if variables:
+                accumulated_variables.update(variables)
             if user_utterance:
                 detailed_trace.append(f"User: {user_utterance}")
 
@@ -723,9 +742,7 @@ class SimulationEvals(Apps):
         """Aggregates results from multiple simulation jobs."""
         results = []
         with Progress() as progress:
-            task_id = progress.add_task(
-                "Running Simulations", total=len(jobs)
-            )
+            task_id = progress.add_task("Running Simulations", total=len(jobs))
 
             if parallel <= 1:
                 for tc, run_idx in jobs:

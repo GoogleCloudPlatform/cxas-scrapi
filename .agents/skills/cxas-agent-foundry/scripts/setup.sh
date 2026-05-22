@@ -36,12 +36,12 @@ SCRAPI_DIR=""
 candidate="$SKILL_ROOT"
 for _ in 1 2 3 4 5; do
   candidate="$(cd "$candidate/.." && pwd)"
-  if [ -f "$candidate/setup.py" ] && grep -q "cxas.scrapi\|cxas-scrapi" "$candidate/setup.py" 2>/dev/null; then
+  if [ -f "$candidate/pyproject.toml" ] && grep -q "cxas-scrapi" "$candidate/pyproject.toml" 2>/dev/null; then
     SCRAPI_DIR="$candidate"
     break
   fi
   # Also check for cxas-scrapi/ as a sibling directory
-  if [ -d "$candidate/cxas-scrapi" ] && [ -f "$candidate/cxas-scrapi/setup.py" ]; then
+  if [ -d "$candidate/cxas-scrapi" ] && [ -f "$candidate/cxas-scrapi/pyproject.toml" ]; then
     SCRAPI_DIR="$candidate/cxas-scrapi"
     break
   fi
@@ -114,7 +114,12 @@ if [ "$CONFIGURE_ONLY" = false ]; then
     # --- Step 1: Create virtualenv ---
     if [ ! -d "$VENV_DIR" ]; then
       echo "[1/3] Creating virtualenv in ${VENV_DIR}..."
-      python3 -m venv "$VENV_DIR"
+      if command -v uv >/dev/null 2>&1; then
+        uv venv "$VENV_DIR" --quiet
+      else
+        echo "      Warning: uv not found. Falling back to python3 -m venv."
+        python3 -m venv "$VENV_DIR"
+      fi
     else
       echo "[1/3] Virtualenv already exists at ${VENV_DIR}"
     fi
@@ -129,8 +134,13 @@ if [ "$CONFIGURE_ONLY" = false ]; then
     fi
 
     echo "[2/3] Installing cxas-scrapi from $SCRAPI_DIR..."
-    pip install -e "$SCRAPI_DIR" --quiet
-    pip install rich InquirerPy --quiet
+    if command -v uv >/dev/null 2>&1; then
+      uv pip install -e "$SCRAPI_DIR" --quiet
+      uv pip install rich InquirerPy --quiet
+    else
+      pip install -e "$SCRAPI_DIR" --quiet
+      pip install rich InquirerPy --quiet
+    fi
 
     echo ""
     installed_ver=$(python -c "import importlib.metadata; print(importlib.metadata.version('cxas-scrapi'))" 2>/dev/null || echo "unknown")
@@ -138,7 +148,11 @@ if [ "$CONFIGURE_ONLY" = false ]; then
     echo ""
   else
     # Ensure rich + InquirerPy are installed even if scrapi was already there
-    pip install rich InquirerPy --quiet 2>/dev/null
+    if command -v uv >/dev/null 2>&1; then
+      uv pip install rich InquirerPy --quiet 2>/dev/null
+    else
+      pip install rich InquirerPy --quiet 2>/dev/null
+    fi
     echo ""
   fi
 else
@@ -148,7 +162,11 @@ else
     exit 1
   fi
   source "${VENV_DIR}/bin/activate"
-  pip install rich InquirerPy --quiet 2>/dev/null
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install rich InquirerPy --quiet 2>/dev/null
+  else
+    pip install rich InquirerPy --quiet 2>/dev/null
+  fi
 fi
 
 # --- Step 2.5: Ensure gemini-cli can discover the skill's sub-agents ---
@@ -161,18 +179,19 @@ if [ -d "$SKILL_AGENTS_DIR" ]; then
   if [ -L "$GEMINI_AGENTS_DIR" ]; then
     # Already a symlink; check target
     current_target="$(readlink "$GEMINI_AGENTS_DIR")"
-    if [ "$current_target" != "$SKILL_AGENTS_DIR" ]; then
-      echo "  Updating $GEMINI_AGENTS_DIR symlink → $SKILL_AGENTS_DIR"
+    if [ "$(python3 -c "import os; print(os.path.abspath(os.path.join(os.path.dirname('$GEMINI_AGENTS_DIR'), '$current_target')))")" != "$SKILL_AGENTS_DIR" ]; then
+      echo "  Updating $GEMINI_AGENTS_DIR symlink"
       rm "$GEMINI_AGENTS_DIR"
-      ln -s "$SKILL_AGENTS_DIR" "$GEMINI_AGENTS_DIR"
+      rel_target=$(python3 -c "import os.path; print(os.path.relpath('$SKILL_AGENTS_DIR', os.path.dirname('$GEMINI_AGENTS_DIR')))")
+      ln -s "$rel_target" "$GEMINI_AGENTS_DIR"
     fi
   elif [ -e "$GEMINI_AGENTS_DIR" ]; then
     echo "  WARN: $GEMINI_AGENTS_DIR exists but is not a symlink. Sub-agent discovery may fail."
-    echo "        Move/remove it and re-run, or symlink manually:"
-    echo "          ln -s $SKILL_AGENTS_DIR $GEMINI_AGENTS_DIR"
+    echo "        Move/remove it and re-run, or symlink manually."
   else
-    echo "  Linking $GEMINI_AGENTS_DIR → $SKILL_AGENTS_DIR (so gemini-cli discovers sub-agents)"
-    ln -s "$SKILL_AGENTS_DIR" "$GEMINI_AGENTS_DIR"
+    echo "  Linking $GEMINI_AGENTS_DIR (relative symlink)"
+    rel_target=$(python3 -c "import os.path; print(os.path.relpath('$SKILL_AGENTS_DIR', os.path.dirname('$GEMINI_AGENTS_DIR')))")
+    ln -s "$rel_target" "$GEMINI_AGENTS_DIR"
   fi
 fi
 

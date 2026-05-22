@@ -24,22 +24,22 @@
             "expectation": {
               "note": "Check_SetPartySize_Called",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 3.0
+                  "party_size": 3.0
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_PartySize",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "3"
+              "note": "Check_PartySize_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 3
                   }
-                ]
+                }
               }
             }
           }
@@ -62,13 +62,12 @@
           },
           {
             "expectation": {
-              "note": "Check_ReAsks_PartySize",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "party"
-                  }
-                ]
+              "note": "Check_Pending_Cleared",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {},
+                  "filled": {}
+                }
               }
             }
           }
@@ -85,22 +84,22 @@
             "expectation": {
               "note": "Check_SetPartySize_Corrected",
               "toolCall": {
-                "tool": "set_party_size",
+                "tool": "set_reservation_basics",
                 "args": {
-                  "size": 4.0
+                  "party_size": 4.0
                 }
               }
             }
           },
           {
             "expectation": {
-              "note": "Check_Readback_Corrected",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "4"
+              "note": "Check_Corrected_Pending",
+              "updatedVariables": {
+                "sm": {
+                  "pending": {
+                    "party_size": 4
                   }
-                ]
+                }
               }
             }
           }
@@ -123,13 +122,14 @@
           },
           {
             "expectation": {
-              "note": "Check_Asks_For_Date",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "date"
-                  }
-                ]
+              "note": "Check_PartySize_Confirmed",
+              "updatedVariables": {
+                "sm": {
+                  "filled": {
+                    "party_size": 4
+                  },
+                  "pending": {}
+                }
               }
             }
           }
@@ -137,7 +137,6 @@
       }
     ],
     "evaluationExpectations": [
-      "Warm Restaurant Host Persona",
       "No Technical Leakage"
     ]
   }

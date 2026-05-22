@@ -1,0 +1,90 @@
+{
+  "name": "d07c0d96-54dc-4305-8a92-e44b00873510",
+  "displayName": "Steer Back - Confused User Recovery",
+  "description": "Simulated user gives vague or incomplete answers for a few turns before providing clear information. Tests that the steer-back mechanism guides the confused user to complete the booking.",
+  "tags": [
+    "slot-machine",
+    "scenario",
+    "steer-back"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "scenario": {
+    "task": "You want to make a dinner reservation at Bella Notte for 4 people on June 28th, 2026. Your name is Patel. You have no special requests. Follow these rules strictly:\n1. When the agent first greets you, say you'd like a table for 4.\n2. When asked for the date, be vague: say 'sometime next week maybe'.\n3. When the agent asks again or steers you toward a specific date, say 'June 28th'.\n4. When presented with available times, pick the FIRST option offered.\n5. Answer each question ONE AT A TIME — only provide the information the agent is currently asking for. Do NOT volunteer information the agent hasn't asked about yet.\n6. Confirm when asked to confirm. Say 'no special requests' or 'none' when asked about special requests.",
+    "rubrics": [
+      "The agent must successfully complete the reservation with a confirmation number.",
+      "The agent must collect all required information: party size, date, time, name, and special requests."
+    ],
+    "scenarioExpectations": [
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_reservation_basics",
+            "args": {
+              "party_size": 4.0
+            }
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_reservation_basics",
+            "args": {
+              "preferred_date": "2026-06-28"
+            }
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_selected_time"
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "set_guest_info",
+            "args": {
+              "guest_name": "Patel"
+            }
+          }
+        }
+      },
+      {
+        "toolExpectation": {
+          "expectedToolCall": {
+            "tool": "book_reservation"
+          }
+        }
+      }
+    ],
+    "userFacts": [
+      {
+        "name": "party_size",
+        "value": "4"
+      },
+      {
+        "name": "preferred_date",
+        "value": "June 28th, 2026"
+      },
+      {
+        "name": "preferred_time",
+        "value": "the first available time offered by the agent"
+      },
+      {
+        "name": "guest_name",
+        "value": "Patel"
+      },
+      {
+        "name": "special_requests",
+        "value": "none"
+      }
+    ],
+    "maxTurns": 16,
+    "userGoalBehavior": "USER_GOAL_IGNORED"
+  }
+}

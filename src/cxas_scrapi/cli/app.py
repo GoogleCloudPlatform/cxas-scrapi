@@ -21,12 +21,14 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from typing import Any, Optional
 
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.versions import Versions
 
 logger = logging.getLogger(__name__)
 
@@ -138,13 +140,14 @@ def app_push(args: argparse.Namespace) -> Optional[str]:  # noqa: C901
         print("No target specified, using existing name if needed.")
         display_name = getattr(args, "display_name", None) or "Pushed Agent"
 
-    _app_push(
+    return _app_push(
         app_dir=app_dir,
         apps_client=apps_client,
         target_app_name=getattr(args, "app_name", None) or app_name,
         identifier=getattr(args, "to", None) or getattr(args, "app_name", None),
         display_name=getattr(args, "display_name", None) or display_name,
         env_file=getattr(args, "env_file", None),
+        args=args,
     )
 
 
@@ -155,6 +158,7 @@ def _app_push(
     identifier: str = None,
     display_name: str = None,
     env_file: str = None,
+    args: Optional[argparse.Namespace] = None,
 ) -> Optional[str]:
     """Helper to push an app to CXAS."""
     temp_dir = tempfile.mkdtemp()
@@ -202,6 +206,19 @@ def _app_push(
                 f"'{env_file}' not found. Skipping."
             )
 
+    # ZIP does not support timestamps before 1980.
+    # Touch files and directories in temp_dir with timestamps before 1980.
+    limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
+    for root, dirs, files in os.walk(temp_dir):
+        for name in files:
+            path = os.path.join(root, name)
+            if os.path.getmtime(path) < limit_time:
+                os.utime(path, None)
+        for name in dirs:
+            path = os.path.join(root, name)
+            if os.path.getmtime(path) < limit_time:
+                os.utime(path, None)
+
     # Zip the filtered agent directory
     temp_zip = tempfile.mktemp(suffix=".zip")
     shutil.make_archive(temp_zip.replace(".zip", ""), "zip", temp_dir)
@@ -222,9 +239,30 @@ def _app_push(
             result = apps_client.import_as_new_app(
                 display_name=display_name, app_content=app_content
             )
-        return _handle_import_result(
+        app_name = _handle_import_result(
             result, "pushed to" if identifier else "pushed"
         )
+
+        if args and getattr(args, "create_version", False) and app_name:
+            print(f"Creating version for {app_name}...")
+            versions_client = Versions(
+                app_name=app_name,
+                creds=apps_client.creds,
+            )
+            display_name = f"import-{time.strftime('%Y%m%d%H%M%S')}"
+            description = getattr(args, "version_description", None)
+            version = versions_client.create_version(
+                display_name=display_name,
+                description=description,
+            )
+            version_name = version.name
+            print(
+                f"Created app version: {version_name} "
+                f"with display name {display_name}"
+            )
+            args.created_version_name = version_name
+
+        return app_name
 
     except Exception as e:
         print(f"Failed to push app: {e}")
@@ -436,7 +474,23 @@ def app_lint(args: argparse.Namespace) -> None:  # noqa: C901
 
     app_dir = project_root / config.app_dir
     evals_dir = project_root / config.evals_dir
-    discovery = Discovery(app_dir, evals_dir)
+
+    limit_agents = None
+    agents_arg = getattr(args, "agents", None)
+    if agents_arg:
+        limit_agents = set(a.strip() for a in agents_arg.split(","))
+
+    limit_tools = None
+    tools_arg = getattr(args, "tools", None)
+    if tools_arg:
+        limit_tools = set(t.strip() for t in tools_arg.split(","))
+
+    discovery = Discovery(
+        app_dir,
+        evals_dir,
+        limit_agents=limit_agents,
+        limit_tools=limit_tools,
+    )
 
     if not discovery.app_root:
         if not json_output:

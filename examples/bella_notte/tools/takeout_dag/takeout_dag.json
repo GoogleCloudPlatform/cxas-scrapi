@@ -1,0 +1,9 @@
+{
+  "name": "8a7039c9-5a75-4084-be83-e798c10ca57c",
+  "pythonFunction": {
+    "name": "takeout_dag",
+    "pythonCode": "tools/takeout_dag/python_function/python_code.py",
+    "description": "Returns the slot filling DAG configuration for the Takeout Agent."
+  },
+  "displayName": "takeout_dag"
+}

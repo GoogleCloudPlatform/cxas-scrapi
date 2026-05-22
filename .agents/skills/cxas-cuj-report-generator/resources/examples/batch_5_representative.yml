@@ -1,0 +1,12 @@
+subintent_id: catering-reservation
+subintent_name: Catering Reservation
+parent_cuj: General Customer Support
+turns:
+- speaker: User
+  text: Hi, I need to start a catering reservation for my client, Sarah Miller.
+- speaker: Agent
+  text: '"I can help with that. I''ve started the catering reservation for Sarah Miller. To proceed, could you please provide the menu selection or the date of the event?'
+  tool_call:
+    name: StartCateringReservation
+    parameters:
+      client_name: Sarah Miller

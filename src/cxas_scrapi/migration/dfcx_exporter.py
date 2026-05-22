@@ -299,6 +299,17 @@ class DFCXAgentExporter(BaseDFCXClient):
 
                 agent_id = agent_data["name"]
 
+                # Extract speech / no-input timeout settings
+                speech_settings = agent_data.get("speechSettings") or {}
+                no_speech_timeout = speech_settings.get("noSpeechTimeout", "7s")
+                if not no_speech_timeout or no_speech_timeout == "0s":
+                    advanced_settings = agent_data.get("advancedSettings") or {}
+                    no_speech_timeout = advanced_settings.get(
+                        "speechSettings", {}
+                    ).get("noSpeechTimeout", "7s")
+                if not no_speech_timeout or no_speech_timeout == "0s":
+                    no_speech_timeout = "7s"
+
                 # Initialize processing context
                 ctx = _ResourceProcessingContext(
                     zip_file=zip_file,
@@ -548,6 +559,7 @@ class DFCXAgentExporter(BaseDFCXClient):
                     agent_transition_route_groups=list(
                         ctx.agent_trg_map.values()
                     ),
+                    no_speech_timeout=no_speech_timeout,
                     code_blocks=list(ctx.code_block_map.values()),
                 )
 

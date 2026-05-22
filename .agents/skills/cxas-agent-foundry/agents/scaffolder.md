@@ -64,7 +64,7 @@ Add the deleted paths to the manifest's `files_skipped` array with reason `"temp
 
 Update `<app_dir>/app.json`:
 - `name` and `displayName` from `gecx-config.json`
-- `rootAgent` to the TDD's named root agent
+- `rootAgent` to the TDD's named root agent. **Crucial**: This property must be strictly camelCase `rootAgent` (never snake_case `root_agent`) and must match an actual agent directory name under `agents/` (e.g., `"support_bot"`).
 - `modelSettings.model` from gecx-config
 - `variableDeclarations` — every variable in the TDD's Variables section, with description + schema. **Every variable MUST have a description per the Zero Warnings Policy.**
 - `tools` array — every tool listed in the TDD's Tools section
@@ -73,13 +73,13 @@ Update `<app_dir>/app.json`:
 ### Step 3 — Write each agent
 
 For each agent in the TDD's Architecture:
-- `<app_dir>/agents/<name>/<name>.json` with `name`, `displayName`, `instruction` (path to instruction.txt), `childAgents`, `tools` (the subset this agent uses).
+- `<app_dir>/agents/<name>/<name>.json` with `name`, `displayName`, `instruction` (path to instruction.txt), `childAgents`, `tools` (the subset this agent uses). **Crucial**: The `"instruction"` path must be relative to the app root and prefixed with `"agents/<name>/"` (e.g., `"agents/support_bot/instruction.txt"`).
 - `<app_dir>/agents/<name>/instruction.txt` — translate the TDD's Routing Logic + role description into the persona/taskflow format from the template. Include `{@TOOL: <tool_name>}` references for every tool the agent uses (per I012). Include the `current_date` variable reference (per I014). Don't copy template instructions verbatim — author from the TDD.
 
 ### Step 4 — Write each tool
 
 For each tool in the TDD's Tools section:
-- `<app_dir>/tools/<name>/<name>.json` with `name`, `displayName`, `pythonFunction.name`, `pythonFunction.pythonCode`, `pythonFunction.description` (required per T012), `executionType`.
+- `<app_dir>/tools/<name>/<name>.json` with `name`, `displayName`, `pythonFunction.name`, `pythonFunction.pythonCode`, `pythonFunction.description` (required per T012), `executionType`. **Crucial**: The `"pythonFunction.pythonCode"` path must be relative to the app root and prefixed with `"tools/<name>/"` (e.g., `"tools/lookup_benefits/python_function/python_code.py"`).
 - `<app_dir>/tools/<name>/python_function/python_code.py` — implement the function with explicit named parameters (no `**kwargs`, no `None` defaults), realistic stub return value matching the TDD's described behavior.
 
 ### Step 5 — Write each callback
@@ -88,7 +88,7 @@ For each callback in the TDD's Callbacks section:
 - `<app_dir>/agents/<agent>/<callback_type>/<name>/python_code.py`
 - Common callbacks: `before_agent_callback` (auth derivation), `before_model_callback` (trigger pattern), `after_model_callback` (text injection)
 - Use the template's callbacks as reference for the function signature; adapt the body to the TDD's described logic.
-- Update the agent's JSON to reference the callback (e.g., `beforeAgentCallbacks: [{pythonCode: "..."}]`).
+- Update the agent's JSON to reference the callback (e.g., `beforeAgentCallbacks: [{pythonCode: "..."}]`). **Crucial**: The callback's `"pythonCode"` path in the agent's JSON must be relative to the app root and prefixed with `"agents/<agent>/"` (e.g., `"agents/support_bot/callbacks/greet_cb.py"`).
 - Follow `references/api-reference.md` → "Callbacks" verbatim for the runtime API. The rules there cover state access, return-value contracts, type imports, and the per-turn semantics that fail only at platform-push (not at lint) — re-read it if you're not sure.
 
 ### Step 6 — Write the manifest

@@ -51,7 +51,7 @@ class Apps(Common):
 
         self.client = AgentServiceClient(
             transport=self.get_grpc_transport(AgentServiceClient),
-            client_info=self.client_info
+            client_info=self.client_info,
         )
 
     def list_apps(self) -> List[types.App]:
@@ -128,6 +128,7 @@ class Apps(Common):
         display_name: str,
         description: str = None,
         root_agent: str = None,
+        **kwargs,
     ) -> types.App:
         """Creates a new app."""
         app = types.App(display_name=display_name)
@@ -135,6 +136,9 @@ class Apps(Common):
             app.description = description
         if root_agent:
             app.root_agent = root_agent
+
+        for key, value in kwargs.items():
+            setattr(app, key, value)
 
         request = types.CreateAppRequest(
             parent=self.parent, app=app, app_id=app_id

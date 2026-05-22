@@ -1,0 +1,101 @@
+suite_name: "cxas_scrapi_report_generator"
+timeout_seconds: 300
+cases:
+  - name: "checklist_mandate"
+    expectations:
+      - "The agent creates or updates `./resources/task_checklist.md`."
+
+  - name: "auditing_subagent"
+    expectations:
+      - "The orchestrator terminates the subagent."
+      - "The orchestrator respawns the subagent with stronger enforcement instructions."
+
+  - name: "gdrive_access"
+    expectations:
+      - "The agent uses the `gdrive` skill to access the files."
+
+  - name: "precedence_rule"
+    expectations:
+      - "The agent selects the specific ADK framework ingestor."
+
+  - name: "mandatory_handoff"
+    expectations:
+      - "The output includes frameworks detected."
+      - "The output includes file types parsed."
+      - "The output includes files or patterns skipped as out-of-scope."
+
+  - name: "fallback_analyzer"
+    expectations:
+      - "The orchestrator spawns a specialized Analysis Subagent to inspect a sample."
+
+  - name: "clustering_noise_reduction"
+    expectations:
+      - "The output does not contain full objects with raw transcripts or code."
+      - "The output is a clean YAML list with id, name, and intent."
+
+  - name: "batch_size_limit"
+    expectations:
+      - "The agent limits batch sizes to 5-10 items per subagent."
+
+  - name: "title_synthesis"
+    expectations:
+      - "The agent synthesizes a short, human-readable scenario title based on content."
+      - "The title is stored in the `subintent_name` field."
+
+  - name: "immediate_id_check"
+    expectations:
+      - "The agent inserts a `webhook_call` or `tool_call` immediately after the ID is provided."
+
+  - name: "user_first_transcript"
+    expectations:
+      - "The transcript starts with a User utterance."
+      - "Any leading Agent greetings are trimmed."
+
+  - name: "dual_reports"
+    expectations:
+      - "The agent generates both a CUJ report and a comprehensive full report."
+
+  - name: "use_append_turn_tool"
+    expectations:
+      - "The agent uses `append_turn.py` to add the turn."
+      - "The agent does not write directly to the transcript file."
+
+  - name: "mandatory_subagent_prompting"
+    expectations:
+      - "The prompt includes: 'You must use `append_turn.py` for every turn.'"
+
+  - name: "scoping_subagents_large_count"
+    expectations:
+      - "The agent spawns Scoping Subagents to scan partitions of the file tree."
+
+  - name: "exhaustion_loop"
+    expectations:
+      - "The agent loops back to find more intents or implies a loop until no new intents are found."
+
+  - name: "clustering_guidance"
+    expectations:
+      - "The agent states or aims for a number between 5 and 10."
+
+  - name: "construct_report_flags"
+    expectations:
+      - "The agent runs `construct_report.py` with `--cuj_report=True`."
+
+  - name: "construct_full_report_flags"
+    expectations:
+      - "The agent runs `construct_report.py` with `--cuj_report=False`."
+
+  - name: "inventory_types"
+    expectations:
+      - "The output contains a list of unique file extensions found."
+
+  - name: "map_ingestors"
+    expectations:
+      - "The agent selects a Python ingestor for `app.py`."
+      - "The agent selects a Gradle or Java ingestor for `build.gradle`."
+
+  - name: "restaurant_domain_intents"
+    expectations:
+      - "The output includes intents specific to a restaurant domain (e.g., 'place_order', 'make_reservation')."
+      - "The generated transcript accurately reflects restaurant interactions."
+      - "The output groups intents into exactly 5 CUJs."
+      - "The output extracts exactly 20 subintents."

@@ -1,12 +1,12 @@
 {
   "name": "c3c25604-5aa9-4a04-95b5-3db284e72790",
   "displayName": "Off-the-Rails - Repeated Off-Topic",
-  "description": "User sends 4 consecutive off-topic messages without providing reservation info. Progress stall counter should hit threshold (4) and agent escalates with phone number.",
+  "description": "Enters reservation specialist, then user sends 8 consecutive off-topic messages. Steer-back progresses through soft steer, hard steer, and finally escalates.",
   "tags": [
     "slot-machine",
     "off-the-rails",
     "stall-detection",
-    "progress-stall"
+    "steer-back"
   ],
   "evaluationDatasets": [
     "Bella Notte Slot Machine - Full Suite"
@@ -17,18 +17,17 @@
         "steps": [
           {
             "userInput": {
-              "text": "Hi there"
+              "text": "I'd like to book a table please"
             }
           },
           {
             "expectation": {
-              "note": "Check_Greeting_Asks_Party_Size",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "help"
-                  }
-                ]
+              "note": "Check_Set_Active_Flow_Called",
+              "toolCall": {
+                "tool": "set_active_flow",
+                "args": {
+                  "flow": "reservation"
+                }
               }
             }
           }
@@ -43,13 +42,11 @@
           },
           {
             "expectation": {
-              "note": "Check_No_Escalation_Yet_Turn2",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "reserv"
-                  }
-                ]
+              "note": "Check_Still_In_Progress_Turn2_SoftSteer",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
               }
             }
           }
@@ -64,13 +61,11 @@
           },
           {
             "expectation": {
-              "note": "Check_No_Escalation_Yet_Turn3",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "reserv"
-                  }
-                ]
+              "note": "Check_Still_In_Progress_Turn3_SoftSteer",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
               }
             }
           }
@@ -85,13 +80,99 @@
           },
           {
             "expectation": {
-              "note": "Check_Escalation_Message",
-              "agentResponse": {
-                "chunks": [
-                  {
-                    "text": "555-0100"
-                  }
-                ]
+              "note": "Check_Still_In_Progress_Turn4_HardSteer",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Can you recommend any good cocktails?"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Still_In_Progress_Turn5_Yield",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "What's the chef's name?"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Still_In_Progress_Turn6_HardSteer",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Do you have outdoor seating?"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Still_In_Progress_Turn7_Yield",
+              "updatedVariables": {
+                "sm": {
+                  "status": "in_progress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Tell me about the desserts"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Escalated",
+              "updatedVariables": {
+                "sm": {
+                  "status": "escalated"
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_End_Session_Called",
+              "toolCall": {
+                "tool": "end_session",
+                "args": {
+                  "reason": "retry_exhausted",
+                  "session_escalated": true
+                }
               }
             }
           }
