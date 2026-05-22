@@ -103,7 +103,7 @@ uv run --with-editable . --with alive-progress cxas lint --app-dir /tmp/poly_prd
 - [x] Milestone 2 complete
 - [x] Milestone 3 complete
 - [x] Milestone 4 complete
-- [ ] Milestone 5 complete
+- [x] Milestone 5 complete
 
 ## Decision Log
 - 2026-05-22 01:55 - Treat the PRD as the primary source of truth for launch
@@ -128,3 +128,4 @@ uv run --with-editable . --with alive-progress cxas lint --app-dir /tmp/poly_prd
   - `uv run --with-editable . --with alive-progress cxas lint --app-dir /tmp/poly_prd_alignment_build_c72c_readiness_20260522/chat`
   - `uv run --with-editable . --with alive-progress cxas lint --app-dir /tmp/poly_prd_alignment_build_c72c_readiness_20260522/voice`
 - No blockers.
+- Draft PR: https://github.com/GoogleCloudPlatform/cxas-scrapi/pull/172

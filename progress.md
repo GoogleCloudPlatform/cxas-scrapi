@@ -34,6 +34,11 @@
 - `uv run --with-editable . --with alive-progress cxas poly build --app-dir examples/bella_notte --output-dir /tmp/poly_prd_alignment_build_c72c_readiness_20260522` - passed: wrote chat and voice outputs.
 - `uv run --with-editable . --with alive-progress cxas lint --app-dir /tmp/poly_prd_alignment_build_c72c_readiness_20260522/chat` - passed: no lint errors.
 - `uv run --with-editable . --with alive-progress cxas lint --app-dir /tmp/poly_prd_alignment_build_c72c_readiness_20260522/voice` - passed: no lint errors.
+- `git commit -m "feat(poly): add launch readiness report"` - created commit `66feb26`.
+- `git push -u origin codex/poly-prd-readiness` - pushed the branch to origin.
+- GitHub connector PR creation failed with `Authentication Failed: Requires authentication`; fell back to authenticated `gh`.
+- `gh pr create --draft --repo GoogleCloudPlatform/cxas-scrapi --base main --head andrewhuot:codex/poly-prd-readiness ...` - opened draft PR https://github.com/GoogleCloudPlatform/cxas-scrapi/pull/172.
 
 ## Errors Encountered
-- None yet.
+- GitHub connector PR creation returned `Authentication Failed: Requires
+  authentication`; authenticated `gh pr create` succeeded as fallback.
