@@ -40,6 +40,7 @@ from cxas_scrapi.poly.engine import (
     PolymorphismEngine,
 )
 from cxas_scrapi.poly.models import AdapterCard
+from cxas_scrapi.poly.readiness import build_readiness_report
 from cxas_scrapi.poly.scaffold import (
     DEFAULT_DISPLAY_NAME_TEMPLATE,
     ScaffoldOptions,
@@ -238,6 +239,61 @@ def _print_diff_report(report: Dict[str, Any]) -> None:
         console.print("\n[bold cyan]gecx-config.json (deployment)[/bold cyan]")
         for key, value in report["deployment"].items():
             console.print(f"  [green]+ {key}: {value}[/green]")
+
+
+def _print_readiness_report(report: Dict[str, Any]) -> None:
+    """Render a launch-readiness report for human review."""
+    summary = report["summary"]
+    console.print(
+        "[bold]Poly readiness[/bold]   "
+        f"{summary['ready']} ready, "
+        f"{summary['attention']} attention, "
+        f"{summary['blocked']} blocked"
+    )
+    console.print(
+        f"Issues: {summary['errors']} error(s), "
+        f"{summary['warnings']} warning(s)\n"
+    )
+
+    if report["adapter_errors"]:
+        console.print("[bold red]Adapter parse/schema errors[/bold red]")
+        _print_issues(report["adapter_errors"])
+        console.print()
+
+    for channel in report["channels"]:
+        status = channel["status"]
+        color = {
+            "ready": "green",
+            "attention": "yellow",
+            "blocked": "red",
+        }.get(status, "cyan")
+        console.print(
+            f"[bold {color}]{channel['channel']}[/bold {color}] "
+            f"({status})   {channel['adapter_path']}"
+        )
+        if channel["issues"]:
+            _print_issues(channel["issues"])
+        diff = channel["diff_summary"]
+        if diff:
+            console.print(
+                "  diff: "
+                f"{diff['agents_touched']} agent(s), "
+                f"{diff['instruction_diffs']} instruction diff(s), "
+                f"{diff['tools_added']} tool add(s), "
+                f"{diff['tools_removed']} tool remove(s), "
+                f"{diff['callbacks_added']} callback(s)"
+            )
+        coverage = channel["eval_coverage"]["evaluations"]
+        console.print(
+            "  evals: "
+            f"{coverage['base_count']} base, "
+            f"{coverage['channel_count']} channel"
+        )
+        for warning in channel["coverage_warnings"]:
+            console.print(f"  [yellow]WARN [/yellow] {warning['message']}")
+        for step in channel["next_steps"]:
+            console.print(f"  next: {step}")
+        console.print()
 
 
 def _prompt_channels() -> List[str]:
@@ -471,6 +527,40 @@ def poly_doctor(args: argparse.Namespace) -> None:
         _print_explanation_report(report)
 
     sys.exit(1 if _should_fail(report.errors, report.warnings, strict) else 0)
+
+
+# ── poly readiness ───────────────────────────────────────────────────────────
+
+
+def poly_readiness(args: argparse.Namespace) -> None:
+    """Handle ``cxas poly readiness``."""
+    app_dir = str(Path(getattr(args, "app_dir", ".")).resolve())
+    fmt = getattr(args, "format", "text")
+    strict = getattr(args, "strict", False)
+
+    try:
+        engine = PolymorphismEngine(app_dir)
+        engine.load_base_project()
+        engine.load_adapter_cards()
+    except FileNotFoundError as e:
+        if fmt == "json":
+            print(json.dumps({"error": str(e), "channels": []}, indent=2))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+    report = build_readiness_report(engine, app_dir)
+    if fmt == "json":
+        print(json.dumps(report, indent=2))
+    else:
+        _print_readiness_report(report)
+
+    summary = report["summary"]
+    sys.exit(
+        1
+        if _should_fail(summary["errors"], summary["warnings"], strict)
+        else 0
+    )
 
 
 # ── poly diff ────────────────────────────────────────────────────────────────
@@ -759,6 +849,32 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Exit non-zero if any warnings are present.",
     )
     p_doctor.set_defaults(func=poly_doctor)
+
+    # readiness
+    p_readiness = poly_subparsers.add_parser(
+        "readiness",
+        help=(
+            "Summarize adapter validation, diffs, eval coverage, and build "
+            "readiness."
+        ),
+    )
+    p_readiness.add_argument(
+        "--app-dir",
+        default=".",
+        help="Path to the agent project root (default: current directory).",
+    )
+    p_readiness.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format (default: text).",
+    )
+    p_readiness.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero if any warnings are present.",
+    )
+    p_readiness.set_defaults(func=poly_readiness)
 
     # diff
     p_diff = poly_subparsers.add_parser(

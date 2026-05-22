@@ -86,6 +86,24 @@ tool descriptions, and callback logic.
 
 ---
 
+## Checking launch readiness
+
+Run `cxas poly readiness` before building when a project is heading into CI,
+design-partner review, or launch review:
+
+```bash
+cxas poly readiness --app-dir examples/bella_notte
+cxas poly readiness --app-dir examples/bella_notte --format json
+```
+
+The report composes validation, compileability, diff summaries, and eval
+coverage. Each channel is marked `ready`, `attention`, or `blocked`, with next
+steps for missing channel evals, duplicate eval names that would shadow base
+items, or blocking AD rule issues. Use `--strict` when warnings should block the
+workflow.
+
+---
+
 ## Why the output is "just a project"
 
 The single most important property of the engine: **the compiled output is indistinguishable from a hand-authored SCRAPI project.** Every base file appears in the output with its modifications applied; nothing is left in a half-compiled state.
@@ -123,4 +141,5 @@ A good rule of thumb: if you find yourself using `replace_section` on most secti
 ## Next steps
 
 - **[Polymorphism Pattern](../patterns/polymorphism.md)** — a step-by-step walkthrough of the Bella Notte chat and voice adapters.
-- **[`cxas poly` CLI reference](../cli/poly.md)** — `init`, `build`, `validate`, `doctor`, and `diff --json`.
+- **[`cxas poly` CLI reference](../cli/poly.md)** — `init`, `build`,
+  `validate`, `doctor`, `readiness`, and `diff --json`.

@@ -63,6 +63,19 @@ def test_cli_doctor_explains_bad_adapter(copied_base: Path, capsys):
     assert "adapters/bad.adapter.yaml" in out
 
 
+def test_cli_readiness_json(base_dir: Path, capsys):
+    code, out, _err = _run_poly(
+        ["readiness", "--app-dir", str(base_dir), "--format", "json"],
+        capsys,
+    )
+
+    assert code == 0
+    report = json.loads(out)
+    assert report["schema_version"] == "poly-readiness/v1"
+    assert report["summary"]["channels"] == 2
+    assert any(c["channel"] == "chat" for c in report["channels"])
+
+
 def test_cli_init_scaffolds_channel(copied_base: Path, capsys):
     code, out, _err = _run_poly(
         [

@@ -4,7 +4,7 @@
 
 See the **[Polymorphism guide](../guides/polymorphism.md)** for concepts and the **[Polymorphism pattern](../patterns/polymorphism.md)** for a full walkthrough.
 
-The command has five subcommands:
+The command has six subcommands:
 
 | Subcommand | Purpose |
 |---|---|
@@ -12,6 +12,7 @@ The command has five subcommands:
 | [`cxas poly build`](#cxas-poly-build) | Compile channel-optimized projects. |
 | [`cxas poly validate`](#cxas-poly-validate) | Validate adapter cards against the base project. |
 | [`cxas poly doctor`](#cxas-poly-doctor) | Explain validation failures with guided fixes. |
+| [`cxas poly readiness`](#cxas-poly-readiness) | Summarize validation, diff, eval coverage, and build readiness before launch review. |
 | [`cxas poly diff`](#cxas-poly-diff) | Show what an adapter changes for a channel. |
 
 Adapter cards live in `<app-dir>/adapters/` and are named `*.adapter.yaml`, `*.adapter.yml`, or `*.adapter.json`.
@@ -240,6 +241,76 @@ ERROR [AD005] adapters/chat.adapter.yaml
 
 `cxas poly validate --explain` is equivalent for developers who start from the
 validation command. Use `cxas poly doctor --format json` for structured tooling.
+
+---
+
+## cxas poly readiness
+
+Summarize whether a polymorphic project is ready for design-partner or launch
+review. `readiness` does not write output; it composes the existing validators,
+compiler, and diff report into one pre-build report.
+
+Use it after `validate`/`diff` and before `build` when you want a single answer
+to: Which channels are ready? Which need attention? Are channel evals present?
+Will any channel eval names shadow base eval names in the compiled project?
+
+### Usage
+
+```
+cxas poly readiness [--app-dir DIR] [--format text|json] [--strict]
+```
+
+### Options
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--app-dir DIR` | No | `.` (current directory) | Path to the base agent project root. |
+| `--format` | No | `text` | Output format. `json` emits a stable `poly-readiness/v1` report for CI and review artifacts. |
+| `--strict` | No | off | Exit non-zero if any warnings are present. |
+
+### Output
+
+Each channel is marked:
+
+| Status | Meaning |
+|--------|---------|
+| `ready` | The adapter validates, compiles, has no warning-level findings, and has no eval namespace collisions. |
+| `attention` | The adapter has warning-level findings such as missing channel evals or duplicate eval names. |
+| `blocked` | The adapter has validation or compile errors. |
+
+The JSON report includes:
+
+- `schema_version: "poly-readiness/v1"`
+- `summary` counts for ready/attention/blocked channels, errors, warnings, and launch readiness
+- `adapter_errors[]` for malformed cards that could not be parsed
+- `channels[]` with adapter path, AD issues, coverage warnings, diff summary,
+  eval coverage counts, duplicate eval names, and next steps
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | No errors. Warnings may be present unless `--strict` is passed. |
+| `1` | One or more errors, warnings with `--strict`, or a missing base project. |
+
+### Example
+
+```bash
+cxas poly readiness --app-dir examples/bella_notte
+cxas poly readiness --app-dir examples/bella_notte --format json
+```
+
+Example text output:
+
+```
+Poly readiness   2 ready, 0 attention, 0 blocked
+Issues: 0 error(s), 0 warning(s)
+
+chat (ready)   adapters/chat.adapter.yaml
+  diff: 2 agent(s), 2 instruction diff(s), 1 tool add(s), 0 tool remove(s), 1 callback(s)
+  evals: 33 base, 1 channel
+  next: Run cxas poly build, lint the compiled output, and run channel evals.
+```
 
 ---
 

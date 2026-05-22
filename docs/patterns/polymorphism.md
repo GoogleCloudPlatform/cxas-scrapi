@@ -237,7 +237,33 @@ deltas plus a flat `deltas[]` list for simple checks.
 
 ---
 
-## 6. Build the channels
+## 6. Check launch readiness
+
+When the adapters look right, run the pre-build readiness report:
+
+```bash
+cxas poly readiness --app-dir examples/bella_notte
+cxas poly readiness --app-dir examples/bella_notte --format json
+```
+
+`readiness` gives you one design-partner review artifact: validation issues,
+compileability, the diff summary, base/channel eval counts, duplicate eval names
+that would shadow base evals in compiled output, and concrete next steps. Use
+`--strict` in CI when warning-level gaps should block launch.
+
+```
+Poly readiness   2 ready, 0 attention, 0 blocked
+Issues: 0 error(s), 0 warning(s)
+
+chat (ready)   adapters/chat.adapter.yaml
+  diff: 2 agent(s), 2 instruction diff(s), 1 tool add(s), 0 tool remove(s), 1 callback(s)
+  evals: 33 base, 1 channel
+  next: Run cxas poly build, lint the compiled output, and run channel evals.
+```
+
+---
+
+## 7. Build the channels
 
 ```bash
 cxas poly build --app-dir examples/bella_notte --output-dir ./output
@@ -254,7 +280,7 @@ Each output directory is a complete project. The chat host now lists `send_rich_
 
 ---
 
-## 7. Lint, evaluate, and deploy the output
+## 8. Lint, evaluate, and deploy the output
 
 Because each compiled directory *is* a normal project, every existing command works on it unchanged:
 
