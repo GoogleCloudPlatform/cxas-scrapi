@@ -940,6 +940,7 @@ class ToolTestCase(BaseModel):
 
     name: str
     tool: str
+    tags: List[str] = Field(default_factory=list)
 
     # We wrap the type in Annotated to add the BeforeValidator
     args: Annotated[dict[str, Any], BeforeValidator(Common.empty_to_dict)] = (

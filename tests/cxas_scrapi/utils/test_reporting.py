@@ -14,7 +14,7 @@
 
 import json
 import os
-from unittest.mock import mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pandas as pd
 
@@ -543,6 +543,16 @@ def test_run_all_evals_tag_filtering(
         {"name": "sim2", "tags": ["tag2"]},
     ]
 
+    # Mock load_tool_test_cases_from_file to return tool test cases with tags
+    mock_tc1 = MagicMock()
+    mock_tc1.tags = ["tag1"]
+    mock_tc2 = MagicMock()
+    mock_tc2.tags = ["tag2"]
+    mock_tool_evals.return_value.load_tool_test_cases_from_file.return_value = [
+        mock_tc1,
+        mock_tc2,
+    ]
+
     mock_eval_client = mock_evaluations.return_value
     mock_eval_client.update_evaluation.return_value.name = "mock_name"
 
@@ -557,6 +567,11 @@ def test_run_all_evals_tag_filtering(
     # Verify that only eval1 was updated/run
     mock_eval_client.update_evaluation.assert_called_once_with(
         evaluation={"name": "eval1", "tags": ["tag1"]}, app_name="projects/p"
+    )
+
+    # Verify that only mock_tc1 (tagged with tag1) was run
+    mock_tool_evals.return_value.run_tool_tests.assert_called_once_with(
+        [mock_tc1]
     )
 
 

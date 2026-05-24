@@ -187,6 +187,30 @@ def test_tool_test_case_validation():
     assert tc5.variables == {"a": 1}
     assert tc5.context == {}
 
+    # Tags default to empty list
+    assert tc5.tags == []
+
+    # Tags list works
+    tc6 = ToolTestCase(name="t6", tool="tool6", tags=["smoke", "regression"])
+    assert tc6.tags == ["smoke", "regression"]
+
+
+def test_load_tool_test_cases_from_yaml_with_tags():
+    tu = ToolEvals.__new__(ToolEvals)
+    yaml_str = """
+tests:
+  - name: test_tag_parsing
+    tool: my_tool
+    tags:
+      - unit
+      - billing
+    args:
+      foo: bar
+"""
+    cases = tu.load_tool_test_cases_from_yaml(yaml_str)
+    assert len(cases) == 1
+    assert cases[0].tags == ["unit", "billing"]
+
 
 def test_parse_python_function():
     tu = ToolEvals.__new__(ToolEvals)
