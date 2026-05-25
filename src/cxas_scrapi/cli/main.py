@@ -48,6 +48,9 @@ from cxas_scrapi.cli.migration_cli import (
 from cxas_scrapi.cli.migration_cli import (
     register as register_dfcx_cxas_subparsers,
 )
+from cxas_scrapi.cli.resources_cli import (
+    register as register_resources_subparsers,
+)
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
@@ -1853,6 +1856,9 @@ def get_parser() -> argparse.ArgumentParser:
         "--app-dir", default=".", help="App directory."
     )
     parser_local_create_tool.set_defaults(func=handle_local_create)
+
+    # Subparsers for 'tools', 'callbacks', and 'variables'
+    register_resources_subparsers(subparsers)
 
     # Subparsers for 'insights'
     parser_insights = subparsers.add_parser(
