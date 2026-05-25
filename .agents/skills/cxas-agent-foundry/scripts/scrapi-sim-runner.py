@@ -144,6 +144,7 @@ class EnhancedSimRunner(SimulationEvals):
         background_noise_file: str | None = None,
         capture_agent_audio: bool = False,
         burst_noise_files: list[str] | None = None,
+        voice_config: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> LLMUserConversation:
         """Run a simulated conversation with variable injection."""
@@ -160,7 +161,6 @@ class EnhancedSimRunner(SimulationEvals):
         current_sim_turn = 0
 
         session_params = test_case.get("session_parameters", {})
-
         if console_logging:
             print("Starting simulated conversation...")
             if session_params:
@@ -186,6 +186,7 @@ class EnhancedSimRunner(SimulationEvals):
                         "capture_agent_audio": capture_agent_audio,
                         "background_noise_file": background_noise_file,
                         "burst_noise_files": burst_noise_files,
+                        "voice_config": voice_config,
                     }
                     # Inject variables on first turn only
                     if first_turn and session_params:
