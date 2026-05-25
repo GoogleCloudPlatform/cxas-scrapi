@@ -1,6 +1,6 @@
 ---
 name: lint-fixer
-description: Run cxas lint, fix every error using the rule recipes in references/build.md, verify each Edit landed on disk, and re-lint until clean. Use after a fresh build or major edit when the lint output has multiple errors and the fixes are mechanical.
+description: Run cxas lint (with optional scoping to a set of agents or tools), fix every error using the rule recipes in references/build.md, verify each Edit landed on disk, and re-lint until clean. Use after a fresh build or major edit when the lint output has multiple errors and the fixes are mechanical.
 ---
 
 # Lint-Fixer Agent
@@ -9,7 +9,7 @@ description: Run cxas lint, fix every error using the rule recipes in references
 
 **Reasoning intensity: LOW** (mechanical for errors and deterministic warnings; MEDIUM for judgment-call warnings where two valid fixes exist). The fixes are recipe lookups from a table. The hard part is NOT thinking — it's (a) making sure your edits actually landed on disk and (b) recognizing which warnings need user judgment vs. which have a single mechanical fix. Per the Zero Warnings Policy in your workspace's mandates file (e.g., `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`), you fix BOTH errors and deterministic warnings; ambiguous warnings go in `unresolved` with the options for the user to decide.
 
-Run `cxas lint`, fix every violation using the rule recipes in `references/build.md`, and re-lint until the app is clean.
+Run `cxas lint` (scoped to specific agents/tools if provided), fix every violation using the rule recipes in `references/build.md`, and re-lint until the target scope is clean.
 
 ## Inputs
 
@@ -17,6 +17,8 @@ Run `cxas lint`, fix every violation using the rule recipes in `references/build
 - `output_path`: where to write the summary JSON
 
 Optional:
+- `agents`: comma-separated list of agent directories to scope linting (translates to `--agent <agents>`)
+- `tools`: comma-separated list of tool directories to scope linting (translates to `--tool <tools>`)
 - `max_iterations`: cap on lint→fix loops (default 5; refuse to loop forever if a violation keeps re-appearing)
 - `dry_run`: if true, print what you would do but don't edit files
 
@@ -34,7 +36,7 @@ Optional:
 | **T011** (`None` default on tool parameter) | Same silent-drop behavior — platform requires type-matching defaults (e.g., `str = ""`, `int = 0`). |
 | **I012** (tool listed in agent config but not referenced in instruction) | Judgment call: either add `{@TOOL: tool_name}` to the instruction OR remove the tool from `tools`. Don't pick unilaterally — surface to user via `unresolved`. |
 | **A006** (`app.json` doesn't list a tool present in `tools/`) | `app.json`'s `tools` array is the canonical inventory; tools on disk not listed are ignored. |
-| **`childAgents` naming** (NOT a lint rule — lint may accept spaces, platform will not) | Strings in `childAgents` must use underscores matching the sub-agent's directory `name`, not spaces matching `displayName`. Spaces cause `cxas push` to silently drop the sub-agents and orphan their tools. See `gecx-design-guide.md` → Multi-Agent → Configuring childAgents. |
+| **`childAgents` naming** (NOT a lint rule — lint may accept spaces, platform will not) | Strings in `childAgents` must use underscores matching the sub-agent's directory `name`, not spaces matching `displayName`. Spaces cause `cxas push` to silently drop the sub-agents and orphan their tools. See `gecx-design-guide.md` --> Multi-Agent --> Configuring childAgents. |
 
 ## Process
 
@@ -43,7 +45,7 @@ Optional:
 Run:
 
 ```bash
-cxas lint --app-dir <app_dir>
+cxas lint --app-dir <app_dir> [--agent <agents>] [--tool <tools>]
 ```
 
 Parse the output. **Per the Zero Warnings Policy in the workspace mandates file (e.g., `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`), you fix `[E]` errors AND `[W]` warnings — both are blocking.** `[I]` info lines are not blocking; log them in the summary but don't fix.
