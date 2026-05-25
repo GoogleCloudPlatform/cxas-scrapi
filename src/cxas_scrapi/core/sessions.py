@@ -1018,6 +1018,7 @@ class Sessions(Common):
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
+        voice_config: dict[str, Any] | None = None,
     ):
         """Sends inputs to a Conversational Agents Session and returns the
         response.
@@ -1198,6 +1199,9 @@ class Sessions(Common):
                     lang_code = variables["locale"]
 
                 for input in text:
+                    current_voice_config = (voice_config or {}).copy()
+                    if "language_code" not in current_voice_config:
+                        current_voice_config["language_code"] = lang_code
                     input_audio_bytes.append(
                         audio_transformer.text_to_speech_bytes(
                             text=input,
@@ -1205,7 +1209,7 @@ class Sessions(Common):
                             project_id=self.project_id,
                             background_noise_file=background_noise_file,
                             burst_noise_files=burst_noise_files,
-                            language_code=lang_code,
+                            voice_config=current_voice_config,
                         )
                     )
                 for input_data in input_audio_bytes:

@@ -452,6 +452,44 @@ def test_run_session_audio_modality_variables_all_turns(
 @patch("cxas_scrapi.core.sessions.Sessions._check_audio_requirements")
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
 @patch("cxas_scrapi.core.sessions.Sessions.async_bidi_run_session")
+def test_run_session_audio_modality_voice_config(
+    mock_async_run, mock_client_cls, mock_check_reqs
+):
+    """Test Sessions.run propagates voice_config to AudioTransformer."""
+    sessions = Sessions(app_name="projects/p/locations/l/apps/a")
+
+    with patch("cxas_scrapi.core.sessions.AudioTransformer") as MockTransformer:
+        mock_transformer = MockTransformer.return_value
+        mock_transformer.text_to_speech_bytes.side_effect = (
+            lambda text, **kwargs: {
+                "audio_bytes": b"tts_" + text.encode(),
+                "text": text,
+            }
+        )
+
+        custom_voice = {"language_code": "fr-FR", "voice_name": "fr-FR-Standard-G"}
+        sessions.run(
+            session_id="s1",
+            text=["Bonjour"],
+            modality=Modality.AUDIO,
+            voice_config=custom_voice,
+        )
+
+        mock_async_run.assert_called_once()
+        
+        # Verify AudioTransformer was called with correct voice_config
+        mock_transformer.text_to_speech_bytes.assert_called_once_with(
+            text="Bonjour",
+            credentials=sessions.creds,
+            project_id=sessions.project_id,
+            voice_config=custom_voice,
+        )
+
+
+
+@patch("cxas_scrapi.core.sessions.Sessions._check_audio_requirements")
+@patch("cxas_scrapi.core.sessions.SessionServiceClient")
+@patch("cxas_scrapi.core.sessions.Sessions.async_bidi_run_session")
 def test_run_session_audio_modality_variables_with_event(
     mock_async_run, mock_client_cls, mock_check_reqs
 ):

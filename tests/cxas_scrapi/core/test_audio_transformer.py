@@ -92,6 +92,7 @@ class TestAudioTransformer:
         assert result["text"] == "hello"
         assert result["audio_bytes"] is None
 
+
     @patch("cxas_scrapi.core.audio_transformer.AudioSegment")
     @patch("cxas_scrapi.core.audio_transformer.texttospeech")
     def test_text_to_speech_bytes_with_burst_noise_success(
@@ -110,6 +111,7 @@ class TestAudioTransformer:
                 wav_file.writeframes(b"audio_data")
             wav_bytes = wav_io.getvalue()
 
+        # Configure mock response
         mock_response = MagicMock()
         mock_response.audio_content = wav_bytes
         mock_client.synthesize_speech.return_value = mock_response
@@ -199,3 +201,43 @@ class TestAudioTransformer:
         # Verify graceful fallback to clean audio
         assert result["text"] == "hello"
         assert result["audio_bytes"] == b"clean_audio_"
+
+    @patch("cxas_scrapi.core.audio_transformer.texttospeech")
+    def test_text_to_speech_bytes_custom_voice(self, mock_tts):
+        # Mock dependencies
+        mock_client = MagicMock()
+        mock_tts.TextToSpeechClient.return_value = mock_client
+
+        # Create a valid WAV file in memory to return as mock response
+        with io.BytesIO() as wav_io:
+            with wave.open(wav_io, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(16000)
+                wav_file.writeframes(b"audio_data")
+            wav_bytes = wav_io.getvalue()
+
+        # Configure mock response
+        mock_response = MagicMock()
+        mock_response.audio_content = wav_bytes
+        mock_client.synthesize_speech.return_value = mock_response
+
+        # Execute with custom voice_config
+        custom_voice = {"language_code": "fr-FR", "voice_name": "fr-FR-Standard-G"}
+        result = self.transformer.text_to_speech_bytes(
+            text="Bonjour",
+            credentials=MagicMock(),
+            project_id="test-project",
+            voice_config=custom_voice,
+        )
+
+        # Verify
+        assert result["text"] == "Bonjour"
+        assert result["audio_bytes"] == b"audio_data"
+        mock_client.synthesize_speech.assert_called_once()
+        
+        # Verify custom params were used
+        mock_tts.VoiceSelectionParams.assert_called_once_with(
+            language_code="fr-FR", name="fr-FR-Standard-G"
+        )
+
