@@ -490,6 +490,7 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        voice_config: dict[str, Any] | None = None,
     ) -> Any:
         """Sends a request to the CES Agent with exponential backoff for
         transient errors.
@@ -508,6 +509,7 @@ class SimulationEvals(Apps):
                         background_noise_file=background_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
+                        voice_config=voice_config,
                     )
                 elif user_utterance.startswith("dtmf:"):
                     response = self.sessions_client.run(
@@ -520,6 +522,7 @@ class SimulationEvals(Apps):
                         background_noise_file=background_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
+                        voice_config=voice_config,
                     )
                 else:
                     response = self.sessions_client.run(
@@ -532,6 +535,7 @@ class SimulationEvals(Apps):
                         background_noise_file=background_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
+                        voice_config=voice_config,
                     )
                 break
             except Exception as e:
@@ -571,6 +575,7 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        voice_config: dict[str, Any] | None = None,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
 
@@ -611,16 +616,17 @@ class SimulationEvals(Apps):
 
         while user_utterance:
             response = self._send_request_with_retry(
-                session_id,
-                user_utterance,
-                accumulated_variables,
-                modality,
-                console_logging,
+                session_id=session_id,
+                user_utterance=user_utterance,
+                variables=accumulated_variables,
+                modality=modality,
+                console_logging=console_logging,
                 turn_num=current_sim_turn,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
                 burst_noise_files=burst_noise_files,
                 use_tool_fakes=use_tool_fakes,
+                voice_config=voice_config,
             )
             if not response:
                 break
