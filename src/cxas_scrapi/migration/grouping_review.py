@@ -145,7 +145,7 @@ def render_diff(
 # ---------------------------------------------------------------------------
 
 
-def _merge_groups(groupings: dict, console: Console) -> dict:
+async def _merge_groups(groupings: dict, console: Console) -> dict:
     names = list(groupings.keys())
     choices = [
         Choice(
@@ -154,19 +154,19 @@ def _merge_groups(groupings: dict, console: Console) -> dict:
         )
         for i, n in enumerate(names)
     ]
-    selected = inquirer.checkbox(
+    selected = await inquirer.checkbox(
         message=(
             "Pick groups to merge (Space to toggle, Enter to confirm; need ≥2):"
         ),
         choices=choices,
         validate=lambda r: len(r) >= 2 or "Pick at least 2 groups",
-    ).execute()
+    ).execute_async()
     targets = [names[i] for i in selected]
-    new_name = inquirer.text(
+    new_name = await inquirer.text(
         message="New group name:",
         default=targets[0],
         validate=lambda v: bool(GROUP_NAME_RE.match(v)) or "Invalid name",
-    ).execute()
+    ).execute_async()
 
     merged_agents: list[str] = []
     rationales: list[str] = []
@@ -189,9 +189,11 @@ def _merge_groups(groupings: dict, console: Console) -> dict:
     return new_groupings
 
 
-def _split_group(ir: MigrationIR, groupings: dict, console: Console) -> dict:
+async def _split_group(
+    ir: MigrationIR, groupings: dict, console: Console
+) -> dict:
     names = list(groupings.keys())
-    target = inquirer.select(
+    target = await inquirer.select(
         message="Group to split:",
         choices=[
             Choice(
@@ -200,7 +202,7 @@ def _split_group(ir: MigrationIR, groupings: dict, console: Console) -> dict:
             )
             for n in names
         ],
-    ).execute()
+    ).execute_async()
     members = groupings[target].get("agents", [])
     if len(members) < 2:
         console.print(
@@ -211,18 +213,18 @@ def _split_group(ir: MigrationIR, groupings: dict, console: Console) -> dict:
         Choice(value=m, name=f"{m} ('{ir.agents[m].display_name}')")
         for m in members
     ]
-    moving = inquirer.checkbox(
+    moving = await inquirer.checkbox(
         message="Members to MOVE to a new group:",
         choices=moving_choices,
         validate=lambda r: 0 < len(r) < len(members) or "Pick a strict subset",
-    ).execute()
-    new_name = inquirer.text(
+    ).execute_async()
+    new_name = await inquirer.text(
         message="Name for new group:",
         validate=lambda v: (
             (bool(GROUP_NAME_RE.match(v)) and v not in groupings)
             or "Invalid or duplicate name"
         ),
-    ).execute()
+    ).execute_async()
 
     new_groupings = {k: dict(v) for k, v in groupings.items()}
     new_groupings[target]["agents"] = [m for m in members if m not in moving]
@@ -235,19 +237,19 @@ def _split_group(ir: MigrationIR, groupings: dict, console: Console) -> dict:
     return new_groupings
 
 
-def _rename_group(groupings: dict, console: Console) -> dict:
+async def _rename_group(groupings: dict, console: Console) -> dict:
     names = list(groupings.keys())
-    old = inquirer.select(
+    old = await inquirer.select(
         message="Group to rename:",
         choices=names,
-    ).execute()
-    new_name = inquirer.text(
+    ).execute_async()
+    new_name = await inquirer.text(
         message="New name:",
         validate=lambda v: (
             (bool(GROUP_NAME_RE.match(v)) and v not in groupings)
             or "Invalid or duplicate name"
         ),
-    ).execute()
+    ).execute_async()
     return {(new_name if k == old else k): v for k, v in groupings.items()}
 
 
@@ -304,7 +306,7 @@ async def interactive_review(
             console,
         )
 
-        action = inquirer.select(
+        action = await inquirer.select(
             message="Action:",
             choices=[
                 Choice(value="accept", name="[a]ccept"),
@@ -315,16 +317,16 @@ async def interactive_review(
                 Choice(value="quit", name="[q]uit"),
             ],
             default="accept",
-        ).execute()
+        ).execute_async()
 
         if action == "accept":
             return groupings
         if action == "quit":
             return None
         if action == "repropose":
-            feedback = inquirer.text(
+            feedback = await inquirer.text(
                 message="Feedback for re-proposal:",
-            ).execute()
+            ).execute_async()
             try:
                 groupings = await consolidator.propose_groupings(
                     root_key, dep_summary, feedback
@@ -332,8 +334,8 @@ async def interactive_review(
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]Re-proposal failed: {exc}[/]")
         elif action == "merge":
-            groupings = _merge_groups(groupings, console)
+            groupings = await _merge_groups(groupings, console)
         elif action == "split":
-            groupings = _split_group(ir, groupings, console)
+            groupings = await _split_group(ir, groupings, console)
         elif action == "rename":
-            groupings = _rename_group(groupings, console)
+            groupings = await _rename_group(groupings, console)

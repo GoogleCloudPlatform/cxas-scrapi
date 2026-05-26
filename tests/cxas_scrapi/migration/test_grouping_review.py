@@ -17,9 +17,11 @@ the structure of the rendered Rich trees, and the return contract
 from __future__ import annotations
 
 from io import StringIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
+from InquirerPy.prompts.input import InputPrompt
+from InquirerPy.prompts.list import ListPrompt
 from rich.console import Console as RichConsole
 
 from cxas_scrapi.migration import grouping_review
@@ -119,13 +121,16 @@ async def test_interactive_review_accept_returns_groupings_unchanged():
     consolidator = _make_consolidator()
 
     # Stub InquirerPy: render_diff doesn't matter; the select returns "accept".
-    fake_select = MagicMock()
-    fake_select.execute = MagicMock(return_value="accept")
+    fake_select = create_autospec(ListPrompt, instance=True)
+    fake_select.execute_async.return_value = "accept"
 
     with (
         patch.object(grouping_review, "render_diff"),
         patch.object(
-            grouping_review.inquirer, "select", return_value=fake_select
+            grouping_review.inquirer,
+            "select",
+            autospec=True,
+            return_value=fake_select,
         ),
     ):
         result = await grouping_review.interactive_review(
@@ -143,13 +148,16 @@ async def test_interactive_review_quit_returns_none():
     groupings = {"RootGroup": {"agents": ["RootAgent"], "is_root": True}}
     consolidator = _make_consolidator()
 
-    fake_select = MagicMock()
-    fake_select.execute = MagicMock(return_value="quit")
+    fake_select = create_autospec(ListPrompt, instance=True)
+    fake_select.execute_async.return_value = "quit"
 
     with (
         patch.object(grouping_review, "render_diff"),
         patch.object(
-            grouping_review.inquirer, "select", return_value=fake_select
+            grouping_review.inquirer,
+            "select",
+            autospec=True,
+            return_value=fake_select,
         ),
     ):
         result = await grouping_review.interactive_review(
@@ -189,17 +197,25 @@ async def test_interactive_review_repropose_then_accept():
 
     # First iteration: select repropose → text prompt for feedback → next
     # iteration: select accept.
-    fake_select = MagicMock()
-    fake_select.execute = MagicMock(side_effect=["repropose", "accept"])
-    fake_text = MagicMock()
-    fake_text.execute = MagicMock(return_value="please split G1")
+    fake_select = create_autospec(ListPrompt, instance=True)
+    fake_select.execute_async.side_effect = ["repropose", "accept"]
+    fake_text = create_autospec(InputPrompt, instance=True)
+    fake_text.execute_async.return_value = "please split G1"
 
     with (
         patch.object(grouping_review, "render_diff"),
         patch.object(
-            grouping_review.inquirer, "select", return_value=fake_select
+            grouping_review.inquirer,
+            "select",
+            autospec=True,
+            return_value=fake_select,
         ),
-        patch.object(grouping_review.inquirer, "text", return_value=fake_text),
+        patch.object(
+            grouping_review.inquirer,
+            "text",
+            autospec=True,
+            return_value=fake_text,
+        ),
     ):
         result = await grouping_review.interactive_review(
             ir,
