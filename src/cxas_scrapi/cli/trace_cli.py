@@ -424,7 +424,9 @@ def trace_bug_report(args: argparse.Namespace) -> None:
 def trace_open(args: argparse.Namespace) -> None:
     try:
         traces = _build_traces(args)
-        url = traces.console_url(args.conversation_id)
+        normalized = traces.get_normalized(args.conversation_id)
+        source_str = normalized.get("source")
+        url = traces.console_url(args.conversation_id, source=source_str)
     except Exception as e:
         print(f"Open failed: {e}", file=sys.stderr)
         sys.exit(1)

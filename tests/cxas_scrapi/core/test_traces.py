@@ -808,10 +808,18 @@ def test_report_bug_skips_failing_artifacts(traces_obj, monkeypatch):
 
 
 def test_console_url_format(traces_obj):
+    # 1. Without source
     url = traces_obj.console_url("conv-1")
     assert url == (
-        "https://ces.cloud.google.com/projects/p/locations/l/apps/a/"
-        "conversations/conv-1"
+        "https://ces.cloud.google.com/projects/p/locations/l/apps/a"
+        "?panel=conversation_list&id=conv-1"
+    )
+
+    # 2. With source
+    url_with_source = traces_obj.console_url("conv-1", source="LIVE")
+    assert url_with_source == (
+        "https://ces.cloud.google.com/projects/p/locations/l/apps/a"
+        "?panel=conversation_list&id=conv-1&source=LIVE"
     )
 
 

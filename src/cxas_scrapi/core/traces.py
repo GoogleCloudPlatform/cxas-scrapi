@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import subprocess
+import urllib.parse
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from statistics import median
@@ -133,15 +134,18 @@ class Traces(Common):
             )
             if channel_filter and normalized_channel != channel_filter.upper():
                 continue
+            source_str = _enum_name(getattr(c, "source", None))
             rows.append(
                 {
                     "id": c.name.split("/")[-1],
                     "name": c.name,
-                    "source": _enum_name(getattr(c, "source", None)),
+                    "source": source_str,
                     "channel": normalized_channel,
                     "start_time": _ts_iso(getattr(c, "start_time", None)),
                     "end_time": _ts_iso(getattr(c, "end_time", None)),
-                    "ces_url": self.console_url(c.name.split("/")[-1]),
+                    "ces_url": self.console_url(
+                        c.name.split("/")[-1], source=source_str
+                    ),
                 }
             )
             if limit and len(rows) >= limit:
@@ -200,7 +204,8 @@ class Traces(Common):
                 conversation_id, normalized=normalized
             )
 
-        url = self.console_url(conversation_id)
+        source_str = normalized.get("source")
+        url = self.console_url(conversation_id, source=source_str)
         if fmt == "json":
             return trace_report.to_json(normalized, extras=extras)
         if fmt in ("md", "markdown"):
@@ -640,6 +645,7 @@ class Traces(Common):
             else None
         )
 
+        source_str = normalized.get("source")
         with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr(
                 "transcript.json",
@@ -648,14 +654,19 @@ class Traces(Common):
             z.writestr(
                 "transcript.md",
                 trace_report.to_markdown(
-                    normalized, console_url=self.console_url(conversation_id)
+                    normalized,
+                    console_url=self.console_url(
+                        conversation_id, source=source_str
+                    ),
                 ),
             )
             z.writestr(
                 "report.html",
                 trace_report.to_html(
                     normalized,
-                    console_url=self.console_url(conversation_id),
+                    console_url=self.console_url(
+                        conversation_id, source=source_str
+                    ),
                     audio_path=(
                         os.path.basename(audio_path) if audio_path else None
                     ),
@@ -721,7 +732,9 @@ class Traces(Common):
                 f"{base_uri}transcript.md",
                 trace_report.to_markdown(
                     normalized,
-                    console_url=self.console_url(conversation_id),
+                    console_url=self.console_url(
+                        conversation_id, source=normalized.get("source")
+                    ),
                 ),
                 content_type="text/markdown",
             )
@@ -789,12 +802,22 @@ class Traces(Common):
 
     # ---------------------------- ui / helpers ------------------------------
 
-    def console_url(self, conversation_id: str) -> str:
+    def console_url(
+        self, conversation_id: str, source: str | None = None
+    ) -> str:
+        """Builds the GECX/CES Console URL for a conversation."""
         base = self.trace_config.ui.ces_console_base.rstrip("/")
+        app_id = (self.app_name or "").split("/")[-1]
+        params = {
+            "panel": "conversation_list",
+            "id": conversation_id,
+        }
+        if source:
+            params["source"] = source
+        qs = urllib.parse.urlencode(params)
         return (
             f"{base}/projects/{self.project_id}/locations/{self.location}"
-            f"/apps/{(self.app_name or '').split('/')[-1]}/conversations/"
-            f"{conversation_id}"
+            f"/apps/{app_id}?{qs}"
         )
 
     def _metadata(self) -> dict[str, Any]:

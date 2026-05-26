@@ -441,6 +441,7 @@ def test_trace_bug_report_failure(fake_traces):
 
 
 def test_trace_open_prints_and_runs_open(fake_traces, capsys, monkeypatch):
+    fake_traces.get_normalized.return_value = {"source": "LIVE"}
     fake_traces.console_url.return_value = "https://x/y"
     monkeypatch.setattr(trace_cli.platform, "system", lambda: "Darwin")
     fake_run = MagicMock()
@@ -448,24 +449,30 @@ def test_trace_open_prints_and_runs_open(fake_traces, capsys, monkeypatch):
     trace_cli.trace_open(_ns(conversation_id="c1"))
     assert "https://x/y" in capsys.readouterr().out
     fake_run.assert_called_once()
+    fake_traces.get_normalized.assert_called_once_with("c1")
+    fake_traces.console_url.assert_called_once_with("c1", source="LIVE")
 
 
 def test_trace_open_non_darwin(fake_traces, capsys, monkeypatch):
+    fake_traces.get_normalized.return_value = {"source": "LIVE"}
     fake_traces.console_url.return_value = "https://x/y"
     monkeypatch.setattr(trace_cli.platform, "system", lambda: "Linux")
     fake_run = MagicMock()
     monkeypatch.setattr(trace_cli.subprocess, "run", fake_run)
     trace_cli.trace_open(_ns(conversation_id="c1"))
     fake_run.assert_not_called()
+    fake_traces.get_normalized.assert_called_once_with("c1")
+    fake_traces.console_url.assert_called_once_with("c1", source="LIVE")
 
 
 def test_trace_open_failure(fake_traces):
-    fake_traces.console_url.side_effect = RuntimeError("boom")
+    fake_traces.get_normalized.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_open(_ns(conversation_id="c1"))
 
 
 def test_trace_open_subprocess_failure_silent(fake_traces, monkeypatch, capsys):
+    fake_traces.get_normalized.return_value = {"source": "LIVE"}
     fake_traces.console_url.return_value = "https://x/y"
     monkeypatch.setattr(trace_cli.platform, "system", lambda: "Darwin")
 
@@ -475,6 +482,8 @@ def test_trace_open_subprocess_failure_silent(fake_traces, monkeypatch, capsys):
     monkeypatch.setattr(trace_cli.subprocess, "run", boom)
     trace_cli.trace_open(_ns(conversation_id="c1"))
     assert "https://x/y" in capsys.readouterr().out
+    fake_traces.get_normalized.assert_called_once_with("c1")
+    fake_traces.console_url.assert_called_once_with("c1", source="LIVE")
 
 
 @patch("cxas_scrapi.cli.trace_cli.Traces")
