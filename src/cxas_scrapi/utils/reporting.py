@@ -28,6 +28,7 @@ from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.evals import runner as evals_runner
 from cxas_scrapi.utils.eval_utils import EvalUtils
 from cxas_scrapi.utils.gcs_utils import GCSUtils
+from cxas_scrapi.utils.report_components import load_component
 
 
 def _escape(text):
@@ -961,6 +962,8 @@ def generate_combined_html_report(
         _escape=_escape,
         _fmt_duration=_fmt_duration,
         json=json,
+        css_content=load_component("base/base.css"),
+        js_interaction=load_component("base/interaction.js"),
     )
 
     if output_path:
