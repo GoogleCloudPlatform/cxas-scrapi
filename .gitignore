@@ -162,3 +162,7 @@ bin/
 node_modules/
 ces_gemmaclaw/node_modules/
 ces_gemmaclaw/dist/
+
+# `cxas trace` workspace — local audio downloads, smoke-test outputs,
+# and per-developer trace.yaml. Users create their own.
+.cxas/
