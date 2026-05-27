@@ -350,8 +350,8 @@ class SimulationEvals(Apps):
         self.tools_map = Tools(app_name=app_name, **kwargs).get_tools_map()
 
         # Vertex AI requires a specific region (e.g. global), whereas CXAS
-        # Apps use 'us' or 'eu'
-        vertex_location = "global"
+        # Apps use 'us' or 'eu'. Allow override via kwargs.
+        vertex_location = kwargs.get("vertex_location", "global")
 
         self.genai_client = GeminiGenerate(
             project_id=self.project_id,
