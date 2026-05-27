@@ -1,0 +1,26 @@
+{
+  "name": "cesgemmaclaw",
+  "version": "1.0.0",
+  "description": "CES Gemmaclaw CLI interface for forward deployed engineering",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "cesgemmaclaw": "./dist/index.js",
+    "cgem": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "inquirer": "^9.2.15",
+    "execa": "^8.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/node": "^20.11.24",
+    "@types/inquirer": "^9.0.7",
+    "vitest": "^1.3.1"
+  }
+}

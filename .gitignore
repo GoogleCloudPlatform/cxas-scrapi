@@ -153,3 +153,8 @@ bin/
 # Don't ignore anything in the skills folder
 !.agents/
 !.agents/**
+
+# Node / TS / ces_gemmaclaw
+node_modules/
+ces_gemmaclaw/node_modules/
+ces_gemmaclaw/dist/
