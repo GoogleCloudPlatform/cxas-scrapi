@@ -125,7 +125,7 @@ class GeminiGenerate:
             return response.text
         except Exception as e:
             logger.error(f"Gemini generation failed: {e}")
-            return None
+            raise e
 
     def generate_with_parts(
         self,
@@ -191,7 +191,7 @@ class GeminiGenerate:
             return response.text
         except Exception as e:
             logger.error(f"Gemini multimodal generation failed: {e}")
-            return None
+            raise e
 
     async def generate_async(
         self,
@@ -263,7 +263,7 @@ class GeminiGenerate:
                     logger.error(
                         "  ❌ All retry attempts failed. Check GCP quota."
                     )
-                    return None
+                    raise e
 
             # EXPONENTIAL BACKOFF WITH JITTER
             sleep_time = (base_delay_seconds * (1.5**attempt)) + random.uniform(
@@ -274,7 +274,7 @@ class GeminiGenerate:
             )
             await asyncio.sleep(sleep_time)
 
-        return None
+        raise e
 
     def generate_embeddings(
         self, contents: list[str], model_name: str = "gemini-embedding-001"
