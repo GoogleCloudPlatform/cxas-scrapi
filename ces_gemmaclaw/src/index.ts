@@ -17,7 +17,14 @@ import {
   syncPaths,
   ensureAgentCredentials,
   getTuiLink,
+  resolveActiveSetupArgs,
+  printAndCopyTuiLink,
+  injectRegistryTemplates,
 } from "./utils.js";
+
+import { fileURLToPath } from "node:url";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Print the Tip Banner only if the alias cgem was NOT used to invoke the CLI
 const execName = path.basename(process.argv[1] || "");
@@ -192,22 +199,17 @@ program
     };
     await walkPermissions(STATE_DIR);
 
-    // Inject skipBootstrap: true and sandbox.scope: 'agent' to harden environment
+
+
+    // Inject custom prompts, skills, and files templates from the registry
     try {
-      if (await fileExists(OPENCLAW_JSON_PATH)) {
-        const config = JSON.parse(await fs.readFile(OPENCLAW_JSON_PATH, "utf-8"));
-        config.agents = config.agents || {};
-        config.agents.defaults = config.agents.defaults || {};
-        config.agents.defaults.skipBootstrap = true;
-
-        config.agents.defaults.sandbox = config.agents.defaults.sandbox || {};
-        config.agents.defaults.sandbox.scope = "agent";
-
-        await fs.writeFile(OPENCLAW_JSON_PATH, JSON.stringify(config, null, 2), "utf-8");
-        console.log("💡 Hardened agents configuration: skipBootstrap and sandbox.scope='agent' enabled globally.");
-      }
+      const workspaceDir = agentName === "main"
+        ? path.join(STATE_DIR, "workspace")
+        : path.join(STATE_DIR, "workspaces", agentName);
+      console.log("⚙️ Injecting custom registry templates into workspace...");
+      await injectRegistryTemplates(agentName, workspaceDir);
     } catch (err) {
-      console.warn("⚠️ Warning: Failed to harden global agents configuration:", err);
+      console.warn("⚠️ Warning: Failed to inject registry templates:", err);
     }
 
     // Generate and stash Vertex credentials for the setup agent
@@ -225,9 +227,43 @@ program
     // Wait 2 seconds for service startup
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    const link = await getTuiLink(agentName);
+    // Inject skipBootstrap: true, sandbox.scope: 'agent', and sandbox free-reign to harden environment
+    try {
+      if (await fileExists(OPENCLAW_JSON_PATH)) {
+        const config = JSON.parse(await fs.readFile(OPENCLAW_JSON_PATH, "utf-8"));
+        config.agents = config.agents || {};
+        config.agents.defaults = config.agents.defaults || {};
+        config.agents.defaults.skipBootstrap = true;
+
+        config.agents.defaults.sandbox = config.agents.defaults.sandbox || {};
+        config.agents.defaults.sandbox.scope = "agent";
+
+        // Automatically bind mount the active scrapi repository workspace into the sandbox container under /workspace/scrapi/
+        const scrapiPath = path.resolve(path.join(__dirname, "..", ".."));
+        const scrapiBind = `${scrapiPath}:/workspace/scrapi:rw`;
+        
+        config.agents.defaults.sandbox.docker = config.agents.defaults.sandbox.docker || {};
+        config.agents.defaults.sandbox.docker.binds = config.agents.defaults.sandbox.docker.binds || [];
+        if (!config.agents.defaults.sandbox.docker.binds.includes(scrapiBind)) {
+          config.agents.defaults.sandbox.docker.binds.push(scrapiBind);
+          console.log(`💡 Staged automatic scrapi repository bind mount: ${scrapiBind}`);
+        }
+
+        // Enable automatic execution approvals inside sandbox containers E2E (free reign)
+        config.tools = config.tools || {};
+        config.tools.exec = config.tools.exec || {};
+        config.tools.exec.security = "sandbox";
+        config.tools.exec.ask = "off";
+
+        await fs.writeFile(OPENCLAW_JSON_PATH, JSON.stringify(config, null, 2), "utf-8");
+        console.log("💡 Hardened agents configuration: skipBootstrap, sandbox.scope='agent', and sandbox free-reign enabled globally.");
+      }
+    } catch (err) {
+      console.warn("⚠️ Warning: Failed to harden global agents configuration:", err);
+    }
+
     console.log("✅ Background system service successfully configured and started.");
-    console.log(`🚀 Browser TUI Link: ${link}`);
+    await printAndCopyTuiLink(agentName);
   });
 
 program
@@ -244,17 +280,10 @@ program
     const agentId = name.trim().toLowerCase();
     console.log(`Spawn new assistant agent '${agentId}'...`);
 
-    const workspacePath = path.join(STATE_DIR, "workspaces", agentId);
-    const createRes = await runCommand(GEMMACLAW_BIN, [
-      "agents",
-      "add",
-      agentId,
-      "--non-interactive",
-      "--workspace",
-      workspacePath,
-    ]);
+    const setupArgs = await resolveActiveSetupArgs(agentId);
+    const createRes = await runCommand(GEMMACLAW_BIN, setupArgs, { stream: true });
     if (createRes.code !== 0) {
-      console.error(`❌ Failed to create agent: ${createRes.stderr}`);
+      console.error("❌ Failed to create agent.");
       process.exit(createRes.code);
     }
 
@@ -272,9 +301,32 @@ program
     // Dynamically refresh and register OAuth credentials for this agent
     await ensureAgentCredentials(agentId);
 
-    const link = await getTuiLink(agentId);
+    // Inject custom prompts, skills, and files templates from the registry
+    try {
+      const workspaceDir = path.join(STATE_DIR, "workspaces", agentId);
+      console.log("⚙️ Injecting custom registry templates into workspace...");
+      await injectRegistryTemplates(agentId, workspaceDir);
+    } catch (err) {
+      console.warn("⚠️ Warning: Failed to inject registry templates:", err);
+    }
+
+    // Inject tools.exec.security to sandbox to enable free-reign inside container
+    try {
+      if (await fileExists(OPENCLAW_JSON_PATH)) {
+        const config = JSON.parse(await fs.readFile(OPENCLAW_JSON_PATH, "utf-8"));
+        config.tools = config.tools || {};
+        config.tools.exec = config.tools.exec || {};
+        config.tools.exec.security = "sandbox";
+        config.tools.exec.ask = "off";
+        await fs.writeFile(OPENCLAW_JSON_PATH, JSON.stringify(config, null, 2), "utf-8");
+        console.log("💡 Configured sandbox execution free-reign for this agent.");
+      }
+    } catch (err) {
+      console.warn("⚠️ Warning: Failed to enable sandbox free-reign in config:", err);
+    }
+
     console.log(`✨ Assistant agent '${agentId}' created successfully.`);
-    console.log(`🚀 Browser TUI Link: ${link}`);
+    await printAndCopyTuiLink(agentId);
   });
 
 program
@@ -484,7 +536,23 @@ program
   .description("Send a direct message turn to a named agent session.")
   .action(async (agent, text) => {
     console.log(`Sending message to agent '${agent}'...`);
-    const msgRes = await runCommand(GEMMACLAW_BIN, ["message", "--agent", agent, text], { stream: true });
+    
+    // Automatically load stashed Gateway Token to pass the authentication handshake E2E
+    let token = "";
+    try {
+      if (await fileExists(OPENCLAW_JSON_PATH)) {
+        const config = JSON.parse(await fs.readFile(OPENCLAW_JSON_PATH, "utf-8"));
+        token = config.gateway?.auth?.token || "";
+      }
+    } catch {}
+
+    const msgRes = await runCommand(GEMMACLAW_BIN, ["message", "--agent", agent, text], { 
+      stream: true,
+      env: { 
+        OPENCLAW_GATEWAY_URL: "http://127.0.0.1:9187",
+        OPENCLAW_GATEWAY_TOKEN: token
+      }
+    });
     process.exit(msgRes.code);
   });
 
@@ -494,9 +562,17 @@ program
   .description("Get the dynamic, direct browser Webchat TUI URL link for a named agent.")
   .action(async (agent) => {
     const agentId = (agent || "main").trim().toLowerCase();
-    const link = await getTuiLink(agentId);
+    
+    // Automatically refresh and stash Vertex credentials to prevent 401 expiration blocks E2E
+    console.log(`🔄 Refreshing access credentials for '${agentId}'...`);
+    await ensureAgentCredentials(agentId);
+
+    // Flush active container caches to apply the fresh credentials dynamically
+    console.log(`🔄 Recreating container sandbox to apply fresh credentials...`);
+    await runCommand(GEMMACLAW_BIN, ["sandbox", "recreate", "--agent", agentId, "--force"]);
+
     console.log("💡 The gateway background service is running on port 9187.");
-    console.log(`🚀 Browser TUI Link: ${link}`);
+    await printAndCopyTuiLink(agentId);
   });
 
 program
@@ -520,34 +596,52 @@ program
   .description("Permanently delete an agent configuration, workspace, and mirror mappings.")
   .action(async (name) => {
     let agentId = name;
-    
+    let agentsList: any[] = [];
+
+    const listRes = await runCommand(GEMMACLAW_BIN, ["agents", "list", "--json"]);
+    try {
+      agentsList = JSON.parse(listRes.stdout.slice(listRes.stdout.indexOf("[")));
+    } catch (err) {
+      console.error("❌ Failed to retrieve configured agents list.");
+      process.exit(1);
+    }
+
     if (!agentId) {
-      const listRes = await runCommand(GEMMACLAW_BIN, ["agents", "list", "--json"]);
-      const agents = JSON.parse(listRes.stdout.slice(listRes.stdout.indexOf("[")));
-      if (agents.length === 0) {
+      if (agentsList.length === 0) {
         console.log("No agents found.");
         process.exit(0);
       }
 
-      const { idx } = await inquirer.prompt([
+      const choices = agentsList.map((a: any, i: number) => ({
+        name: `${i + 1}. ${a.id}`,
+        value: a.id,
+      }));
+      choices.push({
+        name: `${agentsList.length + 1}. 🚨 [REMOVE ALL AGENTS]`,
+        value: "REMOVE_ALL",
+      });
+
+      const { choice } = await inquirer.prompt([
         {
           type: "list",
-          name: "idx",
+          name: "choice",
           message: "Select an agent to remove:",
-          choices: agents.map((a: any, i: number) => ({
-            name: `${i + 1}. ${a.id}`,
-            value: i,
-          })),
+          choices,
         },
       ]);
-      agentId = agents[idx].id;
+      agentId = choice;
     }
+
+    const isBulkDelete = agentId === "REMOVE_ALL";
+    const confirmMsg = isBulkDelete
+      ? "🚨 WARNING: Are you sure you want to permanently delete ALL configured agents, workspaces, and container mirrors? This action CANNOT be undone!"
+      : `Are you sure you want to permanently delete agent '${agentId}'?`;
 
     const { confirm } = await inquirer.prompt([
       {
         type: "confirm",
         name: "confirm",
-        message: `Are you sure you want to permanently delete agent '${agentId}'?`,
+        message: confirmMsg,
         default: false,
       },
     ]);
@@ -557,30 +651,61 @@ program
       process.exit(0);
     }
 
-    console.log(`🗑️ Deleting agent '${agentId}'...`);
-    
-    // Run gemmaclaw agents delete
-    const delRes = await runCommand(GEMMACLAW_BIN, ["agents", "delete", agentId!, "--force"], { stream: true });
-    
-    // Prune mirrors sync map mappings
-    if (await fileExists(SYNC_MAP_PATH)) {
-      const syncMap = JSON.parse(await fs.readFile(SYNC_MAP_PATH, "utf-8"));
-      if (syncMap[agentId!]) {
-        delete syncMap[agentId!];
-        await fs.writeFile(SYNC_MAP_PATH, JSON.stringify(syncMap, null, 2), "utf-8");
-        console.log(`Removed agent '${agentId}' from mirrors sync map.`);
+    const targets = isBulkDelete ? agentsList.map((a) => a.id) : [agentId];
+    let lastCode = 0;
+
+    for (const targetId of targets) {
+      console.log(`🗑️ Deleting agent '${targetId}'...`);
+      
+      // Run gemmaclaw agents delete
+      const delRes = await runCommand(GEMMACLAW_BIN, ["agents", "delete", targetId, "--force"], { stream: true });
+      lastCode = delRes.code;
+      
+      // Permanently delete the entire agent configuration and sessions folder from disk to prevent stale history bleed
+      const agentConfigDir = path.join(STATE_DIR, "agents", targetId);
+      if (await fileExists(agentConfigDir)) {
+        await fs.rm(agentConfigDir, { recursive: true, force: true });
+        console.log(`Pruned agent configuration and sessions directory: ${agentConfigDir}`);
+      }
+      
+      // Prune mirrors sync map mappings
+      if (await fileExists(SYNC_MAP_PATH)) {
+        const syncMap = JSON.parse(await fs.readFile(SYNC_MAP_PATH, "utf-8"));
+        if (syncMap[targetId]) {
+          delete syncMap[targetId];
+          await fs.writeFile(SYNC_MAP_PATH, JSON.stringify(syncMap, null, 2), "utf-8");
+          console.log(`Removed agent '${targetId}' from mirrors sync map.`);
+        }
+      }
+
+      // Clean up any stale BOOTSTRAP.md inside the workspace to prevent leak blocks
+      const agentEntry = agentsList.find((a) => a.id === targetId);
+      if (agentEntry?.workspace) {
+        const bootPath = path.join(agentEntry.workspace, "BOOTSTRAP.md");
+        if (await fileExists(bootPath)) {
+          await fs.rm(bootPath, { force: true });
+          console.log(`Pruned stale BOOTSTRAP.md inside workspace: ${agentEntry.workspace}`);
+        }
+      }
+
+      // Clean up the mirrors subfolder if it exists
+      const mirrorDir = path.join(MIRRORS_ROOT, targetId);
+      if (await fileExists(mirrorDir)) {
+        await fs.rm(mirrorDir, { recursive: true, force: true });
+        console.log(`Pruned mirrors directory: ${mirrorDir}`);
       }
     }
 
-    // Clean up the mirrors subfolder if it exists
-    const mirrorDir = path.join(MIRRORS_ROOT, agentId!);
-    if (await fileExists(mirrorDir)) {
-      await fs.rm(mirrorDir, { recursive: true, force: true });
-      console.log(`Pruned mirrors directory: ${mirrorDir}`);
+    // Restart background systemd service to fully flush all active memory states on bulk delete
+    if (isBulkDelete) {
+      console.log("🔄 Restarting background system service to clear memory states...");
+      await runCommand("systemctl", ["--user", "restart", "openclaw-gateway.service"]);
+      console.log("✨ All agents removed successfully.");
+    } else {
+      console.log(`✨ Agent '${agentId}' removed successfully.`);
     }
 
-    console.log(`✨ Agent '${agentId}' removed successfully.`);
-    process.exit(delRes.code);
+    process.exit(lastCode);
   });
 
 program.parse(process.argv);
