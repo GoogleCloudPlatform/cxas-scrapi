@@ -89,3 +89,14 @@ To register the commands globally in your terminal shell PATH:
 ```bash
 npm link
 ```
+
+### Troubleshooting: `env: 'node': No such file or directory`
+If running `cgem` in a fresh terminal window returns `env: 'node': No such file or directory`, it means NVM (Node Version Manager) has not yet been loaded in your current terminal session.
+
+To solve this cleanly and permanently for all future terminal windows, add the standard NVM startup script to your shell configuration file (`~/.bashrc` or `~/.zshrc`):
+```bash
+# Automatically load Node/NVM on shell startup
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+```
+Once added, restart your terminal or run `source ~/.bashrc`, and `cgem` will be globally active in all windows!

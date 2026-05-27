@@ -157,3 +157,15 @@ export async function ensureAgentCredentials(agentId: string): Promise<void> {
     console.error(`⚠️ Error generating credentials for '${agentId}':`, err);
   }
 }
+
+export async function getTuiLink(agentId: string): Promise<string> {
+  let token = "";
+  try {
+    if (await fileExists(OPENCLAW_JSON_PATH)) {
+      const config = JSON.parse(await fs.readFile(OPENCLAW_JSON_PATH, "utf-8"));
+      token = config.gateway?.auth?.token || "";
+    }
+  } catch {}
+  
+  return `http://127.0.0.1:9187/chat?agent=${agentId}&session=agent%3A${agentId}%3Adefault&token=${token}`;
+}

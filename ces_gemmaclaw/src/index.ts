@@ -16,10 +16,14 @@ import {
   getCitCPathHash,
   syncPaths,
   ensureAgentCredentials,
+  getTuiLink,
 } from "./utils.js";
 
-// Print the Tip Banner first
-console.log("💡 Tip: You can also use the alias 'cgem' for this command.");
+// Print the Tip Banner only if the alias cgem was NOT used to invoke the CLI
+const execName = path.basename(process.argv[1] || "");
+if (execName !== "cgem" && execName !== "cgem.js") {
+  console.log("💡 Tip: You can also use the alias 'cgem' for this command.");
+}
 
 const program = new Command();
 
@@ -39,6 +43,19 @@ program
   .option("--accept-risk", "Acknowledge system-access risk")
   .action(async (options) => {
     let backend = options.backend;
+    let agentName = "main";
+
+    if (!options.nonInteractive) {
+      const answers = await inquirer.prompt([
+        {
+          type: "input",
+          name: "nameInput",
+          message: "Enter agent name to create:",
+          default: "main",
+        },
+      ]);
+      agentName = answers.nameInput.trim().toLowerCase() || "main";
+    }
 
     if (!backend && !options.nonInteractive) {
       const { choice } = await inquirer.prompt([
@@ -141,6 +158,9 @@ program
     if (options.acceptRisk) setupArgs.push("--accept-risk");
     if (options.nonInteractive) setupArgs.push("--non-interactive");
 
+    // Append custom agent name
+    setupArgs.push("--agent-name", agentName);
+
     console.log("Provisioning container sandbox...");
     const setupRes = await runCommand(GEMMACLAW_BIN, setupArgs, { stream: true });
     if (setupRes.code !== 0) {
@@ -172,15 +192,42 @@ program
     };
     await walkPermissions(STATE_DIR);
 
-    // Generate and stash Vertex credentials for main
-    await ensureAgentCredentials("main");
+    // Inject skipBootstrap: true and sandbox.scope: 'agent' to harden environment
+    try {
+      if (await fileExists(OPENCLAW_JSON_PATH)) {
+        const config = JSON.parse(await fs.readFile(OPENCLAW_JSON_PATH, "utf-8"));
+        config.agents = config.agents || {};
+        config.agents.defaults = config.agents.defaults || {};
+        config.agents.defaults.skipBootstrap = true;
+
+        config.agents.defaults.sandbox = config.agents.defaults.sandbox || {};
+        config.agents.defaults.sandbox.scope = "agent";
+
+        await fs.writeFile(OPENCLAW_JSON_PATH, JSON.stringify(config, null, 2), "utf-8");
+        console.log("💡 Hardened agents configuration: skipBootstrap and sandbox.scope='agent' enabled globally.");
+      }
+    } catch (err) {
+      console.warn("⚠️ Warning: Failed to harden global agents configuration:", err);
+    }
+
+    // Generate and stash Vertex credentials for the setup agent
+    await ensureAgentCredentials(agentName);
 
     // Reinstall systemd gateway daemon service on port 9187
     console.log("🚀 Installing background system service (systemd) on port 9187...");
     await runCommand(GEMMACLAW_BIN, ["gateway", "install", "--port", "9187", "--force"]);
 
+    // Explicitly restart the background daemon process to align fresh tokens
+    console.log("🔄 Restarting background system service...");
+    await runCommand("systemctl", ["--user", "daemon-reload"]);
+    await runCommand("systemctl", ["--user", "restart", "openclaw-gateway.service"]);
+    
+    // Wait 2 seconds for service startup
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    const link = await getTuiLink(agentName);
     console.log("✅ Background system service successfully configured and started.");
-    console.log("TUI available: cesgemmaclaw tui");
+    console.log(`🚀 Browser TUI Link: ${link}`);
   });
 
 program
@@ -188,6 +235,12 @@ program
   .argument("<name>", "Name of the assistant (e.g. 'bob')")
   .description("Create a new assistant agent configuration.")
   .action(async (name) => {
+    // Pre-check: Verify setup has been run
+    if (!(await fileExists(OPENCLAW_JSON_PATH))) {
+      console.error("❌ Error: Gemmaclaw is not set up yet. Please run 'cgem setup' first to configure your environment.");
+      process.exit(1);
+    }
+
     const agentId = name.trim().toLowerCase();
     console.log(`Spawn new assistant agent '${agentId}'...`);
 
@@ -219,15 +272,66 @@ program
     // Dynamically refresh and register OAuth credentials for this agent
     await ensureAgentCredentials(agentId);
 
+    const link = await getTuiLink(agentId);
     console.log(`✨ Assistant agent '${agentId}' created successfully.`);
+    console.log(`🚀 Browser TUI Link: ${link}`);
   });
 
 program
   .command("list")
   .description("List all configured Gemmaclaw agents.")
   .action(async () => {
-    const listRes = await runCommand(GEMMACLAW_BIN, ["list"]);
-    console.log(listRes.stdout);
+    const listRes = await runCommand(GEMMACLAW_BIN, ["agents", "list", "--json"]);
+    if (listRes.code !== 0) {
+      console.error("❌ Failed to list agents.");
+      process.exit(listRes.code);
+    }
+
+    let agents = [];
+    try {
+      const raw = listRes.stdout.slice(listRes.stdout.indexOf("["));
+      agents = JSON.parse(raw);
+    } catch (err) {
+      console.error("❌ Failed to parse agents list JSON metadata:", err);
+      process.exit(1);
+    }
+
+    console.log("\n🤖 Active Gemmaclaw Assistants Inventory:");
+    console.log("──────────────────────────────────────────────────");
+
+    for (const agent of agents) {
+      const defaultLabel = agent.isDefault ? " (default)" : "";
+      console.log(`📦 [${agent.id}]${defaultLabel}`);
+
+      // Extract base model name
+      const modelParts = (agent.model || "").split("/");
+      const baseModel = modelParts[modelParts.length - 1] || "unknown";
+      console.log(`  Model:     ${baseModel}`);
+
+      // Sandbox details
+      const shell = agent.containerShell || {};
+      const backend = shell.backend || "docker";
+      const mode = shell.mode || "all";
+      console.log(`  Sandbox:   ${backend} (mode: ${mode})`);
+
+      // Sandbox containers status
+      const containers = shell.containers || [];
+      const activeContainers = containers.filter((c: any) => c.running);
+      if (activeContainers.length > 0) {
+        console.log(`  Status:    🟢 ${activeContainers.length} container(s) active`);
+        for (const container of activeContainers) {
+          console.log(`             - ${container.name}`);
+        }
+      } else {
+        console.log("  Status:    ⚪ No active sandbox");
+      }
+
+      // Direct Tokenized Browser Link
+      const link = await getTuiLink(agent.id);
+      console.log(`  TUI Link:  ${link}\n`);
+    }
+    
+    console.log("──────────────────────────────────────────────────");
   });
 
 program
@@ -386,16 +490,13 @@ program
 
 program
   .command("tui")
-  .argument("[agent]", "Named agent ID to launch TUI shell for")
-  .description("Open a local Terminal User Interface (TUI) for a named agent.")
+  .argument("[agent]", "Named agent ID to print browser TUI link for")
+  .description("Get the dynamic, direct browser Webchat TUI URL link for a named agent.")
   .action(async (agent) => {
-    const args = ["tui"];
-    if (agent) {
-      args.push("--agent", agent);
-    }
-    console.log("Opening TUI session...");
-    const tuiRes = await runCommand(GEMMACLAW_BIN, args, { stream: true });
-    process.exit(tuiRes.code);
+    const agentId = (agent || "main").trim().toLowerCase();
+    const link = await getTuiLink(agentId);
+    console.log("💡 The gateway background service is running on port 9187.");
+    console.log(`🚀 Browser TUI Link: ${link}`);
   });
 
 program
@@ -405,7 +506,7 @@ program
   .action(async (subcommand) => {
     if (subcommand === "recreate") {
       console.log("Recreating sandbox environments...");
-      const recreationRes = await runCommand(GEMMACLAW_BIN, ["sandbox", "recreate"], { stream: true });
+      const recreationRes = await runCommand(GEMMACLAW_BIN, ["sandbox", "recreate", "--all", "--force"], { stream: true });
       process.exit(recreationRes.code);
     } else {
       console.error(`Unknown sandbox command: ${subcommand}`);
