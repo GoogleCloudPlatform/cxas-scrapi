@@ -18,12 +18,15 @@ import json
 import os
 import re
 import sys
+
 import yaml
+
 
 def sanitize_folder_name(name: str) -> str:
     """Sanitizes a display name to be a safe folder name."""
     sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
     return re.sub(r"_+", "_", sanitized).strip("_")
+
 
 def build_local_app(layout_path: str, output_dir: str) -> None:
     if not os.path.exists(layout_path):
@@ -42,20 +45,22 @@ def build_local_app(layout_path: str, output_dir: str) -> None:
     subagents_def = layout.get("subagents", [])
 
     if not app_name or not root_agent_def:
-        print("Error: Missing required root fields (app_name, root_agent) in layout YAML.", file=sys.stderr)
+        print(
+            "Error: Missing required root fields (app_name, root_agent) in"
+            " layout YAML.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    # Ensure target directory exists (preserves pre-existing custom files/folders)
+    # Ensure target directory exists (preserves pre-existing custom
+    # files/folders)
     os.makedirs(output_dir, exist_ok=True)
 
     # Step 1: Write app.json metadata
     router_disp_name = root_agent_def.get("display_name")
     router_folder = sanitize_folder_name(router_disp_name)
-    
-    app_meta = {
-        "displayName": app_name,
-        "rootAgent": router_folder
-    }
+
+    app_meta = {"displayName": app_name, "rootAgent": router_folder}
     with open(os.path.join(output_dir, "app.json"), "w") as f:
         json.dump(app_meta, f, indent=2)
 
@@ -65,75 +70,97 @@ def build_local_app(layout_path: str, output_dir: str) -> None:
 
     # Step 3: Process and Write Subagents folders
     child_agent_folders = []
-    
+
     for sub_def in subagents_def:
         disp_name = sub_def.get("display_name")
         instruction_text = sub_def.get("instruction", "").strip()
-        
+
         if not disp_name or not instruction_text:
-            print("Error: Subagent is missing display_name or instruction text.", file=sys.stderr)
+            print(
+                "Error: Subagent is missing display_name or instruction text.",
+                file=sys.stderr,
+            )
             sys.exit(1)
-            
+
         folder_name = sanitize_folder_name(disp_name)
         child_agent_folders.append(folder_name)
-        
+
         agent_path = os.path.join(agents_dir, folder_name)
         os.makedirs(agent_path, exist_ok=True)
-        
+
         # Write agent metadata JSON
         agent_meta = {
             "displayName": disp_name,
-            "instruction": f"agents/{folder_name}/instruction.txt"
+            "instruction": f"agents/{folder_name}/instruction.txt",
         }
         if "model" in sub_def:
             agent_meta["modelSettings"] = {"model": sub_def["model"]}
-            
+
         with open(os.path.join(agent_path, f"{folder_name}.json"), "w") as f:
             json.dump(agent_meta, f, indent=2)
-            
+
         # Write XML instruction verbatim to instruction.txt
         with open(os.path.join(agent_path, "instruction.txt"), "w") as f:
             f.write(instruction_text + "\n")
-            
+
         print(f"Generated local files for subagent: '{folder_name}'")
 
     # Step 4: Process and Write Root Steering Playbook folder
     router_path = os.path.join(agents_dir, router_folder)
     os.makedirs(router_path, exist_ok=True)
-    
+
     root_instruction = root_agent_def.get("instruction", "").strip()
     if not root_instruction:
         print("Error: Root agent is missing instruction text.", file=sys.stderr)
         sys.exit(1)
-        
-    # Write router metadata JSON (include child playbooks list if there are subagents)
+
+    # Write router metadata JSON (include child playbooks list if there
+    # are subagents)
     router_meta = {
         "displayName": router_disp_name,
-        "instruction": f"agents/{router_folder}/instruction.txt"
+        "instruction": f"agents/{router_folder}/instruction.txt",
     }
     if child_agent_folders:
         router_meta["childAgents"] = child_agent_folders
-        
+
     if "model" in root_agent_def:
         router_meta["modelSettings"] = {"model": root_agent_def["model"]}
-        
+
     with open(os.path.join(router_path, f"{router_folder}.json"), "w") as f:
         json.dump(router_meta, f, indent=2)
-        
+
     # Write Root XML instruction verbatim to instruction.txt
     with open(os.path.join(router_path, "instruction.txt"), "w") as f:
         f.write(root_instruction + "\n")
 
     print(f"Generated local files for root steering router: '{router_folder}'")
-    print(f"\nSUCCESS: Standard CXAS local structure generated from YAML at: {output_dir}")
+    print(
+        f"\nSUCCESS: Standard CXAS local structure generated from YAML at:"
+        f" {output_dir}"
+    )
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate standard local CXAS app structure from a YAML layout playbook specification.")
-    parser.add_argument("--layout-path", required=True, help="Path to the YAML layout specification file.")
-    parser.add_argument("--output-dir", required=True, help="Target local directory to write the CXAS app files.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate standard local CXAS app structure from a YAML layout"
+            " playbook specification."
+        )
+    )
+    parser.add_argument(
+        "--layout-path",
+        required=True,
+        help="Path to the YAML layout specification file.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Target local directory to write the CXAS app files.",
+    )
     args = parser.parse_args()
 
     build_local_app(args.layout_path, args.output_dir)
+
 
 if __name__ == "__main__":
     main()
