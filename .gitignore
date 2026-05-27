@@ -157,3 +157,8 @@ bin/
 !.agents/**
 .agents/**/__pycache__/
 .agents/**/*.pyc
+
+# Node / TS / ces_gemmaclaw
+node_modules/
+ces_gemmaclaw/node_modules/
+ces_gemmaclaw/dist/
