@@ -1337,6 +1337,59 @@ def generate_combined_report_from_dir(
     callback_results = []
     golden_results = []
 
+    _last_update_time = [0.0]
+    _UPDATE_INTERVAL_S = 15.0
+    _output_path = output_path or os.path.join(output_dir, "combined_report.html")
+
+    def _on_progress(partial_results):
+        current_time = time.time()
+        if current_time - _last_update_time[0] < _UPDATE_INTERVAL_S:
+            return
+        _last_update_time[0] = current_time
+
+        p_sim = partial_results.get("simulation", []) if "sims" in include else []
+        p_golden = partial_results.get("golden", []) if "goldens" in include else []
+        p_tool = []
+        p_callback = []
+
+        if "tools" in include:
+            for r in partial_results.get("tool", []):
+                p_tool.append({
+                    "name": r.get("test_name", r.get("test", "?")),
+                    "tool": r.get("tool", "?"),
+                    "passed": r.get("status", "").upper() in ("PASSED", "PASS"),
+                    "status": r.get("status", "?"),
+                    "latency_ms": r.get("latency (ms)", 0),
+                    "errors": r.get("errors", ""),
+                })
+        
+        if "callbacks" in include:
+            for r in partial_results.get("callback", []):
+                p_callback.append({
+                    "name": r.get("test_name", "?"),
+                    "agent": r.get("agent_name", "?"),
+                    "callback_type": r.get("callback_type", "?"),
+                    "passed": r.get("status", "").upper() in ("PASSED", "PASS"),
+                    "status": r.get("status", "?"),
+                    "error": r.get("error_message", ""),
+                })
+
+        if format == "html":
+            generate_combined_html_report(
+                golden_results=p_golden,
+                sim_results=p_sim,
+                tool_results=p_tool,
+                callback_results=p_callback,
+                output_path=_output_path,
+                app_name=app_name or "",
+                golden_modality=modality,
+                sim_modality=modality,
+            )
+
+    if run and format == "html":
+        abs_path = os.path.abspath(_output_path)
+        print(f"\n[INFO] Live HTML report will be incrementally updated at:\n  file://{abs_path}\n")
+
     if run:
         run_results = run_all_evals(
             app_name=app_name,
@@ -1352,6 +1405,7 @@ def generate_combined_report_from_dir(
             parallel=parallel,
             golden_timeout=golden_timeout,
             include=include,
+            progress_callback=_on_progress,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed

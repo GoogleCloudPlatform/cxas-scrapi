@@ -44,6 +44,7 @@ def run_all_evals(
     golden_timeout: int = 600,
     include: list[str] = None,
     rate_limiter: RateLimiter | None = None,
+    progress_callback=None,
 ):
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -220,17 +221,22 @@ def run_all_evals(
                                 )
                             ]
                         test_cases.extend(cases)
-                if test_cases:
-                    print(
-                        f"Running {len(test_cases)} simulations across "
-                        f"{len(sim_files)} files"
-                    )
-                    sim_results = sim_evals.run_simulations(
-                        test_cases,
-                        runs=runs,
-                        parallel=parallel,
-                        modality=modality,
-                    )
+                    if test_cases:
+                        def _sim_progress(current_sims):
+                            results["simulation"] = current_sims
+                            if progress_callback:
+                                progress_callback(results)
+                        print(
+                            f"Running {len(test_cases)} simulations across "
+                            f"{len(sim_files)} files"
+                        )
+                        sim_results = sim_evals.run_simulations(
+                            test_cases,
+                            runs=runs,
+                            parallel=parallel,
+                            modality=modality,
+                            progress_callback=_sim_progress,
+                        )
                     results["simulation"] = sim_results
                     if output_dir:
                         save_path = os.path.join(output_dir, "sim_results.json")
