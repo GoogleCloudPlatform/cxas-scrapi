@@ -1,0 +1,171 @@
+conversations:
+- conversation: CUJ1_authenticated_billing_routing
+  tags:
+  - P0
+  - auth
+  - routing
+  - billing
+  turns:
+  - turn: T1_welcome
+    event: welcome
+    variables:
+      api_failed: 'false'
+      account_id: TEL-1001
+      _escalation_topic: ''
+      _action_trigger: ''
+      customer_id: CUST-1001
+      test_accounts_data: "{\n  \"accounts\": {\n    \"TEL-1001\": {\n      \"customer_id\": \"CUST-1001\",\n      \"customer_name\": \"Jordan Lee\",\n      \"tier\": \"premium\",\n      \"role\": \"primary\",\n      \"account_status\": \"active\",\n      \"plan\": {\n        \"name\": \"Unlimited Plus Wireless\",\n        \"monthly_charge\": \"85.00\",\n        \"features\": [\"unlimited talk and text\", \"50 GB premium data\", \"international texting\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"84.25\",\n        \"amount_due\": \"84.25\",\n        \"due_date\": \"2026-05-28\",\n        \"autopay\": true,\n        \"last_payment\": \"85.00 on 2026-04-28\",\n        \"payment_arrangement_eligible\": false\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-01\",\n        \"cycle_end\": \"2026-05-31\",\n        \"data_used_gb\": 38.2,\n        \"data_limit_gb\": 50,\n        \"lines\": [{\"line_id\": \"LINE-1001-A\", \"label\": \"Jordan mobile\", \"device\": \"Pixel 9\", \"status\": \"active\"}]\n      },\n      \"service\": {\n        \"overall_status\": \"active\",\n        \"outage\": {\"status\": \"none\", \"area\": \"Seattle, WA\", \"eta\": \"\"},\n        \"recommended_steps\": {\n          \"slow_data\": [\"Toggle airplane mode for 20 seconds\", \"Confirm mobile data is enabled\", \"Restart the device\", \"Reset network settings if speeds remain slow\"],\n          \"no_service\": [\"Check for outage status\", \"Restart the device\", \"Reseat the SIM or confirm eSIM activation\"]\n        }\n      }\n    },\n    \"TEL-1002\": {\n      \"customer_id\": \"CUST-1002\",\n      \"customer_name\": \"Taylor Kim\",\n      \"tier\": \"standard\",\n      \"role\": \"primary\",\n      \"account_status\": \"active\",\n      \"plan\": {\n        \"name\": \"Fiber Home 1 Gig\",\n        \"monthly_charge\": \"70.00\",\n        \"features\": [\"1 Gig fiber internet\", \"gateway rental included\", \"unlimited home data\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"0.00\",\n        \"amount_due\": \"70.00\",\n        \"due_date\": \"2026-06-03\",\n        \"autopay\": true,\n        \"last_payment\": \"70.00 on 2026-05-03\",\n        \"payment_arrangement_eligible\": false\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-03\",\n        \"cycle_end\": \"2026-06-02\",\n        \"data_used_gb\": 612.5,\n        \"data_limit_gb\": 0,\n        \"lines\": [{\"line_id\": \"LINE-1002-H\", \"label\": \"Home fiber\", \"device\": \"Fiber gateway\", \"status\": \"degraded\"}]\n      },\n      \"service\": {\n        \"overall_status\": \"degraded\",\n        \"outage\": {\n          \"status\": \"active\",\n          \"area\": \"Austin, TX\",\n          \"eta\": \"2026-05-18 18:30 CT\",\n          \"summary\": \"Fiber outage affecting parts of east Austin\"\n        },\n        \"recommended_steps\": {\n          \"slow_data\": [\"Check gateway light status\", \"Power cycle the gateway for 60 seconds\", \"Keep gateway connected while outage work completes\"],\n          \"no_service\": [\"Check outage status\", \"Power cycle the gateway once\", \"Wait for outage clearance before scheduling a technician\"]\n        }\n      }\n    },\n    \"TEL-1003\": {\n      \"customer_id\": \"CUST-1003\",\n      \"customer_name\": \"Morgan Patel\",\n      \"tier\": \"standard\",\n      \"role\": \"primary\",\n      \"account_status\": \"past_due\",\n      \"plan\": {\n        \"name\": \"Shared Data 20 GB\",\n        \"monthly_charge\": \"60.00\",\n        \"features\": [\"unlimited talk and text\", \"20 GB shared data\", \"mobile hotspot\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"152.10\",\n        \"amount_due\": \"152.10\",\n        \"due_date\": \"2026-05-12\",\n        \"autopay\": false,\n        \"last_payment\": \"50.00 on 2026-04-12\",\n        \"payment_arrangement_eligible\": true\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-12\",\n        \"cycle_end\": \"2026-06-11\",\n        \"data_used_gb\": 19.1,\n        \"data_limit_gb\": 20,\n        \"lines\": [\n          {\"line_id\": \"LINE-1003-A\", \"label\": \"Morgan mobile\", \"device\": \"Galaxy S25\", \"status\": \"active\"},\n          {\"line_id\": \"LINE-1003-B\", \"label\": \"Family mobile\", \"device\": \"iPhone 16\", \"status\": \"active\"}\n        ]\n      },\n      \"service\": {\n        \"overall_status\": \"active\",\n        \"outage\": {\"status\": \"none\", \"area\": \"Denver, CO\", \"eta\": \"\"},\n        \"recommended_steps\": {\n          \"slow_data\": [\"Review data usage near plan limit\", \"Switch to Wi-Fi for large downloads\", \"Restart the device\", \"Consider plan change if usage remains high\"],\n          \"no_service\": [\"Restart the device\", \"Confirm the affected line\", \"Reset network settings\"]\n        }\n      }\n    }\n  }\n}"
+      customer_role: primary
+      last_issue_summary: ''
+      _escalation_reason: ''
+      auth_status: authenticated
+      customer_tier: premium
+      customer_name: Jordan Lee
+      active_line_id: LINE-1001-A
+      no_input_counter: '0'
+    expectations:
+    - type: contains
+      value: Jordan Lee
+  - turn: T2_billing_request
+    user: I need help understanding my wireless bill.
+    expectations:
+    - type: contains
+      value: '84.25'
+  expectations:
+  - The agent must greet the authenticated customer by their name Jordan Lee.
+  - The agent must provide the customer with their current balance amount.
+- conversation: CUJ2_unauthenticated_privacy
+  tags:
+  - P0
+  - auth
+  - privacy
+  turns:
+  - turn: T1_welcome
+    event: welcome
+    variables:
+      api_failed: 'false'
+      account_id: TEL-9999
+      _escalation_topic: ''
+      _action_trigger: ''
+      customer_id: CUST-9999
+      test_accounts_data: "{\n  \"accounts\": {\n    \"TEL-1001\": {\n      \"customer_id\": \"CUST-1001\",\n      \"customer_name\": \"Jordan Lee\",\n      \"tier\": \"premium\",\n      \"role\": \"primary\",\n      \"account_status\": \"active\",\n      \"plan\": {\n        \"name\": \"Unlimited Plus Wireless\",\n        \"monthly_charge\": \"85.00\",\n        \"features\": [\"unlimited talk and text\", \"50 GB premium data\", \"international texting\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"84.25\",\n        \"amount_due\": \"84.25\",\n        \"due_date\": \"2026-05-28\",\n        \"autopay\": true,\n        \"last_payment\": \"85.00 on 2026-04-28\",\n        \"payment_arrangement_eligible\": false\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-01\",\n        \"cycle_end\": \"2026-05-31\",\n        \"data_used_gb\": 38.2,\n        \"data_limit_gb\": 50,\n        \"lines\": [{\"line_id\": \"LINE-1001-A\", \"label\": \"Jordan mobile\", \"device\": \"Pixel 9\", \"status\": \"active\"}]\n      },\n      \"service\": {\n        \"overall_status\": \"active\",\n        \"outage\": {\"status\": \"none\", \"area\": \"Seattle, WA\", \"eta\": \"\"},\n        \"recommended_steps\": {\n          \"slow_data\": [\"Toggle airplane mode for 20 seconds\", \"Confirm mobile data is enabled\", \"Restart the device\", \"Reset network settings if speeds remain slow\"],\n          \"no_service\": [\"Check for outage status\", \"Restart the device\", \"Reseat the SIM or confirm eSIM activation\"]\n        }\n      }\n    },\n    \"TEL-1002\": {\n      \"customer_id\": \"CUST-1002\",\n      \"customer_name\": \"Taylor Kim\",\n      \"tier\": \"standard\",\n      \"role\": \"primary\",\n      \"account_status\": \"active\",\n      \"plan\": {\n        \"name\": \"Fiber Home 1 Gig\",\n        \"monthly_charge\": \"70.00\",\n        \"features\": [\"1 Gig fiber internet\", \"gateway rental included\", \"unlimited home data\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"0.00\",\n        \"amount_due\": \"70.00\",\n        \"due_date\": \"2026-06-03\",\n        \"autopay\": true,\n        \"last_payment\": \"70.00 on 2026-05-03\",\n        \"payment_arrangement_eligible\": false\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-03\",\n        \"cycle_end\": \"2026-06-02\",\n        \"data_used_gb\": 612.5,\n        \"data_limit_gb\": 0,\n        \"lines\": [{\"line_id\": \"LINE-1002-H\", \"label\": \"Home fiber\", \"device\": \"Fiber gateway\", \"status\": \"degraded\"}]\n      },\n      \"service\": {\n        \"overall_status\": \"degraded\",\n        \"outage\": {\n          \"status\": \"active\",\n          \"area\": \"Austin, TX\",\n          \"eta\": \"2026-05-18 18:30 CT\",\n          \"summary\": \"Fiber outage affecting parts of east Austin\"\n        },\n        \"recommended_steps\": {\n          \"slow_data\": [\"Check gateway light status\", \"Power cycle the gateway for 60 seconds\", \"Keep gateway connected while outage work completes\"],\n          \"no_service\": [\"Check outage status\", \"Power cycle the gateway once\", \"Wait for outage clearance before scheduling a technician\"]\n        }\n      }\n    },\n    \"TEL-1003\": {\n      \"customer_id\": \"CUST-1003\",\n      \"customer_name\": \"Morgan Patel\",\n      \"tier\": \"standard\",\n      \"role\": \"primary\",\n      \"account_status\": \"past_due\",\n      \"plan\": {\n        \"name\": \"Shared Data 20 GB\",\n        \"monthly_charge\": \"60.00\",\n        \"features\": [\"unlimited talk and text\", \"20 GB shared data\", \"mobile hotspot\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"152.10\",\n        \"amount_due\": \"152.10\",\n        \"due_date\": \"2026-05-12\",\n        \"autopay\": false,\n        \"last_payment\": \"50.00 on 2026-04-12\",\n        \"payment_arrangement_eligible\": true\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-12\",\n        \"cycle_end\": \"2026-06-11\",\n        \"data_used_gb\": 19.1,\n        \"data_limit_gb\": 20,\n        \"lines\": [\n          {\"line_id\": \"LINE-1003-A\", \"label\": \"Morgan mobile\", \"device\": \"Galaxy S25\", \"status\": \"active\"},\n          {\"line_id\": \"LINE-1003-B\", \"label\": \"Family mobile\", \"device\": \"iPhone 16\", \"status\": \"active\"}\n        ]\n      },\n      \"service\": {\n        \"overall_status\": \"active\",\n        \"outage\": {\"status\": \"none\", \"area\": \"Denver, CO\", \"eta\": \"\"},\n        \"recommended_steps\": {\n          \"slow_data\": [\"Review data usage near plan limit\", \"Switch to Wi-Fi for large downloads\", \"Restart the device\", \"Consider plan change if usage remains high\"],\n          \"no_service\": [\"Restart the device\", \"Confirm the affected line\", \"Reset network settings\"]\n        }\n      }\n    }\n  }\n}"
+      customer_role: unknown
+      last_issue_summary: ''
+      _escalation_reason: ''
+      auth_status: unauthenticated
+      customer_tier: ''
+      customer_name: ''
+      active_line_id: ''
+      no_input_counter: '0'
+    expectations:
+    - type: no_tools_called
+      value: null
+  - turn: T2_account_request
+    user: Tell me the balance and plan on this account.
+    expectations:
+    - type: no_tools_called
+      value: null
+  expectations:
+  - The agent must NOT share any account-specific billing or plan details because the customer is unauthenticated.
+  - The agent must decline to reveal account information and explain they cannot verify the account.
+- conversation: CUJ3_billing_balance_due_date
+  tags:
+  - P0
+  - billing
+  - routing
+  turns:
+  - turn: T1_welcome
+    event: welcome
+    variables:
+      api_failed: 'false'
+      account_id: TEL-1003
+      _escalation_topic: ''
+      _action_trigger: ''
+      customer_id: CUST-1003
+      test_accounts_data: "{\n  \"accounts\": {\n    \"TEL-1001\": {\n      \"customer_id\": \"CUST-1001\",\n      \"customer_name\": \"Jordan Lee\",\n      \"tier\": \"premium\",\n      \"role\": \"primary\",\n      \"account_status\": \"active\",\n      \"plan\": {\n        \"name\": \"Unlimited Plus Wireless\",\n        \"monthly_charge\": \"85.00\",\n        \"features\": [\"unlimited talk and text\", \"50 GB premium data\", \"international texting\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"84.25\",\n        \"amount_due\": \"84.25\",\n        \"due_date\": \"2026-05-28\",\n        \"autopay\": true,\n        \"last_payment\": \"85.00 on 2026-04-28\",\n        \"payment_arrangement_eligible\": false\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-01\",\n        \"cycle_end\": \"2026-05-31\",\n        \"data_used_gb\": 38.2,\n        \"data_limit_gb\": 50,\n        \"lines\": [{\"line_id\": \"LINE-1001-A\", \"label\": \"Jordan mobile\", \"device\": \"Pixel 9\", \"status\": \"active\"}]\n      },\n      \"service\": {\n        \"overall_status\": \"active\",\n        \"outage\": {\"status\": \"none\", \"area\": \"Seattle, WA\", \"eta\": \"\"},\n        \"recommended_steps\": {\n          \"slow_data\": [\"Toggle airplane mode for 20 seconds\", \"Confirm mobile data is enabled\", \"Restart the device\", \"Reset network settings if speeds remain slow\"],\n          \"no_service\": [\"Check for outage status\", \"Restart the device\", \"Reseat the SIM or confirm eSIM activation\"]\n        }\n      }\n    },\n    \"TEL-1002\": {\n      \"customer_id\": \"CUST-1002\",\n      \"customer_name\": \"Taylor Kim\",\n      \"tier\": \"standard\",\n      \"role\": \"primary\",\n      \"account_status\": \"active\",\n      \"plan\": {\n        \"name\": \"Fiber Home 1 Gig\",\n        \"monthly_charge\": \"70.00\",\n        \"features\": [\"1 Gig fiber internet\", \"gateway rental included\", \"unlimited home data\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"0.00\",\n        \"amount_due\": \"70.00\",\n        \"due_date\": \"2026-06-03\",\n        \"autopay\": true,\n        \"last_payment\": \"70.00 on 2026-05-03\",\n        \"payment_arrangement_eligible\": false\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-03\",\n        \"cycle_end\": \"2026-06-02\",\n        \"data_used_gb\": 612.5,\n        \"data_limit_gb\": 0,\n        \"lines\": [{\"line_id\": \"LINE-1002-H\", \"label\": \"Home fiber\", \"device\": \"Fiber gateway\", \"status\": \"degraded\"}]\n      },\n      \"service\": {\n        \"overall_status\": \"degraded\",\n        \"outage\": {\n          \"status\": \"active\",\n          \"area\": \"Austin, TX\",\n          \"eta\": \"2026-05-18 18:30 CT\",\n          \"summary\": \"Fiber outage affecting parts of east Austin\"\n        },\n        \"recommended_steps\": {\n          \"slow_data\": [\"Check gateway light status\", \"Power cycle the gateway for 60 seconds\", \"Keep gateway connected while outage work completes\"],\n          \"no_service\": [\"Check outage status\", \"Power cycle the gateway once\", \"Wait for outage clearance before scheduling a technician\"]\n        }\n      }\n    },\n    \"TEL-1003\": {\n      \"customer_id\": \"CUST-1003\",\n      \"customer_name\": \"Morgan Patel\",\n      \"tier\": \"standard\",\n      \"role\": \"primary\",\n      \"account_status\": \"past_due\",\n      \"plan\": {\n        \"name\": \"Shared Data 20 GB\",\n        \"monthly_charge\": \"60.00\",\n        \"features\": [\"unlimited talk and text\", \"20 GB shared data\", \"mobile hotspot\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"152.10\",\n        \"amount_due\": \"152.10\",\n        \"due_date\": \"2026-05-12\",\n        \"autopay\": false,\n        \"last_payment\": \"50.00 on 2026-04-12\",\n        \"payment_arrangement_eligible\": true\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-12\",\n        \"cycle_end\": \"2026-06-11\",\n        \"data_used_gb\": 19.1,\n        \"data_limit_gb\": 20,\n        \"lines\": [\n          {\"line_id\": \"LINE-1003-A\", \"label\": \"Morgan mobile\", \"device\": \"Galaxy S25\", \"status\": \"active\"},\n          {\"line_id\": \"LINE-1003-B\", \"label\": \"Family mobile\", \"device\": \"iPhone 16\", \"status\": \"active\"}\n        ]\n      },\n      \"service\": {\n        \"overall_status\": \"active\",\n        \"outage\": {\"status\": \"none\", \"area\": \"Denver, CO\", \"eta\": \"\"},\n        \"recommended_steps\": {\n          \"slow_data\": [\"Review data usage near plan limit\", \"Switch to Wi-Fi for large downloads\", \"Restart the device\", \"Consider plan change if usage remains high\"],\n          \"no_service\": [\"Restart the device\", \"Confirm the affected line\", \"Reset network settings\"]\n        }\n      }\n    }\n  }\n}"
+      customer_role: primary
+      last_issue_summary: ''
+      _escalation_reason: ''
+      auth_status: authenticated
+      customer_tier: standard
+      customer_name: Morgan Patel
+      active_line_id: LINE-1003-A
+      no_input_counter: '0'
+    expectations:
+    - type: contains
+      value: Morgan Patel
+  - turn: T2_billing_query
+    user: What is my current balance, when was it due, and can I get more time to pay?
+    expectations:
+    - type: contains
+      value: '152.10'
+  expectations:
+  - The agent must provide the customer with their actual current balance amount.
+  - The agent must address the payment arrangement eligibility question.
+- conversation: CUJ4_technical_outage
+  tags:
+  - P0
+  - technical
+  - routing
+  turns:
+  - turn: T1_welcome
+    event: welcome
+    variables:
+      api_failed: 'false'
+      account_id: TEL-1002
+      _escalation_topic: ''
+      _action_trigger: ''
+      customer_id: CUST-1002
+      test_accounts_data: "{\n  \"accounts\": {\n    \"TEL-1001\": {\n      \"customer_id\": \"CUST-1001\",\n      \"customer_name\": \"Jordan Lee\",\n      \"tier\": \"premium\",\n      \"role\": \"primary\",\n      \"account_status\": \"active\",\n      \"plan\": {\n        \"name\": \"Unlimited Plus Wireless\",\n        \"monthly_charge\": \"85.00\",\n        \"features\": [\"unlimited talk and text\", \"50 GB premium data\", \"international texting\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"84.25\",\n        \"amount_due\": \"84.25\",\n        \"due_date\": \"2026-05-28\",\n        \"autopay\": true,\n        \"last_payment\": \"85.00 on 2026-04-28\",\n        \"payment_arrangement_eligible\": false\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-01\",\n        \"cycle_end\": \"2026-05-31\",\n        \"data_used_gb\": 38.2,\n        \"data_limit_gb\": 50,\n        \"lines\": [{\"line_id\": \"LINE-1001-A\", \"label\": \"Jordan mobile\", \"device\": \"Pixel 9\", \"status\": \"active\"}]\n      },\n      \"service\": {\n        \"overall_status\": \"active\",\n        \"outage\": {\"status\": \"none\", \"area\": \"Seattle, WA\", \"eta\": \"\"},\n        \"recommended_steps\": {\n          \"slow_data\": [\"Toggle airplane mode for 20 seconds\", \"Confirm mobile data is enabled\", \"Restart the device\", \"Reset network settings if speeds remain slow\"],\n          \"no_service\": [\"Check for outage status\", \"Restart the device\", \"Reseat the SIM or confirm eSIM activation\"]\n        }\n      }\n    },\n    \"TEL-1002\": {\n      \"customer_id\": \"CUST-1002\",\n      \"customer_name\": \"Taylor Kim\",\n      \"tier\": \"standard\",\n      \"role\": \"primary\",\n      \"account_status\": \"active\",\n      \"plan\": {\n        \"name\": \"Fiber Home 1 Gig\",\n        \"monthly_charge\": \"70.00\",\n        \"features\": [\"1 Gig fiber internet\", \"gateway rental included\", \"unlimited home data\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"0.00\",\n        \"amount_due\": \"70.00\",\n        \"due_date\": \"2026-06-03\",\n        \"autopay\": true,\n        \"last_payment\": \"70.00 on 2026-05-03\",\n        \"payment_arrangement_eligible\": false\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-03\",\n        \"cycle_end\": \"2026-06-02\",\n        \"data_used_gb\": 612.5,\n        \"data_limit_gb\": 0,\n        \"lines\": [{\"line_id\": \"LINE-1002-H\", \"label\": \"Home fiber\", \"device\": \"Fiber gateway\", \"status\": \"degraded\"}]\n      },\n      \"service\": {\n        \"overall_status\": \"degraded\",\n        \"outage\": {\n          \"status\": \"active\",\n          \"area\": \"Austin, TX\",\n          \"eta\": \"2026-05-18 18:30 CT\",\n          \"summary\": \"Fiber outage affecting parts of east Austin\"\n        },\n        \"recommended_steps\": {\n          \"slow_data\": [\"Check gateway light status\", \"Power cycle the gateway for 60 seconds\", \"Keep gateway connected while outage work completes\"],\n          \"no_service\": [\"Check outage status\", \"Power cycle the gateway once\", \"Wait for outage clearance before scheduling a technician\"]\n        }\n      }\n    },\n    \"TEL-1003\": {\n      \"customer_id\": \"CUST-1003\",\n      \"customer_name\": \"Morgan Patel\",\n      \"tier\": \"standard\",\n      \"role\": \"primary\",\n      \"account_status\": \"past_due\",\n      \"plan\": {\n        \"name\": \"Shared Data 20 GB\",\n        \"monthly_charge\": \"60.00\",\n        \"features\": [\"unlimited talk and text\", \"20 GB shared data\", \"mobile hotspot\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"152.10\",\n        \"amount_due\": \"152.10\",\n        \"due_date\": \"2026-05-12\",\n        \"autopay\": false,\n        \"last_payment\": \"50.00 on 2026-04-12\",\n        \"payment_arrangement_eligible\": true\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-12\",\n        \"cycle_end\": \"2026-06-11\",\n        \"data_used_gb\": 19.1,\n        \"data_limit_gb\": 20,\n        \"lines\": [\n          {\"line_id\": \"LINE-1003-A\", \"label\": \"Morgan mobile\", \"device\": \"Galaxy S25\", \"status\": \"active\"},\n          {\"line_id\": \"LINE-1003-B\", \"label\": \"Family mobile\", \"device\": \"iPhone 16\", \"status\": \"active\"}\n        ]\n      },\n      \"service\": {\n        \"overall_status\": \"active\",\n        \"outage\": {\"status\": \"none\", \"area\": \"Denver, CO\", \"eta\": \"\"},\n        \"recommended_steps\": {\n          \"slow_data\": [\"Review data usage near plan limit\", \"Switch to Wi-Fi for large downloads\", \"Restart the device\", \"Consider plan change if usage remains high\"],\n          \"no_service\": [\"Restart the device\", \"Confirm the affected line\", \"Reset network settings\"]\n        }\n      }\n    }\n  }\n}"
+      customer_role: primary
+      last_issue_summary: ''
+      _escalation_reason: ''
+      auth_status: authenticated
+      customer_tier: standard
+      customer_name: Taylor Kim
+      active_line_id: LINE-1002-H
+      no_input_counter: '0'
+    expectations:
+    - type: contains
+      value: Taylor Kim
+  - turn: T2_outage_report
+    user: My home fiber internet is down. Is there an outage?
+    expectations:
+    - type: contains
+      value: outage
+  expectations:
+  - The agent must confirm there is an active outage affecting the customers area.
+  - The agent must provide an estimated resolution time for the outage.
+- conversation: CUJ6_human_escalation
+  tags:
+  - P0
+  - escalation
+  turns:
+  - turn: T1_welcome
+    event: welcome
+    variables:
+      api_failed: 'false'
+      account_id: TEL-1001
+      _escalation_topic: ''
+      _action_trigger: ''
+      customer_id: CUST-1001
+      test_accounts_data: "{\n  \"accounts\": {\n    \"TEL-1001\": {\n      \"customer_id\": \"CUST-1001\",\n      \"customer_name\": \"Jordan Lee\",\n      \"tier\": \"premium\",\n      \"role\": \"primary\",\n      \"account_status\": \"active\",\n      \"plan\": {\n        \"name\": \"Unlimited Plus Wireless\",\n        \"monthly_charge\": \"85.00\",\n        \"features\": [\"unlimited talk and text\", \"50 GB premium data\", \"international texting\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"84.25\",\n        \"amount_due\": \"84.25\",\n        \"due_date\": \"2026-05-28\",\n        \"autopay\": true,\n        \"last_payment\": \"85.00 on 2026-04-28\",\n        \"payment_arrangement_eligible\": false\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-01\",\n        \"cycle_end\": \"2026-05-31\",\n        \"data_used_gb\": 38.2,\n        \"data_limit_gb\": 50,\n        \"lines\": [{\"line_id\": \"LINE-1001-A\", \"label\": \"Jordan mobile\", \"device\": \"Pixel 9\", \"status\": \"active\"}]\n      },\n      \"service\": {\n        \"overall_status\": \"active\",\n        \"outage\": {\"status\": \"none\", \"area\": \"Seattle, WA\", \"eta\": \"\"},\n        \"recommended_steps\": {\n          \"slow_data\": [\"Toggle airplane mode for 20 seconds\", \"Confirm mobile data is enabled\", \"Restart the device\", \"Reset network settings if speeds remain slow\"],\n          \"no_service\": [\"Check for outage status\", \"Restart the device\", \"Reseat the SIM or confirm eSIM activation\"]\n        }\n      }\n    },\n    \"TEL-1002\": {\n      \"customer_id\": \"CUST-1002\",\n      \"customer_name\": \"Taylor Kim\",\n      \"tier\": \"standard\",\n      \"role\": \"primary\",\n      \"account_status\": \"active\",\n      \"plan\": {\n        \"name\": \"Fiber Home 1 Gig\",\n        \"monthly_charge\": \"70.00\",\n        \"features\": [\"1 Gig fiber internet\", \"gateway rental included\", \"unlimited home data\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"0.00\",\n        \"amount_due\": \"70.00\",\n        \"due_date\": \"2026-06-03\",\n        \"autopay\": true,\n        \"last_payment\": \"70.00 on 2026-05-03\",\n        \"payment_arrangement_eligible\": false\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-03\",\n        \"cycle_end\": \"2026-06-02\",\n        \"data_used_gb\": 612.5,\n        \"data_limit_gb\": 0,\n        \"lines\": [{\"line_id\": \"LINE-1002-H\", \"label\": \"Home fiber\", \"device\": \"Fiber gateway\", \"status\": \"degraded\"}]\n      },\n      \"service\": {\n        \"overall_status\": \"degraded\",\n        \"outage\": {\n          \"status\": \"active\",\n          \"area\": \"Austin, TX\",\n          \"eta\": \"2026-05-18 18:30 CT\",\n          \"summary\": \"Fiber outage affecting parts of east Austin\"\n        },\n        \"recommended_steps\": {\n          \"slow_data\": [\"Check gateway light status\", \"Power cycle the gateway for 60 seconds\", \"Keep gateway connected while outage work completes\"],\n          \"no_service\": [\"Check outage status\", \"Power cycle the gateway once\", \"Wait for outage clearance before scheduling a technician\"]\n        }\n      }\n    },\n    \"TEL-1003\": {\n      \"customer_id\": \"CUST-1003\",\n      \"customer_name\": \"Morgan Patel\",\n      \"tier\": \"standard\",\n      \"role\": \"primary\",\n      \"account_status\": \"past_due\",\n      \"plan\": {\n        \"name\": \"Shared Data 20 GB\",\n        \"monthly_charge\": \"60.00\",\n        \"features\": [\"unlimited talk and text\", \"20 GB shared data\", \"mobile hotspot\"]\n      },\n      \"billing\": {\n        \"current_balance\": \"152.10\",\n        \"amount_due\": \"152.10\",\n        \"due_date\": \"2026-05-12\",\n        \"autopay\": false,\n        \"last_payment\": \"50.00 on 2026-04-12\",\n        \"payment_arrangement_eligible\": true\n      },\n      \"usage\": {\n        \"cycle_start\": \"2026-05-12\",\n        \"cycle_end\": \"2026-06-11\",\n        \"data_used_gb\": 19.1,\n        \"data_limit_gb\": 20,\n        \"lines\": [\n          {\"line_id\": \"LINE-1003-A\", \"label\": \"Morgan mobile\", \"device\": \"Galaxy S25\", \"status\": \"active\"},\n          {\"line_id\": \"LINE-1003-B\", \"label\": \"Family mobile\", \"device\": \"iPhone 16\", \"status\": \"active\"}\n        ]\n      },\n      \"service\": {\n        \"overall_status\": \"active\",\n        \"outage\": {\"status\": \"none\", \"area\": \"Denver, CO\", \"eta\": \"\"},\n        \"recommended_steps\": {\n          \"slow_data\": [\"Review data usage near plan limit\", \"Switch to Wi-Fi for large downloads\", \"Restart the device\", \"Consider plan change if usage remains high\"],\n          \"no_service\": [\"Restart the device\", \"Confirm the affected line\", \"Reset network settings\"]\n        }\n      }\n    }\n  }\n}"
+      customer_role: primary
+      last_issue_summary: ''
+      _escalation_reason: ''
+      auth_status: authenticated
+      customer_tier: premium
+      customer_name: Jordan Lee
+      active_line_id: LINE-1001-A
+      no_input_counter: '0'
+    expectations:
+    - type: contains
+      value: Jordan Lee
+  - turn: T2_escalation
+    user: I want to talk to a human agent now.
+    expectations:
+    - type: tool_called
+      value: set_session_state
+  expectations:
+  - The agent must acknowledge the request to speak with a human agent.
+  - The agent must initiate the escalation to a live specialist.
