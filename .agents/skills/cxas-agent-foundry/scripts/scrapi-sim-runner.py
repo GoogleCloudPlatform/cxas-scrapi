@@ -626,7 +626,7 @@ function jumpToRun(evalName, runIdx) {{
     print(f"Report saved locally to: {output_path}")
 
 
-def _run_single_eval(app_name, tc, run_idx, runs, model, modality, verbose):
+def _run_single_eval(app_name, tc, run_idx, runs, model, modality, verbose, region="global"):
     """Run a single eval iteration. Designed to be called from a thread pool."""
     name = tc["name"]
     label = f"{name} (run {run_idx + 1}/{runs})"
@@ -635,7 +635,7 @@ def _run_single_eval(app_name, tc, run_idx, runs, model, modality, verbose):
         # Each thread gets its own SimRunner instance (separate session client)
         import time as _time
         _start = _time.time()
-        sim = EnhancedSimRunner(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+        sim = EnhancedSimRunner(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION, vertex_location=region)
         conv = sim.simulate_conversation(
             test_case=tc,
             model=model,
@@ -775,7 +775,7 @@ def cmd_run(args):
     if parallel <= 1:
         # Sequential execution
         for tc, run_idx in jobs:
-            result = _run_single_eval(app_name, tc, run_idx, runs, model, modality, args.verbose)
+            result = _run_single_eval(app_name, tc, run_idx, runs, model, modality, args.verbose, region=args.region)
             all_results.append(result)
     else:
         # Parallel execution
@@ -784,7 +784,7 @@ def cmd_run(args):
             for tc, run_idx in jobs:
                 future = executor.submit(
                     _run_single_eval, app_name, tc, run_idx, runs,
-                    model, modality, False  # disable verbose in parallel mode
+                    model, modality, False, region=args.region  # disable verbose in parallel mode
                 )
                 futures[future] = (tc["name"], run_idx)
 
@@ -876,6 +876,7 @@ def main():
     p_run.add_argument("--model", default=None)
     p_run.add_argument("--runs", type=int, default=1)
     p_run.add_argument("--parallel", type=int, default=1, help="Number of concurrent sessions (default: 1)")
+    p_run.add_argument("--region", default="global", help="Vertex AI region to use for model generation (e.g. us-central1)")
     p_run.add_argument("--verbose", action="store_true")
     p_run.add_argument(
         "--gcs-report-path",
