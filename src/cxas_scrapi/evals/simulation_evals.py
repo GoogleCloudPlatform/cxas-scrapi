@@ -29,9 +29,9 @@ from rich.progress import Progress
 
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.conversation_history import ConversationHistory
+from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.core.tools import Tools
-from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.prompts import llm_user_prompts
 from cxas_scrapi.utils.eval_utils import (
     Conversation as GoldenConversation,
@@ -369,7 +369,11 @@ class SimulationEvals(Apps):
             A tuple of (agent_text, trace_chunks, session_ended)
         """
         parsed = ParsedSessionResponse(response, tools_map=self.tools_map)
-        return parsed.consolidated_agent_text, parsed.detailed_trace, parsed.session_ended
+        return (
+            parsed.consolidated_agent_text,
+            parsed.detailed_trace,
+            parsed.session_ended,
+        )
 
     def _evaluate_expectations(
         self,

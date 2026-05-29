@@ -163,6 +163,6 @@ bin/
 .agents/**/*.pyc
 
 # Local evaluation results, scratch notebooks/scripts and temp configurations
-evals/
-scratch/
-temp_sims/
+/evals/
+/scratch/
+/temp_sims/

@@ -18,17 +18,16 @@ import datetime
 import json
 import logging
 import time
-from typing import Annotated, Any, Dict, List, NamedTuple, Optional
+from typing import Annotated, Any, Dict, NamedTuple, Optional
 
 import pandas as pd
-from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, BeforeValidator, Field
 from rich.progress import track
 
 from cxas_scrapi.core.agents import Agents
 from cxas_scrapi.core.apps import Apps
-from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
+from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.utils.eval_utils import EvalUtils
 
 logger = logging.getLogger(__name__)
