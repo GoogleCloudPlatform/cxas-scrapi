@@ -162,6 +162,83 @@ def _session_row(test, ces_base_a, ces_base_b, label_a, label_b):
     )
 
 
+def _render_sxs_merged_items(merged: list, session_id: str, modality: str) -> str:
+    """Render merged trace items to HTML, with optional audio players."""
+    html = ""
+    user_turn_idx = 0
+    agent_turn_idx = 0
+    for item in merged:
+        kind = item[0]
+        if kind == "user":
+            user_turn_idx += 1
+            html += f'<div class="user"><b>User:</b> {_e(item[1])}'
+            if modality == "audio" and session_id:
+                html += (
+                    f'<audio controls preload="none" class="turn-audio" '
+                    f'src="audio/{session_id}/user-turn-{user_turn_idx}.wav"></audio>'
+                )
+            html += '</div>\n'
+        elif kind == "agent":
+            agent_turn_idx += 1
+            html += f'<div class="agent"><b>Agent:</b> {_e(item[1])}'
+            if modality == "audio" and session_id:
+                html += (
+                    f'<audio controls preload="none" class="turn-audio" '
+                    f'src="audio/{session_id}/agent-turn-{agent_turn_idx}.wav"></audio>'
+                )
+            html += '</div>\n'
+        elif kind in ("tool_call", "tool_pair"):
+            call_text = item[1]
+            lbl, _, args = call_text.partition(" with args ")
+            lbl = lbl.replace("Tool Call: ", "").replace(
+                "Tool Call (Output): ", ""
+            )
+            lbl = lbl.split("/")[-1] if "/" in lbl else lbl
+            html += (
+                f'<details class="tool-details"><summary class="tool-summary">'
+                f"&#128295; <b>{_e(lbl)}</b></summary>"
+            )
+            if args:
+                html += (
+                    f'<div class="tool-section"><b>Input:</b></div>'
+                    f'<pre class="tool-data">{_e(args)}</pre>'
+                )
+            if kind == "tool_pair":
+                _, _, result = item[2].partition(" with result ")
+                if result:
+                    html += (
+                        f'<div class="tool-section"><b>Output:</b></div>'
+                        f'<pre class="tool-data">{_e(result)}</pre>'
+                    )
+            html += "</details>\n"
+        elif kind == "tool_resp":
+            lbl, _, result = item[1].partition(" with result ")
+            lbl = lbl.replace("Tool Response: ", "").split("/")[-1]
+            html += (
+                f'<details class="tool-details"><summary class="tool-summary">'
+                f"&#128228; <b>{_e(lbl)}</b> response</summary>"
+            )
+            if result:
+                html += f'<pre class="tool-data">{_e(result)}</pre>'
+            html += "</details>\n"
+        elif kind == "agent_transfer":
+            html += (
+                f'<div class="system">&#128256; <b>Agent Transfer:</b>'
+                f" {_e(item[1])}</div>\n"
+            )
+        elif kind == "custom_payload":
+            html += (
+                f'<details class="tool-details">'
+                f'<summary class="tool-summary">'
+                f'&#128230; <b>Custom Payload</b></summary>'
+                f'<pre class="tool-data">{_e(item[1])}</pre>'
+                f"</details>\n"
+            )
+        else:
+            html += f'<div class="system">{_e(item[1])}</div>\n'
+    return html
+
+
 def _render_sim_test_card(
     test: dict,
     label_a: str,
@@ -169,6 +246,7 @@ def _render_sim_test_card(
     ces_base_a: str,
     ces_base_b: str,
     idx: int,
+    modality: str = "text",
 ) -> str:
     name = test["name"]
     outcome, header_cls, delta, delta_cls, a_badge, b_badge, body_display = (
@@ -268,27 +346,37 @@ def _render_sim_test_card(
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
         _parse_trace,
         _merge_trace_lines,
-        _render_merged_items,
     )
 
-    def _render_sxs_trace(trace, turns, label):
+    def _render_sxs_trace(trace, turns, label, session_id):
         if not trace:
             return ""
         parsed = _parse_trace(trace, {})
         merged = _merge_trace_lines(parsed)
-        body = _render_merged_items(merged)
+        body = _render_sxs_merged_items(merged, session_id, modality)
+        audio_player_html = ""
+        if modality == "audio" and session_id:
+            audio_player_html = f"""
+            <div class="audio-player">
+              <span class="audio-label">Full Conversation</span>
+              <audio controls preload="none" src="audio/{session_id}/full-scenario.wav"></audio>
+            </div>
+            """
         return (
             f'<details><summary>&#128172; Conversation — {_e(label)}'
             f" ({turns} turns)</summary>"
-            f'<div class="transcript">{body}</div></details>'
+            f'<div class="transcript">'
+            f'{audio_player_html}'
+            f'{body}'
+            f'</div></details>'
         )
 
     transcripts_html = ""
     trace_a_html = _render_sxs_trace(
-        test.get("trace_a", []), test.get("turns_a", "?"), label_a
+        test.get("trace_a", []), test.get("turns_a", "?"), label_a, test.get("session_a")
     )
     trace_b_html = _render_sxs_trace(
-        test.get("trace_b", []), test.get("turns_b", "?"), label_b
+        test.get("trace_b", []), test.get("turns_b", "?"), label_b, test.get("session_b")
     )
     if trace_a_html or trace_b_html:
         transcripts_html = (
@@ -325,10 +413,11 @@ def _render_test_card(
     ces_base_a: str,
     ces_base_b: str,
     idx: int,
+    modality: str = "text",
 ) -> str:
     if test.get("type") == "sim":
         return _render_sim_test_card(
-            test, label_a, label_b, ces_base_a, ces_base_b, idx
+            test, label_a, label_b, ces_base_a, ces_base_b, idx, modality=modality
         )
 
     # Turn-eval card (original logic)
@@ -592,10 +681,11 @@ def generate_sxs_html_report(
 </div>
 """
 
+    modality = sxs_results.get("modality", "text")
     cards_html = ""
     for idx, test in enumerate(tests):
         cards_html += _render_test_card(
-            test, label_a, label_b, ces_a, ces_b, idx
+            test, label_a, label_b, ces_a, ces_b, idx, modality=modality
         )
 
     html = f"""<!DOCTYPE html>

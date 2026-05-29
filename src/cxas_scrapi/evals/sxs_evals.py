@@ -108,13 +108,16 @@ class SxSEvals:
         """
         eval_type = _detect_eval_type(eval_file)
         if eval_type == "sim":
-            return self._run_sxs_sims(
+            results = self._run_sxs_sims(
                 eval_file,
                 filter_tags=filter_tags,
                 runs=runs,
                 modality=modality,
             )
-        return self._run_sxs_turns(eval_file, filter_tags=filter_tags)
+        else:
+            results = self._run_sxs_turns(eval_file, filter_tags=filter_tags)
+        results["modality"] = modality
+        return results
 
     # ------------------------------------------------------------------
     # Turn-eval path
