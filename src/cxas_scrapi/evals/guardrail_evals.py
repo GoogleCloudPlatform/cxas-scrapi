@@ -101,8 +101,6 @@ class GuardrailEvals:
         except IndexError as e:
             raise ValueError(f"Invalid resource name format: {name}") from e
 
-
-
     def run_guardrail_tests(
         self,
         df: pd.DataFrame,
