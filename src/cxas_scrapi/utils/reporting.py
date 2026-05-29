@@ -18,6 +18,7 @@ import datetime
 import glob
 import json
 import os
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import jinja2
@@ -517,20 +518,36 @@ def generate_html_report(
 
 
 def generate_combined_html_report(
-    golden_results=None,
-    sim_results=None,
-    tool_results=None,
-    callback_results=None,
-    output_path="",
-    app_name="",
-    golden_modality="text",
-    sim_modality="text",
-    sim_wall_clock_s=None,
-    user_agent_extension=None,
-    bg_noise_file=None,
+    golden_results: list[dict[str, Any]] | None = None,
+    sim_results: list[dict[str, Any]] | None = None,
+    tool_results: list[dict[str, Any]] | None = None,
+    callback_results: list[dict[str, Any]] | None = None,
+    output_path: str = "",
+    app_name: str = "",
+    golden_modality: str = "text",
+    sim_modality: str = "text",
+    sim_wall_clock_s: float | None = None,
+    user_agent_extension: str | None = None,
+    bg_noise_file: str=None,
     burst_noise_files=None,
-):
-    """Generate combined HTML report based on results from multiple sources."""
+) -> str:
+    """Generate combined HTML report based on results from multiple sources.
+
+    Args:
+      golden_results: The list of golden evaluation results.
+      sim_results: The list of simulation evaluation results.
+      tool_results: The list of tool evaluation results.
+      callback_results: The list of callback evaluation results.
+      output_path: The path to save the HTML report (local or GCS).
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      golden_modality: The modality used for the golden evaluations.
+      sim_modality: The modality used for the simulation evaluations.
+      sim_wall_clock_s: Total elapsed execution time for simulations in seconds.
+      user_agent_extension: Optional user agent extension string.
+
+    Returns:
+      The rendered HTML report markup string.
+    """
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     g_total = len(golden_results) if golden_results else 0
@@ -808,6 +825,72 @@ def generate_combined_html_report(
                         merged.append((kind, text))
                 r["_processed_trace"] = merged
 
+
+
+    # Compile Tool evaluation table via Python Component
+    if tool_results:
+        t_pct = 100 * t_passed / t_total if t_total else 0
+        t_pct_str = f"{t_pct:.0f}"
+        rows = [
+            report_components.ToolRow(
+                passed_str="true" if r["passed"] else "false",
+                status_class="pass" if r["passed"] else "fail",
+                status=r.get("status", "?"),
+                tool_name=r.get("tool", "?"),
+                test_name=r.get("name", "?"),
+                latency=(
+                    f"{r.get('latency_ms', 0):.0f}ms"
+                    if r.get("latency_ms")
+                    else "-"
+                ),
+                errors=str(r.get("errors", ""))[:100],
+            )
+            for r in sorted(tool_results, key=lambda x: x.get("passed", False))
+        ]
+
+    if tool_results:
+        tool_results_html = report_components.ToolCard(
+            passed=t_passed,
+            total=t_total,
+            pct_str=t_pct_str,
+            tool_rows=base_components.Raw(
+                "\n".join(row.render() for row in rows)
+            ),
+        ).render()
+    else:
+        tool_results_html = ""
+
+    # Compile Callback evaluation table via Python Component
+    if callback_results:
+        c_pct = 100 * c_passed / c_total if c_total else 0
+        c_pct_str = f"{c_pct:.0f}"
+        rows = [
+            report_components.CallbackRow(
+                passed_str="true" if r["passed"] else "false",
+                status_class="pass" if r["passed"] else "fail",
+                status=r.get("status", "?"),
+                agent_name=r.get("agent", "?"),
+                callback_type=r.get("callback_type", "?"),
+                test_name=r.get("name", "?"),
+                error=str(r.get("error", ""))[:100],
+            )
+            for r in sorted(
+                callback_results, key=lambda x: x.get("passed", False)
+            )
+        ]
+
+    if callback_results:
+        callback_results_html = report_components.CallbackCard(
+            passed=c_passed,
+            total=c_total,
+            pct_str=c_pct_str,
+            callback_rows=base_components.Raw(
+                "\n".join(row.render() for row in rows)
+            ),
+        ).render()
+    else:
+        callback_results_html = ""
+
     template_path = os.path.join(
         os.path.dirname(__file__), "combined_report_template.html"
     )
@@ -842,12 +925,12 @@ def generate_combined_html_report(
         _escape=_escape,
         _fmt_duration=_fmt_duration,
         json=json,
-        css_content=load_component("base/base.css"),
-        js_interaction=load_component("base/interaction.js"),
         bg_noise_file=(
             os.path.basename(bg_noise_file) if bg_noise_file else None
         ),
         burst_noise_files=burst_noise_files,
+        tool_results_html=tool_results_html,
+        callback_results_html=callback_results_html,
     )
 
     # Wrap compiled body dynamically in declarative BaseShell scaffold envelope.
@@ -881,8 +964,100 @@ def _outcome_str(val):
     return str(val) if val else "?"
 
 
-def load_golden_results(run_id: str, app_name: str, include: list[str] = None):
-    """Fetch golden results and parse into report-friendly format."""
+def _compile_tool_results_card(
+    *,
+    tool_results: Sequence[Mapping[str, Any]],
+    t_passed: int,
+    t_total: int,
+) -> report_components.ToolCard | str:
+    """Compile the ToolCard component declaratively without premature rendering.
+
+    Args:
+      tool_results: Sequence of raw tool validation outcomes..
+      t_passed: Number of successful tool test cases..
+      t_total: Total number of tool test cases executed..
+
+    Returns:
+      A ToolCard component or empty string if empty.
+    """
+    if not tool_results:
+        return ""
+    t_pct = 100 * t_passed / t_total if t_total else 0
+    rows = (
+        report_components.ToolRow(
+            passed=r["passed"],
+            status_class="pass" if r["passed"] else "fail",
+            status=r.get("status", "?"),
+            tool_name=r.get("tool", "?"),
+            test_name=r.get("name", "?"),
+            latency_ms=r.get("latency_ms"),
+            errors=r.get("errors", "")[:100],
+        )
+        for r in sorted(tool_results, key=lambda x: x.get("passed", False))
+    )
+    return report_components.ToolCard(
+        passed=t_passed,
+        total=t_total,
+        pct_str=f"{t_pct:.0f}",
+        tool_rows=base_components.ComponentGroup(list(rows)),
+    )
+
+
+def _compile_callback_results_card(
+    *,
+    callback_results: Sequence[Mapping[str, Any]],
+    c_passed: int,
+    c_total: int,
+) -> report_components.CallbackCard | str:
+    """Compile the CallbackCard component declaratively without premature
+
+    rendering.
+
+    Args:
+      callback_results: Sequence of raw callback execution outcomes..
+      c_passed: Number of successful callback test cases..
+      c_total: Total number of callback test cases executed..
+
+    Returns:
+      A CallbackCard component or empty string if empty.
+    """
+    if not callback_results:
+        return ""
+    c_pct = 100 * c_passed / c_total if c_total else 0
+    rows = (
+        report_components.CallbackRow(
+            passed=r["passed"],
+            status_class="pass" if r["passed"] else "fail",
+            status=r.get("status", "?"),
+            agent_name=r.get("agent", "?"),
+            callback_type=r.get("callback_type", "?"),
+            test_name=r.get("name", "?"),
+            error=r.get("error", "")[:100],
+        )
+        for r in sorted(callback_results, key=lambda x: x.get("passed", False))
+    )
+    return report_components.CallbackCard(
+        passed=c_passed,
+        total=c_total,
+        pct_str=f"{c_pct:.0f}",
+        callback_rows=base_components.ComponentGroup(list(rows)),
+    )
+
+
+def load_golden_results(
+    run_id: str, app_name: str, include: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """Fetch golden results and parse into report-friendly format.
+
+    Args:
+      run_id: The evaluation run ID to load results for.
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      include: Categories of evaluations to include (e.g. 'goldens',
+        'scenarios').
+
+    Returns:
+      A list of formatted evaluation result dictionaries.
+    """
     if include is None:
         include = ["goldens", "scenarios"]
 
@@ -1166,8 +1341,15 @@ def load_sim_results(json_path: str, sim_evals_yaml: str = None):
     return results, wall_clock_s
 
 
-def load_tool_test_results(csv_or_json_path):
-    """Load tool test results from a CSV or JSON file."""
+def load_tool_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
+    """Load tool test results from a CSV or JSON file.
+
+    Args:
+      csv_or_json_path: Path to the CSV or JSON tool test results file.
+
+    Returns:
+      A list of formatted tool test result dictionaries.
+    """
     if csv_or_json_path.endswith(".csv"):
         df = pd.read_csv(csv_or_json_path)
     else:
@@ -1187,8 +1369,15 @@ def load_tool_test_results(csv_or_json_path):
     return results
 
 
-def load_callback_test_results(csv_or_json_path):
-    """Load callback test results from a CSV or JSON file."""
+def load_callback_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
+    """Load callback test results from a CSV or JSON file.
+
+    Args:
+      csv_or_json_path: Path to the CSV or JSON callback test results file.
+
+    Returns:
+      A list of formatted callback test result dictionaries.
+    """
     if csv_or_json_path.endswith(".csv"):
         df = pd.read_csv(csv_or_json_path)
     else:
@@ -1210,23 +1399,23 @@ def load_callback_test_results(csv_or_json_path):
 
 def generate_combined_report_from_dir(
     output_dir: str,
-    golden_run: str = None,
-    app_name: str = None,
-    output_path: str = None,
+    golden_run: str | None = None,
+    app_name: str | None = None,
+    output_path: str | None = None,
     run: bool = False,
-    app_dir: str = None,
-    tool_test_file: str = None,
-    goldens_dir: str = None,
-    simulation_dir: str = None,
-    include: list[str] = None,
+    app_dir: str | None = None,
+    tool_test_file: str | None = None,
+    goldens_dir: str | None = None,
+    simulation_dir: str | None = None,
+    include: list[str] | None = None,
     modality: str = "text",
     runs: int = 1,
-    filter_files: list[str] = None,
-    filter_tags: list[str] = None,
+    filter_files: list[str] | None = None,
+    filter_tags: list[str] | None = None,
     parallel: int = 1,
     golden_timeout: int = 600,
-    bg_noise_file=None,
-    burst_noise_files=None,
+    bg_noise_file = None,
+    burst_noise_files = None,
 ) -> str:
     """Load results from directory and generate combined HTML report.
 

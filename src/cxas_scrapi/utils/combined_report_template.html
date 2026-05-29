@@ -1,14 +1,3 @@
-<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<title>Combined Eval Report - {{ ts }}</title>
-<style>
-  {{ css_content }}
-</style>
-<script>
-  {{ js_interaction }}
-</script>
-</head><body>
 <h1>Combined Eval Report</h1>
 <div class="summary">
   <div class="summary-top">
@@ -399,42 +388,10 @@
   {% endfor %}
 {% endif %}
 
-{% if tool_results %}
-  {% set t_pct = 100 * t_passed / t_total if t_total else 0 %}
-  <h2 id="section-tools">Tool Tests <span class="meta">({{ t_passed }}/{{ t_total }} — {{ "%.0f" | format(t_pct) }}%)</span></h2>
-  <table>
-    <tr><th>Result</th><th>Tool</th><th>Test</th><th>Latency</th><th>Errors</th></tr>
-    {% for r in tool_results | sort(attribute='passed') %}
-      {% set cls = "pass" if r["passed"] else "fail" %}
-      {% set passed_str = "true" if r["passed"] else "false" %}
-      {% set lat = "%.0fms" | format(r["latency_ms"]) if r.get("latency_ms") else "-" %}
-      <tr data-passed="{{ passed_str }}">
-        <td class="{{ cls }}"><b>{{ r["status"] }}</b></td>
-        <td>{{ r["tool"] | escape }}</td>
-        <td>{{ r["name"] | escape }}</td>
-        <td>{{ lat }}</td>
-        <td>{{ r.get("errors", "") | string | truncate(100) | escape }}</td>
-      </tr>
-    {% endfor %}
-  </table>
+{% if tool_results_html %}
+  {{ tool_results_html | safe }}
 {% endif %}
 
-{% if callback_results %}
-  {% set c_pct = 100 * c_passed / c_total if c_total else 0 %}
-  <h2 id="section-callbacks">Callback Tests <span class="meta">({{ c_passed }}/{{ c_total }} — {{ "%.0f" | format(c_pct) }}%)</span></h2>
-  <table>
-    <tr><th>Result</th><th>Agent</th><th>Callback</th><th>Test</th><th>Error</th></tr>
-    {% for r in callback_results | sort(attribute='passed') %}
-      {% set cls = "pass" if r["passed"] else "fail" %}
-      {% set passed_str = "true" if r["passed"] else "false" %}
-      <tr data-passed="{{ passed_str }}">
-        <td class="{{ cls }}"><b>{{ r["status"] }}</b></td>
-        <td>{{ r["agent"] | escape }}</td>
-        <td>{{ r["callback_type"] | escape }}</td>
-        <td>{{ r["name"] | escape }}</td>
-        <td>{{ r.get("error", "") | string | truncate(100) | escape }}</td>
-      </tr>
-    {% endfor %}
-  </table>
+{% if callback_results_html %}
+  {{ callback_results_html | safe }}
 {% endif %}
-</body></html>

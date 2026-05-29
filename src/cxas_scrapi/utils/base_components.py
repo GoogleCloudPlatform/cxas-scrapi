@@ -88,6 +88,10 @@ class Component(abc.ABC):
 
     template: str = ""
 
+    def __str__(self) -> str:
+        """Transparently redirects string interpolation to render()."""
+        return self.render()
+
     def get_resolved_template(self) -> str:
         """Gets the resolved template HTML string resolved lazily on first
 
