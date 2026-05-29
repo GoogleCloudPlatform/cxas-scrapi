@@ -12,25 +12,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Component path auto-discovery and template loading helpers for HTML
-reporting.
-"""
+"""Concrete visual components library for cxas_scrapi HTML reporting."""
 
 from __future__ import annotations
 
-import functools
-import os
+from collections.abc import Sequence
 
-# Resolve paths relative to this file
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-COMPONENTS_DIR = os.path.normpath(
-    os.path.join(CURRENT_DIR, "../resources/components")
-)
+from cxas_scrapi.utils import base_components
 
 
-@functools.cache
-def load_component(relative_path: str) -> str:
-    """Helper to load raw component text from resources directory cached E2E."""
-    full_path = os.path.join(COMPONENTS_DIR, relative_path)
-    with open(full_path, "r", encoding="utf-8") as f:
-        return f.read()
+class BaseShell(base_components.Component):
+    """A presentational envelope scaffolding the entire HTML report document.
+
+    Attributes:
+      template: Scaffolding layout relative template file path string.
+      title: Scaffolding page document title string.
+      body_content: Sequence containing visual child component tree contents.
+    """
+
+    template = "base/base_shell.html"
+
+    def __init__(
+        self,
+        title: str,
+        body_content: Sequence[base_components.Component],
+    ) -> None:
+        """Initializes the instance.
+
+        Args:
+          title: Scaffolding page document title string.
+          body_content: Sequence containing visual child component tree
+            contents.
+        """
+        super().__init__()
+        self.title = title
+        self.body_content = body_content
+
+    def render(self) -> str:
+        """Renders the complete visual page envelope.
+
+        Embeds base styles, interactions, and body content.
+        """
+        return self.substitute(
+            TITLE=self.title,
+            CSS_CONTENT=base_components.Raw(
+                base_components.load_component("base/base.css")
+            ),
+            BODY_CONTENT=self.body_content,
+            JS_CONTENT=base_components.Raw(
+                base_components.load_component("base/interaction.js")
+            ),
+        )

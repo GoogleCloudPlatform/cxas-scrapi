@@ -14,21 +14,24 @@
 
 """Utility functions for generating reports."""
 
+import datetime
 import glob
 import json
 import os
-from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
+import jinja2
 import pandas as pd
 import yaml
-from jinja2 import Template
 
-from cxas_scrapi.core.tools import Tools
+from cxas_scrapi.core import tools
 from cxas_scrapi.evals import runner as evals_runner
-from cxas_scrapi.utils.eval_utils import EvalUtils
-from cxas_scrapi.utils.gcs_utils import GCSUtils
-from cxas_scrapi.utils.report_components import load_component
+from cxas_scrapi.utils import (
+    base_components,
+    eval_utils,
+    gcs_utils,
+    report_components,
+)
 
 
 def _escape(text):
@@ -158,7 +161,7 @@ def _render_session_link(session_id, ces_base):
             f"{ces_base}?panel=conversation_list&id={session_id}&source=EVAL"
         )
         return (
-            f'<div class="session-link">Session: '
+            '<div class="session-link">Session: '
             f'<a href="{session_url}" target="_blank">'
             f"<code>{session_id}</code></a></div>\n"
         )
@@ -176,7 +179,7 @@ def _render_session_parameters(sparams):
         "&#9881; <b>Session Parameters</b></summary>"
     )
     html += (
-        f'<pre class="tool-data">'
+        '<pre class="tool-data">'
         f"{_escape(json.dumps(sparams, indent=2))}</pre></details>\n"
     )
     return html
@@ -293,19 +296,19 @@ def _render_merged_items(merged):
             )
             lbl = lbl.split("/")[-1] if "/" in lbl else lbl
             html += (
-                f'<details class="tool-details"><summary class="tool-summary">'
+                '<details class="tool-details"><summary class="tool-summary">'
                 f"&#128295; <b>{_escape(lbl)}</b></summary>"
             )
             if args:
                 html += (
-                    f'<div class="tool-section"><b>Input:</b></div>'
+                    '<div class="tool-section"><b>Input:</b></div>'
                     f'<pre class="tool-data">{_escape(args)}</pre>'
                 )
             if kind == "tool_pair":
                 _, _, result = item[2].partition(" with result ")
                 if result:
                     html += (
-                        f'<div class="tool-section"><b>Output:</b></div>'
+                        '<div class="tool-section"><b>Output:</b></div>'
                         f'<pre class="tool-data">{_escape(result)}</pre>'
                     )
             html += "</details>\n"
@@ -313,7 +316,7 @@ def _render_merged_items(merged):
             lbl, _, result = item[1].partition(" with result ")
             lbl = lbl.replace("Tool Response: ", "").split("/")[-1]
             html += (
-                f'<details class="tool-details"><summary class="tool-summary">'
+                '<details class="tool-details"><summary class="tool-summary">'
                 f"&#128228; <b>{_escape(lbl)}</b> response</summary>"
             )
             if result:
@@ -321,16 +324,16 @@ def _render_merged_items(merged):
             html += "</details>\n"
         elif kind == "agent_transfer":
             html += (
-                f'<div class="system">&#128256; <b>Agent Transfer:</b>'
+                '<div class="system">&#128256; <b>Agent Transfer:</b>'
                 f" {_escape(item[1])}</div>\n"
             )
         elif kind == "custom_payload":
             html += (
-                f'<details class="tool-details">'
-                f'<summary class="tool-summary">'
-                f"&#128230; <b>Custom Payload</b></summary>"
+                '<details class="tool-details">'
+                '<summary class="tool-summary">'
+                "&#128230; <b>Custom Payload</b></summary>"
                 f'<pre class="tool-data">{_escape(item[1])}</pre>'
-                f"</details>\n"
+                "</details>\n"
             )
         else:
             html += f'<div class="system">{_escape(item[1])}</div>\n'
@@ -397,32 +400,41 @@ def _get_run_detail(r, ces_base, tools_map):
     return html
 
 
-def _upload_to_gcs(output_path: str, html: str) -> str | None:
+def _upload_to_gcs(output_path: str, html_content: str) -> str | None:
     """Uploads the report to GCS and returns the mTLS URL or None on failure."""
     try:
-        gcs = GCSUtils()
-        mtls_url = gcs.upload_string(output_path, html)
+        gcs = gcs_utils.GCSUtils()
+        mtls_url = gcs.upload_string(output_path, html_content)
         print(f"Report uploaded to GCS: {output_path}")
         print(f"Authenticated URL: {mtls_url}")
         return mtls_url
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"WARNING: GCS upload failed ({e}). Falling back to local file.")
         return None
 
 
 def generate_html_report(
-    results: List[Dict[str, Any]],
+    results: list[dict[str, Any]],
     output_path: str,
     modality: str,
     model: str,
     app_name: str = "",
     wall_clock_s: float = None,
     user_agent_extension: str = None,
-):
+) -> None:
     """Generate an HTML report and save it locally or upload to GCS.
 
     If output_path starts with 'gs://', the report is uploaded to GCS.
     If the upload fails, it falls back to saving a local file.
+
+    Args:
+      results: The list of evaluation result dicts.
+      output_path: The local or GCS file path to write the HTML report to.
+      modality: The modality used for the evaluation (e.g., 'text').
+      model: The model name used for the evaluation.
+      app_name: The CX Agent Studio (CXAS) agent resource name.
+      wall_clock_s: Total elapsed execution time in seconds.
+      user_agent_extension: Optional user agent extension string.
     """
     total = len(results)
     passed = sum(1 for r in results if r.get("passed"))
@@ -441,10 +453,10 @@ def generate_html_report(
     tools_map = {}
     if app_name:
         try:
-            tools_map = Tools(
+            tools_map = tools.Tools(
                 app_name=app_name, user_agent_extension=user_agent_extension
             ).get_tools_map()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
     parts = app_name.split("/") if app_name else []
@@ -460,7 +472,7 @@ def generate_html_report(
         else ""
     )
 
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     html = _get_html_head(ts)
     html += _get_summary_block(
@@ -519,7 +531,7 @@ def generate_combined_html_report(
     burst_noise_files=None,
 ):
     """Generate combined HTML report based on results from multiple sources."""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     g_total = len(golden_results) if golden_results else 0
     g_passed = (
@@ -660,13 +672,13 @@ def generate_combined_html_report(
                         if ctype == "transfer":
                             if actual == "(missed)":
                                 reason = (
-                                    f"Routing missed: expected transfer to "
-                                    f"{expected}"
+                                    "Routing missed: expected transfer to"
+                                    f" {expected}"
                                 )
                             else:
                                 reason = (
-                                    f"Wrong routing: expected {expected}, "
-                                    f"got {actual}"
+                                    f"Wrong routing: expected {expected},"
+                                    f" got {actual}"
                                 )
                         elif ctype == "tool_call" and actual == "(missed)":
                             if expected:
@@ -705,7 +717,7 @@ def generate_combined_html_report(
             for exp in r.get("expectation_details", []):
                 if exp.get("status") == "Not Met":
                     reason = (
-                        f"Expectation not met: "
+                        "Expectation not met: "
                         f"{exp.get('expectation', '')[:60]}"
                     )
                     failure_groups.setdefault(reason, set()).add(
@@ -750,10 +762,10 @@ def generate_combined_html_report(
     tools_map = {}
     if app_name:
         try:
-            tools_map = Tools(
+            tools_map = tools.Tools(
                 app_name=app_name, user_agent_extension=user_agent_extension
             ).get_tools_map()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
     # Process traces for simulation results to simplify template
@@ -801,7 +813,7 @@ def generate_combined_html_report(
     )
     with open(template_path, "r") as f:
         template_content = f.read()
-    template = Template(template_content)
+    template = jinja2.Template(template_content)
     html = template.render(
         ts=ts,
         pct=pct,
@@ -838,11 +850,16 @@ def generate_combined_html_report(
         burst_noise_files=burst_noise_files,
     )
 
-    html = _get_html_head(ts) + html + "</body></html>"
+    # Wrap compiled body dynamically in declarative BaseShell scaffold envelope.
+    report = report_components.BaseShell(
+        title=f"Combined Eval Report - {ts}",
+        body_content=[base_components.Raw(html)],
+    )
+    html_out = report.render()
 
     if output_path:
         if output_path.startswith("gs://"):
-            mtls_url = _upload_to_gcs(output_path, html)
+            mtls_url = _upload_to_gcs(output_path, html_out)
             if not mtls_url:
                 # Fallback to local file if upload failed
                 filename = output_path.rsplit("/", maxsplit=1)[-1]
@@ -850,12 +867,12 @@ def generate_combined_html_report(
                     filename = "report_fallback.html"
                 output_path = filename
                 with open(output_path, "w") as f:
-                    f.write(html)
+                    f.write(html_out)
         else:
             with open(output_path, "w") as f:
-                f.write(html)
+                f.write(html_out)
 
-    return html
+    return html_out
 
 
 def _outcome_str(val):
@@ -864,14 +881,12 @@ def _outcome_str(val):
     return str(val) if val else "?"
 
 
-def load_golden_results(
-    run_id, app_name, include=None, user_agent_extension=None
-):
+def load_golden_results(run_id: str, app_name: str, include: list[str] = None):
     """Fetch golden results and parse into report-friendly format."""
     if include is None:
         include = ["goldens", "scenarios"]
 
-    utils = EvalUtils(app_name=app_name)
+    utils = eval_utils.EvalUtils(app_name=app_name)
     full_run_id = (
         run_id
         if run_id.startswith("projects/")
@@ -972,14 +987,13 @@ def load_golden_results(
                         at.get("target_agent", "").split("/")[-1],
                     )
                     obs = o.get("observed_agent_transfer", {})
-                    comp["actual"] = (
-                        obs.get(
+                    if obs:
+                        comp["actual"] = obs.get(
                             "display_name",
                             obs.get("target_agent", "").split("/")[-1],
                         )
-                        if obs
-                        else "(missed)"
-                    )
+                    else:
+                        comp["actual"] = "(missed)"
                 else:
                     continue
 
@@ -1030,7 +1044,7 @@ def load_golden_results(
                         turn_input = ("event", str(ui["event"]))
                 if turn_input:
                     turn_inputs.append(turn_input)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
         for i, turn in enumerate(turns):
@@ -1070,8 +1084,15 @@ def load_golden_results(
     return results
 
 
-def _load_sim_test_cases(yaml_path: str) -> list[dict]:
-    """Loads sim files and merges common params and expectations."""
+def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
+    """Loads sim files and merges common params and expectations.
+
+    Args:
+      yaml_path: Path to the YAML test cases file.
+
+    Returns:
+      List of merged evaluation test case dicts.
+    """
     with open(yaml_path) as f:
         data = yaml.safe_load(f) or {}
     if isinstance(data, list):
@@ -1101,10 +1122,17 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict]:
     return merged_cases
 
 
-def load_sim_results(json_path, sim_evals_yaml=None):
+def load_sim_results(json_path: str, sim_evals_yaml: str = None):
     """Load sim results from JSON file.
 
     Handles both old (list) and new (envelope) formats.
+
+    Args:
+      json_path: The JSON file path containing evaluation results.
+      sim_evals_yaml: Optional path to simulation evals YAML definition file.
+
+    Returns:
+      A tuple containing the list of simulation results and the wall clock time.
     """
     with open(json_path) as f:
         data = json.load(f)
@@ -1132,7 +1160,7 @@ def load_sim_results(json_path, sim_evals_yaml=None):
                     r["session_parameters"] = templates[r["name"]].get(
                         "session_parameters", {}
                     )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
     return results, wall_clock_s
@@ -1181,27 +1209,50 @@ def load_callback_test_results(csv_or_json_path):
 
 
 def generate_combined_report_from_dir(
-    output_dir,
-    golden_run=None,
-    app_name=None,
-    output_path=None,
-    run=False,
-    app_dir=None,
-    tool_test_file=None,
-    goldens_dir=None,
-    simulation_dir=None,
-    format="html",
-    include=None,
-    modality="text",
-    runs=1,
-    filter_files=None,
-    filter_tags=None,
-    parallel=1,
-    golden_timeout=600,
+    output_dir: str,
+    golden_run: str = None,
+    app_name: str = None,
+    output_path: str = None,
+    run: bool = False,
+    app_dir: str = None,
+    tool_test_file: str = None,
+    goldens_dir: str = None,
+    simulation_dir: str = None,
+    include: list[str] = None,
+    modality: str = "text",
+    runs: int = 1,
+    filter_files: list[str] = None,
+    filter_tags: list[str] = None,
+    parallel: int = 1,
+    golden_timeout: int = 600,
     bg_noise_file=None,
     burst_noise_files=None,
-):
-    """Load results from directory and generate combined HTML report."""
+) -> str:
+    """Load results from directory and generate combined HTML report.
+
+    Args:
+      output_dir: Directory containing the evaluation results.
+      golden_run: The golden evaluation run ID.
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      output_path: Optional GCS or local path to write the HTML report to.
+      run: If True, triggers execution of evals before compiling report.
+      app_dir: Directory containing CX Agent Studio (CXAS) agent code.
+      tool_test_file: Path to tool tests definition file.
+      goldens_dir: Directory containing golden test cases.
+      simulation_dir: Directory containing simulation test cases.
+      include: List of evaluation types to include ('sims', 'goldens', etc).
+      modality: The modality used for the evaluation (e.g., 'text').
+      runs: Number of simulation runs.
+      filter_files: List of specific files to filter evaluations by.
+      filter_tags: List of specific tags to filter evaluations by.
+      parallel: Degree of parallelism for the runs.
+      golden_timeout: Golden run execution timeout in seconds.
+      bg_noise_file: The background noise file.
+      burst_noise_files: The burst noise files.
+
+    Returns:
+      The rendered combined HTML report string.
+    """
     if not os.path.isdir(output_dir):
         raise ValueError(f"{output_dir} is not a directory.")
 
@@ -1361,26 +1412,47 @@ def generate_combined_report_from_dir(
 
 
 def run_all_evals(
-    app_name,
-    app_dir=None,
-    tool_test_file=None,
-    goldens_dir=None,
-    simulation_dir=None,
-    output_dir=None,
-    modality="text",
-    runs=1,
-    filter_files=None,
-    filter_tags=None,
-    parallel=1,
-    golden_timeout=600,
-    include=None,
+    app_name: str,
+    app_dir: str = None,
+    tool_test_file: str = None,
+    goldens_dir: str = None,
+    simulation_dir: str = None,
+    output_dir: str = None,
+    modality: str = "text",
+    runs: int = 1,
+    filter_files: list[str] = None,
+    filter_tags: list[str] = None,
+    parallel: int = 1,
+    golden_timeout: int = 600,
+    include: list[str] = None,
     bg_noise_file=None,
     burst_noise_files=None,
-):
+) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
     Deprecated legacy wrapper. Use
     `cxas_scrapi.evals.runner.run_all_evals` directly.
+
+    Args:
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      app_dir: Directory containing CX Agent Studio (CXAS) agent code.
+      tool_test_file: Path to tool tests definition file.
+      goldens_dir: Directory containing golden test cases.
+      simulation_dir: Directory containing simulation test cases.
+      output_dir: Directory to write output evaluation results.
+      modality: The modality used for the evaluation (e.g., 'text').
+      runs: Number of simulation runs.
+      filter_files: List of specific files to filter evaluations by.
+      filter_tags: List of specific tags to filter evaluations by.
+      parallel: Degree of parallelism for the runs.
+      golden_timeout: Golden run execution timeout in seconds.
+      include: List of evaluation types to include.
+      bg_noise_file: The background noise file.
+      burst_noise_files: The burst noise files.
+
+    Returns:
+      A dict containing lists of results for 'simulation', 'golden', 'tool', and
+      'callback'.
     """
     return evals_runner.run_all_evals(
         app_name=app_name,
