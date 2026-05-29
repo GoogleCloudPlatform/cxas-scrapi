@@ -891,6 +891,10 @@ def generate_combined_html_report(
     else:
         callback_results_html = ""
 
+    f_patterns = report_components.FailurePatterns(
+        failure_groups=failure_groups
+    )
+    failure_patterns_html = f_patterns.render()
     template_path = os.path.join(
         os.path.dirname(__file__), "combined_report_template.html"
     )
@@ -898,6 +902,7 @@ def generate_combined_html_report(
         template_content = f.read()
     template = jinja2.Template(template_content)
     html = template.render(
+        failure_patterns_html=failure_patterns_html,
         ts=ts,
         pct=pct,
         passed=passed,

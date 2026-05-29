@@ -194,3 +194,81 @@ class CallbackCard(base_components.Component):
             PCT=self.pct_str,
             CALLBACK_ROWS=self.callback_rows,
         )
+
+
+class AffectedItem(base_components.Component):
+    template = "failure_patterns/affected_item.html"
+
+    def __init__(self, type_cls: str, name: str):
+        super().__init__()
+        self.type_cls = type_cls
+        self.name = name
+
+    def render(self) -> str:
+        return self.substitute(
+            TYPE=self.type_cls,
+            EVAL_NAME=self.name,
+            SAFE_NAME=self.name.replace("'", "\\'"),
+        )
+
+
+class FailureGroup(base_components.Component):
+    template = "failure_patterns/failure_group.html"
+
+    def __init__(
+        self,
+        reason: str,
+        affected_count: int,
+        affected_items: list[base_components.Component],
+    ):
+        super().__init__()
+        self.reason = reason
+        self.affected_count = affected_count
+        self.affected_items = affected_items
+
+    def render(self) -> str:
+        return self.substitute(
+            REASON=self.reason,
+            AFFECTED_COUNT=self.affected_count,
+            AFFECTED_ITEMS=self.affected_items,
+        )
+
+
+class FailurePatterns(base_components.Component):
+    """Visual Failure Patterns card container component.
+
+    Attributes:
+      failure_groups: Dictionary mapping reasons to sequence of
+        affected items.
+    """
+
+    template = "failure_patterns/failure_patterns.html"
+
+    def __init__(self, failure_groups: dict):
+        super().__init__()
+        self.failure_groups = failure_groups
+
+    @property
+    def failure_groups_html(self) -> str:
+        groups = []
+        for reason, items in sorted(
+            self.failure_groups.items(), key=lambda x: len(x[1]), reverse=True
+        ):
+            elements = []
+            for type_cls, name in sorted(items):
+                elements.append(AffectedItem(type_cls=type_cls, name=name))
+            groups.append(
+                FailureGroup(
+                    reason=reason,
+                    affected_count=len(items),
+                    affected_items=elements,
+                )
+            )
+        return "\n".join(group.render() for group in groups)
+
+    def render(self) -> str:
+        if not self.failure_groups:
+            return ""
+        return self.substitute(
+            FAILURE_GROUPS=base_components.Raw(self.failure_groups_html)
+        )

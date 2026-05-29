@@ -103,18 +103,8 @@
   {% endfor %}
 </table>
 
-{% if failure_groups %}
-  <h2>Failure Patterns</h2>
-  {% for reason, evals in failure_groups.items() | sort(attribute='1', reverse=true) %}
-    <div class="failure-group">
-      <h3>{{ reason | escape }}</h3>
-      <div class="affected">{{ evals | length }} eval(s):
-        {% for type, name in evals | sort %}
-          <span class="affected-item" style="cursor:pointer" onclick="jumpTo('{{ type }}', '{{ name | replace("'", "\\'") }}')">{{ name | escape }} ({{ type }})</span>
-        {% endfor %}
-      </div>
-    </div>
-  {% endfor %}
+{% if failure_patterns_html %}
+  {{ failure_patterns_html | safe }}
 {% endif %}
 
 {% if golden_results %}
