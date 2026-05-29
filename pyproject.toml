@@ -90,8 +90,6 @@ cxas = "cxas_scrapi.cli.main:main"
 ".agents" = "share/cxas-scrapi/skills/.agents"
 ".claude" = "share/cxas-scrapi/skills/.claude"
 ".gemini" = "share/cxas-scrapi/skills/.gemini"
-"AGENTS.md" = "share/cxas-scrapi/skills/AGENTS.md"
-"GEMINI.md" = "share/cxas-scrapi/skills/GEMINI.md"
 "examples/cxaslint.yaml" = "share/cxas-scrapi/skills/examples/cxaslint.yaml"
 
 [tool.hatch.build.targets.wheel]

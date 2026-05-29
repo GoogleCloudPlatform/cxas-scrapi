@@ -1902,7 +1902,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser_init = subparsers.add_parser(
         "init",
         help="Initialize a project with CXAS agent development skills "
-        "(.agents, .claude, .gemini, AGENTS.md, etc.).",
+        "(.agents, .claude, .gemini, etc.).",
     )
     parser_init.add_argument(
         "--target-dir",
