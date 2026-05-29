@@ -36,8 +36,7 @@
 </span><span id=__span-0-36><a id=__codelineno-0-36 name=__codelineno-0-36 href=#__codelineno-0-36></a><span class=n>report</span> <span class=o>=</span> <span class=n>conversation</span><span class=o>.</span><span class=n>generate_report</span><span class=p>()</span>
 </span><span id=__span-0-37><a id=__codelineno-0-37 name=__codelineno-0-37 href=#__codelineno-0-37></a><span class=nb>print</span><span class=p>(</span><span class=n>report</span><span class=p>)</span>  <span class=c1># Colorized in terminal, styled HTML in Jupyter</span>
 </span></code></pre></div> <h2 id=reference>Reference<a class=headerlink href=#reference title="Permanent link">&para;</a></h2> <div class="doc doc-object doc-class"> <h2 id=cxas_scrapi.evals.simulation_evals.SimulationEvals class="doc doc-heading"> <code class="doc-symbol doc-symbol-heading doc-symbol-class"></code> <span class="doc doc-object-name doc-class-name">SimulationEvals</span> <a href=#cxas_scrapi.evals.simulation_evals.SimulationEvals class=headerlink title="Permanent link">&para;</a></h2> <div class="language-python doc-signature highlight"><pre><span></span><code><span id=__span-0-1><a id=__codelineno-0-1 name=__codelineno-0-1 href=#__codelineno-0-1></a><span class=nf>SimulationEvals</span><span class=p>(</span><span class=n>app_name</span><span class=p>,</span> <span class=n>rate_limiter</span><span class=o>=</span><span class=kc>None</span><span class=p>,</span> <span class=o>**</span><span class=n>kwargs</span><span class=p>)</span>
-</span></code></pre></div> <div class="doc doc-contents first"> <p class="doc doc-class-bases"> Bases: <code><a class="autorefs autorefs-internal" title='<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <span class="doc doc-object-name doc-class-name">Apps</span> (<code>cxas_scrapi.core.apps.Apps</code>)' href=../../core/apps/#cxas_scrapi.core.apps.Apps>Apps</a></code></p> <p>Wrapper class to simulate entire multi-turn conversations with a <abbr title="CX Agent Studio">CXAS</abbr> Agent.</p> <details class=mkdocstrings-source> <summary>Source code in <code>src/cxas_scrapi/evals/simulation_evals.py</code></summary> <div class="language-python highlight"><table class=highlighttable><tr><td class=linenos><div class=linenodiv><pre><span></span><span class=normal><a href=#__codelineno-0-337>337</a></span>
-<span class=normal><a href=#__codelineno-0-338>338</a></span>
+</span></code></pre></div> <div class="doc doc-contents first"> <p class="doc doc-class-bases"> Bases: <code><a class="autorefs autorefs-internal" title='<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <span class="doc doc-object-name doc-class-name">Apps</span> (<code>cxas_scrapi.core.apps.Apps</code>)' href=../../core/apps/#cxas_scrapi.core.apps.Apps>Apps</a></code></p> <p>Wrapper class to simulate entire multi-turn conversations with a <abbr title="CX Agent Studio">CXAS</abbr> Agent.</p> <details class=mkdocstrings-source> <summary>Source code in <code>src/cxas_scrapi/evals/simulation_evals.py</code></summary> <div class="language-python highlight"><table class=highlighttable><tr><td class=linenos><div class=linenodiv><pre><span></span><span class=normal><a href=#__codelineno-0-338>338</a></span>
 <span class=normal><a href=#__codelineno-0-339>339</a></span>
 <span class=normal><a href=#__codelineno-0-340>340</a></span>
 <span class=normal><a href=#__codelineno-0-341>341</a></span>
@@ -59,358 +58,359 @@
 <span class=normal><a href=#__codelineno-0-357>357</a></span>
 <span class=normal><a href=#__codelineno-0-358>358</a></span>
 <span class=normal><a href=#__codelineno-0-359>359</a></span>
-<span class=normal><a href=#__codelineno-0-360>360</a></span></pre></div></td><td class=code><div><pre><span></span><code><span id=__span-0-337><a id=__codelineno-0-337 name=__codelineno-0-337></a><span class=k>def</span><span class=w> </span><span class=fm>__init__</span><span class=p>(</span>
-</span><span id=__span-0-338><a id=__codelineno-0-338 name=__codelineno-0-338></a>    <span class=bp>self</span><span class=p>,</span>
-</span><span id=__span-0-339><a id=__codelineno-0-339 name=__codelineno-0-339></a>    <span class=n>app_name</span><span class=p>:</span> <span class=nb>str</span><span class=p>,</span>
-</span><span id=__span-0-340><a id=__codelineno-0-340 name=__codelineno-0-340></a>    <span class=n>rate_limiter</span><span class=p>:</span> <span class=n>Optional</span><span class=p>[</span><span class=n>RateLimiter</span><span class=p>]</span> <span class=o>=</span> <span class=kc>None</span><span class=p>,</span>
-</span><span id=__span-0-341><a id=__codelineno-0-341 name=__codelineno-0-341></a>    <span class=o>**</span><span class=n>kwargs</span><span class=p>,</span>
-</span><span id=__span-0-342><a id=__codelineno-0-342 name=__codelineno-0-342></a><span class=p>):</span>
-</span><span id=__span-0-343><a id=__codelineno-0-343 name=__codelineno-0-343></a>    <span class=bp>self</span><span class=o>.</span><span class=n>app_name</span> <span class=o>=</span> <span class=n>app_name</span>
-</span><span id=__span-0-344><a id=__codelineno-0-344 name=__codelineno-0-344></a>    <span class=n>project_id</span> <span class=o>=</span> <span class=n>app_name</span><span class=o>.</span><span class=n>split</span><span class=p>(</span><span class=s2>&quot;/&quot;</span><span class=p>)[</span><span class=mi>1</span><span class=p>]</span>
-</span><span id=__span-0-345><a id=__codelineno-0-345 name=__codelineno-0-345></a>    <span class=n>location</span> <span class=o>=</span> <span class=n>app_name</span><span class=o>.</span><span class=n>split</span><span class=p>(</span><span class=s2>&quot;/&quot;</span><span class=p>)[</span><span class=mi>3</span><span class=p>]</span>
-</span><span id=__span-0-346><a id=__codelineno-0-346 name=__codelineno-0-346></a>    <span class=nb>super</span><span class=p>()</span><span class=o>.</span><span class=fm>__init__</span><span class=p>(</span><span class=n>project_id</span><span class=o>=</span><span class=n>project_id</span><span class=p>,</span> <span class=n>location</span><span class=o>=</span><span class=n>location</span><span class=p>,</span> <span class=o>**</span><span class=n>kwargs</span><span class=p>)</span>
-</span><span id=__span-0-347><a id=__codelineno-0-347 name=__codelineno-0-347></a>    <span class=bp>self</span><span class=o>.</span><span class=n>sessions_client</span> <span class=o>=</span> <span class=n>Sessions</span><span class=p>(</span>
-</span><span id=__span-0-348><a id=__codelineno-0-348 name=__codelineno-0-348></a>        <span class=n>app_name</span><span class=p>,</span> <span class=n>rate_limiter</span><span class=o>=</span><span class=n>rate_limiter</span><span class=p>,</span> <span class=o>**</span><span class=n>kwargs</span>
-</span><span id=__span-0-349><a id=__codelineno-0-349 name=__codelineno-0-349></a>    <span class=p>)</span>
-</span><span id=__span-0-350><a id=__codelineno-0-350 name=__codelineno-0-350></a>    <span class=bp>self</span><span class=o>.</span><span class=n>tools_map</span> <span class=o>=</span> <span class=n>Tools</span><span class=p>(</span><span class=n>app_name</span><span class=o>=</span><span class=n>app_name</span><span class=p>,</span> <span class=o>**</span><span class=n>kwargs</span><span class=p>)</span><span class=o>.</span><span class=n>get_tools_map</span><span class=p>()</span>
-</span><span id=__span-0-351><a id=__codelineno-0-351 name=__codelineno-0-351></a>
-</span><span id=__span-0-352><a id=__codelineno-0-352 name=__codelineno-0-352></a>    <span class=c1># Vertex AI requires a specific region (e.g. global), whereas CXAS</span>
-</span><span id=__span-0-353><a id=__codelineno-0-353 name=__codelineno-0-353></a>    <span class=c1># Apps use &#39;us&#39; or &#39;eu&#39;</span>
-</span><span id=__span-0-354><a id=__codelineno-0-354 name=__codelineno-0-354></a>    <span class=n>vertex_location</span> <span class=o>=</span> <span class=s2>&quot;global&quot;</span>
-</span><span id=__span-0-355><a id=__codelineno-0-355 name=__codelineno-0-355></a>
-</span><span id=__span-0-356><a id=__codelineno-0-356 name=__codelineno-0-356></a>    <span class=bp>self</span><span class=o>.</span><span class=n>genai_client</span> <span class=o>=</span> <span class=n>GeminiGenerate</span><span class=p>(</span>
-</span><span id=__span-0-357><a id=__codelineno-0-357 name=__codelineno-0-357></a>        <span class=n>project_id</span><span class=o>=</span><span class=bp>self</span><span class=o>.</span><span class=n>project_id</span><span class=p>,</span>
-</span><span id=__span-0-358><a id=__codelineno-0-358 name=__codelineno-0-358></a>        <span class=n>location</span><span class=o>=</span><span class=n>vertex_location</span><span class=p>,</span>
-</span><span id=__span-0-359><a id=__codelineno-0-359 name=__codelineno-0-359></a>        <span class=n>credentials</span><span class=o>=</span><span class=bp>self</span><span class=o>.</span><span class=n>creds</span><span class=p>,</span>
-</span><span id=__span-0-360><a id=__codelineno-0-360 name=__codelineno-0-360></a>    <span class=p>)</span>
+<span class=normal><a href=#__codelineno-0-360>360</a></span>
+<span class=normal><a href=#__codelineno-0-361>361</a></span></pre></div></td><td class=code><div><pre><span></span><code><span id=__span-0-338><a id=__codelineno-0-338 name=__codelineno-0-338></a><span class=k>def</span><span class=w> </span><span class=fm>__init__</span><span class=p>(</span>
+</span><span id=__span-0-339><a id=__codelineno-0-339 name=__codelineno-0-339></a>    <span class=bp>self</span><span class=p>,</span>
+</span><span id=__span-0-340><a id=__codelineno-0-340 name=__codelineno-0-340></a>    <span class=n>app_name</span><span class=p>:</span> <span class=nb>str</span><span class=p>,</span>
+</span><span id=__span-0-341><a id=__codelineno-0-341 name=__codelineno-0-341></a>    <span class=n>rate_limiter</span><span class=p>:</span> <span class=n>Optional</span><span class=p>[</span><span class=n>RateLimiter</span><span class=p>]</span> <span class=o>=</span> <span class=kc>None</span><span class=p>,</span>
+</span><span id=__span-0-342><a id=__codelineno-0-342 name=__codelineno-0-342></a>    <span class=o>**</span><span class=n>kwargs</span><span class=p>,</span>
+</span><span id=__span-0-343><a id=__codelineno-0-343 name=__codelineno-0-343></a><span class=p>):</span>
+</span><span id=__span-0-344><a id=__codelineno-0-344 name=__codelineno-0-344></a>    <span class=bp>self</span><span class=o>.</span><span class=n>app_name</span> <span class=o>=</span> <span class=n>app_name</span>
+</span><span id=__span-0-345><a id=__codelineno-0-345 name=__codelineno-0-345></a>    <span class=n>project_id</span> <span class=o>=</span> <span class=n>app_name</span><span class=o>.</span><span class=n>split</span><span class=p>(</span><span class=s2>&quot;/&quot;</span><span class=p>)[</span><span class=mi>1</span><span class=p>]</span>
+</span><span id=__span-0-346><a id=__codelineno-0-346 name=__codelineno-0-346></a>    <span class=n>location</span> <span class=o>=</span> <span class=n>app_name</span><span class=o>.</span><span class=n>split</span><span class=p>(</span><span class=s2>&quot;/&quot;</span><span class=p>)[</span><span class=mi>3</span><span class=p>]</span>
+</span><span id=__span-0-347><a id=__codelineno-0-347 name=__codelineno-0-347></a>    <span class=nb>super</span><span class=p>()</span><span class=o>.</span><span class=fm>__init__</span><span class=p>(</span><span class=n>project_id</span><span class=o>=</span><span class=n>project_id</span><span class=p>,</span> <span class=n>location</span><span class=o>=</span><span class=n>location</span><span class=p>,</span> <span class=o>**</span><span class=n>kwargs</span><span class=p>)</span>
+</span><span id=__span-0-348><a id=__codelineno-0-348 name=__codelineno-0-348></a>    <span class=bp>self</span><span class=o>.</span><span class=n>sessions_client</span> <span class=o>=</span> <span class=n>Sessions</span><span class=p>(</span>
+</span><span id=__span-0-349><a id=__codelineno-0-349 name=__codelineno-0-349></a>        <span class=n>app_name</span><span class=p>,</span> <span class=n>rate_limiter</span><span class=o>=</span><span class=n>rate_limiter</span><span class=p>,</span> <span class=o>**</span><span class=n>kwargs</span>
+</span><span id=__span-0-350><a id=__codelineno-0-350 name=__codelineno-0-350></a>    <span class=p>)</span>
+</span><span id=__span-0-351><a id=__codelineno-0-351 name=__codelineno-0-351></a>    <span class=bp>self</span><span class=o>.</span><span class=n>tools_map</span> <span class=o>=</span> <span class=n>Tools</span><span class=p>(</span><span class=n>app_name</span><span class=o>=</span><span class=n>app_name</span><span class=p>,</span> <span class=o>**</span><span class=n>kwargs</span><span class=p>)</span><span class=o>.</span><span class=n>get_tools_map</span><span class=p>()</span>
+</span><span id=__span-0-352><a id=__codelineno-0-352 name=__codelineno-0-352></a>
+</span><span id=__span-0-353><a id=__codelineno-0-353 name=__codelineno-0-353></a>    <span class=c1># Vertex AI requires a specific region (e.g. global), whereas CXAS</span>
+</span><span id=__span-0-354><a id=__codelineno-0-354 name=__codelineno-0-354></a>    <span class=c1># Apps use &#39;us&#39; or &#39;eu&#39;</span>
+</span><span id=__span-0-355><a id=__codelineno-0-355 name=__codelineno-0-355></a>    <span class=n>vertex_location</span> <span class=o>=</span> <span class=s2>&quot;global&quot;</span>
+</span><span id=__span-0-356><a id=__codelineno-0-356 name=__codelineno-0-356></a>
+</span><span id=__span-0-357><a id=__codelineno-0-357 name=__codelineno-0-357></a>    <span class=bp>self</span><span class=o>.</span><span class=n>genai_client</span> <span class=o>=</span> <span class=n>GeminiGenerate</span><span class=p>(</span>
+</span><span id=__span-0-358><a id=__codelineno-0-358 name=__codelineno-0-358></a>        <span class=n>project_id</span><span class=o>=</span><span class=bp>self</span><span class=o>.</span><span class=n>project_id</span><span class=p>,</span>
+</span><span id=__span-0-359><a id=__codelineno-0-359 name=__codelineno-0-359></a>        <span class=n>location</span><span class=o>=</span><span class=n>vertex_location</span><span class=p>,</span>
+</span><span id=__span-0-360><a id=__codelineno-0-360 name=__codelineno-0-360></a>        <span class=n>credentials</span><span class=o>=</span><span class=bp>self</span><span class=o>.</span><span class=n>creds</span><span class=p>,</span>
+</span><span id=__span-0-361><a id=__codelineno-0-361 name=__codelineno-0-361></a>    <span class=p>)</span>
 </span></code></pre></div></td></tr></table></div> </details> <div class="doc doc-children"> <div class="doc doc-object doc-function"> <h3 id=cxas_scrapi.evals.simulation_evals.SimulationEvals.simulate_conversation class="doc doc-heading"> <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code> <span class="doc doc-object-name doc-function-name">simulate_conversation</span> <a href=#cxas_scrapi.evals.simulation_evals.SimulationEvals.simulate_conversation class=headerlink title="Permanent link">&para;</a></h3> <div class="language-python doc-signature highlight"><pre><span></span><code><span id=__span-0-1><a id=__codelineno-0-1 name=__codelineno-0-1 href=#__codelineno-0-1></a><span class=nf>simulate_conversation</span><span class=p>(</span><span class=n>test_case</span><span class=p>,</span> <span class=n>model</span><span class=o>=</span><span class=n><span title=cxas_scrapi.evals.simulation_evals._DEFAULT_GEMINI_MODEL>_DEFAULT_GEMINI_MODEL</span></span><span class=p>,</span> <span class=n>session_id</span><span class=o>=</span><span class=kc>None</span><span class=p>,</span> <span class=n>console_logging</span><span class=o>=</span><span class=kc>True</span><span class=p>,</span> <span class=n>modality</span><span class=o>=</span><span class=s1>&#39;text&#39;</span><span class=p>)</span>
-</span></code></pre></div> <div class="doc doc-contents "> <p>Runs the simulated conversation loop.</p> <p><span class=doc-section-title>Parameters:</span></p> <table> <thead> <tr> <th>Name</th> <th>Type</th> <th>Description</th> <th>Default</th> </tr> </thead> <tbody> <tr class=doc-section-item> <td> <code>test_case</code> </td> <td> <code><span title=typing.Dict>Dict</span>[<span title=str>str</span>, <span title=typing.Any>Any</span>]</code> </td> <td> <div class=doc-md-description> <p>The test case dictionary defining evaluation steps.</p> </div> </td> <td> <em>required</em> </td> </tr> <tr class=doc-section-item> <td> <code>model</code> </td> <td> <code><span title=str>str</span></code> </td> <td> <div class=doc-md-description> <p>The Gemini model used for evaluating turns.</p> </div> </td> <td> <code><span title=cxas_scrapi.evals.simulation_evals._DEFAULT_GEMINI_MODEL>_DEFAULT_GEMINI_MODEL</span></code> </td> </tr> <tr class=doc-section-item> <td> <code>console_logging</code> </td> <td> <code><span title=bool>bool</span></code> </td> <td> <div class=doc-md-description> <p>Whether to print interaction transcript to the console.</p> </div> </td> <td> <code>True</code> </td> </tr> </tbody> </table> <details class=mkdocstrings-source> <summary>Source code in <code>src/cxas_scrapi/evals/simulation_evals.py</code></summary> <div class="language-python highlight"><table class=highlighttable><tr><td class=linenos><div class=linenodiv><pre><span></span><span class=normal><a href=#__codelineno-0-545>545</a></span>
-<span class=normal><a href=#__codelineno-0-546>546</a></span>
-<span class=normal><a href=#__codelineno-0-547>547</a></span>
-<span class=normal><a href=#__codelineno-0-548>548</a></span>
-<span class=normal><a href=#__codelineno-0-549>549</a></span>
-<span class=normal><a href=#__codelineno-0-550>550</a></span>
-<span class=normal><a href=#__codelineno-0-551>551</a></span>
-<span class=normal><a href=#__codelineno-0-552>552</a></span>
-<span class=normal><a href=#__codelineno-0-553>553</a></span>
-<span class=normal><a href=#__codelineno-0-554>554</a></span>
-<span class=normal><a href=#__codelineno-0-555>555</a></span>
-<span class=normal><a href=#__codelineno-0-556>556</a></span>
-<span class=normal><a href=#__codelineno-0-557>557</a></span>
-<span class=normal><a href=#__codelineno-0-558>558</a></span>
-<span class=normal><a href=#__codelineno-0-559>559</a></span>
-<span class=normal><a href=#__codelineno-0-560>560</a></span>
-<span class=normal><a href=#__codelineno-0-561>561</a></span>
-<span class=normal><a href=#__codelineno-0-562>562</a></span>
-<span class=normal><a href=#__codelineno-0-563>563</a></span>
-<span class=normal><a href=#__codelineno-0-564>564</a></span>
-<span class=normal><a href=#__codelineno-0-565>565</a></span>
-<span class=normal><a href=#__codelineno-0-566>566</a></span>
-<span class=normal><a href=#__codelineno-0-567>567</a></span>
-<span class=normal><a href=#__codelineno-0-568>568</a></span>
-<span class=normal><a href=#__codelineno-0-569>569</a></span>
-<span class=normal><a href=#__codelineno-0-570>570</a></span>
-<span class=normal><a href=#__codelineno-0-571>571</a></span>
-<span class=normal><a href=#__codelineno-0-572>572</a></span>
-<span class=normal><a href=#__codelineno-0-573>573</a></span>
-<span class=normal><a href=#__codelineno-0-574>574</a></span>
-<span class=normal><a href=#__codelineno-0-575>575</a></span>
-<span class=normal><a href=#__codelineno-0-576>576</a></span>
-<span class=normal><a href=#__codelineno-0-577>577</a></span>
-<span class=normal><a href=#__codelineno-0-578>578</a></span>
-<span class=normal><a href=#__codelineno-0-579>579</a></span>
-<span class=normal><a href=#__codelineno-0-580>580</a></span>
-<span class=normal><a href=#__codelineno-0-581>581</a></span>
-<span class=normal><a href=#__codelineno-0-582>582</a></span>
-<span class=normal><a href=#__codelineno-0-583>583</a></span>
-<span class=normal><a href=#__codelineno-0-584>584</a></span>
-<span class=normal><a href=#__codelineno-0-585>585</a></span>
-<span class=normal><a href=#__codelineno-0-586>586</a></span>
-<span class=normal><a href=#__codelineno-0-587>587</a></span>
-<span class=normal><a href=#__codelineno-0-588>588</a></span>
-<span class=normal><a href=#__codelineno-0-589>589</a></span>
-<span class=normal><a href=#__codelineno-0-590>590</a></span>
-<span class=normal><a href=#__codelineno-0-591>591</a></span>
-<span class=normal><a href=#__codelineno-0-592>592</a></span>
-<span class=normal><a href=#__codelineno-0-593>593</a></span>
-<span class=normal><a href=#__codelineno-0-594>594</a></span>
-<span class=normal><a href=#__codelineno-0-595>595</a></span>
-<span class=normal><a href=#__codelineno-0-596>596</a></span>
-<span class=normal><a href=#__codelineno-0-597>597</a></span>
-<span class=normal><a href=#__codelineno-0-598>598</a></span>
-<span class=normal><a href=#__codelineno-0-599>599</a></span>
-<span class=normal><a href=#__codelineno-0-600>600</a></span>
-<span class=normal><a href=#__codelineno-0-601>601</a></span>
-<span class=normal><a href=#__codelineno-0-602>602</a></span>
-<span class=normal><a href=#__codelineno-0-603>603</a></span>
-<span class=normal><a href=#__codelineno-0-604>604</a></span>
-<span class=normal><a href=#__codelineno-0-605>605</a></span>
-<span class=normal><a href=#__codelineno-0-606>606</a></span>
-<span class=normal><a href=#__codelineno-0-607>607</a></span>
-<span class=normal><a href=#__codelineno-0-608>608</a></span>
-<span class=normal><a href=#__codelineno-0-609>609</a></span>
-<span class=normal><a href=#__codelineno-0-610>610</a></span>
-<span class=normal><a href=#__codelineno-0-611>611</a></span>
-<span class=normal><a href=#__codelineno-0-612>612</a></span>
-<span class=normal><a href=#__codelineno-0-613>613</a></span>
-<span class=normal><a href=#__codelineno-0-614>614</a></span>
-<span class=normal><a href=#__codelineno-0-615>615</a></span>
-<span class=normal><a href=#__codelineno-0-616>616</a></span>
-<span class=normal><a href=#__codelineno-0-617>617</a></span>
-<span class=normal><a href=#__codelineno-0-618>618</a></span>
-<span class=normal><a href=#__codelineno-0-619>619</a></span>
-<span class=normal><a href=#__codelineno-0-620>620</a></span>
-<span class=normal><a href=#__codelineno-0-621>621</a></span>
-<span class=normal><a href=#__codelineno-0-622>622</a></span>
-<span class=normal><a href=#__codelineno-0-623>623</a></span>
-<span class=normal><a href=#__codelineno-0-624>624</a></span>
-<span class=normal><a href=#__codelineno-0-625>625</a></span>
-<span class=normal><a href=#__codelineno-0-626>626</a></span>
-<span class=normal><a href=#__codelineno-0-627>627</a></span>
-<span class=normal><a href=#__codelineno-0-628>628</a></span>
-<span class=normal><a href=#__codelineno-0-629>629</a></span></pre></div></td><td class=code><div><pre><span></span><code><span id=__span-0-545><a id=__codelineno-0-545 name=__codelineno-0-545></a><span class=k>def</span><span class=w> </span><span class=nf>simulate_conversation</span><span class=p>(</span>
-</span><span id=__span-0-546><a id=__codelineno-0-546 name=__codelineno-0-546></a>    <span class=bp>self</span><span class=p>,</span>
-</span><span id=__span-0-547><a id=__codelineno-0-547 name=__codelineno-0-547></a>    <span class=n>test_case</span><span class=p>:</span> <span class=n>Dict</span><span class=p>[</span><span class=nb>str</span><span class=p>,</span> <span class=n>Any</span><span class=p>],</span>
-</span><span id=__span-0-548><a id=__codelineno-0-548 name=__codelineno-0-548></a>    <span class=n>model</span><span class=p>:</span> <span class=nb>str</span> <span class=o>=</span> <span class=n>_DEFAULT_GEMINI_MODEL</span><span class=p>,</span>
-</span><span id=__span-0-549><a id=__codelineno-0-549 name=__codelineno-0-549></a>    <span class=n>session_id</span><span class=p>:</span> <span class=n>Optional</span><span class=p>[</span><span class=nb>str</span><span class=p>]</span> <span class=o>=</span> <span class=kc>None</span><span class=p>,</span>
-</span><span id=__span-0-550><a id=__codelineno-0-550 name=__codelineno-0-550></a>    <span class=n>console_logging</span><span class=p>:</span> <span class=nb>bool</span> <span class=o>=</span> <span class=kc>True</span><span class=p>,</span>
-</span><span id=__span-0-551><a id=__codelineno-0-551 name=__codelineno-0-551></a>    <span class=n>modality</span><span class=p>:</span> <span class=nb>str</span> <span class=o>=</span> <span class=s2>&quot;text&quot;</span><span class=p>,</span>
-</span><span id=__span-0-552><a id=__codelineno-0-552 name=__codelineno-0-552></a><span class=p>)</span> <span class=o>-&gt;</span> <span class=n>LLMUserConversation</span><span class=p>:</span>
-</span><span id=__span-0-553><a id=__codelineno-0-553 name=__codelineno-0-553></a><span class=w>    </span><span class=sd>&quot;&quot;&quot;Runs the simulated conversation loop.</span>
-</span><span id=__span-0-554><a id=__codelineno-0-554 name=__codelineno-0-554></a>
-</span><span id=__span-0-555><a id=__codelineno-0-555 name=__codelineno-0-555></a><span class=sd>    Args:</span>
-</span><span id=__span-0-556><a id=__codelineno-0-556 name=__codelineno-0-556></a><span class=sd>        test_case: The test case dictionary defining evaluation steps.</span>
-</span><span id=__span-0-557><a id=__codelineno-0-557 name=__codelineno-0-557></a><span class=sd>        model: The Gemini model used for evaluating turns.</span>
-</span><span id=__span-0-558><a id=__codelineno-0-558 name=__codelineno-0-558></a><span class=sd>        console_logging: Whether to print interaction transcript to</span>
-</span><span id=__span-0-559><a id=__codelineno-0-559 name=__codelineno-0-559></a><span class=sd>            the console.</span>
-</span><span id=__span-0-560><a id=__codelineno-0-560 name=__codelineno-0-560></a><span class=sd>    &quot;&quot;&quot;</span>
-</span><span id=__span-0-561><a id=__codelineno-0-561 name=__codelineno-0-561></a>    <span class=k>if</span> <span class=n>session_id</span> <span class=ow>is</span> <span class=kc>None</span><span class=p>:</span>
-</span><span id=__span-0-562><a id=__codelineno-0-562 name=__codelineno-0-562></a>        <span class=n>session_id</span> <span class=o>=</span> <span class=nb>str</span><span class=p>(</span><span class=n>uuid</span><span class=o>.</span><span class=n>uuid4</span><span class=p>())</span>
-</span><span id=__span-0-563><a id=__codelineno-0-563 name=__codelineno-0-563></a>    <span class=n>eval_conv</span> <span class=o>=</span> <span class=n>LLMUserConversation</span><span class=p>(</span>
-</span><span id=__span-0-564><a id=__codelineno-0-564 name=__codelineno-0-564></a>        <span class=n>genai_client</span><span class=o>=</span><span class=bp>self</span><span class=o>.</span><span class=n>genai_client</span><span class=p>,</span>
-</span><span id=__span-0-565><a id=__codelineno-0-565 name=__codelineno-0-565></a>        <span class=n>genai_model</span><span class=o>=</span><span class=n>model</span><span class=p>,</span>
-</span><span id=__span-0-566><a id=__codelineno-0-566 name=__codelineno-0-566></a>        <span class=n>test_case</span><span class=o>=</span><span class=n>test_case</span><span class=p>,</span>
-</span><span id=__span-0-567><a id=__codelineno-0-567 name=__codelineno-0-567></a>    <span class=p>)</span>
-</span><span id=__span-0-568><a id=__codelineno-0-568 name=__codelineno-0-568></a>
-</span><span id=__span-0-569><a id=__codelineno-0-569 name=__codelineno-0-569></a>    <span class=k>if</span> <span class=n>console_logging</span><span class=p>:</span>
-</span><span id=__span-0-570><a id=__codelineno-0-570 name=__codelineno-0-570></a>        <span class=nb>print</span><span class=p>(</span>
-</span><span id=__span-0-571><a id=__codelineno-0-571 name=__codelineno-0-571></a>            <span class=sa>f</span><span class=s2>&quot;Starting simulated conversation with session ID: </span><span class=si>{</span><span class=n>session_id</span><span class=si>}</span><span class=s2>&quot;</span>
-</span><span id=__span-0-572><a id=__codelineno-0-572 name=__codelineno-0-572></a>        <span class=p>)</span>
-</span><span id=__span-0-573><a id=__codelineno-0-573 name=__codelineno-0-573></a>
-</span><span id=__span-0-574><a id=__codelineno-0-574 name=__codelineno-0-574></a>    <span class=c1># Initialize the first turn manually</span>
-</span><span id=__span-0-575><a id=__codelineno-0-575 name=__codelineno-0-575></a>    <span class=n>user_utterance</span><span class=p>,</span> <span class=n>variables</span> <span class=o>=</span> <span class=n>eval_conv</span><span class=o>.</span><span class=n>next_user_utterance</span><span class=p>()</span>
-</span><span id=__span-0-576><a id=__codelineno-0-576 name=__codelineno-0-576></a>    <span class=n>accumulated_variables</span> <span class=o>=</span> <span class=p>{}</span>
-</span><span id=__span-0-577><a id=__codelineno-0-577 name=__codelineno-0-577></a>    <span class=k>if</span> <span class=n>variables</span><span class=p>:</span>
-</span><span id=__span-0-578><a id=__codelineno-0-578 name=__codelineno-0-578></a>        <span class=n>accumulated_variables</span><span class=o>.</span><span class=n>update</span><span class=p>(</span><span class=n>variables</span><span class=p>)</span>
-</span><span id=__span-0-579><a id=__codelineno-0-579 name=__codelineno-0-579></a>
-</span><span id=__span-0-580><a id=__codelineno-0-580 name=__codelineno-0-580></a>    <span class=n>detailed_trace</span> <span class=o>=</span> <span class=p>[]</span>
-</span><span id=__span-0-581><a id=__codelineno-0-581 name=__codelineno-0-581></a>    <span class=n>detailed_trace</span><span class=o>.</span><span class=n>append</span><span class=p>(</span><span class=sa>f</span><span class=s2>&quot;User: </span><span class=si>{</span><span class=n>user_utterance</span><span class=si>}</span><span class=s2>&quot;</span><span class=p>)</span>
-</span><span id=__span-0-582><a id=__codelineno-0-582 name=__codelineno-0-582></a>
-</span><span id=__span-0-583><a id=__codelineno-0-583 name=__codelineno-0-583></a>    <span class=k>while</span> <span class=n>user_utterance</span><span class=p>:</span>
-</span><span id=__span-0-584><a id=__codelineno-0-584 name=__codelineno-0-584></a>        <span class=n>response</span> <span class=o>=</span> <span class=bp>self</span><span class=o>.</span><span class=n>_send_request_with_retry</span><span class=p>(</span>
-</span><span id=__span-0-585><a id=__codelineno-0-585 name=__codelineno-0-585></a>            <span class=n>session_id</span><span class=p>,</span>
-</span><span id=__span-0-586><a id=__codelineno-0-586 name=__codelineno-0-586></a>            <span class=n>user_utterance</span><span class=p>,</span>
-</span><span id=__span-0-587><a id=__codelineno-0-587 name=__codelineno-0-587></a>            <span class=n>accumulated_variables</span><span class=p>,</span>
-</span><span id=__span-0-588><a id=__codelineno-0-588 name=__codelineno-0-588></a>            <span class=n>modality</span><span class=p>,</span>
-</span><span id=__span-0-589><a id=__codelineno-0-589 name=__codelineno-0-589></a>            <span class=n>console_logging</span><span class=p>,</span>
-</span><span id=__span-0-590><a id=__codelineno-0-590 name=__codelineno-0-590></a>        <span class=p>)</span>
-</span><span id=__span-0-591><a id=__codelineno-0-591 name=__codelineno-0-591></a>        <span class=k>if</span> <span class=ow>not</span> <span class=n>response</span><span class=p>:</span>
-</span><span id=__span-0-592><a id=__codelineno-0-592 name=__codelineno-0-592></a>            <span class=k>break</span>
-</span><span id=__span-0-593><a id=__codelineno-0-593 name=__codelineno-0-593></a>
-</span><span id=__span-0-594><a id=__codelineno-0-594 name=__codelineno-0-594></a>        <span class=k>if</span> <span class=n>console_logging</span><span class=p>:</span>
-</span><span id=__span-0-595><a id=__codelineno-0-595 name=__codelineno-0-595></a>            <span class=bp>self</span><span class=o>.</span><span class=n>sessions_client</span><span class=o>.</span><span class=n>parse_result</span><span class=p>(</span><span class=n>response</span><span class=p>)</span>
-</span><span id=__span-0-596><a id=__codelineno-0-596 name=__codelineno-0-596></a>
-</span><span id=__span-0-597><a id=__codelineno-0-597 name=__codelineno-0-597></a>        <span class=n>agent_text</span><span class=p>,</span> <span class=n>trace_chunks</span><span class=p>,</span> <span class=n>session_ended</span> <span class=o>=</span> <span class=p>(</span>
-</span><span id=__span-0-598><a id=__codelineno-0-598 name=__codelineno-0-598></a>            <span class=bp>self</span><span class=o>.</span><span class=n>_parse_agent_response</span><span class=p>(</span><span class=n>response</span><span class=p>)</span>
-</span><span id=__span-0-599><a id=__codelineno-0-599 name=__codelineno-0-599></a>        <span class=p>)</span>
-</span><span id=__span-0-600><a id=__codelineno-0-600 name=__codelineno-0-600></a>        <span class=n>detailed_trace</span><span class=o>.</span><span class=n>append</span><span class=p>(</span><span class=s2>&quot;</span><span class=se>\n</span><span class=s2>&quot;</span><span class=o>.</span><span class=n>join</span><span class=p>(</span><span class=n>trace_chunks</span><span class=p>))</span>
-</span><span id=__span-0-601><a id=__codelineno-0-601 name=__codelineno-0-601></a>
-</span><span id=__span-0-602><a id=__codelineno-0-602 name=__codelineno-0-602></a>        <span class=k>if</span> <span class=n>session_ended</span><span class=p>:</span>
-</span><span id=__span-0-603><a id=__codelineno-0-603 name=__codelineno-0-603></a>            <span class=k>if</span> <span class=n>agent_text</span><span class=p>:</span>
-</span><span id=__span-0-604><a id=__codelineno-0-604 name=__codelineno-0-604></a>                <span class=n>eval_conv</span><span class=o>.</span><span class=n>_add_agent_response</span><span class=p>(</span><span class=n>agent_text</span><span class=p>)</span>
-</span><span id=__span-0-605><a id=__codelineno-0-605 name=__codelineno-0-605></a>            <span class=k>if</span> <span class=n>console_logging</span><span class=p>:</span>
-</span><span id=__span-0-606><a id=__codelineno-0-606 name=__codelineno-0-606></a>                <span class=nb>print</span><span class=p>(</span>
-</span><span id=__span-0-607><a id=__codelineno-0-607 name=__codelineno-0-607></a>                    <span class=s2>&quot;</span><span class=se>\n</span><span class=s2>Session has been closed by the Agent via &quot;</span>
-</span><span id=__span-0-608><a id=__codelineno-0-608 name=__codelineno-0-608></a>                    <span class=s2>&quot;end_session tool.&quot;</span>
-</span><span id=__span-0-609><a id=__codelineno-0-609 name=__codelineno-0-609></a>                <span class=p>)</span>
-</span><span id=__span-0-610><a id=__codelineno-0-610 name=__codelineno-0-610></a>            <span class=k>break</span>
-</span><span id=__span-0-611><a id=__codelineno-0-611 name=__codelineno-0-611></a>
-</span><span id=__span-0-612><a id=__codelineno-0-612 name=__codelineno-0-612></a>        <span class=c1># Get the next simulated user utterance based on the agent&#39;s</span>
-</span><span id=__span-0-613><a id=__codelineno-0-613 name=__codelineno-0-613></a>        <span class=c1># response</span>
-</span><span id=__span-0-614><a id=__codelineno-0-614 name=__codelineno-0-614></a>        <span class=n>user_utterance</span><span class=p>,</span> <span class=n>variables</span> <span class=o>=</span> <span class=n>eval_conv</span><span class=o>.</span><span class=n>next_user_utterance</span><span class=p>(</span>
-</span><span id=__span-0-615><a id=__codelineno-0-615 name=__codelineno-0-615></a>            <span class=n>agent_text</span>
-</span><span id=__span-0-616><a id=__codelineno-0-616 name=__codelineno-0-616></a>        <span class=p>)</span>
-</span><span id=__span-0-617><a id=__codelineno-0-617 name=__codelineno-0-617></a>        <span class=k>if</span> <span class=n>variables</span><span class=p>:</span>
-</span><span id=__span-0-618><a id=__codelineno-0-618 name=__codelineno-0-618></a>            <span class=n>accumulated_variables</span><span class=o>.</span><span class=n>update</span><span class=p>(</span><span class=n>variables</span><span class=p>)</span>
-</span><span id=__span-0-619><a id=__codelineno-0-619 name=__codelineno-0-619></a>        <span class=k>if</span> <span class=n>user_utterance</span><span class=p>:</span>
-</span><span id=__span-0-620><a id=__codelineno-0-620 name=__codelineno-0-620></a>            <span class=n>detailed_trace</span><span class=o>.</span><span class=n>append</span><span class=p>(</span><span class=sa>f</span><span class=s2>&quot;User: </span><span class=si>{</span><span class=n>user_utterance</span><span class=si>}</span><span class=s2>&quot;</span><span class=p>)</span>
-</span><span id=__span-0-621><a id=__codelineno-0-621 name=__codelineno-0-621></a>
-</span><span id=__span-0-622><a id=__codelineno-0-622 name=__codelineno-0-622></a>    <span class=k>if</span> <span class=n>console_logging</span><span class=p>:</span>
-</span><span id=__span-0-623><a id=__codelineno-0-623 name=__codelineno-0-623></a>        <span class=bp>self</span><span class=o>.</span><span class=n>_print_completion_status</span><span class=p>(</span><span class=n>eval_conv</span><span class=p>)</span>
-</span><span id=__span-0-624><a id=__codelineno-0-624 name=__codelineno-0-624></a>
-</span><span id=__span-0-625><a id=__codelineno-0-625 name=__codelineno-0-625></a>    <span class=bp>self</span><span class=o>.</span><span class=n>_evaluate_expectations</span><span class=p>(</span>
-</span><span id=__span-0-626><a id=__codelineno-0-626 name=__codelineno-0-626></a>        <span class=n>eval_conv</span><span class=p>,</span> <span class=n>detailed_trace</span><span class=p>,</span> <span class=n>model</span><span class=p>,</span> <span class=n>console_logging</span>
-</span><span id=__span-0-627><a id=__codelineno-0-627 name=__codelineno-0-627></a>    <span class=p>)</span>
-</span><span id=__span-0-628><a id=__codelineno-0-628 name=__codelineno-0-628></a>    <span class=n>eval_conv</span><span class=o>.</span><span class=n>detailed_trace</span> <span class=o>=</span> <span class=n>detailed_trace</span>
-</span><span id=__span-0-629><a id=__codelineno-0-629 name=__codelineno-0-629></a>    <span class=k>return</span> <span class=n>eval_conv</span>
+</span></code></pre></div> <div class="doc doc-contents "> <p>Runs the simulated conversation loop.</p> <p><span class=doc-section-title>Parameters:</span></p> <table> <thead> <tr> <th>Name</th> <th>Type</th> <th>Description</th> <th>Default</th> </tr> </thead> <tbody> <tr class=doc-section-item> <td> <code>test_case</code> </td> <td> <code><span title=typing.Dict>Dict</span>[<span title=str>str</span>, <span title=typing.Any>Any</span>]</code> </td> <td> <div class=doc-md-description> <p>The test case dictionary defining evaluation steps.</p> </div> </td> <td> <em>required</em> </td> </tr> <tr class=doc-section-item> <td> <code>model</code> </td> <td> <code><span title=str>str</span></code> </td> <td> <div class=doc-md-description> <p>The Gemini model used for evaluating turns.</p> </div> </td> <td> <code><span title=cxas_scrapi.evals.simulation_evals._DEFAULT_GEMINI_MODEL>_DEFAULT_GEMINI_MODEL</span></code> </td> </tr> <tr class=doc-section-item> <td> <code>console_logging</code> </td> <td> <code><span title=bool>bool</span></code> </td> <td> <div class=doc-md-description> <p>Whether to print interaction transcript to the console.</p> </div> </td> <td> <code>True</code> </td> </tr> </tbody> </table> <details class=mkdocstrings-source> <summary>Source code in <code>src/cxas_scrapi/evals/simulation_evals.py</code></summary> <div class="language-python highlight"><table class=highlighttable><tr><td class=linenos><div class=linenodiv><pre><span></span><span class=normal><a href=#__codelineno-0-456>456</a></span>
+<span class=normal><a href=#__codelineno-0-457>457</a></span>
+<span class=normal><a href=#__codelineno-0-458>458</a></span>
+<span class=normal><a href=#__codelineno-0-459>459</a></span>
+<span class=normal><a href=#__codelineno-0-460>460</a></span>
+<span class=normal><a href=#__codelineno-0-461>461</a></span>
+<span class=normal><a href=#__codelineno-0-462>462</a></span>
+<span class=normal><a href=#__codelineno-0-463>463</a></span>
+<span class=normal><a href=#__codelineno-0-464>464</a></span>
+<span class=normal><a href=#__codelineno-0-465>465</a></span>
+<span class=normal><a href=#__codelineno-0-466>466</a></span>
+<span class=normal><a href=#__codelineno-0-467>467</a></span>
+<span class=normal><a href=#__codelineno-0-468>468</a></span>
+<span class=normal><a href=#__codelineno-0-469>469</a></span>
+<span class=normal><a href=#__codelineno-0-470>470</a></span>
+<span class=normal><a href=#__codelineno-0-471>471</a></span>
+<span class=normal><a href=#__codelineno-0-472>472</a></span>
+<span class=normal><a href=#__codelineno-0-473>473</a></span>
+<span class=normal><a href=#__codelineno-0-474>474</a></span>
+<span class=normal><a href=#__codelineno-0-475>475</a></span>
+<span class=normal><a href=#__codelineno-0-476>476</a></span>
+<span class=normal><a href=#__codelineno-0-477>477</a></span>
+<span class=normal><a href=#__codelineno-0-478>478</a></span>
+<span class=normal><a href=#__codelineno-0-479>479</a></span>
+<span class=normal><a href=#__codelineno-0-480>480</a></span>
+<span class=normal><a href=#__codelineno-0-481>481</a></span>
+<span class=normal><a href=#__codelineno-0-482>482</a></span>
+<span class=normal><a href=#__codelineno-0-483>483</a></span>
+<span class=normal><a href=#__codelineno-0-484>484</a></span>
+<span class=normal><a href=#__codelineno-0-485>485</a></span>
+<span class=normal><a href=#__codelineno-0-486>486</a></span>
+<span class=normal><a href=#__codelineno-0-487>487</a></span>
+<span class=normal><a href=#__codelineno-0-488>488</a></span>
+<span class=normal><a href=#__codelineno-0-489>489</a></span>
+<span class=normal><a href=#__codelineno-0-490>490</a></span>
+<span class=normal><a href=#__codelineno-0-491>491</a></span>
+<span class=normal><a href=#__codelineno-0-492>492</a></span>
+<span class=normal><a href=#__codelineno-0-493>493</a></span>
+<span class=normal><a href=#__codelineno-0-494>494</a></span>
+<span class=normal><a href=#__codelineno-0-495>495</a></span>
+<span class=normal><a href=#__codelineno-0-496>496</a></span>
+<span class=normal><a href=#__codelineno-0-497>497</a></span>
+<span class=normal><a href=#__codelineno-0-498>498</a></span>
+<span class=normal><a href=#__codelineno-0-499>499</a></span>
+<span class=normal><a href=#__codelineno-0-500>500</a></span>
+<span class=normal><a href=#__codelineno-0-501>501</a></span>
+<span class=normal><a href=#__codelineno-0-502>502</a></span>
+<span class=normal><a href=#__codelineno-0-503>503</a></span>
+<span class=normal><a href=#__codelineno-0-504>504</a></span>
+<span class=normal><a href=#__codelineno-0-505>505</a></span>
+<span class=normal><a href=#__codelineno-0-506>506</a></span>
+<span class=normal><a href=#__codelineno-0-507>507</a></span>
+<span class=normal><a href=#__codelineno-0-508>508</a></span>
+<span class=normal><a href=#__codelineno-0-509>509</a></span>
+<span class=normal><a href=#__codelineno-0-510>510</a></span>
+<span class=normal><a href=#__codelineno-0-511>511</a></span>
+<span class=normal><a href=#__codelineno-0-512>512</a></span>
+<span class=normal><a href=#__codelineno-0-513>513</a></span>
+<span class=normal><a href=#__codelineno-0-514>514</a></span>
+<span class=normal><a href=#__codelineno-0-515>515</a></span>
+<span class=normal><a href=#__codelineno-0-516>516</a></span>
+<span class=normal><a href=#__codelineno-0-517>517</a></span>
+<span class=normal><a href=#__codelineno-0-518>518</a></span>
+<span class=normal><a href=#__codelineno-0-519>519</a></span>
+<span class=normal><a href=#__codelineno-0-520>520</a></span>
+<span class=normal><a href=#__codelineno-0-521>521</a></span>
+<span class=normal><a href=#__codelineno-0-522>522</a></span>
+<span class=normal><a href=#__codelineno-0-523>523</a></span>
+<span class=normal><a href=#__codelineno-0-524>524</a></span>
+<span class=normal><a href=#__codelineno-0-525>525</a></span>
+<span class=normal><a href=#__codelineno-0-526>526</a></span>
+<span class=normal><a href=#__codelineno-0-527>527</a></span>
+<span class=normal><a href=#__codelineno-0-528>528</a></span>
+<span class=normal><a href=#__codelineno-0-529>529</a></span>
+<span class=normal><a href=#__codelineno-0-530>530</a></span>
+<span class=normal><a href=#__codelineno-0-531>531</a></span>
+<span class=normal><a href=#__codelineno-0-532>532</a></span>
+<span class=normal><a href=#__codelineno-0-533>533</a></span>
+<span class=normal><a href=#__codelineno-0-534>534</a></span>
+<span class=normal><a href=#__codelineno-0-535>535</a></span>
+<span class=normal><a href=#__codelineno-0-536>536</a></span>
+<span class=normal><a href=#__codelineno-0-537>537</a></span>
+<span class=normal><a href=#__codelineno-0-538>538</a></span>
+<span class=normal><a href=#__codelineno-0-539>539</a></span>
+<span class=normal><a href=#__codelineno-0-540>540</a></span></pre></div></td><td class=code><div><pre><span></span><code><span id=__span-0-456><a id=__codelineno-0-456 name=__codelineno-0-456></a><span class=k>def</span><span class=w> </span><span class=nf>simulate_conversation</span><span class=p>(</span>
+</span><span id=__span-0-457><a id=__codelineno-0-457 name=__codelineno-0-457></a>    <span class=bp>self</span><span class=p>,</span>
+</span><span id=__span-0-458><a id=__codelineno-0-458 name=__codelineno-0-458></a>    <span class=n>test_case</span><span class=p>:</span> <span class=n>Dict</span><span class=p>[</span><span class=nb>str</span><span class=p>,</span> <span class=n>Any</span><span class=p>],</span>
+</span><span id=__span-0-459><a id=__codelineno-0-459 name=__codelineno-0-459></a>    <span class=n>model</span><span class=p>:</span> <span class=nb>str</span> <span class=o>=</span> <span class=n>_DEFAULT_GEMINI_MODEL</span><span class=p>,</span>
+</span><span id=__span-0-460><a id=__codelineno-0-460 name=__codelineno-0-460></a>    <span class=n>session_id</span><span class=p>:</span> <span class=n>Optional</span><span class=p>[</span><span class=nb>str</span><span class=p>]</span> <span class=o>=</span> <span class=kc>None</span><span class=p>,</span>
+</span><span id=__span-0-461><a id=__codelineno-0-461 name=__codelineno-0-461></a>    <span class=n>console_logging</span><span class=p>:</span> <span class=nb>bool</span> <span class=o>=</span> <span class=kc>True</span><span class=p>,</span>
+</span><span id=__span-0-462><a id=__codelineno-0-462 name=__codelineno-0-462></a>    <span class=n>modality</span><span class=p>:</span> <span class=nb>str</span> <span class=o>=</span> <span class=s2>&quot;text&quot;</span><span class=p>,</span>
+</span><span id=__span-0-463><a id=__codelineno-0-463 name=__codelineno-0-463></a><span class=p>)</span> <span class=o>-&gt;</span> <span class=n>LLMUserConversation</span><span class=p>:</span>
+</span><span id=__span-0-464><a id=__codelineno-0-464 name=__codelineno-0-464></a><span class=w>    </span><span class=sd>&quot;&quot;&quot;Runs the simulated conversation loop.</span>
+</span><span id=__span-0-465><a id=__codelineno-0-465 name=__codelineno-0-465></a>
+</span><span id=__span-0-466><a id=__codelineno-0-466 name=__codelineno-0-466></a><span class=sd>    Args:</span>
+</span><span id=__span-0-467><a id=__codelineno-0-467 name=__codelineno-0-467></a><span class=sd>        test_case: The test case dictionary defining evaluation steps.</span>
+</span><span id=__span-0-468><a id=__codelineno-0-468 name=__codelineno-0-468></a><span class=sd>        model: The Gemini model used for evaluating turns.</span>
+</span><span id=__span-0-469><a id=__codelineno-0-469 name=__codelineno-0-469></a><span class=sd>        console_logging: Whether to print interaction transcript to</span>
+</span><span id=__span-0-470><a id=__codelineno-0-470 name=__codelineno-0-470></a><span class=sd>            the console.</span>
+</span><span id=__span-0-471><a id=__codelineno-0-471 name=__codelineno-0-471></a><span class=sd>    &quot;&quot;&quot;</span>
+</span><span id=__span-0-472><a id=__codelineno-0-472 name=__codelineno-0-472></a>    <span class=k>if</span> <span class=n>session_id</span> <span class=ow>is</span> <span class=kc>None</span><span class=p>:</span>
+</span><span id=__span-0-473><a id=__codelineno-0-473 name=__codelineno-0-473></a>        <span class=n>session_id</span> <span class=o>=</span> <span class=nb>str</span><span class=p>(</span><span class=n>uuid</span><span class=o>.</span><span class=n>uuid4</span><span class=p>())</span>
+</span><span id=__span-0-474><a id=__codelineno-0-474 name=__codelineno-0-474></a>    <span class=n>eval_conv</span> <span class=o>=</span> <span class=n>LLMUserConversation</span><span class=p>(</span>
+</span><span id=__span-0-475><a id=__codelineno-0-475 name=__codelineno-0-475></a>        <span class=n>genai_client</span><span class=o>=</span><span class=bp>self</span><span class=o>.</span><span class=n>genai_client</span><span class=p>,</span>
+</span><span id=__span-0-476><a id=__codelineno-0-476 name=__codelineno-0-476></a>        <span class=n>genai_model</span><span class=o>=</span><span class=n>model</span><span class=p>,</span>
+</span><span id=__span-0-477><a id=__codelineno-0-477 name=__codelineno-0-477></a>        <span class=n>test_case</span><span class=o>=</span><span class=n>test_case</span><span class=p>,</span>
+</span><span id=__span-0-478><a id=__codelineno-0-478 name=__codelineno-0-478></a>    <span class=p>)</span>
+</span><span id=__span-0-479><a id=__codelineno-0-479 name=__codelineno-0-479></a>
+</span><span id=__span-0-480><a id=__codelineno-0-480 name=__codelineno-0-480></a>    <span class=k>if</span> <span class=n>console_logging</span><span class=p>:</span>
+</span><span id=__span-0-481><a id=__codelineno-0-481 name=__codelineno-0-481></a>        <span class=nb>print</span><span class=p>(</span>
+</span><span id=__span-0-482><a id=__codelineno-0-482 name=__codelineno-0-482></a>            <span class=sa>f</span><span class=s2>&quot;Starting simulated conversation with session ID: </span><span class=si>{</span><span class=n>session_id</span><span class=si>}</span><span class=s2>&quot;</span>
+</span><span id=__span-0-483><a id=__codelineno-0-483 name=__codelineno-0-483></a>        <span class=p>)</span>
+</span><span id=__span-0-484><a id=__codelineno-0-484 name=__codelineno-0-484></a>
+</span><span id=__span-0-485><a id=__codelineno-0-485 name=__codelineno-0-485></a>    <span class=c1># Initialize the first turn manually</span>
+</span><span id=__span-0-486><a id=__codelineno-0-486 name=__codelineno-0-486></a>    <span class=n>user_utterance</span><span class=p>,</span> <span class=n>variables</span> <span class=o>=</span> <span class=n>eval_conv</span><span class=o>.</span><span class=n>next_user_utterance</span><span class=p>()</span>
+</span><span id=__span-0-487><a id=__codelineno-0-487 name=__codelineno-0-487></a>    <span class=n>accumulated_variables</span> <span class=o>=</span> <span class=p>{}</span>
+</span><span id=__span-0-488><a id=__codelineno-0-488 name=__codelineno-0-488></a>    <span class=k>if</span> <span class=n>variables</span><span class=p>:</span>
+</span><span id=__span-0-489><a id=__codelineno-0-489 name=__codelineno-0-489></a>        <span class=n>accumulated_variables</span><span class=o>.</span><span class=n>update</span><span class=p>(</span><span class=n>variables</span><span class=p>)</span>
+</span><span id=__span-0-490><a id=__codelineno-0-490 name=__codelineno-0-490></a>
+</span><span id=__span-0-491><a id=__codelineno-0-491 name=__codelineno-0-491></a>    <span class=n>detailed_trace</span> <span class=o>=</span> <span class=p>[]</span>
+</span><span id=__span-0-492><a id=__codelineno-0-492 name=__codelineno-0-492></a>    <span class=n>detailed_trace</span><span class=o>.</span><span class=n>append</span><span class=p>(</span><span class=sa>f</span><span class=s2>&quot;User: </span><span class=si>{</span><span class=n>user_utterance</span><span class=si>}</span><span class=s2>&quot;</span><span class=p>)</span>
+</span><span id=__span-0-493><a id=__codelineno-0-493 name=__codelineno-0-493></a>
+</span><span id=__span-0-494><a id=__codelineno-0-494 name=__codelineno-0-494></a>    <span class=k>while</span> <span class=n>user_utterance</span><span class=p>:</span>
+</span><span id=__span-0-495><a id=__codelineno-0-495 name=__codelineno-0-495></a>        <span class=n>response</span> <span class=o>=</span> <span class=bp>self</span><span class=o>.</span><span class=n>_send_request_with_retry</span><span class=p>(</span>
+</span><span id=__span-0-496><a id=__codelineno-0-496 name=__codelineno-0-496></a>            <span class=n>session_id</span><span class=p>,</span>
+</span><span id=__span-0-497><a id=__codelineno-0-497 name=__codelineno-0-497></a>            <span class=n>user_utterance</span><span class=p>,</span>
+</span><span id=__span-0-498><a id=__codelineno-0-498 name=__codelineno-0-498></a>            <span class=n>accumulated_variables</span><span class=p>,</span>
+</span><span id=__span-0-499><a id=__codelineno-0-499 name=__codelineno-0-499></a>            <span class=n>modality</span><span class=p>,</span>
+</span><span id=__span-0-500><a id=__codelineno-0-500 name=__codelineno-0-500></a>            <span class=n>console_logging</span><span class=p>,</span>
+</span><span id=__span-0-501><a id=__codelineno-0-501 name=__codelineno-0-501></a>        <span class=p>)</span>
+</span><span id=__span-0-502><a id=__codelineno-0-502 name=__codelineno-0-502></a>        <span class=k>if</span> <span class=ow>not</span> <span class=n>response</span><span class=p>:</span>
+</span><span id=__span-0-503><a id=__codelineno-0-503 name=__codelineno-0-503></a>            <span class=k>break</span>
+</span><span id=__span-0-504><a id=__codelineno-0-504 name=__codelineno-0-504></a>
+</span><span id=__span-0-505><a id=__codelineno-0-505 name=__codelineno-0-505></a>        <span class=k>if</span> <span class=n>console_logging</span><span class=p>:</span>
+</span><span id=__span-0-506><a id=__codelineno-0-506 name=__codelineno-0-506></a>            <span class=bp>self</span><span class=o>.</span><span class=n>sessions_client</span><span class=o>.</span><span class=n>parse_result</span><span class=p>(</span><span class=n>response</span><span class=p>)</span>
+</span><span id=__span-0-507><a id=__codelineno-0-507 name=__codelineno-0-507></a>
+</span><span id=__span-0-508><a id=__codelineno-0-508 name=__codelineno-0-508></a>        <span class=n>agent_text</span><span class=p>,</span> <span class=n>trace_chunks</span><span class=p>,</span> <span class=n>session_ended</span> <span class=o>=</span> <span class=p>(</span>
+</span><span id=__span-0-509><a id=__codelineno-0-509 name=__codelineno-0-509></a>            <span class=bp>self</span><span class=o>.</span><span class=n>_parse_agent_response</span><span class=p>(</span><span class=n>response</span><span class=p>)</span>
+</span><span id=__span-0-510><a id=__codelineno-0-510 name=__codelineno-0-510></a>        <span class=p>)</span>
+</span><span id=__span-0-511><a id=__codelineno-0-511 name=__codelineno-0-511></a>        <span class=n>detailed_trace</span><span class=o>.</span><span class=n>append</span><span class=p>(</span><span class=s2>&quot;</span><span class=se>\n</span><span class=s2>&quot;</span><span class=o>.</span><span class=n>join</span><span class=p>(</span><span class=n>trace_chunks</span><span class=p>))</span>
+</span><span id=__span-0-512><a id=__codelineno-0-512 name=__codelineno-0-512></a>
+</span><span id=__span-0-513><a id=__codelineno-0-513 name=__codelineno-0-513></a>        <span class=k>if</span> <span class=n>session_ended</span><span class=p>:</span>
+</span><span id=__span-0-514><a id=__codelineno-0-514 name=__codelineno-0-514></a>            <span class=k>if</span> <span class=n>agent_text</span><span class=p>:</span>
+</span><span id=__span-0-515><a id=__codelineno-0-515 name=__codelineno-0-515></a>                <span class=n>eval_conv</span><span class=o>.</span><span class=n>_add_agent_response</span><span class=p>(</span><span class=n>agent_text</span><span class=p>)</span>
+</span><span id=__span-0-516><a id=__codelineno-0-516 name=__codelineno-0-516></a>            <span class=k>if</span> <span class=n>console_logging</span><span class=p>:</span>
+</span><span id=__span-0-517><a id=__codelineno-0-517 name=__codelineno-0-517></a>                <span class=nb>print</span><span class=p>(</span>
+</span><span id=__span-0-518><a id=__codelineno-0-518 name=__codelineno-0-518></a>                    <span class=s2>&quot;</span><span class=se>\n</span><span class=s2>Session has been closed by the Agent via &quot;</span>
+</span><span id=__span-0-519><a id=__codelineno-0-519 name=__codelineno-0-519></a>                    <span class=s2>&quot;end_session tool.&quot;</span>
+</span><span id=__span-0-520><a id=__codelineno-0-520 name=__codelineno-0-520></a>                <span class=p>)</span>
+</span><span id=__span-0-521><a id=__codelineno-0-521 name=__codelineno-0-521></a>            <span class=k>break</span>
+</span><span id=__span-0-522><a id=__codelineno-0-522 name=__codelineno-0-522></a>
+</span><span id=__span-0-523><a id=__codelineno-0-523 name=__codelineno-0-523></a>        <span class=c1># Get the next simulated user utterance based on the agent&#39;s</span>
+</span><span id=__span-0-524><a id=__codelineno-0-524 name=__codelineno-0-524></a>        <span class=c1># response</span>
+</span><span id=__span-0-525><a id=__codelineno-0-525 name=__codelineno-0-525></a>        <span class=n>user_utterance</span><span class=p>,</span> <span class=n>variables</span> <span class=o>=</span> <span class=n>eval_conv</span><span class=o>.</span><span class=n>next_user_utterance</span><span class=p>(</span>
+</span><span id=__span-0-526><a id=__codelineno-0-526 name=__codelineno-0-526></a>            <span class=n>agent_text</span>
+</span><span id=__span-0-527><a id=__codelineno-0-527 name=__codelineno-0-527></a>        <span class=p>)</span>
+</span><span id=__span-0-528><a id=__codelineno-0-528 name=__codelineno-0-528></a>        <span class=k>if</span> <span class=n>variables</span><span class=p>:</span>
+</span><span id=__span-0-529><a id=__codelineno-0-529 name=__codelineno-0-529></a>            <span class=n>accumulated_variables</span><span class=o>.</span><span class=n>update</span><span class=p>(</span><span class=n>variables</span><span class=p>)</span>
+</span><span id=__span-0-530><a id=__codelineno-0-530 name=__codelineno-0-530></a>        <span class=k>if</span> <span class=n>user_utterance</span><span class=p>:</span>
+</span><span id=__span-0-531><a id=__codelineno-0-531 name=__codelineno-0-531></a>            <span class=n>detailed_trace</span><span class=o>.</span><span class=n>append</span><span class=p>(</span><span class=sa>f</span><span class=s2>&quot;User: </span><span class=si>{</span><span class=n>user_utterance</span><span class=si>}</span><span class=s2>&quot;</span><span class=p>)</span>
+</span><span id=__span-0-532><a id=__codelineno-0-532 name=__codelineno-0-532></a>
+</span><span id=__span-0-533><a id=__codelineno-0-533 name=__codelineno-0-533></a>    <span class=k>if</span> <span class=n>console_logging</span><span class=p>:</span>
+</span><span id=__span-0-534><a id=__codelineno-0-534 name=__codelineno-0-534></a>        <span class=bp>self</span><span class=o>.</span><span class=n>_print_completion_status</span><span class=p>(</span><span class=n>eval_conv</span><span class=p>)</span>
+</span><span id=__span-0-535><a id=__codelineno-0-535 name=__codelineno-0-535></a>
+</span><span id=__span-0-536><a id=__codelineno-0-536 name=__codelineno-0-536></a>    <span class=bp>self</span><span class=o>.</span><span class=n>_evaluate_expectations</span><span class=p>(</span>
+</span><span id=__span-0-537><a id=__codelineno-0-537 name=__codelineno-0-537></a>        <span class=n>eval_conv</span><span class=p>,</span> <span class=n>detailed_trace</span><span class=p>,</span> <span class=n>model</span><span class=p>,</span> <span class=n>console_logging</span>
+</span><span id=__span-0-538><a id=__codelineno-0-538 name=__codelineno-0-538></a>    <span class=p>)</span>
+</span><span id=__span-0-539><a id=__codelineno-0-539 name=__codelineno-0-539></a>    <span class=n>eval_conv</span><span class=o>.</span><span class=n>detailed_trace</span> <span class=o>=</span> <span class=n>detailed_trace</span>
+</span><span id=__span-0-540><a id=__codelineno-0-540 name=__codelineno-0-540></a>    <span class=k>return</span> <span class=n>eval_conv</span>
 </span></code></pre></div></td></tr></table></div> </details> </div> </div> <div class="doc doc-object doc-function"> <h3 id=cxas_scrapi.evals.simulation_evals.SimulationEvals.run_simulations class="doc doc-heading"> <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code> <span class="doc doc-object-name doc-function-name">run_simulations</span> <a href=#cxas_scrapi.evals.simulation_evals.SimulationEvals.run_simulations class=headerlink title="Permanent link">&para;</a></h3> <div class="language-python doc-signature highlight"><pre><span></span><code><span id=__span-0-1><a id=__codelineno-0-1 name=__codelineno-0-1 href=#__codelineno-0-1></a><span class=nf>run_simulations</span><span class=p>(</span><span class=n>test_cases</span><span class=p>,</span> <span class=n>runs</span><span class=o>=</span><span class=mi>1</span><span class=p>,</span> <span class=n>parallel</span><span class=o>=</span><span class=mi>1</span><span class=p>,</span> <span class=n>model</span><span class=o>=</span><span class=n><span title=cxas_scrapi.evals.simulation_evals._DEFAULT_GEMINI_MODEL>_DEFAULT_GEMINI_MODEL</span></span><span class=p>,</span> <span class=n>modality</span><span class=o>=</span><span class=s1>&#39;text&#39;</span><span class=p>,</span> <span class=n>verbose</span><span class=o>=</span><span class=kc>False</span><span class=p>)</span>
-</span></code></pre></div> <div class="doc doc-contents "> <p>Runs multiple simulations, optionally in parallel.</p> <p><span class=doc-section-title>Parameters:</span></p> <table> <thead> <tr> <th>Name</th> <th>Type</th> <th>Description</th> <th>Default</th> </tr> </thead> <tbody> <tr class=doc-section-item> <td> <code>test_cases</code> </td> <td> <code><span title=typing.List>List</span>[<span title=typing.Dict>Dict</span>[<span title=str>str</span>, <span title=typing.Any>Any</span>]]</code> </td> <td> <div class=doc-md-description> <p>List of test case dictionaries.</p> </div> </td> <td> <em>required</em> </td> </tr> <tr class=doc-section-item> <td> <code>runs</code> </td> <td> <code><span title=int>int</span></code> </td> <td> <div class=doc-md-description> <p>Number of runs per test case.</p> </div> </td> <td> <code>1</code> </td> </tr> <tr class=doc-section-item> <td> <code>parallel</code> </td> <td> <code><span title=int>int</span></code> </td> <td> <div class=doc-md-description> <p>Number of parallel workers (capped at 25).</p> </div> </td> <td> <code>1</code> </td> </tr> <tr class=doc-section-item> <td> <code>model</code> </td> <td> <code><span title=str>str</span></code> </td> <td> <div class=doc-md-description> <p>Gemini model to use.</p> </div> </td> <td> <code><span title=cxas_scrapi.evals.simulation_evals._DEFAULT_GEMINI_MODEL>_DEFAULT_GEMINI_MODEL</span></code> </td> </tr> <tr class=doc-section-item> <td> <code>modality</code> </td> <td> <code><span title=str>str</span></code> </td> <td> <div class=doc-md-description> <p>'text' or 'audio'.</p> </div> </td> <td> <code>&#39;text&#39;</code> </td> </tr> <tr class=doc-section-item> <td> <code>verbose</code> </td> <td> <code><span title=bool>bool</span></code> </td> <td> <div class=doc-md-description> <p>Whether to log to console (only active if parallel=1).</p> </div> </td> <td> <code>False</code> </td> </tr> </tbody> </table> <details class=mkdocstrings-source> <summary>Source code in <code>src/cxas_scrapi/evals/simulation_evals.py</code></summary> <div class="language-python highlight"><table class=highlighttable><tr><td class=linenos><div class=linenodiv><pre><span></span><span class=normal><a href=#__codelineno-0-782>782</a></span>
-<span class=normal><a href=#__codelineno-0-783>783</a></span>
-<span class=normal><a href=#__codelineno-0-784>784</a></span>
-<span class=normal><a href=#__codelineno-0-785>785</a></span>
-<span class=normal><a href=#__codelineno-0-786>786</a></span>
-<span class=normal><a href=#__codelineno-0-787>787</a></span>
-<span class=normal><a href=#__codelineno-0-788>788</a></span>
-<span class=normal><a href=#__codelineno-0-789>789</a></span>
-<span class=normal><a href=#__codelineno-0-790>790</a></span>
-<span class=normal><a href=#__codelineno-0-791>791</a></span>
-<span class=normal><a href=#__codelineno-0-792>792</a></span>
-<span class=normal><a href=#__codelineno-0-793>793</a></span>
-<span class=normal><a href=#__codelineno-0-794>794</a></span>
-<span class=normal><a href=#__codelineno-0-795>795</a></span>
-<span class=normal><a href=#__codelineno-0-796>796</a></span>
-<span class=normal><a href=#__codelineno-0-797>797</a></span>
-<span class=normal><a href=#__codelineno-0-798>798</a></span>
-<span class=normal><a href=#__codelineno-0-799>799</a></span>
-<span class=normal><a href=#__codelineno-0-800>800</a></span>
-<span class=normal><a href=#__codelineno-0-801>801</a></span>
-<span class=normal><a href=#__codelineno-0-802>802</a></span>
-<span class=normal><a href=#__codelineno-0-803>803</a></span>
-<span class=normal><a href=#__codelineno-0-804>804</a></span></pre></div></td><td class=code><div><pre><span></span><code><span id=__span-0-782><a id=__codelineno-0-782 name=__codelineno-0-782></a><span class=k>def</span><span class=w> </span><span class=nf>run_simulations</span><span class=p>(</span>
-</span><span id=__span-0-783><a id=__codelineno-0-783 name=__codelineno-0-783></a>    <span class=bp>self</span><span class=p>,</span>
-</span><span id=__span-0-784><a id=__codelineno-0-784 name=__codelineno-0-784></a>    <span class=n>test_cases</span><span class=p>:</span> <span class=n>List</span><span class=p>[</span><span class=n>Dict</span><span class=p>[</span><span class=nb>str</span><span class=p>,</span> <span class=n>Any</span><span class=p>]],</span>
-</span><span id=__span-0-785><a id=__codelineno-0-785 name=__codelineno-0-785></a>    <span class=n>runs</span><span class=p>:</span> <span class=nb>int</span> <span class=o>=</span> <span class=mi>1</span><span class=p>,</span>
-</span><span id=__span-0-786><a id=__codelineno-0-786 name=__codelineno-0-786></a>    <span class=n>parallel</span><span class=p>:</span> <span class=nb>int</span> <span class=o>=</span> <span class=mi>1</span><span class=p>,</span>
-</span><span id=__span-0-787><a id=__codelineno-0-787 name=__codelineno-0-787></a>    <span class=n>model</span><span class=p>:</span> <span class=nb>str</span> <span class=o>=</span> <span class=n>_DEFAULT_GEMINI_MODEL</span><span class=p>,</span>
-</span><span id=__span-0-788><a id=__codelineno-0-788 name=__codelineno-0-788></a>    <span class=n>modality</span><span class=p>:</span> <span class=nb>str</span> <span class=o>=</span> <span class=s2>&quot;text&quot;</span><span class=p>,</span>
-</span><span id=__span-0-789><a id=__codelineno-0-789 name=__codelineno-0-789></a>    <span class=n>verbose</span><span class=p>:</span> <span class=nb>bool</span> <span class=o>=</span> <span class=kc>False</span><span class=p>,</span>
-</span><span id=__span-0-790><a id=__codelineno-0-790 name=__codelineno-0-790></a><span class=p>)</span> <span class=o>-&gt;</span> <span class=n>List</span><span class=p>[</span><span class=n>Dict</span><span class=p>[</span><span class=nb>str</span><span class=p>,</span> <span class=n>Any</span><span class=p>]]:</span>
-</span><span id=__span-0-791><a id=__codelineno-0-791 name=__codelineno-0-791></a><span class=w>    </span><span class=sd>&quot;&quot;&quot;Runs multiple simulations, optionally in parallel.</span>
-</span><span id=__span-0-792><a id=__codelineno-0-792 name=__codelineno-0-792></a>
-</span><span id=__span-0-793><a id=__codelineno-0-793 name=__codelineno-0-793></a><span class=sd>    Args:</span>
-</span><span id=__span-0-794><a id=__codelineno-0-794 name=__codelineno-0-794></a><span class=sd>        test_cases: List of test case dictionaries.</span>
-</span><span id=__span-0-795><a id=__codelineno-0-795 name=__codelineno-0-795></a><span class=sd>        runs: Number of runs per test case.</span>
-</span><span id=__span-0-796><a id=__codelineno-0-796 name=__codelineno-0-796></a><span class=sd>        parallel: Number of parallel workers (capped at 25).</span>
-</span><span id=__span-0-797><a id=__codelineno-0-797 name=__codelineno-0-797></a><span class=sd>        model: Gemini model to use.</span>
-</span><span id=__span-0-798><a id=__codelineno-0-798 name=__codelineno-0-798></a><span class=sd>        modality: &#39;text&#39; or &#39;audio&#39;.</span>
-</span><span id=__span-0-799><a id=__codelineno-0-799 name=__codelineno-0-799></a><span class=sd>        verbose: Whether to log to console (only active if parallel=1).</span>
-</span><span id=__span-0-800><a id=__codelineno-0-800 name=__codelineno-0-800></a><span class=sd>    &quot;&quot;&quot;</span>
-</span><span id=__span-0-801><a id=__codelineno-0-801 name=__codelineno-0-801></a>    <span class=n>jobs</span> <span class=o>=</span> <span class=bp>self</span><span class=o>.</span><span class=n>_prepare_simulation_jobs</span><span class=p>(</span><span class=n>test_cases</span><span class=p>,</span> <span class=n>runs</span><span class=p>)</span>
-</span><span id=__span-0-802><a id=__codelineno-0-802 name=__codelineno-0-802></a>    <span class=k>return</span> <span class=bp>self</span><span class=o>.</span><span class=n>_aggregate_simulation_results</span><span class=p>(</span>
-</span><span id=__span-0-803><a id=__codelineno-0-803 name=__codelineno-0-803></a>        <span class=n>jobs</span><span class=p>,</span> <span class=n>runs</span><span class=p>,</span> <span class=n>parallel</span><span class=p>,</span> <span class=n>model</span><span class=p>,</span> <span class=n>modality</span><span class=p>,</span> <span class=n>verbose</span>
-</span><span id=__span-0-804><a id=__codelineno-0-804 name=__codelineno-0-804></a>    <span class=p>)</span>
+</span></code></pre></div> <div class="doc doc-contents "> <p>Runs multiple simulations, optionally in parallel.</p> <p><span class=doc-section-title>Parameters:</span></p> <table> <thead> <tr> <th>Name</th> <th>Type</th> <th>Description</th> <th>Default</th> </tr> </thead> <tbody> <tr class=doc-section-item> <td> <code>test_cases</code> </td> <td> <code><span title=typing.List>List</span>[<span title=typing.Dict>Dict</span>[<span title=str>str</span>, <span title=typing.Any>Any</span>]]</code> </td> <td> <div class=doc-md-description> <p>List of test case dictionaries.</p> </div> </td> <td> <em>required</em> </td> </tr> <tr class=doc-section-item> <td> <code>runs</code> </td> <td> <code><span title=int>int</span></code> </td> <td> <div class=doc-md-description> <p>Number of runs per test case.</p> </div> </td> <td> <code>1</code> </td> </tr> <tr class=doc-section-item> <td> <code>parallel</code> </td> <td> <code><span title=int>int</span></code> </td> <td> <div class=doc-md-description> <p>Number of parallel workers (capped at 25).</p> </div> </td> <td> <code>1</code> </td> </tr> <tr class=doc-section-item> <td> <code>model</code> </td> <td> <code><span title=str>str</span></code> </td> <td> <div class=doc-md-description> <p>Gemini model to use.</p> </div> </td> <td> <code><span title=cxas_scrapi.evals.simulation_evals._DEFAULT_GEMINI_MODEL>_DEFAULT_GEMINI_MODEL</span></code> </td> </tr> <tr class=doc-section-item> <td> <code>modality</code> </td> <td> <code><span title=str>str</span></code> </td> <td> <div class=doc-md-description> <p>'text' or 'audio'.</p> </div> </td> <td> <code>&#39;text&#39;</code> </td> </tr> <tr class=doc-section-item> <td> <code>verbose</code> </td> <td> <code><span title=bool>bool</span></code> </td> <td> <div class=doc-md-description> <p>Whether to log to console (only active if parallel=1).</p> </div> </td> <td> <code>False</code> </td> </tr> </tbody> </table> <details class=mkdocstrings-source> <summary>Source code in <code>src/cxas_scrapi/evals/simulation_evals.py</code></summary> <div class="language-python highlight"><table class=highlighttable><tr><td class=linenos><div class=linenodiv><pre><span></span><span class=normal><a href=#__codelineno-0-693>693</a></span>
+<span class=normal><a href=#__codelineno-0-694>694</a></span>
+<span class=normal><a href=#__codelineno-0-695>695</a></span>
+<span class=normal><a href=#__codelineno-0-696>696</a></span>
+<span class=normal><a href=#__codelineno-0-697>697</a></span>
+<span class=normal><a href=#__codelineno-0-698>698</a></span>
+<span class=normal><a href=#__codelineno-0-699>699</a></span>
+<span class=normal><a href=#__codelineno-0-700>700</a></span>
+<span class=normal><a href=#__codelineno-0-701>701</a></span>
+<span class=normal><a href=#__codelineno-0-702>702</a></span>
+<span class=normal><a href=#__codelineno-0-703>703</a></span>
+<span class=normal><a href=#__codelineno-0-704>704</a></span>
+<span class=normal><a href=#__codelineno-0-705>705</a></span>
+<span class=normal><a href=#__codelineno-0-706>706</a></span>
+<span class=normal><a href=#__codelineno-0-707>707</a></span>
+<span class=normal><a href=#__codelineno-0-708>708</a></span>
+<span class=normal><a href=#__codelineno-0-709>709</a></span>
+<span class=normal><a href=#__codelineno-0-710>710</a></span>
+<span class=normal><a href=#__codelineno-0-711>711</a></span>
+<span class=normal><a href=#__codelineno-0-712>712</a></span>
+<span class=normal><a href=#__codelineno-0-713>713</a></span>
+<span class=normal><a href=#__codelineno-0-714>714</a></span>
+<span class=normal><a href=#__codelineno-0-715>715</a></span></pre></div></td><td class=code><div><pre><span></span><code><span id=__span-0-693><a id=__codelineno-0-693 name=__codelineno-0-693></a><span class=k>def</span><span class=w> </span><span class=nf>run_simulations</span><span class=p>(</span>
+</span><span id=__span-0-694><a id=__codelineno-0-694 name=__codelineno-0-694></a>    <span class=bp>self</span><span class=p>,</span>
+</span><span id=__span-0-695><a id=__codelineno-0-695 name=__codelineno-0-695></a>    <span class=n>test_cases</span><span class=p>:</span> <span class=n>List</span><span class=p>[</span><span class=n>Dict</span><span class=p>[</span><span class=nb>str</span><span class=p>,</span> <span class=n>Any</span><span class=p>]],</span>
+</span><span id=__span-0-696><a id=__codelineno-0-696 name=__codelineno-0-696></a>    <span class=n>runs</span><span class=p>:</span> <span class=nb>int</span> <span class=o>=</span> <span class=mi>1</span><span class=p>,</span>
+</span><span id=__span-0-697><a id=__codelineno-0-697 name=__codelineno-0-697></a>    <span class=n>parallel</span><span class=p>:</span> <span class=nb>int</span> <span class=o>=</span> <span class=mi>1</span><span class=p>,</span>
+</span><span id=__span-0-698><a id=__codelineno-0-698 name=__codelineno-0-698></a>    <span class=n>model</span><span class=p>:</span> <span class=nb>str</span> <span class=o>=</span> <span class=n>_DEFAULT_GEMINI_MODEL</span><span class=p>,</span>
+</span><span id=__span-0-699><a id=__codelineno-0-699 name=__codelineno-0-699></a>    <span class=n>modality</span><span class=p>:</span> <span class=nb>str</span> <span class=o>=</span> <span class=s2>&quot;text&quot;</span><span class=p>,</span>
+</span><span id=__span-0-700><a id=__codelineno-0-700 name=__codelineno-0-700></a>    <span class=n>verbose</span><span class=p>:</span> <span class=nb>bool</span> <span class=o>=</span> <span class=kc>False</span><span class=p>,</span>
+</span><span id=__span-0-701><a id=__codelineno-0-701 name=__codelineno-0-701></a><span class=p>)</span> <span class=o>-&gt;</span> <span class=n>List</span><span class=p>[</span><span class=n>Dict</span><span class=p>[</span><span class=nb>str</span><span class=p>,</span> <span class=n>Any</span><span class=p>]]:</span>
+</span><span id=__span-0-702><a id=__codelineno-0-702 name=__codelineno-0-702></a><span class=w>    </span><span class=sd>&quot;&quot;&quot;Runs multiple simulations, optionally in parallel.</span>
+</span><span id=__span-0-703><a id=__codelineno-0-703 name=__codelineno-0-703></a>
+</span><span id=__span-0-704><a id=__codelineno-0-704 name=__codelineno-0-704></a><span class=sd>    Args:</span>
+</span><span id=__span-0-705><a id=__codelineno-0-705 name=__codelineno-0-705></a><span class=sd>        test_cases: List of test case dictionaries.</span>
+</span><span id=__span-0-706><a id=__codelineno-0-706 name=__codelineno-0-706></a><span class=sd>        runs: Number of runs per test case.</span>
+</span><span id=__span-0-707><a id=__codelineno-0-707 name=__codelineno-0-707></a><span class=sd>        parallel: Number of parallel workers (capped at 25).</span>
+</span><span id=__span-0-708><a id=__codelineno-0-708 name=__codelineno-0-708></a><span class=sd>        model: Gemini model to use.</span>
+</span><span id=__span-0-709><a id=__codelineno-0-709 name=__codelineno-0-709></a><span class=sd>        modality: &#39;text&#39; or &#39;audio&#39;.</span>
+</span><span id=__span-0-710><a id=__codelineno-0-710 name=__codelineno-0-710></a><span class=sd>        verbose: Whether to log to console (only active if parallel=1).</span>
+</span><span id=__span-0-711><a id=__codelineno-0-711 name=__codelineno-0-711></a><span class=sd>    &quot;&quot;&quot;</span>
+</span><span id=__span-0-712><a id=__codelineno-0-712 name=__codelineno-0-712></a>    <span class=n>jobs</span> <span class=o>=</span> <span class=bp>self</span><span class=o>.</span><span class=n>_prepare_simulation_jobs</span><span class=p>(</span><span class=n>test_cases</span><span class=p>,</span> <span class=n>runs</span><span class=p>)</span>
+</span><span id=__span-0-713><a id=__codelineno-0-713 name=__codelineno-0-713></a>    <span class=k>return</span> <span class=bp>self</span><span class=o>.</span><span class=n>_aggregate_simulation_results</span><span class=p>(</span>
+</span><span id=__span-0-714><a id=__codelineno-0-714 name=__codelineno-0-714></a>        <span class=n>jobs</span><span class=p>,</span> <span class=n>runs</span><span class=p>,</span> <span class=n>parallel</span><span class=p>,</span> <span class=n>model</span><span class=p>,</span> <span class=n>modality</span><span class=p>,</span> <span class=n>verbose</span>
+</span><span id=__span-0-715><a id=__codelineno-0-715 name=__codelineno-0-715></a>    <span class=p>)</span>
 </span></code></pre></div></td></tr></table></div> </details> </div> </div> <div class="doc doc-object doc-function"> <h3 id=cxas_scrapi.evals.simulation_evals.SimulationEvals.export_results_to_golden class="doc doc-heading"> <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code> <span class="doc doc-object-name doc-function-name">export_results_to_golden</span> <a href=#cxas_scrapi.evals.simulation_evals.SimulationEvals.export_results_to_golden class=headerlink title="Permanent link">&para;</a></h3> <div class="language-python doc-signature highlight"><pre><span></span><code><span id=__span-0-1><a id=__codelineno-0-1 name=__codelineno-0-1 href=#__codelineno-0-1></a><span class=nf>export_results_to_golden</span><span class=p>(</span><span class=n>results</span><span class=p>,</span> <span class=n>output_path</span><span class=o>=</span><span class=kc>None</span><span class=p>)</span>
-</span></code></pre></div> <div class="doc doc-contents "> <p>Exports simulation results to a Golden Evaluation <abbr title="YAML Ain't Markup Language">YAML</abbr> file.</p> <p>Fetches the full conversation trace for each simulation from the platform to ensure accuracy.</p> <p><span class=doc-section-title>Parameters:</span></p> <table> <thead> <tr> <th>Name</th> <th>Type</th> <th>Description</th> <th>Default</th> </tr> </thead> <tbody> <tr class=doc-section-item> <td> <code>results</code> </td> <td> <code><span title=typing.List>List</span>[<span title=typing.Dict>Dict</span>[<span title=str>str</span>, <span title=typing.Any>Any</span>]]</code> </td> <td> <div class=doc-md-description> <p>The list of results returned by run_simulations.</p> </div> </td> <td> <em>required</em> </td> </tr> <tr class=doc-section-item> <td> <code>output_path</code> </td> <td> <code><span title=typing.Optional>Optional</span>[<span title=str>str</span>]</code> </td> <td> <div class=doc-md-description> <p>Optional local path to save the generated <abbr title="YAML Ain't Markup Language">YAML</abbr>.</p> </div> </td> <td> <code>None</code> </td> </tr> </tbody> </table> <p><span class=doc-section-title>Returns:</span></p> <table> <thead> <tr> <th>Type</th> <th>Description</th> </tr> </thead> <tbody> <tr class=doc-section-item> <td> <code><span title=str>str</span></code> </td> <td> <div class=doc-md-description> <p>The generated <abbr title="YAML Ain't Markup Language">YAML</abbr> string.</p> </div> </td> </tr> </tbody> </table> <details class=mkdocstrings-source> <summary>Source code in <code>src/cxas_scrapi/evals/simulation_evals.py</code></summary> <div class="language-python highlight"><table class=highlighttable><tr><td class=linenos><div class=linenodiv><pre><span></span><span class=normal><a href=#__codelineno-0-981> 981</a></span>
-<span class=normal><a href=#__codelineno-0-982> 982</a></span>
-<span class=normal><a href=#__codelineno-0-983> 983</a></span>
-<span class=normal><a href=#__codelineno-0-984> 984</a></span>
-<span class=normal><a href=#__codelineno-0-985> 985</a></span>
-<span class=normal><a href=#__codelineno-0-986> 986</a></span>
-<span class=normal><a href=#__codelineno-0-987> 987</a></span>
-<span class=normal><a href=#__codelineno-0-988> 988</a></span>
-<span class=normal><a href=#__codelineno-0-989> 989</a></span>
-<span class=normal><a href=#__codelineno-0-990> 990</a></span>
-<span class=normal><a href=#__codelineno-0-991> 991</a></span>
-<span class=normal><a href=#__codelineno-0-992> 992</a></span>
-<span class=normal><a href=#__codelineno-0-993> 993</a></span>
-<span class=normal><a href=#__codelineno-0-994> 994</a></span>
-<span class=normal><a href=#__codelineno-0-995> 995</a></span>
-<span class=normal><a href=#__codelineno-0-996> 996</a></span>
-<span class=normal><a href=#__codelineno-0-997> 997</a></span>
-<span class=normal><a href=#__codelineno-0-998> 998</a></span>
-<span class=normal><a href=#__codelineno-0-999> 999</a></span>
-<span class=normal><a href=#__codelineno-0-1000>1000</a></span>
-<span class=normal><a href=#__codelineno-0-1001>1001</a></span>
-<span class=normal><a href=#__codelineno-0-1002>1002</a></span>
-<span class=normal><a href=#__codelineno-0-1003>1003</a></span>
-<span class=normal><a href=#__codelineno-0-1004>1004</a></span>
-<span class=normal><a href=#__codelineno-0-1005>1005</a></span>
-<span class=normal><a href=#__codelineno-0-1006>1006</a></span>
-<span class=normal><a href=#__codelineno-0-1007>1007</a></span>
-<span class=normal><a href=#__codelineno-0-1008>1008</a></span>
-<span class=normal><a href=#__codelineno-0-1009>1009</a></span>
-<span class=normal><a href=#__codelineno-0-1010>1010</a></span>
-<span class=normal><a href=#__codelineno-0-1011>1011</a></span>
-<span class=normal><a href=#__codelineno-0-1012>1012</a></span>
-<span class=normal><a href=#__codelineno-0-1013>1013</a></span>
-<span class=normal><a href=#__codelineno-0-1014>1014</a></span>
-<span class=normal><a href=#__codelineno-0-1015>1015</a></span>
-<span class=normal><a href=#__codelineno-0-1016>1016</a></span>
-<span class=normal><a href=#__codelineno-0-1017>1017</a></span>
-<span class=normal><a href=#__codelineno-0-1018>1018</a></span>
-<span class=normal><a href=#__codelineno-0-1019>1019</a></span>
-<span class=normal><a href=#__codelineno-0-1020>1020</a></span>
-<span class=normal><a href=#__codelineno-0-1021>1021</a></span>
-<span class=normal><a href=#__codelineno-0-1022>1022</a></span>
-<span class=normal><a href=#__codelineno-0-1023>1023</a></span>
-<span class=normal><a href=#__codelineno-0-1024>1024</a></span>
-<span class=normal><a href=#__codelineno-0-1025>1025</a></span>
-<span class=normal><a href=#__codelineno-0-1026>1026</a></span>
-<span class=normal><a href=#__codelineno-0-1027>1027</a></span>
-<span class=normal><a href=#__codelineno-0-1028>1028</a></span>
-<span class=normal><a href=#__codelineno-0-1029>1029</a></span>
-<span class=normal><a href=#__codelineno-0-1030>1030</a></span></pre></div></td><td class=code><div><pre><span></span><code><span id=__span-0-981><a id=__codelineno-0-981 name=__codelineno-0-981></a><span class=k>def</span><span class=w> </span><span class=nf>export_results_to_golden</span><span class=p>(</span>
-</span><span id=__span-0-982><a id=__codelineno-0-982 name=__codelineno-0-982></a>    <span class=bp>self</span><span class=p>,</span>
-</span><span id=__span-0-983><a id=__codelineno-0-983 name=__codelineno-0-983></a>    <span class=n>results</span><span class=p>:</span> <span class=n>List</span><span class=p>[</span><span class=n>Dict</span><span class=p>[</span><span class=nb>str</span><span class=p>,</span> <span class=n>Any</span><span class=p>]],</span>
-</span><span id=__span-0-984><a id=__codelineno-0-984 name=__codelineno-0-984></a>    <span class=n>output_path</span><span class=p>:</span> <span class=n>Optional</span><span class=p>[</span><span class=nb>str</span><span class=p>]</span> <span class=o>=</span> <span class=kc>None</span><span class=p>,</span>
-</span><span id=__span-0-985><a id=__codelineno-0-985 name=__codelineno-0-985></a><span class=p>)</span> <span class=o>-&gt;</span> <span class=nb>str</span><span class=p>:</span>
-</span><span id=__span-0-986><a id=__codelineno-0-986 name=__codelineno-0-986></a><span class=w>    </span><span class=sd>&quot;&quot;&quot;Exports simulation results to a Golden Evaluation YAML file.</span>
-</span><span id=__span-0-987><a id=__codelineno-0-987 name=__codelineno-0-987></a>
-</span><span id=__span-0-988><a id=__codelineno-0-988 name=__codelineno-0-988></a><span class=sd>    Fetches the full conversation trace for each simulation from the</span>
-</span><span id=__span-0-989><a id=__codelineno-0-989 name=__codelineno-0-989></a><span class=sd>    platform to ensure accuracy.</span>
-</span><span id=__span-0-990><a id=__codelineno-0-990 name=__codelineno-0-990></a>
-</span><span id=__span-0-991><a id=__codelineno-0-991 name=__codelineno-0-991></a><span class=sd>    Args:</span>
-</span><span id=__span-0-992><a id=__codelineno-0-992 name=__codelineno-0-992></a><span class=sd>        results: The list of results returned by run_simulations.</span>
-</span><span id=__span-0-993><a id=__codelineno-0-993 name=__codelineno-0-993></a><span class=sd>        output_path: Optional local path to save the generated YAML.</span>
-</span><span id=__span-0-994><a id=__codelineno-0-994 name=__codelineno-0-994></a>
-</span><span id=__span-0-995><a id=__codelineno-0-995 name=__codelineno-0-995></a><span class=sd>    Returns:</span>
-</span><span id=__span-0-996><a id=__codelineno-0-996 name=__codelineno-0-996></a><span class=sd>        The generated YAML string.</span>
-</span><span id=__span-0-997><a id=__codelineno-0-997 name=__codelineno-0-997></a><span class=sd>    &quot;&quot;&quot;</span>
-</span><span id=__span-0-998><a id=__codelineno-0-998 name=__codelineno-0-998></a>    <span class=n>conversations_list</span> <span class=o>=</span> <span class=p>[]</span>
-</span><span id=__span-0-999><a id=__codelineno-0-999 name=__codelineno-0-999></a>
-</span><span id=__span-0-1000><a id=__codelineno-0-1000 name=__codelineno-0-1000></a>    <span class=k>for</span> <span class=n>res</span> <span class=ow>in</span> <span class=n>results</span><span class=p>:</span>
-</span><span id=__span-0-1001><a id=__codelineno-0-1001 name=__codelineno-0-1001></a>        <span class=n>turns</span> <span class=o>=</span> <span class=bp>self</span><span class=o>.</span><span class=n>_get_turns</span><span class=p>(</span><span class=n>res</span><span class=p>)</span>
-</span><span id=__span-0-1002><a id=__codelineno-0-1002 name=__codelineno-0-1002></a>        <span class=k>if</span> <span class=ow>not</span> <span class=n>turns</span><span class=p>:</span>
-</span><span id=__span-0-1003><a id=__codelineno-0-1003 name=__codelineno-0-1003></a>            <span class=k>continue</span>
-</span><span id=__span-0-1004><a id=__codelineno-0-1004 name=__codelineno-0-1004></a>
-</span><span id=__span-0-1005><a id=__codelineno-0-1005 name=__codelineno-0-1005></a>        <span class=n>expectations</span> <span class=o>=</span> <span class=p>[</span>
-</span><span id=__span-0-1006><a id=__codelineno-0-1006 name=__codelineno-0-1006></a>            <span class=n>e</span><span class=p>[</span><span class=s2>&quot;expectation&quot;</span><span class=p>]</span> <span class=k>for</span> <span class=n>e</span> <span class=ow>in</span> <span class=n>res</span><span class=o>.</span><span class=n>get</span><span class=p>(</span><span class=s2>&quot;expectation_details&quot;</span><span class=p>,</span> <span class=p>[])</span>
-</span><span id=__span-0-1007><a id=__codelineno-0-1007 name=__codelineno-0-1007></a>        <span class=p>]</span>
-</span><span id=__span-0-1008><a id=__codelineno-0-1008 name=__codelineno-0-1008></a>        <span class=n>params</span> <span class=o>=</span> <span class=n>res</span><span class=o>.</span><span class=n>get</span><span class=p>(</span><span class=s2>&quot;session_parameters&quot;</span><span class=p>,</span> <span class=p>{})</span>
-</span><span id=__span-0-1009><a id=__codelineno-0-1009 name=__codelineno-0-1009></a>
-</span><span id=__span-0-1010><a id=__codelineno-0-1010 name=__codelineno-0-1010></a>        <span class=n>conversations_list</span><span class=o>.</span><span class=n>append</span><span class=p>(</span>
-</span><span id=__span-0-1011><a id=__codelineno-0-1011 name=__codelineno-0-1011></a>            <span class=n>GoldenConversation</span><span class=p>(</span>
-</span><span id=__span-0-1012><a id=__codelineno-0-1012 name=__codelineno-0-1012></a>                <span class=n>conversation</span><span class=o>=</span><span class=n>res</span><span class=o>.</span><span class=n>get</span><span class=p>(</span><span class=s2>&quot;name&quot;</span><span class=p>,</span> <span class=s2>&quot;Simulated_Conversation&quot;</span><span class=p>),</span>
-</span><span id=__span-0-1013><a id=__codelineno-0-1013 name=__codelineno-0-1013></a>                <span class=n>turns</span><span class=o>=</span><span class=n>turns</span><span class=p>,</span>
-</span><span id=__span-0-1014><a id=__codelineno-0-1014 name=__codelineno-0-1014></a>                <span class=n>expectations</span><span class=o>=</span><span class=n>expectations</span><span class=p>,</span>
-</span><span id=__span-0-1015><a id=__codelineno-0-1015 name=__codelineno-0-1015></a>                <span class=n>session_parameters</span><span class=o>=</span><span class=n>params</span><span class=p>,</span>
-</span><span id=__span-0-1016><a id=__codelineno-0-1016 name=__codelineno-0-1016></a>            <span class=p>)</span>
-</span><span id=__span-0-1017><a id=__codelineno-0-1017 name=__codelineno-0-1017></a>        <span class=p>)</span>
-</span><span id=__span-0-1018><a id=__codelineno-0-1018 name=__codelineno-0-1018></a>
-</span><span id=__span-0-1019><a id=__codelineno-0-1019 name=__codelineno-0-1019></a>    <span class=n>dataset</span> <span class=o>=</span> <span class=n>GoldenConversations</span><span class=p>(</span><span class=n>conversations</span><span class=o>=</span><span class=n>conversations_list</span><span class=p>)</span>
-</span><span id=__span-0-1020><a id=__codelineno-0-1020 name=__codelineno-0-1020></a>    <span class=n>yaml_content</span> <span class=o>=</span> <span class=n>yaml</span><span class=o>.</span><span class=n>dump</span><span class=p>(</span>
-</span><span id=__span-0-1021><a id=__codelineno-0-1021 name=__codelineno-0-1021></a>        <span class=n>dataset</span><span class=o>.</span><span class=n>model_dump</span><span class=p>(</span><span class=n>exclude_none</span><span class=o>=</span><span class=kc>True</span><span class=p>),</span>
-</span><span id=__span-0-1022><a id=__codelineno-0-1022 name=__codelineno-0-1022></a>        <span class=n>sort_keys</span><span class=o>=</span><span class=kc>False</span><span class=p>,</span>
-</span><span id=__span-0-1023><a id=__codelineno-0-1023 name=__codelineno-0-1023></a>        <span class=n>allow_unicode</span><span class=o>=</span><span class=kc>True</span><span class=p>,</span>
-</span><span id=__span-0-1024><a id=__codelineno-0-1024 name=__codelineno-0-1024></a>    <span class=p>)</span>
-</span><span id=__span-0-1025><a id=__codelineno-0-1025 name=__codelineno-0-1025></a>
-</span><span id=__span-0-1026><a id=__codelineno-0-1026 name=__codelineno-0-1026></a>    <span class=k>if</span> <span class=n>output_path</span><span class=p>:</span>
-</span><span id=__span-0-1027><a id=__codelineno-0-1027 name=__codelineno-0-1027></a>        <span class=k>with</span> <span class=nb>open</span><span class=p>(</span><span class=n>output_path</span><span class=p>,</span> <span class=s2>&quot;w&quot;</span><span class=p>,</span> <span class=n>encoding</span><span class=o>=</span><span class=s2>&quot;utf-8&quot;</span><span class=p>)</span> <span class=k>as</span> <span class=n>f</span><span class=p>:</span>
-</span><span id=__span-0-1028><a id=__codelineno-0-1028 name=__codelineno-0-1028></a>            <span class=n>f</span><span class=o>.</span><span class=n>write</span><span class=p>(</span><span class=n>yaml_content</span><span class=p>)</span>
-</span><span id=__span-0-1029><a id=__codelineno-0-1029 name=__codelineno-0-1029></a>
-</span><span id=__span-0-1030><a id=__codelineno-0-1030 name=__codelineno-0-1030></a>    <span class=k>return</span> <span class=n>yaml_content</span>
+</span></code></pre></div> <div class="doc doc-contents "> <p>Exports simulation results to a Golden Evaluation <abbr title="YAML Ain't Markup Language">YAML</abbr> file.</p> <p>Fetches the full conversation trace for each simulation from the platform to ensure accuracy.</p> <p><span class=doc-section-title>Parameters:</span></p> <table> <thead> <tr> <th>Name</th> <th>Type</th> <th>Description</th> <th>Default</th> </tr> </thead> <tbody> <tr class=doc-section-item> <td> <code>results</code> </td> <td> <code><span title=typing.List>List</span>[<span title=typing.Dict>Dict</span>[<span title=str>str</span>, <span title=typing.Any>Any</span>]]</code> </td> <td> <div class=doc-md-description> <p>The list of results returned by run_simulations.</p> </div> </td> <td> <em>required</em> </td> </tr> <tr class=doc-section-item> <td> <code>output_path</code> </td> <td> <code><span title=typing.Optional>Optional</span>[<span title=str>str</span>]</code> </td> <td> <div class=doc-md-description> <p>Optional local path to save the generated <abbr title="YAML Ain't Markup Language">YAML</abbr>.</p> </div> </td> <td> <code>None</code> </td> </tr> </tbody> </table> <p><span class=doc-section-title>Returns:</span></p> <table> <thead> <tr> <th>Type</th> <th>Description</th> </tr> </thead> <tbody> <tr class=doc-section-item> <td> <code><span title=str>str</span></code> </td> <td> <div class=doc-md-description> <p>The generated <abbr title="YAML Ain't Markup Language">YAML</abbr> string.</p> </div> </td> </tr> </tbody> </table> <details class=mkdocstrings-source> <summary>Source code in <code>src/cxas_scrapi/evals/simulation_evals.py</code></summary> <div class="language-python highlight"><table class=highlighttable><tr><td class=linenos><div class=linenodiv><pre><span></span><span class=normal><a href=#__codelineno-0-892>892</a></span>
+<span class=normal><a href=#__codelineno-0-893>893</a></span>
+<span class=normal><a href=#__codelineno-0-894>894</a></span>
+<span class=normal><a href=#__codelineno-0-895>895</a></span>
+<span class=normal><a href=#__codelineno-0-896>896</a></span>
+<span class=normal><a href=#__codelineno-0-897>897</a></span>
+<span class=normal><a href=#__codelineno-0-898>898</a></span>
+<span class=normal><a href=#__codelineno-0-899>899</a></span>
+<span class=normal><a href=#__codelineno-0-900>900</a></span>
+<span class=normal><a href=#__codelineno-0-901>901</a></span>
+<span class=normal><a href=#__codelineno-0-902>902</a></span>
+<span class=normal><a href=#__codelineno-0-903>903</a></span>
+<span class=normal><a href=#__codelineno-0-904>904</a></span>
+<span class=normal><a href=#__codelineno-0-905>905</a></span>
+<span class=normal><a href=#__codelineno-0-906>906</a></span>
+<span class=normal><a href=#__codelineno-0-907>907</a></span>
+<span class=normal><a href=#__codelineno-0-908>908</a></span>
+<span class=normal><a href=#__codelineno-0-909>909</a></span>
+<span class=normal><a href=#__codelineno-0-910>910</a></span>
+<span class=normal><a href=#__codelineno-0-911>911</a></span>
+<span class=normal><a href=#__codelineno-0-912>912</a></span>
+<span class=normal><a href=#__codelineno-0-913>913</a></span>
+<span class=normal><a href=#__codelineno-0-914>914</a></span>
+<span class=normal><a href=#__codelineno-0-915>915</a></span>
+<span class=normal><a href=#__codelineno-0-916>916</a></span>
+<span class=normal><a href=#__codelineno-0-917>917</a></span>
+<span class=normal><a href=#__codelineno-0-918>918</a></span>
+<span class=normal><a href=#__codelineno-0-919>919</a></span>
+<span class=normal><a href=#__codelineno-0-920>920</a></span>
+<span class=normal><a href=#__codelineno-0-921>921</a></span>
+<span class=normal><a href=#__codelineno-0-922>922</a></span>
+<span class=normal><a href=#__codelineno-0-923>923</a></span>
+<span class=normal><a href=#__codelineno-0-924>924</a></span>
+<span class=normal><a href=#__codelineno-0-925>925</a></span>
+<span class=normal><a href=#__codelineno-0-926>926</a></span>
+<span class=normal><a href=#__codelineno-0-927>927</a></span>
+<span class=normal><a href=#__codelineno-0-928>928</a></span>
+<span class=normal><a href=#__codelineno-0-929>929</a></span>
+<span class=normal><a href=#__codelineno-0-930>930</a></span>
+<span class=normal><a href=#__codelineno-0-931>931</a></span>
+<span class=normal><a href=#__codelineno-0-932>932</a></span>
+<span class=normal><a href=#__codelineno-0-933>933</a></span>
+<span class=normal><a href=#__codelineno-0-934>934</a></span>
+<span class=normal><a href=#__codelineno-0-935>935</a></span>
+<span class=normal><a href=#__codelineno-0-936>936</a></span>
+<span class=normal><a href=#__codelineno-0-937>937</a></span>
+<span class=normal><a href=#__codelineno-0-938>938</a></span>
+<span class=normal><a href=#__codelineno-0-939>939</a></span>
+<span class=normal><a href=#__codelineno-0-940>940</a></span>
+<span class=normal><a href=#__codelineno-0-941>941</a></span></pre></div></td><td class=code><div><pre><span></span><code><span id=__span-0-892><a id=__codelineno-0-892 name=__codelineno-0-892></a><span class=k>def</span><span class=w> </span><span class=nf>export_results_to_golden</span><span class=p>(</span>
+</span><span id=__span-0-893><a id=__codelineno-0-893 name=__codelineno-0-893></a>    <span class=bp>self</span><span class=p>,</span>
+</span><span id=__span-0-894><a id=__codelineno-0-894 name=__codelineno-0-894></a>    <span class=n>results</span><span class=p>:</span> <span class=n>List</span><span class=p>[</span><span class=n>Dict</span><span class=p>[</span><span class=nb>str</span><span class=p>,</span> <span class=n>Any</span><span class=p>]],</span>
+</span><span id=__span-0-895><a id=__codelineno-0-895 name=__codelineno-0-895></a>    <span class=n>output_path</span><span class=p>:</span> <span class=n>Optional</span><span class=p>[</span><span class=nb>str</span><span class=p>]</span> <span class=o>=</span> <span class=kc>None</span><span class=p>,</span>
+</span><span id=__span-0-896><a id=__codelineno-0-896 name=__codelineno-0-896></a><span class=p>)</span> <span class=o>-&gt;</span> <span class=nb>str</span><span class=p>:</span>
+</span><span id=__span-0-897><a id=__codelineno-0-897 name=__codelineno-0-897></a><span class=w>    </span><span class=sd>&quot;&quot;&quot;Exports simulation results to a Golden Evaluation YAML file.</span>
+</span><span id=__span-0-898><a id=__codelineno-0-898 name=__codelineno-0-898></a>
+</span><span id=__span-0-899><a id=__codelineno-0-899 name=__codelineno-0-899></a><span class=sd>    Fetches the full conversation trace for each simulation from the</span>
+</span><span id=__span-0-900><a id=__codelineno-0-900 name=__codelineno-0-900></a><span class=sd>    platform to ensure accuracy.</span>
+</span><span id=__span-0-901><a id=__codelineno-0-901 name=__codelineno-0-901></a>
+</span><span id=__span-0-902><a id=__codelineno-0-902 name=__codelineno-0-902></a><span class=sd>    Args:</span>
+</span><span id=__span-0-903><a id=__codelineno-0-903 name=__codelineno-0-903></a><span class=sd>        results: The list of results returned by run_simulations.</span>
+</span><span id=__span-0-904><a id=__codelineno-0-904 name=__codelineno-0-904></a><span class=sd>        output_path: Optional local path to save the generated YAML.</span>
+</span><span id=__span-0-905><a id=__codelineno-0-905 name=__codelineno-0-905></a>
+</span><span id=__span-0-906><a id=__codelineno-0-906 name=__codelineno-0-906></a><span class=sd>    Returns:</span>
+</span><span id=__span-0-907><a id=__codelineno-0-907 name=__codelineno-0-907></a><span class=sd>        The generated YAML string.</span>
+</span><span id=__span-0-908><a id=__codelineno-0-908 name=__codelineno-0-908></a><span class=sd>    &quot;&quot;&quot;</span>
+</span><span id=__span-0-909><a id=__codelineno-0-909 name=__codelineno-0-909></a>    <span class=n>conversations_list</span> <span class=o>=</span> <span class=p>[]</span>
+</span><span id=__span-0-910><a id=__codelineno-0-910 name=__codelineno-0-910></a>
+</span><span id=__span-0-911><a id=__codelineno-0-911 name=__codelineno-0-911></a>    <span class=k>for</span> <span class=n>res</span> <span class=ow>in</span> <span class=n>results</span><span class=p>:</span>
+</span><span id=__span-0-912><a id=__codelineno-0-912 name=__codelineno-0-912></a>        <span class=n>turns</span> <span class=o>=</span> <span class=bp>self</span><span class=o>.</span><span class=n>_get_turns</span><span class=p>(</span><span class=n>res</span><span class=p>)</span>
+</span><span id=__span-0-913><a id=__codelineno-0-913 name=__codelineno-0-913></a>        <span class=k>if</span> <span class=ow>not</span> <span class=n>turns</span><span class=p>:</span>
+</span><span id=__span-0-914><a id=__codelineno-0-914 name=__codelineno-0-914></a>            <span class=k>continue</span>
+</span><span id=__span-0-915><a id=__codelineno-0-915 name=__codelineno-0-915></a>
+</span><span id=__span-0-916><a id=__codelineno-0-916 name=__codelineno-0-916></a>        <span class=n>expectations</span> <span class=o>=</span> <span class=p>[</span>
+</span><span id=__span-0-917><a id=__codelineno-0-917 name=__codelineno-0-917></a>            <span class=n>e</span><span class=p>[</span><span class=s2>&quot;expectation&quot;</span><span class=p>]</span> <span class=k>for</span> <span class=n>e</span> <span class=ow>in</span> <span class=n>res</span><span class=o>.</span><span class=n>get</span><span class=p>(</span><span class=s2>&quot;expectation_details&quot;</span><span class=p>,</span> <span class=p>[])</span>
+</span><span id=__span-0-918><a id=__codelineno-0-918 name=__codelineno-0-918></a>        <span class=p>]</span>
+</span><span id=__span-0-919><a id=__codelineno-0-919 name=__codelineno-0-919></a>        <span class=n>params</span> <span class=o>=</span> <span class=n>res</span><span class=o>.</span><span class=n>get</span><span class=p>(</span><span class=s2>&quot;session_parameters&quot;</span><span class=p>,</span> <span class=p>{})</span>
+</span><span id=__span-0-920><a id=__codelineno-0-920 name=__codelineno-0-920></a>
+</span><span id=__span-0-921><a id=__codelineno-0-921 name=__codelineno-0-921></a>        <span class=n>conversations_list</span><span class=o>.</span><span class=n>append</span><span class=p>(</span>
+</span><span id=__span-0-922><a id=__codelineno-0-922 name=__codelineno-0-922></a>            <span class=n>GoldenConversation</span><span class=p>(</span>
+</span><span id=__span-0-923><a id=__codelineno-0-923 name=__codelineno-0-923></a>                <span class=n>conversation</span><span class=o>=</span><span class=n>res</span><span class=o>.</span><span class=n>get</span><span class=p>(</span><span class=s2>&quot;name&quot;</span><span class=p>,</span> <span class=s2>&quot;Simulated_Conversation&quot;</span><span class=p>),</span>
+</span><span id=__span-0-924><a id=__codelineno-0-924 name=__codelineno-0-924></a>                <span class=n>turns</span><span class=o>=</span><span class=n>turns</span><span class=p>,</span>
+</span><span id=__span-0-925><a id=__codelineno-0-925 name=__codelineno-0-925></a>                <span class=n>expectations</span><span class=o>=</span><span class=n>expectations</span><span class=p>,</span>
+</span><span id=__span-0-926><a id=__codelineno-0-926 name=__codelineno-0-926></a>                <span class=n>session_parameters</span><span class=o>=</span><span class=n>params</span><span class=p>,</span>
+</span><span id=__span-0-927><a id=__codelineno-0-927 name=__codelineno-0-927></a>            <span class=p>)</span>
+</span><span id=__span-0-928><a id=__codelineno-0-928 name=__codelineno-0-928></a>        <span class=p>)</span>
+</span><span id=__span-0-929><a id=__codelineno-0-929 name=__codelineno-0-929></a>
+</span><span id=__span-0-930><a id=__codelineno-0-930 name=__codelineno-0-930></a>    <span class=n>dataset</span> <span class=o>=</span> <span class=n>GoldenConversations</span><span class=p>(</span><span class=n>conversations</span><span class=o>=</span><span class=n>conversations_list</span><span class=p>)</span>
+</span><span id=__span-0-931><a id=__codelineno-0-931 name=__codelineno-0-931></a>    <span class=n>yaml_content</span> <span class=o>=</span> <span class=n>yaml</span><span class=o>.</span><span class=n>dump</span><span class=p>(</span>
+</span><span id=__span-0-932><a id=__codelineno-0-932 name=__codelineno-0-932></a>        <span class=n>dataset</span><span class=o>.</span><span class=n>model_dump</span><span class=p>(</span><span class=n>exclude_none</span><span class=o>=</span><span class=kc>True</span><span class=p>),</span>
+</span><span id=__span-0-933><a id=__codelineno-0-933 name=__codelineno-0-933></a>        <span class=n>sort_keys</span><span class=o>=</span><span class=kc>False</span><span class=p>,</span>
+</span><span id=__span-0-934><a id=__codelineno-0-934 name=__codelineno-0-934></a>        <span class=n>allow_unicode</span><span class=o>=</span><span class=kc>True</span><span class=p>,</span>
+</span><span id=__span-0-935><a id=__codelineno-0-935 name=__codelineno-0-935></a>    <span class=p>)</span>
+</span><span id=__span-0-936><a id=__codelineno-0-936 name=__codelineno-0-936></a>
+</span><span id=__span-0-937><a id=__codelineno-0-937 name=__codelineno-0-937></a>    <span class=k>if</span> <span class=n>output_path</span><span class=p>:</span>
+</span><span id=__span-0-938><a id=__codelineno-0-938 name=__codelineno-0-938></a>        <span class=k>with</span> <span class=nb>open</span><span class=p>(</span><span class=n>output_path</span><span class=p>,</span> <span class=s2>&quot;w&quot;</span><span class=p>,</span> <span class=n>encoding</span><span class=o>=</span><span class=s2>&quot;utf-8&quot;</span><span class=p>)</span> <span class=k>as</span> <span class=n>f</span><span class=p>:</span>
+</span><span id=__span-0-939><a id=__codelineno-0-939 name=__codelineno-0-939></a>            <span class=n>f</span><span class=o>.</span><span class=n>write</span><span class=p>(</span><span class=n>yaml_content</span><span class=p>)</span>
+</span><span id=__span-0-940><a id=__codelineno-0-940 name=__codelineno-0-940></a>
+</span><span id=__span-0-941><a id=__codelineno-0-941 name=__codelineno-0-941></a>    <span class=k>return</span> <span class=n>yaml_content</span>
 </span></code></pre></div></td></tr></table></div> </details> </div> </div> </div> </div> </div> <div class="doc doc-object doc-class"> <h2 id=cxas_scrapi.evals.simulation_evals.Step class="doc doc-heading"> <code class="doc-symbol doc-symbol-heading doc-symbol-class"></code> <span class="doc doc-object-name doc-class-name">Step</span> <a href=#cxas_scrapi.evals.simulation_evals.Step class=headerlink title="Permanent link">&para;</a></h2> <div class="doc doc-contents first"> <p class="doc doc-class-bases"> Bases: <code><span title=pydantic.BaseModel>BaseModel</span></code></p> <div class="doc doc-children"> </div> </div> </div> <div class="doc doc-object doc-class"> <h2 id=cxas_scrapi.evals.simulation_evals.StepStatus class="doc doc-heading"> <code class="doc-symbol doc-symbol-heading doc-symbol-class"></code> <span class="doc doc-object-name doc-class-name">StepStatus</span> <a href=#cxas_scrapi.evals.simulation_evals.StepStatus class=headerlink title="Permanent link">&para;</a></h2> <div class="doc doc-contents first"> <p class="doc doc-class-bases"> Bases: <code><span title=str>str</span></code>, <code><span title=enum.Enum>Enum</span></code></p> <div class="doc doc-children"> </div> </div> </div> <div class="doc doc-object doc-class"> <h2 id=cxas_scrapi.evals.simulation_evals.SimulationReport class="doc doc-heading"> <code class="doc-symbol doc-symbol-heading doc-symbol-class"></code> <span class="doc doc-object-name doc-class-name">SimulationReport</span> <a href=#cxas_scrapi.evals.simulation_evals.SimulationReport class=headerlink title="Permanent link">&para;</a></h2> <div class="language-python doc-signature highlight"><pre><span></span><code><span id=__span-0-1><a id=__codelineno-0-1 name=__codelineno-0-1 href=#__codelineno-0-1></a><span class=nf>SimulationReport</span><span class=p>(</span><span class=n>goals_df</span><span class=p>,</span> <span class=n>expectations_df</span><span class=o>=</span><span class=kc>None</span><span class=p>)</span>
-</span></code></pre></div> <div class="doc doc-contents first"> <p>A report containing both Goals and Expectations DataFrames.</p> <details class=mkdocstrings-source> <summary>Source code in <code>src/cxas_scrapi/evals/simulation_evals.py</code></summary> <div class="language-python highlight"><table class=highlighttable><tr><td class=linenos><div class=linenodiv><pre><span></span><span class=normal><a href=#__codelineno-0-90>90</a></span>
-<span class=normal><a href=#__codelineno-0-91>91</a></span>
+</span></code></pre></div> <div class="doc doc-contents first"> <p>A report containing both Goals and Expectations DataFrames.</p> <details class=mkdocstrings-source> <summary>Source code in <code>src/cxas_scrapi/evals/simulation_evals.py</code></summary> <div class="language-python highlight"><table class=highlighttable><tr><td class=linenos><div class=linenodiv><pre><span></span><span class=normal><a href=#__codelineno-0-91>91</a></span>
 <span class=normal><a href=#__codelineno-0-92>92</a></span>
 <span class=normal><a href=#__codelineno-0-93>93</a></span>
 <span class=normal><a href=#__codelineno-0-94>94</a></span>
 <span class=normal><a href=#__codelineno-0-95>95</a></span>
-<span class=normal><a href=#__codelineno-0-96>96</a></span></pre></div></td><td class=code><div><pre><span></span><code><span id=__span-0-90><a id=__codelineno-0-90 name=__codelineno-0-90></a><span class=k>def</span><span class=w> </span><span class=fm>__init__</span><span class=p>(</span>
-</span><span id=__span-0-91><a id=__codelineno-0-91 name=__codelineno-0-91></a>    <span class=bp>self</span><span class=p>,</span>
-</span><span id=__span-0-92><a id=__codelineno-0-92 name=__codelineno-0-92></a>    <span class=n>goals_df</span><span class=p>:</span> <span class=n>pd</span><span class=o>.</span><span class=n>DataFrame</span><span class=p>,</span>
-</span><span id=__span-0-93><a id=__codelineno-0-93 name=__codelineno-0-93></a>    <span class=n>expectations_df</span><span class=p>:</span> <span class=n>Optional</span><span class=p>[</span><span class=n>pd</span><span class=o>.</span><span class=n>DataFrame</span><span class=p>]</span> <span class=o>=</span> <span class=kc>None</span><span class=p>,</span>
-</span><span id=__span-0-94><a id=__codelineno-0-94 name=__codelineno-0-94></a><span class=p>):</span>
-</span><span id=__span-0-95><a id=__codelineno-0-95 name=__codelineno-0-95></a>    <span class=bp>self</span><span class=o>.</span><span class=n>goals_df</span> <span class=o>=</span> <span class=n>goals_df</span>
-</span><span id=__span-0-96><a id=__codelineno-0-96 name=__codelineno-0-96></a>    <span class=bp>self</span><span class=o>.</span><span class=n>expectations_df</span> <span class=o>=</span> <span class=n>expectations_df</span>
+<span class=normal><a href=#__codelineno-0-96>96</a></span>
+<span class=normal><a href=#__codelineno-0-97>97</a></span></pre></div></td><td class=code><div><pre><span></span><code><span id=__span-0-91><a id=__codelineno-0-91 name=__codelineno-0-91></a><span class=k>def</span><span class=w> </span><span class=fm>__init__</span><span class=p>(</span>
+</span><span id=__span-0-92><a id=__codelineno-0-92 name=__codelineno-0-92></a>    <span class=bp>self</span><span class=p>,</span>
+</span><span id=__span-0-93><a id=__codelineno-0-93 name=__codelineno-0-93></a>    <span class=n>goals_df</span><span class=p>:</span> <span class=n>pd</span><span class=o>.</span><span class=n>DataFrame</span><span class=p>,</span>
+</span><span id=__span-0-94><a id=__codelineno-0-94 name=__codelineno-0-94></a>    <span class=n>expectations_df</span><span class=p>:</span> <span class=n>Optional</span><span class=p>[</span><span class=n>pd</span><span class=o>.</span><span class=n>DataFrame</span><span class=p>]</span> <span class=o>=</span> <span class=kc>None</span><span class=p>,</span>
+</span><span id=__span-0-95><a id=__codelineno-0-95 name=__codelineno-0-95></a><span class=p>):</span>
+</span><span id=__span-0-96><a id=__codelineno-0-96 name=__codelineno-0-96></a>    <span class=bp>self</span><span class=o>.</span><span class=n>goals_df</span> <span class=o>=</span> <span class=n>goals_df</span>
+</span><span id=__span-0-97><a id=__codelineno-0-97 name=__codelineno-0-97></a>    <span class=bp>self</span><span class=o>.</span><span class=n>expectations_df</span> <span class=o>=</span> <span class=n>expectations_df</span>
 </span></code></pre></div></td></tr></table></div> </details> <div class="doc doc-children"> </div> </div> </div> <aside class=md-source-file> <span class=md-source-file__fact> <span class=md-icon title="Last update"> <svg xmlns=http://www.w3.org/2000/svg viewbox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg> </span> <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="May 22, 2026 04:54:24 UTC"><span class=timeago datetime=2026-05-22T04:54:24+00:00 locale=en></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="May 22, 2026 04:54:24 UTC">2026-05-22</span> </span> <span class=md-source-file__fact> <span class=md-icon title=Created> <svg xmlns=http://www.w3.org/2000/svg viewbox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg> </span> <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="April 22, 2026 04:48:21 UTC"><span class=timeago datetime=2026-04-22T04:48:21+00:00 locale=en></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="April 22, 2026 04:48:21 UTC">2026-04-22</span> </span> </aside> </article> </div> <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script> <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script> </div> <button type=button class="md-top md-icon" data-md-component=top hidden> <svg xmlns=http://www.w3.org/2000/svg viewbox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg> Back to top </button> </main> <footer class=md-footer> <div class="md-footer-meta md-typeset"> <div class="md-footer-meta__inner md-grid"> <div class=md-copyright> <div class=md-copyright__highlight> Copyright &copy; 2026 Google LLC. Apache 2.0 License. </div> Made with <a href=https://squidfunk.github.io/mkdocs-material/ target=_blank rel=noopener> Material for MkDocs </a> </div> <div class=md-social> <a href=https://github.com/GoogleCloudPlatform/cxas-scrapi target=_blank rel=noopener title=github.com class=md-social__link> <svg xmlns=http://www.w3.org/2000/svg viewbox="0 0 512 512"><!-- Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg> </a> </div> </div> </div> </footer> </div> <div class=md-dialog data-md-component=dialog> <div class="md-dialog__inner md-typeset"></div> </div> <script id=__config type=application/json>{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.path", "navigation.top", "navigation.tracking", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.code.annotate", "content.tabs.link", "content.tooltips", "announce.dismiss"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script> <script src=../../../assets/javascripts/bundle.79ae519e.min.js></script> <script src=../../../js/timeago.min.js></script> <script src=../../../js/timeago_mkdocs_material.js></script> </body> </html>
