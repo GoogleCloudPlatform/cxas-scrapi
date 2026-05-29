@@ -622,7 +622,7 @@ class TurnEvals:
                 trace_chunks.append(f"Agent Transfer: {target_agent}")
 
             model_name = test_case.config.get(
-                "gemini_model", "gemini-3.1-flash-lite-preview"
+                "gemini_model", "gemini-3.1-flash-lite"
             )
 
             llm_results = evaluate_expectations(
@@ -868,7 +868,7 @@ class TurnEvals:
                             )
 
                             model_name = case.config.get(
-                                "gemini_model", "gemini-3.1-flash-lite-preview"
+                                "gemini_model", "gemini-3.1-flash-lite"
                             )
 
                             llm_results = evaluate_expectations(

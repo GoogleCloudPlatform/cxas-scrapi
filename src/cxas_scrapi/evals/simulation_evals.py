@@ -50,7 +50,7 @@ from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 _FIRST_UTTERANCE = "event: welcome"
 _MAX_TURNS = 30
-_DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+_DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 
 class Step(pydantic.BaseModel):

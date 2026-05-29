@@ -171,22 +171,33 @@ class AsyncAgentDesigner:
             AsyncAgentDesigner._get_available_tools_context(target_ir.tools)
         )
 
-        prompt_2a = Prompts.STEP_2A_ARCHITECTURE_EXPERT["template"].format(
-            flow_name=flow_name,
-            resource_visualization=tree_view,
-            global_variables=global_vars_context,
-            available_backend_toolsets=toolset_context,
-            available_tools=available_tools_context,
-            available_groups=(
-                available_groups
-                or "(consolidation context not applicable for this run)"
-            ),
-            self_group=self_group or flow_name,
-        )
+        if available_groups is not None:
+            system_prompt = Prompts.STEP_3A_CONSOLIDATION_ARCHITECTURE["system"]
+            template_prompt = Prompts.STEP_3A_CONSOLIDATION_ARCHITECTURE[
+                "template"
+            ]
+            prompt_2a = template_prompt.format(
+                flow_name=flow_name,
+                resource_visualization=tree_view,
+                global_variables=global_vars_context,
+                available_backend_toolsets=toolset_context,
+                available_tools=available_tools_context,
+                available_groups=available_groups,
+                self_group=self_group or flow_name,
+            )
+        else:
+            system_prompt = Prompts.STEP_2A_ARCHITECTURE_EXPERT["system"]
+            template_prompt = Prompts.STEP_2A_ARCHITECTURE_EXPERT["template"]
+            prompt_2a = template_prompt.format(
+                flow_name=flow_name,
+                resource_visualization=tree_view,
+                global_variables=global_vars_context,
+                available_backend_toolsets=toolset_context,
+            )
 
         response_raw = await self.gemini.generate_async(
             prompt=prompt_2a,
-            system_prompt=Prompts.STEP_2A_ARCHITECTURE_EXPERT["system"],
+            system_prompt=system_prompt,
         )
 
         blueprint = {}
@@ -254,21 +265,31 @@ class AsyncAgentDesigner:
                 "Blueprint only)"
             )
 
-        prompt_2b = Prompts.STEP_2B_INSTRUCTIONS_EXPERT["template"].format(
-            agent_name=flow_name,
-            architecture_blueprint=blueprint_json_str,
-            resource_visualization=tree_view,
-            available_tools=available_tools_context,
-            available_groups=(
-                available_groups
-                or "(consolidation context not applicable for this run)"
-            ),
-            self_group=self_group or flow_name,
-        )
+        if available_groups is not None:
+            system_prompt = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS["system"]
+            template_prompt = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS[
+                "template"
+            ]
+            prompt_2b = template_prompt.format(
+                agent_name=flow_name,
+                architecture_blueprint=blueprint_json_str,
+                resource_visualization=tree_view,
+                available_tools=available_tools_context,
+                available_groups=available_groups,
+                self_group=self_group or flow_name,
+            )
+        else:
+            system_prompt = Prompts.STEP_2B_INSTRUCTIONS_EXPERT["system"]
+            template_prompt = Prompts.STEP_2B_INSTRUCTIONS_EXPERT["template"]
+            prompt_2b = template_prompt.format(
+                agent_name=flow_name,
+                architecture_blueprint=blueprint_json_str,
+                resource_visualization=tree_view,
+            )
 
         response_raw = await self.gemini.generate_async(
             prompt=prompt_2b,
-            system_prompt=Prompts.STEP_2B_INSTRUCTIONS_EXPERT["system"],
+            system_prompt=system_prompt,
         )
 
         xml_instructions = ""

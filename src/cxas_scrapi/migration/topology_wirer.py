@@ -52,7 +52,7 @@ from cxas_scrapi.migration.structural_consolidator import (
 )
 
 if TYPE_CHECKING:
-    from cxas_scrapi.migration.ir_bundle import IRBundle
+    from cxas_scrapi.migration.data_models import IRBundle
 
 __all__ = [
     "apply_topology",

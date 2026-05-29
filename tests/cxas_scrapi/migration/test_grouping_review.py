@@ -120,7 +120,7 @@ async def test_interactive_review_accept_returns_groupings_unchanged():
 
     # Stub InquirerPy: render_diff doesn't matter; the select returns "accept".
     fake_select = MagicMock()
-    fake_select.execute = MagicMock(return_value="accept")
+    fake_select.execute_async = AsyncMock(return_value="accept")
 
     with (
         patch.object(grouping_review, "render_diff"),
@@ -144,7 +144,7 @@ async def test_interactive_review_quit_returns_none():
     consolidator = _make_consolidator()
 
     fake_select = MagicMock()
-    fake_select.execute = MagicMock(return_value="quit")
+    fake_select.execute_async = AsyncMock(return_value="quit")
 
     with (
         patch.object(grouping_review, "render_diff"),
@@ -190,9 +190,9 @@ async def test_interactive_review_repropose_then_accept():
     # First iteration: select repropose → text prompt for feedback → next
     # iteration: select accept.
     fake_select = MagicMock()
-    fake_select.execute = MagicMock(side_effect=["repropose", "accept"])
+    fake_select.execute_async = AsyncMock(side_effect=["repropose", "accept"])
     fake_text = MagicMock()
-    fake_text.execute = MagicMock(return_value="please split G1")
+    fake_text.execute_async = AsyncMock(return_value="please split G1")
 
     with (
         patch.object(grouping_review, "render_diff"),

@@ -52,6 +52,19 @@ class CXASOptimizer:
             self._stage2_tool_mock_optimization(),
         )
 
+    @staticmethod
+    def _sanitize_variable_name(name: str) -> str:
+        if name == "DELETE":
+            return name
+        # Replace any invalid characters (not alphanumeric, underscore, or
+        # dash) with underscores
+        clean = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+        # Ensure it starts with a letter or underscore (dash/digits at start
+        # are invalid)
+        if clean and (clean[0].isdigit() or clean[0] == "-"):
+            clean = "_" + clean
+        return clean or "_var"
+
     async def _stage1_variable_optimization(self):
         """
         Stage 1: Granular Variable Deduplication
@@ -176,6 +189,12 @@ class CXASOptimizer:
                 raise ValueError("LLM returned empty mapping response.")
 
             variable_mapping = json.loads(mapping_response)
+            # Sanitize all target variable names to ensure they comply with
+            # CXAS database standards
+            variable_mapping = {
+                old_k: CXASOptimizer._sanitize_variable_name(new_v)
+                for old_k, new_v in variable_mapping.items()
+            }
         except Exception as e:
             self.log_action(
                 "Stage 1",
@@ -350,17 +369,34 @@ class CXASOptimizer:
             "Restructuring instructions to State Machine XML.",
         )
 
-        playbook_agents = [
+        all_playbook_flows = [
             agent
             for agent in self.ir.agents.values()
-            if agent.type == "PLAYBOOK"
+            if agent.type in ("PLAYBOOK", "FLOW")
+        ]
+
+        playbook_agents = [
+            agent
+            for agent in all_playbook_flows
+            if "<Agent>" not in (agent.instruction or "")
         ]
 
         if not playbook_agents:
+            details = (
+                (
+                    "All Playbook and Flow sub-agents are already optimized "
+                    "XML State Machines. Skipping Stage 2 Instructions."
+                )
+                if all_playbook_flows
+                else (
+                    "No Playbook or Flow sub-agents found. "
+                    "Skipping Stage 2 Instructions."
+                )
+            )
             self.log_action(
                 "Stage 2 Instructions",
                 "Complete",
-                "No Playbook sub-agents found. Skipping Stage 2 Instructions.",
+                details,
             )
             return
 
@@ -369,12 +405,17 @@ class CXASOptimizer:
                 f"  Optimizing instructions for sub-agent: "
                 f"'{agent.display_name}'..."
             )
+            all_tools = list(agent.tools)
+            for gt in ["set_session_variables"]:
+                if gt not in all_tools:
+                    all_tools.append(gt)
+
             prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION[
                 "template"
             ].format(
                 agent_name=agent.display_name,
                 instruction=agent.instruction,
-                tools=", ".join(agent.tools),
+                tools=", ".join(all_tools),
             )
             system_prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION["system"]
             try:
@@ -387,11 +428,13 @@ class CXASOptimizer:
                     raise ValueError("LLM returned empty instruction response.")
 
                 # Strip conversational fluff if LLM ignored constraints
-                response_clean = response.strip()
-                if response_clean.startswith("```xml"):
-                    response_clean = response_clean[6:]
-                if response_clean.endswith("```"):
-                    response_clean = response_clean[:-3]
+                # Harmonization clean-up pass for malformed markdown formatting
+                response_clean = re.sub(
+                    r"^```(?:xml)?", "", response, flags=re.MULTILINE
+                )
+                response_clean = re.sub(
+                    r"```$", "", response_clean, flags=re.MULTILINE
+                )
                 response_clean = response_clean.strip()
 
                 if "set_session_variables" in response_clean:

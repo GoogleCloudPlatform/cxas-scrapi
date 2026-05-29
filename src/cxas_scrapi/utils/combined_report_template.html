@@ -147,6 +147,12 @@
                 <code>{{ r['session_id'] }}</code>
               {% endif %}
             </div>
+            {% if golden_modality == "audio" %}
+              <div class="audio-player">
+                <span class="audio-label">Full Conversation</span>
+                <audio controls preload="none" src="audio/{{ r['session_id'] }}/full-session.wav"></audio>
+              </div>
+            {% endif %}
           {% endif %}
 
           {% if r.get('session_parameters') %}
@@ -174,7 +180,19 @@
                 </div>
 
                 {% if turn.get('user_input') %}
-                  <div style="color:#2980b9;margin:4px 0;padding:4px 8px;background:#eef5ff;border-radius:4px;"><b>User:</b> {{ turn['user_input'] | escape }}</div>
+                  <div style="color:#2980b9;margin:4px 0;padding:4px 8px;background:#eef5ff;border-radius:4px;"><b>User:</b> {{ turn['user_input'] | escape }}
+                    {% if golden_modality == "audio" and r.get('session_id') %}
+                      <audio controls preload="none" class="turn-audio" src="audio/{{ r['session_id'] }}/user-turn-{{ turn['index'] }}.wav"></audio>
+                    {% endif %}
+                  </div>
+                {% elif golden_modality == "audio" and r.get('session_id') %}
+                  <div style="margin:4px 0;padding:4px 8px;background:#eef5ff;border-radius:4px;">
+                    <audio controls preload="none" class="turn-audio" src="audio/{{ r['session_id'] }}/user-turn-{{ turn['index'] }}.wav"></audio>
+                  </div>
+                {% endif %}
+
+                {% if golden_modality == "audio" and r.get('session_id') %}
+                  <audio controls preload="none" class="turn-audio" src="audio/{{ r['session_id'] }}/agent-turn-{{ turn['index'] }}.wav"></audio>
                 {% endif %}
 
                 {% for comp in turn.get('comparisons', []) %}
@@ -269,8 +287,18 @@
           <details class="run-detail" data-failed="{{ failed_str }}">
             <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }} | turns: {{ r.get('turns','?') }}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}</summary>
 
-            {% if r.get('session_id') and ces_base %}
-              <div class="session-link">Session: <a href="{{ ces_base }}?panel=conversation_list&id={{ r['session_id'] }}&source=EVAL" target="_blank"><code>{{ r['session_id'] }}</code></a></div>
+            {% if r.get('session_id') %}
+              {% if ces_base %}
+                <div class="session-link">Session: <a href="{{ ces_base }}?panel=conversation_list&id={{ r['session_id'] }}&source=EVAL" target="_blank"><code>{{ r['session_id'] }}</code></a></div>
+              {% else %}
+                <div class="session-link">Session: <code>{{ r['session_id'] }}</code></div>
+              {% endif %}
+              {% if sim_modality == "audio" %}
+                <div class="audio-player">
+                  <span class="audio-label">Full Conversation</span>
+                  <audio controls preload="none" src="audio/{{ r['session_id'] }}/full-scenario.wav"></audio>
+                </div>
+              {% endif %}
             {% endif %}
 
             {% if r.get('session_parameters') %}
@@ -308,12 +336,23 @@
               {% if r.get('_processed_trace') %}
                 <details open><summary>Conversation Trace ({{ r.get('turns','?') }} turns)</summary>
                   <div class="transcript">
+                    {% set ns = namespace(user_turn=0, agent_turn=0) %}
                     {% for item in r['_processed_trace'] %}
                       {% set kind = item[0] %}
                       {% if kind == "user" %}
-                        <div class="user"><b>User:</b> {{ item[1] | escape }}</div>
+                        {% set ns.user_turn = ns.user_turn + 1 %}
+                        <div class="user"><b>User:</b> {{ item[1] | escape }}
+                          {% if sim_modality == "audio" and r.get('session_id') %}
+                            <audio controls preload="none" class="turn-audio" src="audio/{{ r['session_id'] }}/user-turn-{{ ns.user_turn }}.wav"></audio>
+                          {% endif %}
+                        </div>
                       {% elif kind == "agent" %}
-                        <div class="agent"><b>Agent:</b> {{ item[1] | escape }}</div>
+                        {% set ns.agent_turn = ns.agent_turn + 1 %}
+                        <div class="agent"><b>Agent:</b> {{ item[1] | escape }}
+                          {% if sim_modality == "audio" and r.get('session_id') %}
+                            <audio controls preload="none" class="turn-audio" src="audio/{{ r['session_id'] }}/agent-turn-{{ ns.agent_turn }}.wav"></audio>
+                          {% endif %}
+                        </div>
                       {% elif kind in ("tool_call", "tool_pair") %}
                         {% set lbl, _, args = item[1].partition(" with args ") %}
                         {% set lbl = lbl.replace("Tool Call: ", "").replace("Tool Call (Output): ", "").split("/")[-1] %}

@@ -31,7 +31,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _prompts  # noqa: E402
 import _shared  # noqa: E402
 
-from cxas_scrapi.migration import ir_bundle, phase_tracker
+from cxas_scrapi.migration import phase_tracker
+from cxas_scrapi.migration.data_models import IRBundle
 from cxas_scrapi.migration.service import MigrationService
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _resolve_bundle_path(args) -> str:
     if args.ir_bundle:
         return args.ir_bundle
-    path = ir_bundle.find_default_bundle(args.target_name)
+    path = IRBundle.find_default_bundle(args.target_name)
     if not path:
         console.print(
             "[red]No IR bundle found.[/] Run migrate.py / stage1.py first."
@@ -95,7 +96,7 @@ async def _run(args) -> None:
 
     bundle_path = _resolve_bundle_path(args)
     console.print(f"[cyan]Loading IR bundle:[/] {bundle_path}")
-    bundle = ir_bundle.load(bundle_path)
+    bundle = IRBundle.load(bundle_path)
     target_name = bundle.config.target_name
 
     service = MigrationService.restore_from_bundle(
@@ -115,8 +116,8 @@ async def _run(args) -> None:
         "Stage 2",
         "instruction state machines + tool mocks + redeploy",
     ):
-        await service.run_stage2(
-            version_label="0.0.2",
+        await service.run_stage_2(
+            version_label="0.0.4",
             generate_unit_tests=not args.no_unit_tests,
             unit_tests_path=unit_tests_path,
             run_lint=not args.no_lint,

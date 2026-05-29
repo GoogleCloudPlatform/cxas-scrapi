@@ -36,7 +36,7 @@ def _print_logs(optimizer: CXASOptimizer, label: str, console: Console) -> None:
         console.print(f"  • [{stage}] [cyan]{action}[/]: {details}")
 
 
-async def run_stage1(
+async def run_stage_1(
     ir: MigrationIR,
     gemini_client: GeminiGenerate,
     console: Console,
@@ -57,7 +57,7 @@ async def run_stage1(
     return optimizer
 
 
-async def run_stage2(
+async def run_stage_2(
     ir: MigrationIR,
     gemini_client: GeminiGenerate,
     console: Console,
@@ -112,9 +112,13 @@ async def run_stage_with_redeploy(
         agent.status = MigrationStatus.COMPILED
 
     if stage == 1:
-        optimizer = await run_stage1(service.ir, service.gemini_client, console)
+        optimizer = await run_stage_1(
+            service.ir, service.gemini_client, console
+        )
     else:
-        optimizer = await run_stage2(service.ir, service.gemini_client, console)
+        optimizer = await run_stage_2(
+            service.ir, service.gemini_client, console
+        )
 
     console.print(f"\n[cyan]Pushing Stage {stage} changes to CXAS…[/]")
     try:

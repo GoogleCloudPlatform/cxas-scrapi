@@ -18,6 +18,7 @@ import json
 import os
 import tempfile
 from datetime import datetime
+from unittest import mock
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,11 +26,11 @@ import pytest
 from cxas_scrapi.migration.data_models import (
     DFCXAgentIR,
     IRAgent,
+    IRBundle,
     IRMetadata,
     MigrationConfig,
     MigrationIR,
 )
-from cxas_scrapi.migration.ir_bundle import IRBundle
 from cxas_scrapi.migration.service import MigrationService
 
 # ---------------------------------------------------------------------------
@@ -201,14 +202,14 @@ def test_persist_bundle_writes_file_and_appends_history():
     with tempfile.TemporaryDirectory() as td:
         path = os.path.join(td, "bundle.json")
         returned = service.persist_bundle(
-            bundle, path, phase="stage1", status="ok", notes="dedup done"
+            bundle, path, phase="stage_1", status="ok", notes="dedup done"
         )
 
     assert returned == path
     assert bundle.ir is service.ir
     assert len(bundle.stage_history) == 1
     entry = bundle.stage_history[0]
-    assert entry.phase == "stage1"
+    assert entry.phase == "stage_1"
     assert entry.status == "ok"
     assert entry.notes == "dedup done"
     assert isinstance(entry.started_at, datetime)
@@ -229,58 +230,88 @@ def test_persist_bundle_without_phase_skips_history():
 
 
 @pytest.mark.asyncio
-async def test_run_stage1_consolidate_requires_bundle():
+async def test_run_stage_1_requires_bundle():
     service = _make_service()
     with pytest.raises(ValueError, match="requires bundle"):
-        await service.run_stage1(consolidate=True)
+        await service.run_stage_1(bundle=None)
 
 
 @pytest.mark.asyncio
-async def test_run_stage1_dedup_only_no_version_no_consolidation():
-    """Variable dedup runs; no Version created when version_label=None;
-    no consolidation when consolidate=False (the default)."""
-    service = _make_service()
-
-    with (
-        patch(
-            "cxas_scrapi.migration.stage_runner.run_stage_with_redeploy",
-            new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
-        ) as mock_run,
-        patch("cxas_scrapi.migration.service.Versions") as mock_versions_cls,
-    ):
-        result = await service.run_stage1(version_label=None)
-
-    assert result is None
-    mock_run.assert_awaited_once()
-    mock_versions_cls.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_run_stage1_creates_version_when_label_set():
+async def test_run_stage_1_creates_double_versions_when_labels_set():
     service = _make_service()
     fake_versions_client = MagicMock()
+    bundle = _make_bundle()
+    fake_groupings = {
+        "RootGroup": {
+            "agents": ["Root Agent"],
+            "journey": "main",
+            "is_root": True,
+        }
+    }
+    fake_consolidator = MagicMock()
+    fake_consolidator.propose_groupings = AsyncMock(return_value=fake_groupings)
+    fake_consolidator.consolidate = MagicMock(return_value=_make_ir())
+    fake_consolidator.synthesize_instructions = AsyncMock(
+        return_value={"RootGroup": "ok"}
+    )
 
     with (
         patch(
             "cxas_scrapi.migration.stage_runner.run_stage_with_redeploy",
             new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.StructuralConsolidator",
+            return_value=fake_consolidator,
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "detect_root_key",
+            return_value="RootAgent",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "validate_groupings"
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "persist_grouping"
+        ),
+        patch(
+            "cxas_scrapi.migration.service.integrity_checks."
+            "check_consolidation_integrity",
+            return_value=([], []),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.topology_wirer.set_app_root_agent",
+            return_value=(True, "set"),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.topology_wirer.delete_orphan_agents",
+            return_value=(0, 0),
         ),
         patch(
             "cxas_scrapi.migration.service.Versions",
             return_value=fake_versions_client,
         ),
     ):
-        await service.run_stage1(version_label="0.0.2")
+        await service.run_stage_1(
+            bundle=bundle,
+            version_label="0.0.3",
+            dedup_version_label="0.0.2",
+        )
 
-    fake_versions_client.create_version.assert_called_once()
-    call_kwargs = fake_versions_client.create_version.call_args.kwargs
-    assert call_kwargs["display_name"] == "0.0.2"
-    assert "variable dedup" in call_kwargs["description"]
-    assert "consolidation" not in call_kwargs["description"]
+    # Double-versioning: create_version is called twice!
+    assert fake_versions_client.create_version.call_count == 2
+    calls = fake_versions_client.create_version.call_args_list
+    assert calls[0].kwargs["display_name"] == "0.0.2"
+    assert "variable de-duplication" in calls[0].kwargs["description"]
+    assert calls[1].kwargs["display_name"] == "0.0.3"
+    assert "consolidation" in calls[1].kwargs["description"]
 
 
 @pytest.mark.asyncio
-async def test_run_stage1_consolidate_runs_consolidator_and_persists_grouping():
+async def test_run_stage_1_consolidate_runs_consolidator_persists_grouping():
     """End-to-end consolidation path with mocked consolidator + grouping
     callback returning the proposed groupings unchanged."""
     service = _make_service()
@@ -339,8 +370,7 @@ async def test_run_stage1_consolidate_runs_consolidator_and_persists_grouping():
         ),
         patch("cxas_scrapi.migration.service.Versions"),
     ):
-        returned = await service.run_stage1(
-            consolidate=True,
+        returned = await service.run_stage_1(
             bundle=bundle,
             version_label=None,
         )
@@ -364,9 +394,10 @@ async def test_run_stage1_consolidate_runs_consolidator_and_persists_grouping():
 
 
 @pytest.mark.asyncio
-async def test_run_stage1_consolidate_aborts_on_integrity_blocking():
-    """When integrity_checks returns blocking errors and
-    on_integrity_fail='abort', run_stage1 raises RuntimeError."""
+async def test_run_stage_1_consolidate_aborts_on_integrity_blocking():
+    """When integrity_checks returns blocking errors,
+    run_stage_1 raises RuntimeError.
+    """
     service = _make_service()
     bundle = _make_bundle()
     fake_groupings = {"RootGroup": {"agents": ["Root Agent"], "is_root": True}}
@@ -405,10 +436,8 @@ async def test_run_stage1_consolidate_aborts_on_integrity_blocking():
         ),
     ):
         with pytest.raises(RuntimeError, match="blocking"):
-            await service.run_stage1(
-                consolidate=True,
+            await service.run_stage_1(
                 bundle=bundle,
-                on_integrity_fail="abort",
                 version_label=None,
             )
 
@@ -417,9 +446,10 @@ async def test_run_stage1_consolidate_aborts_on_integrity_blocking():
 
 
 @pytest.mark.asyncio
-async def test_run_stage1_callback_returning_none_skips_consolidation():
+async def test_run_stage_1_callback_returning_none_skips_consolidation():
     """When the grouping_callback returns None, the consolidation block
-    is skipped but Stage 1 variable dedup still applies."""
+    is skipped.
+    """
     service = _make_service()
     bundle = _make_bundle()
 
@@ -449,8 +479,7 @@ async def test_run_stage1_callback_returning_none_skips_consolidation():
             return_value="RootAgent",
         ),
     ):
-        result = await service.run_stage1(
-            consolidate=True,
+        result = await service.run_stage_1(
             bundle=bundle,
             grouping_callback=reject_callback,
             version_label=None,
@@ -469,7 +498,7 @@ async def test_run_stage1_callback_returning_none_skips_consolidation():
 
 
 @pytest.mark.asyncio
-async def test_run_stage2_creates_version_when_label_set():
+async def test_run_stage_2_creates_version_when_label_set():
     service = _make_service()
     fake_versions_client = MagicMock()
 
@@ -483,17 +512,17 @@ async def test_run_stage2_creates_version_when_label_set():
             return_value=fake_versions_client,
         ),
     ):
-        await service.run_stage2(version_label="0.0.3")
+        await service.run_stage_2(version_label="0.0.4")
 
     fake_versions_client.create_version.assert_called_once()
     assert (
         fake_versions_client.create_version.call_args.kwargs["display_name"]
-        == "0.0.3"
+        == "0.0.4"
     )
 
 
 @pytest.mark.asyncio
-async def test_run_stage2_generate_unit_tests_writes_json(tmp_path):
+async def test_run_stage_2_generate_unit_tests_writes_json(tmp_path):
     service = _make_service()
     out_path = str(tmp_path / "unit_tests.json")
 
@@ -513,7 +542,7 @@ async def test_run_stage2_generate_unit_tests_writes_json(tmp_path):
         ),
         patch("cxas_scrapi.migration.service.Versions"),
     ):
-        await service.run_stage2(
+        await service.run_stage_2(
             version_label=None,
             generate_unit_tests=True,
             unit_tests_path=out_path,
@@ -527,7 +556,7 @@ async def test_run_stage2_generate_unit_tests_writes_json(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_stage2_run_lint_invokes_post_deploy_lint():
+async def test_run_stage_2_run_lint_invokes_post_deploy_lint():
     service = _make_service()
     fake_lint = AsyncMock(return_value=(True, "lint passed"))
 
@@ -542,56 +571,26 @@ async def test_run_stage2_run_lint_invokes_post_deploy_lint():
         ),
         patch("cxas_scrapi.migration.service.Versions"),
     ):
-        await service.run_stage2(version_label=None, run_lint=True)
+        await service.run_stage_2(version_label=None, run_lint=True)
 
     fake_lint.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
-# run_stage3
+# run_stage_3
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_run_stage3_requires_grouping_on_bundle():
+async def test_run_stage_3_requires_grouping_on_bundle():
     service = _make_service()
     bundle = _make_bundle()  # bundle.grouping is None
     with pytest.raises(RuntimeError, match="bundle.grouping"):
-        await service.run_stage3(bundle=bundle)
+        await service.run_stage_3(bundle=bundle)
 
 
 @pytest.mark.asyncio
-async def test_run_stage3_dry_run_skips_apply():
-    service = _make_service()
-    bundle = _make_bundle()
-    bundle.grouping = {"RootGroup": {"agents": ["Root Agent"], "is_root": True}}
-
-    with (
-        patch(
-            "cxas_scrapi.migration.service.topology_wirer."
-            "compute_group_children",
-            return_value={"RootGroup": set()},
-        ),
-        patch(
-            "cxas_scrapi.migration.service.topology_wirer.apply_topology",
-            return_value=(0, 0, 0),
-        ) as mock_apply,
-        patch(
-            "cxas_scrapi.migration.service.topology_wirer.set_app_root_agent",
-            return_value=(True, "ok"),
-        ) as mock_set_root,
-    ):
-        result = await service.run_stage3(bundle=bundle, dry_run=True)
-
-    assert result == (0, 0, 0)
-    mock_apply.assert_called_once()
-    assert mock_apply.call_args.kwargs.get("dry_run") is True
-    # set_root and bundle persistence are skipped in dry-run mode.
-    mock_set_root.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_run_stage3_persists_bundle_on_success(tmp_path):
+async def test_run_stage_3_persists_bundle_on_success(tmp_path):
     service = _make_service()
     bundle = _make_bundle()
     bundle.grouping = {"RootGroup": {"agents": ["Root Agent"], "is_root": True}}
@@ -612,14 +611,57 @@ async def test_run_stage3_persists_bundle_on_success(tmp_path):
             return_value=(True, "ok"),
         ),
     ):
-        updated, skipped, failed = await service.run_stage3(
+        updated, skipped, failed = await service.run_stage_3(
             bundle=bundle, persist_bundle_path=bundle_path
         )
 
     assert (updated, skipped, failed) == (1, 0, 0)
     assert os.path.exists(bundle_path)
-    assert bundle.stage_history[-1].phase == "stage3"
+    assert bundle.stage_history[-1].phase == "stage_3"
     assert bundle.stage_history[-1].status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_run_stage_3_triggers_orphan_cleanup_correct_keep_resources():
+    service = _make_service()
+    service.ir.metadata.app_resource_name = "projects/p/locations/us/apps/X"
+    service.ir.agents = {
+        "RootAgent": IRAgent(
+            type="PLAYBOOK",
+            display_name="RootAgent",
+            instruction="<x/>",
+            resource_name="projects/p/locations/us/apps/X/agents/1",
+        )
+    }
+
+    bundle = _make_bundle()
+    bundle.grouping = {"RootGroup": {"agents": ["RootAgent"], "is_root": True}}
+
+    with (
+        patch(
+            "cxas_scrapi.migration.service.topology_wirer."
+            "compute_group_children",
+            return_value={"RootGroup": set()},
+        ),
+        patch(
+            "cxas_scrapi.migration.service.topology_wirer.apply_topology",
+            return_value=(1, 0, 0),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.topology_wirer.set_app_root_agent",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.topology_wirer.delete_orphan_agents",
+            return_value=(1, 0),
+        ) as mock_delete,
+    ):
+        await service.run_stage_3(bundle=bundle)
+
+    mock_delete.assert_called_once_with(
+        "projects/p/locations/us/apps/X",
+        keep_resources={"projects/p/locations/us/apps/X/agents/1"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -629,15 +671,17 @@ async def test_run_stage3_persists_bundle_on_success(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_migration_optimize_for_cxas_calls_new_stage_methods():
-    """run_migration with optimize_for_cxas=True should delegate to
-    run_stage1(version_label='0.0.2') + run_stage2(version_label='0.0.3'),
-    preserving the existing 0.0.1 / 0.0.2 / 0.0.3 Version naming."""
+    """run_migration with optimize_for_cxas=True should delegate to all three
+    snake_case stage methods with correct standard version sequence parameters.
+    """
+
     service = _make_service()
 
     # Replace the new stage methods so we can assert their invocations
     # without exercising the full optimizer pipeline.
-    service.run_stage1 = AsyncMock(return_value=None)
-    service.run_stage2 = AsyncMock(return_value=None)
+    service.run_stage_1 = AsyncMock(return_value=None)
+    service.run_stage_2 = AsyncMock(return_value=None)
+    service.run_stage_3 = AsyncMock(return_value=(1, 0, 0))
 
     # Stub the source loader + reporter so run_migration can reach the
     # optimize_for_cxas branch without hitting external systems.
@@ -676,7 +720,24 @@ async def test_run_migration_optimize_for_cxas_calls_new_stage_methods():
         == "0.0.1"
     )
 
-    # run_stage1 was called with version_label="0.0.2".
-    service.run_stage1.assert_awaited_once_with(version_label="0.0.2")
-    # run_stage2 was called with version_label="0.0.3".
-    service.run_stage2.assert_awaited_once_with(version_label="0.0.3")
+    # run_stage_1 was called with version_label="0.0.3"
+    # and dedup_version_label="0.0.2".
+    service.run_stage_1.assert_awaited_once_with(
+        bundle=mock.ANY,
+        version_label="0.0.3",
+        dedup_version_label="0.0.2",
+        persist_bundle_path=None,
+    )
+    # run_stage_2 was called with version_label="0.0.4".
+    service.run_stage_2.assert_awaited_once_with(
+        bundle=mock.ANY,
+        version_label="0.0.4",
+        persist_bundle_path=None,
+    )
+    # run_stage_3 was called with version_label="0.0.5".
+    service.run_stage_3.assert_awaited_once_with(
+        bundle=mock.ANY,
+        mode="hub",
+        version_label="0.0.5",
+        persist_bundle_path=None,
+    )

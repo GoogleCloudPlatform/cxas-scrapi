@@ -7,9 +7,9 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
-"""Stage 1: CXASOptimizer variable dedup + optional Gemini consolidation.
+"""Stage 1: CXASOptimizer variable dedup + structural Gemini consolidation.
 
-Thin shell over :meth:`MigrationService.run_stage1`. Loads the IR bundle
+Thin shell over :meth:`MigrationService.run_stage_1`. Loads the IR bundle
 written by :mod:`migrate`, restores a :class:`MigrationService` from it,
 then delegates everything (dedup, consolidator, integrity checks,
 topology link, orphan cleanup, version checkpoint, bundle persist) to
@@ -35,9 +35,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _prompts  # noqa: E402
 import _shared  # noqa: E402
 
-from cxas_scrapi.migration import grouping_review, ir_bundle, phase_tracker
+from cxas_scrapi.migration import grouping_review, phase_tracker
+from cxas_scrapi.migration.data_models import IRBundle
 from cxas_scrapi.migration.service import MigrationService
-from cxas_scrapi.utils.gemini import GeminiGenerate
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -64,27 +64,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--location", help="Override bundle location")
 
     p.add_argument(
-        "--no-consolidate",
-        action="store_true",
-        help="Skip Gemini consolidation; only run CXASOptimizer Stage 1.",
-    )
-    p.add_argument(
-        "--gemini-model",
-        default="gemini-3.1-pro-preview",
-        help=(
-            "Model for the grouping proposal (default: gemini-3.1-pro-preview)"
-        ),
-    )
-    p.add_argument(
         "--grouping-json",
         default=None,
         help="Load a previously persisted grouping instead of asking Gemini.",
-    )
-    p.add_argument(
-        "--on-integrity-fail",
-        choices=["abort", "warn", "ignore"],
-        default="abort",
-        help="What to do if pre-deploy integrity checks find blockers.",
     )
     p.add_argument("--yes", "-y", action="store_true", help="Non-interactive.")
     return p
@@ -93,7 +75,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _resolve_bundle_path(args) -> str:
     if args.ir_bundle:
         return args.ir_bundle
-    path = ir_bundle.find_default_bundle(args.target_name)
+    path = IRBundle.find_default_bundle(args.target_name)
     if not path:
         console.print(
             "[red]No IR bundle found.[/] Run migrate.py first, or pass "
@@ -138,7 +120,7 @@ async def _run(args) -> None:
 
     bundle_path = _resolve_bundle_path(args)
     console.print(f"[cyan]Loading IR bundle:[/] {bundle_path}")
-    bundle = ir_bundle.load(bundle_path)
+    bundle = IRBundle.load(bundle_path)
     target_name = bundle.config.target_name
 
     service = MigrationService.restore_from_bundle(
@@ -147,30 +129,16 @@ async def _run(args) -> None:
         location=args.location,
     )
 
-    consolidate = not args.no_consolidate
-    gemini = None
-    if consolidate and args.gemini_model:
-        # Honor --gemini-model by constructing a client up front; service
-        # would otherwise use its default model.
-        gemini = GeminiGenerate(
-            project_id=service.project_id,
-            location="global",
-            model_name=args.gemini_model,
-            max_concurrent_requests=10,
-        )
-
     with tracker.phase(
         "Stage 1",
-        "variable dedup" + (" + Gemini consolidation" if consolidate else ""),
+        "variable dedup + Gemini consolidation",
     ):
-        await service.run_stage1(
-            consolidate=consolidate,
-            bundle=bundle if consolidate else None,
-            gemini_client=gemini,
+        await service.run_stage_1(
+            bundle=bundle,
             grouping_callback=_make_grouping_callback(args.yes),
             grouping_json_path=args.grouping_json,
-            on_integrity_fail=args.on_integrity_fail,
-            version_label="0.0.1",
+            version_label="0.0.3",
+            dedup_version_label="0.0.2",
             persist_bundle_path=bundle_path,
             console=console,
         )
@@ -184,7 +152,7 @@ async def _run(args) -> None:
     if bundle.app_url:
         console.print(f"  • App console:      {bundle.app_url}")
     console.print(
-        f"\n[dim]Next:[/] [cyan]stage2.py --target-name {target_name}[/]"
+        f"\n[dim]Next:[/] [cyan]stage_2.py --target-name {target_name}[/]"
         " for instruction state machines + tool mocks + lint + report."
     )
 

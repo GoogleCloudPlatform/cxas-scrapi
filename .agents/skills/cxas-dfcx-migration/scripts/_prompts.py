@@ -20,32 +20,15 @@ from typing import Any
 
 from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
-from InquirerPy.utils import get_style
 from InquirerPy.validator import EmptyInputValidator
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.utils.ui_styles import ESCAPE_KEYBINDINGS, PROMPT_STYLE
 
 logger = logging.getLogger(__name__)
 
 LOCATIONS = ["us", "eu", "global"]
 DEFAULT_LOCATION = "us"
-
-ESCAPE_KEYBINDINGS = {"skip": [{"key": "escape"}]}
-
-PROMPT_STYLE = get_style(
-    {
-        "pointer": "#ffffff bg:#4a6fa5",
-        "fuzzy_match": "#ff79c6 bold",
-        "fuzzy_prompt": "#6c99bb",
-        "fuzzy_info": "#888888",
-        "fuzzy_border": "#4a6fa5",
-        "questionmark": "#6c99bb bold",
-        "answer": "#61afef",
-        "input": "#98c379",
-        "marker": "#e5c07b",
-    },
-    style_override=False,
-)
 
 
 def is_interactive() -> bool:

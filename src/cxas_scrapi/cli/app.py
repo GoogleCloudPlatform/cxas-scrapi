@@ -278,7 +278,7 @@ def app_create(args: argparse.Namespace) -> None:
     apps_client = Apps(project_id=args.project_id, location=args.location)
     try:
         app = apps_client.create_app(
-            app_id=getattr(args, "app_id", None),
+            app_id=args.app_id,
             display_name=args.name,
             description=args.description,
         )

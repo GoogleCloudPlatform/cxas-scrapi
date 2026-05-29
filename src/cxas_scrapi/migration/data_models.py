@@ -15,9 +15,15 @@
 """Data models for the Intermediate Representation (IR) of DFCX agents."""
 
 import enum
+import glob
+import logging
+import os
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class MigrationStatus(str, enum.Enum):
@@ -141,22 +147,136 @@ class MigrationConfig(BaseModel):
     target_name: str
     env: str = "PROD"
     model: str
+    profile: str = "standard"
+    architecture: str = "hub-and-spoke"
     gen_report: bool = True
     gen_unit_tests: bool = True
     gen_hillclimbing_evals: bool = False
     eval_runner_target: str = "Custom API Runner"
     migration_version: str = "2.0"
     optimize_for_cxas: bool = False
-    # Opt-in: run Gemini structural consolidation (N→M agent grouping) as a
-    # post-migration step. Requires optimize_for_cxas=True. Auto-accepts the
-    # Gemini-proposed grouping when invoked from MigrationCLI (the skill
-    # provides an interactive review TUI instead).
-    consolidate: bool = False
-    # Opt-in: run Stage 3 parent-child topology wiring after consolidation.
-    # Requires consolidate=True.
-    run_stage3: bool = False
-    # Opt-in: persist an IRBundle (<target>_ir.json) after migrate and after
-    # each post-migration stage so the run is resumable via the stage
-    # subcommands (cxas migrate dfcx-cxas {stage1,stage2,stage3,resume}).
     persist_bundle: bool = False
+    interactive: bool = False
     source_agent_data_override: Optional[DFCXAgentIR] = None
+
+    @property
+    def consolidate(self) -> bool:
+        """Backward-compatibility property hook: consolidation is active
+        whenever optimize is active.
+        """
+        return self.optimize_for_cxas
+
+    @property
+    def run_stage_3(self) -> bool:
+        """Backward-compatibility property hook: Stage 3 parent-child routing
+        is active whenever optimize is active.
+        """
+        return self.optimize_for_cxas
+
+
+class StageHistoryEntry(BaseModel):
+    phase: str  # "migrate", "stage_1", "stage_2", "stage_3"
+    status: str  # "ok", "fail", "partial"
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+    notes: str = ""
+
+
+class IRBundle(BaseModel):
+    """Persisted state shared across migrate / stage1 / stage2."""
+
+    schema_version: str = "2"
+    created_at: datetime = Field(default_factory=datetime.now)
+    config: MigrationConfig
+    source_agent_data: DFCXAgentIR
+    ir: MigrationIR
+    stage_history: List[StageHistoryEntry] = Field(default_factory=list)
+    app_url: Optional[str] = None
+    version_checkpoints: List[tuple[str, str]] = Field(default_factory=list)
+    grouping: Optional[Dict[str, Any]] = (
+        None  # populated when Stage 1 consolidates
+    )
+    pre_consolidation_ir: Optional[MigrationIR] = None
+
+    def resolve_location(self, default: str = "us") -> str:
+        """Return the CXAS location for this bundle's app.
+
+        Tries to parse `projects/<p>/locations/<L>/apps/<a>` out of
+        :attr:`app_url`; falls back to `default` ("us") if that fails.
+        """
+        if self.app_url and "/locations/" in self.app_url:
+            try:
+                return self.app_url.split("/locations/")[1].split("/")[0]
+            except (IndexError, AttributeError):
+                pass
+        return default
+
+    # --- Disk I/O Methods (Native OO Class/Instance Methods) ---
+
+    @staticmethod
+    def _bundle_filename(target_name: str) -> str:
+        return f"{target_name}_ir.json"
+
+    def save(self, path: str) -> str:
+        """Atomic write — write to a tempfile then rename."""
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(self.model_dump_json(indent=2))
+        os.replace(tmp, path)
+        logger.info("IR bundle saved → %s", path)
+        return path
+
+    def save_for_target(
+        self, target_name: str, cwd: Optional[str] = None
+    ) -> str:
+        path = os.path.join(
+            cwd or os.getcwd(), self._bundle_filename(target_name)
+        )
+        return self.save(path)
+
+    @classmethod
+    def load(cls, path: str) -> "IRBundle":
+        with open(path) as f:
+            return cls.model_validate_json(f.read())
+
+    @classmethod
+    def find_default_bundle(
+        cls, target_name: Optional[str] = None, cwd: Optional[str] = None
+    ) -> Optional[str]:
+        """Locate an IR bundle on disk.
+
+        If `target_name` is supplied: returns `<cwd>/<target_name>_ir.json`
+        if it
+        exists, else None.
+        Otherwise: returns the newest `*_ir.json` in cwd, or None.
+        """
+        cwd = cwd or os.getcwd()
+        if target_name:
+            candidate = os.path.join(cwd, cls._bundle_filename(target_name))
+            return candidate if os.path.exists(candidate) else None
+        matches = glob.glob(os.path.join(cwd, "*_ir.json"))
+        if not matches:
+            return None
+        matches.sort(key=os.path.getmtime, reverse=True)
+        return matches[0]
+
+    # --- Convenience Mutator Instance Methods ---
+
+    def append_stage(
+        self, phase: str, status: str, started_at: datetime, notes: str = ""
+    ) -> None:
+        self.stage_history.append(
+            StageHistoryEntry(
+                phase=phase,
+                status=status,
+                started_at=started_at,
+                ended_at=datetime.now(),
+                notes=notes,
+            )
+        )
+
+    def attach_version(self, display_name: str, description: str) -> None:
+        self.version_checkpoints.append((display_name, description))
+
+    def attach_grouping(self, groupings: Dict[str, Any]) -> None:
+        self.grouping = groupings

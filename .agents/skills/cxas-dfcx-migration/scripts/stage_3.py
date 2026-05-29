@@ -9,20 +9,18 @@
 
 """Stage 3: parent-child topology wiring for consolidated CXAS agents.
 
-Thin shell over :meth:`MigrationService.run_stage3`. Loads the IR bundle
-written by :mod:`stage1` (which must have run consolidation —
+Thin shell over :meth:`MigrationService.run_stage_3`. Loads the IR bundle
+written by :mod:`stage_1` (which must have run consolidation —
 ``bundle.grouping`` is required) and delegates the wiring to the
 service method.
 
-Two modes:
+Supported architectures layout style:
 
-  --hub-and-spoke (default)
-    Root has every non-root group as a direct child; non-root groups
-    have no children. Peer transfers route via root. Always cycle-free.
-
-  --preserve-hierarchy
-    Derive children from the source DFCX dep graph with cycle breaking.
-    Use only when the source has a real hierarchy worth preserving.
+  --architecture {hub-and-spoke,original-hierarchy}
+    hub-and-spoke: (Default) Root has every non-root group as a direct child;
+      non-root groups have no children. Always cycle-free.
+    original-hierarchy: Derive children from the source DFCX dependency graph
+      with smart cycle breaking.
 """
 
 from __future__ import annotations
@@ -40,7 +38,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _prompts  # noqa: E402
 import _shared  # noqa: E402
 
-from cxas_scrapi.migration import ir_bundle, phase_tracker
+from cxas_scrapi.migration import phase_tracker
+from cxas_scrapi.migration.data_models import IRBundle
 from cxas_scrapi.migration.service import MigrationService
 
 logger = logging.getLogger(__name__)
@@ -62,31 +61,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--project-id", help="Override bundle project ID")
     p.add_argument("--location", help="Override bundle location")
-    mode = p.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--hub-and-spoke",
-        dest="mode",
-        action="store_const",
-        const="hub",
-        help=("(default) Root has every non-root group as a direct child."),
-    )
-    mode.add_argument(
-        "--preserve-hierarchy",
-        dest="mode",
-        action="store_const",
-        const="hierarchy",
-        help="Derive children from the source DFCX dep graph.",
-    )
-    p.set_defaults(mode="hub")
     p.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print the proposed parent → children mapping without applying.",
-    )
-    p.add_argument(
-        "--no-set-root",
-        action="store_true",
-        help="Skip resetting the app's root_agent.",
+        "--architecture",
+        choices=["hub-and-spoke", "original-hierarchy"],
+        default="hub-and-spoke",
+        help=(
+            "Spoke-Hub architecture style mapping to compile child routing "
+            "(Default: 'hub-and-spoke')."
+        ),
     )
     p.add_argument("--yes", "-y", action="store_true", help="Non-interactive.")
     return p
@@ -95,7 +77,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _resolve_bundle_path(args) -> str:
     if args.ir_bundle:
         return args.ir_bundle
-    path = ir_bundle.find_default_bundle(args.target_name)
+    path = IRBundle.find_default_bundle(args.target_name)
     if not path:
         console.print(
             "[red]No IR bundle found.[/] Run migrate.py + stage1.py first."
@@ -115,7 +97,7 @@ async def _run(args) -> None:
 
     bundle_path = _resolve_bundle_path(args)
     console.print(f"[cyan]Loading IR bundle:[/] {bundle_path}")
-    bundle = ir_bundle.load(bundle_path)
+    bundle = IRBundle.load(bundle_path)
 
     if not bundle.grouping:
         console.print(
@@ -132,18 +114,19 @@ async def _run(args) -> None:
         location=args.location,
     )
 
-    mode_label = (
-        "hub-and-spoke (root has all groups as direct children)"
-        if args.mode == "hub"
-        else "preserve-hierarchy (source dep graph, cycles broken)"
+    mode = (
+        "hub"
+        if getattr(args, "architecture", "hub-and-spoke") == "hub-and-spoke"
+        else "hierarchy"
     )
+    mode_label = f"Architecture style: {args.architecture}"
+
     with tracker.phase("Stage 3 — apply topology", mode_label):
-        updated, skipped, failed = await service.run_stage3(
+        updated, skipped, failed = await service.run_stage_3(
             bundle=bundle,
-            mode=args.mode,
-            set_root=not args.no_set_root,
-            dry_run=args.dry_run,
-            persist_bundle_path=(None if args.dry_run else bundle_path),
+            mode=mode,
+            version_label="0.0.5",
+            persist_bundle_path=bundle_path,
         )
 
     console.print()

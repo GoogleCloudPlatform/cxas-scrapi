@@ -382,6 +382,40 @@ summary {
   background: #f0f8ff;
 }
 
+/* Audio playback */
+.audio-player {
+  margin: 8px 0 10px;
+  padding: 6px 10px;
+  background: #f0f8ff;
+  border-radius: 4px;
+  border-left: 3px solid #3498db;
+}
+
+.audio-label {
+  display: block;
+  font-size: 0.75em;
+  font-weight: bold;
+  color: #3498db;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 3px;
+}
+
+.audio-player audio {
+  width: 100%;
+  max-width: 480px;
+  height: 32px;
+  vertical-align: middle;
+}
+
+.turn-audio {
+  display: block;
+  width: 100%;
+  max-width: 340px;
+  height: 28px;
+  margin: 4px 0 2px;
+}
+
 /* Tool interactions */
 .tool-details {
   margin: 4px 0;
@@ -714,5 +748,14 @@ tr.hidden-row {
 
   .tool-call-args-body {
     background: #2d2d2d;
+  }
+
+  .audio-player {
+    background: #1a2a3a;
+    border-left-color: #3498db;
+  }
+
+  .audio-label {
+    color: #64b5f6;
   }
 }

@@ -42,9 +42,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _prompts  # noqa: E402
 import _shared  # noqa: E402
 
-from cxas_scrapi.migration import html_preview, ir_bundle, phase_tracker
+from cxas_scrapi.migration import html_preview, phase_tracker
 from cxas_scrapi.migration.config import AGENT_MODELS
-from cxas_scrapi.migration.data_models import MigrationConfig
+from cxas_scrapi.migration.data_models import IRBundle, MigrationConfig
 from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
 from cxas_scrapi.migration.eval_generator import DeterministicEvalGenerator
 from cxas_scrapi.migration.main_visualizer import MainVisualizer
@@ -257,7 +257,7 @@ async def _run(args) -> None:
 
     # Phase 6: persist IR bundle. service.persist_bundle handles the
     # IR snapshot + stage_history append + atomic file write.
-    bundle = ir_bundle.IRBundle(
+    bundle = IRBundle(
         config=config,
         source_agent_data=agent_data,
         ir=service.ir,
@@ -314,7 +314,7 @@ async def _run(args) -> None:
     if bundle.app_url:
         console.print(f"  • App console:      {bundle.app_url}")
     console.print(
-        "\n[dim]Next:[/] [cyan]stage1.py --target-name "
+        "\n[dim]Next:[/] [cyan]stage_1.py --target-name "
         f"{inputs['target_name']}[/] for variable dedup + consolidation."
     )
 

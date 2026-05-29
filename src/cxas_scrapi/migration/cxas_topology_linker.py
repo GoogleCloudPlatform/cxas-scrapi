@@ -195,7 +195,10 @@ class CXASTopologyLinker:
             )
 
     def link_and_finalize_topology(
-        self, ir: MigrationIR, source_agent_data: DFCXAgentIR
+        self,
+        ir: MigrationIR,
+        source_agent_data: DFCXAgentIR,
+        groupings: dict | None = None,
     ):
         """Extracts routing dependencies and sets parent/child links with
         circular reference protection.
@@ -273,6 +276,23 @@ class CXASTopologyLinker:
                 ),
                 None,
             )
+            # If the original start agent was consolidated, locate the new
+            # group that absorbed it!
+            if not root_agent_resource and groupings:
+                for grp_name, payload in groupings.items():
+                    members = payload.get("agents") or []
+                    if any(
+                        m.lower() == root_display_name.lower() for m in members
+                    ):
+                        root_agent_resource = deployed_agent_map.get(grp_name)
+                        if root_agent_resource:
+                            logger.info(
+                                "  INFO: Resolved legacy root agent "
+                                f"'{root_display_name}' to its consolidated "
+                                f"group target '{grp_name}'"
+                            )
+                            root_display_name = grp_name
+                        break
 
         if root_agent_resource:
             logger.info(f"Setting '{root_display_name}' as the Root Agent...")

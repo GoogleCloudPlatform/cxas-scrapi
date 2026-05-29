@@ -174,11 +174,13 @@ def test_get_available_tools_context_handles_empty_registry():
 
 
 @pytest.mark.asyncio
-async def test_run_step_2a_renders_available_tools_into_prompt(
+async def test_run_step_3a_consolidation_renders_available_tools_and_groups(
     designer, mock_gemini_client
 ):
-    """The 2A prompt must include the exact tool ID list so the
-    blueprint Gemini produces references real tools."""
+    """When running step 2a under consolidation context (available_groups is
+    passed), the STEP_3A template is used and must include the exact tool list
+    and sibling groups.
+    """
     mock_gemini_client.generate_async.return_value = "{}"
     ir = MigrationIR(
         metadata=IRMetadata(app_name="t"),
@@ -192,22 +194,30 @@ async def test_run_step_2a_renders_available_tools_into_prompt(
         },
     )
 
-    await designer.run_step_2a("Test Flow", "Dummy Tree View", ir)
+    await designer.run_step_2a(
+        "Test Flow",
+        "Dummy Tree View",
+        ir,
+        available_groups="MySiblingGroupsList",
+        self_group="RootAgent",
+    )
 
     sent_prompt = mock_gemini_client.generate_async.call_args.kwargs["prompt"]
+    # STEP_3A uses INPUT 4 for tools and INPUT 5 for groups
     assert "### INPUT 4: Available Tools" in sent_prompt
     assert "authenticate_user" in sent_prompt
+    assert "### INPUT 5: Available Sibling Agents" in sent_prompt
+    assert "MySiblingGroupsList" in sent_prompt
 
 
 @pytest.mark.asyncio
-async def test_run_step_2b_with_target_ir_renders_available_tools(
+async def test_run_step_3b_consolidation_renders_available_tools_and_groups(
     designer, mock_gemini_client
 ):
-    """Passing ``target_ir`` to 2B injects the AVAILABLE TOOLS block so
-    Gemini can only reference real tool IDs in ``{@TOOL: …}``."""
-    mock_gemini_client.generate_async.return_value = (
-        "<Agent><Name>t</Name></Agent>"
-    )
+    """When running step 2b under consolidation context, the STEP_3B template
+    is used and must include the available tools list and sibling groups.
+    """
+    mock_gemini_client.generate_async.return_value = "<Agent/>"
     ir = MigrationIR(
         metadata=IRMetadata(app_name="t"),
         tools={
@@ -221,22 +231,30 @@ async def test_run_step_2b_with_target_ir_renders_available_tools(
     )
 
     await designer.run_step_2b_instructions(
-        "Test Flow", {}, "Dummy Tree View", target_ir=ir
+        "Test Flow",
+        {},
+        "Dummy Tree View",
+        target_ir=ir,
+        available_groups="MySiblingGroupsList",
+        self_group="RootAgent",
     )
 
     sent_prompt = mock_gemini_client.generate_async.call_args.kwargs["prompt"]
     assert "### INPUT 3: AVAILABLE TOOLS" in sent_prompt
     assert "verify_pin_api_wrapper" in sent_prompt
+    assert "### INPUT 4: AVAILABLE SIBLING AGENTS" in sent_prompt
+    assert "MySiblingGroupsList" in sent_prompt
 
 
 @pytest.mark.asyncio
-async def test_run_step_2b_without_target_ir_falls_back(
+async def test_run_step_2b_standard_renders_no_tools_block(
     designer, mock_gemini_client
 ):
-    """Back-compat: callers that don't pass ``target_ir`` get a generic
-    fallback string in place of the AVAILABLE TOOLS block (no crash)."""
+    """Standard 1:1 Step 2B prompt contains the basic tree visualization but
+    no available tools or groups blocks."""
     mock_gemini_client.generate_async.return_value = "<Agent/>"
     await designer.run_step_2b_instructions("Test Flow", {}, "Dummy Tree View")
     sent_prompt = mock_gemini_client.generate_async.call_args.kwargs["prompt"]
-    assert "not provided" in sent_prompt
-    assert "Architecture Blueprint" in sent_prompt
+    assert "Dummy Tree View" in sent_prompt
+    assert "### INPUT 3: AVAILABLE TOOLS" not in sent_prompt
+    assert "### INPUT 4: AVAILABLE SIBLING AGENTS" not in sent_prompt

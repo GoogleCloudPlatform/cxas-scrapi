@@ -173,7 +173,14 @@ def run_all_evals(
                     cases = [
                         c
                         for c in cases
-                        if any(t in filter_tags for t in c.get("tags", []))
+                        if any(
+                            t in filter_tags
+                            for t in (
+                                c.get("tags", [])
+                                if isinstance(c, dict)
+                                else (getattr(c, "tags", None) or [])
+                            )
+                        )
                     ]
                 test_cases.extend(cases)
 

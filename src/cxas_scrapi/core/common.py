@@ -33,7 +33,7 @@ GLOBAL_SCOPES = [
     "https://www.googleapis.com/auth/generative-language.retriever",
 ]
 
-DEFAULT_API_ENDPOINT = "ces.googleapis.com"
+DEFAULT_API_ENDPOINT = os.environ.get("CES_API_ENDPOINT", "ces.googleapis.com")
 
 
 class Common:
@@ -368,14 +368,23 @@ class Common:
         return separator.join(agent_texts)
 
     def get_grpc_transport(self, client_class: type):
-        """Creates a customer gRPC transport for CXAS SCRAPI calls."""
-        transport_class = client_class.get_transport_class("grpc")
+        """Creates a customer transport for CXAS SCRAPI calls."""
+        transport_type = os.environ.get("CES_TRANSPORT", "grpc").lower()
 
         host = DEFAULT_API_ENDPOINT
         client_opts = getattr(self, "client_options", None)
         if client_opts and "api_endpoint" in client_opts:
             host = self.client_options["api_endpoint"]
 
+        if transport_type == "rest":
+            transport_class = client_class.get_transport_class("rest")
+            return transport_class(
+                host=host,
+                credentials=self.creds,
+                client_info=self.client_info,
+            )
+
+        transport_class = client_class.get_transport_class("grpc")
         channel = transport_class.create_channel(
             host=host,
             credentials=self.creds,

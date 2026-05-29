@@ -77,6 +77,30 @@ def test_app_create(
     )
 
 
+def test_app_create_with_app_id(
+    mock_apps_client, mock_common_get_project_id, mock_common_get_location
+):
+    args = argparse.Namespace(
+        name="Test App",
+        description="A test app",
+        app_id="my-custom-id",
+        project_id="test-project",
+        location="us",
+    )
+
+    mock_app_response = mock.MagicMock()
+    mock_app_response.name = (
+        "projects/test-project/locations/us/apps/my-custom-id"
+    )
+    mock_apps_client.create_app.return_value = mock_app_response
+
+    cli_app.app_create(args)
+
+    mock_apps_client.create_app.assert_called_once_with(
+        app_id="my-custom-id", display_name="Test App", description="A test app"
+    )
+
+
 def test_apps_list(mock_apps_client, capsys):
     args = argparse.Namespace(project_id="test-project", location="us")
 

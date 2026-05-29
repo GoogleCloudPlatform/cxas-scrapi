@@ -130,6 +130,14 @@ def heal_tool_refs(ir: MigrationIR) -> tuple[dict[str, str], list[str]]:
                 base = ref[: -len(suffix)]
                 if base in known and ref not in known:
                     return base
+
+        # Prefix match check for truncated completion cutoffs (length >= 15
+        # to avoid generic collisions)
+        if len(ref) >= 15:
+            prefix_matches = [k for k in known if k.startswith(ref)]
+            if len(prefix_matches) == 1:
+                return prefix_matches[0]
+
         return None
 
     # Bogus placeholders Gemini sometimes emits when it gives up mid-list.
