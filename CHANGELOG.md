@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.4.1](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.4.0...v1.4.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* fix .gitignore to prevent packaging issues ([952070e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/952070efb41613959807b3a513150ac4dfb35b40))
+
+## [1.4.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.3.0...v1.4.0) (2026-05-29)
+
+
+### Features
+
+* add audio replay capability to combined evaluation reports ([cf5b904](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/cf5b9049f408f075c8f45e3cb7ecc0a836652f57))
+* add audio replay capability to combined evaluation reports ([8ac99ac](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8ac99aced0b73c7b2041862cfcb6b0144c538ed5))
+* add cxas-loss-analysis skill for conversation loss and patterns analysis ([b6f0a27](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b6f0a271607bc0080298d0a49e49635e96fbdabe))
+* Add llm-based linting to capture semantic errors. ([6fab5a6](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6fab5a6132a6fbab5963b577424cc48ca20e9daf))
+* Add llm-based linting to capture semantic errors. ([34ab035](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/34ab0358731667817e22d266da3bc7624773574e))
+* add native support for CES_API_ENDPOINT and CES_TRANSPORT ([0ecf7fa](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/0ecf7faa9fef543e58031ea54c1e853f39199822))
+* add native support for CES_API_ENDPOINT and CES_TRANSPORT ([214f27a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/214f27abb239b43a61d70deab6868d98ee81d724))
+* **cli:** add cli commands for list version and compare version ([603612b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/603612b69ebbda4394aedbce8986085824af8c46))
+* **cli:** add cli commands for list versions and compare versions ([ba92521](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ba9252100938cd4c9e34e0549f31914fa008a2c9))
+* **cli:** add GECX tools, callbacks, and variables list/delete subcommands ([4ef9760](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4ef9760b66c80869522bea15cf886f6ace141826))
+* improve loss analysis pipeline with time filters, server-side filtering, and performance optimizations ([abecd37](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/abecd37df8f09708c5a1e6e8af614a8f5f25c2f3))
+* unify migration interfaces, implement migration profiles, fixes ([#193](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/193)) ([0d57531](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/0d57531c4490dcb4cf95fd029f44e05595200611))
+
+
+### Bug Fixes
+
+* app_name propagation in cxas create ([d9b655a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d9b655a8d7ad4dac83e9c707eb0e4117a7061367))
+* resolve lint errors and improve placeholder validation ([ab5b009](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ab5b009a9e15ef91c22acd58b54820384a3b11f0))
+* **trace:** correct GECX/CES Console URL query parameter route in console_url ([9ace03c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/9ace03cc103718d869d12e58f8d06aca9821c81e))
+
+
+### Documentation
+
+* add GoogleSearchTool schema and create tool schema generation w… ([d9758cb](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d9758cb78c4b3ff8727f07fc133b2e84e909ec5f))
+
 ## [1.3.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.2.0...v1.3.0) (2026-05-22)
 
 

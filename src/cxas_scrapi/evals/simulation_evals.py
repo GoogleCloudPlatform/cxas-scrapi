@@ -29,6 +29,7 @@ from rich.progress import Progress
 
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.conversation_history import ConversationHistory
+from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.prompts import llm_user_prompts
@@ -367,98 +368,12 @@ class SimulationEvals(Apps):
         Returns:
             A tuple of (agent_text, trace_chunks, session_ended)
         """
-        agent_text = ""
-        session_ended = False
-        trace_chunks = []
-
-        for output in response.outputs:
-            if hasattr(output, "text") and output.text:
-                agent_text += output.text + " "
-                trace_chunks.append(f"Agent Text: {output.text}")
-
-            tool_calls_msg = getattr(output, "tool_calls", None)
-            if tool_calls_msg and hasattr(tool_calls_msg, "tool_calls"):
-                for tc in tool_calls_msg.tool_calls:
-                    tool_name = getattr(tc, "tool", "") or getattr(
-                        tc, "display_name", ""
-                    )
-                    expanded_args = Sessions._expand_pb_struct(tc.args)
-                    trace_chunks.append(
-                        f"Tool Call (Output): {tool_name} "
-                        f"with args {expanded_args}"
-                    )
-                    if "end_session" in tool_name:
-                        session_ended = True
-
-            diagnostic_info = getattr(output, "diagnostic_info", None)
-            if diagnostic_info and hasattr(diagnostic_info, "messages"):
-                for message in diagnostic_info.messages:
-                    for chunk in getattr(message, "chunks", []):
-                        add_text, ended = self._process_diagnostic_chunk(
-                            chunk, trace_chunks
-                        )
-                        agent_text += add_text
-                        if ended:
-                            session_ended = True
-
-        return agent_text.strip(), trace_chunks, session_ended
-
-    def _process_diagnostic_chunk(
-        self, chunk: Any, trace_chunks: list[str]
-    ) -> tuple[str, bool]:
-        """Processes a single diagnostic chunk and updates trace_chunks."""
-        agent_text_add = ""
-        session_ended = False
-
-        chunk_type = (
-            chunk._pb.WhichOneof("data") if hasattr(chunk, "_pb") else None
+        parsed = ParsedSessionResponse(response, tools_map=self.tools_map)
+        return (
+            parsed.consolidated_agent_text,
+            parsed.detailed_trace,
+            parsed.session_ended,
         )
-        if chunk_type == "tool_call":
-            tc = chunk.tool_call
-            tool_name = getattr(tc, "display_name", "") or getattr(
-                tc, "tool", ""
-            )
-            if (
-                tool_name
-                and "/tools/" in tool_name
-                and hasattr(self, "tools_map")
-            ):
-                tool_name = self.tools_map.get(tool_name, tool_name)
-            expanded_args = Sessions._expand_pb_struct(tc.args)
-            trace_chunks.append(
-                f"Tool Call: {tool_name} with args {expanded_args}"
-            )
-            if "end_session" in tool_name:
-                session_ended = True
-        elif chunk_type == "tool_response":
-            tr = chunk.tool_response
-            tool_name = getattr(tr, "display_name", "") or getattr(
-                tr, "tool", ""
-            )
-            if (
-                tool_name
-                and "/tools/" in tool_name
-                and hasattr(self, "tools_map")
-            ):
-                tool_name = self.tools_map.get(tool_name, tool_name)
-            expanded_response = Sessions._expand_pb_struct(tr.response)
-            trace_chunks.append(
-                f"Tool Response: {tool_name} with result {expanded_response}"
-            )
-        elif chunk_type == "agent_transfer":
-            at = chunk.agent_transfer
-            display_name = getattr(at, "display_name", "unknown")
-            trace_chunks.append(
-                f"Agent Transfer: Transferred to {display_name}"
-            )
-        elif chunk_type == "payload":
-            expanded_payload = Sessions._expand_pb_struct(chunk.payload)
-            trace_chunks.append(f"Custom Payload: {expanded_payload}")
-        elif chunk_type == "text":
-            agent_text_add = chunk.text + " "
-            trace_chunks.append(f"Agent Text (Diag): {chunk.text}")
-
-        return agent_text_add, session_ended
 
     def _evaluate_expectations(
         self,

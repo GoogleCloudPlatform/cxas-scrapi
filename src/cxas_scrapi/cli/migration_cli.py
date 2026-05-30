@@ -565,7 +565,7 @@ class MigrationCLI:
         else:
             zip_path = Prompt.ask(
                 "Enter path to local agent export (.zip)",
-                default="~/Desktop/agent-examples/exported_agent_UAT-macys-conversational-chatbot-uat.zip",
+                default="~/Desktop/agent-examples/exported_agent_name.zip",
             )
             zip_path = os.path.expanduser(zip_path)
             self.console.print(f"Loading agent from {zip_path}...")

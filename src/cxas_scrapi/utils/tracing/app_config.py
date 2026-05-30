@@ -159,7 +159,7 @@ class AppConfig:
 
     def audio_bucket(self) -> str | None:
         """Returns the GCS bucket configured for audio recording."""
-        # The Humana CFD app at humana_cfd_mvp1/.../app.json shows the path:
+        # Apps store the bucket at
         # app.loggingSettings.audioRecordingConfig.gcsBucket. Some apps wrap
         # the whole app config under an "app" key; support both.
         for prefix in ("app.", ""):

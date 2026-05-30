@@ -7,6 +7,7 @@
 - **pythonFunction** (-> PythonFunction)
 - **clientFunction** (-> ClientFunction)
 - **systemTool** (-> SystemTool)
+- **googleSearchTool** (-> GoogleSearchTool)
 - **toolFakeConfig** (-> ToolFakeConfig): Fake mode config.
 
 ### PythonFunction
@@ -27,6 +28,15 @@ Pre-defined: `end_session`, `customize_response`, `transfer_to_agent`.
 
 - **name** (string): [required]
 - **description** (string): Output only.
+
+### GoogleSearchTool
+Tool to perform Google web searches for grounding.
+
+- **name** (string): [required]
+- **description** (string)
+- **contextUrls** (list of strings): URLs fetched for context/grounding.
+- **preferredDomains** (list of strings): Domains to restrict search results to.
+- **excludeDomains** (list of strings): Domains excluded from search results.
 
 ### Toolset
 Represents a collection of tools, currently supporting OpenAPI, MCP, or Connector toolsets.

@@ -110,7 +110,7 @@ def main():
     )
     parser.add_argument(
         "--runs", type=int, default=None,
-        help="Trials per golden AND per sim (default: from run-all-evals.py = 5). Tool tests and callback tests are deterministic and always run once."
+        help="Trials per golden AND per sim (default: from run-evals.py = 5). Tool tests and callback tests are deterministic and always run once."
     )
     parser.add_argument(
         "--auto-revert", action="store_true", default=False,
@@ -127,7 +127,7 @@ def main():
     )
     parser.add_argument(
         "--priority", default=None,
-        help="Sim priority filter (e.g., P0, or P0,P1,P2). Default: P0 (set in run-all-evals.py)."
+        help="Sim priority filter (e.g., P0, or P0,P1,P2). Default: P0 (set in run-evals.py)."
     )
     parser.add_argument(
         "--dry-run", action="store_true", default=False,
@@ -171,7 +171,7 @@ def main():
             print("  If you edited golden YAMLs locally, those edits are NOT live on the platform.")
 
     # Step 3: Run all evals
-    eval_cmd = [python, os.path.join(SCRIPTS_DIR, "run-all-evals.py")]
+    eval_cmd = [python, os.path.join(SCRIPTS_DIR, "run-evals.py")]
     if args.channel:
         eval_cmd.extend(["--channel", args.channel])
     if args.runs:

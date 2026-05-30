@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for scrapi-sim-runner.py and run-all-evals.py wrappers.
+"""Tests for scrapi-sim-runner.py and run-evals.py wrappers.
 
 Run from the project root:
     python -m pytest .agents/skills/cxas-agent-foundry/scripts/tests/test_runners.py
@@ -73,10 +73,10 @@ def sim_runner():
 
 
 @pytest.fixture
-def all_evals_runner():
-    """Import the run-all-evals module."""
+def evals_runner():
+    """Import the run-evals module."""
     spec = importlib.util.spec_from_file_location(
-        "run_all_evals", os.path.join(_SCRIPTS_DIR, "run-all-evals.py")
+        "run_evals", os.path.join(_SCRIPTS_DIR, "run-evals.py")
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -156,12 +156,12 @@ def test_sim_runner_cmd_run_delegation(sim_runner):
 
 
 # ---------------------------------------------------------------------------
-# Test run-all-evals.py
+# Test run-evals.py
 # ---------------------------------------------------------------------------
 
 
-def test_run_all_evals_includes_all_by_default(all_evals_runner):
-    """Verify run-all-evals.py invokes combined report with goldens, sims, and scenarios by default."""
+def test_run_evals_includes_all_by_default(evals_runner):
+    """Verify run-evals.py invokes combined report with goldens, sims, and scenarios by default."""
     mock_args = MagicMock()
     mock_args.channel = "text"
     mock_args.runs = 5
@@ -176,7 +176,7 @@ def test_run_all_evals_includes_all_by_default(all_evals_runner):
             "cxas_scrapi.utils.reporting.generate_combined_report_from_dir"
         ) as mock_gen_report,
     ):
-        all_evals_runner.main()
+        evals_runner.main()
 
         # Assert generate_combined_report_from_dir was called with goldens + sims + tools + callbacks
         mock_gen_report.assert_called_once()
@@ -192,8 +192,8 @@ def test_run_all_evals_includes_all_by_default(all_evals_runner):
         assert call_kwargs["parallel"] == 4
 
 
-def test_run_all_evals_excludes_goldens_and_sims(all_evals_runner, config_mock):
-    """Verify run-all-evals.py skips goldens and sims correctly based on CLI flags."""
+def test_run_evals_excludes_goldens_and_sims(evals_runner, config_mock):
+    """Verify run-evals.py skips goldens and sims correctly based on CLI flags."""
     # Set dynamic config mock modality to audio
     config_mock["modality"] = "audio"
     config_mock["default_channel"] = "audio"
@@ -212,7 +212,7 @@ def test_run_all_evals_excludes_goldens_and_sims(all_evals_runner, config_mock):
             "cxas_scrapi.utils.reporting.generate_combined_report_from_dir"
         ) as mock_gen_report,
     ):
-        all_evals_runner.main()
+        evals_runner.main()
 
         mock_gen_report.assert_called_once()
         call_kwargs = mock_gen_report.call_args[1]

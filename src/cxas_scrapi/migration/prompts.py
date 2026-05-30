@@ -1170,7 +1170,7 @@ and CXAS/Polysynth Architect.
 
         ### CRITICAL REWRITING RULES (NON-NEGOTIABLE):
         1. **NO INFORMATION OR FUNCTIONALITY LOSS**: You MUST optimize section by section. Only make targeted, minimal changes to restructure the logic. Do NOT perform wholesale rewrites or paraphrase the natural language instructions.
-        2. **VERBATIM UTTERANCES**: Every single verbatim agent response/say statement (e.g. "Say: 'Welcome to Macy's'") MUST be preserved exactly word-for-word as it appears in the original prompt.
+        2. **VERBATIM UTTERANCES**: Every single verbatim agent response/say statement (e.g. "Say: 'Welcome to our store'") MUST be preserved exactly word-for-word as it appears in the original prompt.
         3. **EXACT REFERENCE MATCHING & BRACE ENCLOSURE**:
            - All names of tools (e.g., {{@TOOL: exact_name}}), agents (e.g., {{@AGENT: exact_name}}), and variables (e.g., {{exact_name}}) MUST match their exact casing, underscores, and spelling.
            - CRITICAL VARIABLE FORMATTING RULE: You MUST ALWAYS enclose variable references inside the instruction text in single curly braces, like so: {{variable_name}}. You MUST NEVER enclose variables in backticks (e.g. `variable_name`) or double curly braces (`{{{{MSISDN}}}}`). Backticks will prevent the live platform from expanding the variable values at runtime and will cause catastrophic runtime failures!

@@ -43,6 +43,7 @@ except ImportError:
 from cxas_scrapi.core.audio_transformer import AudioTransformer
 from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
+from cxas_scrapi.core.response_parser import ParsedSessionResponse
 
 logger = logging.getLogger(__name__)
 
@@ -635,80 +636,6 @@ class Sessions(Common):
                                 )
                             )
 
-    def _process_output_tool_calls(
-        self, output: Any, tool_calls: list[Dict[str, Any]], session_ended: bool
-    ) -> bool:
-        """Processes tool calls from output.tool_calls."""
-        tc_msg = getattr(output, "tool_calls", None)
-        if tc_msg and hasattr(tc_msg, "tool_calls"):
-            for tc in tc_msg.tool_calls:
-                tool_name = getattr(tc, "display_name", "") or getattr(
-                    tc, "tool", ""
-                )
-                args = (
-                    Sessions._expand_pb_struct(tc.args)
-                    if hasattr(tc, "args")
-                    else {}
-                )
-                tool_calls.append({"action": tool_name, "args": args})
-                if "end_session" in (tool_name or ""):
-                    session_ended = True
-        return session_ended
-
-    def _process_diagnostic_info(
-        self,
-        output: Any,
-        tool_calls: list[Dict[str, Any]],
-        agent_transfer: Any,
-        session_ended: bool,
-    ) -> tuple[Any, bool]:
-        """Processes diagnostic info from output."""
-        diagnostic_info = getattr(output, "diagnostic_info", None)
-        if diagnostic_info and hasattr(diagnostic_info, "messages"):
-            for message in diagnostic_info.messages:
-                for chunk in getattr(message, "chunks", []):
-                    fc = getattr(chunk, "function_call", None)
-                    if fc:
-                        tc_name = getattr(fc, "name", "")
-                        tc_args = (
-                            Sessions._expand_pb_struct(fc.args)
-                            if hasattr(fc, "args")
-                            else {}
-                        )
-                        if tc_name and not any(
-                            t["action"] == tc_name for t in tool_calls
-                        ):
-                            tool_calls.append(
-                                {"action": tc_name, "args": tc_args}
-                            )
-                            if "end_session" in tc_name:
-                                session_ended = True
-
-                    fr = getattr(chunk, "function_response", None)
-                    if fr:
-                        fr_name = getattr(fr, "name", "")
-                        fr_resp = (
-                            Sessions._expand_pb_struct(fr.response)
-                            if hasattr(fr, "response")
-                            else {}
-                        )
-                        tool_calls.append(
-                            {
-                                "action": f"_response:{fr_name}",
-                                "args": {},
-                                "response": fr_resp,
-                            }
-                        )
-
-                actions = getattr(message, "actions", None)
-                if (
-                    actions
-                    and hasattr(actions, "transfer_to_agent")
-                    and actions.transfer_to_agent
-                ):
-                    agent_transfer = actions.transfer_to_agent
-        return agent_transfer, session_ended
-
     def get_structured_response(self, response) -> Dict[str, Any]:
         """Parse response, avoiding duplicate text from diagnostic info.
 
@@ -719,36 +646,22 @@ class Sessions(Common):
         - agent_transfer: Target agent if a transfer occurred.
         - session_ended: Boolean indicating if session ended.
         """
-        agent_texts = []
-        tool_calls = []
-        agent_transfer = None
-        session_ended = False
-
-        for output in response.outputs:
-            if hasattr(output, "text") and output.text:
-                agent_texts.append(output.text)
-
-            session_ended = self._process_output_tool_calls(
-                output, tool_calls, session_ended
-            )
-            agent_transfer, session_ended = self._process_diagnostic_info(
-                output, tool_calls, agent_transfer, session_ended
-            )
-
-        agent_text = " ".join(agent_texts).strip() if agent_texts else ""
-
+        parsed = ParsedSessionResponse(response)
         return {
-            "agent_text": agent_text,
+            "agent_text": parsed.consolidated_agent_text,
             "tool_calls": [
-                t
-                for t in tool_calls
-                if not t["action"].startswith("_response:")
+                {"action": tc.name, "args": tc.args} for tc in parsed.tool_calls
             ],
             "tool_responses": [
-                t for t in tool_calls if t["action"].startswith("_response:")
+                {
+                    "action": f"_response:{tr.name}",
+                    "args": {},
+                    "response": tr.response,
+                }
+                for tr in parsed.tool_responses
             ],
-            "agent_transfer": agent_transfer,
-            "session_ended": session_ended,
+            "agent_transfer": parsed.agent_transfer,
+            "session_ended": parsed.session_ended,
         }
 
     def async_bidi_run_session(
