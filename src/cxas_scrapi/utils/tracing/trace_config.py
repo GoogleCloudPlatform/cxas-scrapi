@@ -121,7 +121,23 @@ class BugReportConfig(BaseModel):
     )
 
 
+class ChatConfig(BaseModel):
+    auto_trace: bool = False
+    auto_trace_format: str = "text"
+    verbose: bool = False
+    show_metrics: bool = False
+    save_session: bool = True
+    latency_warning_ms: float = 5000
+
+
+class DefaultsConfig(BaseModel):
+    app_name: str | None = None
+    project_id: str | None = None
+    location: str | None = None
+
+
 class TraceConfig(BaseModel):
+    defaults: DefaultsConfig = Field(default_factory=DefaultsConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     cloud_logging: CloudLoggingConfig = Field(
         default_factory=CloudLoggingConfig
@@ -129,6 +145,7 @@ class TraceConfig(BaseModel):
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
     bug_report: BugReportConfig = Field(default_factory=BugReportConfig)
+    chat: ChatConfig = Field(default_factory=ChatConfig)
 
     @classmethod
     def load(cls, explicit_path: str | None = None) -> "TraceConfig":

@@ -39,6 +39,9 @@ def normalize(conversation: Any) -> dict[str, Any]:
     fed back into a Pydantic model, or rendered. Each entry has a `kind`
     (`user`, `agent`, `tool_call`, `tool_response`, `agent_transfer`,
     `custom_payload`, `system`) plus a small payload.
+
+    Handles both the internal "turns" format and the CES proto
+    "interactions" format (Conversation.interactions[]).
     """
     conv_dict = (
         type(conversation).to_dict(conversation)
@@ -46,9 +49,13 @@ def normalize(conversation: Any) -> dict[str, Any]:
         else conversation
     )
 
+    turns = conv_dict.get("turns", [])
+    if not turns:
+        turns = _interactions_to_turns(conv_dict.get("interactions", []))
+
     entries: list[dict[str, Any]] = []
     turn_metrics: list[dict[str, Any]] = []
-    for turn_idx, turn in enumerate(conv_dict.get("turns", [])):
+    for turn_idx, turn in enumerate(turns):
         for msg in turn.get("messages", []):
             role = msg.get("role", "")
             for chunk in msg.get("chunks", []) or []:
@@ -68,12 +75,58 @@ def normalize(conversation: Any) -> dict[str, Any]:
         "channel": _channel_label(raw_input_types),
         "start_time": _to_iso(conv_dict.get("start_time")),
         "end_time": _to_iso(conv_dict.get("end_time")),
-        "num_turns": len(conv_dict.get("turns", [])),
+        "num_turns": len(turns),
         "entries": entries,
         "turn_metrics": turn_metrics,
         "totals": _conversation_totals(turn_metrics),
         "raw": conv_dict,
     }
+
+
+def _interactions_to_turns(
+    interactions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert CES Conversation.interactions[] to the internal turns format.
+
+    Each interaction has response.query_result with diagnostic_info
+    (messages/chunks) and parameters (session variables including slot_machine).
+    """
+    turns: list[dict[str, Any]] = []
+    for interaction in interactions:
+        response = interaction.get("response", {})
+        qr = response.get("query_result", {})
+        di = qr.get("diagnostic_info", {})
+
+        messages = []
+        if isinstance(di, dict):
+            messages = di.get("messages", [])
+
+        params = qr.get("parameters")
+        if isinstance(params, dict) and params:
+            messages.append({
+                "role": "",
+                "chunks": [{"updated_variables": params}],
+            })
+
+        root_span = {}
+        step_metrics = interaction.get("step_metrics", [])
+        if step_metrics:
+            child_spans = []
+            for sm in step_metrics:
+                child_spans.append({
+                    "name": sm.get("name"),
+                    "start_time": sm.get("latency"),
+                })
+            root_span = {
+                "child_spans": child_spans,
+                "start_time": interaction.get("create_time"),
+            }
+
+        turns.append({
+            "messages": messages,
+            "root_span": root_span,
+        })
+    return turns
 
 
 def _turn_metrics(turn: dict[str, Any], turn_idx: int) -> dict[str, Any]:

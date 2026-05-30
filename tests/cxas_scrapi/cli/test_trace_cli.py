@@ -305,6 +305,221 @@ def test_trace_replay_failure(fake_traces):
         )
 
 
+# ---------------------------------- fork --------------------------------------
+
+
+def test_trace_fork_text(fake_traces, capsys):
+    fake_traces.fork.return_value = {
+        "historical_contexts": [{"role": "user", "chunks": []}],
+        "turn_count": 3,
+        "original_conversation_id": "c1",
+        "forked_at_turn": 1,
+    }
+    trace_cli.trace_fork(
+        _ns(conversation_id="c1", at_turn=1, format="text")
+    )
+    out = capsys.readouterr().out
+    assert "Forked conversation c1" in out
+    assert "Loaded 3 turns" in out
+    assert "Truncated at turn 1" in out
+    assert "1 context messages ready" in out
+
+
+def test_trace_fork_json(fake_traces, capsys):
+    fake_traces.fork.return_value = {
+        "historical_contexts": [],
+        "turn_count": 2,
+        "original_conversation_id": "c1",
+        "forked_at_turn": None,
+    }
+    trace_cli.trace_fork(
+        _ns(conversation_id="c1", at_turn=None, format="json")
+    )
+    out = capsys.readouterr().out
+    parsed = json.loads(out)
+    assert parsed["turn_count"] == 2
+
+
+def test_trace_fork_text_no_truncation(fake_traces, capsys):
+    fake_traces.fork.return_value = {
+        "historical_contexts": [{"role": "user", "chunks": []}],
+        "turn_count": 3,
+        "original_conversation_id": "c1",
+        "forked_at_turn": None,
+    }
+    trace_cli.trace_fork(
+        _ns(conversation_id="c1", at_turn=None, format="text")
+    )
+    out = capsys.readouterr().out
+    assert "Truncated" not in out
+
+
+def test_trace_fork_failure(fake_traces):
+    fake_traces.fork.side_effect = RuntimeError("boom")
+    with pytest.raises(SystemExit):
+        trace_cli.trace_fork(
+            _ns(conversation_id="c1", at_turn=None, format="text")
+        )
+
+
+# ---------------------------------- diff --------------------------------------
+
+
+def test_trace_diff_text(fake_traces, capsys):
+    fake_traces.diff.return_value = {
+        "conversation_a": "ca",
+        "conversation_b": "cb",
+        "agent_text_diff": "--- ca\n+++ cb\n-hello\n+hi",
+        "tool_call_diff": "",
+        "turn_comparison": [],
+        "summary": {
+            "total_turns_a": 2,
+            "total_turns_b": 2,
+            "matching_turns": 1,
+            "differing_turns": 1,
+        },
+    }
+    trace_cli.trace_diff(
+        _ns(conversation_id_a="ca", conversation_id_b="cb", format="text")
+    )
+    out = capsys.readouterr().out
+    assert "Comparing ca vs cb" in out
+    assert "Matching: 1" in out
+    assert "--- Agent text diff ---" in out
+
+
+def test_trace_diff_json(fake_traces, capsys):
+    fake_traces.diff.return_value = {
+        "conversation_a": "ca",
+        "conversation_b": "cb",
+        "agent_text_diff": "",
+        "tool_call_diff": "",
+        "turn_comparison": [],
+        "summary": {
+            "total_turns_a": 1,
+            "total_turns_b": 1,
+            "matching_turns": 1,
+            "differing_turns": 0,
+        },
+    }
+    trace_cli.trace_diff(
+        _ns(conversation_id_a="ca", conversation_id_b="cb", format="json")
+    )
+    parsed = json.loads(capsys.readouterr().out)
+    assert parsed["conversation_a"] == "ca"
+
+
+def test_trace_diff_md(fake_traces, capsys):
+    fake_traces.diff.return_value = {
+        "conversation_a": "ca",
+        "conversation_b": "cb",
+        "agent_text_diff": "+changed",
+        "tool_call_diff": "",
+        "turn_comparison": [],
+        "summary": {
+            "total_turns_a": 2,
+            "total_turns_b": 2,
+            "matching_turns": 1,
+            "differing_turns": 1,
+        },
+    }
+    trace_cli.trace_diff(
+        _ns(conversation_id_a="ca", conversation_id_b="cb", format="md")
+    )
+    out = capsys.readouterr().out
+    assert "# Trace Diff" in out
+    assert "## Agent Text Diff" in out
+    assert "+changed" in out
+
+
+def test_trace_diff_md_identical(fake_traces, capsys):
+    fake_traces.diff.return_value = {
+        "conversation_a": "ca",
+        "conversation_b": "cb",
+        "agent_text_diff": "",
+        "tool_call_diff": "",
+        "turn_comparison": [],
+        "summary": {
+            "total_turns_a": 1,
+            "total_turns_b": 1,
+            "matching_turns": 1,
+            "differing_turns": 0,
+        },
+    }
+    trace_cli.trace_diff(
+        _ns(conversation_id_a="ca", conversation_id_b="cb", format="md")
+    )
+    out = capsys.readouterr().out
+    assert "_(identical)_" in out
+
+
+def test_trace_diff_text_with_tool_diff(fake_traces, capsys):
+    fake_traces.diff.return_value = {
+        "conversation_a": "ca",
+        "conversation_b": "cb",
+        "agent_text_diff": "",
+        "tool_call_diff": "--- ca (tools)\n+++ cb (tools)",
+        "turn_comparison": [],
+        "summary": {
+            "total_turns_a": 1,
+            "total_turns_b": 1,
+            "matching_turns": 0,
+            "differing_turns": 1,
+        },
+    }
+    trace_cli.trace_diff(
+        _ns(conversation_id_a="ca", conversation_id_b="cb", format="text")
+    )
+    out = capsys.readouterr().out
+    assert "--- Tool call diff ---" in out
+
+
+def test_trace_diff_failure(fake_traces):
+    fake_traces.diff.side_effect = RuntimeError("boom")
+    with pytest.raises(SystemExit):
+        trace_cli.trace_diff(
+            _ns(
+                conversation_id_a="ca",
+                conversation_id_b="cb",
+                format="text",
+            )
+        )
+
+
+def test_register_fork_subcommand():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    trace_cli.register(sub)
+    args = parser.parse_args(
+        ["trace", "fork", "--app-name", APP, "conv-1", "--at-turn", "2"]
+    )
+    assert args.func == trace_cli.trace_fork
+    assert args.conversation_id == "conv-1"
+    assert args.at_turn == 2
+
+
+def test_register_diff_subcommand():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    trace_cli.register(sub)
+    args = parser.parse_args(
+        [
+            "trace",
+            "diff",
+            "--app-name",
+            APP,
+            "conv-a",
+            "conv-b",
+            "--format",
+            "md",
+        ]
+    )
+    assert args.func == trace_cli.trace_diff
+    assert args.conversation_id_a == "conv-a"
+    assert args.conversation_id_b == "conv-b"
+    assert args.format == "md"
+
+
 def test_trace_stats_markdown(fake_traces, capsys):
     fake_traces.aggregate_stats.return_value = {
         "time_filter": "7d",

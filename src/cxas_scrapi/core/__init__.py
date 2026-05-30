@@ -15,5 +15,6 @@
 """Core module for CXAS Scrapi."""
 
 from .common import Common
+from .programmatic_chat import ProgrammaticChatDriver
 
-__all__ = ["Common"]
+__all__ = ["Common", "ProgrammaticChatDriver"]

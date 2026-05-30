@@ -48,6 +48,9 @@ from cxas_scrapi.cli.migration_cli import (
 from cxas_scrapi.cli.migration_cli import (
     register as register_dfcx_cxas_subparsers,
 )
+from cxas_scrapi.cli.chat_cli import register as register_chat_subparser
+from cxas_scrapi.cli.chat_step_cli import register as register_chat_step_subparser
+from cxas_scrapi.cli.slots_cli import register as register_slots_subparser
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
@@ -1864,6 +1867,15 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'trace' — observability/debugging for past conversations.
     register_trace_subparser(subparsers)
+
+    # Subparsers for 'chat' — interactive chat with trace integration.
+    register_chat_subparser(subparsers)
+
+    # Subparsers for 'chat-step' — programmatic single-turn chat.
+    register_chat_step_subparser(subparsers)
+
+    # Subparsers for 'slots' — deep slot machine inspection.
+    register_slots_subparser(subparsers)
 
     return parser
 

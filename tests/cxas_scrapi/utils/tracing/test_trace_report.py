@@ -407,3 +407,106 @@ def test_span_renderers_unknown_name():
     assert "Other" in tr._span_to_text(s)
     md = tr._span_to_markdown(s)
     assert "Other" in md
+
+
+# -----------------------------------------------------------------------
+# _interactions_to_turns / normalize with interactions
+# -----------------------------------------------------------------------
+
+SAMPLE_INTERACTIONS = {
+    "name": "projects/p/locations/global/apps/a/conversations/c2",
+    "interactions": [
+        {
+            "response": {
+                "query_result": {
+                    "diagnostic_info": {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "chunks": [{"text": "table for 4"}],
+                            },
+                            {
+                                "role": "Reservation_Agent",
+                                "chunks": [
+                                    {"text": "I'd be happy to help!"},
+                                    {
+                                        "tool_call": {
+                                            "display_name": "set_party_size",
+                                            "args": {"party_size": 4},
+                                        }
+                                    },
+                                    {
+                                        "tool_response": {
+                                            "display_name": "set_party_size",
+                                            "response": {"status": "ok"},
+                                        }
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                    "parameters": {
+                        "slot_machine": {
+                            "filled": {"party_size": "4"},
+                            "pending": {},
+                            "status": "in_progress",
+                            "_config_id": "reservation",
+                        }
+                    },
+                }
+            },
+            "request_utterances": "table for 4",
+            "response_utterances": "I'd be happy to help!",
+        },
+    ],
+}
+
+
+def test_interactions_to_turns_basic():
+    turns = tr._interactions_to_turns(SAMPLE_INTERACTIONS["interactions"])
+    assert len(turns) == 1
+    messages = turns[0]["messages"]
+    assert len(messages) == 3  # 2 from diagnostic_info + 1 from parameters
+
+
+def test_normalize_from_interactions():
+    n = tr.normalize(SAMPLE_INTERACTIONS)
+    assert n["conversation_id"] == "c2"
+    assert n["num_turns"] == 1
+    kinds = [e["kind"] for e in n["entries"]]
+    assert "user" in kinds
+    assert "agent" in kinds
+    assert "tool_call" in kinds
+    assert "tool_response" in kinds
+    assert "variable_update" in kinds
+
+
+def test_normalize_interactions_extracts_slot_machine():
+    n = tr.normalize(SAMPLE_INTERACTIONS)
+    var_entries = [
+        e for e in n["entries"] if e["kind"] == "variable_update"
+    ]
+    assert len(var_entries) >= 1
+    sm = var_entries[-1]["variables"].get("slot_machine")
+    assert sm is not None
+    assert sm["filled"] == {"party_size": "4"}
+    assert sm["_config_id"] == "reservation"
+
+
+def test_normalize_interactions_empty():
+    n = tr.normalize({"name": "p/c3", "interactions": []})
+    assert n["entries"] == []
+    assert n["num_turns"] == 0
+
+
+def test_normalize_prefers_turns_over_interactions():
+    combo = {
+        "name": "p/c4",
+        "turns": [
+            {"messages": [{"role": "user", "chunks": [{"text": "hi"}]}]}
+        ],
+        "interactions": SAMPLE_INTERACTIONS["interactions"],
+    }
+    n = tr.normalize(combo)
+    assert n["num_turns"] == 1
+    assert n["entries"][0]["text"] == "hi"

@@ -475,11 +475,18 @@ class Traces(Common):
         self,
         conversation_id: str,
         diff: bool = True,
+        interactive: bool = False,
+        on_turn: "callable | None" = None,
     ) -> dict[str, Any]:
         """Re-runs original user inputs against the current agent.
 
         Returns `{"original": [...], "replay": [...], "diff": "..."}`. The
         diff is a unified diff of the agent text per turn.
+
+        If *interactive* is True and *on_turn* is provided, the callback is
+        invoked after each replayed turn with ``(turn_index,
+        original_agent_text, replayed_agent_text)``.  If it returns a
+        non-None value the replay is marked as diverged at that turn.
         """
         normalized = self.get_normalized(conversation_id)
         user_turns = [
@@ -493,7 +500,13 @@ class Traces(Common):
 
         original_agents = _agent_text_per_turn(normalized)
         replay_agents: list[str] = []
-        for ut in user_turns:
+        result: dict[str, Any] = {
+            "conversation_id": conversation_id,
+            "original": original_agents,
+            "replay": replay_agents,
+            "diverged_at": None,
+        }
+        for i, ut in enumerate(user_turns):
             try:
                 response = sess.run(
                     session_id=session_id,
@@ -505,11 +518,17 @@ class Traces(Common):
             except Exception as e:
                 replay_agents.append(f"<replay error: {e}>")
 
-        result: dict[str, Any] = {
-            "conversation_id": conversation_id,
-            "original": original_agents,
-            "replay": replay_agents,
-        }
+            if interactive and on_turn is not None:
+                override = on_turn(
+                    i,
+                    original_agents[i] if i < len(original_agents) else "",
+                    replay_agents[-1],
+                )
+                if override is not None:
+                    # User wants to diverge - record the divergence point
+                    if result["diverged_at"] is None:
+                        result["diverged_at"] = i
+
         if diff:
             result["diff"] = "\n".join(
                 difflib.unified_diff(
@@ -521,6 +540,120 @@ class Traces(Common):
                 )
             )
         return result
+
+    def fork(
+        self,
+        conversation_id: str,
+        at_turn: int | None = None,
+    ) -> dict[str, Any]:
+        """Prepare historical_contexts for forking from an existing conversation.
+
+        Fetches the conversation, extracts message dicts (role + chunks) from
+        each turn up to `at_turn` (inclusive). Returns a dict with the
+        historical_contexts list ready for Sessions.run().
+        """
+        conv = self.history.get_conversation(conversation_id)
+        conv_dict = (
+            type(conv).to_dict(conv) if not isinstance(conv, dict) else conv
+        )
+        turns = conv_dict.get("turns", [])
+        if at_turn is not None:
+            turns = turns[: at_turn + 1]
+
+        contexts = []
+        for turn in turns:
+            for msg in turn.get("messages", []):
+                if "role" in msg and "chunks" in msg:
+                    contexts.append(
+                        {"role": msg["role"], "chunks": msg["chunks"]}
+                    )
+
+        return {
+            "historical_contexts": contexts,
+            "turn_count": len(turns),
+            "original_conversation_id": conversation_id,
+            "forked_at_turn": at_turn,
+        }
+
+    def diff(
+        self,
+        conversation_id_a: str,
+        conversation_id_b: str,
+        context_lines: int = 3,
+    ) -> dict[str, Any]:
+        """Compare two conversations turn-by-turn.
+
+        Builds per-turn comparison of agent text and tool call sequences,
+        plus unified diffs.
+        """
+        norm_a = self.get_normalized(conversation_id_a)
+        norm_b = self.get_normalized(conversation_id_b)
+
+        agents_a = _agent_text_per_turn(norm_a)
+        agents_b = _agent_text_per_turn(norm_b)
+
+        tools_a = _tool_calls_per_turn(norm_a)
+        tools_b = _tool_calls_per_turn(norm_b)
+
+        max_turns = max(len(agents_a), len(agents_b))
+        turn_comparison = []
+        matching = 0
+        for i in range(max_turns):
+            a_text = agents_a[i] if i < len(agents_a) else ""
+            b_text = agents_b[i] if i < len(agents_b) else ""
+            a_tools = tools_a[i] if i < len(tools_a) else []
+            b_tools = tools_b[i] if i < len(tools_b) else []
+            text_match = a_text.strip() == b_text.strip()
+            tools_match = a_tools == b_tools
+            if text_match and tools_match:
+                matching += 1
+            turn_comparison.append(
+                {
+                    "turn": i,
+                    "a_agent": a_text,
+                    "b_agent": b_text,
+                    "a_tools": a_tools,
+                    "b_tools": b_tools,
+                    "text_match": text_match,
+                    "tools_match": tools_match,
+                }
+            )
+
+        agent_diff = "\n".join(
+            difflib.unified_diff(
+                agents_a,
+                agents_b,
+                fromfile=conversation_id_a,
+                tofile=conversation_id_b,
+                lineterm="",
+                n=context_lines,
+            )
+        )
+
+        tool_diff = "\n".join(
+            difflib.unified_diff(
+                [str(t) for t in tools_a],
+                [str(t) for t in tools_b],
+                fromfile=f"{conversation_id_a} (tools)",
+                tofile=f"{conversation_id_b} (tools)",
+                lineterm="",
+                n=context_lines,
+            )
+        )
+
+        return {
+            "conversation_a": conversation_id_a,
+            "conversation_b": conversation_id_b,
+            "agent_text_diff": agent_diff,
+            "tool_call_diff": tool_diff,
+            "turn_comparison": turn_comparison,
+            "summary": {
+                "total_turns_a": len(agents_a),
+                "total_turns_b": len(agents_b),
+                "matching_turns": matching,
+                "differing_turns": max_turns - matching,
+            },
+        }
 
     # ------------------------------ stats -----------------------------------
 
@@ -868,6 +1001,18 @@ def _agent_text_per_turn(normalized: dict[str, Any]) -> list[str]:
         if e["kind"] == "agent" and e.get("text"):
             by_turn.setdefault(e.get("turn", 0), []).append(e["text"])
     return [" ".join(by_turn[k]) for k in sorted(by_turn.keys())]
+
+
+def _tool_calls_per_turn(normalized: dict[str, Any]) -> list[list[str]]:
+    """Extracts tool call names grouped by turn."""
+    by_turn: dict[int, list[str]] = {}
+    for e in normalized.get("entries", []):
+        if e["kind"] == "tool_call" and e.get("tool"):
+            by_turn.setdefault(e.get("turn", 0), []).append(e["tool"])
+    if not by_turn:
+        return []
+    max_turn = max(by_turn.keys())
+    return [by_turn.get(i, []) for i in range(max_turn + 1)]
 
 
 def _git_sha() -> str | None:

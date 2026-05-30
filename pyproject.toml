@@ -64,6 +64,7 @@ dependencies = [
   # subcommands do NOT pull it in.
   "InquirerPy",
   "ratelimit",
+  "textual>=1.0.0",
 ]
 
 [project.optional-dependencies]

@@ -41,6 +41,16 @@ python .agents/skills/cxas-agent-foundry/scripts/triage-results.py --last 3
 # Run all 6 build-verification gates against the deployed app
 python .agents/skills/cxas-agent-foundry/scripts/gate-check.py
 
+# Debug a conversation (step through turns, inspect SM state)
+cxas chat-step --app-name <full_resource_name> \
+  -m "user message" --session-file /tmp/cxas-debug.json \
+  --with-log --with-slots --with-flow-context
+
+# Inspect existing session (no message sent)
+cxas chat-step --app-name <full_resource_name> \
+  --session-file /tmp/cxas-debug.json \
+  --inspect-only --with-log debug --with-slots
+
 # Tune scoring thresholds (similarity, hallucination, extra-tools)
 python .agents/skills/cxas-agent-foundry/scripts/app-thresholds.py show
 
@@ -105,6 +115,9 @@ Read what the user wants and load the appropriate sub-skill:
 | "Why is this eval failing", "get to 90%" | Debug | `references/debug.md` |
 | "Fix the failing evals", "debug the agent" | Debug | `references/debug.md` |
 | "Tool test is failing", "callback test broke" | Debug | `references/debug.md` |
+| "Why did the agent say X?", "reproduce this issue", "step through the conversation" | Chat Debug | `references/chat-debug.md` |
+| "Slots are getting lost", "preempt is stuck", "flow switch drops data" | Chat Debug | `references/chat-debug.md` |
+| "Inspect the SM log", "debug this conversation", "what happened in this turn" | Chat Debug | `references/chat-debug.md` |
 | **"Edit the agent's instructions", "tweak the auth tool", "fix the greeting", "update this callback"** | **Build** (Edit cycle) | **`references/build.md` → "Editing an Existing Agent"** |
 
 **Any phrasing that implies creating, building, or setting up an agent/app routes to `references/build.md` — even if it sounds like "just create the app shell."** "Create a new cxas app" is NOT a shortcut to scaffolding; it triggers the full build flow (todo.md → interview/PRD → TDD + approval → scaffold → lint → evals → push). Skipping the interview / TDD because the user said "create" instead of "build" is a routing failure.

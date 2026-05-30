@@ -17,6 +17,7 @@ from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.callbacks import Callbacks
 from cxas_scrapi.core.changelogs import Changelogs
 from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.programmatic_chat import ProgrammaticChatDriver
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.deployments import Deployments
 from cxas_scrapi.core.evaluations import Evaluations
@@ -57,6 +58,7 @@ from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
 
 __all__ = [
     "Common",
+    "ProgrammaticChatDriver",
     "Apps",
     "Agents",
     "Sessions",

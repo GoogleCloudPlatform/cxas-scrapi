@@ -253,6 +253,82 @@ def trace_replay(args: argparse.Namespace) -> None:
         print(json.dumps(result, indent=2, default=str))
 
 
+# ---------------------------------- fork --------------------------------------
+
+
+def trace_fork(args: argparse.Namespace) -> None:
+    """Handles the `trace fork` command."""
+    try:
+        traces = _build_traces(args)
+        result = traces.fork(args.conversation_id, at_turn=args.at_turn)
+    except Exception as e:
+        print(f"Fork failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.format == "json":
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        print(f"Forked conversation {args.conversation_id}")
+        print(f"  Loaded {result['turn_count']} turns")
+        if result["forked_at_turn"] is not None:
+            print(f"  Truncated at turn {result['forked_at_turn']}")
+        print(f"  {len(result['historical_contexts'])} context messages ready")
+        print(
+            f"\nUse with: cxas chat --app-name APP "
+            f"--fork {args.conversation_id}"
+        )
+
+
+# ---------------------------------- diff --------------------------------------
+
+
+def trace_diff(args: argparse.Namespace) -> None:
+    """Handles the `trace diff` command."""
+    try:
+        traces = _build_traces(args)
+        result = traces.diff(args.conversation_id_a, args.conversation_id_b)
+    except Exception as e:
+        print(f"Diff failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.format == "json":
+        print(json.dumps(result, indent=2, default=str))
+    elif args.format == "md":
+        s = result["summary"]
+        print("# Trace Diff\n")
+        print("| Metric | Value |")
+        print("|---|---|")
+        print(f"| Conversation A | `{result['conversation_a']}` |")
+        print(f"| Conversation B | `{result['conversation_b']}` |")
+        print(f"| Turns A / B | {s['total_turns_a']} / {s['total_turns_b']} |")
+        print(f"| Matching | {s['matching_turns']} |")
+        print(f"| Differing | {s['differing_turns']} |")
+        print()
+        if result["agent_text_diff"]:
+            print("## Agent Text Diff\n```diff")
+            print(result["agent_text_diff"])
+            print("```")
+        else:
+            print("## Agent Text Diff\n_(identical)_")
+    else:  # text
+        s = result["summary"]
+        print(
+            f"Comparing {result['conversation_a']} "
+            f"vs {result['conversation_b']}"
+        )
+        print(f"  Turns: {s['total_turns_a']} vs {s['total_turns_b']}")
+        print(
+            f"  Matching: {s['matching_turns']}, "
+            f"Differing: {s['differing_turns']}"
+        )
+        if result["agent_text_diff"]:
+            print("\n--- Agent text diff ---")
+            print(result["agent_text_diff"])
+        if result["tool_call_diff"]:
+            print("\n--- Tool call diff ---")
+            print(result["tool_call_diff"])
+
+
 # ---------------------------------- stats -----------------------------------
 
 
@@ -574,6 +650,40 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     p_replay.add_argument("--format", choices=["md", "json"], default="md")
     p_replay.set_defaults(func=trace_replay, diff=True)
+
+    # fork
+    p_fork = trace_subparsers.add_parser(
+        "fork",
+        help=(
+            "Prepare historical context from an existing conversation "
+            "for a new chat."
+        ),
+    )
+    add_trace_args(p_fork)
+    p_fork.add_argument("conversation_id")
+    p_fork.add_argument(
+        "--at-turn",
+        type=int,
+        default=None,
+        help="Load only turns up to this index (inclusive).",
+    )
+    p_fork.add_argument(
+        "--format", choices=["json", "text"], default="text"
+    )
+    p_fork.set_defaults(func=trace_fork)
+
+    # diff
+    p_diff = trace_subparsers.add_parser(
+        "diff",
+        help="Compare two conversations turn-by-turn.",
+    )
+    add_trace_args(p_diff)
+    p_diff.add_argument("conversation_id_a")
+    p_diff.add_argument("conversation_id_b")
+    p_diff.add_argument(
+        "--format", choices=["json", "text", "md"], default="text"
+    )
+    p_diff.set_defaults(func=trace_diff)
 
     # stats
     p_stats = trace_subparsers.add_parser(

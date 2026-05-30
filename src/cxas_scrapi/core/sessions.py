@@ -709,6 +709,28 @@ class Sessions(Common):
                     agent_transfer = actions.transfer_to_agent
         return agent_transfer, session_ended
 
+    @staticmethod
+    def _extract_variable_updates(
+        output: Any, variable_updates: list[Dict[str, Any]]
+    ) -> None:
+        """Extract default_variables and updated_variables from diagnostic info chunks."""
+        diagnostic_info = getattr(output, "diagnostic_info", None)
+        if not diagnostic_info or not hasattr(diagnostic_info, "messages"):
+            return
+        for message in diagnostic_info.messages:
+            for chunk in getattr(message, "chunks", []):
+                chunk_type = (
+                    chunk._pb.WhichOneof("data")
+                    if hasattr(chunk, "_pb")
+                    else None
+                )
+                if chunk_type in ("default_variables", "updated_variables"):
+                    raw = getattr(chunk, chunk_type, None)
+                    if raw is not None:
+                        variable_updates.append(
+                            Sessions._expand_pb_struct(raw)
+                        )
+
     def get_structured_response(self, response) -> Dict[str, Any]:
         """Parse response, avoiding duplicate text from diagnostic info.
 
@@ -718,15 +740,25 @@ class Sessions(Common):
         - tool_responses: List of tool responses received.
         - agent_transfer: Target agent if a transfer occurred.
         - session_ended: Boolean indicating if session ended.
+        - variable_updates: List of variable dicts from diagnostic info.
+        - payloads: List of custom payload dicts from outputs.
         """
-        agent_texts = []
+        agent_texts_seen: set[str] = set()
+        agent_texts: list[str] = []
         tool_calls = []
+        variable_updates = []
+        payloads = []
         agent_transfer = None
         session_ended = False
 
         for output in response.outputs:
-            if hasattr(output, "text") and output.text:
-                agent_texts.append(output.text)
+            payload = getattr(output, "payload", None)
+            if payload:
+                payloads.append(Sessions._expand_pb_struct(payload))
+            elif hasattr(output, "text") and output.text:
+                if output.text not in agent_texts_seen:
+                    agent_texts.append(output.text)
+                    agent_texts_seen.add(output.text)
 
             session_ended = self._process_output_tool_calls(
                 output, tool_calls, session_ended
@@ -734,10 +766,11 @@ class Sessions(Common):
             agent_transfer, session_ended = self._process_diagnostic_info(
                 output, tool_calls, agent_transfer, session_ended
             )
+            self._extract_variable_updates(output, variable_updates)
 
         agent_text = " ".join(agent_texts).strip() if agent_texts else ""
 
-        return {
+        result = {
             "agent_text": agent_text,
             "tool_calls": [
                 t
@@ -749,7 +782,11 @@ class Sessions(Common):
             ],
             "agent_transfer": agent_transfer,
             "session_ended": session_ended,
+            "variable_updates": variable_updates,
         }
+        if payloads:
+            result["payloads"] = payloads
+        return result
 
     def async_bidi_run_session(
         self, config: dict, inputs: list[dict[str, Any]]
