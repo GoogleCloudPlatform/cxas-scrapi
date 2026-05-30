@@ -24,7 +24,7 @@ each tool/webhook expands further to show its python code (for
 ones). This makes large agents skimmable without a wall of text.
 
 :class:`StageReport` accumulates labeled HTML sections across the
-migrate/stage1/stage2/stage3 pipeline and emits a single multi-section
+migrate/stage_1/stage_2/stage_3 pipeline and emits a single multi-section
 report at the end. Each section becomes a top-level ``<details open>``
 block, so the result is one collapsible-friendly long-form doc.
 """

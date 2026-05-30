@@ -224,16 +224,18 @@ class MigrationAnalysisBuilder:
             # if Stage 1 / 2 has written them. Absent fields render as blank
             # in the report.
             opt = getattr(ir, "optimization_logs", {}) or {}
-            stage1 = (opt.get("stages") or {}).get("stage_1") or {}
-            stage2 = (opt.get("stages") or {}).get("stage_2") or {}
-            if isinstance(stage1, dict):
-                kpis["stage1_variables_before"] = stage1.get(
+            stage_1 = (opt.get("stages") or {}).get("stage_1") or {}
+            stage_2 = (opt.get("stages") or {}).get("stage_2") or {}
+            if isinstance(stage_1, dict):
+                kpis["stage_1_variables_before"] = stage_1.get(
                     "parameters_before"
                 )
-                kpis["stage1_variables_after"] = stage1.get("parameters_after")
-            if isinstance(stage2, dict):
-                kpis["stage2_lint_baseline"] = stage2.get("lint_baseline")
-                kpis["stage2_lint_final"] = stage2.get("lint_final")
+                kpis["stage_1_variables_after"] = stage_1.get(
+                    "parameters_after"
+                )
+            if isinstance(stage_2, dict):
+                kpis["stage_2_lint_baseline"] = stage_2.get("lint_baseline")
+                kpis["stage_2_lint_final"] = stage_2.get("lint_final")
         return kpis
 
     def _derive_tools(

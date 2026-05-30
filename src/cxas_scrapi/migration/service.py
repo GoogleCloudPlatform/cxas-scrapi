@@ -211,7 +211,7 @@ class MigrationService:
     ) -> "MigrationService":
         """Recreate a `MigrationService` from a persisted :class:`IRBundle`.
 
-        Used by stage1 / stage2 / stage3 to resume work against an already
+        Used by stage_1 / stage_2 / stage_3 to resume work against an already
         deployed app without going through a full :meth:`run_migration`
         cycle. Populates the runtime attributes that `run_migration` would
         normally set up after creating the app:
@@ -276,7 +276,7 @@ class MigrationService:
     #
     # These are the single source of truth for each post-migration stage.
     # `run_migration`'s `optimize_for_cxas` branch delegates to
-    # `run_stage1` + `run_stage2`. Stage subcommands and skill scripts
+    # `run_stage_1` + `run_stage_2`. Stage subcommands and skill scripts
     # call the same methods to avoid pipeline duplication.
     # ------------------------------------------------------------------
 
@@ -344,7 +344,7 @@ class MigrationService:
         )
         stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage_1")
         self._analysis_checkpoint(
-            "stage1_dedup",
+            "stage_1_dedup",
             f"Stage 1 variable deduplication complete; "
             f"{len(self.ir.parameters)} variables remain.",
         )
@@ -374,7 +374,7 @@ class MigrationService:
                 )
 
         # --- Gemini consolidation (always runs) ------------------------------
-        accepted_groupings = await self._run_stage1_consolidation(
+        accepted_groupings = await self._run_stage_1_consolidation(
             bundle=bundle,
             gemini=gemini,
             grouping_callback=grouping_callback,
@@ -384,7 +384,7 @@ class MigrationService:
 
         if accepted_groupings:
             self._analysis_checkpoint(
-                "stage1_consolidation",
+                "stage_1_consolidation",
                 f"Consolidated to {len(accepted_groupings)} CXAS group(s); "
                 f"{len(self.ir.agents)} agents in final IR.",
             )
@@ -421,7 +421,7 @@ class MigrationService:
 
         return accepted_groupings
 
-    async def _run_stage1_consolidation(
+    async def _run_stage_1_consolidation(
         self,
         *,
         bundle: "IRBundle",
@@ -599,7 +599,7 @@ class MigrationService:
         )
         stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage_2")
         self._analysis_checkpoint(
-            "stage2_optimization",
+            "stage_2_optimization",
             "Stage 2 optimization + redeploy complete (instruction state "
             "machines + tool mocks).",
         )
@@ -647,7 +647,7 @@ class MigrationService:
                 logger.warning("Unit test regeneration failed: %s", exc)
             if test_counts:
                 self._analysis_checkpoint(
-                    "stage2_eval_regen",
+                    "stage_2_eval_regen",
                     f"Regenerated {sum(test_counts.values())} unit tests "
                     f"across {len(test_counts)} agents.",
                 )
@@ -666,17 +666,17 @@ class MigrationService:
             if lint_passed is not None:
                 outcome = "passed" if lint_passed else "failed"
                 self._analysis_checkpoint(
-                    "stage2_lint",
+                    "stage_2_lint",
                     f"Post-deploy lint {outcome}.",
                 )
 
         # --- Optional OptimizationReporter audit markdown -------------------
         if write_report_to:
             try:
-                stage1_logs = self.ir.optimization_logs.get("stages", {}).get(
+                stage_1_logs = self.ir.optimization_logs.get("stages", {}).get(
                     "stage_1"
                 )
-                stage2_logs = self.ir.optimization_logs.get("stages", {}).get(
+                stage_2_logs = self.ir.optimization_logs.get("stages", {}).get(
                     "stage_2"
                 )
                 reporter = OptimizationReporter()
@@ -699,7 +699,7 @@ class MigrationService:
                         after_count=len(self.ir.agents),
                         path=f"{target_name}_grouping.json",
                     )
-                reporter.set_optimizer_logs(stage1_logs, stage2_logs)
+                reporter.set_optimizer_logs(stage_1_logs, stage_2_logs)
                 if bundle and bundle.version_checkpoints:
                     reporter.set_version_checkpoints(bundle.version_checkpoints)
                 if test_counts:
@@ -754,7 +754,7 @@ class MigrationService:
             failed,
         )
         self._analysis_checkpoint(
-            "stage3_topology",
+            "stage_3_topology",
             f"Stage 3 wiring: updated={updated} skipped={skipped} "
             f"failed={failed}.",
         )

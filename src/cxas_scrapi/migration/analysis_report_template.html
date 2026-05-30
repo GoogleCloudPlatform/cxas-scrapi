@@ -909,8 +909,8 @@
       <div class="kpi-card"><div class="label">OpenAPI toolsets</div><div class="value">${k.cxas_toolsets}</div><div class="sub">1:1 from DFCX webhooks</div></div>
     `;
     $('#kpi-grid-2').innerHTML = `
-      <div class="kpi-card"><div class="label">Variables: dedup</div><div class="value">${k.stage1_variables_before} → ${k.stage1_variables_after}</div><div class="sub">Gemini semantic dedup</div></div>
-      <div class="kpi-card"><div class="label">Orphans cleaned</div><div class="value">${k.stage1_orphans_deleted}</div><div class="sub">absorbed 1:1 agents removed</div></div>
+      <div class="kpi-card"><div class="label">Variables: dedup</div><div class="value">${k.stage_1_variables_before} → ${k.stage_1_variables_after}</div><div class="sub">Gemini semantic dedup</div></div>
+      <div class="kpi-card"><div class="label">Orphans cleaned</div><div class="value">${k.stage_1_orphans_deleted}</div><div class="sub">absorbed 1:1 agents removed</div></div>
       <div class="kpi-card"><div class="label">Tools auto-wired</div><div class="value">${k.tools_wired_post_consolidation}</div><div class="sub">missing post-consolidation refs</div></div>
       <div class="kpi-card"><div class="label">Lint findings</div><div class="value">${k.fix_lint_baseline} → ${k.fix_lint_final}</div><div class="sub">0 errors after fix-pass</div></div>
     `;

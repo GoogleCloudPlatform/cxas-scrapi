@@ -7,7 +7,7 @@
 #     https://www.apache.org/licenses/LICENSE-2.0
 
 """OptimizationReporter: writes a Markdown audit report describing the
-consolidated CXAS app produced by stage1.py + stage2.py."""
+consolidated CXAS app produced by stage_1.py + stage_2.py."""
 
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ class OptimizationReporter:
     groupings: dict[str, dict[str, Any]] = field(default_factory=dict)
     before_agent_count: int = 0
     after_agent_count: int = 0
-    stage1_logs: list[dict[str, Any]] = field(default_factory=list)
-    stage2_logs: list[dict[str, Any]] = field(default_factory=list)
+    stage_1_logs: list[dict[str, Any]] = field(default_factory=list)
+    stage_2_logs: list[dict[str, Any]] = field(default_factory=list)
     versions: list[tuple[str, str]] = field(default_factory=list)
     unit_test_counts: dict[str, int] = field(default_factory=dict)
     unit_test_path: str = ""
@@ -75,11 +75,11 @@ class OptimizationReporter:
 
     def set_optimizer_logs(
         self,
-        stage1_logs: list[dict[str, Any]] | None,
-        stage2_logs: list[dict[str, Any]] | None,
+        stage_1_logs: list[dict[str, Any]] | None,
+        stage_2_logs: list[dict[str, Any]] | None,
     ) -> None:
-        self.stage1_logs = list(stage1_logs or [])
-        self.stage2_logs = list(stage2_logs or [])
+        self.stage_1_logs = list(stage_1_logs or [])
+        self.stage_2_logs = list(stage_2_logs or [])
 
     def set_version_checkpoints(self, versions: list[tuple[str, str]]) -> None:
         self.versions = list(versions)
@@ -149,28 +149,28 @@ class OptimizationReporter:
                     out.append(f"- {r}")
             out.append("")
 
-        if self.stage1_logs or self.stage2_logs:
+        if self.stage_1_logs or self.stage_2_logs:
             out += ["## CXASOptimizer Logs"]
-            if self.stage1_logs:
+            if self.stage_1_logs:
                 out += [
                     "### Stage 1 — Variable Deduplication",
                     "| Stage | Action | Details |",
                     "|---|---|---|",
                 ]
-                for entry in self.stage1_logs:
+                for entry in self.stage_1_logs:
                     out.append(
                         f"| `{entry.get('stage', '?')}` | "
                         f"`{entry.get('action', '?')}` | "
                         f"{entry.get('details', '')} |"
                     )
                 out.append("")
-            if self.stage2_logs:
+            if self.stage_2_logs:
                 out += [
                     "### Stage 2 — Instruction State Machines + Tool Mocks",
                     "| Stage | Action | Details |",
                     "|---|---|---|",
                 ]
-                for entry in self.stage2_logs:
+                for entry in self.stage_2_logs:
                     out.append(
                         f"| `{entry.get('stage', '?')}` | "
                         f"`{entry.get('action', '?')}` | "
@@ -232,8 +232,8 @@ class OptimizationReporter:
                 "source_id": self.source_id,
                 "target_name": self.target_name,
                 "groupings": self.groupings,
-                "stage1_logs": self.stage1_logs,
-                "stage2_logs": self.stage2_logs,
+                "stage_1_logs": self.stage_1_logs,
+                "stage_2_logs": self.stage_2_logs,
                 "versions": self.versions,
                 "unit_test_counts": self.unit_test_counts,
                 "lint_passed": self.lint_passed,

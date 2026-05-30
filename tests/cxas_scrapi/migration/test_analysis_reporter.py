@@ -319,12 +319,12 @@ def test_flush_never_raises_when_service_state_bad(tmp_path, caplog):
         "fast_deploy_complete",
         "flows_processed",
         "topology_linked",
-        "stage1_dedup",
-        "stage1_consolidation",
-        "stage2_optimization",
-        "stage2_eval_regen",
-        "stage2_lint",
-        "stage3_topology",
+        "stage_1_dedup",
+        "stage_1_consolidation",
+        "stage_2_optimization",
+        "stage_2_eval_regen",
+        "stage_2_lint",
+        "stage_3_topology",
     ],
 )
 def test_service_declares_all_planned_checkpoints(name):

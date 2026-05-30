@@ -183,7 +183,7 @@ class StageHistoryEntry(BaseModel):
 
 
 class IRBundle(BaseModel):
-    """Persisted state shared across migrate / stage1 / stage2."""
+    """Persisted state shared across migrate / stage_1 / stage_2."""
 
     schema_version: str = "2"
     created_at: datetime = Field(default_factory=datetime.now)

@@ -10,14 +10,14 @@
 
 Used by:
 
-* :meth:`MigrationService.run_stage1` — passed as the ``grouping_callback``
+* :meth:`MigrationService.run_stage_1` — passed as the ``grouping_callback``
   argument; lets a human review / re-propose / merge / split / rename the
   Gemini-proposed grouping before the consolidator commits.
 * The skill scripts (via re-export from ``_grouping.py``) which forward
-  the same callback into ``run_stage1``.
+  the same callback into ``run_stage_1``.
 
 The TUI returns *just the accepted groupings dict* (or ``None`` to
-abort). The caller — `run_stage1` — runs the actual
+abort). The caller — `run_stage_1` — runs the actual
 :meth:`StructuralConsolidator.consolidate` afterwards. Keeping the
 consolidate step out of the TUI avoids double-consolidating and keeps
 this module a pure UX layer.
@@ -298,7 +298,7 @@ async def interactive_review(
 
     Returns:
         The accepted ``groupings`` dict, or ``None`` if the user quit.
-        The caller (typically ``MigrationService.run_stage1``) is
+        The caller (typically ``MigrationService.run_stage_1``) is
         responsible for committing the consolidation.
     """
     console = console or Console()
