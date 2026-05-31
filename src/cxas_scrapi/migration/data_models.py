@@ -158,6 +158,14 @@ class MigrationConfig(BaseModel):
     persist_bundle: bool = False
     interactive: bool = False
     source_agent_data_override: Optional[DFCXAgentIR] = None
+    # Phase 4: HTML-driven grouping confirmation gate. When True (default
+    # post-Phase-5), MigrationService installs the web_review callback
+    # for Stage 1 consolidation. Opt-out via --no-web-confirm.
+    web_confirm_grouping: bool = False
+    web_confirm_host: str = "127.0.0.1"
+    web_confirm_port: int = 0  # 0 = pick an ephemeral port
+    web_confirm_timeout_s: int = 1800
+    auto_confirm_grouping: bool = False  # CI escape hatch: skip gate
 
     @property
     def consolidate(self) -> bool:

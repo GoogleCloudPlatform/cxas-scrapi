@@ -464,6 +464,25 @@ class MigrationService:
         # 3. Optional interactive review. The callback receives everything
         # it needs to preview consolidation + re-propose, all via kwargs so
         # it can pick out whichever args it actually uses.
+        if (
+            grouping_callback is None
+            and getattr(bundle.config, "web_confirm_grouping", False)
+            and not getattr(bundle.config, "auto_confirm_grouping", False)
+        ):
+            from functools import partial  # noqa: PLC0415
+
+            from cxas_scrapi.migration import (  # noqa: PLC0415
+                grouping_web_review,
+            )
+
+            grouping_callback = partial(
+                grouping_web_review.web_review,
+                builder=self._analysis_builder,
+                bind_host=bundle.config.web_confirm_host,
+                bind_port=bundle.config.web_confirm_port,
+                timeout_s=bundle.config.web_confirm_timeout_s,
+                console=console,
+            )
         if grouping_callback is not None:
             reviewed = await grouping_callback(
                 ir=self.ir,

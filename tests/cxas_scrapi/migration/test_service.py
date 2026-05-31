@@ -741,3 +741,125 @@ async def test_run_migration_optimize_for_cxas_calls_new_stage_methods():
         version_label="0.0.5",
         persist_bundle_path=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: web-review callback auto-install
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_stage_1_installs_web_review_when_configured():
+    """When no callback is supplied and config.web_confirm_grouping is True,
+    the service auto-installs grouping_web_review.web_review."""
+    service = _make_service()
+    bundle = _make_bundle()
+    bundle.config.web_confirm_grouping = True
+    bundle.config.optimize_for_cxas = True
+
+    fake_consolidator = MagicMock()
+    fake_consolidator.propose_groupings = AsyncMock(
+        return_value={"G": {"agents": ["Root Agent"], "is_root": True}}
+    )
+
+    captured = {}
+
+    async def fake_web_review(**kwargs):
+        captured.update(kwargs)
+
+    with (
+        patch(
+            "cxas_scrapi.migration.stage_runner.run_stage_with_redeploy",
+            new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.StructuralConsolidator",
+            return_value=fake_consolidator,
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "detect_root_key",
+            return_value="RootAgent",
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.web_review",
+            new=fake_web_review,
+        ),
+    ):
+        result = await service.run_stage_1(
+            bundle=bundle,
+            version_label=None,
+        )
+
+    # Aborted → result None, consolidate not called.
+    assert result is None
+    fake_consolidator.consolidate.assert_not_called()
+    # And the auto-installed callback was actually invoked with the
+    # standard kwargs.
+    assert captured.get("ir") is service.ir
+    assert "RootAgent" not in captured  # this is in groupings, not top-level
+    assert captured.get("root_key") == "RootAgent"
+
+
+@pytest.mark.asyncio
+async def test_run_stage_1_skips_web_review_when_auto_confirm():
+    """auto_confirm_grouping=True → no callback installed; Gemini proposal
+    applied verbatim."""
+    service = _make_service()
+    bundle = _make_bundle()
+    bundle.config.web_confirm_grouping = True
+    bundle.config.auto_confirm_grouping = True
+    bundle.config.optimize_for_cxas = True
+
+    fake_consolidator = MagicMock()
+    fake_consolidator.propose_groupings = AsyncMock(
+        return_value={"G": {"agents": ["Root Agent"], "is_root": True}}
+    )
+    fake_consolidator.consolidate = MagicMock(return_value=service.ir)
+    fake_consolidator.synthesize_instructions = AsyncMock(
+        return_value={"G": "ok"}
+    )
+
+    called = {"n": 0}
+
+    async def fake_web_review(**kwargs):  # noqa: ARG001
+        called["n"] += 1
+
+    with (
+        patch(
+            "cxas_scrapi.migration.stage_runner.run_stage_with_redeploy",
+            new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.StructuralConsolidator",
+            return_value=fake_consolidator,
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "detect_root_key",
+            return_value="RootAgent",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "validate_groupings",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "persist_grouping",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.integrity_checks."
+            "check_consolidation_integrity",
+            return_value=(False, []),
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.web_review",
+            new=fake_web_review,
+        ),
+    ):
+        await service.run_stage_1(
+            bundle=bundle,
+            version_label=None,
+        )
+
+    assert called["n"] == 0
