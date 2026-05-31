@@ -428,3 +428,25 @@ def test_html_confirm_button_disabled_without_live_endpoint(tmp_path):
     assert 'id="gr-abort"' in html
     # Either explicit `disabled` attribute or the no-endpoint title.
     assert "Live server not running" in html
+
+
+# --- Phase 5: always-on consolidation defaults ----------------------------
+
+
+def test_migration_config_consolidates_by_default():
+    """Post-Phase-5 invariant: default config consolidates and shows the
+    web confirmation gate."""
+    cfg = MigrationConfig(project_id="p", target_name="t", model="m")
+    assert cfg.consolidate is True
+    assert cfg.run_stage_3 is True
+    assert cfg.web_confirm_grouping is True
+    assert cfg.no_consolidate is False
+
+
+def test_migration_config_no_consolidate_disables_pipeline():
+    """--no-consolidate opt-out flips both consolidate and run_stage_3."""
+    cfg = MigrationConfig(
+        project_id="p", target_name="t", model="m", no_consolidate=True
+    )
+    assert cfg.consolidate is False
+    assert cfg.run_stage_3 is False

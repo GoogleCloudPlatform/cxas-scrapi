@@ -91,7 +91,11 @@ async def test_post_migration_opt_ins_all_off_skips_everything():
     """With all optimization off, no stage methods are invoked."""
     cli = MigrationCLI()
     service = _make_service_mock()
-    config = _make_config(optimize_for_cxas=False, persist_bundle=False)
+    # Post-Phase-5: consolidation is the default; explicit no_consolidate
+    # is required to skip Stage 1/2/3.
+    config = _make_config(
+        optimize_for_cxas=False, no_consolidate=True, persist_bundle=False
+    )
 
     await cli._run_post_migration_opt_ins(service, config, _make_source())
 
@@ -104,7 +108,9 @@ async def test_post_migration_opt_ins_all_off_skips_everything():
 async def test_post_migration_opt_ins_persist_only_calls_persist_bundle():
     cli = MigrationCLI()
     service = _make_service_mock()
-    config = _make_config(optimize_for_cxas=False, persist_bundle=True)
+    config = _make_config(
+        optimize_for_cxas=False, no_consolidate=True, persist_bundle=True
+    )
 
     await cli._run_post_migration_opt_ins(service, config, _make_source())
 

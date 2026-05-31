@@ -726,7 +726,7 @@ class MigrationCLI:
                 return
 
         # 2.5 Instruction state machines & tool mocks generation (Stage 2).
-        if config.optimize_for_cxas:
+        if config.consolidate:
             try:
                 await migration_service.run_stage_2(
                     version_label="0.0.4",
@@ -876,6 +876,9 @@ def run_end_to_end(args: argparse.Namespace) -> None:
             args, "eval_runner_target", "Custom API Runner"
         )
     elif profile == "direct":
+        # Phase 5 alignment: --profile direct must map to no_consolidate
+        # so the always-on default doesn't silently re-shape the app
+        # under this profile. Stage 1/2/3 stay skipped; no grouping gate.
         optimize_for_cxas = False
         persist_bundle = False
         gen_report = True
@@ -884,7 +887,19 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         gen_hillclimbing_evals = False
         eval_runner_target = "Custom API Runner"
     else:  # "custom"
-        optimize_for_cxas = not getattr(args, "no_optimize", False)
+        # Phase 5: --no-consolidate is the canonical opt-out; --no-optimize
+        # is a deprecated alias.
+        no_consolidate = getattr(args, "no_consolidate", False) or getattr(
+            args, "no_optimize", False
+        )
+        if getattr(args, "no_optimize", False) and not getattr(
+            args, "no_consolidate", False
+        ):
+            _sub_console.print(
+                "[yellow]warning: --no-optimize is deprecated; use"
+                " --no-consolidate instead.[/]"
+            )
+        optimize_for_cxas = not no_consolidate
         persist_bundle = getattr(args, "persist_bundle", False)
         gen_report = not getattr(args, "no_report", False)
         architecture = getattr(args, "architecture", "hub-and-spoke")
@@ -894,10 +909,18 @@ def run_end_to_end(args: argparse.Namespace) -> None:
             args, "eval_runner_target", "Custom API Runner"
         )
 
-    # Phase 4: HTML grouping confirmation gate. Default opt-in until
-    # Phase 5 flips it to the unconditional default.
-    web_confirm_grouping = optimize_for_cxas and not getattr(
-        args, "no_web_confirm", False
+    # Phase 5: HTML grouping confirmation gate is the default. Opt-out
+    # via --no-web-confirm. Always off when consolidation is skipped.
+    # --profile direct implies no_consolidate so the always-on flip
+    # doesn't silently re-shape apps under that profile.
+    no_consolidate_flag = (
+        getattr(args, "no_consolidate", False)
+        or getattr(args, "no_optimize", False)
+        or profile == "direct"
+    )
+    web_confirm_grouping = (
+        not no_consolidate_flag
+        and not getattr(args, "no_web_confirm", False)
     )
     auto_confirm_grouping = getattr(args, "auto_confirm_grouping", False)
 
@@ -909,6 +932,7 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         profile=profile,
         architecture=architecture,
         optimize_for_cxas=optimize_for_cxas,
+        no_consolidate=no_consolidate_flag,
         persist_bundle=persist_bundle,
         gen_report=gen_report,
         gen_unit_tests=gen_unit_tests,
