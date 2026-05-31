@@ -87,6 +87,17 @@ class MigrationAnalysisSnapshot:
     evals: dict[str, Any] | None = None  # stubbed in this PR
     eval_traces: dict[str, Any] | None = None  # stubbed in this PR
     references: list[dict[str, str]] = field(default_factory=list)
+    # In-flight Gemini grouping awaiting user confirmation in the HTML
+    # report's Grouping Review tab. None when no review is active.
+    # Shape: {
+    #   "groupings": {group_name: {agents, rationale, journey, is_root}},
+    #   "all_flow_names": [...],
+    #   "root_key": str | None,
+    #   "status": "awaiting_confirmation" | "confirmed" | "aborted"
+    #             | "reproposing",
+    #   "session_id": str,
+    # }
+    pending_grouping: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

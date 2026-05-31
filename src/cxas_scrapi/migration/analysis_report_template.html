@@ -313,6 +313,45 @@
     body { background: white; color: black; }
     main { max-width: 100%; padding: 8px; }
   }
+
+  /* Grouping Review */
+  .btn { background: var(--panel); border: 1px solid var(--border); color: var(--fg);
+    padding: 6px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .gr-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+    background: var(--panel); min-height: 120px; transition: border-color 0.15s; }
+  .gr-card.drag-over { border-color: var(--accent); background: var(--panel-hover, var(--panel)); }
+  .gr-card.root { border-left: 4px solid var(--accent); }
+  .gr-card-title { font-weight: 600; outline: none; border-bottom: 1px dashed transparent; }
+  .gr-card-title:focus { border-bottom-color: var(--accent); }
+  .gr-card-title.invalid { color: #d9534f; border-bottom-color: #d9534f; }
+  .gr-card-meta { font-size: 11px; color: var(--muted); margin: 4px 0 8px; }
+  .gr-card-rationale { font-size: 12px; color: var(--muted); margin-bottom: 8px;
+    font-style: italic; }
+  .gr-card-header { display: flex; align-items: center; flex-wrap: wrap; }
+  .gr-card-section { margin: 10px 0; }
+  .gr-card-label { font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.06em; font-weight: 600; margin-bottom: 4px; }
+  .gr-card-body { font-size: 13px; color: var(--fg); line-height: 1.45; }
+  .gr-pills { display: flex; flex-wrap: wrap; gap: 4px; min-height: 24px; }
+  .gr-pill { background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+    padding: 3px 10px; font-size: 12px; cursor: grab; user-select: none; }
+  .gr-pill:active { cursor: grabbing; }
+  .gr-pill.orphan { border-color: #d9534f; background: rgba(217,83,79,0.15); }
+  .gr-card-actions { display: flex; justify-content: space-between; align-items: center;
+    margin-top: 10px; font-size: 12px; }
+  .gr-card-actions label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .gr-status-pill { display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; }
+  .gr-status-pill.awaiting { background: #ffc107; color: #333; }
+  .gr-status-pill.confirmed { background: #5cb85c; color: white; }
+  .gr-status-pill.aborted { background: #d9534f; color: white; }
+  .gr-status-pill.reproposing { background: #5bc0de; color: white; }
+  .gr-validation-error { color: #d9534f; }
+  .gr-validation-warn { color: #f0ad4e; }
+  .gr-validation-ok { color: #5cb85c; }
 </style>
 </head>
 <body>
@@ -332,6 +371,7 @@
     <div class="tab" data-tab="evals">Evals <span class="tab-badge" id="evals-count"></span></div>
     <div class="tab" data-tab="dfcx">DFCX Source <span class="tab-badge" id="dfcx-count"></span></div>
     <div class="tab" data-tab="pipeline">Pipeline <span class="tab-badge" id="pipe-count"></span></div>
+    <div class="tab" data-tab="grouping" id="tab-grouping" style="display:none;">Grouping Review <span class="tab-badge" id="grouping-status-pill"></span></div>
   </nav>
 </header>
 
@@ -469,6 +509,28 @@
     <div class="timeline" id="timeline"></div>
     <h2>What each step changed</h2>
     <div class="entity-grid" id="grid-pipeline"></div>
+  </section>
+
+  <!-- ===================== GROUPING REVIEW ===================== -->
+  <section class="panel" id="panel-grouping">
+    <h1>Grouping Review
+      <div class="sub" id="grouping-subtitle">Drag flows between groups, rename or add groups, then click Confirm.</div>
+    </h1>
+    <div id="grouping-banner" class="callout" style="margin-bottom:16px;"></div>
+    <div id="grouping-toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+      <button type="button" id="gr-add" class="btn">+ New group</button>
+      <button type="button" id="gr-collapse" class="btn">Collapse to one group</button>
+      <button type="button" id="gr-reset" class="btn">Reset to Gemini proposal</button>
+      <button type="button" id="gr-repropose" class="btn" disabled title="Live server not running">Re-propose…</button>
+    </div>
+    <div id="gr-cards" class="agent-grid" role="list" aria-label="Grouping cards"></div>
+    <div id="gr-footer" style="position:sticky;bottom:0;background:var(--bg);padding:12px;border-top:1px solid var(--border);margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;" role="status" aria-live="polite">
+      <div id="gr-validation" style="font-size:13px;flex:1;"></div>
+      <div style="display:flex;gap:8px;">
+        <button type="button" id="gr-abort" class="btn" disabled title="Live server not running">Abort</button>
+        <button type="button" id="gr-confirm" class="btn btn-primary" disabled title="Live server not running">Confirm</button>
+      </div>
+    </div>
   </section>
 
 </main>
@@ -616,7 +678,7 @@
     agent: {
       find: name => findAgent(name),
       render: a => {
-        const evals = DATA.evals[a.name];
+        const evals = (DATA.evals || {})[a.name];
         const pctClass = evals && evals.pct >= 90 ? 'pass' : evals && evals.pct >= 70 ? 'warn' : 'fail';
         const tabsHtml = `
           <div class="drawer-subtabs">
@@ -959,7 +1021,7 @@
 
   function renderAgentGrid() {
     $('#agent-grid').innerHTML = Object.entries(DATA.agents).map(([name, a]) => {
-      const evals = DATA.evals[name];
+      const evals = (DATA.evals || {})[name];
       const pctClass = evals && evals.pct >= 90 ? 'pass' : evals && evals.pct >= 70 ? 'warn' : 'fail';
       const pctBadge = evals ? `<span class="pill ${pctClass}">${evals.pct.toFixed(0)}% eval</span>` : '';
       return `
@@ -1286,6 +1348,278 @@
   $('#filter-eval-pass').addEventListener('change', reRenderEvals);
   $('#filter-eval-agent').addEventListener('change', reRenderEvals);
 
+  // ----------- GROUPING REVIEW
+  // Single source of truth for the live edit state. Mutated in place by
+  // drag/drop, add/delete/rename, and reset; persisted only on Confirm.
+  let groupingState = null;  // {groupings: {...}, all_flow_names: [...], root_key, status, session_id}
+  const GROUP_NAME_RE = /^[A-Za-z][A-Za-z0-9 _-]{2,84}$/;
+  const MAX_GROUPS = 12;
+
+  function liveEndpoint() {
+    // The server-rendered route sets this before this script runs;
+    // file:// loads leave it undefined → buttons stay disabled.
+    return window.__REVIEW_ENDPOINT__ || null;
+  }
+
+  function validateGrouping(state) {
+    // Returns {errors: [{code, msg}], warnings: [{code, msg}], orphanFlows: Set}
+    const errors = [];
+    const warnings = [];
+    const groupings = state.groupings || {};
+    const allFlows = state.all_flow_names || [];
+    const groupNames = Object.keys(groupings);
+    const assigned = {};  // flow → list of groups
+    let totalAssigned = 0;
+    groupNames.forEach(g => {
+      (groupings[g].agents || []).forEach(f => {
+        assigned[f] = (assigned[f] || []).concat([g]);
+        totalAssigned++;
+      });
+      if (!GROUP_NAME_RE.test(g)) {
+        errors.push({code: 'E_INVALID_GROUP_NAME', msg: `Group name "${g}" invalid (letters/digits/space/_/-; 3-84 chars)`});
+      }
+      if ((groupings[g].agents || []).length === 0) {
+        errors.push({code: 'E_EMPTY_GROUP', msg: `Group "${g}" is empty — delete it or move flows in`});
+      }
+    });
+    const orphans = new Set(allFlows.filter(f => !assigned[f]));
+    if (orphans.size > 0) {
+      errors.push({code: 'E_ORPHAN_FLOWS', msg: `${orphans.size} orphan flow(s): ${[...orphans].slice(0,5).join(', ')}${orphans.size > 5 ? '…' : ''}`});
+    }
+    Object.entries(assigned).forEach(([flow, groups]) => {
+      if (groups.length > 1) {
+        errors.push({code: 'E_DUPLICATE_FLOWS', msg: `Flow "${flow}" appears in ${groups.length} groups`});
+      }
+    });
+    const roots = groupNames.filter(g => groupings[g].is_root);
+    if (roots.length === 0) {
+      errors.push({code: 'E_NO_ROOT', msg: 'Mark one group as root'});
+    } else if (roots.length > 1) {
+      errors.push({code: 'E_MULTIPLE_ROOTS', msg: `Only one group can be root (currently ${roots.length})`});
+    }
+    if (groupNames.length === 0) {
+      errors.push({code: 'E_TOO_FEW_GROUPS', msg: 'At least one group required'});
+    }
+    if (groupNames.length > MAX_GROUPS) {
+      errors.push({code: 'E_TOO_MANY_GROUPS', msg: `Maximum ${MAX_GROUPS} groups; merge or delete some`});
+    }
+    if (allFlows.length > 0) {
+      groupNames.forEach(g => {
+        const ratio = (groupings[g].agents || []).length / allFlows.length;
+        if (ratio > 0.5) {
+          warnings.push({code: 'W_BALANCE', msg: `Group "${g}" holds ${groupings[g].agents.length} of ${allFlows.length} flows — consider splitting`});
+        }
+      });
+    }
+    return {errors, warnings, orphanFlows: orphans, totalAssigned, totalFlows: allFlows.length, groupCount: groupNames.length, rootCount: roots.length};
+  }
+
+  function renderGroupingValidation(result) {
+    const footer = $('#gr-validation');
+    if (!footer) return;
+    const bits = [];
+    bits.push(`<span class="gr-validation-ok">${result.totalAssigned}/${result.totalFlows} assigned · ${result.groupCount} group(s) (${result.rootCount} root)</span>`);
+    result.errors.forEach(e => bits.push(`<div class="gr-validation-error">✗ ${esc(e.msg)}</div>`));
+    result.warnings.forEach(w => bits.push(`<div class="gr-validation-warn">⚠ ${esc(w.msg)}</div>`));
+    footer.innerHTML = bits.join(' ');
+    const confirmBtn = $('#gr-confirm');
+    if (confirmBtn) {
+      const blocked = result.errors.length > 0 || !liveEndpoint();
+      confirmBtn.disabled = blocked;
+      if (!liveEndpoint()) {
+        confirmBtn.title = 'This view is read-only. Re-run cxas migrate to open the live confirmation gate.';
+      } else if (result.errors.length > 0) {
+        confirmBtn.title = 'Fix validation errors above';
+      } else {
+        confirmBtn.title = '';
+      }
+    }
+  }
+
+  function renderGroupingBanner(state) {
+    const banner = $('#grouping-banner');
+    if (!banner) return;
+    const status = (state && state.status) || 'awaiting_confirmation';
+    const map = {
+      awaiting_confirmation: ['awaiting', '⏳ AWAITING_CONFIRMATION', 'Review each group below — its rationale, the flows in it, and what those flows do. Approve by clicking Confirm, or edit first (drag flows between groups, rename, add a new group, or click Re-propose to ask Gemini for a different cut).'],
+      confirmed: ['confirmed', '✓ CONFIRMED', 'Grouping was confirmed and consolidation proceeded.'],
+      aborted: ['aborted', '✗ ABORTED', 'Grouping review was aborted.'],
+      reproposing: ['reproposing', '↻ REPROPOSING', 'Waiting for Gemini to return a new proposal…'],
+    };
+    const [klass, label, hint] = map[status] || map.awaiting_confirmation;
+    banner.innerHTML = `<span class="gr-status-pill ${klass}">${label}</span> <span style="margin-left:8px;">${esc(hint)}</span>`;
+    const pill = $('#grouping-status-pill');
+    if (pill) pill.textContent = label.replace(/^[^A-Z]+/, '');
+  }
+
+  function renderGroupingCards(state) {
+    const wrap = $('#gr-cards');
+    if (!wrap) return;
+    const groupings = state.groupings || {};
+    const names = Object.keys(groupings);
+    const validation = validateGrouping(state);
+    const cards = names.map(name => {
+      const g = groupings[name];
+      const agents = g.agents || [];
+      const pillsHtml = agents.map(a => {
+        const orphan = validation.orphanFlows.has(a) ? ' orphan' : '';
+        return `<button type="button" class="gr-pill${orphan}" draggable="true" data-flow="${esc(a)}" data-from="${esc(name)}" role="listitem" aria-grabbed="false">${esc(a)}</button>`;
+      }).join('');
+      const rationale = g.rationale
+        ? `<div class="gr-card-section"><div class="gr-card-label">Why grouped</div><div class="gr-card-body">${esc(g.rationale)}</div></div>`
+        : '';
+      const journey = g.journey
+        ? `<div class="gr-card-section"><div class="gr-card-label">What these flows do</div><div class="gr-card-body">${esc(g.journey)}</div></div>`
+        : '';
+      const rootBadge = g.is_root ? '<span class="gr-status-pill confirmed" style="margin-left:8px;">⭐ ROOT</span>' : '';
+      return `
+        <section class="gr-card ${g.is_root ? 'root' : ''}" data-group="${esc(name)}" aria-label="Group ${esc(name)}" role="listitem">
+          <div class="gr-card-header">
+            <div class="gr-card-title" contenteditable="true" spellcheck="false" data-group="${esc(name)}">${esc(name)}</div>
+            ${rootBadge}
+          </div>
+          <div class="gr-card-meta">${agents.length} flow(s)</div>
+          ${rationale}
+          ${journey}
+          <div class="gr-card-section"><div class="gr-card-label">Source flows (drag to move)</div>
+            <div class="gr-pills" data-drop="${esc(name)}">${pillsHtml || '<span style="color:var(--muted);font-size:12px;">drop flows here</span>'}</div>
+          </div>
+          <div class="gr-card-actions">
+            <label><input type="radio" name="gr-root" value="${esc(name)}" ${g.is_root ? 'checked' : ''}> mark as root</label>
+            <button type="button" class="btn gr-delete" data-group="${esc(name)}" ${names.length === 1 ? 'disabled' : ''}>Delete group</button>
+          </div>
+        </section>
+      `;
+    });
+    wrap.innerHTML = cards.join('');
+    wireGroupingCardHandlers();
+    renderGroupingValidation(validation);
+  }
+
+  function wireGroupingCardHandlers() {
+    // Drag handlers
+    $$('.gr-pill', $('#gr-cards')).forEach(pill => {
+      pill.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('text/plain', JSON.stringify({flow: pill.dataset.flow, from: pill.dataset.from}));
+        pill.setAttribute('aria-grabbed', 'true');
+      });
+      pill.addEventListener('dragend', () => pill.setAttribute('aria-grabbed', 'false'));
+    });
+    $$('.gr-card', $('#gr-cards')).forEach(card => {
+      card.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('drag-over'); });
+      card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+      card.addEventListener('drop', e => {
+        e.preventDefault();
+        card.classList.remove('drag-over');
+        let data;
+        try { data = JSON.parse(e.dataTransfer.getData('text/plain')); }
+        catch { return; }
+        const target = card.dataset.group;
+        if (!data.flow || data.from === target) return;
+        // move flow
+        const src = groupingState.groupings[data.from];
+        const dst = groupingState.groupings[target];
+        if (!src || !dst) return;
+        src.agents = (src.agents || []).filter(a => a !== data.flow);
+        dst.agents = (dst.agents || []).concat([data.flow]);
+        renderGroupingCards(groupingState);
+      });
+    });
+    // Inline rename
+    $$('.gr-card-title', $('#gr-cards')).forEach(el => {
+      const old = el.dataset.group;
+      el.addEventListener('blur', () => {
+        const newName = el.textContent.trim();
+        if (newName === old || !newName) { el.textContent = old; return; }
+        if (!GROUP_NAME_RE.test(newName) || groupingState.groupings[newName]) {
+          el.classList.add('invalid');
+          return;
+        }
+        el.classList.remove('invalid');
+        const oldEntry = groupingState.groupings[old];
+        // Rebuild dict preserving order
+        const rebuilt = {};
+        Object.keys(groupingState.groupings).forEach(k => {
+          if (k === old) rebuilt[newName] = oldEntry;
+          else rebuilt[k] = groupingState.groupings[k];
+        });
+        groupingState.groupings = rebuilt;
+        renderGroupingCards(groupingState);
+      });
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+        if (e.key === 'Escape') { el.textContent = old; el.blur(); }
+      });
+    });
+    // Root toggle
+    $$('input[name="gr-root"]', $('#gr-cards')).forEach(radio => {
+      radio.addEventListener('change', () => {
+        Object.keys(groupingState.groupings).forEach(k => {
+          groupingState.groupings[k].is_root = (k === radio.value);
+        });
+        groupingState.root_key = radio.value;
+        renderGroupingCards(groupingState);
+      });
+    });
+    // Delete
+    $$('.gr-delete', $('#gr-cards')).forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.group;
+        const entry = groupingState.groupings[name];
+        if (!entry) return;
+        const orphans = entry.agents || [];
+        // First non-deleted group gets the orphans
+        delete groupingState.groupings[name];
+        const remaining = Object.keys(groupingState.groupings);
+        if (remaining.length > 0 && orphans.length > 0) {
+          const first = groupingState.groupings[remaining[0]];
+          first.agents = (first.agents || []).concat(orphans);
+        }
+        renderGroupingCards(groupingState);
+      });
+    });
+  }
+
+  function renderGroupingReview() {
+    const pending = DATA.pending_grouping;
+    const tab = $('#tab-grouping');
+    if (!pending || !pending.groupings || Object.keys(pending.groupings).length === 0) {
+      if (tab) tab.style.display = 'none';
+      return;
+    }
+    if (tab) tab.style.display = '';
+    // Deep copy so user edits don't mutate the rendered snapshot.
+    groupingState = JSON.parse(JSON.stringify(pending));
+    renderGroupingBanner(groupingState);
+    renderGroupingCards(groupingState);
+  }
+
+  function wireGroupingToolbar() {
+    const addBtn = $('#gr-add');
+    if (addBtn) addBtn.addEventListener('click', () => {
+      if (!groupingState) return;
+      let i = 1;
+      while (groupingState.groupings['NewGroup_' + i]) i++;
+      groupingState.groupings['NewGroup_' + i] = {agents: [], is_root: false, rationale: '', journey: ''};
+      renderGroupingCards(groupingState);
+    });
+    const collapseBtn = $('#gr-collapse');
+    if (collapseBtn) collapseBtn.addEventListener('click', () => {
+      if (!groupingState) return;
+      const all = groupingState.all_flow_names || [];
+      groupingState.groupings = {AllFlows: {agents: [...all], is_root: true, rationale: 'Collapsed by user', journey: ''}};
+      groupingState.root_key = 'AllFlows';
+      renderGroupingCards(groupingState);
+    });
+    const resetBtn = $('#gr-reset');
+    if (resetBtn) resetBtn.addEventListener('click', () => {
+      groupingState = JSON.parse(JSON.stringify(DATA.pending_grouping || {}));
+      renderGroupingCards(groupingState);
+    });
+    // Confirm/Abort/Re-propose are wired by the server when liveEndpoint() is set
+    // (Phase 4). Until then they stay disabled per the title tooltip.
+  }
+
   // ----------- BOOT
   renderKpis();
   renderRefs();
@@ -1298,6 +1632,8 @@
   renderPipeline();
   renderEvalKpis();
   renderEvalsGrid('', '', '');
+  wireGroupingToolbar();
+  renderGroupingReview();
 
   // If mermaid is already loaded (cached) just kick it
   if (window.__mermaid__) setActiveTab('overview');
