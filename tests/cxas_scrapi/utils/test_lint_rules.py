@@ -319,6 +319,55 @@ def test_i014_no_agents_directory(tmp_path, context):
     assert len(results) == 0
 
 
+def test_i015_banned_legacy_xml_tags(tmp_path, context):
+    """Instruction with legacy CamelCase / state-machine tags fires I015."""
+    from cxas_scrapi.utils.lint_rules.instructions import BannedLegacyXmlTags  # noqa: PLC0415,I001
+
+    rule = BannedLegacyXmlTags()
+    f = tmp_path / "instruction.txt"
+    content = (
+        "<Agent>\n"
+        "  <Conversation_Schema>\n"
+        '    <state id="main"><transitions>'
+        '<transition condition="x" next_state="y"/></transitions></state>\n'
+        "  </Conversation_Schema>\n"
+        "</Agent>\n"
+    )
+    f.write_text(content)
+
+    results = rule.check(f, content, context)
+    tags = {r.message for r in results}
+    assert any("<Agent>" in t for t in tags)
+    assert any("<Conversation_Schema>" in t for t in tags)
+    assert any("<state" in t for t in tags)
+    assert any("<transitions>" in t for t in tags)
+    assert any("<transition " in t for t in tags)
+
+
+def test_i015_canonical_text_ok(tmp_path, context):
+    """Canonical lowercase taskflow XML produces zero I015 findings."""
+    from cxas_scrapi.utils.lint_rules.instructions import BannedLegacyXmlTags  # noqa: PLC0415,I001
+
+    rule = BannedLegacyXmlTags()
+    f = tmp_path / "instruction.txt"
+    content = (
+        "<role>do things</role>\n"
+        "<persona>- be helpful</persona>\n"
+        "<taskflow>\n"
+        '  <subtask name="Greet">\n'
+        '    <step name="Welcome">\n'
+        "      <trigger>start</trigger>\n"
+        "      <action>1. hi</action>\n"
+        "    </step>\n"
+        "  </subtask>\n"
+        "</taskflow>\n"
+    )
+    f.write_text(content)
+
+    results = rule.check(f, content, context)
+    assert results == []
+
+
 # ── Callback Rules ───────────────────────────────────────────────────────
 
 

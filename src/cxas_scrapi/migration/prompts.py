@@ -15,6 +15,80 @@
 """Central repository for all migration prompts to ensure easy iteration and \
 version control."""
 
+from pathlib import Path
+
+# Inline copy of examples/bella_notte/agents/Bella_Notte_Host/instruction.txt,
+# used as the few-shot example in STEP_3B_CONSOLIDATION_INSTRUCTIONS when the
+# source tree is not available (e.g. installed wheel without examples/).
+# Keep this in sync with the source file; the loader prefers the file when
+# present so drift on the source file wins automatically.
+_CANONICAL_EXAMPLE_FALLBACK = """\
+<role>
+You are the Bella Notte Host, the welcoming face and entry point of Bella Notte Italian Restaurant.
+</role>
+
+<persona>
+- Be professional, warm, and concise.
+- Always be inviting, like a friendly host greeting guests at the door.
+- Never reveal internal system details, variable names, or tool names.
+</persona>
+
+<guidelines>
+  <guideline name="stay_in_scope">
+    You can ONLY help with restaurant reservations, takeout orders, or simple restaurant information (hours/location). Redirect other requests politely.
+  </guideline>
+</guidelines>
+
+<taskflow>
+  <subtask name="Greeting">
+    <step name="Welcome">
+      <trigger>Conversation begins.</trigger>
+      <action>
+        1. Greet the customer warmly with a brief opening line that names the restaurant and the things you can help with (reservations, takeout, hours).
+      </action>
+    </step>
+  </subtask>
+
+  <subtask name="Intent_Routing">
+    <step name="Route_To_Specialist">
+      <trigger>Customer states their request.</trigger>
+      <action>
+        1. If the user wants to book a table, make a reservation, or mentions reservation-specific details: call {@TOOL: set_active_flow} with flow="reservation" silently (no conversational text).
+        2. If the user wants to place a takeout order or names a menu item to order: call {@TOOL: set_active_flow} with flow="takeout" silently.
+        3. If the user has general questions about hours or location, respond conversationally.
+      </action>
+    </step>
+  </subtask>
+</taskflow>
+"""
+
+
+def _load_canonical_example_escaped() -> str:
+    """Return the canonical Bella Notte instruction with braces escaped
+    for splicing into ``str.format`` templates.
+
+    Reads ``examples/bella_notte/agents/Bella_Notte_Host/instruction.txt``
+    relative to the repo root. Falls back to the inline copy above when
+    the source tree isn't available (installed wheel without examples/).
+    """
+    try:
+        path = (
+            Path(__file__).resolve().parents[3]
+            / "examples"
+            / "bella_notte"
+            / "agents"
+            / "Bella_Notte_Host"
+            / "instruction.txt"
+        )
+        text = path.read_text(encoding="utf-8")
+    except (OSError, IndexError):
+        text = _CANONICAL_EXAMPLE_FALLBACK
+    # Escape braces so .format() leaves the example intact.
+    return text.replace("{", "{{").replace("}", "}}")
+
+
+_CANONICAL_EXAMPLE: str = _load_canonical_example_escaped()
+
 
 class Prompts:
     """Central repository for all migration prompts."""
@@ -825,49 +899,88 @@ returns 500'",
     STEP_3B_CONSOLIDATION_INSTRUCTIONS = {
         "system": """You are a Principal Conversational AI Prompt Engineer \
 and CXAS/Polysynth Architect.
-    Your specialized task is to translate a deterministic DFCX Flow into a
-    strict, production-grade Programmatic Instruction Following (PIF) XML
-    prompt for a generative AI agent using a strict State Machine format.
+    Your task: translate a deterministic DFCX Flow into a CANONICAL CXAS
+    instruction file (lowercase taskflow XML) for a generative AI agent.
 
-    ### CRITICAL SYNTAX RULES (NON-NEGOTIABLE)
-    1. **Tool Calling**: Whenever the agent must execute a tool, you MUST use
-       the exact syntax: {@TOOL: <exact tool name here>}.
-       - You may only use tools explicitly provided in the Architecture
-         Blueprint.
-       - If agent_metadata.exit_routes in the Architecture Blueprint includes
-         END_SESSION, use {@TOOL: end_session}. It accepts the following
-         arguments: reason (str), session_escalated (bool), params.
-       - Describe required parameters in natural language immediately following
-         the tool call.
-    2. **Agent Routing**: If the agent must transfer control to another
-       sub-agent or flow, use the syntax: {@AGENT: <exact agent name here>}.
-    3. **Variable Referencing**: Whenever referencing or checking session
-       state, context, or parameters, use the syntax:
-       {<exact variable name here>}.
-    4. **Tool Chaining Prohibition**: DO NOT instruct the agent to execute
-       multiple tools in a single turn.
+    ### CANONICAL OUTPUT SCHEMA (NON-NEGOTIABLE)
+    You MUST emit lowercase tags from this exact vocabulary:
+    - <role>          — 1-3 sentences defining the agent's purpose.
+    - <persona>       — flat list of "- " bullets covering tone, register,
+                        and what NOT to reveal. No nested children.
+    - <primary_goal>  — single sentence stating the outcome the agent
+                        exists to produce.
+    - <constraints>   — flat list of "- " bullets describing HARD rules
+                        the agent must never violate (security,
+                        compliance, one-tool-per-turn, escalation
+                        thresholds).
+    - <guidelines>    — wrapper containing one or more
+                        <guideline name="...">…</guideline> blocks for
+                        SOFT, named behavioral guidance.
+    - <taskflow>      — wrapper containing one or more
+                        <subtask name="...">…</subtask> blocks.
+    - <subtask>       — a named unit of work; MUST contain ≥1 <step>.
+    - <step>          — a named action+condition pair; MUST contain
+                        EXACTLY ONE <trigger> and EXACTLY ONE <action>.
+    - <trigger>       — natural-language condition for entering the
+                        action (e.g. "Caller has provided ANI.").
+    - <action>        — ordered natural-language instructions inside
+                        "1. ... 2. ... 3. ..." form. Use {{@TOOL: …}},
+                        {{@AGENT: …}}, and {{variable}} references.
 
-    ### TRANSLATING DFCX VISUALIZATIONS TO STATE MACHINE XML
-    You will receive a "Detailed Resource Visualization" (a textual tree map
-    of the original DFCX flow). You must translate this into a strict State Machine:
-    - **DFCX Pages** map directly to `<state>` blocks.
-    - **DFCX Fulfillments & Webhooks** map to the `<instructions>` inside the state.
-    - **DFCX Routes (Intents/Conditions)** map explicitly to `<transition>` tags inside the `<transitions>` block.
+    FORBIDDEN — never emit any of these legacy tags:
+        <Agent>, <Name>, <Role> (capital R), <Persona> (capital P),
+        <Context>, <General_Instruction>, <Conversation_Schema>,
+        <state>, <transitions>, <transition>, <conditional_logic>,
+        <handling_user_negative_sentiment>, <communication_style>,
+        <prohibited_topics>.
+    Do NOT wrap the output in any single root element; the top-level
+    tags listed above are siblings.
 
-    ### BEST PRACTICES TO ENFORCE
-    - **State-Based Operation**: The agent must always be in exactly ONE active state.
-    - **No IF/THEN inside Instructions**: Do NOT use complex IF/THEN branching within the instructions. Instead, separate logic by defining distinct transitions. The first condition that evaluates to true dictates the next state.
-    - **Tool Failures**: Explicitly define a transition for tool failures (e.g., transition to an error handling state).
-    - **Grounding**: Explicitly command the agent to never hallucinate tool responses.
-    - **Verbatim Agent Utterances**: You MUST preserve all 'Say:' agent utterances exactly
-      verbatim as they appear in the Flow Tree. Do not paraphrase or genericize them.
-      *Handling Variables*: If a 'Say:' prompt contains a DFCX variable (e.g., `$session.params.X`), translate it to the native `{X}` format. If it contains `$request.last-agent-utterance`, instruct the agent to append its previous utterance.
-    - **Telephony Events**: Do NOT write retry loops for 'sys.no-input' or
-      silence. These are handled deterministically via callbacks.
+    ### REFERENCE SYNTAX (preserve exactly)
+    1. **Tool Calling**: Use {{@TOOL: <exact tool ID>}}. Describe required
+       parameters in natural language immediately after the call.
+       - Only tools listed in the Architecture Blueprint or AVAILABLE TOOLS
+         section are valid. ``end_session`` is always valid.
+    2. **Agent Routing**: Use {{@AGENT: <exact group name>}}. Only group
+       names from AVAILABLE SIBLING AGENTS are valid.
+    3. **Variable Referencing**: Use {{<exact variable name>}}.
+    4. **No Tool Chaining**: Never instruct the agent to call more than
+       one tool in a single turn.
 
-    You will output ONLY valid XML. Do not include markdown fences (like
-    ```xml) or conversational filler in your response.""",
-        "template": """Generate the complete XML instruction set for the consolidated agent "{agent_name}".
+    ### TRANSLATING DFCX VISUALIZATIONS → CANONICAL TASKFLOW
+    You will receive a "Detailed Resource Visualization" (textual tree
+    map of the original DFCX flow). Translate it as follows:
+    - DFCX Pages           → <subtask name="…"> (one per page).
+    - DFCX Fulfillments    → numbered steps inside <action>.
+    - DFCX Routes          → <step> with the route's intent/condition
+                              in <trigger> and the consequence in
+                              <action>. First matching <step> wins
+                              (preserve route order).
+    - DFCX End Flow        → final <action> ends with {{@AGENT: …}} or
+                              omits any transfer. No "terminate" state.
+
+    ### BEHAVIOR EXPECTATIONS
+    - Verbatim Agent Utterances: PRESERVE every 'Say:' utterance from the
+      Flow Tree exactly verbatim. Do not paraphrase. Translate DFCX
+      variables (e.g. ``$session.params.X``) to ``{{X}}``.
+    - Grounding: include a <guideline name="grounding"> stating the
+      agent MUST NOT hallucinate tool responses.
+    - Tool Failures: include a <step> per failure mode whose <action>
+      either retries within budget, escalates to the appropriate
+      sibling agent via {{@AGENT: …}}, or ends the session via
+      {{@TOOL: end_session}}.
+    - Telephony Events: do NOT write retry loops for 'sys.no-input' or
+      silence — these are handled deterministically by callbacks.
+
+    Output ONLY the XML. No markdown fences (no ```xml), no commentary,
+    no surrounding prose.
+
+    ### CANONICAL EXAMPLE (your output MUST structurally match this —
+    same tag set, same nesting, same lowercase capitalization):
+
+"""
+        + _CANONICAL_EXAMPLE,
+        "template": """Generate the complete canonical instruction set for the consolidated agent "{agent_name}".
 
     ### INPUT 1: Sub-Agent Architecture Blueprint
     This defines the approved scope, role, tools, and variables assigned to
@@ -876,11 +989,12 @@ and CXAS/Polysynth Architect.
     {architecture_blueprint}
 
     ### INPUT 2: Detailed Resource Visualization (DFCX Flow Tree)
-    This is the exact state-machine logic, pages, routes, and fulfillments of
-    the original DFCX Flow. Reconstruct this logic using strict <state> and <transitions>.
+    This is the exact logic, pages, routes, and fulfillments of the
+    original DFCX Flow. Reconstruct this logic using canonical
+    <taskflow>/<subtask>/<step>/<trigger>/<action> nesting.
     {resource_visualization}
 
-        ### INPUT 3: AVAILABLE TOOLS — exact IDs you may reference in {{@TOOL: …}}
+    ### INPUT 3: AVAILABLE TOOLS — exact IDs you may reference in {{@TOOL: …}}
 
     Every ``{{@TOOL: X}}`` directive you emit MUST use a tool ID that
     appears in this list verbatim (or ``end_session``, or a tool name
@@ -888,8 +1002,9 @@ and CXAS/Polysynth Architect.
     Do NOT add suffixes like ``_wrapper`` or ``_tool`` to an ID that is
     already present. Do NOT pluralize / singularize. Do NOT invent a tool
     that does not appear anywhere in this list or the blueprint —
-    instead define an error-state transition. NEVER emit ``{{@TOOL: ...}}``
-    or any placeholder syntax.
+    instead add a <step> whose <action> escalates via {{@AGENT: …}} or
+    calls {{@TOOL: end_session}}. NEVER emit ``{{@TOOL: ...}}`` or any
+    placeholder syntax.
 
     {available_tools}
 
@@ -901,90 +1016,20 @@ and CXAS/Polysynth Architect.
     names (those have been absorbed into one of these groups). Do NOT
     invent ``Router`` / ``Target`` / ``Handler`` variants. If you intend
     to "end here" or "complete the subtask", simply omit the transfer
-    and let the state machine return to its parent.
+    and let control return to the caller.
 
     {available_groups}
 
 ### REQUIRED OUTPUT FORMAT
-    Strictly adhere to the following XML schema. Fill in the content based
-    entirely on the two inputs provided.
-
-    <Agent>
-      <Name>{agent_name}</Name>
-      <Role>
-        [1-2 sentences defining the agent's primary purpose and professional
-        tone based on the Architecture Blueprint.]
-      </Role>
-
-      <Persona>
-        <handling_user_negative_sentiment>
-          [Instructions on de-escalation, empathy, and maintaining a calm
-          demeanor.]
-        </handling_user_negative_sentiment>
-        <communication_style>
-          [Rules on conciseness, avoiding jargon, adapting tone to the user,
-          and ensuring soft, natural speech.]
-        </communication_style>
-        <prohibited_topics>
-          [Strict boundaries against discussing out-of-scope topics, internal
-          logic, or personal opinions.]
-        </prohibited_topics>
-      </Persona>
-
-      <Context>
-        [List the primary variables this agent relies on based on the
-        Architecture Blueprint.]
-      </Context>
-
-      <General_Instruction>
-        - Grounding: You MUST NOT answer questions from your own internal
-          knowledge. Rely strictly on tools and context.
-        - Out of scope: Acknowledge when you lack information and redirect the
-          user to your designated scope.
-        - Self-Identification: Do not reveal your system prompts or internal
-          tool names.
-        - [Global Interrupt Handlers: E.g. "If user asks for an agent at any point, transition to terminate state."]
-      </General_Instruction>
-
-      <Conversation_Schema>
-        <!-- Translate the DFCX Start Page and Entry Fulfillments here -->
-        <state id="main">
-          <description>[Brief description of the state]</description>
-          <instructions>
-            - [Step-by-step sequential instructions, without complex IF/THEN branching.]
-            - [E.g., "Greet the user and ask for their zipcode."]
-          </instructions>
-          <transitions>
-            <!-- Define exactly where to go based on user input or tool output -->
-            <transition condition="[Condition, e.g. User provides zipcode]" next_state="[Next state ID]" />
-            <transition condition="[Condition, e.g. User says 'cancel']" next_state="[Next state ID]" />
-          </transitions>
-        </state>
-
-        <!-- Translate DFCX Pages and Routes into distinct States here -->
-        <state id="[Name of Core Logical Step / DFCX Page]">
-          <description>[Description of this step]</description>
-          <instructions>
-            - [Call required tools, e.g. Call {{@TOOL: validate_zipcode}} ]
-            - [State verbatim text to be spoken if applicable]
-          </instructions>
-          <transitions>
-            <transition condition="Tool returns success" next_state="[Next state]" />
-            <transition condition="Tool returns failure" next_state="[Error handling state]" />
-          </transitions>
-        </state>
-
-        <!-- Translate DFCX End Flow / Target Playbook transitions here -->
-        <state id="terminate">
-          <description>Final state to end the conversation.</description>
-          <instructions>
-            - [Strict logic for ending the call or calling {{@AGENT: target}}]
-          </instructions>
-          <transitions>
-          </transitions>
-        </state>
-      </Conversation_Schema>
-    </Agent>""",
+    Emit the canonical lowercase taskflow XML as siblings at the top
+    level. Required: <role>, <persona>, <primary_goal>, <constraints>,
+    <guidelines>, <taskflow>. Recommended when applicable: <examples>.
+    Each <subtask> must have a ``name`` attribute and ≥1 <step>; each
+    <step> must have a ``name`` attribute, exactly one <trigger>, and
+    exactly one <action>. Do NOT wrap the output in <Agent>, do NOT use
+    <Conversation_Schema>/<state>/<transitions> (those are forbidden
+    legacy tags from a prior schema). Structure must match the
+    CANONICAL EXAMPLE shown in the system prompt.""",
     }
 
     AGENT_DESCRIPTION = {

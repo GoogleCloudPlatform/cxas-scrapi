@@ -234,6 +234,7 @@ class AsyncAgentDesigner:
         target_ir: MigrationIR | None = None,
         available_groups: str | None = None,
         self_group: str | None = None,
+        feedback: str | None = None,
     ) -> str:
         """Runs the Instructions Expert prompt to generate the PIF XML.
 
@@ -248,6 +249,9 @@ class AsyncAgentDesigner:
         valid ``{@AGENT: …}`` transfer targets so Gemini stops inventing
         agent names. Used by the StructuralConsolidator path; ignored
         by 1:1 migration.
+
+        ``feedback``: optional text appended to the prompt for a re-prompt
+        attempt after a prior response failed canonical-XML validation.
         """
         AsyncAgentDesigner._validate_tree_view(tree_view)
         logger.info(
@@ -286,6 +290,9 @@ class AsyncAgentDesigner:
                 architecture_blueprint=blueprint_json_str,
                 resource_visualization=tree_view,
             )
+
+        if feedback:
+            prompt_2b = f"{prompt_2b}\n\n{feedback}"
 
         response_raw = await self.gemini.generate_async(
             prompt=prompt_2b,

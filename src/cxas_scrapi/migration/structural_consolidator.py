@@ -37,7 +37,9 @@ from cxas_scrapi.migration.flow_visualizer import (
     FlowDependencyResolver,
     FlowTreeVisualizer,
 )
+from cxas_scrapi.migration.instruction_lint import lint_instruction_text
 from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.linter import LintResult
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,39 @@ GROUP_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{2,84}$")
 AGENT_REF_RE = re.compile(r"{@AGENT:\s*([^}]+)}")
 SENTINEL_REFS = {"END_SESSION", "END_FLOW"}
 DEFAULT_PER_GROUP_TIMEOUT_S = 600
+
+
+def _format_diagnostic(r: LintResult) -> str:
+    """Single-line render of a LintResult for prompts / errors."""
+    return f"[{r.rule_id}] {r.message}"
+
+
+class XMLSchemaError(RuntimeError):
+    """Raised when Gemini synthesis produces non-canonical XML after retry."""
+
+    def __init__(self, group_name: str, diagnostics: list[LintResult]):
+        self.group_name = group_name
+        self.diagnostics = diagnostics
+        diag_block = "\n".join(
+            f"  - {_format_diagnostic(d)}" for d in diagnostics
+        )
+        super().__init__(
+            f"Synthesized XML for '{group_name}' failed canonical-schema "
+            f"validation after re-prompt:\n{diag_block}"
+        )
+
+
+def _build_validator_feedback(diagnostics: list[LintResult]) -> str:
+    """Render lint diagnostics into the re-prompt feedback block."""
+    diag_block = "\n".join(f"- {_format_diagnostic(d)}" for d in diagnostics)
+    return (
+        "### YOUR PREVIOUS RESPONSE FAILED CANONICAL-XML VALIDATION\n\n"
+        "Diagnostics:\n"
+        f"{diag_block}\n\n"
+        "CORRECT THESE ISSUES AND REGENERATE THE FULL INSTRUCTION SET. "
+        "Do not abbreviate. Do not include the original response in your "
+        "reply. Emit only the corrected XML."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -874,6 +909,48 @@ class StructuralConsolidator:
 
             if not xml_instructions:
                 return "empty-response"
+
+            diagnostics = lint_instruction_text(xml_instructions, group_name)
+            if diagnostics:
+                logger.warning(
+                    "Synthesized XML for %s failed canonical-schema "
+                    "validation (%d issue(s)); re-prompting Gemini once.",
+                    group_name,
+                    len(diagnostics),
+                )
+                feedback = _build_validator_feedback(diagnostics)
+                try:
+                    xml_instructions = await asyncio.wait_for(
+                        designer.run_step_2b_instructions(
+                            flow_name=group_name,
+                            blueprint=blueprint,
+                            tree_view=combined_tree,
+                            target_ir=self.ir,
+                            available_groups=available_groups_context,
+                            self_group=group_name,
+                            feedback=feedback,
+                        ),
+                        timeout=per_group_timeout_s,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Step 2B re-prompt timed out for %s after %ds.",
+                        group_name,
+                        per_group_timeout_s,
+                    )
+                    return "timeout"
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Step 2B re-prompt failed for %s: %s", group_name, exc
+                    )
+                    return "error"
+                if not xml_instructions:
+                    return "empty-response"
+                diagnostics = lint_instruction_text(
+                    xml_instructions, group_name
+                )
+                if diagnostics:
+                    raise XMLSchemaError(group_name, diagnostics)
 
             xml_instructions = rewrite_agent_refs(
                 xml_instructions,
