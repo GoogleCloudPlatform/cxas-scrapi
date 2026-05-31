@@ -327,6 +327,63 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+async def _watch_plan_file(
+    ctx: _ReviewContext, *, poll_interval_s: float = 1.0
+) -> None:
+    """Background task: poll plan_path's mtime and apply on change.
+
+    Converges with the POST /api/grouping path via ctx.apply_grouping —
+    whichever fires first wins; the other becomes a no-op once the
+    asyncio.Event is set.
+    """
+    try:
+        baseline = ctx.plan_path.stat().st_mtime
+    except OSError:
+        baseline = 0.0
+    while not ctx.event.is_set():
+        await asyncio.sleep(poll_interval_s)
+        if ctx.event.is_set():
+            return
+        try:
+            mtime = ctx.plan_path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime <= baseline:
+            continue
+        baseline = mtime
+        try:
+            text = ctx.plan_path.read_text(encoding="utf-8")
+            parsed = json.loads(text)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "[grouping-review] file-watch: %s is not valid JSON: %s",
+                ctx.plan_path,
+                exc,
+            )
+            continue
+        if not isinstance(parsed, dict):
+            logger.warning(
+                "[grouping-review] file-watch: %s does not contain a"
+                " grouping dict; ignoring.",
+                ctx.plan_path,
+            )
+            continue
+        errors = ctx.apply_grouping(parsed)
+        if errors:
+            logger.warning(
+                "[grouping-review] file-watch: edits to %s failed"
+                " validation: %s",
+                ctx.plan_path,
+                "; ".join(errors),
+            )
+            continue
+        ctx.console.print(
+            f"[cyan][grouping-review] file-watch: detected change to"
+            f" {ctx.plan_path.name}; consolidation resuming.[/]"
+        )
+        return
+
+
 async def web_review(
     *,
     ir: "MigrationIR",
@@ -403,6 +460,7 @@ async def web_review(
         except Exception as exc:  # noqa: BLE001
             logger.debug("could not auto-open browser: %s", exc)
 
+    watcher_task = asyncio.create_task(_watch_plan_file(ctx))
     try:
         await asyncio.wait_for(event.wait(), timeout=timeout_s)
     except asyncio.TimeoutError:
@@ -411,6 +469,11 @@ async def web_review(
         )
         ctx.abort()
     finally:
+        watcher_task.cancel()
+        try:
+            await watcher_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
         # NOTE: we intentionally do NOT shut down the server here. Stage
         # 2 / Stage 3 continue rewriting <target>_migration_analysis.html
         # via builder.flush(), and the user-held browser tab at /review

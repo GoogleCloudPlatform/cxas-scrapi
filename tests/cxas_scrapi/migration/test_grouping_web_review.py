@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -376,3 +377,69 @@ def test_get_root_redirects_to_review(tmp_path, monkeypatch):
 
     _http_post(f"{base}/api/abort", {})
     thread.join(timeout=5)
+
+
+# --- Phase 6: file-watch fallback -------------------------------------------
+
+
+def test_file_watch_applies_valid_edits(tmp_path, monkeypatch):
+    """Editing <target>_grouping_plan.json and saving resolves the gate
+    via the same code path as POST /api/grouping."""
+    fixed_port = 18752
+    monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
+    b = _make_builder(tmp_path)
+    _, _, thread, shared = _start_web_review(builder=b)
+    _wait_for_server("127.0.0.1", fixed_port)
+
+    plan_path = tmp_path / "demo_grouping_plan.json"
+    # Wait until the pre-seed write lands.
+    deadline = time.time() + 5.0
+    while not plan_path.exists() and time.time() < deadline:
+        time.sleep(0.05)
+    assert plan_path.exists()
+
+    # Bump mtime far enough into the future that polling notices on
+    # filesystems with second-granularity mtime.
+    edited = {
+        "AllInOne": {
+            "agents": ["FlowA", "FlowB", "FlowC"],
+            "is_root": True,
+            "rationale": "edited via file",
+            "journey": "",
+        }
+    }
+    plan_path.write_text(json.dumps(edited, indent=2), encoding="utf-8")
+    # Force mtime forward so the watcher sees the change even on
+    # second-granularity filesystems.
+    new_mtime = time.time() + 2
+    os.utime(plan_path, (new_mtime, new_mtime))
+
+    thread.join(timeout=10)
+    assert shared["exc"] is None
+    assert shared["result"] == edited
+
+
+def test_file_watch_ignores_invalid_json(tmp_path, monkeypatch):
+    """Invalid JSON written to the plan file does NOT resolve the gate."""
+    fixed_port = 18753
+    monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
+    b = _make_builder(tmp_path)
+    _, _, thread, shared = _start_web_review(builder=b)
+    base = _wait_for_server("127.0.0.1", fixed_port)
+
+    plan_path = tmp_path / "demo_grouping_plan.json"
+    deadline = time.time() + 5.0
+    while not plan_path.exists() and time.time() < deadline:
+        time.sleep(0.05)
+
+    plan_path.write_text("not json{{", encoding="utf-8")
+    os.utime(plan_path, (time.time() + 2, time.time() + 2))
+
+    # Watcher should log a warning but keep waiting. Give it time to poll.
+    time.sleep(2)
+    assert thread.is_alive()
+
+    # Tidy up via abort.
+    _http_post(f"{base}/api/abort", {})
+    thread.join(timeout=5)
+    assert shared["result"] is None
