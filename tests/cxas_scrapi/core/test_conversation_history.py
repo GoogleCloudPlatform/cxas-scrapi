@@ -68,9 +68,7 @@ def test_list_conversations_extra_filter_only(mock_client_cls):
     mock_client.list_conversations.return_value = []
 
     conv_client = ConversationHistory(app_name="projects/p/locations/l/apps/a")
-    conv_client.list_conversations(
-        extra_filter='ces_transcript.search("hi")'
-    )
+    conv_client.list_conversations(extra_filter='ces_transcript.search("hi")')
 
     request = mock_client.list_conversations.call_args.kwargs["request"]
     assert request.filter == 'ces_transcript.search("hi")'

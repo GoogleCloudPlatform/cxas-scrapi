@@ -129,9 +129,7 @@ def test_trace_search_table_with_snippets(fake_traces, capsys):
             "start_time": "s",
             "end_time": "e",
             "ces_url": "u",
-            "snippets": [
-                {"kind": "user", "text": "my app keeps crashing"}
-            ],
+            "snippets": [{"kind": "user", "text": "my app keeps crashing"}],
         }
     ]
     trace_cli.trace_search(_search_ns(snippets=True))

@@ -183,22 +183,18 @@ def test_build_search_filter_all_and_any():
         "app crashing", match="all", id_match=False
     )
     assert f_all == (
-        '(ces_transcript.search("app") AND '
-        'ces_transcript.search("crashing"))'
+        '(ces_transcript.search("app") AND ces_transcript.search("crashing"))'
     )
     f_any = traces_mod._build_search_filter(
         "app crashing", match="any", id_match=False
     )
     assert f_any == (
-        '(ces_transcript.search("app") OR '
-        'ces_transcript.search("crashing"))'
+        '(ces_transcript.search("app") OR ces_transcript.search("crashing"))'
     )
 
 
 def test_build_search_filter_single_word_no_parens():
-    f = traces_mod._build_search_filter(
-        "crashing", match="all", id_match=False
-    )
+    f = traces_mod._build_search_filter("crashing", match="all", id_match=False)
     assert f == 'ces_transcript.search("crashing")'
 
 
