@@ -14,6 +14,8 @@
 
 from unittest.mock import MagicMock, patch
 
+from google.cloud.ces_v1beta import types
+
 from cxas_scrapi.core.conversation_history import ConversationHistory
 
 
@@ -33,6 +35,45 @@ def test_conversation_list(mock_client_cls):
     assert len(res) == 1
     assert res[0].name == "projects/p/locations/l/apps/a/conversations/c1"
     mock_client.list_conversations.assert_called_once()
+
+
+@patch("cxas_scrapi.core.conversation_history.AgentServiceClient")
+def test_list_conversations_extra_filter_and_sources(mock_client_cls):
+    """extra_filter is ANDed with the time filter; sources map to enums."""
+    mock_client = mock_client_cls.return_value
+    mock_client.list_conversations.return_value = []
+
+    conv_client = ConversationHistory(app_name="projects/p/locations/l/apps/a")
+    conv_client.list_conversations(
+        time_filter="7d",
+        extra_filter='ces_transcript.search("hi")',
+        sources=["LIVE", "SIMULATOR"],
+        page_size=15,
+    )
+
+    request = mock_client.list_conversations.call_args.kwargs["request"]
+    assert request.filter.startswith('start_time > "')
+    assert request.filter.endswith('AND ces_transcript.search("hi")')
+    assert request.page_size == 15
+    assert list(request.sources) == [
+        types.Conversation.Source.LIVE,
+        types.Conversation.Source.SIMULATOR,
+    ]
+
+
+@patch("cxas_scrapi.core.conversation_history.AgentServiceClient")
+def test_list_conversations_extra_filter_only(mock_client_cls):
+    """extra_filter alone (no time filter) becomes the whole filter."""
+    mock_client = mock_client_cls.return_value
+    mock_client.list_conversations.return_value = []
+
+    conv_client = ConversationHistory(app_name="projects/p/locations/l/apps/a")
+    conv_client.list_conversations(
+        extra_filter='ces_transcript.search("hi")'
+    )
+
+    request = mock_client.list_conversations.call_args.kwargs["request"]
+    assert request.filter == 'ces_transcript.search("hi")'
 
 
 @patch("cxas_scrapi.core.conversation_history.AgentServiceClient")

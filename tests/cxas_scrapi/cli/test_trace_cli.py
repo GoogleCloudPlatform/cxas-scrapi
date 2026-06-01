@@ -53,6 +53,131 @@ def test_register_smoke():
     assert args.time_filter == "1d"
 
 
+def _search_ns(**overrides):
+    base = dict(
+        query="crashing",
+        match="phrase",
+        time_filter=None,
+        source=None,
+        sources=None,
+        channel=None,
+        limit=None,
+        page_size=None,
+        id_match=True,
+        snippets=False,
+        format="table",
+    )
+    base.update(overrides)
+    return _ns(**base)
+
+
+def test_register_search_smoke():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    trace_cli.register(sub)
+    args = parser.parse_args(
+        [
+            "trace",
+            "search",
+            "app crashing",
+            "--app-name",
+            APP,
+            "--match",
+            "all",
+            "--sources",
+            "LIVE",
+            "SIMULATOR",
+            "--snippets",
+            "--no-id-match",
+        ]
+    )
+    assert args.func == trace_cli.trace_search
+    assert args.query == "app crashing"
+    assert args.match == "all"
+    assert args.sources == ["LIVE", "SIMULATOR"]
+    assert args.snippets is True
+    assert args.id_match is False
+
+
+def test_trace_search_table(fake_traces, capsys):
+    fake_traces.search.return_value = [
+        {
+            "id": "c1",
+            "source": "LIVE",
+            "channel": "TEXT",
+            "start_time": "s",
+            "end_time": "e",
+            "ces_url": "u",
+        }
+    ]
+    trace_cli.trace_search(_search_ns())
+    out = capsys.readouterr().out
+    assert "Search" in out
+    assert "c1" in out
+    # Forwards the parsed options to Traces.search.
+    kwargs = fake_traces.search.call_args.kwargs
+    assert kwargs["match"] == "phrase"
+    assert kwargs["id_match"] is True
+
+
+def test_trace_search_table_with_snippets(fake_traces, capsys):
+    fake_traces.search.return_value = [
+        {
+            "id": "c1",
+            "source": "LIVE",
+            "channel": "TEXT",
+            "start_time": "s",
+            "end_time": "e",
+            "ces_url": "u",
+            "snippets": [
+                {"kind": "user", "text": "my app keeps crashing"}
+            ],
+        }
+    ]
+    trace_cli.trace_search(_search_ns(snippets=True))
+    out = capsys.readouterr().out
+    assert "crashing" in out
+
+
+def test_trace_search_json(fake_traces, capsys):
+    fake_traces.search.return_value = [{"id": "c1"}]
+    trace_cli.trace_search(_search_ns(format="json"))
+    assert json.loads(capsys.readouterr().out)[0]["id"] == "c1"
+
+
+def test_trace_search_csv_with_snippets(fake_traces, capsys):
+    fake_traces.search.return_value = [
+        {
+            "id": "c1",
+            "source": "LIVE",
+            "channel": "TEXT",
+            "start_time": "s",
+            "end_time": "e",
+            "ces_url": "u",
+            "snippets": [
+                {"text": "a crashing"},
+                {"text": "b crashing"},
+            ],
+        }
+    ]
+    trace_cli.trace_search(_search_ns(format="csv", snippets=True))
+    out = capsys.readouterr().out
+    assert "snippets" in out
+    assert "a crashing | b crashing" in out
+
+
+def test_trace_search_csv_empty_no_output(fake_traces, capsys):
+    fake_traces.search.return_value = []
+    trace_cli.trace_search(_search_ns(format="csv"))
+    assert capsys.readouterr().out == ""
+
+
+def test_trace_search_failure_exits(fake_traces):
+    fake_traces.search.side_effect = RuntimeError("boom")
+    with pytest.raises(SystemExit):
+        trace_cli.trace_search(_search_ns(format="json"))
+
+
 def test_trace_list_table(fake_traces, capsys):
     fake_traces.list.return_value = [
         {
