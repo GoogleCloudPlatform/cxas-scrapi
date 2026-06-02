@@ -17,6 +17,7 @@
 import os
 from unittest.mock import MagicMock, patch
 
+import graphviz
 from rich.console import Console
 from rich.tree import Tree
 
@@ -252,3 +253,28 @@ class TestMainVisualizerExport:
         md_file = f"{prefix}_detailed_resources.md"
         content = open(md_file).read()
         assert "Agent Tools" in content
+
+    @patch("cxas_scrapi.migration.main_visualizer.sys.exit")
+    @patch(
+        "cxas_scrapi.migration.graph_visualizer.HighLevelGraphVisualizer.build"
+    )
+    def test_export_handles_executable_not_found(
+        self, mock_build, mock_exit, tmp_path
+    ):
+        mock_dot = MagicMock()
+        mock_dot.render.side_effect = (
+            graphviz.backend.execute.ExecutableNotFound("dot")
+        )
+        mock_build.return_value = mock_dot
+
+        prefix = str(tmp_path / "test_agent")
+        mv = MainVisualizer(DFCXAgentIR(**EMPTY_DATA))
+
+        with patch.object(mv.console, "print") as mock_print:
+            mv.export_visualizations(prefix=prefix)
+
+            mock_print.assert_called_once()
+            args, _ = mock_print.call_args
+            assert "Graphviz executable 'dot' not found" in args[0]
+
+        mock_exit.assert_called_once_with(1)

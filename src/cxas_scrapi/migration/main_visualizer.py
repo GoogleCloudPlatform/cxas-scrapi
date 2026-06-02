@@ -15,8 +15,11 @@
 """Master visualizer coordinating topology graph and detailed Rich trees."""
 
 import io
+import sys
 import uuid
 from typing import Any, Dict
+
+import graphviz
 
 try:
     from IPython.display import HTML, display
@@ -332,9 +335,25 @@ class MainVisualizer:
         Args:
             prefix: Filename prefix for exported files.
         """
-        dot = HighLevelGraphVisualizer(self.data).build(show_code_blocks=False)
-        svg_filename = f"{prefix}_topology.svg"
-        dot.render(outfile=svg_filename, format="svg", cleanup=True)
+        try:
+            dot = HighLevelGraphVisualizer(self.data).build(
+                show_code_blocks=False
+            )
+            svg_filename = f"{prefix}_topology.svg"
+            dot.render(outfile=svg_filename, format="svg", cleanup=True)
+        except graphviz.backend.execute.ExecutableNotFound:
+            self.console.print(
+                "\n[bold red]Error: Graphviz executable 'dot' not found.[/]\n"
+                "The topology graph could not be rendered. Please install "
+                "the actual Graphviz software on your system:\n"
+                "  - [bold cyan]macOS[/]: brew install graphviz\n"
+                "  - [bold cyan]Ubuntu/Debian[/]: "
+                "sudo apt-get install graphviz\n"
+                "  - [bold cyan]Windows/Other[/]: "
+                "Download from https://graphviz.org/download/\n"
+                "Ensure the 'dot' executable is added to your system PATH.\n"
+            )
+            sys.exit(1)
 
         buf = io.StringIO()
         capture_console = Console(file=buf, force_terminal=False, width=120)
