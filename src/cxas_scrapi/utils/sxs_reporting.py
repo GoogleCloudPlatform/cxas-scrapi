@@ -489,121 +489,6 @@ def _render_test_card(
     )
 
 
-_SXS_CSS = """
-/* SxS-specific overrides */
-body { max-width: 1400px; }
-
-.eval-header.regression-bg {
-  background: #fff3e0;
-  border-left: 4px solid #f57c00;
-}
-.eval-header.improvement-bg {
-  background: #e0f7f4;
-  border-left: 4px solid #00897b;
-}
-
-.badge.regression { background: #fff3e0; color: #e65100; }
-.badge.improvement { background: #e0f7f4; color: #00695c; }
-
-.sxs-header { cursor: pointer; }
-.sxs-sessions {
-  display: flex;
-  gap: 24px;
-  margin: 8px 0 12px;
-  flex-wrap: wrap;
-}
-.session-link-a {
-  color: #3498db;
-  text-decoration: none;
-}
-.session-link-a:hover { text-decoration: underline; }
-
-.sxs-table {
-  table-layout: fixed;
-  font-size: 0.88em;
-}
-.sxs-table .col-turn { width: 12%; }
-.sxs-table .col-user { width: 20%; }
-.sxs-table .col-app  { width: 34%; vertical-align: top; }
-
-.check-item {
-  margin: 4px 0;
-  padding: 5px 8px;
-  border-radius: 4px;
-  font-size: 0.85em;
-}
-.check-label {
-  font-size: 0.7em;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #888;
-  margin-top: 4px;
-}
-.comp-text { margin-top: 2px; word-break: break-word; }
-
-.sxs-score { font-size: 1.5em; font-weight: bold; }
-
-.sim-stats {
-  display: flex;
-  gap: 24px;
-  margin: 8px 0 12px;
-  flex-wrap: wrap;
-}
-.sxs-transcripts { margin-top: 12px; }
-.sxs-transcripts details { margin: 6px 0; }
-.sxs-transcripts summary {
-  cursor: pointer;
-  font-size: 0.85em;
-  color: #3498db;
-  padding: 4px 0;
-}
-.sxs-transcripts .transcript {
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-/* Dark mode additions */
-@media (prefers-color-scheme: dark) {
-  .eval-header.regression-bg {
-    background: #2e1f00;
-    border-left-color: #f57c00;
-    color: #e0e0e0;
-  }
-  .eval-header.improvement-bg {
-    background: #00221d;
-    border-left-color: #00897b;
-    color: #e0e0e0;
-  }
-  .badge.regression { background: #2e1f00; color: #ffb74d; }
-  .badge.improvement { background: #00221d; color: #80cbc4; }
-  .check-label { color: #aaa; }
-  .sxs-table { color: #e0e0e0; }
-}
-"""
-
-_SXS_JS = """
-function toggleCard(id) {
-  var body = document.getElementById('body-' + id);
-  if (body) {
-    body.style.display =
-      body.style.display === 'none' ? 'block' : 'none';
-  }
-}
-
-function filterTests(type) {
-  document.querySelectorAll('.eval-card').forEach(function(card) {
-    var ok = type === 'all' || card.dataset.outcome === type;
-    card.classList.toggle('hidden-card', !ok);
-  });
-  document.querySelectorAll('.controls button').forEach(function(btn) {
-    btn.classList.remove('active');
-  });
-  var btn = document.getElementById('btn-' + type);
-  if (btn) btn.classList.add('active');
-}
-"""
-
-
 def generate_sxs_html_report(
     sxs_results: dict,
     output_path: str,
@@ -643,6 +528,8 @@ def generate_sxs_html_report(
 
     base_css = load_component("base/base.css")
     base_js = load_component("base/interaction.js")
+    sxs_css = load_component("sxs/sxs.css")
+    sxs_js = load_component("sxs/sxs.js")
 
     # Summary section
     a_cls = "pass" if pct_a >= 90 else ("mixed" if pct_a >= 60 else "fail")
@@ -724,11 +611,11 @@ def generate_sxs_html_report(
 <title>SxS Report — {_e(label_a)} vs {_e(label_b)}</title>
 <style>
 {base_css}
-{_SXS_CSS}
+{sxs_css}
 </style>
 <script>
 {base_js}
-{_SXS_JS}
+{sxs_js}
 </script>
 </head>
 <body>
