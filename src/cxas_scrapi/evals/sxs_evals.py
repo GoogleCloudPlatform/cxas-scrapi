@@ -20,8 +20,10 @@ from typing import List, Optional
 import pandas as pd
 import yaml
 
+from cxas_scrapi.evals.simulation_evals import SimulationEvals
 from cxas_scrapi.evals.turn_evals import TurnEvals
 from cxas_scrapi.utils.rate_limiter import RateLimiter
+from cxas_scrapi.utils.reporting import _load_sim_test_cases
 
 
 def _detect_eval_type(eval_file: str) -> str:
@@ -176,12 +178,8 @@ class SxSEvals:
             pass_a = len(rows_a) > 0 and all(rows_a["status"] == "SUCCESS")
             pass_b = len(rows_b) > 0 and all(rows_b["status"] == "SUCCESS")
 
-            session_a = (
-                rows_a["session_id"].iloc[0] if len(rows_a) > 0 else ""
-            )
-            session_b = (
-                rows_b["session_id"].iloc[0] if len(rows_b) > 0 else ""
-            )
+            session_a = rows_a["session_id"].iloc[0] if len(rows_a) > 0 else ""
+            session_b = rows_b["session_id"].iloc[0] if len(rows_b) > 0 else ""
 
             turn_ids_a = (
                 list(rows_a["turn"].unique()) if len(rows_a) > 0 else []
@@ -232,14 +230,12 @@ class SxSEvals:
                         "user": user,
                         "status_a": (
                             "SUCCESS"
-                            if len(ta) > 0
-                            and all(ta["status"] == "SUCCESS")
+                            if len(ta) > 0 and all(ta["status"] == "SUCCESS")
                             else "FAILURE"
                         ),
                         "status_b": (
                             "SUCCESS"
-                            if len(tb) > 0
-                            and all(tb["status"] == "SUCCESS")
+                            if len(tb) > 0 and all(tb["status"] == "SUCCESS")
                             else "FAILURE"
                         ),
                         "checks_a": _agg_checks(ta),
@@ -272,9 +268,6 @@ class SxSEvals:
         runs: int = 1,
         modality: str = "text",
     ) -> dict:
-        from cxas_scrapi.evals.simulation_evals import SimulationEvals  # noqa: PLC0415
-        from cxas_scrapi.utils.reporting import _load_sim_test_cases  # noqa: PLC0415
-
         test_cases = _load_sim_test_cases(eval_file)
         if filter_tags:
             test_cases = [
@@ -283,7 +276,9 @@ class SxSEvals:
                 if any(t in (tc.get("tags") or []) for t in filter_tags)
             ]
 
-        print(f"Loaded {len(test_cases)} simulation test cases from {eval_file}")
+        print(
+            f"Loaded {len(test_cases)} simulation test cases from {eval_file}"
+        )
 
         sim_a = SimulationEvals(
             app_name=self._app_name_a,
@@ -328,9 +323,7 @@ class SxSEvals:
         for r in results_b:
             idx_b.setdefault(r["name"], r)
 
-        all_names = list(
-            dict.fromkeys(list(idx_a.keys()) + list(idx_b.keys()))
-        )
+        all_names = list(dict.fromkeys(list(idx_a.keys()) + list(idx_b.keys())))
 
         tests = []
         for name in all_names:
@@ -341,12 +334,8 @@ class SxSEvals:
             pass_b = rb.get("passed", False)
 
             # Build step comparison
-            steps_a = {
-                s["goal"]: s for s in ra.get("step_details", [])
-            }
-            steps_b = {
-                s["goal"]: s for s in rb.get("step_details", [])
-            }
+            steps_a = {s["goal"]: s for s in ra.get("step_details", [])}
+            steps_b = {s["goal"]: s for s in rb.get("step_details", [])}
             all_goals = list(
                 dict.fromkeys(list(steps_a.keys()) + list(steps_b.keys()))
             )
@@ -417,9 +406,7 @@ class SxSEvals:
     # Shared helpers
     # ------------------------------------------------------------------
 
-    def _wrap_results(
-        self, tests: list, dur_a: float, dur_b: float
-    ) -> dict:
+    def _wrap_results(self, tests: list, dur_a: float, dur_b: float) -> dict:
         _priority = {
             (True, False): 0,
             (False, True): 1,

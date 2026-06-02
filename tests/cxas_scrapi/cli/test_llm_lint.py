@@ -18,8 +18,19 @@ import json
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from cxas_scrapi.cli.llm_lint import llm_lint, resolve_gcp_credentials
 from cxas_scrapi.prompts import LLM_LINT_SYSTEM_PROMPT, LLM_LINT_USER_PROMPT
+
+
+@pytest.fixture(autouse=True)
+def clear_gcp_env(monkeypatch):
+    """Clear GCP environment variables to ensure hermetic tests."""
+    monkeypatch.delenv("PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("LOCATION", raising=False)
+    monkeypatch.delenv("REGION", raising=False)
 
 
 def test_resolve_gcp_credentials_from_cli():
