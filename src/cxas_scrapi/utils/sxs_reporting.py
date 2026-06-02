@@ -53,7 +53,7 @@ def _session_link(session_id: str, ces_base: str, label: str) -> str:
             f'<a class="session-link-a" href="{url}" target="_blank"'
             f' title="Open {_e(label)} session in CES">{_e(session_id)}</a>'
         )
-    return f'<code>{_e(session_id)}</code>'
+    return f"<code>{_e(session_id)}</code>"
 
 
 def _render_checks(checks: list) -> str:
@@ -77,12 +77,10 @@ def _render_checks(checks: list) -> str:
             html += (
                 f'<div class="check-label" style="color:#c0392b">error</div>'
                 f'<div class="comp-text" style="color:#c0392b">'
-                f'{_e(c["errors"])}</div>'
+                f"{_e(c['errors'])}</div>"
             )
         if c["llm_results"] and not c["expected"] and not c["actual"]:
-            html += (
-                f'<div class="comp-text meta">{_e(c["llm_results"])}</div>'
-            )
+            html += f'<div class="comp-text meta">{_e(c["llm_results"])}</div>'
         html += "</div>"
     return html
 
@@ -127,7 +125,10 @@ def _card_header(
     label_b: str,
     card_id: str,
 ) -> tuple:
-    """Return (outcome, header_cls, delta, delta_cls, a_badge, b_badge, body_display)."""
+    """Return (outcome, header_cls, delta, delta_cls, a_badge, b_badge,
+
+    body_display).
+    """
     pa, pb = test["pass_a"], test["pass_b"]
     if pa and pb:
         outcome, header_cls = "both-pass", "pass-bg"
@@ -162,7 +163,9 @@ def _session_row(test, ces_base_a, ces_base_b, label_a, label_b):
     )
 
 
-def _render_sxs_merged_items(merged: list, session_id: str, modality: str) -> str:
+def _render_sxs_merged_items(
+    merged: list, session_id: str, modality: str
+) -> str:
     """Render merged trace items to HTML, with optional audio players."""
     html = ""
     user_turn_idx = 0
@@ -177,7 +180,7 @@ def _render_sxs_merged_items(merged: list, session_id: str, modality: str) -> st
                     f'<audio controls preload="none" class="turn-audio" '
                     f'src="audio/{session_id}/user-turn-{user_turn_idx}.wav"></audio>'
                 )
-            html += '</div>\n'
+            html += "</div>\n"
         elif kind == "agent":
             agent_turn_idx += 1
             html += f'<div class="agent"><b>Agent:</b> {_e(item[1])}'
@@ -186,7 +189,7 @@ def _render_sxs_merged_items(merged: list, session_id: str, modality: str) -> st
                     f'<audio controls preload="none" class="turn-audio" '
                     f'src="audio/{session_id}/agent-turn-{agent_turn_idx}.wav"></audio>'
                 )
-            html += '</div>\n'
+            html += "</div>\n"
         elif kind in ("tool_call", "tool_pair"):
             call_text = item[1]
             lbl, _, args = call_text.partition(" with args ")
@@ -230,7 +233,7 @@ def _render_sxs_merged_items(merged: list, session_id: str, modality: str) -> st
             html += (
                 f'<details class="tool-details">'
                 f'<summary class="tool-summary">'
-                f'&#128230; <b>Custom Payload</b></summary>'
+                f"&#128230; <b>Custom Payload</b></summary>"
                 f'<pre class="tool-data">{_e(item[1])}</pre>'
                 f"</details>\n"
             )
@@ -260,9 +263,11 @@ def _render_sim_test_card(
     stats_html = (
         '<div class="sim-stats meta">'
         f"<span><b>{_e(label_a)}:</b> goals {_e(test['goals_a'])} | "
-        f"expectations {_e(test['expectations_a'])} | {test['turns_a']} turns</span>"
+        f"expectations {_e(test['expectations_a'])} | "
+        f"{test['turns_a']} turns</span>"
         f"<span><b>{_e(label_b)}:</b> goals {_e(test['goals_b'])} | "
-        f"expectations {_e(test['expectations_b'])} | {test['turns_b']} turns</span>"
+        f"expectations {_e(test['expectations_b'])} | "
+        f"{test['turns_b']} turns</span>"
         "</div>"
     )
 
@@ -344,8 +349,8 @@ def _render_sim_test_card(
 
     # Traces (collapsible) — use the same pipeline as the single-sided report
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
-        _parse_trace,
         _merge_trace_lines,
+        _parse_trace,
     )
 
     def _render_sxs_trace(trace, turns, label, session_id):
@@ -356,27 +361,35 @@ def _render_sim_test_card(
         body = _render_sxs_merged_items(merged, session_id, modality)
         audio_player_html = ""
         if modality == "audio" and session_id:
-            audio_player_html = f"""
-            <div class="audio-player">
-              <span class="audio-label">Full Conversation</span>
-              <audio controls preload="none" src="audio/{session_id}/full-scenario.wav"></audio>
-            </div>
-            """
+            audio_player_html = (
+                '<div class="audio-player">\n'
+                '  <span class="audio-label">Full Conversation</span>\n'
+                '  <audio controls preload="none"\n'
+                f'    src="audio/{session_id}/full-scenario.wav">\n'
+                "  </audio>\n"
+                "</div>\n"
+            )
         return (
-            f'<details><summary>&#128172; Conversation — {_e(label)}'
+            f"<details><summary>&#128172; Conversation — {_e(label)}"
             f" ({turns} turns)</summary>"
             f'<div class="transcript">'
-            f'{audio_player_html}'
-            f'{body}'
-            f'</div></details>'
+            f"{audio_player_html}"
+            f"{body}"
+            f"</div></details>"
         )
 
     transcripts_html = ""
     trace_a_html = _render_sxs_trace(
-        test.get("trace_a", []), test.get("turns_a", "?"), label_a, test.get("session_a")
+        test.get("trace_a", []),
+        test.get("turns_a", "?"),
+        label_a,
+        test.get("session_a"),
     )
     trace_b_html = _render_sxs_trace(
-        test.get("trace_b", []), test.get("turns_b", "?"), label_b, test.get("session_b")
+        test.get("trace_b", []),
+        test.get("turns_b", "?"),
+        label_b,
+        test.get("session_b"),
     )
     if trace_a_html or trace_b_html:
         transcripts_html = (
@@ -385,17 +398,21 @@ def _render_sim_test_card(
 
     return (
         f'<div class="eval-card" id="{card_id}" data-outcome="{outcome}">\n'
-        f'  <div class="eval-header {header_cls} sxs-header"'
+        f'  <div class="eval-header {header_cls} sxs-header"\n'
         f'    onclick="toggleCard(\'{card_id}\')" style="cursor:pointer">\n'
         f"    <span>{_e(name)} "
-        f'<span class="badge sim" style="font-weight:normal">sim</span></span>\n'
+        '    <span class="badge sim" '
+        'style="font-weight:normal">sim</span></span>\n'
         f"    <span>\n"
-        f'      <span class="badge {a_badge}">{_e(label_a)}: {a_status}</span>\n'
-        f'      <span class="badge {b_badge}">{_e(label_b)}: {b_status}</span>\n'
+        f'      <span class="badge {a_badge}">'
+        f"{_e(label_a)}: {a_status}</span>\n"
+        f'      <span class="badge {b_badge}">'
+        f"{_e(label_b)}: {b_status}</span>\n"
         f'      <span class="badge {delta_cls}">{delta}</span>\n'
         f"    </span>\n"
         f"  </div>\n"
-        f'  <div class="eval-body" id="body-{card_id}" style="display:{body_display}">\n'
+        f'  <div class="eval-body" id="body-{card_id}" '
+        f'style="display:{body_display}">\n'
         f"    {stats_html}\n"
         f"    {session_html}\n"
         f"    {steps_table}\n"
@@ -417,7 +434,13 @@ def _render_test_card(
 ) -> str:
     if test.get("type") == "sim":
         return _render_sim_test_card(
-            test, label_a, label_b, ces_base_a, ces_base_b, idx, modality=modality
+            test,
+            label_a,
+            label_b,
+            ces_base_a,
+            ces_base_b,
+            idx,
+            modality=modality,
         )
 
     # Turn-eval card (original logic)
@@ -446,12 +469,14 @@ def _render_test_card(
 
     return (
         f'<div class="eval-card" id="{card_id}" data-outcome="{outcome}">\n'
-        f'  <div class="eval-header {header_cls} sxs-header"'
+        f'  <div class="eval-header {header_cls} sxs-header"\n'
         f'    onclick="toggleCard(\'{card_id}\')" style="cursor:pointer">\n'
         f"    <span>{_e(name)}</span>\n"
         f"    <span>\n"
-        f'      <span class="badge {a_badge}">{_e(label_a)}: {a_status}</span>\n'
-        f'      <span class="badge {b_badge}">{_e(label_b)}: {b_status}</span>\n'
+        f'      <span class="badge {a_badge}">'
+        f"{_e(label_a)}: {a_status}</span>\n"
+        f'      <span class="badge {b_badge}">'
+        f"{_e(label_b)}: {b_status}</span>\n"
         f'      <span class="badge {delta_cls}">{delta}</span>\n'
         f"    </span>\n"
         f"  </div>\n"
@@ -559,7 +584,10 @@ body { max-width: 1400px; }
 _SXS_JS = """
 function toggleCard(id) {
   var body = document.getElementById('body-' + id);
-  if (body) body.style.display = body.style.display === 'none' ? 'block' : 'none';
+  if (body) {
+    body.style.display =
+      body.style.display === 'none' ? 'block' : 'none';
+  }
 }
 
 function filterTests(type) {
@@ -619,6 +647,7 @@ def generate_sxs_html_report(
     # Summary section
     a_cls = "pass" if pct_a >= 90 else ("mixed" if pct_a >= 60 else "fail")
     b_cls = "pass" if pct_b >= 90 else ("mixed" if pct_b >= 60 else "fail")
+    reg_cls = "mixed" if regressions else "pass"
 
     summary_html = f"""
 <div class="summary">
@@ -643,7 +672,7 @@ def generate_sxs_html_report(
     </div>
     <div class="summary-card" onclick="filterTests('regression')">
       <div class="label">Regressions &#8595;</div>
-      <div class="value {'mixed' if regressions else 'pass'}">{regressions}</div>
+      <div class="value {reg_cls}">{regressions}</div>
     </div>
     <div class="summary-card" onclick="filterTests('both-fail')">
       <div class="label">Both Fail</div>
@@ -655,8 +684,8 @@ def generate_sxs_html_report(
     </div>
   </div>
   <div class="meta">Generated {ts}
-    | {_e(label_a)} runtime: {sxs_results['duration_a']:.1f}s
-    | {_e(label_b)} runtime: {sxs_results['duration_b']:.1f}s
+    | {_e(label_a)} runtime: {sxs_results["duration_a"]:.1f}s
+    | {_e(label_b)} runtime: {sxs_results["duration_b"]:.1f}s
   </div>
 </div>
 """

@@ -719,7 +719,7 @@ def run_sxs_cmd(args: argparse.Namespace) -> None:
 
     s = results["summary"]
     print(
-        f"\n{'='*60}\n"
+        f"\n{'=' * 60}\n"
         f"SxS Summary\n"
         f"  {args.label_a}: {s['pass_a']}/{s['total']} passed\n"
         f"  {args.label_b}: {s['pass_b']}/{s['total']} passed\n"
@@ -727,7 +727,7 @@ def run_sxs_cmd(args: argparse.Namespace) -> None:
         f"Regressions: {s['regressions']}  |  "
         f"Both fail: {s['both_fail']}\n"
         f"Report: {args.output}\n"
-        f"{'='*60}"
+        f"{'=' * 60}"
     )
 
 
