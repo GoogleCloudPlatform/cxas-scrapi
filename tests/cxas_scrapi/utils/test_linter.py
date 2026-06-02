@@ -232,7 +232,7 @@ def test_reset_registry():
     registry_restored = build_registry()
     # 68 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
-    assert len(registry_restored.all_rules()) == 79  # noqa: PLR2004
+    assert len(registry_restored.all_rules()) == 80  # noqa: PLR2004
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -524,7 +524,7 @@ def test_build_registry_all_rules():
     all_rules = registry.all_rules()
     # 68 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
-    assert len(all_rules) == 79  # noqa: PLR2004
+    assert len(all_rules) == 80  # noqa: PLR2004
 
 
 def test_build_context(tmp_path):

@@ -80,6 +80,8 @@ dev = [
   "mdformat-gfm",
   "mdformat-frontmatter",
   "mdformat-gfm-alerts",
+  "google-antigravity>=0.1.0",
+  "markdown",
 ]
 docs = [
   "mkdocs-material[imaging]>=9.5",
@@ -105,7 +107,7 @@ packages = ["src/cxas_scrapi"]
 [tool.ruff]
 line-length = 80
 target-version = "py310"
-extend-exclude = ["*.ipynb", ".agents/skills/cxas-agent-foundry/assets/project-template/", ".agents/skills/cxas-agent-foundry/scripts", ".agents/skills/cxas-sim-eval/scripts", ".agents/skills/cxas-cuj-report-generator/", ".agents/skills/cxas-insights-sim-eval/scripts", "examples/"]
+extend-exclude = ["*.ipynb", ".agents/skills/cxas-agent-foundry/assets/project-template/", ".agents/skills/cxas-agent-foundry/scripts", ".agents/skills/cxas-sim-eval/scripts", ".agents/skills/cxas-cuj-report-generator/", ".agents/skills/cxas-insights-sim-eval/scripts", "examples/", "skill_eval/scratch/"]
 
 [tool.ruff.lint]
 select = [
@@ -148,6 +150,9 @@ ignore = [
 # Audio-analysis prompts are verbatim text intended for Gemini and must not be
 # reflowed; line-length doesn't apply to prompt content.
 "src/cxas_scrapi/utils/tracing/audio_analysis.py" = ["E501"]
+# Benchmark orchestrator, reports generator, and scenarios contain multi-line HTML templates
+# and long prompts that cannot be reflowed without breaking layout.
+"skill_eval/**/*.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

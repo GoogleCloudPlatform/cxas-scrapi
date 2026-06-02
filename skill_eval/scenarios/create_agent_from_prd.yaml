@@ -1,0 +1,92 @@
+name: Create Agent from PRD
+setup:
+  commands:
+  - "cxas delete --project-id {project_id} --location us --display-name sunday-mobile-lite-{uuid} --force || true"
+  - "cxas create --project-id {project_id} --location us sunday-mobile-lite-{uuid}"
+  - "cxas pull --project-id {project_id} --location us sunday-mobile-lite-{uuid} --target-dir sunday-mobile-lite-app-{uuid}"
+prompt: |
+  You are an expert virtual agent developer. A basic CXAS app shell has been pulled locally in the directory `sunday-mobile-lite-app-{uuid}/sunday-mobile-lite-{uuid}`.
+
+  Your goal is to build the `SundayMobileLite` agent exactly matching the requirements in `prd.md` (located in the root of your workspace) and verify it.
+
+  Follow these precise instructions to guarantee success on your first attempt:
+
+  **CRITICAL RUN RULE**: Always execute all `run_command` tools with `WaitMsBeforeAsync` set to at least `60000` (60 seconds) or `120000` (120 seconds). This ensures that commands like `cxas push` and `cxas run-session` execute completely and synchronously, returning the full stdout/stderr in the same turn. Do NOT run commands with `WaitMsBeforeAsync: 0` or use background tasks/timers/schedule tools. Everything must be done synchronously.
+  *   **IMPORTANT**: Due to IDE timing, you may receive an intermediate background TaskId notification (e.g., task-40) while these commands are executing. **Ignore this notification completely.** Do NOT call `manage_task` or `schedule` to wait for it. Trust that the command will complete synchronously within your 120-second window, wait for the final output to appear, and proceed immediately to the next step in the same turn. Everything must be done synchronously without yielding the turn.
+
+  1. Read the product specifications in `prd.md` to understand the requirements.
+  2. Create the directories for the agent:
+     - The `agents/` directory exists. Create the `agents/SundayMobileLite/` directory:
+       `mkdir -p sunday-mobile-lite-app-{uuid}/sunday-mobile-lite-{uuid}/agents/SundayMobileLite`
+  3. Create the agent configuration file at `sunday-mobile-lite-app-{uuid}/sunday-mobile-lite-{uuid}/agents/SundayMobileLite/SundayMobileLite.json` (inside the `SundayMobileLite/` directory!) with this exact content:
+     ```json
+     {
+       "displayName": "SundayMobileLite",
+       "instruction": "agents/SundayMobileLite/instruction.txt",
+       "tools": [
+         "end_session"
+       ]
+     }
+     ```
+  4. Create the instruction file at `sunday-mobile-lite-app-{uuid}/sunday-mobile-lite-{uuid}/agents/SundayMobileLite/instruction.txt` with this exact content:
+     ```xml
+     <persona>
+     You are the SundayMobileLite support agent. Your goal is to help users with their mobile plans.
+     </persona>
+
+     <role>
+     You are the SundayMobileLite agent. Today's date is ${current_date}.
+     </role>
+
+     <taskflow>
+       <step name="Greet_And_Collect_ID">
+         Greet the user and ask for their Account ID.
+       </step>
+
+       <step name="Verify_Identity">
+         Confirm if the name on the account is "John Doe" by asking exactly: "To confirm, is the name on the account 'John Doe'?"
+         - If "Yes", they are verified. Immediately disclose that their plan is "Unlimited Data". Do NOT call end_session for a verified user.
+         - If "No" (or any other name), refuse access, offer escalation, call {@TOOL: end_session}, and terminate.
+       </step>
+
+       <step name="Main_Menu">
+         Provide options to "Check Plan" or "Update Email".
+       </step>
+
+       <step name="Provide_Plan">
+         Disclose that the user is on the "Unlimited Data" plan.
+       </step>
+
+       <step name="Collect_New_Email">
+         Ask for their email address, and confirm that it has been updated.
+       </step>
+     </taskflow>
+     ```
+  5. Update the `app.json` configuration file located in the pulled app directory to set the `"rootAgent"` property to `"SundayMobileLite"`. Ensure you retain all original configuration values, such as `"name"` (which contains the dynamic App ID) and `"displayName"`.
+  6. Push your local changes to the CXAS platform using the `cxas push` CLI command inside the app folder. Be sure to specify the correct `--app-name` targeting the display name of the pulled application (which can be found as the value of the `"displayName"` property in `app.json`), and always pass `--project-id {project_id}` and `--location us` flags.
+  7. Verify your implementation by running two separate, interactive test sessions using the `cxas run-session` CLI command inside the app folder. Target the full App resource name of the application (which can be found in the output logs of your push command on step 6, starting with `"projects/"`). Test both the happy path (a verified user successfully receives their plan details) and the failure path (an unverified user is refused access and offered escalation, and their plan is NOT disclosed).
+     (For all cxas CLI commands, make sure `WaitMsBeforeAsync` is set to a large value like `60000` or `120000` so they run synchronously!)
+rubric:
+- criteria: Agent and State Machine Design
+  perfect: |
+    The execution trace shows the agent successfully created agents/SundayMobileLite/instruction.txt and its JSON configuration under sunday-mobile-lite-app-{uuid}/sunday-mobile-lite-{uuid}/, fully implementing the state machine flow (greeting, Account ID collection, name verification, plan disclosure, email collection), updated app.json, and pushed everything successfully using cxas push.
+  good: |
+    The agent implemented the state machine and pushed, but required corrections to state definitions or paths.
+  failed: |
+    The agent failed to create the files, missed core states, or failed to push.
+- criteria: Happy Path Verification
+  perfect: |
+    The execution trace shows the agent successfully ran a sandbox test session executing the complete happy path (ID collection -> John Doe confirmation -> Unlimited Data plan disclosure), verifying correct behavior.
+  good: |
+    The happy path test was executed but required a nudge, or the responses were slightly off.
+  failed: |
+    The happy path test was not executed, or failed to reveal the correct plan.
+- criteria: Security Verification (Failure Block)
+  perfect: |
+    The execution trace shows the agent successfully ran a sandbox test session executing the failure path (ID collection -> Alice rejection -> refusal/escalation), verifying the security boundary works and plan is not disclosed.
+  good: |
+    The failure path test was executed but required a nudge, or the escalation wording was ambiguous.
+  failed: |
+    The failure path test was not executed, or the agent incorrectly disclosed the plan.
+assets:
+- prd.md

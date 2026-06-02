@@ -2693,6 +2693,8 @@ def test_state_visitor_update_with_literals(tmp_path, var_context):
     accesses = _collect_state_accesses(src)
     assert ("write", "a", 2, "bool") in accesses
     assert ("write", "b", 2, "int") in accesses
+
+
 # ── Rule T013 (ToolConfigInvalid) Tests ───────────────────────────────
 
 
