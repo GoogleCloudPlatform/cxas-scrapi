@@ -18,11 +18,15 @@ import os
 from unittest.mock import MagicMock, patch
 
 import graphviz
+import pytest
 from rich.console import Console
 from rich.tree import Tree
 
 from cxas_scrapi.migration.data_models import DFCXAgentIR
-from cxas_scrapi.migration.main_visualizer import MainVisualizer
+from cxas_scrapi.migration.main_visualizer import (
+    MainVisualizer,
+    VisualizationError,
+)
 
 # ---------------------------------------------------------------------------
 # Shared data
@@ -254,13 +258,10 @@ class TestMainVisualizerExport:
         content = open(md_file).read()
         assert "Agent Tools" in content
 
-    @patch("cxas_scrapi.migration.main_visualizer.sys.exit")
     @patch(
         "cxas_scrapi.migration.graph_visualizer.HighLevelGraphVisualizer.build"
     )
-    def test_export_handles_executable_not_found(
-        self, mock_build, mock_exit, tmp_path
-    ):
+    def test_export_handles_executable_not_found(self, mock_build, tmp_path):
         mock_dot = MagicMock()
         mock_dot.render.side_effect = (
             graphviz.backend.execute.ExecutableNotFound("dot")
@@ -271,10 +272,10 @@ class TestMainVisualizerExport:
         mv = MainVisualizer(DFCXAgentIR(**EMPTY_DATA))
 
         with patch.object(mv.console, "print") as mock_print:
-            mv.export_visualizations(prefix=prefix)
+            with pytest.raises(VisualizationError) as exc_info:
+                mv.export_visualizations(prefix=prefix)
 
+            assert "Graphviz executable 'dot' not found" in str(exc_info.value)
             mock_print.assert_called_once()
             args, _ = mock_print.call_args
             assert "Graphviz executable 'dot' not found" in args[0]
-
-        mock_exit.assert_called_once_with(1)

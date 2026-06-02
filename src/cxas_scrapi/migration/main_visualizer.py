@@ -15,7 +15,6 @@
 """Master visualizer coordinating topology graph and detailed Rich trees."""
 
 import io
-import sys
 import uuid
 from typing import Any, Dict
 
@@ -46,6 +45,10 @@ from cxas_scrapi.migration.flow_visualizer import (
 )
 from cxas_scrapi.migration.graph_visualizer import HighLevelGraphVisualizer
 from cxas_scrapi.migration.playbook_visualizer import PlaybookTreeVisualizer
+
+
+class VisualizationError(Exception):
+    """Raised when visualization fails (e.g. missing external dependency)."""
 
 
 class MainVisualizer:
@@ -341,7 +344,7 @@ class MainVisualizer:
             )
             svg_filename = f"{prefix}_topology.svg"
             dot.render(outfile=svg_filename, format="svg", cleanup=True)
-        except graphviz.backend.execute.ExecutableNotFound:
+        except graphviz.backend.execute.ExecutableNotFound as e:
             self.console.print(
                 "\n[bold red]Error: Graphviz executable 'dot' not found.[/]\n"
                 "The topology graph could not be rendered. Please install "
@@ -353,7 +356,9 @@ class MainVisualizer:
                 "Download from https://graphviz.org/download/\n"
                 "Ensure the 'dot' executable is added to your system PATH.\n"
             )
-            sys.exit(1)
+            raise VisualizationError(
+                "Graphviz executable 'dot' not found."
+            ) from e
 
         buf = io.StringIO()
         capture_console = Console(file=buf, force_terminal=False, width=120)
