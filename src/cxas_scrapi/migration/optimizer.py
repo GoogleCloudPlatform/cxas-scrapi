@@ -34,12 +34,12 @@ class CXASOptimizer:
         self.optimization_logs.append(log_entry)
         logger.info(f"[{stage}] {action}: {details}")
 
-    async def optimize_stage1(self):
+    async def optimize_stage_1(self):
         """Executes Stage 1 Variable Optimization."""
         logger.info("Starting Stage 1 Variable Optimization...")
-        await self._stage1_variable_optimization()
+        await self._stage_1_variable_optimization()
 
-    async def optimize_stage2(self):
+    async def optimize_stage_2(self):
         """Executes Stage 2 Instructions and Tool Mocks Optimization
         in parallel.
         """
@@ -48,8 +48,8 @@ class CXASOptimizer:
             "Tool Mock Optimization..."
         )
         await asyncio.gather(
-            self._stage2_instruction_optimization(),
-            self._stage2_tool_mock_optimization(),
+            self._stage_2_instruction_optimization(),
+            self._stage_2_tool_mock_optimization(),
         )
 
     @staticmethod
@@ -65,7 +65,7 @@ class CXASOptimizer:
             clean = "_" + clean
         return clean or "_var"
 
-    async def _stage1_variable_optimization(self):
+    async def _stage_1_variable_optimization(self):
         """
         Stage 1: Granular Variable Deduplication
         Scans all instructions, tools, and callbacks to build a dependency map.
@@ -358,7 +358,7 @@ class CXASOptimizer:
             "Global Variable Deduplication finished successfully.",
         )
 
-    async def _stage2_instruction_optimization(self):
+    async def _stage_2_instruction_optimization(self):
         """
         Stage 2 Instructions: Playbook State Machine Optimizer.
         Restructures instructions into structured XML State Machines.
@@ -473,7 +473,7 @@ class CXASOptimizer:
             f"successfully.",
         )
 
-    async def _stage2_tool_mock_optimization(self):
+    async def _stage_2_tool_mock_optimization(self):
         """
         Stage 2 Tool Mocks: Tool Mock Optimizer.
         Concurrently injects highly realistic happy-path mock_mode return paths.

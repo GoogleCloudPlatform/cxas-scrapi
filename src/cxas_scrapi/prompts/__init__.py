@@ -12,8 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from cxas_scrapi.prompts.llm_lint_prompts import (
+    LLM_LINT_SYSTEM_PROMPT,
+    LLM_LINT_USER_PROMPT,
+)
 from cxas_scrapi.prompts.llm_user_prompts import LLM_USER_PROMPT
 
 __all__ = [
     "LLM_USER_PROMPT",
+    "LLM_LINT_SYSTEM_PROMPT",
+    "LLM_LINT_USER_PROMPT",
 ]

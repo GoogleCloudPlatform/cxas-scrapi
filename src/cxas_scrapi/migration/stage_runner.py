@@ -50,7 +50,7 @@ async def run_stage_1(
     )
     optimizer = CXASOptimizer(ir, gemini_client)
     before = len(ir.parameters)
-    await optimizer.optimize_stage1()
+    await optimizer.optimize_stage_1()
     after = len(ir.parameters)
     console.print(f"[green]Stage 1 complete:[/] parameters {before} → {after}")
     _print_logs(optimizer, "Stage 1", console)
@@ -70,7 +70,7 @@ async def run_stage_2(
         "tool mocks…[/]"
     )
     optimizer = CXASOptimizer(ir, gemini_client)
-    await optimizer.optimize_stage2()
+    await optimizer.optimize_stage_2()
     console.print("[green]Stage 2 complete.[/]")
     _print_logs(optimizer, "Stage 2", console)
     return optimizer
@@ -95,7 +95,7 @@ async def run_stage_with_redeploy(
     console: Console,
 ) -> CXASOptimizer:
     """Run a single CXASOptimizer stage and push the resulting IR changes
-    via update-pass deploys. Used by stage1.py / stage2.py.
+    via update-pass deploys. Used by stage_1.py / stage_2.py.
 
     Steps:
       1. Mark every IR agent COMPILED so the update-pass deploy knows to push.

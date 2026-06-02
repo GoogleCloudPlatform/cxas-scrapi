@@ -79,159 +79,25 @@ def _format_trace_line(line, tools_map):
 
 def _get_html_head(ts):
     """Return the HTML head with CSS and JS."""
+    css_path = os.path.join(
+        os.path.dirname(__file__), "../resources/components/base/base.css"
+    )
+    js_path = os.path.join(
+        os.path.dirname(__file__), "../resources/components/base/interaction.js"
+    )
+    with open(css_path, "r", encoding="utf-8") as f:
+        css = f.read()
+    with open(js_path, "r", encoding="utf-8") as f:
+        js = f.read()
     return f"""<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
 <title>Simulation Report - {ts}</title>
 <style>
-  body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 20px;
-    background: #f8f9fa;
-  }}
-  h1 {{
-    color: #1a1a2e;
-    border-bottom: 3px solid #e94560;
-    padding-bottom: 10px;
-  }}
-  h2 {{ color: #1a1a2e; margin-top: 30px; }}
-  .summary {{
-    background: white;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    margin-bottom: 20px;
-  }}
-  .summary .big {{ font-size: 2em; font-weight: bold; }}
-  .pass {{ color: #27ae60; }}
-  .fail {{ color: #e74c3c; }}
-  .error {{ color: #e67e22; }}
-  table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
-  th,
-  td {{
-    text-align: left;
-    padding: 8px 12px;
-    border-bottom: 1px solid #ddd;
-  }}
-  th {{ background: #2c3e50; color: white; }}
-  tr:hover {{ background: #f5f5f5; }}
-  .eval-card {{
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    margin: 15px 0;
-    overflow: hidden;
-  }}
-  .eval-header {{
-    padding: 12px 16px;
-    font-weight: bold;
-    cursor: pointer;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }}
-  .eval-header.pass-bg {{
-    background: #d4edda;
-    border-left: 4px solid #27ae60;
-  }}
-  .eval-header.fail-bg {{
-    background: #f8d7da;
-    border-left: 4px solid #e74c3c;
-  }}
-  .eval-body {{ padding: 0 16px 16px; }}
-  .transcript {{
-    background: #f8f9fa;
-    border-radius: 6px;
-    padding: 12px;
-    margin: 8px 0;
-    font-size: 0.9em;
-  }}
-  .transcript .user {{ color: #2980b9; margin: 6px 0; }}
-  .transcript .agent {{ color: #27ae60; margin: 6px 0; }}
-  .transcript .system {{ color: #e67e22; margin: 4px 0; font-size: 0.85em; }}
-  .badge {{
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 0.8em;
-    font-weight: bold;
-  }}
-  .badge.pass {{ background: #d4edda; color: #155724; }}
-  .badge.fail {{ background: #f8d7da; color: #721c24; }}
-  .badge.met {{ background: #d4edda; color: #155724; }}
-  .badge.not-met {{ background: #f8d7da; color: #721c24; }}
-  .expectation {{
-    margin: 6px 0;
-    padding: 8px;
-    background: #f0f0f0;
-    border-radius: 4px;
-  }}
-  .step {{
-    margin: 6px 0;
-    padding: 8px;
-    border-left: 3px solid #3498db;
-    background: #f0f8ff;
-  }}
-  .meta {{ color: #666; font-size: 0.85em; }}
-  details {{ margin: 4px 0; }}
-  summary {{ cursor: pointer; font-weight: bold; padding: 4px 0; }}
-  .tool-details {{
-    margin: 4px 0;
-    padding: 4px 8px;
-    background: #f3e8ff;
-    border-radius: 4px;
-    border-left: 3px solid #8e44ad;
-  }}
-  .tool-summary {{
-    font-weight: normal;
-    font-size: 0.9em;
-    color: #6c3483;
-    padding: 2px 0;
-  }}
-  .tool-data {{
-    margin: 4px 0;
-    padding: 8px;
-    background: #faf5ff;
-    border-radius: 4px;
-    font-size: 0.8em;
-    white-space: pre-wrap;
-    word-break: break-word;
-    overflow-x: auto;
-  }}
-  .tool-section {{ font-size: 0.85em; color: #555; margin-top: 6px; }}
-  .run-dot {{
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    margin-right: 3px;
-    cursor: pointer;
-    border: 2px solid transparent;
-    transition: border-color 0.15s;
-  }}
-  .run-dot:hover {{ border-color: #333; }}
-  .run-dot.p {{ background: #27ae60; }}
-  .run-dot.f {{ background: #e74c3c; }}
-  .run-dot.e {{ background: #e67e22; }}
-  .session-link {{ font-size: 0.85em; color: #3498db; margin: 4px 0; }}
-  .session-link a {{ color: #3498db; text-decoration: none; }}
-  .session-link a:hover {{ text-decoration: underline; }}
+{css}
 </style>
 <script>
-function jumpToRun(evalName, runIdx) {{
-  var card = document.getElementById('eval-' + evalName);
-  if (!card) return;
-  var details = card.querySelectorAll('details.run-detail');
-  details.forEach(function(d) {{ d.removeAttribute('open'); }});
-  if (details[runIdx]) {{
-    details[runIdx].setAttribute('open', '');
-  }}
-  setTimeout(function() {{
-    card.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-  }}, 50);
-}}
+{js}
 </script>
 </head><body>
 """
@@ -965,6 +831,8 @@ def generate_combined_html_report(
         css_content=load_component("base/base.css"),
         js_interaction=load_component("base/interaction.js"),
     )
+
+    html = _get_html_head(ts) + html + "</body></html>"
 
     if output_path:
         if output_path.startswith("gs://"):

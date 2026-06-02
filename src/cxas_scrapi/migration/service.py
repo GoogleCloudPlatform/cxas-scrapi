@@ -35,6 +35,7 @@ from cxas_scrapi.migration import (
     topology_wirer,
 )
 from cxas_scrapi.migration.ai_augment import AIAugment
+from cxas_scrapi.migration.analysis_reporter import MigrationAnalysisBuilder
 from cxas_scrapi.migration.artifacts_builder import CXASAsyncArtifactBuilder
 from cxas_scrapi.migration.code_block_migrator import CodeBlockMigrator
 from cxas_scrapi.migration.cxas_topology_linker import CXASTopologyLinker
@@ -141,6 +142,64 @@ class MigrationService:
 
         self.ir = {}
         self.source_agent_data = None
+        # Migration analysis report — instantiated lazily once a target_name
+        # is known. Reset for each migration so per-target state is clean.
+        self._analysis_builder: MigrationAnalysisBuilder | None = None
+        self._analysis_bundle: "IRBundle | None" = None
+
+    # ------------------------------------------------------------------
+    # Migration analysis report helpers
+    # ------------------------------------------------------------------
+
+    def _ensure_analysis_builder(
+        self,
+        target_name: str | None,
+        *,
+        bundle: "IRBundle | None" = None,
+        output_dir: str | None = None,
+    ) -> MigrationAnalysisBuilder | None:
+        """Create the analysis builder on first use; cheap no-op afterwards.
+
+        Resilient: returns None on any failure so the migration keeps
+        running. The report is a best-effort artifact, never a blocker.
+        """
+        if bundle is not None:
+            self._analysis_bundle = bundle
+        if self._analysis_builder is not None:
+            return self._analysis_builder
+        if not target_name:
+            return None
+        try:
+            app_name = target_name
+            if (
+                getattr(self, "ir", None)
+                and getattr(self.ir, "metadata", None) is not None
+            ):
+                app_name = self.ir.metadata.app_name or target_name
+            self._analysis_builder = MigrationAnalysisBuilder(
+                target_name=target_name,
+                app_name=app_name,
+                output_dir=output_dir,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("could not init migration analysis report: %s", exc)
+            self._analysis_builder = None
+        return self._analysis_builder
+
+    def _analysis_checkpoint(
+        self, phase: str, what_changed: str = "", *, kind: str = "skill"
+    ) -> None:
+        """Refresh the snapshot, record a phase entry, and flush the report."""
+        if self._analysis_builder is None:
+            return
+        try:
+            self._analysis_builder.record_phase(phase, what_changed, kind=kind)
+            self._analysis_builder.update_from_service(self)
+            self._analysis_builder.flush()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "migration analysis checkpoint %r failed: %s", phase, exc
+            )
 
     @classmethod
     def restore_from_bundle(
@@ -152,7 +211,7 @@ class MigrationService:
     ) -> "MigrationService":
         """Recreate a `MigrationService` from a persisted :class:`IRBundle`.
 
-        Used by stage1 / stage2 / stage3 to resume work against an already
+        Used by stage_1 / stage_2 / stage_3 to resume work against an already
         deployed app without going through a full :meth:`run_migration`
         cycle. Populates the runtime attributes that `run_migration` would
         normally set up after creating the app:
@@ -204,6 +263,12 @@ class MigrationService:
             if getattr(service, "code_block_migrator", None) is not None:
                 service.code_block_migrator.ps_tools = service.ps_tools
 
+        # Reattach the analysis builder so resumed stages keep updating
+        # the report alongside the IR bundle.
+        service._ensure_analysis_builder(
+            bundle.config.target_name, bundle=bundle
+        )
+
         return service
 
     # ------------------------------------------------------------------
@@ -211,7 +276,7 @@ class MigrationService:
     #
     # These are the single source of truth for each post-migration stage.
     # `run_migration`'s `optimize_for_cxas` branch delegates to
-    # `run_stage1` + `run_stage2`. Stage subcommands and skill scripts
+    # `run_stage_1` + `run_stage_2`. Stage subcommands and skill scripts
     # call the same methods to avoid pipeline duplication.
     # ------------------------------------------------------------------
 
@@ -269,11 +334,20 @@ class MigrationService:
         console = console or Console()
         gemini = gemini_client or self.gemini_client
 
+        self._ensure_analysis_builder(
+            bundle.config.target_name if bundle else None, bundle=bundle
+        )
+
         # --- Variable dedup (always runs) -----------------------------------
         optimizer = await stage_runner.run_stage_with_redeploy(
             self, stage=1, console=console
         )
         stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage_1")
+        self._analysis_checkpoint(
+            "stage_1_dedup",
+            f"Stage 1 variable deduplication complete; "
+            f"{len(self.ir.parameters)} variables remain.",
+        )
 
         # --- CXAS Version checkpoint: Post-Dedup ----------------------------
         if dedup_version_label and self.ir.metadata.app_resource_name:
@@ -300,13 +374,20 @@ class MigrationService:
                 )
 
         # --- Gemini consolidation (always runs) ------------------------------
-        accepted_groupings = await self._run_stage1_consolidation(
+        accepted_groupings = await self._run_stage_1_consolidation(
             bundle=bundle,
             gemini=gemini,
             grouping_callback=grouping_callback,
             grouping_json_path=grouping_json_path,
             console=console,
         )
+
+        if accepted_groupings:
+            self._analysis_checkpoint(
+                "stage_1_consolidation",
+                f"Consolidated to {len(accepted_groupings)} CXAS group(s); "
+                f"{len(self.ir.agents)} agents in final IR.",
+            )
 
         # --- CXAS Version checkpoint: Post-Consolidation --------------------
         if accepted_groupings:
@@ -340,7 +421,7 @@ class MigrationService:
 
         return accepted_groupings
 
-    async def _run_stage1_consolidation(
+    async def _run_stage_1_consolidation(
         self,
         *,
         bundle: "IRBundle",
@@ -508,11 +589,20 @@ class MigrationService:
 
         console = console or Console()
 
+        self._ensure_analysis_builder(
+            bundle.config.target_name if bundle else None, bundle=bundle
+        )
+
         # --- Optimize Stage 2 + redeploy ------------------------------------
         optimizer = await stage_runner.run_stage_with_redeploy(
             self, stage=2, console=console
         )
         stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage_2")
+        self._analysis_checkpoint(
+            "stage_2_optimization",
+            "Stage 2 optimization + redeploy complete (instruction state "
+            "machines + tool mocks).",
+        )
 
         # --- CXAS Version checkpoint ----------------------------------------
         if version_label and self.ir.metadata.app_resource_name:
@@ -555,6 +645,12 @@ class MigrationService:
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Unit test regeneration failed: %s", exc)
+            if test_counts:
+                self._analysis_checkpoint(
+                    "stage_2_eval_regen",
+                    f"Regenerated {sum(test_counts.values())} unit tests "
+                    f"across {len(test_counts)} agents.",
+                )
 
         # --- Optional post-deploy lint --------------------------------------
         lint_passed: bool | None = None
@@ -567,14 +663,20 @@ class MigrationService:
                 ) = await post_deploy_lint.run_post_deploy_lint(self, console)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Lint did not run: %s", exc)
+            if lint_passed is not None:
+                outcome = "passed" if lint_passed else "failed"
+                self._analysis_checkpoint(
+                    "stage_2_lint",
+                    f"Post-deploy lint {outcome}.",
+                )
 
         # --- Optional OptimizationReporter audit markdown -------------------
         if write_report_to:
             try:
-                stage1_logs = self.ir.optimization_logs.get("stages", {}).get(
+                stage_1_logs = self.ir.optimization_logs.get("stages", {}).get(
                     "stage_1"
                 )
-                stage2_logs = self.ir.optimization_logs.get("stages", {}).get(
+                stage_2_logs = self.ir.optimization_logs.get("stages", {}).get(
                     "stage_2"
                 )
                 reporter = OptimizationReporter()
@@ -597,7 +699,7 @@ class MigrationService:
                         after_count=len(self.ir.agents),
                         path=f"{target_name}_grouping.json",
                     )
-                reporter.set_optimizer_logs(stage1_logs, stage2_logs)
+                reporter.set_optimizer_logs(stage_1_logs, stage_2_logs)
                 if bundle and bundle.version_checkpoints:
                     reporter.set_version_checkpoints(bundle.version_checkpoints)
                 if test_counts:
@@ -639,6 +741,8 @@ class MigrationService:
                 "stage_1 first."
             )
 
+        self._ensure_analysis_builder(bundle.config.target_name, bundle=bundle)
+
         children = topology_wirer.compute_group_children(bundle, mode=mode)
         updated, skipped, failed = topology_wirer.apply_topology(
             bundle, children, dry_run=False
@@ -648,6 +752,11 @@ class MigrationService:
             updated,
             skipped,
             failed,
+        )
+        self._analysis_checkpoint(
+            "stage_3_topology",
+            f"Stage 3 wiring: updated={updated} skipped={skipped} "
+            f"failed={failed}.",
         )
 
         ok, msg = topology_wirer.set_app_root_agent(bundle)
@@ -809,6 +918,15 @@ class MigrationService:
             )
             return
 
+        self._ensure_analysis_builder(config.target_name)
+        self._analysis_checkpoint(
+            "source_loaded",
+            f"Fetched source DFCX agent "
+            f"({len(self.source_agent_data.flows or [])} flows, "
+            f"{len(self.source_agent_data.playbooks or [])} playbooks, "
+            f"{len(self.source_agent_data.webhooks or [])} webhooks).",
+        )
+
         logger.info("\nPre-processing text fields (Playbook -> agent)...")
         self._preprocess_text_fields(self.source_agent_data)
         self.reporter.log_action(
@@ -890,6 +1008,11 @@ class MigrationService:
             self.ir.parameters[param["name"]] = param
 
         self._inject_system_variables()
+        self._analysis_checkpoint(
+            "parameters_extracted",
+            f"Migrated {len(self.ir.parameters)} session variables "
+            f"(including injected system vars).",
+        )
 
         # --- 4. Populate Standard Tools & Webhooks into IR ---
         logger.info("Processing Standard Tools and Webhooks...")
@@ -965,6 +1088,12 @@ class MigrationService:
                 else cx_webhook
             )
             process_resource(w_val, is_webhook=True)
+
+        self._analysis_checkpoint(
+            "tools_converted",
+            f"Compiled {len(self.ir.tools)} tools and toolsets from "
+            f"DFCX sources.",
+        )
 
         # --- 5. Extract Code Blocks ---
         logger.info("Extracting and rewriting Python Code Blocks into IR...")
@@ -1132,10 +1261,21 @@ class MigrationService:
                 status=MigrationStatus.COMPILED,
             )
 
+        self._analysis_checkpoint(
+            "agents_compiled",
+            f"Compiled {len(self.ir.agents)} agents (Playbooks) into IR; "
+            f"{len(self.ir.tools)} tools/toolsets in total.",
+        )
+
         # --- 6. FAST DEPLOY (Phase 1) ---
         logger.info("FAST DEPLOY: Pushing Base Resources to CXAS...")
         await self._deploy_base_resources()
         await self._deploy_pending_agents()
+
+        self._analysis_checkpoint(
+            "fast_deploy_complete",
+            "Pushed base resources (app, variables, tools, agents) to CXAS.",
+        )
 
         # --- 8. Background Processing for Flows (Phase 2) ---
         flows = self.source_agent_data.flows
@@ -1164,10 +1304,21 @@ class MigrationService:
             ]
             await asyncio.gather(*tasks)
 
+            self._analysis_checkpoint(
+                "flows_processed",
+                f"Synthesized {len(flows)} flow-derived agents; "
+                f"total agents now {len(self.ir.agents)}.",
+            )
+
         # --- 10. Finalization & Topology Linking (Phase 4) ---
         logger.info("DEPLOYMENT & TOPOLOGY LINKING")
         self.topology_linker.link_and_finalize_topology(
             self.ir, self.source_agent_data
+        )
+        self._analysis_checkpoint(
+            "topology_linked",
+            f"Wired parent-child topology; "
+            f"{len(self.ir.routing_edges or [])} routing edges in graph.",
         )
 
         # Create initial 1:1 transpile version snapshot unconditionally!

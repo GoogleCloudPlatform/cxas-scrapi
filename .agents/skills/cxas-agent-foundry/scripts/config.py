@@ -18,7 +18,7 @@ All scripts use gecx-config.json as the single source of truth for project
 configuration. This module provides a common loader so each script doesn't
 duplicate the same config-reading logic.
 
-Projects live in named folders (e.g., tmobile/, humana/) with their own
+Projects live in named folders (e.g., project_a/, project_b/) with their own
 gecx-config.json. The active project is resolved via:
 1. GECX_PROJECT env var
 2. CWD contains gecx-config.json (backward compat)
@@ -30,7 +30,7 @@ Usage:
 
     app_name = load_app_name()                    # "projects/P/locations/L/apps/A"
     config = load_config()                         # full config dict
-    evals_dir = get_project_path("evals", "goldens")  # /workspace/tmobile/evals/goldens
+    evals_dir = get_project_path("evals", "goldens")  # /workspace/<project>/evals/goldens
 """
 
 import json
@@ -123,7 +123,7 @@ def resolve_project_dir():
 def get_project_path(*parts):
     """Join parts relative to the active project directory.
 
-    Usage: get_project_path("evals", "goldens") → /workspace/tmobile/evals/goldens
+    Usage: get_project_path("evals", "goldens") → /workspace/<project>/evals/goldens
     """
     return os.path.join(resolve_project_dir(), *parts)
 

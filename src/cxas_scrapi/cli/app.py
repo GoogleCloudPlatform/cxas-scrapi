@@ -93,10 +93,20 @@ def app_pull(args: argparse.Namespace) -> None:
 
     apps_client, app_name, _ = _resolve_app_args(args.app, args)
 
-    _app_pull(apps_client, app_name, args.target_dir)
+    _app_pull(
+        apps_client,
+        app_name,
+        args.target_dir,
+        getattr(args, "overwrite", False),
+    )
 
 
-def _app_pull(apps_client: Apps, app_name: str, target_dir: str) -> None:
+def _app_pull(
+    apps_client: Apps,
+    app_name: str,
+    target_dir: str,
+    overwrite: bool = False,
+) -> None:
     """Helper to pull an app from CXAS."""
     try:
         # Export the app
@@ -110,7 +120,81 @@ def _app_pull(apps_client: Apps, app_name: str, target_dir: str) -> None:
 
         # Extract content to target directory.
         with zipfile.ZipFile(io.BytesIO(response.app_content)) as z:
+            export_members = z.namelist()
             z.extractall(target_dir)
+
+        # Handle overwrite logic if requested
+        if overwrite and export_members:
+            # Find the top level directory name in the zip (app name)
+            top_dir = export_members[0].split("/")[0]
+            app_root = os.path.join(target_dir, top_dir)
+
+            if os.path.exists(app_root):
+                # Build set of exported paths relative to app_root
+                export_set = set()
+                for member in export_members:
+                    rel_path = os.path.relpath(member, top_dir)
+                    if rel_path != ".":
+                        export_set.add(rel_path)
+
+                # Identify root level items in export (direct children of
+                # top_dir)
+                export_root_items = set()
+                for member in export_members:
+                    parts = member.split("/")
+                    if len(parts) > 1 and parts[0] == top_dir:
+                        export_root_items.add(parts[1])
+
+                # Walk the local app root bottom-up to remove files then dirs
+                for root, dirs, files in os.walk(app_root, topdown=False):
+                    rel_root = os.path.relpath(root, app_root)
+                    if rel_root == ".":
+                        rel_root = ""
+
+                    # Check files
+                    for name in files:
+                        local_rel_path = (
+                            os.path.join(rel_root, name) if rel_root else name
+                        )
+                        parts = local_rel_path.split("/")
+
+                        if len(parts) > 1:
+                            # It's a non-root level file
+                            root_item = parts[0]
+                            # Only remove if it belongs to a folder that WAS in
+                            # the export
+                            if root_item in export_root_items:
+                                if local_rel_path not in export_set:
+                                    file_path = os.path.join(root, name)
+                                    print(
+                                        "Removing non-exported file: "
+                                        f"{file_path}"
+                                    )
+                                    os.remove(file_path)
+
+                    # Check directories (remove if empty and not in export)
+                    for name in dirs:
+                        local_rel_path = (
+                            os.path.join(rel_root, name) if rel_root else name
+                        )
+                        parts = local_rel_path.split("/")
+
+                        if len(parts) > 1:
+                            root_item = parts[0]
+                            if root_item in export_root_items:
+                                if (
+                                    local_rel_path not in export_set
+                                    and (local_rel_path + "/") not in export_set
+                                ):
+                                    dir_path = os.path.join(root, name)
+                                    # Only remove if it's empty (we didn't keep
+                                    # any files inside it)
+                                    if not os.listdir(dir_path):
+                                        print(
+                                            "Removing empty non-exported dir: "
+                                            f"{dir_path}"
+                                        )
+                                        os.rmdir(dir_path)
 
         print("Successfully pulled app.")
 
@@ -232,8 +316,15 @@ def _app_push(
         print("Uploading to CES...")
 
         if target_app_name:
+            conflict_strategy = (
+                "OVERWRITE"
+                if args and getattr(args, "overwrite", False)
+                else None
+            )
             result = apps_client.import_app(
-                app_name=target_app_name, app_content=app_content
+                app_name=target_app_name,
+                app_content=app_content,
+                conflict_strategy=conflict_strategy,
             )
         else:
             result = apps_client.import_as_new_app(

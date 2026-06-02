@@ -32,7 +32,6 @@ import sys
 import time
 import uuid
 import yaml
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -289,78 +288,6 @@ def cmd_convert(args):
     print(f"Wrote {len(all_tests)} test cases to {output_dir}/")
 
 
-def _run_single_eval(app_name, tc, run_idx, runs, model, modality, verbose):
-    """Run a single eval iteration. Designed to be called from a thread pool."""
-    name = tc["name"]
-    label = f"{name} (run {run_idx + 1}/{runs})"
-
-    try:
-        # Each thread gets its own SimRunner instance (separate session client)
-        import time as _time
-        _start = _time.time()
-        sim = EnhancedSimRunner(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
-        conv = sim.simulate_conversation(
-            test_case=tc,
-            model=model,
-            console_logging=verbose,
-            modality=modality,
-        )
-        duration_s = round(_time.time() - _start, 1)
-
-        goals_completed = sum(
-            1 for p in conv.steps_progress if p.status == StepStatus.COMPLETED
-        )
-        total_goals = len(conv.steps_progress)
-        expectations_met = sum(
-            1 for r in conv.expectation_results if r.status.value == "Met"
-        )
-        total_exp = len(conv.expectation_results)
-
-        passed = (goals_completed == total_goals)
-        if total_exp > 0:
-            passed = passed and (expectations_met == total_exp)
-
-        status = "PASS" if passed else "FAIL"
-        print(f"  {status}  {label} | goals: {goals_completed}/{total_goals} | "
-              f"expectations: {expectations_met}/{total_exp} | "
-              f"turns: {conv.current_turn} | {duration_s}s")
-
-        return {
-            "name": name,
-            "run": run_idx + 1,
-            "passed": passed,
-            "goals": f"{goals_completed}/{total_goals}",
-            "expectations": f"{expectations_met}/{total_exp}",
-            "turns": conv.current_turn,
-            "duration_s": duration_s,
-            "session_id": getattr(conv, "_session_id", ""),
-            "session_parameters": tc.get("session_parameters", {}),
-            "transcript": conv.get_transcript(),
-            "detailed_trace": getattr(conv, "_detailed_trace", []),
-            "step_details": [
-                {
-                    "goal": p.step.goal,
-                    "success_criteria": p.step.success_criteria,
-                    "status": p.status.value,
-                    "justification": p.justification,
-                }
-                for p in conv.steps_progress
-            ],
-            "expectation_details": [
-                {
-                    "expectation": r.expectation,
-                    "status": r.status.value,
-                    "justification": r.justification,
-                }
-                for r in conv.expectation_results
-            ],
-        }
-
-    except Exception as e:
-        print(f"  ERROR  {label}: {e}")
-        return {"name": name, "run": run_idx + 1, "passed": False, "error": str(e)}
-
-
 def cmd_run(args):
     """Run sim evals against the live agent."""
     data = load_yaml()
@@ -420,40 +347,24 @@ def cmd_run(args):
     runs = args.runs or 1
     parallel = args.parallel or 1
 
-    total_jobs = len(test_cases) * runs
     print(f"Running {len(test_cases)} evals x {runs} runs ({modality}, model: {model})")
     if parallel > 1:
         print(f"Parallelism: {parallel} concurrent sessions")
     print(f"App: {app_name}\n")
 
-    # Build job list: (test_case, run_index)
-    jobs = []
-    for tc in test_cases:
-        for run_idx in range(runs):
-            jobs.append((tc, run_idx))
-
-    all_results = []
     _batch_start = time.time()
-
-    if parallel <= 1:
-        # Sequential execution
-        for tc, run_idx in jobs:
-            result = _run_single_eval(app_name, tc, run_idx, runs, model, modality, args.verbose)
-            all_results.append(result)
-    else:
-        # Parallel execution
-        with ThreadPoolExecutor(max_workers=parallel) as executor:
-            futures = {}
-            for tc, run_idx in jobs:
-                future = executor.submit(
-                    _run_single_eval, app_name, tc, run_idx, runs,
-                    model, modality, False  # disable verbose in parallel mode
-                )
-                futures[future] = (tc["name"], run_idx)
-
-            for future in as_completed(futures):
-                result = future.result()
-                all_results.append(result)
+    sim = EnhancedSimRunner(
+        app_name=app_name,
+        user_agent_extension=USER_AGENT_EXTENSION,
+    )
+    all_results = sim.run_simulations(
+        test_cases=test_cases,
+        runs=runs,
+        parallel=parallel,
+        model=model,
+        modality=modality,
+        verbose=args.verbose,
+    )
 
     # Summary
     print(f"\n{'=' * 60}")

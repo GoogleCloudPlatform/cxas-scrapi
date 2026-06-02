@@ -574,12 +574,12 @@ class MissingCurrentDate(Rule):
     id = "I014"
     name = "missing-current-date"
     description = (
-        "Instruction should reference ${current_date} so the"
+        "Instruction should reference {current_date} so the"
         " agent knows today's date"
     )
     default_severity = Severity.WARNING
 
-    VALID_PATTERNS = re.compile(r"\$\{current_date\}|\$\{\{current_date\}\}")
+    VALID_PATTERNS = re.compile(r"\{current_date\}|\{\{current_date\}\}")
 
     _APPLICABLE_FILES = {"instruction.txt", "global_instruction.txt"}
 
@@ -628,8 +628,8 @@ class MissingCurrentDate(Rule):
                     " not know today's date"
                 ),
                 fix=(
-                    "Add ${current_date} or"
-                    " ${{current_date}} to the"
+                    "Add {current_date} or"
+                    " {{current_date}} to the"
                     " instruction or global"
                     " instruction"
                 ),

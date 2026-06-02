@@ -26,6 +26,7 @@ import io
 import json
 import logging
 import platform
+import re
 import subprocess
 import sys
 
@@ -135,6 +136,94 @@ def trace_list(args: argparse.Namespace) -> None:
             )
         )
     console.print(table)
+
+
+# --------------------------------- search -----------------------------------
+
+
+def trace_search(args: argparse.Namespace) -> None:
+    try:
+        traces = _build_traces(args)
+        rows = traces.search(
+            args.query,
+            match=args.match,
+            time_filter=args.time_filter,
+            sources=args.sources,
+            source_filter=args.source,
+            channel_filter=args.channel,
+            limit=args.limit,
+            page_size=args.page_size,
+            id_match=args.id_match,
+            with_snippets=args.snippets,
+        )
+    except Exception as e:
+        print(f"Search failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    fmt = args.format
+    if fmt == "json":
+        print(json.dumps(rows, indent=2, default=str))
+        return
+    if fmt == "csv":
+        if not rows:
+            return
+        fieldnames = [
+            "id",
+            "source",
+            "channel",
+            "start_time",
+            "end_time",
+            "ces_url",
+        ]
+        if args.snippets:
+            fieldnames.append("snippets")
+        writer = csv.DictWriter(
+            sys.stdout, fieldnames=fieldnames, extrasaction="ignore"
+        )
+        writer.writeheader()
+        for r in rows:
+            out = dict(r)
+            if args.snippets:
+                out["snippets"] = " | ".join(
+                    s.get("text", "") for s in r.get("snippets", [])
+                )
+            writer.writerow(out)
+        return
+
+    # default: table
+    table = Table(title=f'Search "{args.query}" ({len(rows)} matches)')
+    for col in ("id", "source", "channel", "start_time", "end_time"):
+        table.add_column(col)
+    if args.snippets:
+        table.add_column("match")
+    for r in rows:
+        cells = [
+            str(r.get(c) or "")
+            for c in ("id", "source", "channel", "start_time", "end_time")
+        ]
+        if args.snippets:
+            cells.append(_format_snippets(r.get("snippets", []), args.query))
+        table.add_row(*cells)
+    console.print(table)
+
+
+def _format_snippets(snippets: list, query: str) -> str:
+    """Renders snippet excerpts for a table cell, emphasizing the query."""
+    if not snippets:
+        return ""
+    lines = []
+    for s in snippets:
+        text = s.get("text", "")
+        # Case-insensitive highlight of each query word.
+        for word in {w for w in query.split() if w}:
+            text = re.sub(
+                f"({re.escape(word)})",
+                r"[bold yellow]\1[/bold yellow]",
+                text,
+                flags=re.IGNORECASE,
+            )
+        lines.append(f"[{s.get('kind')}] {text}")
+    return "\n".join(lines)
 
 
 # ---------------------------------- get -------------------------------------
@@ -475,6 +564,72 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--format", choices=["table", "json", "csv"], default="table"
     )
     p_list.set_defaults(func=trace_list)
+
+    # search
+    p_search = trace_subparsers.add_parser(
+        "search",
+        help="Find conversations whose transcript contains a query.",
+        description=(
+            "Searches conversations by transcript content using the same "
+            "server-side full-text search as the CES console search box. "
+            "Only the user + agent transcript is searched server-side; tool "
+            "call args, tool responses, and variables are not. Matching is "
+            "case-insensitive and substring/prefix based (e.g. 'crash' "
+            "matches 'crashing')."
+        ),
+    )
+    add_trace_args(p_search)
+    p_search.add_argument("query", help="Text to search for in transcripts.")
+    p_search.add_argument(
+        "--match",
+        choices=["phrase", "all", "any"],
+        default="phrase",
+        help=(
+            "Multi-word handling: 'phrase' (contiguous, the UI default), "
+            "'all' (every word must appear) or 'any' (any word). "
+            "Default: phrase."
+        ),
+    )
+    p_search.add_argument(
+        "--time-filter",
+        default=None,
+        help="Relative time filter (e.g. '7d', '24h'). Default: all time.",
+    )
+    p_search.add_argument(
+        "--source",
+        choices=["LIVE", "SIMULATOR", "EVAL"],
+        help="Filter by a single conversation source.",
+    )
+    p_search.add_argument(
+        "--sources",
+        nargs="+",
+        choices=["LIVE", "SIMULATOR", "EVAL"],
+        help="Filter by multiple sources (takes precedence over --source).",
+    )
+    p_search.add_argument(
+        "--channel",
+        choices=["TEXT", "AUDIO", "MULTIMODAL", "OTHER"],
+        help="Filter by input channel (client-side over input_types).",
+    )
+    p_search.add_argument("--limit", type=int)
+    p_search.add_argument(
+        "--page-size", type=int, help="Server-side page size hint."
+    )
+    p_search.add_argument(
+        "--no-id-match",
+        dest="id_match",
+        action="store_false",
+        help="Do not also match an exact customer_conversation_id.",
+    )
+    p_search.add_argument(
+        "--snippets",
+        action="store_true",
+        help="Fetch each match and show a highlighted transcript excerpt.",
+    )
+    p_search.add_argument(
+        "--format", choices=["table", "json", "csv"], default="table"
+    )
+    p_search.set_defaults(func=trace_search, id_match=True)
 
     # get
     p_get = trace_subparsers.add_parser(

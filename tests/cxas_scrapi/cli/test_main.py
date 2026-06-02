@@ -39,6 +39,32 @@ def test_get_parser():
     assert args.location == "us"
 
 
+def test_get_parser_llm_lint():
+    """Test that the parser can parse the llm-lint command."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "llm-lint",
+            "--agent-dir",
+            "/path/to/agent",
+            "--project-id",
+            "test-project",
+            "--location",
+            "us-central1",
+            "--model",
+            "gemini-2.5-flash",
+            "--output",
+            "/path/to/output.md",
+        ]
+    )
+    assert args.command == "llm-lint"
+    assert args.agent_dir == "/path/to/agent"
+    assert args.project_id == "test-project"
+    assert args.location == "us-central1"
+    assert args.model == "gemini-2.5-flash"
+    assert args.output == "/path/to/output.md"
+
+
 def test_cli_installed_help():
     """Test that the 'cxas' command is installed and executable (verifies
     setup.py)."""

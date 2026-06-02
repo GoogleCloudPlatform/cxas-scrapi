@@ -193,9 +193,7 @@ def test_i014_in_global_only(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
-    (tmp_path / "global_instruction.txt").write_text(
-        "Today is ${current_date}."
-    )
+    (tmp_path / "global_instruction.txt").write_text("Today is {current_date}.")
     f = tmp_path / "instruction.txt"
     f.write_text("No date here.")
 
@@ -208,11 +206,9 @@ def test_i014_in_global_and_agent(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
-    (tmp_path / "global_instruction.txt").write_text(
-        "Today is ${current_date}."
-    )
+    (tmp_path / "global_instruction.txt").write_text("Today is {current_date}.")
     f = tmp_path / "instruction.txt"
-    f.write_text("Date: ${current_date}.")
+    f.write_text("Date: {current_date}.")
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -227,7 +223,7 @@ def test_i014_in_all_agents_not_global(tmp_path, context):
     for name in ("agent_a", "agent_b"):
         d = tmp_path / "agents" / name
         d.mkdir(parents=True)
-        (d / "instruction.txt").write_text("Date: ${current_date}.")
+        (d / "instruction.txt").write_text("Date: {current_date}.")
     # Global does not have it
     gi = tmp_path / "global_instruction.txt"
     gi.write_text("No date here.")
@@ -244,7 +240,7 @@ def test_i014_in_some_agents_not_global(tmp_path, context):
     # agent_a has it, agent_b does not
     a = tmp_path / "agents" / "agent_a"
     a.mkdir(parents=True)
-    (a / "instruction.txt").write_text("Date: ${current_date}.")
+    (a / "instruction.txt").write_text("Date: {current_date}.")
     b = tmp_path / "agents" / "agent_b"
     b.mkdir(parents=True)
     (b / "instruction.txt").write_text("No date here.")
@@ -268,12 +264,12 @@ def test_i014_in_some_agents_not_global(tmp_path, context):
 
 
 def test_i014_accepts_double_brace_syntax(tmp_path, context):
-    """${{current_date}} syntax is also valid."""
+    """{{current_date}} syntax is also valid."""
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
     f = tmp_path / "global_instruction.txt"
-    f.write_text("Today is ${{current_date}}.")
+    f.write_text("Today is {{current_date}}.")
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0

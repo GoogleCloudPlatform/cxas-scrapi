@@ -1,0 +1,1307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ app_name }} · DFCX → CXAS Migration Analysis</title>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  window.__mermaid__ = mermaid;
+  mermaid.initialize({ startOnLoad: false, theme: 'default', flowchart: { curve: 'basis', htmlLabels: true } });
+  window.dispatchEvent(new Event('mermaid:ready'));
+</script>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --panel: #ffffff;
+    --panel2: #eef2f7;
+    --ink: #0f172a;
+    --muted: #64748b;
+    --accent: #0369a1;
+    --accent2: #6d28d9;
+    --det: #b45309;
+    --det-bg: #fef3c7;
+    --gen: #047857;
+    --gen-bg: #d1fae5;
+    --critical: #be123c;
+    --critical-bg: #fee2e2;
+    --code-bg: #f1f5f9;
+    --border: #cbd5e1;
+    --dfcx: #b45309;
+    --cxas: #047857;
+    --group: #6d28d9;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.55; scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { background: var(--code-bg); padding: 1.5px 6px; border-radius: 4px;
+    font-size: 12.5px; color: #92400e; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; font-size: 12px; line-height: 1.5;
+    color: #1e293b; margin: 8px 0; white-space: pre-wrap; word-break: break-word; }
+
+  /* Header band */
+  .header { position: sticky; top: 0; z-index: 100; background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border); padding: 14px 32px; }
+  .header-row { display: flex; align-items: center; gap: 20px; max-width: 1500px; margin: 0 auto; }
+  .brand { font-size: 15px; font-weight: 600; color: var(--accent); flex-shrink: 0; }
+  .brand .sub { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .search-wrap { flex: 1; position: relative; max-width: 460px; margin-left: auto; }
+  .search-input { width: 100%; padding: 8px 12px 8px 32px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px; color: var(--ink); font-size: 13px;
+    outline: none; transition: border-color 0.15s; }
+  .search-input:focus { border-color: var(--accent); }
+  .search-wrap::before { content: "🔍"; position: absolute; left: 10px; top: 50%;
+    transform: translateY(-50%); font-size: 12px; opacity: 0.5; pointer-events: none; }
+  .search-results { position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); max-height: 360px; overflow-y: auto;
+    display: none; z-index: 200; }
+  .search-results.open { display: block; }
+  .search-result { padding: 8px 12px; cursor: pointer; display: flex; gap: 10px;
+    align-items: center; font-size: 13px; border-bottom: 1px solid var(--border); }
+  .search-result:last-child { border-bottom: none; }
+  .search-result:hover, .search-result.active {
+    background: var(--panel2); color: var(--accent); }
+  .search-result .kind { font-size: 10px; padding: 2px 6px; border-radius: 4px;
+    font-weight: 700; flex-shrink: 0; }
+  .search-result .kind.A { background: #ede9fe; color: #6d28d9; }
+  .search-result .kind.T { background: var(--gen-bg); color: var(--gen); }
+  .search-result .kind.S { background: var(--det-bg); color: var(--det); }
+  .search-result .kind.V { background: var(--panel2); color: var(--muted); }
+  .search-result .kind.F { background: var(--det-bg); color: var(--dfcx); }
+  .search-result .kind.P { background: #e0f2fe; color: #0369a1; }
+  .search-result .kind.E { background: #e2e8f0; color: #0f172a; }
+  .search-result .meta { color: var(--muted); font-size: 11px; margin-left: auto; }
+  .search-empty { padding: 12px; color: var(--muted); font-size: 12px; text-align: center; }
+  .search-more { padding: 8px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; max-width: 1500px; margin: 8px auto 0; padding: 0;
+    border-bottom: 1px solid var(--border); }
+  .tab { padding: 10px 18px; cursor: pointer; color: var(--muted); font-size: 13.5px;
+    font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s; user-select: none; white-space: nowrap; }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab-badge { display: inline-block; margin-left: 6px; font-size: 10px; padding: 1px 6px;
+    background: var(--panel2); color: var(--muted); border-radius: 999px; font-weight: 600; }
+  .tab.active .tab-badge { background: var(--accent); color: var(--bg); }
+
+  /* Main / panels */
+  main { padding: 32px; max-width: 1500px; margin: 0 auto; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  h1 { font-size: 26px; margin: 0 0 4px; line-height: 1.2; }
+  h1 .sub { font-size: 13px; color: var(--muted); font-weight: 400; }
+  h2 { font-size: 18px; margin-top: 34px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--border); color: var(--accent); }
+  h3 { font-size: 15px; margin-top: 22px; color: var(--accent2); }
+  h4 { font-size: 13px; margin: 16px 0 8px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+  p, li { font-size: 14px; }
+
+  /* Cards & grids */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 20px 0; }
+  .kpi-card { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; }
+  .kpi-card .label { font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.08em; }
+  .kpi-card .value { font-size: 24px; font-weight: 700; color: var(--accent); margin-top: 6px; }
+  .kpi-card .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .callout { border-left: 4px solid var(--accent); background: var(--panel);
+    padding: 14px 16px; margin: 16px 0; border-radius: 0 8px 8px 0; font-size: 13.5px; }
+  .callout.det { border-left-color: var(--det); }
+  .callout.gen { border-left-color: var(--gen); background: rgba(6, 78, 59, 0.2); }
+  .callout.crit { border-left-color: var(--critical); background: rgba(76, 5, 25, 0.3); }
+  .callout h4 { color: var(--accent); margin-top: 0; }
+  .callout.det h4 { color: var(--det); }
+  .callout.gen h4 { color: var(--gen); }
+  .callout.crit h4 { color: var(--critical); }
+
+  .mermaid { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; margin: 14px 0; text-align: center; min-height: 100px; }
+
+  /* Pills & badges */
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    font-weight: 600; letter-spacing: 0.02em; vertical-align: middle; margin: 1px 2px;
+    cursor: default; text-transform: uppercase; }
+  .pill.clickable { cursor: pointer; transition: background 0.15s; }
+  .pill.clickable:hover { background: var(--panel2); }
+  .pill.tool { background: var(--gen-bg); color: var(--gen); border: 1px solid var(--gen); text-transform: none; }
+  .pill.toolset { background: var(--det-bg); color: var(--det); border: 1px solid var(--det); text-transform: none; }
+  .pill.agent { background: #ede9fe; color: #6d28d9; border: 1px solid var(--group); text-transform: none; }
+  .pill.flow { background: var(--det-bg); color: var(--dfcx); border: 1px solid var(--dfcx); text-transform: none; }
+  .pill.var { background: var(--panel2); color: #334155; border: 1px solid #94a3b8; text-transform: none; font-family: ui-monospace, monospace; }
+  .pill.warn { background: var(--det-bg); color: var(--det); border: 1px solid var(--det); }
+  .pill.gen { background: var(--gen-bg); color: var(--gen); border: 1px solid var(--gen); }
+  .pill.pass { background: var(--gen-bg); color: var(--gen); border: 1px solid var(--gen); }
+  .pill.fail { background: var(--critical-bg); color: var(--critical); border: 1px solid var(--critical); }
+  .pill.group { background: #ede9fe; color: var(--group); border: 1px solid var(--group); }
+  .pill-list { display: flex; flex-wrap: wrap; gap: 4px; }
+
+  .badge { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 4px;
+    font-weight: 700; letter-spacing: 0.04em; margin-right: 4px; vertical-align: middle; }
+  .badge.mock-fn { background: rgba(245, 158, 11, 0.15); color: var(--det); border: 1px solid rgba(245,158,11,0.4); }
+  .badge.mock-server { background: rgba(244, 63, 94, 0.15); color: var(--critical); border: 1px solid rgba(244,63,94,0.4); }
+  .badge.real { background: var(--gen-bg); color: var(--gen); border: 1px solid var(--gen); }
+
+  /* Agent overview cards (CXAS Agents tab) */
+  .agent-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 16px 0; }
+  @media (max-width: 1100px) { .agent-grid { grid-template-columns: 1fr; } }
+  .agent-card { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; border-top: 4px solid var(--group);
+    cursor: pointer; transition: transform 0.12s, border-color 0.12s; }
+  .agent-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .agent-card h3 { margin: 0 0 4px; color: var(--group); font-size: 17px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .agent-card .role { color: var(--muted); font-size: 12.5px; margin-bottom: 14px; min-height: 2.6em; }
+  .agent-card .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  .agent-card .stat { background: var(--code-bg); padding: 8px; border-radius: 6px; text-align: center; }
+  .agent-card .stat .n { font-size: 18px; font-weight: 700; color: var(--accent); }
+  .agent-card .stat .l { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+  .agent-card .rationale { font-size: 12px; color: var(--ink); line-height: 1.5;
+    padding: 10px; background: rgba(167, 139, 250, 0.06); border-left: 3px solid var(--group);
+    border-radius: 0 6px 6px 0; }
+  .agent-card .rationale strong { color: var(--accent2); }
+  .agent-card .peek { margin-top: 14px; font-size: 12px; color: var(--accent); }
+
+  /* Sankey-style flow → group strip */
+  .sankey { display: grid; grid-template-columns: 1fr auto 1fr; gap: 18px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; margin: 14px 0; align-items: center; }
+  .sankey-col h4 { margin: 0 0 8px; }
+  .sankey-arrow { color: var(--muted); font-size: 20px; }
+  .sankey-group { margin-bottom: 12px; padding: 8px; background: rgba(167,139,250,0.08);
+    border-left: 3px solid var(--group); border-radius: 0 6px 6px 0; }
+  .sankey-group strong { color: var(--accent2); font-size: 13px; }
+  .sankey-group .pill-list { margin-top: 6px; }
+
+  /* Entity grid (tools, toolsets, vars, flows, pipeline) */
+  .filter-row { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
+  .filter-input { flex: 1; padding: 8px 12px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; color: var(--ink); font-size: 13px; outline: none; }
+  .filter-input:focus { border-color: var(--accent); }
+  .filter-count { font-size: 12px; color: var(--muted); }
+  .entity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px; margin: 14px 0; }
+  .entity-card { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; cursor: pointer; transition: transform 0.12s, border-color 0.12s; }
+  .entity-card:hover { transform: translateY(-1px); border-color: var(--accent); }
+  .entity-card .name { font-weight: 600; color: var(--ink); font-size: 13px; word-break: break-all;
+    font-family: ui-monospace, monospace; }
+  .entity-card .desc { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.45; min-height: 2.2em; }
+  .entity-card .meta { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+  .empty-state { padding: 24px; text-align: center; color: var(--muted); font-size: 13px;
+    background: var(--panel); border: 1px dashed var(--border); border-radius: 8px; }
+  .empty-state button { margin-left: 8px; padding: 4px 10px; background: var(--accent);
+    color: var(--bg); border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
+
+  /* Subtabs (Tools & Variables) */
+  .subtabs { display: flex; gap: 4px; margin: 14px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+  .subtab { padding: 6px 14px; cursor: pointer; color: var(--muted); font-size: 12.5px;
+    border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.15s; user-select: none; }
+  .subtab:hover { color: var(--ink); }
+  .subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .subpanel { display: none; }
+  .subpanel.active { display: block; }
+
+  /* Pipeline timeline */
+  .timeline { display: flex; gap: 8px; overflow-x: auto; padding: 8px 0; margin: 14px 0; }
+  .timeline-step { flex: 0 0 240px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; cursor: pointer; transition: transform 0.12s, border-color 0.12s; }
+  .timeline-step:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .timeline-step .step-name { font-weight: 600; color: var(--accent2); font-size: 13px; word-break: break-all; }
+  .timeline-step .step-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .timeline-step .step-what { font-size: 12px; color: var(--ink); margin-top: 8px; line-height: 1.4; }
+  .timeline-step .step-kind { display: inline-block; font-size: 9px; padding: 1px 6px;
+    border-radius: 4px; font-weight: 700; margin-bottom: 4px; }
+  .timeline-step .step-kind.skill { background: #ede9fe; color: #6d28d9; }
+  .timeline-step .step-kind.custom { background: var(--det-bg); color: var(--det); }
+
+  /* Tables */
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--panel); color: var(--muted); font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.05em; }
+  tr:hover td { background: rgba(56, 189, 248, 0.08); }
+  .bar { display: inline-block; width: 110px; height: 6px; background: var(--panel2);
+    border-radius: 999px; overflow: hidden; margin-right: 8px; vertical-align: middle; }
+  .bar > span { display: block; height: 100%; background: var(--gen); }
+  .bar.warn > span { background: var(--det); }
+  .bar.fail > span { background: var(--critical); }
+
+  /* Drawer */
+  .drawer-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.18);
+    pointer-events: none; opacity: 0; transition: opacity 0.2s; z-index: 300; }
+  .drawer-backdrop.open { opacity: 1; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 520px; max-width: 100vw;
+    background: var(--bg); border-left: 1px solid var(--border); transform: translateX(100%);
+    transition: transform 0.25s ease; z-index: 310; display: flex; flex-direction: column;
+    box-shadow: -8px 0 32px rgba(15, 23, 42, 0.18); }
+  .drawer.open { transform: translateX(0); }
+  .drawer-header { padding: 14px 18px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px; }
+  .drawer-history { flex: 1; font-size: 11px; color: var(--muted); display: flex;
+    gap: 4px; align-items: center; flex-wrap: wrap; min-width: 0; overflow: hidden; }
+  .drawer-history .crumb { cursor: pointer; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+  .drawer-history .crumb:hover { color: var(--accent); background: var(--panel); }
+  .drawer-history .crumb.current { color: var(--ink); font-weight: 600; }
+  .drawer-back, .drawer-close { background: var(--panel); border: 1px solid var(--border);
+    color: var(--ink); width: 28px; height: 28px; border-radius: 6px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 14px; }
+  .drawer-back:hover, .drawer-close:hover { background: var(--panel2); }
+  .drawer-back:disabled { opacity: 0.4; cursor: not-allowed; }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 18px; }
+  .drawer-title { font-size: 18px; font-weight: 600; color: var(--accent); margin: 0 0 4px;
+    word-break: break-all; font-family: ui-monospace, monospace; }
+  .drawer-subtitle { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+  .drawer-section { margin: 16px 0; }
+  .drawer-section h4 { margin: 0 0 6px; }
+  .drawer-row { display: flex; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border);
+    font-size: 13px; }
+  .drawer-row .k { color: var(--muted); min-width: 110px; font-size: 12px; }
+  .drawer-row .v { color: var(--ink); word-break: break-all; flex: 1; }
+  .drawer .pill { cursor: pointer; }
+
+  /* Drawer subtabs (for agent view) */
+  .drawer-subtabs { display: flex; gap: 2px; margin: 0 0 14px; border-bottom: 1px solid var(--border); }
+  .drawer-subtab { padding: 6px 12px; cursor: pointer; color: var(--muted); font-size: 12px;
+    border-bottom: 2px solid transparent; margin-bottom: -1px; user-select: none; }
+  .drawer-subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Footer / legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px;
+    color: var(--muted); margin: 16px 0; }
+  .legend .sw { display: inline-block; width: 11px; height: 11px;
+    border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+  .ref-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 12px 0; }
+  .ref-item { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px; font-size: 12px; }
+  .ref-item .l { color: var(--muted); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; margin-bottom: 2px; }
+  .ref-item a { color: var(--accent); text-decoration: none; word-break: break-all; }
+  .ref-item a:hover { text-decoration: underline; }
+
+  a { color: var(--accent); }
+
+  /* Eval list (inside agent drawer + Evals tab) */
+  .eval-list { display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px; background: var(--code-bg); }
+  .eval-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 4px;
+    cursor: pointer; transition: background 0.12s; font-size: 12.5px; }
+  .eval-row:hover { background: var(--panel2); }
+  .eval-row .eval-name { flex: 1; color: var(--ink); font-family: ui-monospace, monospace;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .eval-row .eval-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  /* Evals tab grid (full-page list) */
+  #grid-evals { display: flex; flex-direction: column; gap: 4px;
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px; background: var(--panel); margin-top: 12px; }
+  #grid-evals .eval-row { padding: 8px 12px; font-size: 13px; border-bottom: 1px solid var(--border); border-radius: 0; }
+  #grid-evals .eval-row:last-child { border-bottom: none; }
+  #grid-evals .eval-row .eval-tags { display: flex; gap: 4px; flex-wrap: wrap; max-width: 200px; justify-content: flex-end; }
+
+  /* Print */
+  @media print {
+    .header, .tab, .drawer-backdrop, .drawer-close, .drawer-back, .search-wrap { display: none !important; }
+    .drawer { position: relative; transform: none; width: 100%; box-shadow: none;
+      border-left: none; border-top: 2px solid var(--accent); margin-top: 30px; }
+    .panel { display: block !important; }
+    body { background: white; color: black; }
+    main { max-width: 100%; padding: 8px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-row">
+    <div class="brand">{{ app_name }} · DFCX → CXAS<span class="sub">Migration analysis · {{ generated_at }}</span></div>
+    <div class="search-wrap">
+      <input type="text" class="search-input" id="search" placeholder="Search agents, tools, variables, flows…" autocomplete="off">
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <div class="tab active" data-tab="overview">Overview</div>
+    <div class="tab" data-tab="agents">CXAS Agents <span class="tab-badge" id="agents-count"></span></div>
+    <div class="tab" data-tab="tools">Tools &amp; Variables <span class="tab-badge" id="tv-count"></span></div>
+    <div class="tab" data-tab="evals">Evals <span class="tab-badge" id="evals-count"></span></div>
+    <div class="tab" data-tab="dfcx">DFCX Source <span class="tab-badge" id="dfcx-count"></span></div>
+    <div class="tab" data-tab="pipeline">Pipeline <span class="tab-badge" id="pipe-count"></span></div>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ===================== OVERVIEW ===================== -->
+  <section class="panel active" id="panel-overview">
+    <h1>{{ app_name }}
+      <div class="sub">DFCX → CXAS migration analysis · target <code>{{ target_name }}</code> · generated {{ generated_at }}</div>
+    </h1>
+
+    <div class="kpi-grid" id="kpi-grid"></div>
+
+    <div class="callout" id="overview-callout" style="display:none;">
+      <h4>About this agent</h4>
+      <span id="overview-description"></span>
+    </div>
+
+    <h2>End-to-end user journey</h2>
+    <div class="mermaid" data-mermaid="overview" id="overview-mermaid">{{ mermaid_chart | safe }}</div>
+
+    <h2>Migration headline numbers</h2>
+    <div class="kpi-grid" id="kpi-grid-2"></div>
+
+    <h2>Legend</h2>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--dfcx);"></span>DFCX flow</span>
+      <span><span class="sw" style="background:var(--cxas);"></span>CXAS tool</span>
+      <span><span class="sw" style="background:var(--group);"></span>CXAS agent (group)</span>
+      <span><span class="sw" style="background:var(--det);"></span>OpenAPI toolset</span>
+      <span><span class="sw" style="background:var(--muted);"></span>Session variable</span>
+    </div>
+    <p style="font-size: 12px; color: var(--muted);">
+      Click any agent / tool / variable / flow pill or card to open the inspector drawer.
+      Cross-links inside the drawer let you traverse: agent → tools → "used by" → another agent.
+    </p>
+
+    <h2>References</h2>
+    <div class="ref-list" id="ref-list"></div>
+  </section>
+
+  <!-- ===================== CXAS AGENTS ===================== -->
+  <section class="panel" id="panel-agents">
+    <h1>CXAS Agents <div class="sub" id="agents-subtitle">click a card to inspect</div></h1>
+
+    <h2 id="sankey-header">DFCX flows → CXAS groups</h2>
+    <div class="sankey" id="sankey"></div>
+
+    <h2>Consolidated agents</h2>
+    <p style="font-size: 13px; color: var(--muted); margin-top: -8px;">
+      Each card shows the absorbed source flows, tool/toolset counts, and Gemini's grouping rationale.
+      Click the card to inspect the agent's instruction, callbacks, attached tools, and eval coverage.
+    </p>
+    <div class="agent-grid" id="agent-grid"></div>
+  </section>
+
+  <!-- ===================== TOOLS & VARIABLES ===================== -->
+  <section class="panel" id="panel-tools">
+    <h1>Tools &amp; Variables <div class="sub">building blocks shared across the 3 agents</div></h1>
+
+    <div class="subtabs" id="subtabs-tv">
+      <div class="subtab active" data-sub="tools">Python Tools <span class="tab-badge" id="sub-tools-count"></span></div>
+      <div class="subtab" data-sub="toolsets">OpenAPI Toolsets <span class="tab-badge" id="sub-toolsets-count"></span></div>
+      <div class="subtab" data-sub="vars">Variables <span class="tab-badge" id="sub-vars-count"></span></div>
+    </div>
+
+    <div class="subpanel active" id="sub-tools">
+      <div class="filter-row">
+        <input type="text" class="filter-input" id="filter-tools" placeholder="Filter tools by name or description…">
+        <span class="filter-count" id="count-tools"></span>
+      </div>
+      <div class="entity-grid" id="grid-tools"></div>
+    </div>
+
+    <div class="subpanel" id="sub-toolsets">
+      <div class="filter-row">
+        <input type="text" class="filter-input" id="filter-toolsets" placeholder="Filter toolsets…">
+        <span class="filter-count" id="count-toolsets"></span>
+      </div>
+      <div class="entity-grid" id="grid-toolsets"></div>
+    </div>
+
+    <div class="subpanel" id="sub-vars">
+      <div class="filter-row">
+        <input type="text" class="filter-input" id="filter-vars" placeholder="Filter variables by name…">
+        <span class="filter-count" id="count-vars"></span>
+      </div>
+      <div id="grid-vars"></div>
+    </div>
+  </section>
+
+  <!-- ===================== EVALS ===================== -->
+  <section class="panel" id="panel-evals">
+    <h1>Sim Evals <div class="sub">populated after sim runs · stubbed until evals exist</div></h1>
+    <div class="kpi-grid" id="eval-kpis"></div>
+    <div class="filter-row" id="eval-filter-row" style="display:none;">
+      <input type="text" class="filter-input" id="filter-evals" placeholder="Filter evals by name, tag, or agent…">
+      <select id="filter-eval-pass" style="padding:8px 10px; background:var(--panel); border:1px solid var(--border); color:var(--ink); border-radius:6px; font-size:13px;">
+        <option value="">All results</option>
+        <option value="pass">Pass only</option>
+        <option value="fail">Fail only</option>
+      </select>
+      <select id="filter-eval-agent" style="padding:8px 10px; background:var(--panel); border:1px solid var(--border); color:var(--ink); border-radius:6px; font-size:13px;">
+        <option value="">All agents</option>
+      </select>
+      <span class="filter-count" id="count-evals"></span>
+    </div>
+    <div id="grid-evals"></div>
+    <div class="callout" id="eval-stub">
+      <h4>No sim evals captured yet</h4>
+      <p style="margin:6px 0 0;">Run sim evals against this migrated app and re-run <code>cxas migrate</code> (or any stage) to repopulate this tab. Suggested command:</p>
+      <pre>cxas sim-eval --app-name {{ target_name }} --suite &lt;your_suite&gt;</pre>
+      <p style="font-size: 11.5px; color: var(--muted); margin-top: 10px;">For live conversation traces, use <code>cxas trace get --session-id &lt;id&gt;</code>.</p>
+    </div>
+  </section>
+
+  <!-- ===================== DFCX SOURCE ===================== -->
+  <section class="panel" id="panel-dfcx">
+    <h1>DFCX Source Flows <div class="sub">sorted by page count · click to see absorption mapping</div></h1>
+    <div class="filter-row">
+      <input type="text" class="filter-input" id="filter-flows" placeholder="Filter flows…">
+      <span class="filter-count" id="count-flows"></span>
+    </div>
+    <div class="entity-grid" id="grid-flows"></div>
+  </section>
+
+  <!-- ===================== PIPELINE ===================== -->
+  <section class="panel" id="panel-pipeline">
+    <h1>Migration Pipeline <div class="sub">skill scripts + custom post-fix scripts that produced the final state</div></h1>
+    <p style="font-size: 13px; color: var(--muted);">
+      Click any step to see what it changed, its duration, and outputs.
+      Skill scripts come from <code>.agents/skills/cxas-dfcx-migration/scripts/</code>; custom scripts live at the repo root.
+    </p>
+    <h2>Timeline</h2>
+    <div class="timeline" id="timeline"></div>
+    <h2>What each step changed</h2>
+    <div class="entity-grid" id="grid-pipeline"></div>
+  </section>
+
+</main>
+
+<!-- Drawer -->
+<div class="drawer-backdrop" id="drawer-backdrop"></div>
+<aside class="drawer" id="drawer">
+  <header class="drawer-header">
+    <button class="drawer-back" id="drawer-back" title="Back">←</button>
+    <div class="drawer-history" id="drawer-history"></div>
+    <button class="drawer-close" id="drawer-close" title="Close (Esc)">×</button>
+  </header>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+<script type="application/json" id="report-data">{{ data_json | safe }}</script>
+<script>
+(function() {
+  'use strict';
+  const DATA = JSON.parse(document.getElementById('report-data').textContent);
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  // ----------- entity lookup helpers
+  function findAgent(name) { return DATA.agents[name] || null; }
+  function findTool(name) { return DATA.tools[name] || null; }
+  function findToolset(name) { return DATA.toolsets[name] || null; }
+  function findVariable(name) { return DATA.variables.find(v => v.name === name) || null; }
+  function findFlow(name) { return DATA.flows.find(f => f.name === name) || null; }
+  function findPipelineStep(name) { return DATA.pipeline.find(p => p.name === name) || null; }
+  function findEval(name) {
+    const all = (DATA.eval_traces && DATA.eval_traces.all) || [];
+    return all.find(e => e.name === name) || null;
+  }
+  function evalsForAgent(agentName) {
+    return ((DATA.eval_traces && DATA.eval_traces.by_agent) || {})[agentName] || [];
+  }
+
+  // ----------- drawer state
+  const drawer = $('#drawer');
+  const backdrop = $('#drawer-backdrop');
+  const drawerBody = $('#drawer-body');
+  const drawerHistory = $('#drawer-history');
+  const drawerBack = $('#drawer-back');
+  const drawerClose = $('#drawer-close');
+  let historyStack = []; // entries: { type, key, label }
+  let backDepth = 0;     // for distinguishing "back" navigation from "new push"
+
+  function entityLabel(type, key) {
+    return key;
+  }
+
+  function openDrawer(type, key, fromBack) {
+    const renderer = RENDERERS[type];
+    if (!renderer) { console.warn('no renderer for', type); return; }
+    const entity = renderer.find(key);
+    if (!entity) { console.warn('not found', type, key); return; }
+    if (!fromBack) historyStack.push({ type, key, label: entityLabel(type, key) });
+    drawer.classList.add('open');
+    backdrop.classList.add('open');
+    drawerBody.innerHTML = renderer.render(entity);
+    drawerBody.scrollTop = 0;
+    drawerBack.disabled = historyStack.length < 2;
+    renderHistory();
+    bindDrawerLinks();
+    setHash(type, key);
+  }
+
+  function closeDrawer() {
+    drawer.classList.remove('open');
+    backdrop.classList.remove('open');
+    historyStack = [];
+    drawerBack.disabled = true;
+    drawerHistory.innerHTML = '';
+    // strip entity from hash
+    const m = (location.hash || '').match(/^#tab\/([^/]+)/);
+    history.replaceState(null, '', m ? '#tab/' + m[1] : '#');
+  }
+
+  function back() {
+    if (historyStack.length < 2) return;
+    historyStack.pop();
+    const prev = historyStack[historyStack.length - 1];
+    openDrawer(prev.type, prev.key, true);
+  }
+
+  function renderHistory() {
+    const last = historyStack.slice(-3);
+    drawerHistory.innerHTML = last.map((h, i) => {
+      const isLast = i === last.length - 1;
+      return `<span class="crumb${isLast?' current':''}" data-i="${historyStack.length - last.length + i}">${esc(h.label.length > 28 ? h.label.slice(0,26)+'…' : h.label)}</span>` +
+             (isLast ? '' : '<span style="opacity:0.5;">›</span>');
+    }).join('');
+    drawerHistory.querySelectorAll('.crumb').forEach(c => {
+      c.addEventListener('click', () => {
+        const i = parseInt(c.dataset.i, 10);
+        historyStack = historyStack.slice(0, i + 1);
+        const e = historyStack[historyStack.length - 1];
+        openDrawer(e.type, e.key, true);
+      });
+    });
+  }
+
+  function bindDrawerLinks() {
+    drawerBody.querySelectorAll('[data-entity-type]').forEach(el => {
+      el.classList.add('clickable');
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        openDrawer(el.dataset.entityType, el.dataset.entityKey);
+      });
+    });
+    drawerBody.querySelectorAll('[data-subtab]').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        const targetTab = el.dataset.subtab;
+        const wrap = el.closest('.drawer-subtabs').parentElement;
+        wrap.querySelectorAll('.drawer-subtab').forEach(t => t.classList.toggle('active', t === el));
+        wrap.querySelectorAll('.drawer-sub-pane').forEach(p => p.classList.toggle('active', p.dataset.subtab === targetTab));
+      });
+    });
+    drawerBody.querySelectorAll('[data-go-tab]').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        setActiveTab(el.dataset.goTab);
+        // optionally close drawer if jumping tabs
+      });
+    });
+  }
+
+  drawerClose.addEventListener('click', closeDrawer);
+  drawerBack.addEventListener('click', back);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && drawer.classList.contains('open')) closeDrawer();
+  });
+
+  // ----------- RENDERERS
+  function pill(type, key, label, extra) {
+    return `<span class="pill ${type}" data-entity-type="${type==='flow'?'flow':type==='agent'?'agent':type==='tool'?'tool':type==='toolset'?'toolset':type==='var'?'var':type}" data-entity-key="${esc(key)}">${esc(label||key)}${extra?' '+extra:''}</span>`;
+  }
+  function badge(cls, label) {
+    return `<span class="badge ${cls}">${esc(label)}</span>`;
+  }
+
+  const RENDERERS = {
+    agent: {
+      find: name => findAgent(name),
+      render: a => {
+        const evals = DATA.evals[a.name];
+        const pctClass = evals && evals.pct >= 90 ? 'pass' : evals && evals.pct >= 70 ? 'warn' : 'fail';
+        const tabsHtml = `
+          <div class="drawer-subtabs">
+            <div class="drawer-subtab active" data-subtab="ov">Overview</div>
+            <div class="drawer-subtab" data-subtab="instr">Instruction</div>
+            <div class="drawer-subtab" data-subtab="tools">Tools</div>
+            ${evals ? '<div class="drawer-subtab" data-subtab="evals">Evals</div>' : ''}
+          </div>`;
+        const overview = `
+          <div class="drawer-sub-pane active" data-subtab="ov">
+            <div class="drawer-row"><span class="k">Role</span><span class="v">${esc(a.description||'(no description)')}</span></div>
+            <div class="drawer-row"><span class="k">Root?</span><span class="v">${a.is_root ? 'yes — app entry point' : 'no'}</span></div>
+            <div class="drawer-row"><span class="k">Model</span><span class="v"><code>${esc(a.model||'?')}</code></span></div>
+            <div class="drawer-row"><span class="k">Callbacks</span><span class="v">${a.callbacks.before_files} before · ${a.callbacks.after_files} after  <span class="badge mock-fn" title="defs collapsed by merge_callbacks_v2.py">${a.callbacks.before_stacked_defs}/${a.callbacks.after_stacked_defs} stacked defs</span></span></div>
+            <div class="drawer-row"><span class="k">Child agents</span><span class="v">${a.child_agents.length ? a.child_agents.map(c => pill('agent', c, c)).join('') : '<span style="color:var(--muted);">(none — leaf)</span>'}</span></div>
+            <div class="drawer-section">
+              <h4>Absorbed DFCX flows (${a.absorbed_flows.length})</h4>
+              <div class="pill-list">${a.absorbed_flows.map(f => pill('flow', f, f)).join('')}</div>
+            </div>
+            <div class="drawer-section">
+              <h4>Grouping rationale</h4>
+              <div class="callout"><strong style="color:var(--accent2);">Journey:</strong> ${esc(a.journey)}<br><br><strong style="color:var(--accent2);">Rationale:</strong> ${esc(a.rationale)}</div>
+            </div>
+          </div>`;
+        const instr = `
+          <div class="drawer-sub-pane" data-subtab="instr">
+            <div class="drawer-section">
+              <h4>PIF/XML instruction (excerpt)</h4>
+              <pre>${esc(a.instruction_excerpt)}</pre>
+            </div>
+          </div>`;
+        const tools = `
+          <div class="drawer-sub-pane" data-subtab="tools">
+            <div class="drawer-section">
+              <h4>Attached Python tools (${a.tools.length})</h4>
+              <div class="pill-list">${a.tools.map(t => {
+                const tdat = findTool(t);
+                const mockBadge = tdat && tdat.mocked_fn ? ' <span class="badge mock-fn">mock-fn</span>' : '';
+                return pill('tool', t, t, mockBadge);
+              }).join('')}</div>
+            </div>
+            <div class="drawer-section">
+              <h4>OpenAPI toolsets (${a.toolsets.length})</h4>
+              <div class="pill-list">${a.toolsets.map(t => {
+                const tdat = findToolset(t);
+                const mockBadge = tdat && tdat.mocked_server ? ' <span class="badge mock-server">mock-server</span>' : '';
+                return pill('toolset', t, t, mockBadge);
+              }).join('')}</div>
+            </div>
+          </div>`;
+        const agentEvals = evalsForAgent(a.name);
+        const agentEvalsPass = agentEvals.filter(e => e.passed).length;
+        const evalListHtml = agentEvals.length ? `
+          <div class="drawer-section">
+            <h4>Individual evals (${agentEvalsPass} / ${agentEvals.length} pass) — click to inspect trace</h4>
+            <div class="eval-list">
+              ${agentEvals.map(e => `
+                <div class="eval-row" data-entity-type="eval" data-entity-key="${esc(e.name)}">
+                  <span class="pill ${e.passed?'pass':'fail'}" style="min-width:46px; text-align:center;">${e.passed?'PASS':'FAIL'}</span>
+                  <span class="eval-name">${esc(e.name)}</span>
+                  <span class="eval-meta">${e.turns}t · ${e.duration_s}s · ${esc(e.primary_tag)}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : '<div style="color:var(--muted); font-size:12px;">No eval traces embedded for this agent.</div>';
+        const evalsHtml = evals ? `
+          <div class="drawer-sub-pane" data-subtab="evals">
+            <div class="callout ${pctClass==='pass'?'gen':pctClass==='warn'?'det':'crit'}">
+              <h4>Sim eval coverage: ${evals.pass} / ${evals.total} (${evals.pct.toFixed(1)}%)</h4>
+              <table><thead><tr><th>Tag</th><th>Pass / Total</th><th>Rate</th></tr></thead><tbody>
+              ${evals.tags.map(t => {
+                const rate = (t.p / t.t * 100) || 0;
+                const cls = rate >= 90 ? '' : rate >= 50 ? 'warn' : 'fail';
+                return `<tr><td>${esc(t.tag)}</td><td>${t.p} / ${t.t}</td><td><span class="bar ${cls}"><span style="width:${rate}%;"></span></span>${rate.toFixed(0)}%</td></tr>`;
+              }).join('')}
+              </tbody></table>
+            </div>
+            ${evalListHtml}
+          </div>` : `<div class="drawer-sub-pane" data-subtab="evals">${evalListHtml}</div>`;
+        return `
+          <div class="drawer-title">${esc(a.name)}</div>
+          <div class="drawer-subtitle">CXAS group agent ${a.is_root ? '· root' : ''} ${evals ? '· <span class="pill '+pctClass+'">'+evals.pct.toFixed(0)+'% eval pass</span>' : ''}</div>
+          ${tabsHtml}
+          ${overview}${instr}${tools}${evalsHtml}
+        `;
+      }
+    },
+
+    tool: {
+      find: name => findTool(name),
+      render: t => {
+        const badges = [];
+        if (t.mocked_fn) badges.push(badge('mock-fn', 'mock-fn'));
+        if (!t.mocked_fn) badges.push(badge('real', 'no mock_mode'));
+        return `
+          <div class="drawer-title">${esc(t.name)}</div>
+          <div class="drawer-subtitle">Python function tool · ${badges.join(' ')}</div>
+          <div class="drawer-section">
+            <div class="drawer-row"><span class="k">Display name</span><span class="v"><code>${esc(t.display_name)}</code></span></div>
+            <div class="drawer-row"><span class="k">Description</span><span class="v">${esc(t.description || '(none)')}</span></div>
+            ${t.docstring ? `<div class="drawer-row"><span class="k">Docstring</span><span class="v"><em>${esc(t.docstring)}</em></span></div>` : ''}
+            ${t.signature ? `<div class="drawer-row"><span class="k">Signature</span><span class="v"><code>${esc(t.signature)}</code></span></div>` : ''}
+            <div class="drawer-row"><span class="k">Mock mode?</span><span class="v">${t.mocked_fn ? '✓ checks <code>get_variable(\'mock_mode\')</code> and short-circuits with synthetic data' : '✗ no mock branch — calls real backend'}</span></div>
+          </div>
+          ${t.mock_excerpt ? `
+            <div class="drawer-section">
+              <h4>Mock-mode logic excerpt</h4>
+              <pre>${esc(t.mock_excerpt)}</pre>
+            </div>
+          ` : ''}
+          <div class="drawer-section">
+            <h4>Used by (${t.callers.length})</h4>
+            <div class="pill-list">${t.callers.length ? t.callers.map(a => pill('agent', a, a)).join('') : '<span style="color:var(--muted); font-size:12px;">No agent currently declares this tool.</span>'}</div>
+          </div>
+        `;
+      }
+    },
+
+    toolset: {
+      find: name => findToolset(name),
+      render: t => {
+        const mockBadge = t.mocked_server ? badge('mock-server', 'mock-server (placeholder URL)') : badge('real', 'real endpoint');
+        return `
+          <div class="drawer-title">${esc(t.name)}</div>
+          <div class="drawer-subtitle">OpenAPI toolset · ${mockBadge}</div>
+          <div class="drawer-section">
+            <div class="drawer-row"><span class="k">Display name</span><span class="v"><code>${esc(t.display_name)}</code></span></div>
+            <div class="drawer-row"><span class="k">Description</span><span class="v">${esc(t.description||'(none)')}</span></div>
+            <div class="drawer-row"><span class="k">Server URL</span><span class="v"><code>${esc(t.server_url||'(none)')}</code> ${t.mocked_server ? '<span class="badge mock-server">placeholder</span>' : ''}</span></div>
+            <div class="drawer-row"><span class="k">Operations</span><span class="v">${t.operation_count} · ${t.operations.map(o => `<code>${esc(o)}</code>`).join(' ')}</span></div>
+          </div>
+          <div class="drawer-section">
+            <h4>Used by (${t.callers.length})</h4>
+            <div class="pill-list">${t.callers.length ? t.callers.map(a => pill('agent', a, a)).join('') : '<span style="color:var(--muted); font-size:12px;">No agent currently lists this toolset.</span>'}</div>
+          </div>
+        `;
+      }
+    },
+
+    var: {
+      find: name => findVariable(name),
+      render: v => {
+        const dflt = v.default === null || v.default === undefined ? '(unset)' : JSON.stringify(v.default);
+        return `
+          <div class="drawer-title">${esc(v.name)}</div>
+          <div class="drawer-subtitle">Session variable · <code>${esc(v.type)}</code></div>
+          <div class="drawer-section">
+            <div class="drawer-row"><span class="k">Type</span><span class="v"><code>${esc(v.type)}</code></span></div>
+            <div class="drawer-row"><span class="k">Default</span><span class="v"><code>${esc(dflt)}</code></span></div>
+            <div class="drawer-row"><span class="k">Description</span><span class="v">${esc(v.description || '(no description)')}</span></div>
+          </div>
+          <div class="drawer-section">
+            <h4>Referenced by (${v.referenced_by.length})</h4>
+            <div class="pill-list">${v.referenced_by.length ? v.referenced_by.map(a => pill('agent', a, a)).join('') : '<span style="color:var(--muted); font-size:12px;">Not referenced in any agent instruction or callback.</span>'}</div>
+          </div>
+        `;
+      }
+    },
+
+    flow: {
+      find: name => findFlow(name),
+      render: f => {
+        const grp = f.absorbed_by_group;
+        return `
+          <div class="drawer-title">${esc(f.name)}</div>
+          <div class="drawer-subtitle">DFCX source flow · ${f.page_count} pages · ${f.transition_routes} routes · ${f.event_handlers} handlers</div>
+          <div class="drawer-section">
+            <div class="drawer-row"><span class="k">Description</span><span class="v">${esc(f.description||'(no description in source)')}</span></div>
+            <div class="drawer-row"><span class="k">NLU enabled</span><span class="v">${f.nlu ? '✓' : '✗'}</span></div>
+            <div class="drawer-row"><span class="k">Page count</span><span class="v">${f.page_count}</span></div>
+            <div class="drawer-row"><span class="k">Sample pages</span><span class="v">${f.sample_pages.map(p => `<code style="display:inline-block; margin:2px;">${esc(p)}</code>`).join(' ')}</span></div>
+          </div>
+          <div class="drawer-section">
+            <h4>Absorbed by CXAS group</h4>
+            ${grp ? pill('agent', grp, grp) + `<button data-go-tab="agents" style="margin-left:8px; background:var(--panel); color:var(--accent); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:11px;">Jump to CXAS Agents tab →</button>` : '<span style="color:var(--muted);">(unmapped)</span>'}
+          </div>
+        `;
+      }
+    },
+
+    pipe: {
+      find: name => findPipelineStep(name),
+      render: p => `
+        <div class="drawer-title">${esc(p.name)}</div>
+        <div class="drawer-subtitle"><span class="badge ${p.kind === 'skill' ? 'mock-fn' : 'mock-server'}">${esc(p.kind)}</span> · ${esc(p.duration)}</div>
+        <div class="drawer-section">
+          <div class="drawer-row"><span class="k">Script path</span><span class="v"><code>${esc(p.script_path)}</code></span></div>
+          <div class="drawer-row"><span class="k">What it changed</span><span class="v">${esc(p.what_changed)}</span></div>
+          <div class="drawer-row"><span class="k">Outputs</span><span class="v">${esc(p.outputs)}</span></div>
+        </div>
+      `
+    },
+
+    eval: {
+      find: name => findEval(name),
+      render: e => {
+        const passCls = e.passed ? 'pass' : 'fail';
+        const passLabel = e.passed ? 'PASS' : 'FAIL';
+        const params = Object.keys(e.session_parameters || {});
+        const stepsHtml = (e.step_details || []).map(s => `
+          <div class="drawer-row">
+            <span class="k">${esc(s.status||'?')}</span>
+            <span class="v">${esc(s.goal||'')}<br><em style="color:var(--muted); font-size:11.5px;">${esc(s.reason||'')}</em></span>
+          </div>
+        `).join('');
+        const expectsHtml = (e.expectation_details || []).map(x => `
+          <div class="drawer-row">
+            <span class="k">${x.status==='Met'?'<span style="color:var(--gen);">✓ Met</span>':'<span style="color:var(--critical);">✗ '+esc(x.status||'?')+'</span>'}</span>
+            <span class="v">${esc(x.expectation||'')}</span>
+          </div>
+        `).join('');
+        const traceHtml = (e.trace_tail || []).map((t, i) => `
+          <pre style="margin: 4px 0;"><span style="color:var(--muted); font-size:10px;">[turn tail ${i+1}/${e.trace_tail.length}]</span>\n${esc(t)}</pre>
+        `).join('');
+        return `
+          <div class="drawer-title">${esc(e.name)}</div>
+          <div class="drawer-subtitle">Sim eval · <span class="pill ${passCls}">${passLabel}</span> · ${e.turns} turn${e.turns===1?'':'s'} · ${e.duration_s}s · ${esc(e.primary_tag)}</div>
+          <div class="drawer-subtabs">
+            <div class="drawer-subtab active" data-subtab="ov">Overview</div>
+            <div class="drawer-subtab" data-subtab="transcript">Transcript</div>
+            <div class="drawer-subtab" data-subtab="trace">Trace tail</div>
+            <div class="drawer-subtab" data-subtab="meta">Metadata</div>
+          </div>
+          <div class="drawer-sub-pane active" data-subtab="ov">
+            <div class="drawer-row"><span class="k">Goals</span><span class="v">${esc(e.goals||'-')}</span></div>
+            <div class="drawer-row"><span class="k">Expectations</span><span class="v">${esc(e.expectations||'-')}</span></div>
+            <div class="drawer-row"><span class="k">Agent</span><span class="v">${pill('agent', e.agent, e.agent)}</span></div>
+            <div class="drawer-row"><span class="k">Tags</span><span class="v">${(e.tags||[]).map(t => '<span class="badge real">'+esc(t)+'</span>').join(' ')}</span></div>
+            ${stepsHtml ? '<div class="drawer-section"><h4>Step outcomes</h4>'+stepsHtml+'</div>' : ''}
+            ${expectsHtml ? '<div class="drawer-section"><h4>Expectations</h4>'+expectsHtml+'</div>' : ''}
+          </div>
+          <div class="drawer-sub-pane" data-subtab="transcript">
+            <div class="drawer-section">
+              <h4>Conversation transcript</h4>
+              <pre>${esc(e.transcript||'(no transcript captured)')}</pre>
+            </div>
+          </div>
+          <div class="drawer-sub-pane" data-subtab="trace">
+            <div class="drawer-section">
+              <h4>Detailed trace (last ${e.trace_tail.length} chunks — tool calls, agent transfers, agent text)</h4>
+              ${traceHtml || '<div style="color:var(--muted); font-size:12px;">(no trace data)</div>'}
+            </div>
+          </div>
+          <div class="drawer-sub-pane" data-subtab="meta">
+            <div class="drawer-row"><span class="k">Session ID</span><span class="v"><code>${esc(e.session_id||'-')}</code></span></div>
+            <div class="drawer-row"><span class="k">Source report</span><span class="v"><code>${esc(e.source_report||'-')}</code></span></div>
+            <div class="drawer-row"><span class="k">Session params</span><span class="v">${params.length ? params.map(k => '<code style="display:inline-block; margin:2px;">'+esc(k)+'='+esc(JSON.stringify(e.session_parameters[k]))+'</code>').join(' ') : '<span style="color:var(--muted); font-size:12px;">(none)</span>'}</span></div>
+            <div class="drawer-row"><span class="k">Fetch live trace</span><span class="v"><code style="font-size:11px;">cxas trace get --session-id ${esc(e.session_id||'')}</code></span></div>
+          </div>
+        `;
+      }
+    },
+  };
+
+  // ----------- TAB SWITCHING + mermaid
+  const rendered = {};
+  async function setActiveTab(name) {
+    $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+    // sync hash (preserving entity if present)
+    const ent = (location.hash || '').match(/#(?:tab\/[^/]+\/)?(tool|agent|toolset|var|flow|pipe|eval)\/(.+)$/);
+    history.replaceState(null, '', '#tab/' + name + (ent ? '/' + ent[1] + '/' + ent[2] : ''));
+    // render mermaid in this panel if not yet
+    if (!rendered[name] && window.__mermaid__) {
+      const panel = $('#panel-' + name);
+      const nodes = $$('.mermaid:not([data-processed="true"])', panel);
+      if (nodes.length) {
+        try { await window.__mermaid__.run({ nodes }); } catch(e) { console.warn('mermaid', e); }
+      }
+      rendered[name] = true;
+    }
+  }
+  $$('.tab').forEach(t => t.addEventListener('click', () => setActiveTab(t.dataset.tab)));
+
+  // ----------- SUBTAB SWITCHING (Tools & Variables)
+  $$('#subtabs-tv .subtab').forEach(t => t.addEventListener('click', () => {
+    const target = t.dataset.sub;
+    $$('#subtabs-tv .subtab').forEach(s => s.classList.toggle('active', s === t));
+    $$('#sub-tools, #sub-toolsets, #sub-vars').forEach(p => p.classList.toggle('active', p.id === 'sub-' + target));
+  }));
+
+  // ----------- KPIS
+  function renderKpis() {
+    const k = DATA.kpis;
+    $('#kpi-grid').innerHTML = `
+      <div class="kpi-card"><div class="label">DFCX flows</div><div class="value">${k.dfcx_flows}</div><div class="sub">${k.dfcx_pages_total} pages · ${k.dfcx_intents} intents</div></div>
+      <div class="kpi-card"><div class="label">CXAS agents</div><div class="value">${k.cxas_agents}</div><div class="sub">hub-and-spoke topology</div></div>
+      <div class="kpi-card"><div class="label">Python tools</div><div class="value">${k.cxas_tools}</div><div class="sub">generated by stage 2C</div></div>
+      <div class="kpi-card"><div class="label">OpenAPI toolsets</div><div class="value">${k.cxas_toolsets}</div><div class="sub">1:1 from DFCX webhooks</div></div>
+    `;
+    $('#kpi-grid-2').innerHTML = `
+      <div class="kpi-card"><div class="label">Variables: dedup</div><div class="value">${k.stage_1_variables_before} → ${k.stage_1_variables_after}</div><div class="sub">Gemini semantic dedup</div></div>
+      <div class="kpi-card"><div class="label">Orphans cleaned</div><div class="value">${k.stage_1_orphans_deleted}</div><div class="sub">absorbed 1:1 agents removed</div></div>
+      <div class="kpi-card"><div class="label">Tools auto-wired</div><div class="value">${k.tools_wired_post_consolidation}</div><div class="sub">missing post-consolidation refs</div></div>
+      <div class="kpi-card"><div class="label">Lint findings</div><div class="value">${k.fix_lint_baseline} → ${k.fix_lint_final}</div><div class="sub">0 errors after fix-pass</div></div>
+    `;
+    $('#agents-count').textContent = Object.keys(DATA.agents).length;
+    $('#tv-count').textContent = (Object.keys(DATA.tools).length + Object.keys(DATA.toolsets).length + DATA.variables.length);
+    $('#dfcx-count').textContent = DATA.flows.length;
+    $('#pipe-count').textContent = DATA.pipeline.length;
+    $('#sub-tools-count').textContent = Object.keys(DATA.tools).length;
+    $('#sub-toolsets-count').textContent = Object.keys(DATA.toolsets).length;
+    $('#sub-vars-count').textContent = DATA.variables.length;
+  }
+
+  function renderRefs() {
+    $('#ref-list').innerHTML = DATA.references.map(r =>
+      `<div class="ref-item"><div class="l">${esc(r.label)}</div>${r.href ? `<a href="${esc(r.href)}" target="_blank">${esc(r.value)}</a>` : `<code>${esc(r.value)}</code>`}</div>`
+    ).join('');
+  }
+
+  // ----------- CXAS AGENTS tab
+  function renderSankey() {
+    const cols = Object.entries(DATA.grouping).map(([gname, g]) => `
+      <div class="sankey-group">
+        <strong>${esc(gname)}</strong>${g.is_root ? ' <span class="pill group">root</span>' : ''}
+        <div class="pill-list">
+          ${g.agents.map(f => pill('flow', f, f)).join('')}
+        </div>
+      </div>
+    `).join('');
+    const flowCount = DATA.flows.length;
+    const groupCount = Object.keys(DATA.grouping || {}).length;
+    $('#sankey').innerHTML = `
+      <div class="sankey-col">
+        <h4>${flowCount} DFCX source flow${flowCount===1?'':'s'}</h4>
+        <div class="pill-list">
+          ${DATA.flows.map(f => pill('flow', f.name, f.name)).join('')}
+        </div>
+      </div>
+      <div class="sankey-arrow">→</div>
+      <div class="sankey-col">
+        <h4>${groupCount || Object.keys(DATA.agents).length} CXAS consolidated agent${groupCount===1?'':'s'}</h4>
+        ${cols || '<div style="color:var(--muted); font-size:12px;">No consolidation yet. Run <code>cxas migrate</code> with <code>--optimize-for-cxas</code> to populate.</div>'}
+      </div>
+    `;
+    bindCardClicks($('#sankey'));
+  }
+
+  function renderAgentGrid() {
+    $('#agent-grid').innerHTML = Object.entries(DATA.agents).map(([name, a]) => {
+      const evals = DATA.evals[name];
+      const pctClass = evals && evals.pct >= 90 ? 'pass' : evals && evals.pct >= 70 ? 'warn' : 'fail';
+      const pctBadge = evals ? `<span class="pill ${pctClass}">${evals.pct.toFixed(0)}% eval</span>` : '';
+      return `
+        <div class="agent-card" data-entity-type="agent" data-entity-key="${esc(name)}">
+          <h3>${a.is_root ? '⭐ ' : ''}${esc(name)} ${a.is_root ? '<span class="pill group">root</span>' : ''}${pctBadge}</h3>
+          <div class="role">${esc(a.description || '(no description)')}</div>
+          <div class="stats">
+            <div class="stat"><div class="n">${a.absorbed_flows.length}</div><div class="l">flows</div></div>
+            <div class="stat"><div class="n">${a.tools.length}</div><div class="l">tools</div></div>
+            <div class="stat"><div class="n">${a.toolsets.length}</div><div class="l">toolsets</div></div>
+          </div>
+          <div class="rationale">
+            <strong>Why grouped:</strong> ${esc(a.rationale)}
+          </div>
+          <div class="peek">▸ Peek inside (instruction · callbacks · tools · evals)</div>
+        </div>
+      `;
+    }).join('');
+    bindCardClicks($('#agent-grid'));
+  }
+
+  function bindCardClicks(root) {
+    root.querySelectorAll('[data-entity-type]').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        openDrawer(el.dataset.entityType, el.dataset.entityKey);
+      });
+    });
+  }
+
+  // ----------- TOOLS / TOOLSETS / VARS grids
+  function renderToolsGrid(filter) {
+    const list = Object.values(DATA.tools);
+    const q = (filter || '').toLowerCase();
+    const matches = q ? list.filter(t => t.name.toLowerCase().includes(q) || (t.description||'').toLowerCase().includes(q)) : list;
+    const grid = $('#grid-tools');
+    if (!matches.length) {
+      grid.innerHTML = `<div class="empty-state">No tools match "${esc(filter)}". <button onclick="document.getElementById('filter-tools').value='';document.getElementById('filter-tools').dispatchEvent(new Event('input'))">Clear</button></div>`;
+    } else {
+      grid.innerHTML = matches.map(t => {
+        const badges = [];
+        if (t.mocked_fn) badges.push(badge('mock-fn', 'mock-fn'));
+        const callers = t.callers.map(a => pill('agent', a, a)).join('') || '<span style="color:var(--muted); font-size:11px;">(no caller)</span>';
+        return `
+          <div class="entity-card" data-entity-type="tool" data-entity-key="${esc(t.name)}">
+            <div class="name">${esc(t.name)}</div>
+            <div class="desc">${esc(t.description || t.docstring || '(no description)')}</div>
+            <div class="meta">${badges.join('')} ${callers}</div>
+          </div>
+        `;
+      }).join('');
+      bindCardClicks(grid);
+    }
+    $('#count-tools').textContent = `${matches.length} / ${list.length}`;
+  }
+
+  function renderToolsetsGrid(filter) {
+    const list = Object.values(DATA.toolsets);
+    const q = (filter||'').toLowerCase();
+    const matches = q ? list.filter(t => t.name.toLowerCase().includes(q) || (t.description||'').toLowerCase().includes(q)) : list;
+    const grid = $('#grid-toolsets');
+    if (!matches.length) {
+      grid.innerHTML = `<div class="empty-state">No toolsets match "${esc(filter)}". <button onclick="document.getElementById('filter-toolsets').value='';document.getElementById('filter-toolsets').dispatchEvent(new Event('input'))">Clear</button></div>`;
+    } else {
+      grid.innerHTML = matches.map(t => {
+        const mockBadge = t.mocked_server ? badge('mock-server', 'mock-server') : badge('real', 'real');
+        const callers = t.callers.map(a => pill('agent', a, a)).join('') || '<span style="color:var(--muted); font-size:11px;">(unattached)</span>';
+        return `
+          <div class="entity-card" data-entity-type="toolset" data-entity-key="${esc(t.name)}">
+            <div class="name">${esc(t.name)}</div>
+            <div class="desc">${esc(t.description || '(no description)')} · ${t.operation_count} op${t.operation_count===1?'':'s'}</div>
+            <div class="meta">${mockBadge} ${callers}</div>
+          </div>
+        `;
+      }).join('');
+      bindCardClicks(grid);
+    }
+    $('#count-toolsets').textContent = `${matches.length} / ${list.length}`;
+  }
+
+  function renderVarsGrid(filter) {
+    const q = (filter || '').toLowerCase();
+    const matches = q ? DATA.variables.filter(v => v.name.toLowerCase().includes(q) || (v.description||'').toLowerCase().includes(q)) : DATA.variables;
+    const groups = {};
+    matches.forEach(v => { (groups[v.type] = groups[v.type] || []).push(v); });
+    const grid = $('#grid-vars');
+    if (!matches.length) {
+      grid.innerHTML = `<div class="empty-state">No variables match. <button onclick="document.getElementById('filter-vars').value='';document.getElementById('filter-vars').dispatchEvent(new Event('input'))">Clear</button></div>`;
+    } else {
+      grid.innerHTML = Object.entries(groups).sort().map(([type, vs]) => `
+        <h3>${esc(type)} <span class="tab-badge">${vs.length}</span></h3>
+        <div class="entity-grid">
+          ${vs.map(v => `
+            <div class="entity-card" data-entity-type="var" data-entity-key="${esc(v.name)}">
+              <div class="name">${esc(v.name)}</div>
+              <div class="desc">${esc(v.description || '(no description)')}</div>
+              <div class="meta"><span class="badge real">${esc(v.type)}</span> ${v.referenced_by.length ? '<span class="pill agent" style="cursor:default;">used by '+v.referenced_by.length+'</span>' : ''}</div>
+            </div>
+          `).join('')}
+        </div>
+      `).join('');
+      bindCardClicks(grid);
+    }
+    $('#count-vars').textContent = `${matches.length} / ${DATA.variables.length}`;
+  }
+
+  // ----------- DFCX flows
+  function renderFlowsGrid(filter) {
+    const q = (filter || '').toLowerCase();
+    const matches = q ? DATA.flows.filter(f => f.name.toLowerCase().includes(q) || (f.description||'').toLowerCase().includes(q)) : DATA.flows;
+    const grid = $('#grid-flows');
+    if (!matches.length) {
+      grid.innerHTML = `<div class="empty-state">No flows match. <button onclick="document.getElementById('filter-flows').value='';document.getElementById('filter-flows').dispatchEvent(new Event('input'))">Clear</button></div>`;
+    } else {
+      grid.innerHTML = matches.map(f => `
+        <div class="entity-card" data-entity-type="flow" data-entity-key="${esc(f.name)}">
+          <div class="name">${esc(f.name)}</div>
+          <div class="desc">${esc(f.description || '(no description in source)')}</div>
+          <div class="meta">
+            <span class="badge real">${f.page_count} pages</span>
+            ${f.transition_routes ? `<span class="badge real">${f.transition_routes} routes</span>` : ''}
+            ${f.absorbed_by_group ? pill('agent', f.absorbed_by_group, '→ ' + f.absorbed_by_group) : ''}
+          </div>
+        </div>
+      `).join('');
+      bindCardClicks(grid);
+    }
+    $('#count-flows').textContent = `${matches.length} / ${DATA.flows.length}`;
+  }
+
+  // ----------- PIPELINE
+  // ----------- EVALS tab
+  function renderEvalKpis() {
+    const all = (DATA.eval_traces && DATA.eval_traces.all) || [];
+    const total = all.length;
+    if (!total) {
+      $('#eval-kpis').innerHTML = '';
+      $('#evals-count').textContent = '0';
+      $('#eval-stub').style.display = '';
+      $('#eval-filter-row').style.display = 'none';
+      return;
+    }
+    $('#eval-stub').style.display = 'none';
+    $('#eval-filter-row').style.display = '';
+    const passed = all.filter(e => e.passed).length;
+    const byAgent = (DATA.eval_traces && DATA.eval_traces.by_agent) || {};
+    const agentCards = Object.entries(byAgent)
+      .filter(([, list]) => list && list.length)
+      .map(([name, list]) => ({
+        label: name,
+        value: `${list.filter(e=>e.passed).length} / ${list.length}`,
+        sub: `${name} evals`,
+      }));
+    const cards = [
+      {label: 'Total evals', value: total, sub: 'across all stages'},
+      {label: 'Pass rate',   value: ((passed*100/total).toFixed(1)+'%'), sub: `${passed} / ${total}`},
+      ...agentCards,
+    ];
+    $('#eval-kpis').innerHTML = cards.map(c =>
+      `<div class="kpi-card"><div class="label">${esc(c.label)}</div><div class="value">${esc(c.value)}</div><div class="sub">${esc(c.sub)}</div></div>`
+    ).join('');
+    $('#evals-count').textContent = total;
+    // populate agent filter dropdown from data
+    const sel = $('#filter-eval-agent');
+    while (sel.options.length > 1) sel.remove(1);
+    Object.keys(byAgent).forEach(n => {
+      const opt = document.createElement('option');
+      opt.value = n; opt.textContent = n;
+      sel.appendChild(opt);
+    });
+  }
+
+  function renderEvalsGrid(filter, passFilter, agentFilter) {
+    const all = (DATA.eval_traces && DATA.eval_traces.all) || [];
+    const q = (filter || '').toLowerCase().trim();
+    let matches = all;
+    if (q) matches = matches.filter(e =>
+      e.name.toLowerCase().includes(q) ||
+      (e.tags||[]).some(t => t.toLowerCase().includes(q)) ||
+      e.agent.toLowerCase().includes(q));
+    if (passFilter === 'pass') matches = matches.filter(e => e.passed);
+    if (passFilter === 'fail') matches = matches.filter(e => !e.passed);
+    if (agentFilter) matches = matches.filter(e => e.agent === agentFilter);
+    const grid = $('#grid-evals');
+    if (!matches.length) {
+      grid.innerHTML = `<div class="empty-state">No evals match the current filters.</div>`;
+    } else {
+      grid.innerHTML = matches.map(e => `
+        <div class="eval-row" data-entity-type="eval" data-entity-key="${esc(e.name)}">
+          <span class="pill ${e.passed?'pass':'fail'}" style="min-width:46px; text-align:center;">${e.passed?'PASS':'FAIL'}</span>
+          <span class="eval-name">${esc(e.name)}</span>
+          <span class="eval-meta">${e.turns}t · ${e.duration_s}s</span>
+          <span class="eval-tags"><span class="badge real">${esc(e.agent)}</span><span class="badge real">${esc(e.primary_tag)}</span></span>
+        </div>
+      `).join('');
+      bindCardClicks(grid);
+    }
+    $('#count-evals').textContent = `${matches.length} / ${all.length}`;
+  }
+
+  function renderPipeline() {
+    $('#timeline').innerHTML = DATA.pipeline.map(p => `
+      <div class="timeline-step" data-entity-type="pipe" data-entity-key="${esc(p.name)}">
+        <span class="step-kind ${esc(p.kind)}">${esc(p.kind)}</span>
+        <div class="step-name">${esc(p.name)}</div>
+        <div class="step-meta">${esc(p.duration)}</div>
+        <div class="step-what">${esc(p.what_changed.slice(0,140))}${p.what_changed.length>140?'…':''}</div>
+      </div>
+    `).join('');
+    bindCardClicks($('#timeline'));
+    $('#grid-pipeline').innerHTML = DATA.pipeline.map(p => `
+      <div class="entity-card" data-entity-type="pipe" data-entity-key="${esc(p.name)}">
+        <div class="name">${esc(p.name)} <span class="badge ${p.kind === 'skill' ? 'mock-fn' : 'mock-server'}">${esc(p.kind)}</span></div>
+        <div class="desc">${esc(p.what_changed)}</div>
+        <div class="meta"><span style="font-size:11px; color:var(--muted);">${esc(p.duration)}</span></div>
+      </div>
+    `).join('');
+    bindCardClicks($('#grid-pipeline'));
+  }
+
+  // ----------- SEARCH
+  const searchInput = $('#search');
+  const searchResults = $('#search-results');
+  let searchActive = -1;
+  let searchMatches = [];
+
+  function buildIndex() {
+    const idx = [];
+    Object.values(DATA.agents).forEach(a => idx.push({type: 'agent', kind: 'A', name: a.name, key: a.name, hint: a.description || ''}));
+    Object.values(DATA.tools).forEach(t => idx.push({type: 'tool', kind: 'T', name: t.name, key: t.name, hint: t.description || '', extra: t.mocked_fn?'mock-fn':''}));
+    Object.values(DATA.toolsets).forEach(t => idx.push({type: 'toolset', kind: 'S', name: t.name, key: t.name, hint: t.description || '', extra: t.mocked_server?'mock-server':''}));
+    DATA.variables.forEach(v => idx.push({type: 'var', kind: 'V', name: v.name, key: v.name, hint: v.description || ''}));
+    DATA.flows.forEach(f => idx.push({type: 'flow', kind: 'F', name: f.name, key: f.name, hint: 'absorbed by '+(f.absorbed_by_group||'?')}));
+    DATA.pipeline.forEach(p => idx.push({type: 'pipe', kind: 'P', name: p.name, key: p.name, hint: p.duration}));
+    ((DATA.eval_traces && DATA.eval_traces.all) || []).forEach(e => idx.push({
+      type: 'eval', kind: 'E', name: e.name, key: e.name,
+      hint: (e.passed?'PASS':'FAIL')+' · '+e.agent+' · '+e.primary_tag,
+      extra: e.passed?'':'fail'
+    }));
+    return idx;
+  }
+  const SEARCH_INDEX = buildIndex();
+
+  function renderSearch(query) {
+    const q = (query || '').toLowerCase().trim();
+    if (!q) { searchResults.classList.remove('open'); return; }
+    searchMatches = SEARCH_INDEX.filter(e => e.name.toLowerCase().includes(q) || e.hint.toLowerCase().includes(q));
+    searchActive = 0;
+    if (!searchMatches.length) {
+      searchResults.innerHTML = `<div class="search-empty">No matches for "${esc(query)}"</div>`;
+      searchResults.classList.add('open');
+      return;
+    }
+    const top = searchMatches.slice(0, 8);
+    searchResults.innerHTML = top.map((m, i) => `
+      <div class="search-result ${i===searchActive?'active':''}" data-i="${i}">
+        <span class="kind ${m.kind}">${m.kind}</span>
+        <span>${esc(m.name)}</span>
+        ${m.extra ? `<span class="badge mock-fn">${esc(m.extra)}</span>` : ''}
+        <span class="meta">${esc((m.hint||'').slice(0,40))}</span>
+      </div>
+    `).join('') + (searchMatches.length > 8 ? `<div class="search-more">+ ${searchMatches.length - 8} more — refine search</div>` : '');
+    searchResults.classList.add('open');
+    searchResults.querySelectorAll('.search-result').forEach(r => {
+      r.addEventListener('click', () => {
+        const m = searchMatches[parseInt(r.dataset.i, 10)];
+        openDrawer(m.type, m.key);
+        searchInput.value = '';
+        searchResults.classList.remove('open');
+      });
+    });
+  }
+  searchInput.addEventListener('input', e => renderSearch(e.target.value));
+  searchInput.addEventListener('keydown', e => {
+    const items = searchResults.querySelectorAll('.search-result');
+    if (e.key === 'Enter' && searchMatches.length) {
+      e.preventDefault();
+      const m = searchMatches[Math.max(0, searchActive)];
+      openDrawer(m.type, m.key);
+      searchInput.value = '';
+      searchResults.classList.remove('open');
+    } else if (e.key === 'ArrowDown' && items.length) {
+      e.preventDefault();
+      searchActive = Math.min(searchActive + 1, items.length - 1);
+      items.forEach((it, i) => it.classList.toggle('active', i === searchActive));
+    } else if (e.key === 'ArrowUp' && items.length) {
+      e.preventDefault();
+      searchActive = Math.max(searchActive - 1, 0);
+      items.forEach((it, i) => it.classList.toggle('active', i === searchActive));
+    } else if (e.key === 'Escape') {
+      searchResults.classList.remove('open');
+    }
+  });
+  document.addEventListener('click', e => {
+    if (!searchResults.contains(e.target) && e.target !== searchInput) searchResults.classList.remove('open');
+  });
+
+  // ----------- HASH ROUTING (deep links)
+  function setHash(type, key) {
+    const tabMatch = (location.hash || '').match(/#tab\/([^/]+)/);
+    const tab = tabMatch ? tabMatch[1] : 'overview';
+    history.replaceState(null, '', `#tab/${tab}/${type}/${encodeURIComponent(key)}`);
+  }
+  function readHash() {
+    const m = (location.hash || '').match(/^#(?:tab\/([^/]+))?(?:\/(agent|tool|toolset|var|flow|pipe|eval)\/(.+))?$/);
+    if (!m) return;
+    if (m[1]) setActiveTab(m[1]);
+    if (m[2] && m[3]) openDrawer(m[2], decodeURIComponent(m[3]));
+  }
+  window.addEventListener('mermaid:ready', () => {
+    setActiveTab('overview');
+    setTimeout(readHash, 50);
+  });
+
+  // ----------- FILTERS
+  $('#filter-tools').addEventListener('input', e => renderToolsGrid(e.target.value));
+  $('#filter-toolsets').addEventListener('input', e => renderToolsetsGrid(e.target.value));
+  $('#filter-vars').addEventListener('input', e => renderVarsGrid(e.target.value));
+  $('#filter-flows').addEventListener('input', e => renderFlowsGrid(e.target.value));
+  function reRenderEvals() {
+    renderEvalsGrid($('#filter-evals').value, $('#filter-eval-pass').value, $('#filter-eval-agent').value);
+  }
+  $('#filter-evals').addEventListener('input', reRenderEvals);
+  $('#filter-eval-pass').addEventListener('change', reRenderEvals);
+  $('#filter-eval-agent').addEventListener('change', reRenderEvals);
+
+  // ----------- BOOT
+  renderKpis();
+  renderRefs();
+  renderSankey();
+  renderAgentGrid();
+  renderToolsGrid('');
+  renderToolsetsGrid('');
+  renderVarsGrid('');
+  renderFlowsGrid('');
+  renderPipeline();
+  renderEvalKpis();
+  renderEvalsGrid('', '', '');
+
+  // If mermaid is already loaded (cached) just kick it
+  if (window.__mermaid__) setActiveTab('overview');
+})();
+</script>
+</body>
+</html>
