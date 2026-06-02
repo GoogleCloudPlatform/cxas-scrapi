@@ -374,8 +374,6 @@ class TurnEvals:
 
             # Fallback to high-level outputs if no diagnostic trace is available
             if not messages:
-                if "text" in out:
-                    full_text += str(out["text"]) + " "
                 # Check top-level toolCalls and agentTransfers
                 tcs_msg = out.get("toolCalls", {})
                 for tc in tcs_msg.get("toolCalls", []):
