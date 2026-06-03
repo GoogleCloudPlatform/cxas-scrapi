@@ -528,8 +528,8 @@ def generate_combined_html_report(
     sim_modality: str = "text",
     sim_wall_clock_s: float | None = None,
     user_agent_extension: str | None = None,
-    bg_noise_file: str=None,
-    burst_noise_files=None,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
 ) -> str:
     """Generate combined HTML report based on results from multiple sources.
 
@@ -544,6 +544,10 @@ def generate_combined_html_report(
       sim_modality: The modality used for the simulation evaluations.
       sim_wall_clock_s: Total elapsed execution time for simulations in seconds.
       user_agent_extension: Optional user agent extension string.
+      bg_noise_file: Path to background noise audio file to play during
+        replay.
+      burst_noise_files: List of paths to burst noise audio files injected
+        during replay.
 
     Returns:
       The rendered HTML report markup string.
@@ -824,8 +828,6 @@ def generate_combined_html_report(
                     else:
                         merged.append((kind, text))
                 r["_processed_trace"] = merged
-
-
 
     # Compile Tool evaluation table via Python Component
     if tool_results:
@@ -1419,8 +1421,8 @@ def generate_combined_report_from_dir(
     filter_tags: list[str] | None = None,
     parallel: int = 1,
     golden_timeout: int = 600,
-    bg_noise_file = None,
-    burst_noise_files = None,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
 ) -> str:
     """Load results from directory and generate combined HTML report.
 
@@ -1441,8 +1443,10 @@ def generate_combined_report_from_dir(
       filter_tags: List of specific tags to filter evaluations by.
       parallel: Degree of parallelism for the runs.
       golden_timeout: Golden run execution timeout in seconds.
-      bg_noise_file: The background noise file.
-      burst_noise_files: The burst noise files.
+      bg_noise_file: Path to background noise audio file to play during
+        replay.
+      burst_noise_files: List of paths to burst noise audio files injected
+        during replay.
 
     Returns:
       The rendered combined HTML report string.
@@ -1607,20 +1611,20 @@ def generate_combined_report_from_dir(
 
 def run_all_evals(
     app_name: str,
-    app_dir: str = None,
-    tool_test_file: str = None,
-    goldens_dir: str = None,
-    simulation_dir: str = None,
-    output_dir: str = None,
+    app_dir: str | None = None,
+    tool_test_file: str | None = None,
+    goldens_dir: str | None = None,
+    simulation_dir: str | None = None,
+    output_dir: str | None = None,
     modality: str = "text",
     runs: int = 1,
-    filter_files: list[str] = None,
-    filter_tags: list[str] = None,
+    filter_files: list[str] | None = None,
+    filter_tags: list[str] | None = None,
     parallel: int = 1,
     golden_timeout: int = 600,
-    include: list[str] = None,
-    bg_noise_file=None,
-    burst_noise_files=None,
+    include: list[str] | None = None,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -1641,8 +1645,10 @@ def run_all_evals(
       parallel: Degree of parallelism for the runs.
       golden_timeout: Golden run execution timeout in seconds.
       include: List of evaluation types to include.
-      bg_noise_file: The background noise file.
-      burst_noise_files: The burst noise files.
+      bg_noise_file: Path to background noise audio file to play during
+        replay.
+      burst_noise_files: List of paths to burst noise audio files injected
+        during replay.
 
     Returns:
       A dict containing lists of results for 'simulation', 'golden', 'tool', and
