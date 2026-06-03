@@ -230,8 +230,14 @@ def test_app_pull_with_app_dir_name(
         app_name="projects/test-project/locations/us/apps/123"
     )
     # Check that the files were extracted under the overridden name
-    assert os.path.exists(os.path.join(args.target_dir, "my_custom_folder", "app.yaml"))
-    assert os.path.exists(os.path.join(args.target_dir, "my_custom_folder", "agents", "agent1.json"))
+    assert os.path.exists(
+        os.path.join(args.target_dir, "my_custom_folder", "app.yaml")
+    )
+    assert os.path.exists(
+        os.path.join(
+            args.target_dir, "my_custom_folder", "agents", "agent1.json"
+        )
+    )
     # Check that original 123 folder does not exist
     assert not os.path.exists(os.path.join(args.target_dir, "123"))
 
@@ -278,10 +284,23 @@ def test_app_pull_overwrite_with_app_dir_name(
     cli_app.app_pull(args)
 
     # Check that the files were extracted under the overridden name
-    assert os.path.exists(os.path.join(args.target_dir, "my_custom_folder", "app.yaml"))
-    assert os.path.exists(os.path.join(args.target_dir, "my_custom_folder", "agents", "agent1.json"))
+    assert os.path.exists(
+        os.path.join(args.target_dir, "my_custom_folder", "app.yaml")
+    )
+    assert os.path.exists(
+        os.path.join(
+            args.target_dir, "my_custom_folder", "agents", "agent1.json"
+        )
+    )
     # Check that the extra file was deleted by the overwrite logic
-    assert not os.path.exists(os.path.join(args.target_dir, "my_custom_folder", "agents", "extra_file.json"))
+    assert not os.path.exists(
+        os.path.join(
+            args.target_dir,
+            "my_custom_folder",
+            "agents",
+            "extra_file.json",
+        )
+    )
 
 
 def test_app_push(mock_apps_client, tmp_path):

@@ -126,8 +126,11 @@ def _app_pull(
             if export_members:
                 top_dir = export_members[0].split("/")[0]
                 for info in z.infolist():
-                    if app_dir_name and info.filename.startswith(top_dir + "/"):
-                        info.filename = app_dir_name + "/" + info.filename[len(top_dir) + 1:]
+                    if app_dir_name and info.filename.startswith(
+                        top_dir + "/"
+                    ):
+                        suffix = info.filename[len(top_dir) + 1 :]
+                        info.filename = f"{app_dir_name}/{suffix}"
                     elif app_dir_name and info.filename == top_dir:
                         info.filename = app_dir_name
                     z.extract(info, path=target_dir)
