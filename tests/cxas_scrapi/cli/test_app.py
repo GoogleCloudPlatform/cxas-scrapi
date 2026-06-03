@@ -191,6 +191,99 @@ def test_app_pull(
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
 
+def test_app_pull_with_app_dir_name(
+    mock_apps_client,
+    mock_common_get_project_id,
+    mock_common_get_location,
+    tmp_path,
+):
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "pulled_app"),
+        app_dir_name="my_custom_folder",
+        project_id="test-project",
+        location="us",
+        overwrite=True,
+    )
+
+    # Mock resolving display name to resource name
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    # Create a dummy zip file in memory representing the LRO response
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("123/app.yaml", "name: Test App")
+        zf.writestr("123/agents/agent1.json", "{}")
+    dummy_zip_bytes = dummy_zip_io.getvalue()
+
+    mock_lro = mock.MagicMock()
+    mock_response = mock.MagicMock()
+    mock_response.app_content = dummy_zip_bytes
+    mock_lro.result.return_value = mock_response
+    mock_apps_client.export_app.return_value = mock_lro
+
+    cli_app.app_pull(args)
+
+    mock_apps_client.export_app.assert_called_once_with(
+        app_name="projects/test-project/locations/us/apps/123"
+    )
+    # Check that the files were extracted under the overridden name
+    assert os.path.exists(os.path.join(args.target_dir, "my_custom_folder", "app.yaml"))
+    assert os.path.exists(os.path.join(args.target_dir, "my_custom_folder", "agents", "agent1.json"))
+    # Check that original 123 folder does not exist
+    assert not os.path.exists(os.path.join(args.target_dir, "123"))
+
+
+def test_app_pull_overwrite_with_app_dir_name(
+    mock_apps_client,
+    mock_common_get_project_id,
+    mock_common_get_location,
+    tmp_path,
+):
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "pulled_app"),
+        app_dir_name="my_custom_folder",
+        project_id="test-project",
+        location="us",
+        overwrite=True,
+    )
+
+    # Mock resolving display name to resource name
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    # Pre-create the custom folder with an extra file that should be deleted
+    custom_folder = tmp_path / "pulled_app" / "my_custom_folder"
+    os.makedirs(custom_folder / "agents", exist_ok=True)
+    with open(custom_folder / "agents" / "extra_file.json", "w") as f:
+        f.write("{}")
+
+    # Create a dummy zip file in memory representing the LRO response
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("123/app.yaml", "name: Test App")
+        zf.writestr("123/agents/agent1.json", "{}")
+    dummy_zip_bytes = dummy_zip_io.getvalue()
+
+    mock_lro = mock.MagicMock()
+    mock_response = mock.MagicMock()
+    mock_response.app_content = dummy_zip_bytes
+    mock_lro.result.return_value = mock_response
+    mock_apps_client.export_app.return_value = mock_lro
+
+    cli_app.app_pull(args)
+
+    # Check that the files were extracted under the overridden name
+    assert os.path.exists(os.path.join(args.target_dir, "my_custom_folder", "app.yaml"))
+    assert os.path.exists(os.path.join(args.target_dir, "my_custom_folder", "agents", "agent1.json"))
+    # Check that the extra file was deleted by the overwrite logic
+    assert not os.path.exists(os.path.join(args.target_dir, "my_custom_folder", "agents", "extra_file.json"))
+
+
 def test_app_push(mock_apps_client, tmp_path):
     args = argparse.Namespace(
         app_dir=str(tmp_path),
