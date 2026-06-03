@@ -696,6 +696,46 @@ def test_single_callback(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def run_sxs_cmd(args: argparse.Namespace) -> None:
+    """Handles the 'sxs' command."""
+    from cxas_scrapi.evals.sxs_evals import SxSEvals  # noqa: PLC0415
+    from cxas_scrapi.utils.sxs_reporting import (  # noqa: PLC0415
+        generate_sxs_html_report,
+    )
+
+    sxs = SxSEvals(
+        app_name_a=args.app_name_a,
+        app_name_b=args.app_name_b,
+        label_a=args.label_a,
+        label_b=args.label_b,
+    )
+    results = sxs.run_sxs(
+        eval_file=args.eval_file,
+        filter_tags=args.tags or None,
+        runs=getattr(args, "runs", 1),
+        modality=getattr(args, "modality", "text"),
+    )
+    generate_sxs_html_report(
+        sxs_results=results,
+        output_path=args.output,
+        app_name_a=args.app_name_a,
+        app_name_b=args.app_name_b,
+    )
+
+    s = results["summary"]
+    print(
+        f"\n{'=' * 60}\n"
+        f"SxS Summary\n"
+        f"  {args.label_a}: {s['pass_a']}/{s['total']} passed\n"
+        f"  {args.label_b}: {s['pass_b']}/{s['total']} passed\n"
+        f"  Improvements: {s['improvements']}  |  "
+        f"Regressions: {s['regressions']}  |  "
+        f"Both fail: {s['both_fail']}\n"
+        f"Report: {args.output}\n"
+        f"{'=' * 60}"
+    )
+
+
 def ci_test(args: argparse.Namespace) -> None:
     """Handles the 'ci-test' command."""
 
@@ -1690,6 +1730,64 @@ def get_parser() -> argparse.ArgumentParser:
     )
 
     parser_run.set_defaults(func=run_eval)
+
+    # Parser for 'sxs'
+    parser_sxs = subparsers.add_parser(
+        "sxs",
+        help=(
+            "Run a YAML eval suite against two CES Apps side-by-side "
+            "and produce an HTML comparison report."
+        ),
+    )
+    parser_sxs.add_argument(
+        "--app-name-a",
+        required=True,
+        help="App A resource name (projects/.../locations/.../apps/...).",
+    )
+    parser_sxs.add_argument(
+        "--app-name-b",
+        required=True,
+        help="App B resource name (projects/.../locations/.../apps/...).",
+    )
+    parser_sxs.add_argument(
+        "--eval-file",
+        required=True,
+        help="Path to the YAML eval file (TurnEvals format).",
+    )
+    parser_sxs.add_argument(
+        "--output",
+        default="sxs_report.html",
+        help="Output path for the HTML report (default: sxs_report.html).",
+    )
+    parser_sxs.add_argument(
+        "--label-a",
+        default="App A",
+        help="Display label for App A (default: 'App A').",
+    )
+    parser_sxs.add_argument(
+        "--label-b",
+        default="App B",
+        help="Display label for App B (default: 'App B').",
+    )
+    parser_sxs.add_argument(
+        "--tags",
+        nargs="+",
+        default=[],
+        help="Space-separated tags; only test cases matching any tag are run.",
+    )
+    parser_sxs.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="Number of runs per simulation (sim evals only, default: 1).",
+    )
+    parser_sxs.add_argument(
+        "--modality",
+        choices=["text", "audio"],
+        default="text",
+        help="Modality for simulation evals (default: text).",
+    )
+    parser_sxs.set_defaults(func=run_sxs_cmd)
 
     # Parser for 'run-session'
     parser_run_session = subparsers.add_parser(
