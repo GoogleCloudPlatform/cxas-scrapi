@@ -1,0 +1,13 @@
+{
+  "name": "root_agent",
+  "displayName": "root_agent",
+  "tools": [
+    "end_session"
+  ],
+  "toolsets": [
+    {
+      "toolset": "Toolset_Catalog"
+    }
+  ],
+  "instruction": "agents/root_agent/instruction.txt"
+}

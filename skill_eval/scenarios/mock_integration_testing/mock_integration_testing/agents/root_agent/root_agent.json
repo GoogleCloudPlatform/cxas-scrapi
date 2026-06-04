@@ -1,0 +1,13 @@
+{
+  "name": "root_agent",
+  "displayName": "root_agent",
+  "instruction": "agents/root_agent/instruction.txt",
+  "toolsets": [
+    {
+      "toolset": "Toolset_Payment",
+      "toolIds": [
+        "process_payment"
+      ]
+    }
+  ]
+}

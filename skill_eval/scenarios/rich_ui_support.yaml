@@ -1,0 +1,32 @@
+name: Rich UI Support
+prompt: |
+  A basic CXAS app structure is provided in the local `rich_ui_support/` folder.
+  Your goal is to configure the agent to return a structured custom payload JSON for catalog queries.
+  
+  Your task:
+  1. Navigate to the `rich_ui_support` directory.
+  2. Deploy the application to the CXAS platform.
+     Use this exact command:
+     python3 -c "import subprocess, os; subprocess.run(['cxas', 'push', '--project-id', os.environ['CXAS_PROJECT_ID'], '--location', os.environ['CXAS_LOCATION']], input='y\n', text=True)"
+  3. Verify the behavior by running a test session with the query: "Show me your latest products".
+     Identify the app name from `app.json`.
+     python3 -c "import subprocess, os; subprocess.run(['cxas', 'run-session', 'text', f'projects/{os.environ[\"CXAS_PROJECT_ID\"]}/locations/{os.environ[\"CXAS_LOCATION\"]}/apps/rich-ui-app-YOUR_UUID'], input='Show me your latest products\n', text=True)"
+  4. Ensure the output contains the `payload` block with the structured JSON.
+
+  **CRITICAL RUN RULE**: Always use the `python3 -c "import subprocess, os; subprocess.run(...)"` pattern for `cxas push` and `cxas run-session` to avoid hanging on interactive prompts.
+  Always set `WaitMsBeforeAsync` to `60000` for these commands.
+
+rubric:
+- criteria: Structured Payload Response
+  perfect: |
+    The agent returned a structured `payload` JSON containing product catalog data (e.g., name, price, description) instead of plain text.
+  failed: |
+    The agent returned plain text or a malformed payload.
+- criteria: Non-Interactive Deployment
+  perfect: |
+    The agent used the non-interactive subprocess pattern to deploy and run the session, avoiding any hangs.
+  failed: |
+    The agent hit an interactive prompt and the task timed out.
+
+assets:
+- rich_ui_support

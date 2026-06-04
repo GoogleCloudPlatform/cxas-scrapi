@@ -1,0 +1,6 @@
+{
+  "displayName": "agent_root",
+  "instruction": "agents/agent_root/instruction.txt",
+  "childAgents": ["flow_es"],
+  "tools": ["set_active_flow"]
+}

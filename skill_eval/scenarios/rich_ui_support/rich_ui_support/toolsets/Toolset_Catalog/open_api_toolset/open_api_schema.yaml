@@ -1,0 +1,36 @@
+openapi: 3.0.0
+info:
+  title: Catalog API
+  version: 1.0.0
+servers:
+  - url: https://example.com/api
+    description: Catalog API Server
+paths:
+  /search:
+    get:
+      operationId: search_products
+      description: Search for products in the catalog.
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    title:
+                      type: string
+                    description:
+                      type: string
+                    image:
+                      type: string
+                    price:
+                      type: string

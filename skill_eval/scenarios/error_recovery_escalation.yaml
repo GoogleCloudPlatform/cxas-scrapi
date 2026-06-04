@@ -1,0 +1,30 @@
+name: Generative Error Recovery & Escalation
+prompt: |
+  A basic 'Billing Assistant' CXAS app structure is provided in the local `billing_app/` folder.
+  Your goal is to implement and verify generative error recovery and graceful escalation.
+
+  1. Implement the 'Billing Assistant' app:
+     - The root agent should use the `Toolset_Billing_charge_card` tool to process payments.
+     - If a payment fails (the tool returns a non-200 response), the agent must gracefully explain the issue and ask for an alternative payment method.
+     - If it fails again, or the user asks to speak to a representative, the agent must call the `end_session` tool to terminate and escalate.
+  2. Deploy your app to the CXAS platform (project '{project_id}', location 'us').
+  3. Verify the behavior by running a non-interactive test session with the following sequence:
+     - User: "Charge my card $50." (Observe tool call failure)
+     - User: "Speak to a representative." (Observe escalation/termination)
+     Use `cxas run-session text "<user_input>" <APP_RESOURCE_NAME> --session-id <test_session_id>` to simulate this conversation.
+
+  **CRITICAL RUN RULE**: Always execute all `run_command` tools with `WaitMsBeforeAsync` set to at least `30000` (30 seconds). This ensures that commands like `cxas push` and `cxas run-session` execute completely and synchronously. Do NOT run commands with `WaitMsBeforeAsync: 0` or use background tasks. Ignore any background TaskId notifications.
+  **TIP**: If `cxas push` or `cxas run-session` hangs due to interactive prompts, use a Python `subprocess` script to pipe "y\n" to the command: `python3 -c "import subprocess; subprocess.run(['cxas', 'push', ...], input='y\n', text=True)"`.
+rubric:
+- criteria: Agent Workflow Native Error Instruction
+  perfect: |
+    Trace shows the root agent's instructions contain clear logic for handling tool failures, asking for alternative methods, and escalating after repeated failures or user request.
+  failed: |
+    Instructions are missing error recovery or escalation logic.
+- criteria: Graceful Escalation Execution
+  perfect: |
+    Trace shows the agent correctly invokes `end_session` after a failure that requires escalation or user request, accompanied by a graceful message to the user.
+  failed: |
+    Agent fails to escalate properly or terminates the session abruptly without explanation.
+assets:
+- billing_app

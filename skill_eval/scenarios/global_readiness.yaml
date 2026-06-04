@@ -1,0 +1,39 @@
+name: Global Readiness
+prompt: |
+  You are an expert virtual agent developer. Your task is to implement a multi-locale CXAS application named 'Global Readiness'.
+  A skeleton structure is provided in the `global_readiness/` folder.
+
+  1. Configure `app.json` to support both 'en' and 'es' languages using `languageSettings` (e.g., `supportedLanguageCodes: ["en", "es"]`).
+  2. The root agent must be `agent_root`. It should have `flow_es` as a child agent.
+  3. In `agents/agent_root/instruction.txt`, add this CRITICAL instruction: "If the user greets or communicates in Spanish, switch locale to 'es' and route to Spanish flow."
+  4. The Spanish subagent must be named `flow_es`.
+  5. Deploy the application to the CXAS platform using `cxas push --project-id {project_id} --location us`.
+  6. Verify the following interaction:
+     - User: "Hola, buenas tardes, me gustaría cambiar mi reserva."
+     - Expectations:
+       - The session language code is updated to `es`.
+       - The conversation transitions to the `flow_es` subagent.
+       - The agent responds helpfully in Spanish.
+
+  TIP: If `cxas push` or `cxas run-session` hangs due to interactive prompts, use a Python `subprocess` script to pipe 'y\n' to the command. Be sure to run it from the app directory:
+  `python3 -c "import subprocess; subprocess.run(['cxas', 'push', '--project-id', '{project_id}', '--location', 'us'], cwd='global_readiness', input='y\n', text=True)"`
+  For `cxas run-session`, ensure you use non-interactive mode: `cxas run-session text "your text here" projects/{project_id}/locations/us/apps/<app_resource_name>`
+
+rubric:
+- criteria: Multi-locale Configuration
+  perfect: |
+    The `app.json` correctly defines `languageSettings` with `supportedLanguageCodes` including both 'en' and 'es'.
+  failed: |
+    Language settings are missing or use incorrect field names.
+- criteria: Subagent Routing Logic
+  perfect: |
+    The `agent_root` has clear instructions to switch locale to 'es' and route to `flow_es` upon detecting Spanish.
+  failed: |
+    Instruction is missing or the routing target is incorrect.
+- criteria: Global Readiness Interaction
+  perfect: |
+    Trace confirms that upon receiving the Spanish greeting, the session `languageCode` changed to `es` and the active agent became `flow_es`.
+  failed: |
+    The language code did not update, or the agent failed to transition to the Spanish subagent.
+assets:
+- global_readiness

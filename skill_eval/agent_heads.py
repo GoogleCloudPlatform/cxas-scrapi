@@ -120,7 +120,7 @@ class ScaffoldingTestAgent(benchmark.BaseAgentHead):
 class AntigravityAgentHead(benchmark.BaseAgentHead):
     """Agent head powered by the public Google Antigravity SDK."""
 
-    _TIMEOUT_SECONDS: Final[int] = 600
+    _TIMEOUT_SECONDS: Final[int] = 1200
 
     def __init__(
         self,
@@ -235,7 +235,7 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
         # Execute isolated workspace environment setup
 
         await self._run_subprocess_cmd(
-            ["uv", "venv", "--system-site-packages"], self._workspace_dir
+            ["uv", "venv", "--python", sys.executable, "--system-site-packages"], self._workspace_dir
         )
 
         local_venv_path = os.path.join(self._workspace_dir, ".venv")

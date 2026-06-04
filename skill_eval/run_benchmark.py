@@ -37,7 +37,7 @@ _SCENARIO_PATH = flags.DEFINE_string(
     "Path to the scenario .yaml/.yml file or a directory containing them.",
 )
 _TIMEOUT = flags.DEFINE_integer(
-    "timeout", 1200, "Global timeout in seconds for each agent head run."
+    "timeout", 2400, "Global timeout in seconds for each agent head run."
 )
 _PROJECT = flags.DEFINE_string(
     "project",

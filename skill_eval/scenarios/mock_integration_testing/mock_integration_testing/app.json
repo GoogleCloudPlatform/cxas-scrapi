@@ -1,0 +1,5 @@
+{
+  "name": "mock-integration-testing-v1",
+  "displayName": "mock-integration-testing-v1",
+  "rootAgent": "payment_root_agent"
+}

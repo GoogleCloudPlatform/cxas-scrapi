@@ -1,0 +1,9 @@
+{
+  "name": "set_active_flow",
+  "pythonFunction": {
+    "name": "set_active_flow",
+    "pythonCode": "tools/set_active_flow/python_function/python_code.py",
+    "description": "Route the conversation to a specialized sub-agent. Valid target: 'flow_es'."
+  },
+  "displayName": "set_active_flow"
+}

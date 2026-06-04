@@ -1,0 +1,6 @@
+{
+  "name": "agent_billing",
+  "displayName": "agent_billing",
+  "instruction": "agents/agent_billing/instruction.txt",
+  "tools": ["end_session"]
+}
