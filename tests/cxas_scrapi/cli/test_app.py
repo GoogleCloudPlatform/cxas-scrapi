@@ -191,6 +191,106 @@ def test_app_pull(
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
 
+def _make_pull_zip_response(mock_apps_client):
+    """Helper to wire mock_apps_client.export_app to return a dummy zip LRO."""
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("app.yaml", "name: Test App")
+    mock_lro = mock.MagicMock()
+    mock_response = mock.MagicMock()
+    mock_response.app_content = dummy_zip_io.getvalue()
+    mock_lro.result.return_value = mock_response
+    mock_apps_client.export_app.return_value = mock_lro
+
+
+def test_app_pull_with_version_id_bare(
+    mock_apps_client,
+    mock_common_get_project_id,
+    mock_common_get_location,
+    tmp_path,
+):
+    """Bare --version-id is expanded to a full resource name on the request."""
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "pulled_app"),
+        project_id="test-project",
+        location="us",
+        version_id="0.0.3",
+    )
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    _make_pull_zip_response(mock_apps_client)
+
+    cli_app.app_pull(args)
+
+    mock_apps_client.export_app.assert_called_once_with(
+        app_name="projects/test-project/locations/us/apps/123",
+        app_version=(
+            "projects/test-project/locations/us/apps/123/versions/0.0.3"
+        ),
+    )
+
+
+def test_app_pull_with_version_id_full_resource_name(
+    mock_apps_client,
+    mock_common_get_project_id,
+    mock_common_get_location,
+    tmp_path,
+):
+    """A fully qualified --version-id is passed through unchanged."""
+    full_version = (
+        "projects/test-project/locations/us/apps/123/versions/0.0.3"
+    )
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "pulled_app"),
+        project_id="test-project",
+        location="us",
+        version_id=full_version,
+    )
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    _make_pull_zip_response(mock_apps_client)
+
+    cli_app.app_pull(args)
+
+    mock_apps_client.export_app.assert_called_once_with(
+        app_name="projects/test-project/locations/us/apps/123",
+        app_version=full_version,
+    )
+
+
+def test_app_pull_without_version_id_omits_app_version(
+    mock_apps_client,
+    mock_common_get_project_id,
+    mock_common_get_location,
+    tmp_path,
+):
+    """When --version-id is not provided, export_app is called without it.
+
+    Guards against regressing the live-app pull path.
+    """
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "pulled_app"),
+        project_id="test-project",
+        location="us",
+        version_id=None,
+    )
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    _make_pull_zip_response(mock_apps_client)
+
+    cli_app.app_pull(args)
+
+    mock_apps_client.export_app.assert_called_once_with(
+        app_name="projects/test-project/locations/us/apps/123"
+    )
+
+
 def test_app_push(mock_apps_client, tmp_path):
     args = argparse.Namespace(
         app_dir=str(tmp_path),

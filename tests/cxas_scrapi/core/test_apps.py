@@ -283,6 +283,49 @@ def test_export_app_validation(mock_client_cls):
         )
 
 
+@patch("cxas_scrapi.core.apps.types.ExportAppRequest")
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_export_app_with_app_version(mock_client_cls, mock_export_app_req):
+    """app_version is forwarded to ExportAppRequest as the full resource name."""
+    apps_client = Apps(
+        project_id="mock-project", location="us", creds=MagicMock()
+    )
+    mock_operation = MagicMock()
+    apps_client.client.export_app.return_value = mock_operation
+
+    version_name = (
+        "projects/mock-project/locations/us/apps/test-app/versions/0.0.3"
+    )
+    result = apps_client.export_app(
+        app_name="projects/mock-project/locations/us/apps/test-app",
+        app_version=version_name,
+    )
+
+    kwargs = mock_export_app_req.call_args[1]
+    assert kwargs.get("app_version") == version_name
+    assert (
+        kwargs.get("name") == "projects/mock-project/locations/us/apps/test-app"
+    )
+    assert result == mock_operation
+
+
+@patch("cxas_scrapi.core.apps.types.ExportAppRequest")
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_export_app_without_app_version(mock_client_cls, mock_export_app_req):
+    """Omitting app_version produces a request without it (live-app export)."""
+    apps_client = Apps(
+        project_id="mock-project", location="us", creds=MagicMock()
+    )
+    apps_client.client.export_app.return_value = MagicMock()
+
+    apps_client.export_app(
+        app_name="projects/mock-project/locations/us/apps/test-app",
+    )
+
+    kwargs = mock_export_app_req.call_args[1]
+    assert kwargs.get("app_version") is None
+
+
 @patch("cxas_scrapi.core.apps.types.UpdateAppRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
 def test_update_app_sparse(mock_client_cls, mock_update_app_req):

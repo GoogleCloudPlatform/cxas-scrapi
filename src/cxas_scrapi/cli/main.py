@@ -1797,6 +1797,16 @@ def get_parser() -> argparse.ArgumentParser:
             "the exported app will be deleted."
         ),
     )
+    parser_pull.add_argument(
+        "--version-id",
+        default=None,
+        help=(
+            "Optional. Export a specific app version instead of the live app. "
+            "Accepts a bare version ID (e.g. '0.0.3') or a fully qualified "
+            "resource name "
+            "(projects/.../apps/{app}/versions/{version})."
+        ),
+    )
     _add_project_location_args(parser_pull, required=False)
     parser_pull.set_defaults(func=app_pull)
 
