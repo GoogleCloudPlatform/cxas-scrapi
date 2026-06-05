@@ -20,7 +20,6 @@ Validates agent instruction files against CXAS design guide best practices.
 import json
 import re
 from pathlib import Path
-from typing import Optional
 
 from cxas_scrapi.utils.linter import (
     LintContext,
@@ -35,7 +34,7 @@ from cxas_scrapi.utils.linter import (
 TOOL_REF_PATTERN = re.compile(r"\{@TOOL:\s*([^}]+)\}")
 
 
-def _load_agent_config(file_path: Path) -> Optional[dict]:
+def _load_agent_config(file_path: Path) -> dict | None:
     """Load the agent JSON config adjacent to an instruction file."""
     agent_dir = file_path.parent
     agent_json = agent_dir / f"{agent_dir.name}.json"
@@ -52,7 +51,7 @@ def _extract_tool_refs(content: str) -> set[str]:
     return {m.group(1).strip() for m in TOOL_REF_PATTERN.finditer(content)}
 
 
-def _find_line(content: str, needle: str) -> Optional[int]:
+def _find_line(content: str, needle: str) -> int | None:
     """Return 1-based line number of first occurrence, or None."""
     for i, line in enumerate(content.splitlines(), 1):
         if needle in line:
@@ -140,7 +139,7 @@ class ExcessiveIfElse(Rule):
         count = sum(
             1 for line in content.split("\n") if self.IF_ELSE_RE.search(line)
         )
-        if count >= 3:  # noqa: PLR2004
+        if count >= 3:
             rel = str(file_path.relative_to(context.project_root))
             return [
                 self.make_result(

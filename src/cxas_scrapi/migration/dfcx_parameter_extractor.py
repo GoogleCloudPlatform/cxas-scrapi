@@ -14,7 +14,7 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from cxas_scrapi.migration.data_models import DFCXAgentIR
 
@@ -25,7 +25,7 @@ class DFCXParameterExtractor:
     """Production-grade Global Parameter Extraction Engine."""
 
     @staticmethod
-    def infer_schema_from_value(value: Any) -> Dict[str, str]:
+    def infer_schema_from_value(value: Any) -> dict[str, str]:
         """Infers the CXAS schema type based on a raw Python value."""
         if isinstance(value, bool):
             return {"type": "BOOLEAN"}
@@ -41,11 +41,11 @@ class DFCXParameterExtractor:
     @staticmethod
     def register_param(
         original_ref: str,
-        schema: Dict[str, Any],
+        schema: dict[str, Any],
         description: str,
         source: str,
-        unified_parameters: Dict[str, Dict[str, Any]],
-        parameter_name_map: Dict[str, str],
+        unified_parameters: dict[str, dict[str, Any]],
+        parameter_name_map: dict[str, str],
     ):
         """Sanitizes and registers a parameter, upgrading its type if a stronger
 
@@ -182,15 +182,15 @@ class DFCXParameterExtractor:
     @staticmethod
     def migrate_parameters(
         source_agent_data: DFCXAgentIR, reporter: Any
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
         """Aggregates all unique parameters across the agent data."""
         logger.info(
             "  -> Running deep traversal to extract and unify global "
             "parameters..."
         )
 
-        unified_parameters: Dict[str, Dict[str, Any]] = {}
-        parameter_name_map: Dict[str, str] = {}
+        unified_parameters: dict[str, dict[str, Any]] = {}
+        parameter_name_map: dict[str, str] = {}
 
         var_pattern = re.compile(
             r"\$(?:session\.params\.|page\.params\.|flow\.params\.)?([a-zA-Z_][a-zA-Z0-9_-]*)"

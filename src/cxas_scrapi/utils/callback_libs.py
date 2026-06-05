@@ -16,7 +16,7 @@
 
 import base64
 import json as json_lib
-from typing import Any, List, Optional, Set
+from typing import Any
 
 import pydantic
 
@@ -45,13 +45,14 @@ class BaseModel(pydantic.BaseModel):
 class Blob(BaseModel):
     """Datamodel for the blob content."""
 
-    display_name: Optional[str] = pydantic.Field(
-        default=None, alias="displayName"
-    )
-    data: Optional[bytes] = pydantic.Field(
+    display_name: str | None = pydantic.Field(default=None, alias="displayName")
+    data: bytes | None = pydantic.Field(
         default=None,
     )
-    mime_type: Optional[str] = pydantic.Field(default=None, alias="mimeType")
+    mime_type: str | None = pydantic.Field(default=None, alias="mimeType")
+    transcript_field: str | None = pydantic.Field(
+        default=None, alias="transcript"
+    )
 
     @property
     def raw_data(self) -> bytes:
@@ -60,6 +61,9 @@ class Blob(BaseModel):
     @raw_data.setter
     def raw_data(self, value: bytes) -> None:
         self.data = base64.b64encode(value)
+
+    def transcript(self) -> str | None:
+        return self.transcript_field
 
     @classmethod
     def from_json(cls, data: str) -> "Blob":
@@ -72,13 +76,13 @@ class Blob(BaseModel):
 class FunctionCall(BaseModel):
     """Datamodel for the function call."""
 
-    id: Optional[str] = pydantic.Field(
+    id: str | None = pydantic.Field(
         default=None,
     )
-    args: Optional[dict[str, Any]] = pydantic.Field(
+    args: dict[str, Any] | None = pydantic.Field(
         default=None,
     )
-    name: Optional[str] = pydantic.Field(
+    name: str | None = pydantic.Field(
         default=None,
     )
 
@@ -86,16 +90,16 @@ class FunctionCall(BaseModel):
 class FunctionResponse(BaseModel):
     """Datamodel for the function response."""
 
-    will_continue: Optional[bool] = pydantic.Field(
+    will_continue: bool | None = pydantic.Field(
         default=None, alias="willContinue"
     )
-    id: Optional[str] = pydantic.Field(
+    id: str | None = pydantic.Field(
         default=None,
     )
-    name: Optional[str] = pydantic.Field(
+    name: str | None = pydantic.Field(
         default=None,
     )
-    response: Optional[dict[str, Any]] = pydantic.Field(
+    response: dict[str, Any] | None = pydantic.Field(
         default=None,
     )
 
@@ -103,20 +107,18 @@ class FunctionResponse(BaseModel):
 class Part(BaseModel):
     """Datamodel for the part."""
 
-    function_call: Optional[FunctionCall] = pydantic.Field(
+    function_call: FunctionCall | None = pydantic.Field(
         default=None, alias="functionCall"
     )
-    function_response: Optional[FunctionResponse] = pydantic.Field(
+    function_response: FunctionResponse | None = pydantic.Field(
         default=None, alias="functionResponse"
     )
-    text: Optional[str] = pydantic.Field(
+    text: str | None = pydantic.Field(
         default=None,
     )
-    inline_data: Optional[Blob] = pydantic.Field(
-        default=None, alias="inlineData"
-    )
+    inline_data: Blob | None = pydantic.Field(default=None, alias="inlineData")
 
-    def text_or_transcript(self) -> Optional[str]:
+    def text_or_transcript(self) -> str | None:
         if self.text is not None:
             return self.text
         if self.inline_data is not None:
@@ -226,10 +228,10 @@ class Part(BaseModel):
 class Content(BaseModel):
     """Datamodel for the content."""
 
-    parts: Optional[list[Part]] = pydantic.Field(
+    parts: list[Part] | None = pydantic.Field(
         default=None,
     )
-    role: Optional[str] = pydantic.Field(
+    role: str | None = pydantic.Field(
         default=None,
     )
 
@@ -243,7 +245,7 @@ class Content(BaseModel):
 class FunctionDeclaration(BaseModel):
     """Datamodel for the function declaration."""
 
-    name: Optional[str] = pydantic.Field(
+    name: str | None = pydantic.Field(
         default=None,
     )
 
@@ -251,7 +253,7 @@ class FunctionDeclaration(BaseModel):
 class ToolDeclaration(BaseModel):
     """Datamodel for the tool declaration."""
 
-    function_declarations: Optional[list[FunctionDeclaration]] = pydantic.Field(
+    function_declarations: list[FunctionDeclaration] | None = pydantic.Field(
         default=None, alias="functionDeclarations"
     )
 
@@ -259,13 +261,13 @@ class ToolDeclaration(BaseModel):
 class GenerateContentConfig(BaseModel):
     """Datamodel for the generate content config."""
 
-    system_instruction: Optional[Content] = pydantic.Field(
+    system_instruction: Content | None = pydantic.Field(
         default=None, alias="systemInstruction"
     )
-    tools: Optional[list[ToolDeclaration]] = pydantic.Field(
+    tools: list[ToolDeclaration] | None = pydantic.Field(
         default=None,
     )
-    excluded_tools: Optional[list[str]] = pydantic.Field(
+    excluded_tools: list[str] | None = pydantic.Field(
         default=None, alias="excludedTools"
     )
 
@@ -278,7 +280,7 @@ class GenerateContentConfig(BaseModel):
 class EventActions(BaseModel):
     """Event actions data model for the tool context."""
 
-    skip_summarization: Optional[bool] = pydantic.Field(
+    skip_summarization: bool | None = pydantic.Field(
         default=None, alias="skipSummarization"
     )
     state_delta: dict[str, Any] = pydantic.Field(
@@ -287,14 +289,14 @@ class EventActions(BaseModel):
     artifact_delta: dict[str, Any] = pydantic.Field(
         default_factory=dict, alias="artifactDelta"
     )
-    transfer_to_agent: Optional[str] = pydantic.Field(
+    transfer_to_agent: str | None = pydantic.Field(
         default=None, alias="transferToAgent"
     )
-    escalate: Optional[bool] = None
+    escalate: bool | None = None
     requested_auth_configs: dict[str, dict[str, Any]] = pydantic.Field(
         default_factory=dict, alias="requestedAuthConfigs"
     )
-    end_invocation: Optional[bool] = pydantic.Field(
+    end_invocation: bool | None = pydantic.Field(
         default=None, alias="endInvocation"
     )
 
@@ -306,21 +308,21 @@ class Event(BaseModel):
     author: str
     timestamp: int
     invocation_id: str = pydantic.Field(alias="invocationId")
-    content: Optional[Content] = None
+    content: Content | None = None
     actions: EventActions = EventActions()
-    long_running_tool_ids: Optional[Set[str]] = pydantic.Field(
+    long_running_tool_ids: set[str] | None = pydantic.Field(
         default=None, alias="longRunningToolIds"
     )
-    partial: Optional[bool] = None
-    turn_complete: Optional[bool] = pydantic.Field(
+    partial: bool | None = None
+    turn_complete: bool | None = pydantic.Field(
         default=None, alias="turnComplete"
     )
-    error_code: Optional[str] = pydantic.Field(default=None, alias="errorCode")
-    error_message: Optional[str] = pydantic.Field(
+    error_code: str | None = pydantic.Field(default=None, alias="errorCode")
+    error_message: str | None = pydantic.Field(
         default=None, alias="errorMessage"
     )
-    interrupted: Optional[bool] = None
-    branch: Optional[str] = None
+    interrupted: bool | None = None
+    branch: str | None = None
     grounding_metadata: Any = pydantic.Field(
         default=None, alias="groundingMetadata"
     )
@@ -328,7 +330,7 @@ class Event(BaseModel):
     def is_user(self) -> bool:
         return self.author == "user"
 
-    def is_agent(self, agent_name: Optional[str] = None) -> bool:
+    def is_agent(self, agent_name: str | None = None) -> bool:
         if agent_name is None:
             return self.author != "user"
         return self.author == agent_name
@@ -345,7 +347,7 @@ class Event(BaseModel):
 class CallbackContext(BaseModel):
     """Datamodel for the callback context."""
 
-    user_content: Optional[Content] = pydantic.Field(
+    user_content: Content | None = pydantic.Field(
         default=None, alias="userContent"
     )
     invocation_id: str = pydantic.Field(default="", alias="invocationId")
@@ -354,7 +356,7 @@ class CallbackContext(BaseModel):
     state: dict[str, Any] = {}
     actions: EventActions = EventActions()
     events: list[Event] = []
-    streaming_stage: Optional[str] = pydantic.Field(
+    streaming_stage: str | None = pydantic.Field(
         default=None, alias="streamingStage"
     )
     language_code: str = pydantic.Field(default="", alias="languageCode")
@@ -413,7 +415,7 @@ class CallbackContext(BaseModel):
 class ToolContext(CallbackContext):
     """Tool context that could be used by the user code."""
 
-    function_call_id: Optional[str] = pydantic.Field(
+    function_call_id: str | None = pydantic.Field(
         default=None, alias="functionCallId"
     )
 
@@ -428,17 +430,17 @@ class Tool(BaseModel):
 class LlmRequest(BaseModel):
     """Datamodel for the LLM request."""
 
-    model: Optional[str] = None
-    contents: List[Content] = pydantic.Field(default_factory=list)
-    config: Optional[GenerateContentConfig] = None
+    model: str | None = None
+    contents: list[Content] = pydantic.Field(default_factory=list)
+    config: GenerateContentConfig | None = None
 
 
 class LlmResponse(BaseModel):
     """Datamodel for the LLM response."""
 
-    content: Optional[Content] = None
-    partial: Optional[bool] = None
-    turn_complete: Optional[bool] = pydantic.Field(
+    content: Content | None = None
+    partial: bool | None = None
+    turn_complete: bool | None = pydantic.Field(
         default=None, alias="turnComplete"
     )
 

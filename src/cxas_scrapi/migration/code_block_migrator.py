@@ -17,7 +17,7 @@
 import ast
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.migration.ai_augment import AIAugment
@@ -37,7 +37,7 @@ class ToolCallTransformer(ast.NodeTransformer):
     """
 
     def __init__(
-        self, tool_map: Dict[str, Any], tool_display_name_map: Dict[str, str]
+        self, tool_map: dict[str, Any], tool_display_name_map: dict[str, str]
     ):
         super().__init__()
         self.tool_map = tool_map
@@ -427,14 +427,14 @@ class CodeBlockMigrator:
     }
 
     def __init__(
-        self, ps_tools_client: Tools, ai_augment_client: Optional[AIAugment]
+        self, ps_tools_client: Tools, ai_augment_client: AIAugment | None
     ):
         self.ps_tools = ps_tools_client
         self.ai_augment = ai_augment_client
         logger.info("CodeBlockMigrator initialized.")
 
     @staticmethod
-    def _get_typing_imports_for_function(function_code: str) -> Set[str]:
+    def _get_typing_imports_for_function(function_code: str) -> set[str]:
         imports_needed = set()
         try:
             tree = ast.parse(function_code)
@@ -479,7 +479,7 @@ class CodeBlockMigrator:
     @staticmethod
     def _parse_code_block_with_ast(
         code_string: str,
-    ) -> Tuple[Set[str], List[Tuple[str, str]], List[str]]:
+    ) -> tuple[set[str], list[tuple[str, str]], list[str]]:
         explicit_imports = set()
         entry_functions = []
         helper_functions = []
@@ -554,15 +554,15 @@ class CodeBlockMigrator:
     def extract_functions_to_ir(
         self,
         code: str,
-        existing_tool_ids: Set[str],
-        migrated_function_names: Set[str],
-        function_name_to_tool_map: Dict[str, str],
-        tool_map: Dict[str, Any],
-        tool_display_name_map: Dict[str, str],
+        existing_tool_ids: set[str],
+        migrated_function_names: set[str],
+        function_name_to_tool_map: dict[str, str],
+        tool_map: dict[str, Any],
+        tool_display_name_map: dict[str, str],
         target_app_resource_name: str,
-        known_parameters: Set[str] = None,
-    ) -> Tuple[
-        List[Dict[str, Any]], Dict[str, str], Set[str], Set[str], Set[str]
+        known_parameters: set[str] | None = None,
+    ) -> tuple[
+        list[dict[str, Any]], dict[str, str], set[str], set[str], set[str]
     ]:
         """Extracts, transforms (AST), and compiles Python functions into IR
         tool payloads.

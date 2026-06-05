@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 from google.auth.transport.requests import Request as GoogleAuthRequest
@@ -30,10 +30,10 @@ class Insights(Common):
         project_id: str,
         location: str = "us-central1",
         api_version: str = "v1",
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         """Initializes the Insights API base client."""
@@ -58,8 +58,8 @@ class Insights(Common):
         self,
         method: str,
         path: str,
-        data: Optional[Dict[str, Any]] = None,
-        params: Optional[Dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         timeout: float = 60.0,
     ) -> Any:
         """Makes an authenticated HTTP request to the Insights REST API."""
@@ -98,8 +98,8 @@ class Insights(Common):
         self,
         path: str,
         response_key: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> List[Any]:
+        params: dict[str, Any] | None = None,
+    ) -> list[Any]:
         """Helper to exhaust a paginated Insights API endpoint."""
         results = []
         page_token = None
@@ -116,11 +116,11 @@ class Insights(Common):
 
     def list_conversations(
         self,
-        filter_str: Optional[str] = None,
-        view: Optional[str] = None,
+        filter_str: str | None = None,
+        view: str | None = None,
         page_size: int = 100,
         max_pages: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Lists conversations in the configured parent location."""
         path = f"{self.parent}/conversations"
         params = {"pageSize": page_size}
@@ -143,7 +143,7 @@ class Insights(Common):
                 break
         return results
 
-    def get_conversation(self, name: str) -> Dict[str, Any]:
+    def get_conversation(self, name: str) -> dict[str, Any]:
         """Gets a single conversation by name or ID."""
         if not name.startswith("projects/"):
             name = f"{self.parent}/conversations/{name}"

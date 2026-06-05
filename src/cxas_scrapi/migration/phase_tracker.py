@@ -15,9 +15,9 @@ optimization is running. The markers also feed the final summary table.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Iterator
 
 from rich.console import Console
 from rich.table import Table

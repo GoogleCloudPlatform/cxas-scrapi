@@ -168,7 +168,7 @@ class MigrationAnalysisBuilder:
             self.snapshot.grouping = self._derive_grouping(grouping)
             self._wire_callers()
             self.snapshot.references = self._derive_references(ir, bundle)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("analysis snapshot refresh failed: %s", exc)
 
     def flush(self) -> None:
@@ -183,16 +183,16 @@ class MigrationAnalysisBuilder:
             html = self._render_html(data)
             self._atomic_write(self.html_path, html)
             logger.info("migration analysis report → %s", self.html_path)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("analysis report flush failed: %s", exc)
 
     # ----- Derivation helpers ------------------------------------------
 
     def _derive_kpis(
         self,
-        ir: "MigrationIR | None",
-        source: "DFCXAgentIR | None",
-        bundle: "IRBundle | None",
+        ir: MigrationIR | None,
+        source: DFCXAgentIR | None,
+        bundle: IRBundle | None,
     ) -> dict[str, Any]:
         kpis: dict[str, Any] = {}
         if source is not None:
@@ -239,7 +239,7 @@ class MigrationAnalysisBuilder:
         return kpis
 
     def _derive_tools(
-        self, ir: "MigrationIR | None"
+        self, ir: MigrationIR | None
     ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
         tools: dict[str, dict[str, Any]] = {}
         toolsets: dict[str, dict[str, Any]] = {}
@@ -314,11 +314,11 @@ class MigrationAnalysisBuilder:
         # take up to ~10 lines after the match
         lines_after = code[end:].splitlines()[:9]
         prefix = code[start + 1 : match.end()].splitlines()[0]
-        return "\n".join([prefix] + lines_after).strip("\n")
+        return "\n".join([prefix, *lines_after]).strip("\n")
 
     def _derive_agents(
         self,
-        ir: "MigrationIR | None",
+        ir: MigrationIR | None,
         grouping: dict[str, Any] | None,
     ) -> dict[str, dict[str, Any]]:
         agents: dict[str, dict[str, Any]] = {}
@@ -372,9 +372,7 @@ class MigrationAnalysisBuilder:
                 agents[parent]["child_agents"].append(child)
         return agents
 
-    def _derive_variables(
-        self, ir: "MigrationIR | None"
-    ) -> list[dict[str, Any]]:
+    def _derive_variables(self, ir: MigrationIR | None) -> list[dict[str, Any]]:
         if ir is None:
             return []
         out: list[dict[str, Any]] = []
@@ -393,7 +391,7 @@ class MigrationAnalysisBuilder:
 
     def _derive_flows(
         self,
-        source: "DFCXAgentIR | None",
+        source: DFCXAgentIR | None,
         grouping: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
         if source is None:
@@ -483,8 +481,8 @@ class MigrationAnalysisBuilder:
 
     def _derive_references(
         self,
-        ir: "MigrationIR | None",
-        bundle: "IRBundle | None",
+        ir: MigrationIR | None,
+        bundle: IRBundle | None,
     ) -> list[dict[str, str]]:
         refs: list[dict[str, str]] = []
         if ir is not None and ir.metadata.app_resource_name:

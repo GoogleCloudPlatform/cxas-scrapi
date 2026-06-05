@@ -19,13 +19,12 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
 
 from cxas_scrapi.prompts import LLM_LINT_SYSTEM_PROMPT, LLM_LINT_USER_PROMPT
 from cxas_scrapi.utils.gemini import GeminiGenerate
 
 
-def discover_agent_callbacks(agent_dir: Path) -> list[Tuple[str, Path]]:
+def discover_agent_callbacks(agent_dir: Path) -> list[tuple[str, Path]]:
     """Discovers all dynamic instruction callbacks for a given agent directory.
 
     Returns:
@@ -95,9 +94,9 @@ def extract_dynamic_instructions(file_path: Path) -> dict[str, str]:
 
 def resolve_gcp_credentials(
     agent_dir: Path,
-    cli_project_id: Optional[str] = None,
-    cli_location: Optional[str] = None,
-) -> Tuple[str, str]:
+    cli_project_id: str | None = None,
+    cli_location: str | None = None,
+) -> tuple[str, str]:
     """Resolves the GCP project ID and location using multiple fallback methods.
 
     Checks:
@@ -131,7 +130,7 @@ def resolve_gcp_credentials(
         config_path = current_dir / "gecx-config.json"
         if config_path.exists():
             try:
-                with open(config_path, "r", encoding="utf-8") as f:
+                with open(config_path, encoding="utf-8") as f:
                     config_data = json.load(f)
                     if not project_id:
                         project_id = config_data.get("gcp_project_id")
@@ -153,7 +152,7 @@ def resolve_gcp_credentials(
             repo_config = repo_root / "gecx-config.json"
             if repo_config.exists():
                 try:
-                    with open(repo_config, "r", encoding="utf-8") as f:
+                    with open(repo_config, encoding="utf-8") as f:
                         config_data = json.load(f)
                         if not project_id:
                             project_id = config_data.get("gcp_project_id")
@@ -236,7 +235,7 @@ def llm_lint(args: argparse.Namespace) -> None:
 
     # Load instruction content
     try:
-        with open(instruction_file, "r", encoding="utf-8") as f:
+        with open(instruction_file, encoding="utf-8") as f:
             instruction_content = f.read()
     except OSError as e:
         print(f"Error reading instruction.txt: {e}", file=sys.stderr)
@@ -252,7 +251,7 @@ def llm_lint(args: argparse.Namespace) -> None:
     # Load global instruction content if found
     if global_instruction_file:
         try:
-            with open(global_instruction_file, "r", encoding="utf-8") as f:
+            with open(global_instruction_file, encoding="utf-8") as f:
                 global_instruction_content = f.read()
         except OSError as e:
             print(

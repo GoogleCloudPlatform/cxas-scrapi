@@ -16,7 +16,7 @@
 
 import re
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import gspread
 import pandas as pd
@@ -36,10 +36,10 @@ class GoogleSheetsUtils(Common):
 
     def __init__(
         self,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
     ):
         # Ensure sheets scopes are included
         auth_scopes = scope or []
@@ -122,7 +122,7 @@ class GoogleSheetsUtils(Common):
             raise e
 
     def sheets_to_dataframe(
-        self, sheet_name: str, worksheet_name: Optional[str] = None
+        self, sheet_name: str, worksheet_name: str | None = None
     ) -> pd.DataFrame:
         """Move data from Google Sheets to a pandas DataFrame.
 
@@ -162,7 +162,7 @@ class GoogleSheetsUtils(Common):
         self,
         dataframe: pd.DataFrame,
         sheet_name: str,
-        worksheet_name: Optional[str] = None,
+        worksheet_name: str | None = None,
     ):
         """Move data from a pandas DataFrame to Google Sheets.
 
@@ -194,7 +194,7 @@ class GoogleSheetsUtils(Common):
         self,
         dataframe: pd.DataFrame,
         sheet_name: str,
-        worksheet_name: Optional[str] = None,
+        worksheet_name: str | None = None,
     ):
         """Append data from a pandas DataFrame to an existing Google Sheet tab.
 

@@ -350,7 +350,7 @@ def test_parse_agent_response_agent_transfer():
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
-    agent_text, trace_chunks, session_ended = simulator._parse_agent_response(
+    _agent_text, trace_chunks, session_ended = simulator._parse_agent_response(
         mock_response
     )
 
@@ -387,7 +387,7 @@ def test_parse_agent_response_custom_payload():
         "cxas_scrapi.evals.simulation_evals.Sessions._expand_pb_struct",
         return_value={"key": "value"},
     ):
-        agent_text, trace_chunks, session_ended = (
+        _agent_text, trace_chunks, session_ended = (
             simulator._parse_agent_response(mock_response)
         )
 

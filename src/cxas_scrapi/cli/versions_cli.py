@@ -94,7 +94,7 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils")
 
 def _load_template(filename: str) -> str:
     template_path = os.path.join(TEMPLATE_DIR, filename)
-    with open(template_path, "r", encoding="utf-8") as f:
+    with open(template_path, encoding="utf-8") as f:
         return f.read()
 
 
@@ -157,7 +157,9 @@ def _upload_to_codebin(title: str, content: str) -> str | None:
 
 def app_versions_list(args: argparse.Namespace) -> None:
     """Handles the 'versions list' command."""
-    apps_client, app_name, display_name = _resolve_app_args(args.app_name, args)
+    _apps_client, app_name, display_name = _resolve_app_args(
+        args.app_name, args
+    )
     console = Console()
     console.print(
         "\n[bold blue]Listing versions for App:[/] [bold"
@@ -451,7 +453,9 @@ def app_versions_compare(args: argparse.Namespace) -> None:
     """Handles the 'versions compare' command."""
     console = Console()
 
-    apps_client, app_name, display_name = _resolve_app_args(args.app_name, args)
+    _apps_client, app_name, display_name = _resolve_app_args(
+        args.app_name, args
+    )
 
     def get_clean_json(proto_message) -> str:
         d = (

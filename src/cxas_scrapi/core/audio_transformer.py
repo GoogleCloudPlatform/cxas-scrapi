@@ -46,9 +46,9 @@ class AudioTransformer:
         text: str,
         credentials,
         project_id: str,
-        background_noise_file: str = None,
+        background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
-        burst_noise_files: list[str] = None,
+        burst_noise_files: list[str] | None = None,
         burst_noise_snr: float = 5.0,
     ) -> dict:
         """Converts text to speech and returns a dictionary with text and

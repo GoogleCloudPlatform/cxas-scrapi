@@ -17,7 +17,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 USER_AGENT_EXTENSION = "skill/cxas-loss-analysis/fetch-losses"
 
 
-def ccai_to_cxas_dict(ccai_conv: Dict[str, Any]) -> Dict[str, Any]:
+def ccai_to_cxas_dict(ccai_conv: dict[str, Any]) -> dict[str, Any]:
     """Converts a CCAI Insights conversation dict to CXAS-like format."""
     segments = ccai_conv.get("transcript", {}).get("transcriptSegments", [])
     turns = []
@@ -49,7 +49,7 @@ def ccai_to_cxas_dict(ccai_conv: Dict[str, Any]) -> Dict[str, Any]:
     return {"turns": turns}
 
 
-def extract_transcript(conv: Dict[str, Any]) -> Optional[Dict[str, str]]:
+def extract_transcript(conv: dict[str, Any]) -> dict[str, str] | None:
     """Extracts conversation transcript and formats to YAML."""
     conv_name = conv.get("name")
     conv_id = conv_name.split("/")[-1]

@@ -20,7 +20,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import pandas as pd
 import pydantic
@@ -40,29 +40,29 @@ logger = logging.getLogger(__name__)
 
 class ToolCall(BaseModel):
     action: str
-    args: Dict[str, Any] = {}
-    output: Optional[Union[str, Dict[str, Any]]] = None
-    agent: Optional[str] = None
+    args: dict[str, Any] = {}
+    output: str | dict[str, Any] | None = None
+    agent: str | None = None
 
 
 class Turn(BaseModel):
-    user: Optional[str] = None
-    agent: Optional[Union[str, List[str]]] = None
-    tool_calls: List[ToolCall] = []
+    user: str | None = None
+    agent: str | list[str] | None = None
+    tool_calls: list[ToolCall] = []
 
 
 class Conversation(BaseModel):
     conversation: str
-    expectations: List[str] = []
-    tags: List[str] = []
-    session_parameters: Dict[str, Any] = {}
-    turns: List[Turn]
+    expectations: list[str] = []
+    tags: list[str] = []
+    session_parameters: dict[str, Any] = {}
+    turns: list[Turn]
 
 
 class Conversations(BaseModel):
-    common_session_parameters: Dict[str, Any] = {}
-    common_expectations: List[str] = []
-    conversations: List[Conversation]
+    common_session_parameters: dict[str, Any] = {}
+    common_expectations: list[str] = []
+    conversations: list[Conversation]
 
 
 class EvalUtils(Evaluations):
@@ -111,7 +111,7 @@ class EvalUtils(Evaluations):
         )
 
     @staticmethod
-    def parse_variables_input(v: Any) -> Dict[str, Any]:
+    def parse_variables_input(v: Any) -> dict[str, Any]:
         """Allows YAML to accept a list of strings OR a custom dictionary."""
         if v is None:
             return {}
@@ -151,7 +151,7 @@ class EvalUtils(Evaluations):
         return (goal == 1) and all_exp
 
     @staticmethod
-    def _extract_tool_call_args(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_tool_call_args(tool_call: dict[str, Any]) -> dict[str, Any]:
         """Extracts tool arguments from various possible alias keys."""
         for key in ["args", "arguments"]:
             if key in tool_call:
@@ -161,9 +161,9 @@ class EvalUtils(Evaluations):
     def _process_dataset_turn(
         self,
         turn: Turn,
-        session_params: Dict[str, Any],
+        session_params: dict[str, Any],
         params_injected: bool,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Processes a single turn from a conversation dataset into JSON steps.
 
         Returns:
@@ -260,10 +260,10 @@ class EvalUtils(Evaluations):
 
     def _parse_eval_results(
         self,
-        results: Optional[Union[List[Any], str]] = None,
-        eval_names: Optional[Union[List[str], str]] = None,
+        results: list[Any] | str | None = None,
+        eval_names: list[str] | str | None = None,
     ) -> tuple[
-        List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]
+        list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]
     ]:
         if isinstance(results, str):
             eval_names = [results]
@@ -465,9 +465,9 @@ class EvalUtils(Evaluations):
 
     def evals_to_dataframe(
         self,
-        results: Optional[Union[List[Any], str]] = None,
-        eval_names: Optional[Union[List[str], str]] = None,
-    ) -> Dict[str, Any]:
+        results: list[Any] | str | None = None,
+        eval_names: list[str] | str | None = None,
+    ) -> dict[str, Any]:
         """Provides three simplified views of the evaluation data.
 
         Returns:
@@ -759,10 +759,10 @@ class EvalUtils(Evaluations):
 
     def get_latency_metrics_dfs(
         self,
-        results: Optional[List[Any]] = None,
-        eval_names: Optional[List[str]] = None,
-        app_name: Optional[str] = None,
-    ) -> Dict[str, pd.DataFrame]:
+        results: list[Any] | None = None,
+        eval_names: list[str] | None = None,
+        app_name: str | None = None,
+    ) -> dict[str, pd.DataFrame]:
         """Generates latency metrics DataFrames from results and traces.
 
         Args:
@@ -1030,7 +1030,7 @@ class EvalUtils(Evaluations):
         self,
         df: Any,
         dataset_table: str,
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         if_exists: str = "append",
     ):
         """Exports a pandas DataFrame to a Google BigQuery table."""
@@ -1048,7 +1048,7 @@ class EvalUtils(Evaluations):
 
     def load_golden_eval_from_yaml(
         self, yaml_file_path: str, auto_sideload: bool = False
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Parses a YAML file and creates a Golden eval input from it.
 
         Supports two formats:
@@ -1068,7 +1068,7 @@ class EvalUtils(Evaluations):
 
     def load_golden_evals_from_yaml(
         self, yaml_file_path: str, auto_sideload: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Parses a YAML file and returns a list of Golden eval inputs.
 
         Similar to load_golden_eval_from_yaml, but returns all conversations
@@ -1082,9 +1082,9 @@ class EvalUtils(Evaluations):
                 structure.
         """
         try:
-            with open(yaml_file_path, "r", encoding="utf-8") as f:
+            with open(yaml_file_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-        except (IOError, yaml.YAMLError) as e:
+        except (OSError, yaml.YAMLError) as e:
             logger.error("Failed to load YAML from %s: %s", yaml_file_path, e)
             return []
 
@@ -1204,10 +1204,10 @@ class EvalUtils(Evaluations):
 
     def _process_conversation_expectations(
         self,
-        expectations: List[Any],
-        base_dir: Optional[str] = None,
+        expectations: list[Any],
+        base_dir: str | None = None,
         auto_sideload: bool = False,
-    ) -> List[str]:
+    ) -> list[str]:
         """Processes a list of conversation expectations, resolving prompt
         to resource names.
 
@@ -1292,7 +1292,7 @@ class EvalUtils(Evaluations):
         self,
         run_name: str,
         timeout_seconds: int = 300,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Polls for completion of an evaluation run and returns results.
 
         Args:
@@ -1318,10 +1318,10 @@ class EvalUtils(Evaluations):
     def create_and_run_evaluation_from_yaml(
         self,
         yaml_file_path: str,
-        app_name: Optional[str] = None,
+        app_name: str | None = None,
         modality: str = "text",
-        run_count: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        run_count: int | None = None,
+    ) -> dict[str, Any]:
         """Loads, creates, and runs an evaluation from a YAML file.
 
         Args:
@@ -1397,15 +1397,15 @@ class ExpectationResult(pydantic.BaseModel):
 
 
 class ExpectationOutput(pydantic.BaseModel):
-    results: List[ExpectationResult] = []
+    results: list[ExpectationResult] = []
 
 
 def evaluate_expectations(
     gemini_client: Any,
     model_name: str,
-    trace: List[str],
-    expectations: List[str],
-) -> List[ExpectationResult]:
+    trace: list[str],
+    expectations: list[str],
+) -> list[ExpectationResult]:
     """Evaluates expectations against the conversation trace using an LLM.
 
     Args:

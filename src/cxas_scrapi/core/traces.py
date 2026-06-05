@@ -1070,7 +1070,7 @@ def _percentile(values: list[float], p: int) -> float | None:
     if not values:
         return None
     s = sorted(values)
-    k = max(0, min(len(s) - 1, int(round((p / 100) * (len(s) - 1)))))
+    k = max(0, min(len(s) - 1, round((p / 100) * (len(s) - 1))))
     return s[k]
 
 

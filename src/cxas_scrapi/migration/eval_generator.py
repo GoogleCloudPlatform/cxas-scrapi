@@ -16,7 +16,7 @@
 
 import logging
 import re
-from typing import Any, List
+from typing import Any
 
 from cxas_scrapi.evals.turn_evals import (
     TurnExpectation,
@@ -52,7 +52,7 @@ class DeterministicEvalGenerator:
             expectations=[TurnExpectation(type=exp_type, value=exp_value)],
         )
 
-    def generate_tests_for_agent(self, agent_name: str) -> List[TurnTestCase]:
+    def generate_tests_for_agent(self, agent_name: str) -> list[TurnTestCase]:
         """Parse the IR to build an isolated test suite for the given agent."""
         agent_data = self.ir.agents.get(agent_name)
         if not agent_data:
