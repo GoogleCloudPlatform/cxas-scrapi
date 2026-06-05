@@ -20,7 +20,7 @@ import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 import pydantic
@@ -91,7 +91,7 @@ class SimulationReport:
     def __init__(
         self,
         goals_df: pd.DataFrame,
-        expectations_df: Optional[pd.DataFrame] = None,
+        expectations_df: pd.DataFrame | None = None,
     ):
         self.goals_df = goals_df
         self.expectations_df = expectations_df
@@ -152,7 +152,7 @@ class Conversation:
 
     def next_user_utterance(
         self, last_agent_response: str
-    ) -> tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Gets the next user utterance and variables to inject."""
         raise NotImplementedError
 
@@ -174,7 +174,7 @@ class LLMUserConversation(Conversation):
         self,
         genai_client: GeminiGenerate,
         genai_model: str,
-        test_case: Dict[str, Any],
+        test_case: dict[str, Any],
         max_turns: int = _MAX_TURNS,
     ):
         super().__init__()
@@ -198,7 +198,7 @@ class LLMUserConversation(Conversation):
                 )
             )
         self.expectations = test_case.get("expectations", [])
-        self.expectation_results: List[ExpectationResult] = []
+        self.expectation_results: list[ExpectationResult] = []
 
     def _check_conversation_status(self) -> bool:
         """Checks if the conversation should continue."""
@@ -213,7 +213,7 @@ class LLMUserConversation(Conversation):
 
         return True
 
-    def _get_active_step_index(self) -> Optional[int]:
+    def _get_active_step_index(self) -> int | None:
         """Finds the index of the first step that is not completed."""
         for i, prog in enumerate(self.steps_progress):
             if prog.status != StepStatus.COMPLETED:
@@ -242,7 +242,7 @@ class LLMUserConversation(Conversation):
         )
         return prompt
 
-    def _next_user_utterance(self) -> tuple[str, Dict[str, Any]]:
+    def _next_user_utterance(self) -> tuple[str, dict[str, Any]]:
         """Generates the next user utterance and variables to inject based
         on the conversation history.
 
@@ -350,7 +350,7 @@ class SimulationEvals(Apps):
     def __init__(
         self,
         app_name: str,
-        rate_limiter: Optional[RateLimiter] = None,
+        rate_limiter: RateLimiter | None = None,
         **kwargs,
     ):
         self.app_name = app_name
@@ -413,11 +413,11 @@ class SimulationEvals(Apps):
         self,
         session_id: str,
         user_utterance: str,
-        variables: Dict[str, Any],
+        variables: dict[str, Any],
         modality: str,
         console_logging: bool,
-        background_noise_file: Optional[str] = None,
-        burst_noise_files: Optional[List[str]] = None,
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
     ) -> Any:
         """Sends a request to the CES Agent with exponential backoff for
         transient errors.
@@ -479,13 +479,13 @@ class SimulationEvals(Apps):
 
     def simulate_conversation(
         self,
-        test_case: Dict[str, Any],
+        test_case: dict[str, Any],
         model: str = _DEFAULT_GEMINI_MODEL,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         console_logging: bool = True,
         modality: str = "text",
-        background_noise_file: Optional[str] = None,
-        burst_noise_files: Optional[List[str]] = None,
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
 
@@ -568,8 +568,8 @@ class SimulationEvals(Apps):
         return eval_conv
 
     def _prepare_simulation_jobs(
-        self, test_cases: List[Dict[str, Any]], runs: int
-    ) -> List[tuple[Dict[str, Any], int]]:
+        self, test_cases: list[dict[str, Any]], runs: int
+    ) -> list[tuple[dict[str, Any], int]]:
         """Prepares a list of simulation jobs to run."""
         jobs = []
         for tc in test_cases:
@@ -579,16 +579,16 @@ class SimulationEvals(Apps):
 
     def _run_single_simulation_job(
         self,
-        tc: Dict[str, Any],
+        tc: dict[str, Any],
         run_idx: int,
         runs: int,
         model: str,
         modality: str,
         verbose: bool,
         parallel: int,
-        background_noise_file: Optional[str] = None,
-        burst_noise_files: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Runs a single simulation job and returns the results."""
         name = tc["name"]
         label = f"{name} (run {run_idx + 1}/{runs})"
@@ -674,15 +674,15 @@ class SimulationEvals(Apps):
 
     def _aggregate_simulation_results(
         self,
-        jobs: List[tuple[Dict[str, Any], int]],
+        jobs: list[tuple[dict[str, Any], int]],
         runs: int,
         parallel: int,
         model: str,
         modality: str,
         verbose: bool,
-        background_noise_file: Optional[str] = None,
-        burst_noise_files: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Aggregates results from multiple simulation jobs."""
         results = []
         with Progress() as progress:
@@ -730,15 +730,15 @@ class SimulationEvals(Apps):
 
     def run_simulations(
         self,
-        test_cases: List[Dict[str, Any]],
+        test_cases: list[dict[str, Any]],
         runs: int = 1,
         parallel: int = 1,
         model: str = _DEFAULT_GEMINI_MODEL,
         modality: str = "text",
         verbose: bool = False,
-        background_noise_file: Optional[str] = None,
-        burst_noise_files: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Runs multiple simulations, optionally in parallel.
 
         Args:
@@ -785,14 +785,14 @@ class SimulationEvals(Apps):
                 tc_obj.output = response
                 break
 
-    def _handle_text_chunk(self, chunk: Dict[str, Any], turn: Turn) -> None:
+    def _handle_text_chunk(self, chunk: dict[str, Any], turn: Turn) -> None:
         """Processes a text chunk from the platform response."""
         text = chunk.get("text", "").strip()
         if text:
             self._add_agent_text(turn, text)
 
     def _handle_tool_call_chunk(
-        self, chunk: Dict[str, Any], turn: Turn
+        self, chunk: dict[str, Any], turn: Turn
     ) -> None:
         """Processes a tool call chunk from the platform response."""
         tc = chunk["tool_call"]
@@ -801,7 +801,7 @@ class SimulationEvals(Apps):
         turn.tool_calls.append(ToolCall(action=tool_name, args=args))
 
     def _handle_tool_response_chunk(
-        self, chunk: Dict[str, Any], turn: Turn
+        self, chunk: dict[str, Any], turn: Turn
     ) -> None:
         """Processes a tool response chunk from the platform response."""
         tr = chunk["tool_response"]
@@ -810,7 +810,7 @@ class SimulationEvals(Apps):
         self._match_tool_response(turn, tool_name, response)
 
     def _handle_agent_transfer_chunk(
-        self, chunk: Dict[str, Any], turn: Turn
+        self, chunk: dict[str, Any], turn: Turn
     ) -> None:
         """Processes an agent transfer chunk from the platform response."""
         # For golden export, we represent this as a special tool call or skip if
@@ -823,7 +823,7 @@ class SimulationEvals(Apps):
             ToolCall(action="transfer_to_agent", args={"agent": target})
         )
 
-    def _handle_payload_chunk(self, chunk: Dict[str, Any], turn: Turn) -> None:
+    def _handle_payload_chunk(self, chunk: dict[str, Any], turn: Turn) -> None:
         """Processes a custom payload chunk from the platform response."""
         # Custom payloads don't have a direct field in Turn/ToolCall model
         # for golden export usually, but we could add to agent text as a note
@@ -831,7 +831,7 @@ class SimulationEvals(Apps):
         self._add_agent_text(turn, f"[Custom Payload]: {json.dumps(payload)}")
 
     def _process_platform_chunk(
-        self, chunk: Dict[str, Any], turn: Turn
+        self, chunk: dict[str, Any], turn: Turn
     ) -> None:
         """Dispatches platform chunks to their respective handlers."""
         if "text" in chunk:
@@ -846,8 +846,8 @@ class SimulationEvals(Apps):
             self._handle_payload_chunk(chunk, turn)
 
     def _parse_platform_messages(
-        self, messages: List[Dict[str, Any]], turns: List[Turn]
-    ) -> Optional[Turn]:
+        self, messages: list[dict[str, Any]], turns: list[Turn]
+    ) -> Turn | None:
         """Parses a list of platform messages into turns."""
         current_turn = turns[-1] if turns else None
 
@@ -871,7 +871,7 @@ class SimulationEvals(Apps):
 
         return current_turn
 
-    def _get_turns_from_platform(self, session_id: str) -> List[Turn]:
+    def _get_turns_from_platform(self, session_id: str) -> list[Turn]:
         """Fetches and parses turns from the platform conversation history."""
         ch = ConversationHistory(app_name=self.app_name, creds=self.creds)
         conv_obj = ch.get_conversation(session_id)
@@ -882,7 +882,7 @@ class SimulationEvals(Apps):
             self._parse_platform_messages(p_turn.get("messages", []), turns)
         return turns
 
-    def _parse_trace_line(self, line: str, turns: List[Turn]) -> Optional[Turn]:
+    def _parse_trace_line(self, line: str, turns: list[Turn]) -> Turn | None:
         """Parses a single line from the local trace."""
         current_turn = turns[-1] if turns else None
 
@@ -912,14 +912,14 @@ class SimulationEvals(Apps):
 
         return current_turn
 
-    def _get_turns_from_local_trace(self, trace: List[str]) -> List[Turn]:
+    def _get_turns_from_local_trace(self, trace: list[str]) -> list[Turn]:
         """Parses turns from the local simulation trace (fallback)."""
         turns = []
         for line in trace:
             self._parse_trace_line(line, turns)
         return turns
 
-    def _get_turns(self, res: Dict[str, Any]) -> List[Turn]:
+    def _get_turns(self, res: dict[str, Any]) -> list[Turn]:
         """Orchestrates turn retrieval with platform-to-local fallback."""
         session_id = res.get("session_id")
         if not session_id:
@@ -938,8 +938,8 @@ class SimulationEvals(Apps):
 
     def export_results_to_golden(
         self,
-        results: List[Dict[str, Any]],
-        output_path: Optional[str] = None,
+        results: list[dict[str, Any]],
+        output_path: str | None = None,
     ) -> str:
         """Exports simulation results to a Golden Evaluation YAML file.
 

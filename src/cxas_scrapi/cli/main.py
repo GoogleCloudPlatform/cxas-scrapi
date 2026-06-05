@@ -23,7 +23,6 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Dict, List
 
 import pandas as pd
 from google.api_core.exceptions import NotFound
@@ -198,11 +197,11 @@ def push_eval(args: argparse.Namespace) -> None:
 
 def wait_for_evaluation_completion(
     eval_utils: EvalUtils,
-    old_result_ids: List[str],
+    old_result_ids: list[str],
     app_name: str,
     expected_count: int = 1,
     timeout_seconds: int = 600,
-) -> Dict[str, pd.DataFrame]:
+) -> dict[str, pd.DataFrame]:
     """Waits for all new evaluation results to appear."""
     print(f"Waiting for {expected_count} evaluation(s) to complete...")
     start_time = time.time()
@@ -255,8 +254,8 @@ def wait_for_evaluation_completion(
     sys.exit(1)
 
 
-def filter_metrics_and_assess(  # noqa: C901
-    df_dict_new_run: Dict[str, pd.DataFrame],
+def filter_metrics_and_assess(
+    df_dict_new_run: dict[str, pd.DataFrame],
     filter_auto_metrics: bool,
 ) -> bool:
     """Assesses the evaluation run and returns True if passed,
@@ -349,7 +348,7 @@ def filter_metrics_and_assess(  # noqa: C901
     return passed
 
 
-def run_eval(args: argparse.Namespace) -> None:  # noqa: C901
+def run_eval(args: argparse.Namespace) -> None:
     """Handles the 'run' command."""
 
     print(f"Triggering evaluation for App: {args.app_name}")

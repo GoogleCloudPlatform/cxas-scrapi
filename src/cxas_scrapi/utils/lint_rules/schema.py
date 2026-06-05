@@ -57,7 +57,7 @@ def _load_json_or_yaml(directory: Path, file_name: str) -> dict:
         )
 
 
-def _resolve_paths(data, extra_prefixes=(), base_path=None):  # noqa: C901
+def _resolve_paths(data, extra_prefixes=(), base_path=None):
     """Recursively replace file-path strings with their contents."""
     if isinstance(data, dict):
         return {

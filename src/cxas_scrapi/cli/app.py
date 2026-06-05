@@ -24,7 +24,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
@@ -71,7 +71,7 @@ def _resolve_app_args(
     return apps_client, app_name, display_name
 
 
-def _handle_import_result(result: Any, success_verb: str) -> Optional[str]:
+def _handle_import_result(result: Any, success_verb: str) -> str | None:
     """Helper to wait for import LRO and print success message."""
     if hasattr(result, "result"):
         print("Waiting for import to complete...")
@@ -203,7 +203,7 @@ def _app_pull(
         sys.exit(1)
 
 
-def app_push(args: argparse.Namespace) -> Optional[str]:  # noqa: C901
+def app_push(args: argparse.Namespace) -> str | None:
     """Handles the 'push' command."""
     # We will reuse the deploy_agent logic from main.py, slightly adjusted.
     app_dir = args.app_dir if args.app_dir else "."
@@ -238,12 +238,12 @@ def app_push(args: argparse.Namespace) -> Optional[str]:  # noqa: C901
 def _app_push(
     app_dir: str,
     apps_client: Apps = None,
-    target_app_name: str = None,
-    identifier: str = None,
-    display_name: str = None,
-    env_file: str = None,
-    args: Optional[argparse.Namespace] = None,
-) -> Optional[str]:
+    target_app_name: str | None = None,
+    identifier: str | None = None,
+    display_name: str | None = None,
+    env_file: str | None = None,
+    args: argparse.Namespace | None = None,
+) -> str | None:
     """Helper to push an app to CXAS."""
     temp_dir = tempfile.mkdtemp()
     inner_dir = os.path.join(temp_dir, "agent")
@@ -514,7 +514,7 @@ def apps_get(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def app_lint(args: argparse.Namespace) -> None:  # noqa: C901
+def app_lint(args: argparse.Namespace) -> None:
     """Handles the 'lint' command."""
     from cxas_scrapi.utils.linter import (  # noqa: PLC0415
         SINGLE_RESOURCE_RULES,
@@ -554,8 +554,9 @@ def app_lint(args: argparse.Namespace) -> None:  # noqa: C901
         if not json_output:
             print(f"Validating {flag}: {resource_path.name}")
             print("=" * 60)
-        for result in rule_obj.check(resource_path, "", context):
-            report.add(result)
+        if rule_obj is not None:
+            for result in rule_obj.check(resource_path, "", context):
+                report.add(result)
         report.print_and_exit(json_output, show_fixes)
         return
 

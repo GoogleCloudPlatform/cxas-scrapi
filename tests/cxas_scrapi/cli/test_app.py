@@ -442,7 +442,7 @@ def test_app_lint_json_output(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415,I001
+    import json  # noqa: PLC0415
 
     parsed = json.loads(captured.out)
     assert isinstance(parsed, list)
@@ -460,7 +460,7 @@ def test_app_lint_validate_only(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415,I001
+    import json  # noqa: PLC0415
 
     results = json.loads(captured.out)
     valid_prefixes = ("A", "S", "V")
@@ -482,7 +482,7 @@ def test_app_lint_only_filter(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415,I001
+    import json  # noqa: PLC0415
 
     results = json.loads(captured.out)
     for r in results:
@@ -503,7 +503,7 @@ def test_app_lint_rule_filter(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415,I001
+    import json  # noqa: PLC0415
 
     results = json.loads(captured.out)
     for r in results:

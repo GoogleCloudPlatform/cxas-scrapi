@@ -39,8 +39,8 @@ from rich.logging import RichHandler
 
 # Skill-local helpers
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _prompts  # noqa: E402
-import _shared  # noqa: E402
+import _prompts
+import _shared
 
 from cxas_scrapi.migration import html_preview, phase_tracker
 from cxas_scrapi.migration.config import AGENT_MODELS
@@ -184,7 +184,7 @@ async def _run(args) -> None:
                     f"{stats['routing_edge_count']} routing edges\n"
                     f"  • Estimated 1:1 migration time: ~{est} min"
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Preview HTML generation failed: %s", exc)
 
     if args.preview_only:
@@ -224,7 +224,7 @@ async def _run(args) -> None:
                 inputs["target_name"]
             )
             _shared.show_visualizations(inputs["target_name"], console)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("SVG export failed: %s", exc)
 
     # Phase 6: review + confirm
@@ -297,7 +297,7 @@ async def _run(args) -> None:
                     f"[green]Wrote {total} deterministic tests for "
                     f"{len(by_agent)} agents → {test_path}[/]"
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Unit test generation failed: %s", exc)
 
     # Phase 8: final summary

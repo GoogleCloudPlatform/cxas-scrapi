@@ -18,7 +18,8 @@ import inspect
 import re
 import textwrap
 import traceback
-from typing import Any, Callable, Dict, List, Optional, Union
+from collections.abc import Callable
+from typing import Any
 
 from google.cloud.ces_v1beta import types
 from google.protobuf import field_mask_pb2
@@ -51,7 +52,7 @@ class Callbacks(Agents):
         }
 
     def _format_python_code(
-        self, callback_type: str, code: Union[Callable, str]
+        self, callback_type: str, code: Callable | str
     ) -> str:
         """Parses a Callable into the properly named string expected by CES."""
         if not isinstance(code, Callable):
@@ -77,7 +78,7 @@ class Callbacks(Agents):
                 "Callable."
             ) from e
 
-    def list_callbacks(self, agent_id: str) -> Dict[str, List[types.Callback]]:
+    def list_callbacks(self, agent_id: str) -> dict[str, list[types.Callback]]:
         """Lists callbacks attached to a specific agent.
 
         Returns:
@@ -97,7 +98,7 @@ class Callbacks(Agents):
 
     def get_callback(
         self, agent_id: str, callback_type: str, index: int = 0
-    ) -> Optional[types.Callback]:
+    ) -> types.Callback | None:
         """Gets a specific callback from an agent by its index."""
         field_name = self.callback_map.get(callback_type)
         if not field_name:
@@ -114,7 +115,7 @@ class Callbacks(Agents):
         self,
         agent_id: str,
         callback_type: str,
-        code: Union[Callable, str],
+        code: Callable | str,
         description: str = "",
         disabled: bool = False,
     ) -> types.Agent:
@@ -149,9 +150,9 @@ class Callbacks(Agents):
         agent_id: str,
         callback_type: str,
         index: int,
-        code: Union[Callable, str] = None,
-        description: str = None,
-        disabled: bool = None,
+        code: Callable | str | None = None,
+        description: str | None = None,
+        disabled: bool | None = None,
     ) -> types.Agent:
         """Updates an existing callback on the agent by its index."""
         field_name = self.callback_map.get(callback_type)
@@ -204,8 +205,8 @@ class Callbacks(Agents):
 
     @staticmethod
     def execute_callback(
-        callback_func: Union[Callable, str], mock_session_input: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        callback_func: Callable | str, mock_session_input: dict[str, Any]
+    ) -> dict[str, Any]:
         """Executes a localized python callback function hermetically against
         a mock session.
 
@@ -246,7 +247,7 @@ class Callbacks(Agents):
             # Execute the string into our globals namespace
             exec(code_str, exec_globals)
         except Exception as e:
-            return {"error": f"Compilation failed: {str(e)}"}
+            return {"error": f"Compilation failed: {e!s}"}
 
         if func_name not in exec_globals:
             return {
@@ -262,6 +263,6 @@ class Callbacks(Agents):
             return {"success": True, "result": result}
         except Exception as e:
             return {
-                "error": f"Execution failed: {str(e)}",
+                "error": f"Execution failed: {e!s}",
                 "traceback": traceback.format_exc(),
             }

@@ -460,7 +460,7 @@ def _bar_block(
     label_w = min(40, max(len(str(k)) for k, _ in items))
     out: list[str] = ["```"]
     for label, n in items:
-        bar = "█" * max(1, int(round(width * n / peak)))
+        bar = "█" * max(1, round(width * n / peak))
         pct = ""
         if total:
             pct = f"  ({n / total:.0%})"

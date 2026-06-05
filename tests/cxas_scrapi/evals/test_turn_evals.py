@@ -73,7 +73,7 @@ tests:
     assert cases[0].name == "test_greeting"
     assert cases[0].user == "Hello"
     assert cases[0].variables["first_turn"] is True
-    assert len(cases[0].expectations) == 2  # noqa: PLR2004
+    assert len(cases[0].expectations) == 2
     assert cases[0].expectations[0].type == TurnOperator.CONTAINS
     assert cases[0].expectations[0].value == "Hi there"
     assert cases[0].expectations[1].type == TurnOperator.TOOL_CALLED
@@ -132,7 +132,7 @@ def test_validate_turn_test_success(mock_message_to_dict, mock_turn_evals):
     )
 
     results = mock_turn_evals.validate_turn_test(test_case, MagicMock())
-    assert len(results) == 5  # noqa: PLR2004
+    assert len(results) == 5
     assert all(r["status"] == "SUCCESS" for r in results)
 
 
@@ -179,7 +179,7 @@ def test_validate_turn_test_failures(mock_message_to_dict, mock_turn_evals):
     )
 
     results = mock_turn_evals.validate_turn_test(test_case, MagicMock())
-    assert len(results) == 5  # noqa: PLR2004
+    assert len(results) == 5
     assert all(r["status"] == "FAILURE" for r in results)
     assert any("CONTAINS failed" in r["justification"] for r in results)
     assert any("EQUALS failed" in r["justification"] for r in results)
@@ -259,7 +259,7 @@ def test_run_turn_tests_conversation_expectations(
     df = mock_turn_evals.run_turn_tests(cases)
     assert isinstance(df, pd.DataFrame)
     # 1 row for the turn, 1 row for the conversation expectation
-    assert len(df) == 2  # noqa: PLR2004
+    assert len(df) == 2
 
     # Check the conversation row
     conv_row = df[df["turn"] == "CONVERSATION"]
@@ -286,14 +286,14 @@ def test_run_turn_tests_multi_turn_passes_historical_contexts(mock_turn_evals):
 
     mock_turn_evals.run_turn_tests(cases)
 
-    assert mock_turn_evals.sessions_client.run.call_count == 2  # noqa: PLR2004
+    assert mock_turn_evals.sessions_client.run.call_count == 2
 
     # Check first call
-    args, kwargs = mock_turn_evals.sessions_client.run.call_args_list[0]
+    _args, kwargs = mock_turn_evals.sessions_client.run.call_args_list[0]
     assert kwargs["historical_contexts"] == "some_context_id"
 
     # Check second call
-    args, kwargs = mock_turn_evals.sessions_client.run.call_args_list[1]
+    _args, kwargs = mock_turn_evals.sessions_client.run.call_args_list[1]
     assert kwargs["historical_contexts"] is None
 
 
@@ -340,7 +340,7 @@ def test_run_turn_tests_resolves_test_name_dependency(mock_turn_evals):
     mock_turn_evals.run_turn_tests(cases)
 
     assert mock_turn_evals.sessions_client.run.call_count == 1
-    args, kwargs = mock_turn_evals.sessions_client.run.call_args
+    _args, kwargs = mock_turn_evals.sessions_client.run.call_args
     assert kwargs["historical_contexts"] == "resolved_session_123"
 
 
@@ -359,7 +359,7 @@ def test_run_turn_tests_passes_utterances_directly(mock_turn_evals):
     mock_turn_evals.run_turn_tests(cases)
 
     assert mock_turn_evals.sessions_client.run.call_count == 1
-    args, kwargs = mock_turn_evals.sessions_client.run.call_args
+    _args, kwargs = mock_turn_evals.sessions_client.run.call_args
     assert kwargs["historical_contexts"] == utterances
 
 
@@ -418,7 +418,7 @@ def test_run_turn_tests_with_event(mock_turn_evals):
     mock_turn_evals.run_turn_tests(cases)
 
     assert mock_turn_evals.sessions_client.run.call_count == 1
-    args, kwargs = mock_turn_evals.sessions_client.run.call_args
+    _args, kwargs = mock_turn_evals.sessions_client.run.call_args
     assert kwargs["text"] is None
     assert kwargs["event"] == "welcome"
 
@@ -445,12 +445,12 @@ def test_run_turn_tests_multi_turn_with_event(mock_turn_evals):
     assert mock_turn_evals.sessions_client.run.call_count == 2
 
     # Check first call (event)
-    args, kwargs = mock_turn_evals.sessions_client.run.call_args_list[0]
+    _args, kwargs = mock_turn_evals.sessions_client.run.call_args_list[0]
     assert kwargs["text"] is None
     assert kwargs["event"] == "welcome"
 
     # Check second call (text)
-    args, kwargs = mock_turn_evals.sessions_client.run.call_args_list[1]
+    _args, kwargs = mock_turn_evals.sessions_client.run.call_args_list[1]
     assert kwargs["text"] == "regular text"
     assert kwargs["event"] is None
 

@@ -32,5 +32,5 @@ COMPONENTS_DIR = os.path.normpath(
 def load_component(relative_path: str) -> str:
     """Helper to load raw component text from resources directory cached E2E."""
     full_path = os.path.join(COMPONENTS_DIR, relative_path)
-    with open(full_path, "r", encoding="utf-8") as f:
+    with open(full_path, encoding="utf-8") as f:
         return f.read()

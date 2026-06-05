@@ -40,8 +40,8 @@ class CallbackEvals:
         agent_name: str,
         callback_type: str,
         test_file_path: str,
-        log_file: str = None,
-        pytest_args: list[str] = None,
+        log_file: str | None = None,
+        pytest_args: list[str] | None = None,
     ) -> pd.DataFrame:
         """Runs test against a single callback fetched from the agent proto.
 
@@ -60,9 +60,13 @@ class CallbackEvals:
         # Get agent ID
         try:
             agents_map = agents_client.get_agents_map(reverse=True)
-            agent = agents_client.get_agent(
-                agents_map.get(agent_name).split("/")[-1]
-            )
+            agent_uri = agents_map.get(agent_name)
+            if agent_uri is None:
+                raise ValueError(
+                    f"Agent '{agent_name}' not found in "
+                    "applications agents map."
+                )
+            agent = agents_client.get_agent(agent_uri.split("/")[-1])
         except Exception as e:
             logger.error(f"Failed to get agent {agent_name}: {e}")
             raise ValueError(
@@ -96,7 +100,7 @@ class CallbackEvals:
         if not os.path.exists(test_file_path):
             raise FileNotFoundError(f"Test file not found: {test_file_path}")
 
-        with open(test_file_path, "r", encoding="utf-8") as f:
+        with open(test_file_path, encoding="utf-8") as f:
             test_content = f.read()
 
             results = self._run_test(
@@ -125,8 +129,8 @@ class CallbackEvals:
         agent_name: str = "*",
         callback_type: str = "*_callbacks",
         callback_name: str = "*",
-        log_file: str = None,
-        pytest_args: list[str] = None,
+        log_file: str | None = None,
+        pytest_args: list[str] | None = None,
     ) -> pd.DataFrame:
         """Runs pytest against all callback tests in the given agent directory.
 
@@ -192,10 +196,10 @@ class CallbackEvals:
 
             logger.debug(f"Running test for: {python_code_path}")
 
-            with open(python_code_path, "r", encoding="utf-8") as f:
+            with open(python_code_path, encoding="utf-8") as f:
                 code_content = f.read()
 
-            with open(test_file, "r", encoding="utf-8") as f:
+            with open(test_file, encoding="utf-8") as f:
                 test_content = f.read()
 
             cur_agent_name = self._get_agent_name(test_file)
@@ -238,8 +242,8 @@ class CallbackEvals:
         test_file_path: str,
         agent_name: str,
         callback_type: str,
-        log_file: str = None,
-        pytest_args: list[str] = None,
+        log_file: str | None = None,
+        pytest_args: list[str] | None = None,
     ) -> list[dict]:
         """Runs the test for the given callback content and test content."""
 

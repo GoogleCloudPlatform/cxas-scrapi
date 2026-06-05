@@ -279,7 +279,7 @@ def test_generate_combined_html_report(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         content = f.read()
         assert "Combined Eval Report" in content
         assert "test_golden" in content
@@ -347,7 +347,7 @@ def test_generate_combined_report_from_dir(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         content = f.read()
         assert "Combined Eval Report" in content
         assert "test_sim" in content
@@ -384,7 +384,7 @@ def test_generate_combined_report_from_dir_include_all(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         content = f.read()
         assert "test_sim" in content
         assert "test_tool" in content

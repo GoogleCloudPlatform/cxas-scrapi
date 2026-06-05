@@ -478,7 +478,7 @@ class WrongCallbackSignature(Rule):
     description = "Callback function must have correct type annotations"
     default_severity = Severity.ERROR
 
-    def check(  # noqa: C901
+    def check(
         self,
         file_path: Path,
         content: str,

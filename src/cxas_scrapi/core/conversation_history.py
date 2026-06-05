@@ -16,7 +16,7 @@
 
 import datetime
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 import yaml
@@ -33,11 +33,11 @@ class ConversationHistory(Common):
 
     def __init__(
         self,
-        app_name: str = None,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        app_name: str | None = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -59,7 +59,7 @@ class ConversationHistory(Common):
     def parse_conversation_to_yaml(filepath):
         """Parses a direct CXAS Conversation History textproto into the
         target FDE YAML format."""
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             text = f.read()
 
         parsed = Common.parse_textproto(text)
@@ -135,11 +135,11 @@ class ConversationHistory(Common):
 
     def list_conversations(
         self,
-        time_filter: str = None,
-        source_filter: str = None,
-        extra_filter: str = None,
-        sources: List[str] = None,
-        page_size: int = None,
+        time_filter: str | None = None,
+        source_filter: str | None = None,
+        extra_filter: str | None = None,
+        sources: list[str] | None = None,
+        page_size: int | None = None,
     ) -> Any:
         """Lists conversations in the configured app.
 
@@ -226,9 +226,9 @@ class ConversationHistory(Common):
     def get_latency_metrics_dfs(
         self,
         time_filter: str = "7d",
-        source_filter: str = None,
+        source_filter: str | None = None,
         limit: int = 50,
-    ) -> Dict[str, pd.DataFrame]:
+    ) -> dict[str, pd.DataFrame]:
         """Generates latency metrics DataFrames from recent conversation traces.
 
         Args:

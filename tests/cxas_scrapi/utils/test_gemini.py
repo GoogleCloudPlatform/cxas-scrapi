@@ -36,7 +36,7 @@ def test_generate_with_parts_text_response(mock_genai):
         temperature=0.5,
     )
     assert out == "reply"
-    args, kwargs = fake_client.models.generate_content.call_args
+    _args, kwargs = fake_client.models.generate_content.call_args
     contents = kwargs["contents"]
     assert contents[0] == "text:a prompt"
     assert hasattr(contents[1], "name")

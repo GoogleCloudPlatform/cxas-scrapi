@@ -22,7 +22,7 @@ import threading
 import time
 import uuid
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import certifi
 import requests
@@ -34,7 +34,7 @@ from google.protobuf import json_format
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 try:
-    from IPython.display import HTML, display  # noqa: F401
+    from IPython.display import HTML, display
 
     HAS_IPYTHON = True
 except ImportError:
@@ -108,10 +108,10 @@ class BidiSessionError(Exception):
     def __init__(
         self,
         message: str,
-        close_status_code: Optional[int] = None,
-        close_msg: Optional[str] = None,
-        server_error_kind: Optional[str] = None,
-        server_trace_id: Optional[str] = None,
+        close_status_code: int | None = None,
+        close_msg: str | None = None,
+        server_error_kind: str | None = None,
+        server_trace_id: str | None = None,
     ):
         super().__init__(message)
         self.close_status_code = close_status_code
@@ -178,10 +178,10 @@ class BidiSessionHandler:
         self,
         location: str,
         token: str,
-        config: Dict[str, Any],
-        inputs: List[Dict[str, Any]],
-        user_agent: str = None,
-        background_noise_file: Optional[str] = None,
+        config: dict[str, Any],
+        inputs: list[dict[str, Any]],
+        user_agent: str | None = None,
+        background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
     ):
         self.uri = BIDI_SESSION_URI + location
@@ -190,11 +190,11 @@ class BidiSessionHandler:
         self.inputs = inputs
         self.user_agent = user_agent
         self.agent_turn_manager = AgentTurnManager()
-        self.ws_app = None
+        self.ws_app: websocket.WebSocketApp | None = None
         self.outputs = []
-        self._close_status_code: Optional[int] = None
-        self._close_msg: Optional[str] = None
-        self._connection_error: Optional[BaseException] = None
+        self._close_status_code: int | None = None
+        self._close_msg: str | None = None
+        self._connection_error: BaseException | None = None
 
         # Setup continuous background noise segment if provided
         self.bg_noise_segment = None
@@ -272,7 +272,7 @@ class BidiSessionHandler:
             time.sleep(CHUNK_DELAY)
 
     def _send_audio_message(
-        self, audio_payload: Dict[str, Any], turn_index: int
+        self, audio_payload: dict[str, Any], turn_index: int
     ):
         audio_bytes = audio_payload["audio"]
         variables = audio_payload.get("variables")
@@ -563,8 +563,8 @@ class Sessions(Common):
     def __init__(
         self,
         app_name: str,
-        deployment_id: str = None,
-        rate_limiter: Optional[RateLimiter] = None,
+        deployment_id: str | None = None,
+        rate_limiter: RateLimiter | None = None,
         **kwargs,
     ):
         """Initializes the Sessions client."""
@@ -637,7 +637,7 @@ class Sessions(Common):
         return str(uuid.uuid4())
 
     @staticmethod
-    def get_file_data(file_path: str) -> Dict[str, Any]:
+    def get_file_data(file_path: str) -> dict[str, Any]:
         """
         Reads a local file, returns a blob dict.
         """
@@ -673,7 +673,7 @@ class Sessions(Common):
         else:
             return pb_struct
 
-    def parse_result(self, res: Any):  # noqa: C901
+    def parse_result(self, res: Any):
         """
         Parses the CX Agent Studio session response to extract and print
         turn-by-turn interactions including User Queries, Agent Responses,
@@ -841,7 +841,7 @@ class Sessions(Common):
                                 )
                             )
 
-    def get_structured_response(self, response) -> Dict[str, Any]:
+    def get_structured_response(self, response) -> dict[str, Any]:
         """Parse response, avoiding duplicate text from diagnostic info.
 
         Returns a dictionary with keys:
@@ -879,7 +879,7 @@ class Sessions(Common):
         self,
         config: dict,
         inputs: list[dict[str, Any]],
-        background_noise_file: Optional[str] = None,
+        background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
     ):
         if self.rate_limiter:
@@ -909,28 +909,28 @@ class Sessions(Common):
         request = types.RunSessionRequest(config=config, inputs=inputs)
         return self.client.run_session(request=request)
 
-    def run(  # noqa: C901
+    def run(
         self,
         session_id: str,
-        text: Optional[str | list[str]] = None,
-        dtmf: Optional[str] = None,
-        event: Optional[str] = None,
-        event_vars: Optional[Dict[str, Any]] = None,
-        blob: bytes = None,
+        text: str | list[str] | None = None,
+        dtmf: str | None = None,
+        event: str | None = None,
+        event_vars: dict[str, Any] | None = None,
+        blob: bytes | None = None,
         blob_mime_type: str = "application/octet-stream",
-        variables: Optional[Dict[str, Any]] = None,
-        tool_responses: Optional[List[Dict[str, Any]]] = None,
-        audio: bytes = None,
-        audio_config: Optional[Dict[str, Any]] = None,
-        input_audio_config: Optional[Dict[str, Any]] = None,
-        output_audio_config: Optional[Dict[str, Any]] = None,
-        deployment_id: Optional[str] = None,
-        historical_contexts: Optional[List[Dict[str, Any]] | str] = None,
-        turn_count: Optional[int] = None,
+        variables: dict[str, Any] | None = None,
+        tool_responses: list[dict[str, Any]] | None = None,
+        audio: bytes | None = None,
+        audio_config: dict[str, Any] | None = None,
+        input_audio_config: dict[str, Any] | None = None,
+        output_audio_config: dict[str, Any] | None = None,
+        deployment_id: str | None = None,
+        historical_contexts: list[dict[str, Any]] | str | None = None,
+        turn_count: int | None = None,
         modality: Modality | str = Modality.TEXT,
         use_tool_fakes: bool = False,
-        background_noise_file: Optional[str] = None,
-        burst_noise_files: Optional[List[str]] = None,
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
     ):
         """Sends inputs to a Conversational Agents Session and returns the
         response.
@@ -1015,7 +1015,7 @@ class Sessions(Common):
                 )
                 conv = ch.get_conversation(historical_contexts)
                 d = type(conv).to_dict(conv)
-                if "turns" in d and d["turns"]:
+                if d.get("turns"):
                     turns_to_process = d["turns"]
                     if turn_count is not None and turn_count > 0:
                         turns_to_process = turns_to_process[:turn_count]
@@ -1179,7 +1179,7 @@ class Sessions(Common):
             raise ValueError("Modality must be either 'text' or 'audio'.")
 
     def send_event(
-        self, unique_id: str, event_name: str, event_vars: Dict[str, Any]
+        self, unique_id: str, event_name: str, event_vars: dict[str, Any]
     ):
         if self.rate_limiter:
             self.rate_limiter.wait_and_consume()

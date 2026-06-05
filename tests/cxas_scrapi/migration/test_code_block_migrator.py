@@ -52,7 +52,7 @@ def func1():
 def func2():
     pass
 """
-    imports, functions, helpers = migrator._parse_code_block_with_ast(code)
+    imports, functions, _helpers = migrator._parse_code_block_with_ast(code)
     assert "import os" in imports
     assert "from datetime import datetime" in imports
     assert len(functions) == 2
@@ -84,8 +84,8 @@ def use_tool():
         extracted_tools,
         action_map,
         referenced_toolsets,
-        disc_params,
-        rout_params,
+        _disc_params,
+        _rout_params,
     ) = migrator.extract_functions_to_ir(
         code=code,
         existing_tool_ids=set(),

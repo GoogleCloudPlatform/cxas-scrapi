@@ -236,7 +236,7 @@ def test_run_session_audio_modality_text_inputs(
 
         # Verify inputs are transformed
         inputs = call_kwargs["inputs"]
-        assert len(inputs) == 2  # noqa: PLR2004
+        assert len(inputs) == 2
         assert inputs[0]["audio"]["audio"] == b"tts_Hello"
         assert inputs[1]["audio"]["audio"] == b"tts_World"
 
@@ -269,10 +269,10 @@ def test_run_session_text_multi_inputs_aggregation(mock_client_cls, mock_types):
     )
 
     # Verify run_session was called twice
-    assert mock_client.run_session.call_count == 2  # noqa: PLR2004
+    assert mock_client.run_session.call_count == 2
 
     # Verify the result contains outputs from both responses
-    assert len(res.outputs) == 2  # noqa: PLR2004
+    assert len(res.outputs) == 2
     assert res.outputs[0].text == "Response 1"
     assert res.outputs[1].text == "Response 2"
 
@@ -444,7 +444,7 @@ def test_run_session_audio_modality_variables_all_turns(
         call_kwargs = mock_async_run.call_args[1]
 
         inputs = call_kwargs["inputs"]
-        assert len(inputs) == 2  # noqa: PLR2004
+        assert len(inputs) == 2
         assert inputs[0]["audio"]["variables"] == {"v": "1"}
         assert inputs[1]["audio"]["variables"] == {"v": "1"}
 
@@ -471,7 +471,7 @@ def test_run_session_audio_modality_variables_with_event(
     call_kwargs = mock_async_run.call_args[1]
 
     inputs = call_kwargs["inputs"]
-    assert len(inputs) == 2  # noqa: PLR2004
+    assert len(inputs) == 2
     assert inputs[0]["variables"] == {"disable_disclaimer": True}
     assert inputs[1]["event"]["event"] == "WELCOME"
 
@@ -579,7 +579,7 @@ def test_check_audio_requirements_success(mock_get):
     mock_get.return_value = mock_response
 
     sessions._check_audio_requirements()
-    assert mock_get.call_count == 2  # noqa: PLR2004
+    assert mock_get.call_count == 2
 
 
 @patch("cxas_scrapi.core.sessions.requests.get")

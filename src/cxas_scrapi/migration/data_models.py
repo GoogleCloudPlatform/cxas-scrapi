@@ -19,7 +19,7 @@ import glob
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -44,15 +44,15 @@ class DFCXPageModel(BaseModel):
     """Represents a Page in a Flow."""
 
     page_id: str
-    page_data: Dict[str, Any]
+    page_data: dict[str, Any]
 
 
 class DFCXFlowModel(BaseModel):
     """Represents a Flow with its Pages."""
 
     flow_id: str  # The full resource name of the flow
-    flow_data: Dict[str, Any]  # The raw flow data
-    pages: List[DFCXPageModel] = Field(default_factory=list)
+    flow_data: dict[str, Any]  # The raw flow data
+    pages: list[DFCXPageModel] = Field(default_factory=list)
 
 
 class DFCXAgentIR(BaseModel):
@@ -61,26 +61,26 @@ class DFCXAgentIR(BaseModel):
     name: str  # The full resource name of the DFCX agent
     display_name: str  # The human-readable name of the DFCX agent
     default_language_code: str
-    supported_language_codes: List[str] = Field(default_factory=list)
-    time_zone: Optional[str] = None
-    description: Optional[str] = None
-    start_flow: Optional[str] = None
-    start_playbook: Optional[str] = None
-    intents: List[Dict[str, Any]] = Field(default_factory=list)
-    tools: List[Dict[str, Any]] = Field(default_factory=list)
-    entity_types: List[Dict[str, Any]] = Field(default_factory=list)
-    webhooks: List[Dict[str, Any]] = Field(default_factory=list)
-    flows: List[DFCXFlowModel] = Field(default_factory=list)
-    playbooks: List[Dict[str, Any]] = Field(default_factory=list)
-    test_cases: List[Dict[str, Any]] = Field(default_factory=list)
-    generative_settings: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-    playbook_generative_settings: Optional[Dict[str, Any]] = None
-    generators: List[Dict[str, Any]] = Field(default_factory=list)
-    agent_transition_route_groups: List[Dict[str, Any]] = Field(
+    supported_language_codes: list[str] = Field(default_factory=list)
+    time_zone: str | None = None
+    description: str | None = None
+    start_flow: str | None = None
+    start_playbook: str | None = None
+    intents: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    entity_types: list[dict[str, Any]] = Field(default_factory=list)
+    webhooks: list[dict[str, Any]] = Field(default_factory=list)
+    flows: list[DFCXFlowModel] = Field(default_factory=list)
+    playbooks: list[dict[str, Any]] = Field(default_factory=list)
+    test_cases: list[dict[str, Any]] = Field(default_factory=list)
+    generative_settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    playbook_generative_settings: dict[str, Any] | None = None
+    generators: list[dict[str, Any]] = Field(default_factory=list)
+    agent_transition_route_groups: list[dict[str, Any]] = Field(
         default_factory=list
     )
-    no_speech_timeout: Optional[str] = "7s"
-    code_blocks: List[Dict[str, Any]] = Field(default_factory=list)
+    no_speech_timeout: str | None = "7s"
+    code_blocks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # --- Target Migration IR Models ---
@@ -90,8 +90,8 @@ class IRMetadata(BaseModel):
     """Metadata for the migration target."""
 
     app_name: str  # The display name of the target Polysynth app
-    app_id: Optional[str] = None  # The UUID generated for the new Polysynth app
-    app_resource_name: Optional[str] = (
+    app_id: str | None = None  # The UUID generated for the new Polysynth app
+    app_resource_name: str | None = (
         None  # The full resource name of the Polysynth app
     )
     default_model: str = "gemini-2.5-flash-001"
@@ -103,8 +103,8 @@ class IRTool(BaseModel):
     id: str  # Short ID (e.g., "tool_billing")
     name: str  # Full resource name (projects/.../tools/...)
     type: str  # "TOOLSET", "TOOL", "PYTHON"
-    payload: Dict[str, Any]
-    operation_ids: List[str] = Field(default_factory=list)
+    payload: dict[str, Any]
+    operation_ids: list[str] = Field(default_factory=list)
     status: MigrationStatus = MigrationStatus.COMPILED
 
 
@@ -113,31 +113,31 @@ class IRAgent(BaseModel):
 
     type: str  # "FLOW", "PLAYBOOK"
     display_name: str
-    description: Optional[str] = None
     instruction: str  # The generated PIF XML
-    tools: List[str] = Field(default_factory=list)  # Resource names
-    toolsets: List[Dict[str, Any]] = Field(
+    description: str | None = None
+    tools: list[str] = Field(default_factory=list)  # Resource names
+    toolsets: list[dict[str, Any]] = Field(
         default_factory=list
     )  # [{"toolset": ..., "toolIds": []}]
-    model_settings: Dict[str, Any] = Field(default_factory=dict)
-    raw_data: Optional[Dict[str, Any]] = None  # Original DFCX data
-    blueprint: Optional[Dict[str, Any]] = None  # Used by Flows
-    callbacks: Optional[Dict[str, Any]] = None  # Used by Flows
+    model_settings: dict[str, Any] = Field(default_factory=dict)
+    raw_data: dict[str, Any] | None = None  # Original DFCX data
+    blueprint: dict[str, Any] | None = None  # Used by Flows
+    callbacks: dict[str, Any] | None = None  # Used by Flows
     status: MigrationStatus = MigrationStatus.COMPILED
-    resource_name: Optional[str] = None  # Populated after deployment
+    resource_name: str | None = None  # Populated after deployment
 
 
 class MigrationIR(BaseModel):
     """The full state of the migration offline workspace."""
 
     metadata: IRMetadata
-    parameters: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-    tools: Dict[str, IRTool] = Field(default_factory=dict)
-    agents: Dict[str, IRAgent] = Field(default_factory=dict)
-    routing_edges: List[Dict[str, Any]] = Field(default_factory=list)
-    test_cases: Dict[str, Any] = Field(default_factory=dict)
-    test_runs: Dict[str, Any] = Field(default_factory=dict)
-    optimization_logs: Dict[str, Any] = Field(default_factory=dict)
+    parameters: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    tools: dict[str, IRTool] = Field(default_factory=dict)
+    agents: dict[str, IRAgent] = Field(default_factory=dict)
+    routing_edges: list[dict[str, Any]] = Field(default_factory=list)
+    test_cases: dict[str, Any] = Field(default_factory=dict)
+    test_runs: dict[str, Any] = Field(default_factory=dict)
+    optimization_logs: dict[str, Any] = Field(default_factory=dict)
 
 
 class MigrationConfig(BaseModel):
@@ -145,8 +145,8 @@ class MigrationConfig(BaseModel):
 
     project_id: str
     target_name: str
-    env: str = "PROD"
     model: str
+    env: str = "PROD"
     profile: str = "standard"
     architecture: str = "hub-and-spoke"
     gen_report: bool = True
@@ -157,7 +157,7 @@ class MigrationConfig(BaseModel):
     optimize_for_cxas: bool = False
     persist_bundle: bool = False
     interactive: bool = False
-    source_agent_data_override: Optional[DFCXAgentIR] = None
+    source_agent_data_override: DFCXAgentIR | None = None
 
     @property
     def consolidate(self) -> bool:
@@ -178,7 +178,7 @@ class StageHistoryEntry(BaseModel):
     phase: str  # "migrate", "stage_1", "stage_2", "stage_3"
     status: str  # "ok", "fail", "partial"
     started_at: datetime
-    ended_at: Optional[datetime] = None
+    ended_at: datetime | None = None
     notes: str = ""
 
 
@@ -190,13 +190,13 @@ class IRBundle(BaseModel):
     config: MigrationConfig
     source_agent_data: DFCXAgentIR
     ir: MigrationIR
-    stage_history: List[StageHistoryEntry] = Field(default_factory=list)
-    app_url: Optional[str] = None
-    version_checkpoints: List[tuple[str, str]] = Field(default_factory=list)
-    grouping: Optional[Dict[str, Any]] = (
+    stage_history: list[StageHistoryEntry] = Field(default_factory=list)
+    app_url: str | None = None
+    version_checkpoints: list[tuple[str, str]] = Field(default_factory=list)
+    grouping: dict[str, Any] | None = (
         None  # populated when Stage 1 consolidates
     )
-    pre_consolidation_ir: Optional[MigrationIR] = None
+    pre_consolidation_ir: MigrationIR | None = None
 
     def resolve_location(self, default: str = "us") -> str:
         """Return the CXAS location for this bundle's app.
@@ -226,9 +226,7 @@ class IRBundle(BaseModel):
         logger.info("IR bundle saved → %s", path)
         return path
 
-    def save_for_target(
-        self, target_name: str, cwd: Optional[str] = None
-    ) -> str:
+    def save_for_target(self, target_name: str, cwd: str | None = None) -> str:
         path = os.path.join(
             cwd or os.getcwd(), self._bundle_filename(target_name)
         )
@@ -241,8 +239,8 @@ class IRBundle(BaseModel):
 
     @classmethod
     def find_default_bundle(
-        cls, target_name: Optional[str] = None, cwd: Optional[str] = None
-    ) -> Optional[str]:
+        cls, target_name: str | None = None, cwd: str | None = None
+    ) -> str | None:
         """Locate an IR bundle on disk.
 
         If `target_name` is supplied: returns `<cwd>/<target_name>_ir.json`
@@ -278,5 +276,5 @@ class IRBundle(BaseModel):
     def attach_version(self, display_name: str, description: str) -> None:
         self.version_checkpoints.append((display_name, description))
 
-    def attach_grouping(self, groupings: Dict[str, Any]) -> None:
+    def attach_grouping(self, groupings: dict[str, Any]) -> None:
         self.grouping = groupings

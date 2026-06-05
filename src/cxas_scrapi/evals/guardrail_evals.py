@@ -18,7 +18,7 @@ import datetime
 import json
 import logging
 import time
-from typing import Annotated, Any, Dict, NamedTuple, Optional
+from typing import Annotated, Any, NamedTuple
 
 import pandas as pd
 from pydantic import BaseModel, BeforeValidator, Field
@@ -63,14 +63,14 @@ class SummaryStats(NamedTuple):
 class GuardrailTestCase(BaseModel):
     """Data model for a guardrail test case."""
 
-    name: str = "Guardrail Test"
     user_input: str
+    name: str = "Guardrail Test"
     variables: Annotated[
-        Dict[str, Any], BeforeValidator(EvalUtils.parse_variables_input)
+        dict[str, Any], BeforeValidator(EvalUtils.parse_variables_input)
     ] = Field(default_factory=dict)
-    expected_guardrail_name: Optional[str] = None
-    expected_guardrail_type: Optional[str] = None
-    expected_parameters: Optional[str] = None
+    expected_guardrail_name: str | None = None
+    expected_guardrail_type: str | None = None
+    expected_parameters: str | None = None
 
 
 class GuardrailEvals:
@@ -169,7 +169,7 @@ class GuardrailEvals:
             }
 
             # Use test_id for name if available
-            if "test_id" in row_dict and row_dict["test_id"]:
+            if row_dict.get("test_id"):
                 row_dict["name"] = str(row_dict["test_id"])
             elif "name" not in row_dict or not row_dict["name"]:
                 row_dict["name"] = f"Test_{index}"

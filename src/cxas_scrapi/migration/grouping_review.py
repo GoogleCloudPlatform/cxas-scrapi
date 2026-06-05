@@ -306,7 +306,7 @@ async def interactive_review(
         # Preview only — the caller will re-run consolidate after accept.
         try:
             preview_ir = consolidator.consolidate(groupings)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             console.print(f"[red]Consolidation preview failed: {exc}[/]")
             return None
         render_diff(
@@ -342,7 +342,7 @@ async def interactive_review(
                 groupings = await consolidator.propose_groupings(
                     root_key, dep_summary, feedback
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 console.print(f"[red]Re-proposal failed: {exc}[/]")
         elif action == "merge":
             groupings = await _merge_groups(groupings, console)

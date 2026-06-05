@@ -28,8 +28,8 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _prompts  # noqa: E402
-import _shared  # noqa: E402
+import _prompts
+import _shared
 
 from cxas_scrapi.migration import phase_tracker
 from cxas_scrapi.migration.data_models import IRBundle
