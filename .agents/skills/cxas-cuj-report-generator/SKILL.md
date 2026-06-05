@@ -175,8 +175,10 @@ high-fidelity spoken voice standards. Subagents must ensure:
     (e.g., do NOT write `"450"`, `"$909"`, `"555-0199"`). Instead, numbers must
     be explicitly spelled out phonetically:
     *   *Correct*: `"four hundred fifty points"`, `"nine hundred nine dollars"`.
-    *   *IDs and Phone Numbers*: Must be written digit-by-digit separated by
-        spaces or commas: `"five five five, zero, one, nine, nine"`.
+    *   *IDs, Times, and Phone Numbers*: Must be written digit-by-digit or
+        word-by-word phonetically with absolutely no colon dividers: `"five five
+        five, zero, one, nine, nine"`, `"seven thirty PM"`, `"eight o'clock
+        PM"`.
 2.  **Spoken Breath Span Limit**: Agent turns must remain concise, natural, and
     conversational. Individual spoken text blocks MUST NOT exceed **300
     characters** inside a single turn.
