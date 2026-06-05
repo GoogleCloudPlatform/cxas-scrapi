@@ -104,6 +104,11 @@ def process_evaluation_batch(batch, iteration):
 
         testdir = os.path.join(case_results_dir, "testdir")
         prompt_path = os.path.join(case_results_dir, "prompt.txt")
+
+        # Write compiled prompt string to the staged workspace prompt file
+        with open(prompt_path, "w") as pf:
+            pf.write(prompt)
+
         batch_spec.append(
             {
                 "case_name": case_name,

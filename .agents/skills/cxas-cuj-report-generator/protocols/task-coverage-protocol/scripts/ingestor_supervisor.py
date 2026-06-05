@@ -19,9 +19,11 @@ class IngestorSupervisor:
         target_skill_dir,
         include_extensions=None,
         exclude_patterns=None,
+        scratch_dir=None,
     ):
         self.source_dir = source_dir
         self.target_skill_dir = target_skill_dir
+        self.scratch_dir = scratch_dir or "/tmp/gecx_scratch"
         self.drawio_skill = os.path.join(
             target_skill_dir, "ingestors/files/drawio/SKILL.md"
         )
@@ -175,7 +177,7 @@ Read the structural digest of the conversation. Generate a high-fidelity, natura
             f' "{OUTPUT_DIR}"}}'
         )
         print(
-            f"AIS Supervisor is waiting for {len(batch)} subagents to ingest the"
+            f"Supervisor is waiting for {len(batch)} subagents to ingest the"
             " files..."
         )
 
@@ -225,9 +227,61 @@ Read the structural digest of the conversation. Generate a high-fidelity, natura
                 " batch."
             )
         else:
-            state["phase"] = "COMPLETE"
-            self.save_state(state)
-            print("\n🎉 All files successfully ingested!")
+            if self.verify_deliverables():
+                state["phase"] = "COMPLETE"
+                self.save_state(state)
+                print("\n🎉 All files successfully ingested!")
+            else:
+                state["phase"] = "INGEST"
+                self.save_state(state)
+
+    def verify_deliverables(self):
+        """Audits the existence and size of all registered GECX deliverables."""
+        print("\n=== RUNNING AUTOMATED DELIVERABLES DELIVERY AUDIT ===")
+        scratch_dir = self.scratch_dir
+        outputs_dir = "/tmp/evals/customer_outputs"
+
+        expected_deliverables = {
+            "Comprehensive HTML Report": os.path.join(
+                scratch_dir,
+                "customer_campaign_deliverables/dashboard/gecx_customer_report.html",
+            ),
+            "Core CUJ HTML Report (Second Deliverable)": os.path.join(
+                scratch_dir,
+                "customer_campaign_deliverables/dashboard/gecx_cuj_report.html",
+            ),
+            "Zipped Deliverables Package": os.path.join(
+                outputs_dir, "customer_campaign_deliverables.zip"
+            ),
+        }
+
+        audit_passed = True
+        for name, path in expected_deliverables.items():
+            if not os.path.exists(path):
+                print(
+                    f"  ❌ Critical Delivery Failure: {name} is missing at {path}!"
+                )
+                audit_passed = False
+            elif os.path.getsize(path) == 0:
+                print(
+                    f"  ❌ Critical Delivery Failure: {name} at {path} is empty (0"
+                    " bytes)!"
+                )
+                audit_passed = False
+            else:
+                print(
+                    f"  🟢 Verified Delivery: {name} is present and valid"
+                    f" ({os.path.getsize(path)} bytes)."
+                )
+
+        if not audit_passed:
+            print("❌ DELIVERY AUDIT FAILED! Bypassing campaign completion.")
+            return False
+        print(
+            "🎉 DELIVERY AUDIT PASSED! All GECX deliverables are verified"
+            " successfully!"
+        )
+        return True
 
     def run(self):
         all_files = self.scan_and_count_files()

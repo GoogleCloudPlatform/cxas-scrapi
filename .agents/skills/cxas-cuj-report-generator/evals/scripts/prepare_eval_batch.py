@@ -73,7 +73,7 @@ def prepare_batch(batch_start, batch_size, iteration=1, replications=1):
                     raw_files_content += f.read() + "\n"
 
         # Determine subagent type and role prefix based on suffix
-        type_name = "research-agent"
+        type_name = "self"
 
         if "frameworks/cyara" in case_path:
             role_prefix = f"Cyara Ingestion Evaluator-{case_name}"

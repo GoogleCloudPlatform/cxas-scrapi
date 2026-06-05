@@ -78,14 +78,11 @@ Output the complete, optimized SKILL.md content directly in your response with a
         f.write(prompt)
 
     print(
-        '\nSPAWN_OPTIMIZER_DIRECTIVE: {"role": "OwlNext", "prompt_file":'
+        '\nSPAWN_OPTIMIZER_DIRECTIVE: {"role": "optimization-subagent", "prompt_file":'
         f' "{OPTIMIZER_PROMPT_FILE}", "response_file":'
         f' "{OPTIMIZER_RESPONSE_FILE}"}}'
     )
-    print(
-        "AIS Master Orchestrator is waiting for OwlNext Optimizer response"
-        " file..."
-    )
+    print("Orchestrator is waiting for optimization response file...")
 
     while not os.path.exists(OPTIMIZER_RESPONSE_FILE):
         time.sleep(2)
@@ -150,7 +147,7 @@ def run_hill_climb():
                 f'\nSPAWN_BATCH_DIRECTIVE: {{"spec_file": "{spec_file}",'
                 f' "output_dir": "{OUTPUT_DIR}"}}'
             )
-            print(f"AIS Orchestrator is waiting for batch outputs...")
+            print(f"Orchestrator is waiting for batch outputs...")
 
             # 3. Wait for parallel subagent outputs in outputs folder
             batch_spec = state["batch_spec"]
@@ -227,8 +224,8 @@ def run_hill_climb():
 
         if iteration < args.iterations and pass_rate < TARGET_PASS_RATE:
             print(
-                f"Pass rate ({pass_rate * 100:.1f}%) below target. Initiating OwlNext"
-                " Optimizer..."
+                f"Pass rate ({pass_rate * 100:.1f}%) below target. Initiating prompt"
+                " optimizer..."
             )
             current_skill = load_skill_content()
             optimized_skill = request_optimization(

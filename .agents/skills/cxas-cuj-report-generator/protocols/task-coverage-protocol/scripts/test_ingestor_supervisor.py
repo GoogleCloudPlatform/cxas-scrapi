@@ -28,6 +28,13 @@ def test_ingestor_supervisor_dry_run():
         "protocols/task-coverage-protocol/evals/cases/list_and_count_173_files/testdir",
     )
 
+    # Programmatically bootstrap exactly 173 mock files
+    os.makedirs(source_dir, exist_ok=True)
+    for i in range(173):
+        file_path = os.path.join(source_dir, f"file_{i}.txt")
+        with open(file_path, "w") as f:
+            f.write(f"Mock requirements spec content for file {i}")
+
     supervisor = IngestorSupervisor(
         source_dir,
         target_skill,
@@ -119,6 +126,12 @@ turns:
         "Incorrect starting file in slice 2:"
         f" {state['batch_spec'][0]['file_path']}"
     )
+
+    # Teardown: Clean up programmatically bootstrapped mock files
+    for i in range(173):
+        file_path = os.path.join(source_dir, f"file_{i}.txt")
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
     print(
         "✅ Step 4: Successfully prepared slice #2 (files alphabetically 10-19)"

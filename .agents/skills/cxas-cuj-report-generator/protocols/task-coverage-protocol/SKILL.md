@@ -36,7 +36,7 @@ task state:
 ```bash
 python3 protocols/task-coverage-protocol/scripts/ingestor_supervisor.py \
   --source_dir="path/to/source" \
-  --target_skill=".agents/skills/cxas-cuj-report-generator/"
+  --target_skill="path/to/cxas-cuj-report-generator/"
 ```
 
 ### 2. Consume the Handoff Directive
@@ -71,7 +71,7 @@ script again:
 ```bash
 python3 protocols/task-coverage-protocol/scripts/ingestor_supervisor.py \
   --source_dir="path/to/source" \
-  --target_skill=".agents/skills/cxas-cuj-report-generator/"
+  --target_skill="path/to/cxas-cuj-report-generator/"
 ```
 
 *   **Verification Pass**: If the supervisor grades all outputs as passing, it
