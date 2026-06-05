@@ -20,8 +20,8 @@ To ensure 100% coverage and zero data loss, you MUST follow these core rules:
     `protocols/cxas-protocol-two-phase-ingestion/`.
 *   **Checklist Mandate**: The orchestrator and all subagents MUST follow the
     `agent-protocol-checklist` protocol to maintain a local
-    `task_checklist.json` file, ensuring they track their progress andFbas do
-    not lose coverage during execution.
+    `task_checklist.json` file, ensuring they track their progress and not lose
+    coverage during execution.
 *   **Auditing**: The orchestrator MUST periodically check the subagent's
     scratch directory to ensure the `task_checklist.json` file is being created
     and maintained. If the file is missing or not updated, the orchestrator MUST
@@ -105,9 +105,12 @@ Follow this 5-step structured workflow to execute the task:
         Account Number or Order ID are checked in a backend system immediately
         after being provided by the user, and insert a `webhook_call` or
         `tool_call` accordingly.
-    *   **Agent-First Transcripts**: All transcripts MUST start with the natural
-        Agent welcome greeting defined in your active test expectations (e.g.,
-        *"Hello! Thanks for calling [Brand]. How can I help you today?"*).
+    *   **Agent-First Transcripts**: Every single transcript MUST start with a
+        standard welcome greeting: *"Hello! Thanks for calling [Brand]. How can
+        I help you today?"* (or a generic welcoming if no brand is specified,
+        e.g. *"Hello! Thanks for calling. How can I help you today?"*) with
+        absolutely no exceptions or alternative phrasing, even if raw
+        requirements suggest another name.
     *   **Voice Realism (No Spoken URLs)**: Agents on the voice channel cannot
         speak long URLs. You MUST NEVER write raw URLs (e.g., `https://...`) in
         Agent turns. Instead, the Agent must verbally state they are texting or
@@ -118,10 +121,13 @@ Follow this 5-step structured workflow to execute the task:
         1.  Agent: *"Is there anything else I can help you with today?"*
         2.  User: *"No, that's all. Thank you."*
         3.  Agent: *"Thank you for calling [Brand]! Goodbye."* (or equivalent
-            brand sign-off) with absolutely no alternative phrasing allowed. The
-            final Agent turn MUST trigger the `end_session` system tool call
-            matching this CXAS schema: `yaml tool_call: name: end_session
-            payload: session_escalated: false reason: "Conversation completed
+            brand sign-off, e.g., *"Thank you for calling Customer Support!
+            Goodbye."*, or *"Thank you for calling! Goodbye."* if no brand is
+            specified) with absolutely no alternative phrasing allowed. The
+            final Agent turn MUST trigger the `end_session` system tool call. Do
+            NOT omit this tool call under any circumstances. It must match this
+            CXAS schema: `yaml tool_call: name: end_session payload:
+            session_escalated: false reason: "Conversation completed
             successfully" response: result: "success"`
     *   **Dual Reports**: The agent MUST generate both a CUJ report (limiting
         examples to at most 3) AND a comprehensive full report (including all
@@ -160,10 +166,12 @@ All generated transcripts MUST adhere to the
 -   **Speaker:** Must be either `Agent` or `User`. Please ensure that function
     call turn comes immediately after a user turn.
 -   **Text:** The literal string spoken.
--   **Enrichment:**
+-   **Root-Level Call Fields**: The `tool_call` (such as `end_session`) and
+    `webhook_call` fields MUST be written at the root level of individual turn
+    objects in the YAML transcript, and MUST NOT be nested under `enrichment` or
+    any other parent key.
+-   **Enrichment**:
     -   `intent_detected`: Specify the NLU intent if applicable.
-    -   `tool_call`: Use when the agent invokes a local function.
-    -   `webhook_call`: Use when the agent triggers an external API.
     -   `system_action`: Use for state transitions or background logic.
 
 ## Linguistic & Voice Naturalness Standards

@@ -8,7 +8,7 @@ cases:
       - "The agent scans the `resources/test_inputs/` directory."
       - "The agent identifies `.drawio`, `.xml`, `app.py`, `build.gradle`, and `README.md` files."
       - "The agent extracts exactly 20 subintents and groups them into 5 CUJs."
-      - "The agent extracts intents and generates YAML transcripts."
+      - "The agent extracts intents and generates  YAML transcripts."
       - "The agent verifies that transcripts contain restaurant domain intents."
       - "The agent runs `construct_report.py` to generate the final HTML report."
 
