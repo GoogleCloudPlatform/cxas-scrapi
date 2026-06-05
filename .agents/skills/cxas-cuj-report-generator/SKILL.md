@@ -105,9 +105,23 @@ Follow this 5-step structured workflow to execute the task:
         Account Number or Order ID are checked in a backend system immediately
         after being provided by the user, and insert a `webhook_call` or
         `tool_call` accordingly.
-    *   **User-First Transcripts**: Transcripts MUST always start with a User
-        utterance. Trim any leading Agent greetings or prompts from the
-        beginning of the transcript.
+    *   **Agent-First Transcripts**: All transcripts MUST start with the natural
+        Agent welcome greeting defined in your active test expectations (e.g.,
+        *"Hello! Thanks for calling [Brand]. How can I help you today?"*).
+    *   **Voice Realism (No Spoken URLs)**: Agents on the voice channel cannot
+        speak long URLs. You MUST NEVER write raw URLs (e.g., `https://...`) in
+        Agent turns. Instead, the Agent must verbally state they are texting or
+        emailing the link (e.g., *"I've texted that tracking link to your
+        phone"*).
+    *   **Standardized End Session**: Every conversation MUST close with a
+        structured 3-turn sign-off sequence:
+        1.  Agent: *"Is there anything else I can help you with today?"*
+        2.  User: *"No, that's all. Thank you."*
+        3.  Agent: *"Thank you for calling [Brand]! Goodbye."* (or equivalent
+            brand sign-off). The final Agent turn MUST trigger the `end_session`
+            system tool call matching this CXAS schema: `yaml tool_call: name:
+            end_session payload: session_escalated: false reason: "Conversation
+            completed successfully" response: result: "success"`
     *   **Dual Reports**: The agent MUST generate both a CUJ report (limiting
         examples to at most 3) AND a comprehensive full report (including all
         examples).
@@ -150,6 +164,28 @@ All generated transcripts MUST adhere to the
     -   `tool_call`: Use when the agent invokes a local function.
     -   `webhook_call`: Use when the agent triggers an external API.
     -   `system_action`: Use for state transitions or background logic.
+
+## Linguistic & Voice Naturalness Standards
+
+All generated spoken dialogue turns (Agent voice turns) MUST strictly adhere to
+high-fidelity spoken voice standards. Subagents must ensure:
+
+1.  **Numeric Voice Normalization**: Spoken Agent turns MUST NOT contain raw
+    digits, formatted currencies, or punctuation symbols representing numbers
+    (e.g., do NOT write `"450"`, `"$909"`, `"555-0199"`). Instead, numbers must
+    be explicitly spelled out phonetically:
+    *   *Correct*: `"four hundred fifty points"`, `"nine hundred nine dollars"`.
+    *   *IDs and Phone Numbers*: Must be written digit-by-digit separated by
+        spaces or commas: `"five five five, zero, one, nine, nine"`.
+2.  **Spoken Breath Span Limit**: Agent turns must remain concise, natural, and
+    conversational. Individual spoken text blocks MUST NOT exceed **300
+    characters** inside a single turn.
+3.  **Vocabulary Smoothness**: Avoid robotic repetitions of the same long words
+    (do not repeat the same word of length 5+ more than 4 times in a single
+    turn).
+4.  **Conversational Politeness**: Agent turns must maintain standard polite
+    voice markers (`please`, `thank you`, `thanks`, `certainly`, `happy to
+    help`, `welcome`, `goodbye`, `great day`).
 
 ## Execution Phase Details
 
