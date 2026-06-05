@@ -26,23 +26,28 @@ def file_lock(lock_file_path: pathlib.Path):
     try:
         if os.name == "nt":
             import msvcrt
+
             msvcrt.locking(f.fileno(), msvcrt.LK_RLCK, 1)
         else:
             import fcntl
+
             fcntl.flock(f, fcntl.LOCK_EX)
         yield
     finally:
         try:
             if os.name == "nt":
                 import msvcrt
+
                 f.seek(0)
                 msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
+
                 fcntl.flock(f, fcntl.LOCK_UN)
         except Exception:
             pass
         f.close()
+
 
 _TRANSCRIPT_FILE = flags.DEFINE_string(
     "transcript_file",
@@ -139,7 +144,6 @@ def main(argv: Sequence[str]) -> None:
 
     try:
         with file_lock(lock_file):
-
             transcript_data = {}
             if transcript_file.exists():
                 try:

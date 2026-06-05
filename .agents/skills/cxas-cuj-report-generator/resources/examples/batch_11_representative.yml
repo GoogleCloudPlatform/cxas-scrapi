@@ -1,0 +1,37 @@
+subintent_id: order-group-share
+subintent_name: Setup Group Order
+parent_cuj: Digital Ordering
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I want to set up a group order link so my friends can add their own items to my bill.
+- speaker: Agent
+  text: Oh, that's a super convenient feature! I can generate a group order link for you right now. Can you please provide your loyalty phone number?
+- speaker: User
+  text: Sure, it's 555-123-4567.
+- speaker: Agent
+  text: Generating group order session link.
+  tool_call:
+    name: create_group_order_session
+    payload:
+      host_account: 555-123-4567
+    response:
+      status: success
+      session_id: GRP-LINK-99
+      share_url: https://order.example.com/group/GRP-99
+- speaker: Agent
+  text: Alright, I've generated the link and texted it to your phone. You can just forward that text to your friends so they can add their items. I'll hold the cart open until you checkout.
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

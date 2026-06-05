@@ -1,0 +1,51 @@
+subintent_id: gift-card-purchase
+subintent_name: Purchase Gift Card
+parent_cuj: Loyalty & Rewards
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I'd like to buy a fifty dollar digital gift card for my friend's birthday.
+- speaker: Agent
+  text: What a wonderful birthday gift! What is your friend's email address?
+- speaker: User
+  text: Her email is sarah.miller@example.com.
+- speaker: Agent
+  text: Generating unique gift card registry code.
+  tool_call:
+    name: generate_digital_gift_card
+    payload:
+      amount: 50.0
+      recipient_email: sarah.miller@example.com
+    response:
+      status: success
+      card_code: GIFT-VAL-50
+- speaker: Agent
+  text: Okay, I've generated the gift card code GIFT-VAL-50. I just need to process the fifty dollar payment. Shall I charge your default card on file?
+- speaker: User
+  text: Yes, please charge that card.
+- speaker: Agent
+  text: Charging card and sending gift card email to recipient.
+  tool_call:
+    name: send_gift_card_email
+    payload:
+      card_code: GIFT-VAL-50
+      recipient_email: sarah.miller@example.com
+      amount: 50.0
+    response:
+      status: success
+      email_sent: true
+      transaction_id: TXN-GIFT-99
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

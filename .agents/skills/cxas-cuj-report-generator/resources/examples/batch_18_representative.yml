@@ -1,0 +1,37 @@
+subintent_id: loyalty-redeem-points
+subintent_name: Redeem Rewards Points
+parent_cuj: Loyalty & Rewards
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I have two hundred and fifty points and I'd like to redeem two hundred points for a free Tiramisu voucher.
+- speaker: Agent
+  text: Oh, that's a delicious choice! Can you please confirm the phone number associated with your account?
+- speaker: User
+  text: Yes, it's 555-123-4567.
+- speaker: Agent
+  text: Redeeming loyalty points for a free Tiramisu voucher.
+  tool_call:
+    name: redeem_reward_points
+    payload:
+      phone_number: 555-123-4567
+      points_to_redeem: 200
+      reward_item: Free Tiramisu
+    response:
+      status: success
+      voucher_code: TIRA-FREE-99
+      new_balance: 50
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

@@ -1,0 +1,51 @@
+subintent_id: delivery-address-update
+subintent_name: Modify Delivery Address
+parent_cuj: Delivery Logistics
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: 'Hi, I just placed order #9982, but I need to change the delivery address. I put the wrong street number.'
+- speaker: Agent
+  text: Let me check if the driver has already picked up the order from the kitchen.
+- speaker: Agent
+  text: Checking if driver is dispatched.
+  tool_call:
+    name: get_order_status
+    payload:
+      order_id: '9982'
+    response:
+      status: success
+      order_state: prepping
+      driver_assigned: false
+      address_modifiable: true
+- speaker: Agent
+  text: Good news! The order is still prepping and the driver hasn't been dispatched yet, so we can update the address. What is the correct address?
+- speaker: User
+  text: It should be one two five Main Street instead of one two three.
+- speaker: Agent
+  text: Updating delivery address in system.
+  tool_call:
+    name: update_delivery_address
+    payload:
+      order_id: '9982'
+      new_address: 125 Main St
+    response:
+      status: success
+      updated: true
+      new_address: 125 Main St
+- speaker: Agent
+  text: 'Perfect, address updated successfully! Order #9982 will now be delivered to one two five Main Street.'
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success
