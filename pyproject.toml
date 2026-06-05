@@ -111,6 +111,8 @@ select = [
     "I",  # isort
     "B",  # flake8-bugbear
     "PL", # pylint
+    "RUF", # Ruff rules
+    "UP",  # pyupgrade rules
 ]
 ignore = [
     "E203",  # extend-ignore = E203 from flake8
@@ -122,6 +124,10 @@ ignore = [
     "PLR0914", # too-many-locals
     "PLR2004", # magic-value-comparison
     "PLW0108", # unnecessary-lambda
+    "RUF001",  # ambiguous unicode characters (allow emojis in visualizers)
+    "RUF006",  # allow fire-and-forget create_task
+    "RUF100",  # preserve unused noqa comments for external linter compatibility
+    "RUF012",  # mutable class attributes (constants are fine)
 ]
 
 [tool.ruff.lint.per-file-ignores]
