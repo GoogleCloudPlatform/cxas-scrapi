@@ -118,10 +118,11 @@ Follow this 5-step structured workflow to execute the task:
         1.  Agent: *"Is there anything else I can help you with today?"*
         2.  User: *"No, that's all. Thank you."*
         3.  Agent: *"Thank you for calling [Brand]! Goodbye."* (or equivalent
-            brand sign-off). The final Agent turn MUST trigger the `end_session`
-            system tool call matching this CXAS schema: `yaml tool_call: name:
-            end_session payload: session_escalated: false reason: "Conversation
-            completed successfully" response: result: "success"`
+            brand sign-off) with absolutely no alternative phrasing allowed. The
+            final Agent turn MUST trigger the `end_session` system tool call
+            matching this CXAS schema: `yaml tool_call: name: end_session
+            payload: session_escalated: false reason: "Conversation completed
+            successfully" response: result: "success"`
     *   **Dual Reports**: The agent MUST generate both a CUJ report (limiting
         examples to at most 3) AND a comprehensive full report (including all
         examples).
