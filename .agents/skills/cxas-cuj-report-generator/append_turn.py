@@ -80,16 +80,22 @@ def process_append_turn(
           or if turn structure is invalid.
     """
     if not transcript_data:
-        required_meta = ["subintent_id", "subintent_name", "parent_cuj"]
+        required_meta = [
+            "subintent_id",
+            "subintent_name",
+            "parent_cuj",
+            "description",
+        ]
         if not all(k in turn_input for k in required_meta):
             raise ValueError(
                 "First turn must include subintent_id, subintent_name,"
-                " and parent_cuj in the input file"
+                " parent_cuj, and description in the input file"
             )
         base_data = {
             "subintent_id": turn_input["subintent_id"],
             "subintent_name": turn_input["subintent_name"],
             "parent_cuj": turn_input["parent_cuj"],
+            "description": turn_input["description"],
             "turns": [],
         }
     else:
