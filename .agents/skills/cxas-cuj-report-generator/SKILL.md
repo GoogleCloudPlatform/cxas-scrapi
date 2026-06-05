@@ -175,10 +175,12 @@ high-fidelity spoken voice standards. Subagents must ensure:
     (e.g., do NOT write `"450"`, `"$909"`, `"555-0199"`). Instead, numbers must
     be explicitly spelled out phonetically:
     *   *Correct*: `"four hundred fifty points"`, `"nine hundred nine dollars"`.
-    *   *IDs, Times, and Phone Numbers*: Must be written digit-by-digit or
-        word-by-word phonetically with absolutely no colon dividers: `"five five
-        five, zero, one, nine, nine"`, `"seven thirty PM"`, `"eight o'clock
-        PM"`.
+    *   *IDs, Times, Order Numbers, Percentages, and Phone Numbers*: All numeric
+        IDs, times, counts, reward points, percentages, or numbers of any kind
+        must be written digit-by-digit or word-by-word phonetically with
+        absolutely no punctuation or colon dividers: `"five five five, zero,
+        one, nine, nine"`, `"seven thirty PM"`, `"eight o'clock PM"`, `"order
+        number nine nine eight eight"`, `"twenty percent discount"`.
     *   *Scheduling Confirmation*: For any reservations or delivery updates that
         schedule or communicate a specific time, timeframe, or booking date
         (e.g., "ready in twenty minutes", "arrive in ten minutes", "booked for
