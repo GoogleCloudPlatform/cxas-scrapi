@@ -92,7 +92,6 @@ HTML report with nested stylesheets and an embedded interactive JS engine.
     *   `--report_heading` / `--project_name` / `--title`: Custom text to
         hydrate the report header and document shell.
 
-
 **Usage (Summary CUJ Report)**:
 
 ```bash
@@ -199,37 +198,36 @@ flowchart LR
         the batch and spawns two parallel subagents to complete the workload
         safely.
 
-
 --------------------------------------------------------------------------------
 
 ## 🧪 Evaluation & Testing
 
-The logic is verified using e2e and granular assertion frameworks located under
-`evals/`.
+The logic and parser quality are verified using our standardized 104-case
+dynamic evaluation and naturalness grading pipeline.
 
-### 1. E2E Evaluation (`evals/EVAL_e2e.yaml`)
+Detailed step-by-step running instructions are documented in the
+**[evals/TESTING.md](evals/TESTING.md)** execution runner guide.
 
-Tests the entire pipeline using a mock directory (`resources/test_inputs/`)
-containing various customer requirement documents such as diagrams, BRDs, code
-etc.
+### 🚀 How to Run Evals:
 
-*   **`simple_e2e_flow`**: Verifies that the agent can successfully scan inputs,
-    discover sub-intents, group them into CUJs, generate valid restaurant-domain
-    YAML transcripts, and compile the HTML report.
-*   **`e2e_flow_unspecified_counts`**: Verifies the agent's capacity to
-    autonomously discover taxonomy and cluster counts without explicit hints.
+1.  **Prepare Batch**: Compile a slice of test cases:
 
-### 2. Granular Evaluation (`evals/EVAL_granular.yaml`)
+    ```bash
+    python3 evals/scripts/prepare_mcp_batch.py --batch-start=50 --batch-size=5
+    ```
 
-Asserts specific guardrails and execution requirements, verifying that the
-agent:
+2.  **Spawn Subagents**: Read `/tmp/mcp_subagents_spec.json` and invoke the
+    special evaluations research subagents concurrently.
 
-*   Strictly initializes and maintains `task_checklist.json`.
-*   Applies the framework precedence rule.
-*   Trims leading agent greetings for `user_first_transcript` compliance.
-*   Generates both summary and detailed reports (`dual_reports`).
-*   Invokes `append_turn.py` for all turn writes.
-*   Invokes bisection logic on failures.
+3.  **Grade Results**: Run the scoring engine to compile results and naturalness
+    metrics on a simple `0-3` rubric:
+
+    ```bash
+    python3 evals/scripts/grade_mcp_batch.py
+    ```
+
+All progress logs and chronological history logs are safely stored in the hidden
+dot-prefixed directory `evals/.eval_results/`.
 
 --------------------------------------------------------------------------------
 
