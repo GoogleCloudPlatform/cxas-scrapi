@@ -191,9 +191,10 @@ high-fidelity spoken voice standards. Subagents must ensure:
 3.  **Vocabulary Smoothness**: Avoid robotic repetitions of the same long words
     (do not repeat the same word of length 5+ more than 4 times in a single
     turn).
-4.  **Conversational Politeness**: Agent turns must maintain standard polite
-    voice markers (`please`, `thank you`, `thanks`, `certainly`, `happy to
-    help`, `welcome`, `goodbye`, `great day`).
+4.  **Conversational Politeness**: Every Agent spoken turn MUST include at least
+    one standard polite voice marker (`please`, `thank you`, `thanks`,
+    `certainly`, `happy to help`, `welcome`, `goodbye`, `great day`, `my
+    pleasure`, `certainly help`) to ensure a warm, non-robotic user experience.
 
 ## Execution Phase Details
 
