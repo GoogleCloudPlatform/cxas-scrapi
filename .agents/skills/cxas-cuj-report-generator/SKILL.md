@@ -179,6 +179,12 @@ high-fidelity spoken voice standards. Subagents must ensure:
         word-by-word phonetically with absolutely no colon dividers: `"five five
         five, zero, one, nine, nine"`, `"seven thirty PM"`, `"eight o'clock
         PM"`.
+    *   *Scheduling Confirmation*: For any reservations or delivery updates that
+        schedule or communicate a specific time, timeframe, or booking date
+        (e.g., "ready in twenty minutes", "arrive in ten minutes", "booked for
+        tomorrow at eight PM"), you MUST explicitly seek confirmation from the
+        user (e.g. *"Is that okay?"*, *"Does that work for you?"*, or *"Should
+        we proceed with that?"*).
 2.  **Spoken Breath Span Limit**: Agent turns must remain concise, natural, and
     conversational. Individual spoken text blocks MUST NOT exceed **300
     characters** inside a single turn.
