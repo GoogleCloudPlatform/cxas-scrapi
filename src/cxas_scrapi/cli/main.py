@@ -1072,21 +1072,24 @@ def cmd_help(args: argparse.Namespace) -> None:
 
 def get_parser() -> argparse.ArgumentParser:
     """Sets up the argument parser."""
-    description = """CXAS SCRAPI Command Line Interface — Full CI/CD & Agent Management Suite
-
-The cxas CLI puts the full power of CX Agent Studio in your terminal: pull/push apps, run evaluations, manage versions, analyze conversation traces, and lint configurations or natural language prompts.
-
---- Key Verification & Linting Tools — When to Run Which ---
-
-• cxas lint     : Fast, deterministic structural & configuration linter.
-                  Validates directory layout, YAML/JSON schemas, app.yaml/app.json correctness, and basic structure.
-                  When to run: Continuously during development, in pre-commit hooks, and as a first CI gate.
-
-• cxas llm-lint : AI-driven semantic natural language prompt linter using Gemini.
-                  Deeply analyzes natural language instructions (instruction.txt, global_instruction.txt,
-                  and dynamic state callbacks) for clarity, tone, persona adherence, and logical contradictions.
-                  When to run: When authoring or refactoring prompt engineering, before code reviews,
-                  or during qualitative prompt evaluations."""
+    description = (
+        "CXAS SCRAPI Command Line Interface — Full CI/CD Suite\n\n"
+        "The cxas CLI puts the full power of CX Agent Studio in your\n"
+        "terminal: pull/push apps, run evals, manage versions, analyze\n"
+        "conversation traces, and lint configurations or prompts.\n\n"
+        "--- Key Verification & Linting Tools — When to Run Which ---\n\n"
+        "• cxas lint     : Fast, deterministic structural linter.\n"
+        "                  Validates directory layout, YAML/JSON schemas,\n"
+        "                  app.yaml/app.json correctness, & basic structure.\n"
+        "                  When to run: Continuously during development,\n"
+        "                  in pre-commit hooks, and as a first CI gate.\n\n"
+        "• cxas llm-lint : AI semantic natural language prompt linter.\n"
+        "                  Analyzes instructions (instruction.txt,\n"
+        "                  global_instruction.txt, & dynamic callbacks)\n"
+        "                  for clarity, tone, persona, & contradictions.\n"
+        "                  When to run: When authoring prompt engineering,\n"
+        "                  before code reviews, or during qualitative QA."
+    )
 
     parser = argparse.ArgumentParser(
         description=description,
