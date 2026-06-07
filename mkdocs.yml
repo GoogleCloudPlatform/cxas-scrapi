@@ -233,6 +233,7 @@ nav:
     - cxas llm-lint: cli/llm-lint.md
     - cxas init: cli/init.md
     - cxas insights: cli/insights.md
+    - cxas trace: cli/trace.md
   - API Reference:
     - api/index.md
     - Core:
