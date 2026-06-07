@@ -28,6 +28,8 @@ Please evaluate the instruction texts according to the following Criteria:
    - Completeness & Edge Cases: Identify underspecified instructions, such as conditional `if-then` statements without a clear fallback `else` or fallback action when a condition isn't met.
    - Dynamic Prompt Integration: If a Python callback is provided, check if the dynamic instructions injected by it are consistent with the static instructions. Highlight any conflicts where the callback might override static instructions in a confusing or contradictory way.
    - Contradictions & Alignment: Identify directives that contradict each other, both within a single instruction file and between the global package instruction (`global_instruction.txt`), the sub-agent instructions (`instruction.txt`), and any active dynamic callbacks. Ensure they are aligned and unified.
+   - Quotes vs. Backticks: Ensure that instructions do not use back-ticks (`). Only quotes (single or double) are allowed. Flag any back-ticks as style errors and suggest replacing them with quotes.
+   - Variable & Entity Formatting: When referencing variable names, tool names, or agent names, verify that `$name` syntax is NOT used. Enforce using curly braces for variables (single or double, e.g., `{name}` or `{{name}}`), `{@tool ...}` for tool names, and `{@agent ...}` for agent names respectively. Flag any invalid syntax and suggest the correct formatting.
 
 3. EXAMPLES:
    - Redundant Examples: Sample conversations or user logs that repeat standard instructions without demonstrating unique edge cases.
@@ -47,7 +49,7 @@ Please evaluate the instruction texts according to the following Criteria:
 Provide your response as a structured markdown report containing these sections:
 - SUMMARY: A high-level score (e.g., out of 100) and a brief 2-3 sentence assessment of instruction quality and overall cohesion (including dynamic prompt cohesion, if applicable).
 - BASIC ERRORS: Table or list of typos, misspellings, and grammar bugs, with exact line or text snippets and recommended fixes. If none, state "No issues found."
-- INSTRUCTION STYLE & COHESION: Detailed review of length, task decomposition, completeness, ambiguity, and contradictions/alignment, pointing out specific instructions and explaining how to correct them. Provide a concrete rewrite suggestion for the problematic sections using proper nested numbering.
+- INSTRUCTION STYLE & COHESION: Detailed review of length, task decomposition, completeness, ambiguity, contradictions/alignment, quotes vs. back-ticks, and variable/entity formatting, pointing out specific instructions and explaining how to correct them. Provide a concrete rewrite suggestion for the problematic sections using proper nested numbering.
 - EXAMPLES: Review of any examples provided, flagging redundancies or conflicts. If none, state "No issues found."
 - RED-TEAMING & ROBUSTNESS: A detailed review of the agent's robustness against red-teaming scenarios. Identify any missing, weak, or incomplete rules regarding grounding, out-of-scope handling, limitations, self-identification/internal details, manipulation resistance, context/tool constraints, empathetic tone adaptation, voice clarity, and PII protection. For each gap, provide clear recommendations and specific rule phrasings to be added to the instructions.
 """
