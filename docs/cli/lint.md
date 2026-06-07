@@ -114,6 +114,7 @@ cxas lint --json | jq 'if length > 0 then error else empty end'
 
 ## Related Commands
 
+- [`cxas llm-lint`](llm-lint.md) — AI-driven semantic prompt linter using Gemini. While `cxas lint` enforces deterministic structural, schema, and configuration rules across your directory tree, `cxas llm-lint` deeply analyzes the actual human language meaning, tone, persona consistency, and logical clarity of your sub-agent prompts.
 - [`cxas init`](init.md) — Bootstrap a project with the skills and configs that help you write lint-clean agents.
 - [`cxas push`](push.md) — Push your linted app to CX Agent Studio.
 - [`cxas ci-test`](ci-test.md) — Full CI lifecycle (add `cxas lint` as a step before `cxas ci-test` for maximum coverage).
