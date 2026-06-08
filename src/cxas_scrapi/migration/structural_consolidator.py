@@ -55,21 +55,6 @@ def _format_diagnostic(r: LintResult) -> str:
     return f"[{r.rule_id}] {r.message}"
 
 
-class XMLSchemaError(RuntimeError):
-    """Raised when Gemini synthesis produces non-canonical XML after retry."""
-
-    def __init__(self, group_name: str, diagnostics: list[LintResult]):
-        self.group_name = group_name
-        self.diagnostics = diagnostics
-        diag_block = "\n".join(
-            f"  - {_format_diagnostic(d)}" for d in diagnostics
-        )
-        super().__init__(
-            f"Synthesized XML for '{group_name}' failed canonical-schema "
-            f"validation after re-prompt:\n{diag_block}"
-        )
-
-
 def _build_validator_feedback(diagnostics: list[LintResult]) -> str:
     """Render lint diagnostics into the re-prompt feedback block."""
     diag_block = "\n".join(f"- {_format_diagnostic(d)}" for d in diagnostics)
@@ -949,8 +934,22 @@ class StructuralConsolidator:
                 diagnostics = lint_instruction_text(
                     xml_instructions, group_name
                 )
+                final_status = "ok"
                 if diagnostics:
-                    raise XMLSchemaError(group_name, diagnostics)
+                    diag_block = "\n".join(
+                        f"  - {_format_diagnostic(d)}" for d in diagnostics
+                    )
+                    logger.warning(
+                        "Synthesized XML for %s still fails schema "
+                        "validation after retry (%d issue(s)). "
+                        "Proceeding anyway.\n%s",
+                        group_name,
+                        len(diagnostics),
+                        diag_block,
+                    )
+                    final_status = "warning"
+            else:
+                final_status = "ok"
 
             xml_instructions = rewrite_agent_refs(
                 xml_instructions,
@@ -963,7 +962,7 @@ class StructuralConsolidator:
                 group_names=set(groupings.keys()),
             )
             consolidated_ir.agents[group_name].instruction = xml_instructions
-            return "ok"
+            return final_status
 
         statuses: dict[str, str] = {}
         results = await asyncio.gather(

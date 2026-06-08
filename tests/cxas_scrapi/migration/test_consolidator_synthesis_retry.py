@@ -28,7 +28,6 @@ from cxas_scrapi.migration.data_models import (
 )
 from cxas_scrapi.migration.structural_consolidator import (
     StructuralConsolidator,
-    XMLSchemaError,
     _build_validator_feedback,
 )
 from cxas_scrapi.utils.linter import LintResult, Severity
@@ -166,20 +165,31 @@ async def test_bad_then_good_xml_retries_once_then_succeeds(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_bad_xml_twice_raises_xml_schema_error(monkeypatch):
+async def test_bad_xml_twice_returns_warning_and_keeps_instructions(
+    monkeypatch, caplog
+):
+    """A second-pass schema failure must NOT crash the migration. The
+    consolidator should log a loud warning, mark the group as "warning",
+    and save the (still-non-canonical) instructions so the rest of the
+    asyncio.gather batch can continue."""
     _patch_designer_class(monkeypatch, xml_responses=[LEGACY_XML, LEGACY_XML])
     _patch_tree_view(monkeypatch)
     ir = _ir()
     consolidator = StructuralConsolidator(ir, gemini_client=None)
     groupings = {"GreetAgent": {"agents": ["GreetAgent"], "is_root": True}}
 
-    with pytest.raises(XMLSchemaError) as excinfo:
-        await consolidator.synthesize_instructions(ir, groupings)
-    err = excinfo.value
-    assert err.group_name == "GreetAgent"
-    assert any("<Agent>" in d.message for d in err.diagnostics)
-    # I015 (banned legacy tags) is the rule that catches the <Agent> wrapper
-    assert any(d.rule_id == "I015" for d in err.diagnostics)
+    with caplog.at_level("WARNING"):
+        statuses = await consolidator.synthesize_instructions(ir, groupings)
+
+    assert statuses == {"GreetAgent": "warning"}
+    # Instructions are still saved despite the validation failure.
+    assert ir.agents["GreetAgent"].instruction.lstrip().startswith("<Agent>")
+    # Loud warning was logged, naming the group and the proceed-anyway action.
+    assert any(
+        "GreetAgent" in rec.getMessage()
+        and "Proceeding anyway" in rec.getMessage()
+        for rec in caplog.records
+    )
 
 
 def test_build_validator_feedback_format() -> None:
