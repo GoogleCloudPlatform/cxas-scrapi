@@ -338,13 +338,15 @@ class MainVisualizer:
         Args:
             prefix: Filename prefix for exported files.
         """
+        svg_filename = f"{prefix}_topology.svg"
+        svg_exported = False
         try:
             dot = HighLevelGraphVisualizer(self.data).build(
                 show_code_blocks=False
             )
-            svg_filename = f"{prefix}_topology.svg"
             dot.render(outfile=svg_filename, format="svg", cleanup=True)
-        except graphviz.backend.execute.ExecutableNotFound as e:
+            svg_exported = True
+        except graphviz.backend.execute.ExecutableNotFound:
             self.console.print(
                 "\n[bold red]Error: Graphviz executable 'dot' not found.[/]\n"
                 "The topology graph could not be rendered. Please install "
@@ -356,9 +358,6 @@ class MainVisualizer:
                 "Download from https://graphviz.org/download/\n"
                 "Ensure the 'dot' executable is added to your system PATH.\n"
             )
-            raise VisualizationError(
-                "Graphviz executable 'dot' not found."
-            ) from e
 
         buf = io.StringIO()
         capture_console = Console(file=buf, force_terminal=False, width=120)
@@ -399,7 +398,10 @@ class MainVisualizer:
             md_file.write(buf.getvalue())
 
         if HAS_COLAB:
-            files.download(svg_filename)
+            if svg_exported:
+                files.download(svg_filename)
             files.download(md_filename)
-        else:
+        elif svg_exported:
             print(f"Files saved locally: {svg_filename}, {md_filename}")
+        else:
+            print(f"Files saved locally: {md_filename}")

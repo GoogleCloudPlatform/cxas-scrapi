@@ -18,15 +18,11 @@ import os
 from unittest.mock import MagicMock, patch
 
 import graphviz
-import pytest
 from rich.console import Console
 from rich.tree import Tree
 
 from cxas_scrapi.migration.data_models import DFCXAgentIR
-from cxas_scrapi.migration.main_visualizer import (
-    MainVisualizer,
-    VisualizationError,
-)
+from cxas_scrapi.migration.main_visualizer import MainVisualizer
 
 # ---------------------------------------------------------------------------
 # Shared data
@@ -272,10 +268,10 @@ class TestMainVisualizerExport:
         mv = MainVisualizer(DFCXAgentIR(**EMPTY_DATA))
 
         with patch.object(mv.console, "print") as mock_print:
-            with pytest.raises(VisualizationError) as exc_info:
-                mv.export_visualizations(prefix=prefix)
-
-            assert "Graphviz executable 'dot' not found" in str(exc_info.value)
+            mv.export_visualizations(prefix=prefix)
             mock_print.assert_called_once()
             args, _ = mock_print.call_args
             assert "Graphviz executable 'dot' not found" in args[0]
+
+            md_file = f"{prefix}_detailed_resources.md"
+            assert os.path.exists(md_file)
