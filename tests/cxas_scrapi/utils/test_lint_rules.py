@@ -1660,6 +1660,146 @@ def test_v006_deterministic_evaluation_passes(tmp_path, context):
     assert len(results) == 0, results[0].message
 
 
+def test_v006_generative_scenario_without_required_scenario_expectations_fails(
+    tmp_path, context
+):
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+
+    registry = build_registry()
+    rule = registry.get("V006")
+
+    eval_dir = tmp_path / "evaluations" / "ScenarioNoExpectations"
+    eval_dir.mkdir(parents=True)
+    (eval_dir / "ScenarioNoExpectations.yaml").write_text(
+        "displayName: Scenario No Expectations\n"
+        "scenario:\n"
+        "  task: Perform a transaction.\n"
+        "  rubrics:\n"
+        "    - The transaction must succeed.\n"
+    )
+    results = rule.check(eval_dir, "", context)
+    assert len(results) == 1, f"Expected 1 failure, got: {results}"
+    assert "Missing required fields" in results[0].message
+
+
+def test_v006_deterministic_standard_golden_passes(tmp_path, context):
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+
+    registry = build_registry()
+    rule = registry.get("V006")
+
+    eval_dir = tmp_path / "evaluations" / "StandardGolden"
+    eval_dir.mkdir(parents=True)
+    (eval_dir / "StandardGolden.yaml").write_text(
+        "displayName: Standard Golden\n"
+        "golden:\n"
+        "  turns:\n"
+        "    - steps:\n"
+        "        - userInput:\n"
+        "            text: hello\n"
+        "        - expectation:\n"
+        "            agentResponse:\n"
+        "              chunks:\n"
+        "                - text: Hi\n"
+    )
+    results = rule.check(eval_dir, "", context)
+    assert len(results) == 0, f"Standard Golden failed: {results}"
+
+
+def test_v006_deterministic_legacy_keys_passes(tmp_path, context):
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+
+    registry = build_registry()
+    rule = registry.get("V006")
+
+    eval_dir = tmp_path / "evaluations" / "LegacyKeys"
+    eval_dir.mkdir(parents=True)
+    (eval_dir / "LegacyKeys.yaml").write_text(
+        "displayName: Legacy Keys\n"
+        "turns:\n"
+        "  - steps:\n"
+        "      - userInput:\n"
+        "          text: hello\n"
+        "      - expectation:\n"
+        "          agentResponse:\n"
+        "            chunks:\n"
+        "              - text: Hi\n"
+        "expectations:\n"
+        "  - projects/p/locations/l/apps/a/evaluationExpectations/e1\n"
+    )
+    results = rule.check(eval_dir, "", context)
+    assert len(results) == 0, f"Legacy Keys failed: {results}"
+
+
+def test_v006_deterministic_hybrid_evaluation_passes(tmp_path, context):
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+
+    registry = build_registry()
+    rule = registry.get("V006")
+
+    eval_dir = tmp_path / "evaluations" / "HybridKeys"
+    eval_dir.mkdir(parents=True)
+    (eval_dir / "HybridKeys.yaml").write_text(
+        "displayName: Hybrid Keys\n"
+        "scenario:\n"
+        "  task: Perform a transaction.\n"
+        "expectations:\n"
+        "  - projects/p/locations/l/apps/a/evaluationExpectations/e1\n"
+    )
+    results = rule.check(eval_dir, "", context)
+    assert len(results) == 0, f"Hybrid Keys failed: {results}"
+
+
+def test_v006_generative_scenario_without_required_rubrics_fails(
+    tmp_path, context
+):
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+
+    registry = build_registry()
+    rule = registry.get("V006")
+
+    eval_dir = tmp_path / "evaluations" / "InvalidScenario"
+    eval_dir.mkdir(parents=True)
+    (eval_dir / "InvalidScenario.yaml").write_text(
+        "displayName: Invalid Scenario\n"
+        "scenario:\n"
+        "  task: Perform a transaction.\n"
+    )
+    results = rule.check(eval_dir, "", context)
+    assert len(results) == 1, f"Expected 1 failure, got: {results}"
+    assert "Missing required fields" in results[0].message
+
+
+def test_v006_generative_scenario_with_required_fields_passes(
+    tmp_path, context
+):
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+
+    registry = build_registry()
+    rule = registry.get("V006")
+
+    eval_dir = tmp_path / "evaluations" / "ValidScenario"
+    eval_dir.mkdir(parents=True)
+    (eval_dir / "ValidScenario.yaml").write_text(
+        "displayName: Valid Scenario\n"
+        "scenario:\n"
+        "  task: Perform a transaction.\n"
+        "  rubrics:\n"
+        "    - The transaction must succeed.\n"
+        "  scenarioExpectations:\n"
+        "    - toolExpectation:\n"
+        "        expectedToolCall:\n"
+        "          tool: projects/p/locations/l/apps/a/tools/finish\n"
+        "        mockToolResponse:\n"
+        "          tool: projects/p/locations/l/apps/a/tools/finish\n"
+        "          response:\n"
+        "            output:\n"
+        "              status: SUCCESS\n"
+    )
+    results = rule.check(eval_dir, "", context)
+    assert len(results) == 0, f"Valid Scenario failed: {results}"
+
+
 def test_schema_missing_referenced_file(tmp_path, context):
     from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
