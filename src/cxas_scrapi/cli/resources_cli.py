@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -272,6 +273,7 @@ def variables_list(args: argparse.Namespace) -> None:
                 schema = getattr(v, "schema", None)
                 try:
                     from google.cloud.ces_v1beta import types  # noqa: PLC0415
+
                     decl_schema = types.App.VariableDeclaration.Schema
                     v_type = decl_schema.Type(schema.type_).name
                 except Exception:
@@ -296,6 +298,7 @@ def variables_list(args: argparse.Namespace) -> None:
                 schema = getattr(v, "schema", None)
                 try:
                     from google.cloud.ces_v1beta import types  # noqa: PLC0415
+
                     decl_schema = types.App.VariableDeclaration.Schema
                     v_type = decl_schema.Type(schema.type_).name
                 except Exception:

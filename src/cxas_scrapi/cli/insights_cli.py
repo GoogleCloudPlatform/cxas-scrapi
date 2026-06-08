@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 """CLI module for handling Insights Operations."""
 
 # Copyright 2026 Google LLC
@@ -51,8 +52,8 @@ def handle_list(args: argparse.Namespace) -> None:
 def handle_export(args: argparse.Namespace) -> None:
     """Handles the 'insights export' command."""
     print(f"Exporting scorecard {args.scorecard_name} to {args.template}")
-    from cxas_scrapi.core.scorecards import Scorecards
     import cxas_scrapi.utils.scorecard_template_manager as template_manager
+    from cxas_scrapi.core.scorecards import Scorecards
 
     # Extract project/location from the full scorecard name.
     # Format: projects/PROJ/locations/LOC/qaScorecards/ID
@@ -99,8 +100,8 @@ def handle_import(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    from cxas_scrapi.utils.insights_utils import InsightsUtils
     import cxas_scrapi.utils.scorecard_template_manager as template_manager
+    from cxas_scrapi.utils.insights_utils import InsightsUtils
 
     target_id = None
     if args.scorecard_name:

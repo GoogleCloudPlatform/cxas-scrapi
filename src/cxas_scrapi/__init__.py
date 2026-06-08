@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, Any
 import importlib
+from typing import TYPE_CHECKING, Any
 
 # To keep the CLI startup time under 130ms, we lazy-load packages at runtime.
 # Using `if TYPE_CHECKING:` allows IDEs, type checkers, and static analyzers
 # to see the eager imports statically for full autocompletion and type-safety.
-# At runtime, TYPE_CHECKING is False, triggering the dynamic lazy loader in __getattr__.
+# At runtime, TYPE_CHECKING is False, triggering the dynamic lazy loader in
+# __getattr__.
 if TYPE_CHECKING:
     from cxas_scrapi.core.agents import Agents
     from cxas_scrapi.core.apps import Apps
@@ -106,6 +107,7 @@ else:
             module = importlib.import_module(module_path)
             return getattr(module, name)
         raise AttributeError(f"module {__name__} has no attribute {name}")
+
 
 __all__ = [
     "Agents",

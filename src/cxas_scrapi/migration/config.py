@@ -25,5 +25,3 @@ AGENT_MODELS = [
     "gemini-3.1-flash-live",
     "gemini-3.1-pro-preview",
 ]
-
-from cxas_scrapi.core.constants import DEFAULT_MODEL

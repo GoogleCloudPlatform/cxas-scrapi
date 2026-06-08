@@ -38,7 +38,9 @@ def _ns(**overrides):
 @pytest.fixture
 def fake_traces(monkeypatch):
     fake = MagicMock()
-    monkeypatch.setattr("cxas_scrapi.core.traces.Traces", MagicMock(return_value=fake))
+    monkeypatch.setattr(
+        "cxas_scrapi.core.traces.Traces", MagicMock(return_value=fake)
+    )
     return fake
 
 
