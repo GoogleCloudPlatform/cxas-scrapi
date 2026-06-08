@@ -17,18 +17,18 @@
 from __future__ import annotations
 
 import asyncio
-import glob
 import os
 import pathlib
 import re
 import shutil
 import sys
-import textwrap
 import uuid
 from collections.abc import Sequence
 from typing import Final
 
 import google.auth
+import google.auth.transport.requests
+import tomllib
 from absl import logging
 from google.antigravity import Agent, LocalAgentConfig
 from google.antigravity.hooks import policy
@@ -159,6 +159,7 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
         self._trajectory_extractor = trajectory_extractor.TrajectoryExtractor()
         self._keep_workspaces = keep_workspaces
         self._original_env: dict[str, str | None] = {}
+        self._gcp_token: str | None = None
 
     @property
     def _workspace_dir(self) -> str:
@@ -169,6 +170,23 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
         """Executes a subprocess command inside the given directory."""
         logging.info("[%s] Running command: %s", self.name, " ".join(args))
         env = os.environ.copy()
+
+        # Target the child venv if it exists, otherwise strip VIRTUAL_ENV to avoid polluting parent
+        child_venv = os.path.join(cwd, ".venv")
+        if os.path.exists(child_venv):
+            env["VIRTUAL_ENV"] = child_venv
+        else:
+            env.pop("VIRTUAL_ENV", None)
+
+        # Enable subprocess keyring provider to authenticate uv with private Artifact Registry
+        env["UV_KEYRING_PROVIDER"] = "subprocess"
+
+        if self._gcp_token:
+            for key, val in self._get_uv_index_env_vars(
+                self._gcp_token
+            ).items():
+                env[key] = val
+
         process = await asyncio.create_subprocess_exec(
             args[0],
             *args[1:],
@@ -193,10 +211,52 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
                 f" {process.returncode}"
             )
 
+    def _get_uv_index_env_vars(self, token: str) -> dict[str, str]:
+        """Helper to resolve uv index credential environment variables from config."""
+        env_vars = {}
+        paths = [
+            pathlib.Path("/etc/uv/uv.toml"),
+            pathlib.Path.home() / ".config" / "uv" / "uv.toml",
+        ]
+        for path in paths:
+            if path.exists():
+                try:
+                    with open(path, "rb") as f:
+                        config = tomllib.load(f)
+                        for index in config.get("index", []):
+                            if name := index.get("name"):
+                                var_name = name.upper().replace("-", "_")
+                                env_vars[f"UV_INDEX_{var_name}_USERNAME"] = (
+                                    "oauth2accesstoken"
+                                )
+                                env_vars[f"UV_INDEX_{var_name}_PASSWORD"] = (
+                                    token
+                                )
+                except Exception as e:
+                    logging.warning(
+                        "[%s] Failed to parse %s: %s", self.name, path, e
+                    )
+        if not env_vars:
+            env_vars["UV_INDEX_CORP_AIRLOCK_DEFAULT_USERNAME"] = (
+                "oauth2accesstoken"
+            )
+            env_vars["UV_INDEX_CORP_AIRLOCK_DEFAULT_PASSWORD"] = token
+        return env_vars
+
     async def initialize(self) -> None:
         """Initializes the conversation session and the agent."""
         await self.close()
         self._trajectory_extractor = trajectory_extractor.TrajectoryExtractor()
+
+        try:
+            credentials, _ = google.auth.default()
+            if not credentials.valid:
+                credentials.refresh(google.auth.transport.requests.Request())
+            self._gcp_token = credentials.token
+        except Exception as e:
+            logging.warning(
+                "[%s] Failed to resolve GCP OAuth token: %s", self.name, e
+            )
 
         # Resolve absolute paths to the root repository directory
         skill_eval_dir = pathlib.Path(__file__).parent.resolve()
@@ -234,98 +294,20 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
 
         # Execute isolated workspace environment setup
 
+        # 1. Create clean virtual environment (NO system site-packages)
         await self._run_subprocess_cmd(
-            ["uv", "venv", "--python", sys.executable, "--system-site-packages"], self._workspace_dir
+            ["uv", "venv", "--python", sys.executable], self._workspace_dir
         )
 
         local_venv_path = os.path.join(self._workspace_dir, ".venv")
-        site_packages_glob = glob.glob(
-            os.path.join(local_venv_path, "lib", "python*", "site-packages")
-        )
-        if not site_packages_glob:
-            raise RuntimeError(
-                "Could not find site-packages directory inside isolated venv:"
-                f" {local_venv_path}"
-            )
-        local_site_packages = site_packages_glob[0]
-
-        # 1. Zero-Build local package linkage (.pth file)
-        src_dir = os.path.join(root_repo_dir, "src")
-        pth_file = os.path.join(local_site_packages, "cxas-scrapi.pth")
-
-        # Resolve active parent virtualenv site-packages directory dynamically
-        parent_site_packages = None
-        for p in sys.path:
-            if "site-packages" in p:
-                parent_site_packages = p
-                break
-
-        with open(pth_file, "w") as f:
-            f.write(f"{src_dir}\n")
-            if parent_site_packages:
-                f.write(f"{parent_site_packages}\n")
-
-        logging.info(
-            "[%s] Wrote local .pth link file: %s -> %s (parent venv: %s)",
-            self.name,
-            pth_file,
-            src_dir,
-            parent_site_packages,
-        )
-
-        # 2. Programmatic cxas CLI wrap script
         local_venv_bin = os.path.join(local_venv_path, "bin")
-        local_venv_cxas = os.path.join(local_venv_bin, "cxas")
-        local_venv_python = os.path.join(local_venv_bin, "python3")
 
-        cxas_script_content = textwrap.dedent(f"""\
-        #!{local_venv_python}
-        import sys
-        sys.path.insert(0, {src_dir!r})
-        from cxas_scrapi.cli.main import main
-        if __name__ == '__main__':
-            sys.exit(main())
-        """)
-
-        with open(local_venv_cxas, "w") as f:
-            f.write(cxas_script_content)
-
-        # Make CLI script executable
-        os.chmod(local_venv_cxas, 0o755)
-        logging.info(
-            "[%s] Registered local cxas executable: %s",
-            self.name,
-            local_venv_cxas,
+        # 2. Install scrapi in non-editable mode (resolves all dependencies in child venv)
+        await self._run_subprocess_cmd(
+            ["uv", "pip", "install", str(root_repo_dir)], self._workspace_dir
         )
 
-        # Symlink or copy parent virtualenv's share/cxas-scrapi to child venv
-        parent_skills_dir = os.path.join(sys.prefix, "share", "cxas-scrapi")
-        local_share_dir = os.path.join(local_venv_path, "share", "cxas-scrapi")
-
-        if os.path.exists(parent_skills_dir):
-            os.makedirs(os.path.dirname(local_share_dir), exist_ok=True)
-            try:
-                os.symlink(parent_skills_dir, local_share_dir)
-                logging.info(
-                    "[%s] Symlinked parent shared skills: %s -> %s",
-                    self.name,
-                    local_share_dir,
-                    parent_skills_dir,
-                )
-            except FileExistsError:
-                pass
-            except Exception as e:
-                shutil.copytree(
-                    parent_skills_dir, local_share_dir, dirs_exist_ok=True
-                )
-                logging.info(
-                    "[%s] Copied parent shared skills: %s -> %s due to: %s",
-                    self.name,
-                    local_share_dir,
-                    parent_skills_dir,
-                    e,
-                )
-
+        # 3. Configure LocalAgentConfig
         instructions = (
             "You are a specialized virtual agent for designing and deploying "
             "virtual agents. You have the `cxas` CLI tool in your PATH and the "
@@ -337,6 +319,7 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
             raise ValueError(
                 "A GCP project ID (--project) is required for Vertex-only evaluation."
             )
+        skills_path = os.path.join(root_repo_dir, ".agents", "skills")
         config = LocalAgentConfig(
             workspaces=[self._workspace_dir],
             policies=[policy.allow_all()],
@@ -345,6 +328,7 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
             vertex=True,
             project=self._project,
             location=self._location,
+            skills_paths=[skills_path],
         )
 
         # Capture original environment values for persistent injection
@@ -355,7 +339,11 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
             "GOOGLE_CLOUD_PROJECT": os.environ.get("GOOGLE_CLOUD_PROJECT"),
             "CXAS_PROJECT_ID": os.environ.get("CXAS_PROJECT_ID"),
             "CXAS_LOCATION": os.environ.get("CXAS_LOCATION"),
+            "UV_KEYRING_PROVIDER": os.environ.get("UV_KEYRING_PROVIDER"),
         }
+        if self._gcp_token:
+            for key in self._get_uv_index_env_vars(self._gcp_token):
+                self._original_env[key] = os.environ.get(key)
 
         local_venv_path = os.path.join(self._workspace_dir, ".venv")
         local_venv_bin = os.path.join(local_venv_path, "bin")
@@ -367,6 +355,14 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
             )
         else:
             os.environ["PATH"] = local_venv_bin
+
+        os.environ["UV_KEYRING_PROVIDER"] = "subprocess"
+
+        if self._gcp_token:
+            for key, val in self._get_uv_index_env_vars(
+                self._gcp_token
+            ).items():
+                os.environ[key] = val
 
         if self._project:
             os.environ["GCLOUD_PROJECT"] = self._project
@@ -456,14 +452,6 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
         logging.info(
             "[%s] [%s] Running setup commands...", self.name, self._session_id
         )
-        venv_path = os.path.join(self._workspace_dir, ".venv")
-        env = os.environ.copy()
-        if os.path.exists(venv_path):
-            env["VIRTUAL_ENV"] = venv_path
-            env["PATH"] = (
-                f"{os.path.join(venv_path, 'bin')}:{env.get('PATH', '')}"
-            )
-
         for cmd in self._setup_commands:
             logging.info(
                 "[%s] [%s] Running setup command: %s",
@@ -476,7 +464,6 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
                 cwd=self._workspace_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=env,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(

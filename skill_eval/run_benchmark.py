@@ -182,8 +182,8 @@ class BenchmarkOrchestrator:
             1
         )  # Strict sequential initialization
         self._run_semaphore = asyncio.Semaphore(
-            2
-        )  # Limit concurrent active evaluations to respect Vertex AI burst limits
+            1
+        )  # Sequential runs to eliminate process-global os.environ race conditions
         self._scorer = scorer.Scorer(
             project=project,
             location=model_location,
