@@ -478,8 +478,10 @@ class TurnEvals:
                         f"CONTAINS failed: '{expected}' not found in '{actual}'"
                     )
             elif op == TurnOperator.FUZZY_MATCH:
-                import numpy as np
-                from sklearn.metrics.pairwise import cosine_similarity
+                import numpy as np  # noqa: PLC0415
+                from sklearn.metrics.pairwise import (  # noqa: PLC0415
+                    cosine_similarity,
+                )
 
                 THRESHOLD = 0.75
                 actual = full_text.strip()

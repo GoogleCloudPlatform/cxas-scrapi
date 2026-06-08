@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,6 +76,7 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
         run_stage_2,
         run_stage_3,
     )
+
     if getattr(args, "run", False):
         # Validate E2E requirements
         if not (
@@ -132,7 +134,6 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
     else:
         # Default: Interactive TUI Dashboard Mode
         from cxas_scrapi.cli.migration_cli import MigrationCLI  # noqa: PLC0415
-
         from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
 
         dashboard = MigrationCLI()
@@ -330,6 +331,7 @@ def filter_metrics_and_assess(
 def run_eval(args: argparse.Namespace) -> None:
     """Handles the 'run' command."""
     import pandas as pd
+
     from cxas_scrapi.core.evaluations import Evaluations
     from cxas_scrapi.utils.eval_utils import EvalUtils
 
@@ -685,8 +687,9 @@ def test_single_callback(args: argparse.Namespace) -> None:
 
 def ci_test(args: argparse.Namespace) -> None:
     """Handles the 'ci-test' command."""
-    from cxas_scrapi.core.apps import Apps
     from cxas_scrapi.cli.app import app_push
+    from cxas_scrapi.core.apps import Apps
+    from cxas_scrapi.core.evaluations import Evaluations
 
     print("Starting CI Test Lifecycle...")
 
@@ -892,9 +895,10 @@ def run_session(args: argparse.Namespace) -> None:
 def conversations_list(args: argparse.Namespace) -> None:
     """Lists conversations for an app."""
     from google.protobuf.json_format import MessageToDict
-    from cxas_scrapi.core.conversation_history import ConversationHistory
-    from cxas_scrapi.core.common import Common
+
     from cxas_scrapi.core.apps import Apps
+    from cxas_scrapi.core.common import Common
+    from cxas_scrapi.core.conversation_history import ConversationHistory
 
     print(f"Listing conversations for App: {args.app_name}")
 
@@ -930,9 +934,10 @@ def conversations_list(args: argparse.Namespace) -> None:
 def conversations_get(args: argparse.Namespace) -> None:
     """Gets details of a specific conversation."""
     from google.protobuf.json_format import MessageToDict
-    from cxas_scrapi.core.conversation_history import ConversationHistory
-    from cxas_scrapi.core.common import Common
+
     from cxas_scrapi.core.apps import Apps
+    from cxas_scrapi.core.common import Common
+    from cxas_scrapi.core.conversation_history import ConversationHistory
 
     print(f"Getting conversation: {args.conversation_resource_name}")
 
@@ -966,6 +971,7 @@ def conversations_get(args: argparse.Namespace) -> None:
 def deployments_list(args: argparse.Namespace) -> None:
     """Lists deployments for an app."""
     from google.protobuf.json_format import MessageToDict
+
     from cxas_scrapi.core.deployments import Deployments
 
     print(f"Listing deployments for App: {args.app_name}")
@@ -1032,8 +1038,9 @@ def deployments_create(args: argparse.Namespace) -> None:
 def deployments_promote(args: argparse.Namespace) -> None:
     """Promotes app to live traffic."""
     from google.api_core.exceptions import NotFound
-    from cxas_scrapi.core.deployments import Deployments
+
     from cxas_scrapi.cli.app import app_push
+    from cxas_scrapi.core.deployments import Deployments
 
     has_id = getattr(args, "deployment_id", None)
     has_split_or_ver = getattr(args, "version", None) or getattr(
@@ -1153,73 +1160,94 @@ def deployments_promote(args: argparse.Namespace) -> None:
 
 def app_branch(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.app import app_branch as _app_branch
+
     _app_branch(args)
 
 
 def app_create(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.app import app_create as _app_create
+
     _app_create(args)
 
 
 def app_delete(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.app import app_delete as _app_delete
+
     _app_delete(args)
 
 
 def app_init(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.app import app_init as _app_init
+
     _app_init(args)
 
 
 def app_lint(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.app import app_lint as _app_lint
+
     _app_lint(args)
 
 
 def app_pull(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.app import app_pull as _app_pull
+
     _app_pull(args)
 
 
 def app_push(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.app import app_push as _app_push
+
     _app_push(args)
 
 
 def apps_get(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.app import apps_get as _apps_get
+
     _apps_get(args)
 
 
 def apps_list(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.app import apps_list as _apps_list
+
     _apps_list(args)
 
 
 def handle_local_create(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.create_local import handle_local_create as _handle_local_create
+    from cxas_scrapi.cli.create_local import (
+        handle_local_create as _handle_local_create,
+    )
+
     _handle_local_create(args)
 
 
 def llm_lint(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.llm_lint import llm_lint as _llm_lint
+
     _llm_lint(args)
 
 
 def app_versions_list(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.versions_cli import app_versions_list as _app_versions_list
+    from cxas_scrapi.cli.versions_cli import (
+        app_versions_list as _app_versions_list,
+    )
+
     _app_versions_list(args)
 
 
 def app_versions_compare(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.versions_cli import app_versions_compare as _app_versions_compare
+    from cxas_scrapi.cli.versions_cli import (
+        app_versions_compare as _app_versions_compare,
+    )
+
     _app_versions_compare(args)
 
 
 def init_github_action(args: argparse.Namespace) -> None:
-    from cxas_scrapi.core.github import init_github_action as _init_github_action
-    _init_github_action(args)
+    from cxas_scrapi.core.github import (
+        init_github_action as _init_github_action,
+    )
 
+    _init_github_action(args)
 
 
 def get_parser() -> argparse.ArgumentParser:

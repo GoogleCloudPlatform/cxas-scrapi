@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 """Argparse subcommand handlers for `cxas trace`.
 
 The handlers are intentionally thin: they only build a `Traces` instance and
@@ -24,6 +25,11 @@ import argparse
 import csv
 import io
 import json
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from cxas_scrapi.core.traces import Traces
+
 import logging
 import platform
 import re
@@ -69,6 +75,7 @@ def add_trace_args(subparser: argparse.ArgumentParser) -> None:
 
 def _build_traces(args: argparse.Namespace) -> "Traces":
     from cxas_scrapi.core.traces import Traces
+
     return Traces(
         app_name=args.app_name,
         app_dir=getattr(args, "app_dir", "."),
