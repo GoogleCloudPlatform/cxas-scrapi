@@ -18,10 +18,6 @@ import argparse
 import sys
 import tempfile
 
-import cxas_scrapi.utils.scorecard_template_manager as template_manager
-from cxas_scrapi.core.scorecards import Scorecards
-from cxas_scrapi.utils.insights_utils import InsightsUtils
-
 
 def _get_project_and_location_from_parent(parent: str) -> tuple[str, str]:
     """Helper to extract project and location from parent string."""
@@ -38,6 +34,8 @@ def _get_project_and_location_from_parent(parent: str) -> tuple[str, str]:
 def handle_list(args: argparse.Namespace) -> None:
     """Handles the 'insights list' command."""
     print(f"Listing scorecards in: {args.parent}")
+    from cxas_scrapi.core.scorecards import Scorecards
+
     project_id, location = _get_project_and_location_from_parent(args.parent)
     scorecards_client = Scorecards(project_id=project_id, location=location)
 
@@ -53,6 +51,9 @@ def handle_list(args: argparse.Namespace) -> None:
 def handle_export(args: argparse.Namespace) -> None:
     """Handles the 'insights export' command."""
     print(f"Exporting scorecard {args.scorecard_name} to {args.template}")
+    from cxas_scrapi.core.scorecards import Scorecards
+    import cxas_scrapi.utils.scorecard_template_manager as template_manager
+
     # Extract project/location from the full scorecard name.
     # Format: projects/PROJ/locations/LOC/qaScorecards/ID
     project_id, location = _get_project_and_location_from_parent(
@@ -97,6 +98,9 @@ def handle_import(args: argparse.Namespace) -> None:
             "import."
         )
         sys.exit(1)
+
+    from cxas_scrapi.utils.insights_utils import InsightsUtils
+    import cxas_scrapi.utils.scorecard_template_manager as template_manager
 
     target_id = None
     if args.scorecard_name:

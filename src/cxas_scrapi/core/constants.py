@@ -12,18 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Configuration constants for migration."""
+"""Common constants for the cxas_scrapi package."""
 
-AGENT_MODELS = [
-    "gemini-3.0-flash-001",
-    "gemini-3.0-pro-001",
-    "gemini-2.5-flash-001",
-    "gemini-2.5-flash-native-audio-preview",
-    "gemini-2.5-flash-voice-optimized",
-    "gemini-3.0-flash-native-audio-preview",
-    "gemini-3-flash-native-audio",
-    "gemini-3.1-flash-live",
-    "gemini-3.1-pro-preview",
-]
-
-from cxas_scrapi.core.constants import DEFAULT_MODEL
+DEFAULT_MODEL = "gemini-3.1-flash-live"
