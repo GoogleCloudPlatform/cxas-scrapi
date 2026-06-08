@@ -17,6 +17,7 @@ import os
 from unittest.mock import mock_open, patch
 
 import pandas as pd
+import pytest
 
 from cxas_scrapi.utils.reporting import (
     _escape,
@@ -522,6 +523,7 @@ def test_run_all_evals_tag_filtering(
 
     mock_eval_client = mock_evaluations.return_value
     mock_eval_client.update_evaluation.return_value.name = "mock_name"
+    mock_sim_evals.return_value.run_simulations.return_value = []
 
     run_all_evals(
         app_name="projects/p",
@@ -565,6 +567,7 @@ def test_run_all_evals_include_filtering(
         ["evals/simulations/sim1.yaml"],
     ]
     mock_yaml_load.return_value = [{"name": "sim1"}]
+    mock_sim_evals.return_value.run_simulations.return_value = []
 
     # Call with ONLY sims
     run_all_evals(
@@ -702,6 +705,7 @@ def test_run_all_evals_dict_based_simulations(
     mock_glob.side_effect = [
         ["evals/simulations/sims.yaml"],
     ]
+    mock_sim_evals.return_value.run_simulations.return_value = []
 
     run_all_evals(
         app_name="projects/p",
@@ -784,3 +788,160 @@ evals:
             "The agent welcomes the user",
             "The agent behaves politely",
         ]
+
+
+@patch("cxas_scrapi.core.workspace.resolve_project_dir")
+def test_generate_combined_report_no_workspace_raises_actionable_error(
+    mock_resolve_dir,
+):
+    mock_resolve_dir.side_effect = ValueError(
+        "No GECX project directory could be resolved."
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        generate_combined_report_from_dir(output_dir=None)
+
+    assert "No active GECX project workspace is set." in str(excinfo.value)
+    assert "Please run 'cxas workspace set <path>'" in str(excinfo.value)
+
+
+@patch("cxas_scrapi.utils.reporting.run_all_evals")
+@patch("cxas_scrapi.utils.reporting.generate_combined_html_report")
+@patch("os.makedirs")
+@patch("cxas_scrapi.core.workspace.resolve_project_dir")
+@patch("cxas_scrapi.core.workspace.load_workspace_config")
+@patch("cxas_scrapi.core.workspace.app_name")
+@patch("cxas_scrapi.core.workspace.get_output_dir")
+@patch("cxas_scrapi.core.workspace.callback_tests_path")
+@patch("cxas_scrapi.core.workspace.tool_tests_path")
+@patch("cxas_scrapi.core.workspace.goldens_path")
+@patch("cxas_scrapi.core.workspace.simulations_path")
+def test_generate_combined_report_resolves_workspace_paths(
+    mock_sims_path,
+    mock_goldens_path,
+    mock_tool_path,
+    mock_callback_path,
+    mock_get_out,
+    mock_app_name,
+    mock_load_config,
+    mock_resolve_dir,
+    mock_makedirs,
+    mock_gen_html,
+    mock_run_all,
+):
+    mock_resolve_dir.return_value = "/mock/project"
+    mock_load_config.return_value = {"modality": "voice"}
+    mock_app_name.return_value = "projects/p/locations/l/apps/a"
+    mock_get_out.return_value = "/mock/project/.scrapi-out"
+    mock_callback_path.return_value = "/mock/project/evals/callback_tests"
+    mock_tool_path.return_value = "/mock/project/evals/tool_tests"
+    mock_goldens_path.return_value = "/mock/project/evals/goldens"
+    mock_sims_path.return_value = "/mock/project/evals/simulations"
+
+    mock_run_all.return_value = {
+        "simulation": [],
+        "tool": [],
+        "callback": [],
+        "golden": [],
+    }
+    mock_gen_html.return_value = "html_report"
+
+    res = generate_combined_report_from_dir(run=True)
+
+    mock_run_all.assert_called_once_with(
+        app_name="projects/p/locations/l/apps/a",
+        app_dir="/mock/project/evals/callback_tests",
+        tool_test_file="/mock/project/evals/tool_tests",
+        goldens_dir="/mock/project/evals/goldens",
+        simulation_dir="/mock/project/evals/simulations",
+        output_dir="/mock/project/.scrapi-out",
+        modality="voice",
+        runs=1,
+        filter_files=None,
+        filter_tags=None,
+        parallel=1,
+        golden_timeout=600,
+        include=["sims", "goldens", "tools", "callbacks"],
+        bg_noise_file=None,
+        burst_noise_files=None,
+    )
+    assert res == "html_report"
+
+
+@patch("cxas_scrapi.utils.reporting.run_all_evals", autospec=True)
+@patch(
+    "cxas_scrapi.utils.reporting.generate_combined_html_report", autospec=True
+)
+@patch("os.makedirs", autospec=True)
+@patch("cxas_scrapi.core.workspace.resolve_project_dir", autospec=True)
+@patch("cxas_scrapi.core.workspace.load_workspace_config", autospec=True)
+@patch("cxas_scrapi.core.workspace.app_name", autospec=True)
+@patch("cxas_scrapi.core.workspace.get_output_dir", autospec=True)
+def test_generate_combined_report_resolves_relative_explicit_paths(
+    mock_get_out,
+    mock_app_name,
+    mock_load_config,
+    mock_resolve_dir,
+    mock_makedirs,
+    mock_gen_html,
+    mock_run_all,
+):
+    mock_resolve_dir.return_value = "/mock/project"
+    mock_load_config.return_value = {"modality": "voice"}
+    mock_app_name.return_value = "projects/p/locations/l/apps/a"
+    mock_get_out.return_value = "/mock/project/.scrapi-out"
+    mock_run_all.return_value = {
+        "simulation": [],
+        "tool": [],
+        "callback": [],
+        "golden": [],
+    }
+    mock_gen_html.return_value = "html_report"
+
+    res = generate_combined_report_from_dir(
+        run=True,
+        app_dir="my_app",
+        tool_test_file="my_evals/tools",
+        goldens_dir="my_evals/goldens",
+        simulation_dir="my_evals/sims",
+    )
+
+    mock_run_all.assert_called_once_with(
+        app_name="projects/p/locations/l/apps/a",
+        app_dir="/mock/project/my_app",
+        tool_test_file="/mock/project/my_evals/tools",
+        goldens_dir="/mock/project/my_evals/goldens",
+        simulation_dir="/mock/project/my_evals/sims",
+        output_dir="/mock/project/.scrapi-out",
+        modality="voice",
+        runs=1,
+        filter_files=None,
+        filter_tags=None,
+        parallel=1,
+        golden_timeout=600,
+        include=["sims", "goldens", "tools", "callbacks"],
+        bg_noise_file=None,
+        burst_noise_files=None,
+    )
+    assert res == "html_report"
+
+
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs", autospec=True)
+def test_generate_combined_report_appends_filename_to_gcs_dir_path(
+    mock_upload,
+):
+    mock_upload.return_value = "https://mtls-url"
+
+    from cxas_scrapi.utils.reporting import generate_combined_html_report
+
+    res = generate_combined_html_report(
+        golden_results=[],
+        sim_results=[],
+        tool_results=[],
+        callback_results=[],
+        output_path="gs://my-bucket/my-folder/",
+    )
+
+    mock_upload.assert_called_once_with(
+        "gs://my-bucket/my-folder/combined_report.html", res
+    )

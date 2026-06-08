@@ -66,6 +66,7 @@ dependencies = [
   "ratelimit",
   "pydub",
   "audioop-lts; python_version >= '3.13'",
+  "toml",
 ]
 
 [project.optional-dependencies]
@@ -97,6 +98,7 @@ cxas = "cxas_scrapi.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cxas_scrapi"]
+
 
 [tool.ruff]
 line-length = 80
@@ -143,6 +145,15 @@ ignore = [
 # Audio-analysis prompts are verbatim text intended for Gemini and must not be
 # reflowed; line-length doesn't apply to prompt content.
 "src/cxas_scrapi/utils/tracing/audio_analysis.py" = ["E501"]
+# Workspace contains complex state logs and path migrations; main_visualizer contains terminal format strings.
+"src/cxas_scrapi/core/workspace.py" = ["E501"]
+"src/cxas_scrapi/migration/main_visualizer.py" = ["E501"]
+# CLI scripts define parsing option helps and logging warnings which naturally span >80 chars.
+"src/cxas_scrapi/cli/app.py" = ["E501"]
+"src/cxas_scrapi/cli/main.py" = ["E501"]
+"src/cxas_scrapi/cli/workspace.py" = ["E501"]
+# Test files are allowed to have local imports (for scoping mocks) and long lines.
+"tests/**/*.py" = ["PLC0415", "PLW1510", "RUF005", "E501"]
 
 [tool.ruff.format]
 quote-style = "double"

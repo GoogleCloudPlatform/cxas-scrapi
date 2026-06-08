@@ -35,7 +35,7 @@ from datetime import datetime
 from typing import Any
 
 import yaml
-from config import get_project_path, load_app_name
+from config import get_output_dir, get_project_path, load_app_name
 
 from cxas_scrapi.evals.simulation_evals import (
     LLMUserConversation,
@@ -50,7 +50,7 @@ USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/scrapi-sim-runner"
 EVALS_YAML = get_project_path("evals", "scenarios", "scenarios.yaml")
 SIM_EVALS_YAML = get_project_path("evals", "simulations", "simulations.yaml")
 SIM_TESTS_DIR = get_project_path("evals", "simulations")
-REPORTS_DIR = get_project_path("eval-reports")
+REPORTS_DIR = get_output_dir()
 
 _DEFAULT_MODEL = "gemini-3.1-flash-lite"
 

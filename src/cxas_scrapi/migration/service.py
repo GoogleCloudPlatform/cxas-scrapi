@@ -26,6 +26,7 @@ import google.protobuf.duration_pb2
 from google.cloud.ces_v1beta import types
 from rich.console import Console
 
+from cxas_scrapi.core import workspace as ws
 from cxas_scrapi.core.agents import Agents
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.tools import Tools
@@ -141,7 +142,7 @@ class MigrationService:
             reporter=self.reporter,
         )
 
-        self.ir: MigrationIR | None = None
+        self.ir = {}
         self.source_agent_data = None
         # Migration analysis report — instantiated lazily once a target_name
         # is known. Reset for each migration so per-target state is clean.
@@ -177,12 +178,16 @@ class MigrationService:
                 and getattr(self.ir, "metadata", None) is not None
             ):
                 app_name = self.ir.metadata.app_name or target_name
+
+            if output_dir is None:
+                output_dir = ws.get_output_dir()
+
             self._analysis_builder = MigrationAnalysisBuilder(
                 target_name=target_name,
                 app_name=app_name,
                 output_dir=output_dir,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("could not init migration analysis report: %s", exc)
             self._analysis_builder = None
         return self._analysis_builder
@@ -197,7 +202,7 @@ class MigrationService:
             self._analysis_builder.record_phase(phase, what_changed, kind=kind)
             self._analysis_builder.update_from_service(self)
             self._analysis_builder.flush()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "migration analysis checkpoint %r failed: %s", phase, exc
             )
@@ -228,10 +233,10 @@ class MigrationService:
         Args:
             bundle: The :class:`IRBundle` to restore from.
             project_id: Override the bundle's project ID. Defaults to
-                `bundle.config.project_id`.
+              `bundle.config.project_id`.
             location: Override the bundle's location. Defaults to whatever
-                :meth:`IRBundle.resolve_location` returns (parsed from
-                `bundle.app_url`, else "us").
+              :meth:`IRBundle.resolve_location` returns (parsed from
+              `bundle.app_url`, else "us").
 
         Returns:
             A `MigrationService` ready for update-pass deploys + Stage N
@@ -297,31 +302,31 @@ class MigrationService:
 
         Args:
             bundle: Required post-migration bundle — used to snapshot
-                ``pre_consolidation_ir`` and persist the accepted grouping.
+              ``pre_consolidation_ir`` and persist the accepted grouping.
             gemini_client: Override the service's default Gemini client.
             grouping_callback: Async callable invoked after the consolidator
-                proposes groupings, before integrity check + consolidate +
-                deploy. Called with kwargs ``ir``, ``groupings``,
-                ``consolidator``, ``root_key``, ``dep_summary`` so the
-                callback can preview consolidation via
-                ``consolidator.consolidate(...)`` and re-propose via
-                ``consolidator.propose_groupings(...)``. Returns the
-                accepted ``groupings`` dict (possibly edited) or ``None``
-                to abort the consolidation step. See
-                :func:`cxas_scrapi.migration.grouping_review.interactive_review`
-                for the canonical TUI implementation.
+              proposes groupings, before integrity check + consolidate +
+              deploy. Called with kwargs ``ir``, ``groupings``,
+              ``consolidator``, ``root_key``, ``dep_summary`` so the
+              callback can preview consolidation via
+              ``consolidator.consolidate(...)`` and re-propose via
+              ``consolidator.propose_groupings(...)``. Returns the
+              accepted ``groupings`` dict (possibly edited) or ``None``
+              to abort the consolidation step. See
+              :func:`cxas_scrapi.migration.grouping_review.interactive_review`
+              for the canonical TUI implementation.
             grouping_json_path: If set, load groupings from this JSON file
-                instead of calling Gemini.
+              instead of calling Gemini.
             version_label: CXAS Version ``display_name`` to create after
-                the final structural consolidation step. (Default: ``"0.0.3"``).
-                ``None`` skips the checkpoint.
-            dedup_version_label: CXAS Version ``display_name`` to create after
-                the initial variable deduplication step. (Default: ``"0.0.2"``).
-                ``None`` skips the checkpoint.
+              the final structural consolidation step. (Default:
+              ``"0.0.3"``). ``None`` skips the checkpoint.
+            dedup_version_label: CXAS Version ``display_name`` to create
+              after the initial variable deduplication step. (Default:
+              ``"0.0.2"``). ``None`` skips the checkpoint.
             persist_bundle_path: If set, save the updated bundle to this
-                path after the stage.
+              path after the stage.
             console: Rich console for progress output. Defaults to a fresh
-                ``Console()`` (writes to stderr).
+              ``Console()`` (writes to stderr).
 
         Returns:
             The accepted grouping dict when structural consolidation was
@@ -346,7 +351,7 @@ class MigrationService:
         stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage_1")
         self._analysis_checkpoint(
             "stage_1_dedup",
-            f"Stage 1 variable deduplication complete; "
+            "Stage 1 variable deduplication complete; "
             f"{len(self.ir.parameters)} variables remain.",
         )
 
@@ -367,7 +372,7 @@ class MigrationService:
                             "Stage 1 Part A: variable de-duplication",
                         )
                     )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Failed to create CXAS Version %s (dedup): %s",
                     dedup_version_label,
@@ -407,7 +412,7 @@ class MigrationService:
                         bundle.version_checkpoints.append(
                             (version_label, description)
                         )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "Failed to create CXAS Version %s (consolidation): %s",
                         version_label,
@@ -433,8 +438,10 @@ class MigrationService:
         grouping_json_path: str | None,
         console: Console,
     ) -> dict | None:
-        """The Gemini consolidation block of Stage 1. Returns the accepted
-        groupings, or ``None`` if the user aborted."""
+        """The Gemini consolidation block of Stage 1.
+
+        Returns the accepted groupings, or ``None`` if the user aborted.
+        """
         # 1. Build dep summary + detect root.
         analyzer = DependencyAnalyzer(self.source_agent_data)
         dep_summary = {
@@ -495,7 +502,7 @@ class MigrationService:
             grouping_path = f"{bundle.config.target_name}_grouping.json"
             structural_consolidator.persist_grouping(groupings, grouping_path)
             logger.info("Persisted grouping → %s", grouping_path)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to persist grouping JSON: %s", exc)
 
         # 7. Synthesize per-group PIF instructions.
@@ -552,7 +559,7 @@ class MigrationService:
             self.topology_linker.link_and_finalize_topology(
                 self.ir, self.source_agent_data, groupings=groupings
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Topology linking failed: %s", exc)
 
         # Synchronize bundle.ir before calling finalizers!
@@ -615,7 +622,7 @@ class MigrationService:
                     ),
                 )
                 logger.info("Created CXAS Version %s.", version_label)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Failed to create CXAS Version %s: %s",
                     version_label,
@@ -644,7 +651,7 @@ class MigrationService:
                         len(test_counts),
                         unit_tests_path,
                     )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("Unit test regeneration failed: %s", exc)
             if test_counts:
                 self._analysis_checkpoint(
@@ -662,7 +669,7 @@ class MigrationService:
                     lint_passed,
                     lint_output,
                 ) = await post_deploy_lint.run_post_deploy_lint(self, console)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("Lint did not run: %s", exc)
             if lint_passed is not None:
                 outcome = "passed" if lint_passed else "failed"
@@ -711,7 +718,7 @@ class MigrationService:
                     reporter.set_lint_result(lint_passed, lint_output)
                 reporter.export(write_report_to)
                 logger.info("Optimization report → %s", write_report_to)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("Report generation failed: %s", exc)
 
         # --- Optional bundle persist ----------------------------------------
@@ -738,8 +745,8 @@ class MigrationService:
         console = console or Console()
         if not bundle.grouping:
             raise RuntimeError(
-                "Stage 3 requires consolidated bundle.grouping; run "
-                "stage_1 first."
+                "Stage 3 requires consolidated bundle.grouping; run"
+                " stage_1 first."
             )
 
         self._ensure_analysis_builder(bundle.config.target_name, bundle=bundle)
@@ -756,8 +763,8 @@ class MigrationService:
         )
         self._analysis_checkpoint(
             "stage_3_topology",
-            f"Stage 3 wiring: updated={updated} skipped={skipped} "
-            f"failed={failed}.",
+            f"Stage 3 wiring: updated={updated} skipped={skipped}"
+            f" failed={failed}.",
         )
 
         ok, msg = topology_wirer.set_app_root_agent(bundle)
@@ -787,7 +794,7 @@ class MigrationService:
                 persist_bundle_path,
                 phase="stage_3",
                 status="ok" if failed == 0 else "partial",
-                notes=(f"updated={updated} skipped={skipped} failed={failed}"),
+                notes=f"updated={updated} skipped={skipped} failed={failed}",
             )
 
         # --- CXAS Version checkpoint: Post-Topology ------------------------
@@ -804,7 +811,7 @@ class MigrationService:
                     bundle.version_checkpoints.append(
                         (version_label, "Stage 3: parent-child topology wiring")
                     )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Failed to create CXAS Version %s (topology): %s",
                     version_label,
@@ -853,6 +860,7 @@ class MigrationService:
 
     def _inject_system_variables(self, dynamic_params: list | None = None):
         """Injects global system variables required by migration tooling and
+
         callbacks.
         """
         system_vars = [
@@ -922,7 +930,7 @@ class MigrationService:
         self._ensure_analysis_builder(config.target_name)
         self._analysis_checkpoint(
             "source_loaded",
-            f"Fetched source DFCX agent "
+            "Fetched source DFCX agent "
             f"({len(self.source_agent_data.flows or [])} flows, "
             f"{len(self.source_agent_data.playbooks or [])} playbooks, "
             f"{len(self.source_agent_data.webhooks or [])} webhooks).",
@@ -996,7 +1004,7 @@ class MigrationService:
         for param in final_declarations:
             if len(self.ir.parameters) >= 90:
                 logger.warning(
-                    f"    - Variable limit reached! Stashing parameter "
+                    "    - Variable limit reached! Stashing parameter "
                     f"'{param['name']}' for later LLM optimization pass."
                 )
                 unregistered = self.ir.optimization_logs.setdefault(
@@ -1012,7 +1020,7 @@ class MigrationService:
         self._analysis_checkpoint(
             "parameters_extracted",
             f"Migrated {len(self.ir.parameters)} session variables "
-            f"(including injected system vars).",
+            "(including injected system vars).",
         )
 
         # --- 4. Populate Standard Tools & Webhooks into IR ---
@@ -1092,8 +1100,8 @@ class MigrationService:
 
         self._analysis_checkpoint(
             "tools_converted",
-            f"Compiled {len(self.ir.tools)} tools and toolsets from "
-            f"DFCX sources.",
+            f"Compiled {len(self.ir.tools)} tools and toolsets from"
+            " DFCX sources.",
         )
 
         # --- 5. Extract Code Blocks ---
@@ -1152,9 +1160,9 @@ class MigrationService:
                     if param_name not in self.ir.parameters:
                         if len(self.ir.parameters) >= 95:
                             logger.warning(
-                                f"    - Skipping registration for discovered "
+                                "    - Skipping registration for discovered "
                                 f"parameter '{param_name}' due to CXAS "
-                                f"variable limit. Saving for later pass."
+                                "variable limit. Saving for later pass."
                             )
                             unregistered = self.ir.optimization_logs.setdefault(
                                 "unregistered_parameters", []
@@ -1163,7 +1171,7 @@ class MigrationService:
                                 unregistered.append(param_name)
                             continue
                         logger.info(
-                            f"    - Registering newly discovered parameter "
+                            "    - Registering newly discovered parameter "
                             f"from code block: {param_name}"
                         )
                         self.ir.parameters[param_name] = {
@@ -1288,12 +1296,12 @@ class MigrationService:
             )
             logger.info(
                 f"\nACCESS YOUR CXAS AGENT HERE:\n{app_url}\n\n"
-                f"*(Note: Background processes are still running and more "
-                f"sub-agents and other resources are currently being "
-                f"migrated!)*\n"
+                "*(Note: Background processes are still running and more "
+                "sub-agents and other resources are currently being "
+                "migrated!)*\n"
             )
             logger.info(
-                f"\nLaunching parallel Analysis & Architecture for "
+                "\nLaunching parallel Analysis & Architecture for "
                 f"{len(flows)} flows..."
             )
 
@@ -1318,7 +1326,7 @@ class MigrationService:
         )
         self._analysis_checkpoint(
             "topology_linked",
-            f"Wired parent-child topology; "
+            "Wired parent-child topology; "
             f"{len(self.ir.routing_edges or [])} routing edges in graph.",
         )
 
@@ -1619,7 +1627,7 @@ class MigrationService:
                                 )
                         except Exception as update_e:
                             logger.warning(
-                                f"    -> Update failed due to backend platform "
+                                "    -> Update failed due to backend platform "
                                 f"limitations: {update_e}. Attempting safe "
                                 "Delete-and-Recreate fallback pass..."
                             )
@@ -1691,8 +1699,8 @@ class MigrationService:
                                 continue
                     else:
                         logger.error(
-                            f"    -> Exception creating {res_type} "
-                            f"'{display_name}': {e}"
+                            f"    -> Exception creating {res_type}"
+                            f" '{display_name}': {e}"
                         )
                         tool.status = MigrationStatus.FAILED
                         continue
@@ -1708,6 +1716,7 @@ class MigrationService:
 
     def _safe_dereference_tool_from_console(self, full_tool_name: str):
         """Finds all agents in the live console that reference the given tool,
+
         and dynamically removes the tool reference to bypass foreign key
         constraints.
 
@@ -1786,6 +1795,7 @@ class MigrationService:
 
     async def _deploy_pending_agents(self, is_update_pass: bool = False):
         """Deploys any agents in the IR that have been compiled but not yet
+
         deployed.
         """
         full_app_name = self.ir.metadata.app_resource_name
@@ -2135,7 +2145,7 @@ class MigrationService:
                             )
                     else:
                         logger.warning(
-                            f"⚠️ Could not resolve tool reference for "
+                            "⚠️ Could not resolve tool reference for "
                             f"agent '{display_name}': "
                             f"{t_ref}"
                         )
@@ -2170,13 +2180,17 @@ class MigrationService:
 
                 ps_agent_payload = {
                     "display_name": display_name,
-                    "description": agent.description
-                    or (
-                        agent.blueprint.get("agent_metadata", {}).get("role")
-                        if agent.blueprint
-                        else None
-                    )
-                    or agent.type,
+                    "description": (
+                        agent.description
+                        or (
+                            agent.blueprint.get("agent_metadata", {}).get(
+                                "role"
+                            )
+                            if agent.blueprint
+                            else None
+                        )
+                        or agent.type
+                    ),
                     "instruction": agent.instruction,
                     "tools": list(set(resolved_tools)),
                     "toolsets": resolved_toolsets,
@@ -2234,14 +2248,14 @@ class MigrationService:
                                 continue
                         except Exception as update_e:
                             logger.error(
-                                f"    -> Exception updating Agent "
+                                "    -> Exception updating Agent "
                                 f"'{display_name}': {update_e}"
                             )
                             continue
                     else:
                         logger.error(
-                            f"    -> Exception creating Agent "
-                            f"'{display_name}': {e}"
+                            f"    -> Exception creating Agent"
+                            f" '{display_name}': {e}"
                         )
                         continue
 
@@ -2350,6 +2364,7 @@ class MigrationService:
         parameter_name_map: dict[str, str],
     ):
         """Processes a single DFCX flow: resolves dependencies, visualizes,
+
         generates instructions and tools, and deploys them.
         """
         flow_name = flow_wrapper.flow_data.get("displayName", "Unnamed")
@@ -2476,8 +2491,8 @@ class MigrationService:
 
                 # DEPLOY THE TOOL NOW
                 logger.info(
-                    f"[{flow_name}] Deploying generated Python tool: "
-                    f"{safe_tool_id}"
+                    f"[{flow_name}] Deploying generated Python tool:"
+                    f" {safe_tool_id}"
                 )
                 try:
                     created_tool = self.ps_tools.create_tool(
@@ -2555,13 +2570,13 @@ class MigrationService:
                             except Exception as recreate_e:
                                 logger.error(
                                     f"[{flow_name}] Exception during safe "
-                                    f"Delete-and-Recreate fallback for "
+                                    "Delete-and-Recreate fallback for "
                                     f"'{safe_tool_id}': {recreate_e}"
                                 )
                     else:
                         logger.error(
-                            f"[{flow_name}] Failed to deploy tool "
-                            f"{safe_tool_id}: {e}"
+                            f"[{flow_name}] Failed to deploy tool"
+                            f" {safe_tool_id}: {e}"
                         )
 
             # 1.5 MISSING LOGIC RESTORATION
@@ -2716,8 +2731,8 @@ class MigrationService:
                     logger.error(f"[{flow_name}] ❌ Failed to deploy agent.")
             except Exception as e:
                 logger.error(
-                    f"[{flow_name}] ❌ API Exception during agent "
-                    f"deployment: {e}"
+                    f"[{flow_name}] ❌ API Exception during agent"
+                    f" deployment: {e}"
                 )
         else:
             logger.error(f"[{flow_name}] Failed to generate blueprint.")

@@ -18,7 +18,7 @@ import datetime
 import glob
 import json
 import os
-from collections.abc import Mapping, Sequence
+import pathlib
 from typing import Any
 
 import jinja2
@@ -26,13 +26,14 @@ import pandas as pd
 import yaml
 
 from cxas_scrapi.core import tools
+from cxas_scrapi.core import workspace as ws
 from cxas_scrapi.evals import runner as evals_runner
 from cxas_scrapi.utils import (
     base_components,
-    eval_utils,
     gcs_utils,
     report_components,
 )
+from cxas_scrapi.utils.eval_utils import EvalUtils
 
 
 def _escape(text):
@@ -162,7 +163,7 @@ def _render_session_link(session_id, ces_base):
             f"{ces_base}?panel=conversation_list&id={session_id}&source=EVAL"
         )
         return (
-            '<div class="session-link">Session: '
+            f'<div class="session-link">Session: '
             f'<a href="{session_url}" target="_blank">'
             f"<code>{session_id}</code></a></div>\n"
         )
@@ -180,7 +181,7 @@ def _render_session_parameters(sparams):
         "&#9881; <b>Session Parameters</b></summary>"
     )
     html += (
-        '<pre class="tool-data">'
+        f'<pre class="tool-data">'
         f"{_escape(json.dumps(sparams, indent=2))}</pre></details>\n"
     )
     return html
@@ -234,9 +235,7 @@ def _parse_trace(trace, tools_map):
             if not stripped_line:
                 continue
             formatted_line = _format_trace_line(stripped_line, tools_map)
-            if formatted_line.startswith(
-                "Agent Text (Diag):"
-            ) or formatted_line.startswith("User Query:"):
+            if formatted_line.startswith("Agent Text (Diag):"):
                 continue
             elif formatted_line.startswith("Agent Text:"):
                 parsed_lines.append(
@@ -403,15 +402,15 @@ def _get_run_detail(r, ces_base, tools_map):
     return html
 
 
-def _upload_to_gcs(output_path: str, html_content: str) -> str | None:
+def _upload_to_gcs(output_path: str, html: str) -> str | None:
     """Uploads the report to GCS and returns the mTLS URL or None on failure."""
     try:
         gcs = gcs_utils.GCSUtils()
-        mtls_url = gcs.upload_string(output_path, html_content)
+        mtls_url = gcs.upload_string(output_path, html)
         print(f"Report uploaded to GCS: {output_path}")
         print(f"Authenticated URL: {mtls_url}")
         return mtls_url
-    except Exception as e:  # pylint: disable=broad-exception-caught
+    except Exception as e:
         print(f"WARNING: GCS upload failed ({e}). Falling back to local file.")
         return None
 
@@ -424,20 +423,11 @@ def generate_html_report(
     app_name: str = "",
     wall_clock_s: float | None = None,
     user_agent_extension: str | None = None,
-) -> None:
+):
     """Generate an HTML report and save it locally or upload to GCS.
 
     If output_path starts with 'gs://', the report is uploaded to GCS.
     If the upload fails, it falls back to saving a local file.
-
-    Args:
-      results: The list of evaluation result dicts.
-      output_path: The local or GCS file path to write the HTML report to.
-      modality: The modality used for the evaluation (e.g., 'text').
-      model: The model name used for the evaluation.
-      app_name: The CX Agent Studio (CXAS) agent resource name.
-      wall_clock_s: Total elapsed execution time in seconds.
-      user_agent_extension: Optional user agent extension string.
     """
     total = len(results)
     passed = sum(1 for r in results if r.get("passed"))
@@ -459,7 +449,7 @@ def generate_html_report(
             tools_map = tools.Tools(
                 app_name=app_name, user_agent_extension=user_agent_extension
             ).get_tools_map()
-        except Exception:  # pylint: disable=broad-exception-caught
+        except Exception:
             pass
 
     parts = app_name.split("/") if app_name else []
@@ -504,6 +494,8 @@ def generate_html_report(
     html += "</body></html>"
 
     if output_path.startswith("gs://"):
+        if output_path.endswith("/"):
+            output_path = output_path + "report.html"
         mtls_url = _upload_to_gcs(output_path, html)
         if mtls_url:
             return
@@ -955,6 +947,8 @@ def generate_combined_html_report(
 
     if output_path:
         if output_path.startswith("gs://"):
+            if output_path.endswith("/"):
+                output_path = output_path + "combined_report.html"
             mtls_url = _upload_to_gcs(output_path, html_out)
             if not mtls_url:
                 # Fallback to local file if upload failed
@@ -977,104 +971,14 @@ def _outcome_str(val):
     return str(val) if val else "?"
 
 
-def _compile_tool_results_card(
-    *,
-    tool_results: Sequence[Mapping[str, Any]],
-    t_passed: int,
-    t_total: int,
-) -> report_components.ToolCard | str:
-    """Compile the ToolCard component declaratively without premature rendering.
-
-    Args:
-      tool_results: Sequence of raw tool validation outcomes..
-      t_passed: Number of successful tool test cases..
-      t_total: Total number of tool test cases executed..
-
-    Returns:
-      A ToolCard component or empty string if empty.
-    """
-    if not tool_results:
-        return ""
-    t_pct = 100 * t_passed / t_total if t_total else 0
-    rows = (
-        report_components.ToolRow(
-            passed=r["passed"],
-            status_class="pass" if r["passed"] else "fail",
-            status=r.get("status", "?"),
-            tool_name=r.get("tool", "?"),
-            test_name=r.get("name", "?"),
-            latency_ms=r.get("latency_ms"),
-            errors=r.get("errors", "")[:100],
-        )
-        for r in sorted(tool_results, key=lambda x: x.get("passed", False))
-    )
-    return report_components.ToolCard(
-        passed=t_passed,
-        total=t_total,
-        pct_str=f"{t_pct:.0f}",
-        tool_rows=base_components.ComponentGroup(list(rows)),
-    )
-
-
-def _compile_callback_results_card(
-    *,
-    callback_results: Sequence[Mapping[str, Any]],
-    c_passed: int,
-    c_total: int,
-) -> report_components.CallbackCard | str:
-    """Compile the CallbackCard component declaratively without premature
-
-    rendering.
-
-    Args:
-      callback_results: Sequence of raw callback execution outcomes..
-      c_passed: Number of successful callback test cases..
-      c_total: Total number of callback test cases executed..
-
-    Returns:
-      A CallbackCard component or empty string if empty.
-    """
-    if not callback_results:
-        return ""
-    c_pct = 100 * c_passed / c_total if c_total else 0
-    rows = (
-        report_components.CallbackRow(
-            passed=r["passed"],
-            status_class="pass" if r["passed"] else "fail",
-            status=r.get("status", "?"),
-            agent_name=r.get("agent", "?"),
-            callback_type=r.get("callback_type", "?"),
-            test_name=r.get("name", "?"),
-            error=r.get("error", "")[:100],
-        )
-        for r in sorted(callback_results, key=lambda x: x.get("passed", False))
-    )
-    return report_components.CallbackCard(
-        passed=c_passed,
-        total=c_total,
-        pct_str=f"{c_pct:.0f}",
-        callback_rows=base_components.ComponentGroup(list(rows)),
-    )
-
-
 def load_golden_results(
-    run_id: str, app_name: str, include: list[str] | None = None
-) -> list[dict[str, Any]]:
-    """Fetch golden results and parse into report-friendly format.
-
-    Args:
-      run_id: The evaluation run ID to load results for.
-      app_name: CX Agent Studio (CXAS) agent resource name.
-      include: Categories of evaluations to include (e.g. 'goldens',
-        'scenarios').
-
-    Returns:
-      A list of formatted evaluation result dictionaries.
-    """
+    run_id, app_name, include=None, user_agent_extension=None
+):
+    """Fetch golden results and parse into report-friendly format."""
     if include is None:
         include = ["goldens", "scenarios"]
 
-    utils = eval_utils.EvalUtils(app_name=app_name)
+    utils = EvalUtils(app_name=app_name)
     full_run_id = (
         run_id
         if run_id.startswith("projects/")
@@ -1175,13 +1079,14 @@ def load_golden_results(
                         at.get("target_agent", "").split("/")[-1],
                     )
                     obs = o.get("observed_agent_transfer", {})
-                    if obs:
-                        comp["actual"] = obs.get(
+                    comp["actual"] = (
+                        obs.get(
                             "display_name",
                             obs.get("target_agent", "").split("/")[-1],
                         )
-                    else:
-                        comp["actual"] = "(missed)"
+                        if obs
+                        else "(missed)"
+                    )
                 else:
                     continue
 
@@ -1232,7 +1137,7 @@ def load_golden_results(
                         turn_input = ("event", str(ui["event"]))
                 if turn_input:
                     turn_inputs.append(turn_input)
-        except Exception:  # pylint: disable=broad-exception-caught
+        except Exception:
             pass
 
         for i, turn in enumerate(turns):
@@ -1272,15 +1177,8 @@ def load_golden_results(
     return results
 
 
-def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
-    """Loads sim files and merges common params and expectations.
-
-    Args:
-      yaml_path: Path to the YAML test cases file.
-
-    Returns:
-      List of merged evaluation test case dicts.
-    """
+def _load_sim_test_cases(yaml_path: str) -> list[dict]:
+    """Loads sim files and merges common params and expectations."""
     with open(yaml_path) as f:
         data = yaml.safe_load(f) or {}
     if isinstance(data, list):
@@ -1310,17 +1208,10 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
     return merged_cases
 
 
-def load_sim_results(json_path: str, sim_evals_yaml: str | None = None):
+def load_sim_results(json_path, sim_evals_yaml=None):
     """Load sim results from JSON file.
 
     Handles both old (list) and new (envelope) formats.
-
-    Args:
-      json_path: The JSON file path containing evaluation results.
-      sim_evals_yaml: Optional path to simulation evals YAML definition file.
-
-    Returns:
-      A tuple containing the list of simulation results and the wall clock time.
     """
     with open(json_path) as f:
         data = json.load(f)
@@ -1348,21 +1239,14 @@ def load_sim_results(json_path: str, sim_evals_yaml: str | None = None):
                     r["session_parameters"] = templates[r["name"]].get(
                         "session_parameters", {}
                     )
-        except Exception:  # pylint: disable=broad-exception-caught
+        except Exception:
             pass
 
     return results, wall_clock_s
 
 
-def load_tool_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
-    """Load tool test results from a CSV or JSON file.
-
-    Args:
-      csv_or_json_path: Path to the CSV or JSON tool test results file.
-
-    Returns:
-      A list of formatted tool test result dictionaries.
-    """
+def load_tool_test_results(csv_or_json_path):
+    """Load tool test results from a CSV or JSON file."""
     if csv_or_json_path.endswith(".csv"):
         df = pd.read_csv(csv_or_json_path)
     else:
@@ -1382,15 +1266,8 @@ def load_tool_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
     return results
 
 
-def load_callback_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
-    """Load callback test results from a CSV or JSON file.
-
-    Args:
-      csv_or_json_path: Path to the CSV or JSON callback test results file.
-
-    Returns:
-      A list of formatted callback test result dictionaries.
-    """
+def load_callback_test_results(csv_or_json_path):
+    """Load callback test results from a CSV or JSON file."""
     if csv_or_json_path.endswith(".csv"):
         df = pd.read_csv(csv_or_json_path)
     else:
@@ -1411,7 +1288,7 @@ def load_callback_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
 
 
 def generate_combined_report_from_dir(
-    output_dir: str,
+    output_dir: str | None = None,
     golden_run: str | None = None,
     app_name: str | None = None,
     output_path: str | None = None,
@@ -1457,8 +1334,59 @@ def generate_combined_report_from_dir(
     Returns:
       The rendered combined HTML report string.
     """
-    if not os.path.isdir(output_dir):
-        raise ValueError(f"{output_dir} is not a directory.")
+
+    try:
+        project_dir = ws.resolve_project_dir()
+    except ValueError:
+        project_dir = None
+
+    if project_dir:
+        config = ws.load_workspace_config()
+        if not app_name:
+            app_name = ws.app_name()
+
+        modality = config.get("modality", modality)
+
+        if not output_dir:
+            try:
+                output_dir = ws.get_output_dir()
+            except Exception:
+                output_dir = os.path.join(project_dir, ".scrapi-out")
+
+        if not app_dir:
+            app_dir = ws.callback_tests_path()
+        elif project_dir and not pathlib.Path(app_dir).is_absolute():
+            app_dir = str((pathlib.Path(project_dir) / app_dir).resolve())
+
+        if not tool_test_file:
+            tool_test_file = ws.tool_tests_path()
+        elif project_dir and not pathlib.Path(tool_test_file).is_absolute():
+            tool_test_file = str(
+                (pathlib.Path(project_dir) / tool_test_file).resolve()
+            )
+
+        if not goldens_dir:
+            goldens_dir = ws.goldens_path()
+        elif project_dir and not pathlib.Path(goldens_dir).is_absolute():
+            goldens_dir = str(
+                (pathlib.Path(project_dir) / goldens_dir).resolve()
+            )
+
+        if not simulation_dir:
+            simulation_dir = ws.simulations_path()
+        elif project_dir and not pathlib.Path(simulation_dir).is_absolute():
+            simulation_dir = str(
+                (pathlib.Path(project_dir) / simulation_dir).resolve()
+            )
+
+    if not output_dir:
+        raise ValueError(
+            "No active GECX project workspace is set. Please run"
+            " 'cxas workspace set <path>' to activate a project workspace,"
+            " or specify output_dir explicitly."
+        )
+
+    os.makedirs(output_dir, exist_ok=True)
 
     if include is None or "all" in include:
         include = ["sims", "goldens", "tools", "callbacks"]
