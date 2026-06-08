@@ -104,7 +104,7 @@ def test_parser_resources():
     assert args.name == "my-var"
 
 
-@mock.patch("cxas_scrapi.cli.resources_cli.Tools", autospec=True)
+@mock.patch("cxas_scrapi.core.tools.Tools", autospec=True)
 def test_tools_list(mock_tools_cls):
     """Test listing tools."""
     args = argparse.Namespace(app_name="projects/p/locations/l/apps/a")
@@ -121,7 +121,7 @@ def test_tools_list(mock_tools_cls):
     mock_inst.list_tools.assert_called_once()
 
 
-@mock.patch("cxas_scrapi.cli.resources_cli.Tools", autospec=True)
+@mock.patch("cxas_scrapi.core.tools.Tools", autospec=True)
 def test_tools_delete_by_display_name(mock_tools_cls):
     """Test deleting tools by display name."""
     args = argparse.Namespace(
@@ -139,8 +139,8 @@ def test_tools_delete_by_display_name(mock_tools_cls):
     )
 
 
-@mock.patch("cxas_scrapi.cli.resources_cli.Agents", autospec=True)
-@mock.patch("cxas_scrapi.cli.resources_cli.Callbacks", autospec=True)
+@mock.patch("cxas_scrapi.core.agents.Agents", autospec=True)
+@mock.patch("cxas_scrapi.core.callbacks.Callbacks", autospec=True)
 def test_callbacks_list(mock_cb_cls, mock_agents_cls):
     """Test listing callbacks."""
     args = argparse.Namespace(
@@ -163,8 +163,8 @@ def test_callbacks_list(mock_cb_cls, mock_agents_cls):
     mock_cb_inst.list_callbacks.assert_called_once_with(mock_agent.name)
 
 
-@mock.patch("cxas_scrapi.cli.resources_cli.Agents", autospec=True)
-@mock.patch("cxas_scrapi.cli.resources_cli.Callbacks", autospec=True)
+@mock.patch("cxas_scrapi.core.agents.Agents", autospec=True)
+@mock.patch("cxas_scrapi.core.callbacks.Callbacks", autospec=True)
 def test_callbacks_delete(mock_cb_cls, mock_agents_cls):
     """Test deleting a callback."""
     args = argparse.Namespace(
@@ -189,7 +189,7 @@ def test_callbacks_delete(mock_cb_cls, mock_agents_cls):
     )
 
 
-@mock.patch("cxas_scrapi.cli.resources_cli.Variables", autospec=True)
+@mock.patch("cxas_scrapi.core.variables.Variables", autospec=True)
 def test_variables_list(mock_vars_cls):
     """Test listing variables."""
     args = argparse.Namespace(app_name="projects/p/locations/l/apps/a")
@@ -207,7 +207,7 @@ def test_variables_list(mock_vars_cls):
     mock_inst.variable_to_dict.assert_called_once_with(mock_var)
 
 
-@mock.patch("cxas_scrapi.cli.resources_cli.Variables", autospec=True)
+@mock.patch("cxas_scrapi.core.variables.Variables", autospec=True)
 def test_variables_delete(mock_vars_cls):
     """Test deleting a variable."""
     args = argparse.Namespace(

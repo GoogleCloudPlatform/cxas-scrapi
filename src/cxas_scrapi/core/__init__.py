@@ -14,6 +14,26 @@
 
 """Core module for CXAS Scrapi."""
 
-from .common import Common
+from typing import TYPE_CHECKING, Any
+import importlib
+
+# To keep the CLI startup time under 130ms, we lazy-load packages at runtime.
+# Using `if TYPE_CHECKING:` allows IDEs, type checkers, and static analyzers
+# to see the eager imports statically for full autocompletion and type-safety.
+# At runtime, TYPE_CHECKING is False, triggering the dynamic lazy loader in __getattr__.
+if TYPE_CHECKING:
+    from .common import Common
+else:
+    _LAZY_IMPORTS = {
+        "Common": "cxas_scrapi.core.common",
+    }
+
+    def __getattr__(name: str) -> Any:
+        if name in _LAZY_IMPORTS:
+            module_path = _LAZY_IMPORTS[name]
+            module = importlib.import_module(module_path)
+            return getattr(module, name)
+        raise AttributeError(f"module {__name__} has no attribute {name}")
 
 __all__ = ["Common"]
+
