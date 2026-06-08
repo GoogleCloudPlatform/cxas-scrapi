@@ -1617,6 +1617,49 @@ def test_v006_evaluation_invalid_field(tmp_path, context):
     assert "Proto schema" in msg or "validation failed" in msg
 
 
+def test_v006_golden_with_empty_scenario_passes(tmp_path, context):
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
+
+    registry = build_registry()
+    rule = registry.get("V006")
+
+    eval_dir = tmp_path / "evaluations" / "MyEval"
+    eval_dir.mkdir(parents=True)
+    (eval_dir / "MyEval.yaml").write_text(
+        "displayName: MyEval\n"
+        "golden:\n"
+        "  turns:\n"
+        "    - steps:\n"
+        "        - userInput:\n"
+        "            text: hello\n"
+        "scenario: {}\n"
+    )
+
+    results = rule.check(eval_dir, "", context)
+    assert len(results) == 0, results[0].message
+
+
+def test_v006_deterministic_evaluation_passes(tmp_path, context):
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
+
+    registry = build_registry()
+    rule = registry.get("V006")
+
+    eval_dir = tmp_path / "evaluations" / "MyEval"
+    eval_dir.mkdir(parents=True)
+    (eval_dir / "MyEval.yaml").write_text(
+        "displayName: MyEval\n"
+        "golden:\n"
+        "  turns:\n"
+        "    - steps:\n"
+        "        - userInput:\n"
+        "            text: hello\n"
+    )
+
+    results = rule.check(eval_dir, "", context)
+    assert len(results) == 0, results[0].message
+
+
 def test_schema_missing_referenced_file(tmp_path, context):
     from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
