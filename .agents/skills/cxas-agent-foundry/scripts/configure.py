@@ -30,14 +30,13 @@ import warnings
 warnings.filterwarnings("ignore", message=".*quota project.*")
 warnings.filterwarnings("ignore", message=".*end user credentials.*")
 
+from InquirerPy import inquirer
+from InquirerPy.base.control import Choice
+from InquirerPy.validator import EmptyInputValidator
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich import box
-from InquirerPy import inquirer
-from InquirerPy.base.control import Choice
-from InquirerPy.utils import get_style
-from InquirerPy.validator import EmptyInputValidator
 
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/configure"
 
@@ -45,21 +44,13 @@ console = Console()
 
 from cxas_scrapi.utils.ui_styles import ESCAPE_KEYBINDINGS, PROMPT_STYLE
 
-def _resolve_config_dir():
-    """Return the directory where gecx-config.json and cxas_app/ should live.
 
-    If .active-project is set, use that project directory.
-    Otherwise fall back to CWD.
-    """
-    pointer = os.path.join(os.getcwd(), ".active-project")
-    if os.path.exists(pointer):
-        with open(pointer) as f:
-            name = f.read().strip()
-        if name:
-            candidate = os.path.join(os.getcwd(), name)
-            if os.path.isdir(candidate):
-                return candidate
-    return os.getcwd()
+def _resolve_config_dir():
+    """Return the directory where gecx-config.json and cxas_app/ should live."""
+    import cxas_scrapi.core.workspace as ws
+
+    project_dir = ws.find_project_dir()
+    return project_dir if project_dir else os.getcwd()
 
 
 def _config_file():
@@ -69,8 +60,7 @@ def _config_file():
 # Kept for backward compat with code that reads CONFIG_FILE directly
 CONFIG_FILE = _config_file()
 
-DEFAULT_PROJECTS = [
-]
+DEFAULT_PROJECTS = []
 
 LOCATIONS = ["us", "eu"]
 
@@ -79,8 +69,8 @@ def banner():
     console.print()
     console.print(
         Panel(
-            "[bold]GECX Project Configuration Wizard[/bold]\n"
-            "This will create [cyan]gecx-config.json[/cyan] with your project settings.",
+            "[bold]GECX Project Configuration Wizard[/bold]\nThis will create"
+            " [cyan]gecx-config.json[/cyan] with your project settings.",
             box=box.DOUBLE,
             style="blue",
         )
@@ -88,20 +78,25 @@ def banner():
     console.print()
 
 
-
 def fetch_cxas_apps(project_id, location):
     """Fetch existing CXAS apps for a project using SCRAPI."""
     try:
         from cxas_scrapi.core.apps import Apps
 
-        apps_client = Apps(project_id=project_id, location=location, user_agent_extension=USER_AGENT_EXTENSION)
+        apps_client = Apps(
+            project_id=project_id,
+            location=location,
+            user_agent_extension=USER_AGENT_EXTENSION,
+        )
         apps_list = apps_client.list_apps()
         results = []
         for app in apps_list:
             display_name = getattr(app, "display_name", None) or ""
             name = getattr(app, "name", "") or ""
             app_id = name.split("/")[-1] if "/" in name else name
-            results.append({"display_name": display_name, "app_id": app_id, "name": name})
+            results.append(
+                {"display_name": display_name, "app_id": app_id, "name": name}
+            )
         return results
     except Exception as e:
         console.print(f"  [dim]Could not fetch apps: {e}[/dim]")
@@ -169,7 +164,9 @@ def select_app(project_id, location):
 
         # Fetch apps from CXAS (once)
         if apps is None:
-            console.print(f"  [dim]Fetching apps from {project_id}/{location}...[/dim]")
+            console.print(
+                f"  [dim]Fetching apps from {project_id}/{location}...[/dim]"
+            )
             apps = fetch_cxas_apps(project_id, location)
 
             if not apps:
@@ -187,7 +184,10 @@ def select_app(project_id, location):
                 app_labels.append(label)
                 app_lookup[label] = app
 
-        console.print(f"  [dim]Found {len(apps)} apps. Type to filter, Escape to go back.[/dim]")
+        console.print(
+            f"  [dim]Found {len(apps)} apps. Type to filter, Escape to go"
+            " back.[/dim]"
+        )
 
         selected_label = inquirer.fuzzy(
             message="Search for an app (type to filter, Esc to go back):",
@@ -204,12 +204,18 @@ def select_app(project_id, location):
             continue
 
         selected = app_lookup[selected_label]
-        console.print(f"  Selected: [green]{selected['display_name']}[/green] ({selected['app_id']})\n")
+        console.print(
+            f"  Selected: [green]{selected['display_name']}[/green]"
+            f" ({selected['app_id']})\n"
+        )
         return selected["app_id"], selected["display_name"]
 
 
 def _create_new_app(project_id, location):
-    """Create a new app in CXAS via SCRAPI and return the platform-assigned UUID."""
+    """Create a new app in CXAS via SCRAPI.
+
+    Returns the platform-assigned UUID.
+    """
     generated_id = str(uuid.uuid4())
     app_id_slug = inquirer.text(
         message="App ID:",
@@ -224,12 +230,19 @@ def _create_new_app(project_id, location):
         default="",
     ).execute()
 
-    console.print(f"  [dim]Creating app '{app_id_slug}' in {project_id}/{location}...[/dim]")
+    console.print(
+        f"  [dim]Creating app '{app_id_slug}' in"
+        f" {project_id}/{location}...[/dim]"
+    )
 
     try:
         from cxas_scrapi.core.apps import Apps
 
-        apps_client = Apps(project_id=project_id, location=location, user_agent_extension=USER_AGENT_EXTENSION)
+        apps_client = Apps(
+            project_id=project_id,
+            location=location,
+            user_agent_extension=USER_AGENT_EXTENSION,
+        )
         app = apps_client.create_app(
             app_id=app_id_slug,
             display_name=display_name,
@@ -237,14 +250,23 @@ def _create_new_app(project_id, location):
         )
         app_name = getattr(app, "name", "") or ""
         # The platform assigns a UUID — extract it from the resource path
-        real_app_id = app_name.split("/")[-1] if "/" in app_name else app_id_slug
+        real_app_id = (
+            app_name.split("/")[-1] if "/" in app_name else app_id_slug
+        )
 
-        console.print(f"  [bold green]Created![/bold green] App ID: [green]{real_app_id}[/green]\n")
+        console.print(
+            "  [bold green]Created![/bold green] App ID:"
+            f" [green]{real_app_id}[/green]\n"
+        )
         return real_app_id, display_name
 
     except Exception as e:
         console.print(f"  [red]Failed to create app: {e}[/red]")
-        console.print("  [yellow]Create the app manually, then re-run .agents/skills/cxas-agent-foundry/scripts/setup.sh --configure[/yellow]")
+        console.print(
+            "  [yellow]Create the app manually, then re-run"
+            " .agents/skills/cxas-agent-foundry/scripts/setup.sh"
+            " --configure[/yellow]"
+        )
 
         return None, display_name
 
@@ -271,16 +293,19 @@ def select_modality():
 def select_gcs_bucket(modality):
     """Enter GCS bucket for storing artifacts.
 
-    REQUIRED for audio modality (the platform needs evaluationAudioRecordingConfig.gcsBucket
-    to run audio evaluations — without it, every audio eval run fails with a 400 BadRequestException).
+    REQUIRED for audio modality (the platform needs
+    evaluationAudioRecordingConfig.gcsBucket
+    to run audio evaluations — without it, every audio eval run fails with a 400
+    BadRequestException).
     Optional for text modality.
     """
     console.print("[bold]5. GCS Bucket[/bold]")
 
     if modality == "audio":
         console.print(
-            "  [yellow]Required for audio agents — the platform's evaluationAudioRecordingConfig\n"
-            "  needs this bucket to run audio evals (without it, eval runs return HTTP 400).[/yellow]"
+            "  [yellow]Required for audio agents — the platform's"
+            " evaluationAudioRecordingConfig\n  needs this bucket to run audio"
+            " evals (without it, eval runs return HTTP 400).[/yellow]"
         )
 
         def validate_bucket(val):
@@ -307,7 +332,10 @@ def select_gcs_bucket(modality):
         return True
 
     bucket = inquirer.text(
-        message="Enter GCS bucket (leave empty to skip — text agents don't need one):",
+        message=(
+            "Enter GCS bucket (leave empty to skip — text agents"
+            " don't need one):"
+        ),
         default="",
         validate=validate_bucket,
     ).execute()
@@ -343,7 +371,10 @@ def review_and_confirm(config):
     table.add_row("GCP Project", config["gcp_project_id"])
     table.add_row("Location", config["location"])
     table.add_row("App Name", config.get("app_name", ""))
-    app_id_display = config["deployed_app_id"] or "[yellow]Not yet assigned (will be set after app creation)[/yellow]"
+    app_id_display = (
+        config["deployed_app_id"]
+        or "[yellow]Not yet assigned (will be set after app creation)[/yellow]"
+    )
     table.add_row("App ID", app_id_display)
     table.add_row("Model", config.get("model", "gemini-3.1-flash-live"))
     table.add_row("Modality", config["modality"])
@@ -369,7 +400,7 @@ def load_existing_config():
         try:
             with open(CONFIG_FILE) as f:
                 return json.load(f)
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             pass
     return None
 
@@ -423,8 +454,13 @@ def main():
         action = inquirer.select(
             message="What would you like to do?",
             choices=[
-                Choice(value="reconfigure", name="Reconfigure (update settings)"),
-                Choice(value="pull_only", name="Pull app from CXAS (refresh local files)"),
+                Choice(
+                    value="reconfigure", name="Reconfigure (update settings)"
+                ),
+                Choice(
+                    value="pull_only",
+                    name="Pull app from CXAS (refresh local files)",
+                ),
                 Choice(value="exit", name="Exit (keep current config)"),
             ],
             default="exit",
@@ -437,10 +473,15 @@ def main():
             return
 
         if action == "pull_only":
-            app_dir = os.path.join(_resolve_config_dir(), existing.get("app_dir", "cxas_app/"))
+            app_dir = os.path.join(
+                _resolve_config_dir(), existing.get("app_dir", "cxas_app/")
+            )
             if _has_local_changes(app_dir):
                 confirm_pull = inquirer.confirm(
-                    message=f"{app_dir} has uncommitted changes. Pull will overwrite them. Continue?",
+                    message=(
+                        f"{app_dir} has uncommitted changes. "
+                        "Pull will overwrite them. Continue?"
+                    ),
                     default=False,
                     style=PROMPT_STYLE,
                 ).execute()
@@ -493,24 +534,33 @@ def main():
         console.print(f"\n[bold green]Wrote {CONFIG_FILE}[/bold green]")
         if not config["deployed_app_id"]:
             console.print(
-                "[yellow]Note: deployed_app_id is not set. It will be updated automatically\n"
-                "after you create and push the app to CXAS.[/yellow]"
+                "[yellow]Note: deployed_app_id is not set. It will be updated"
+                " automatically\nafter you create and push the app to"
+                " CXAS.[/yellow]"
             )
         else:
             # Pull the app locally — warn if overwriting local changes
             app_dir = os.path.join(_resolve_config_dir(), config["app_dir"])
             if _has_local_changes(app_dir):
                 confirm_pull = inquirer.confirm(
-                    message=f"{app_dir} has uncommitted changes. Pull will overwrite them. Continue?",
+                    message=(
+                        f"{app_dir} has uncommitted changes."
+                        " Pull will overwrite them. Continue?"
+                    ),
                     default=False,
                     style=PROMPT_STYLE,
                 ).execute()
                 if not confirm_pull:
-                    console.print(f"\n[dim]Skipped pull. Run manually later: cxas pull ...[/dim]")
+                    console.print(
+                        "\n[dim]Skipped pull. Run manually later:"
+                        " cxas pull ...[/dim]"
+                    )
                     return
             _pull_app(config)
     else:
-        console.print("\n[yellow]Configuration cancelled. Run again to retry.[/yellow]")
+        console.print(
+            "\n[yellow]Configuration cancelled. Run again to retry.[/yellow]"
+        )
         sys.exit(1)
 
 
@@ -537,10 +587,15 @@ def _pull_app(config):
         app_resource = f"projects/{project}/locations/{location}/apps/{app_id}"
 
     pull_cmd = [
-        "cxas", "pull", app_resource,
-        "--project-id", project,
-        "--location", location,
-        "--target-dir", app_dir,
+        "cxas",
+        "pull",
+        app_resource,
+        "--project-id",
+        project,
+        "--location",
+        location,
+        "--target-dir",
+        app_dir,
     ]
 
     try:
@@ -554,7 +609,8 @@ def _pull_app(config):
 
         # Filter out warning lines from stderr — only keep actual errors
         stderr_lines = [
-            line for line in (result.stderr or "").strip().split("\n")
+            line
+            for line in (result.stderr or "").strip().split("\n")
             if line.strip()
             and "UserWarning" not in line
             and "warnings.warn" not in line
@@ -568,14 +624,20 @@ def _pull_app(config):
             console.print(f"[bold green]App pulled to {app_dir}[/bold green]")
         elif real_errors:
             console.print(f"[red]Pull failed: {real_errors}[/red]")
-            console.print(f"[yellow]Try manually: {' '.join(pull_cmd)}[/yellow]")
+            console.print(
+                f"[yellow]Try manually: {' '.join(pull_cmd)}[/yellow]"
+            )
+        # Non-zero exit but only warnings in stderr — might have still worked
+        elif os.path.isdir(app_dir) and any(os.scandir(app_dir)):
+            console.print(
+                f"[bold green]App pulled to {app_dir}[/bold green] [dim](with"
+                " warnings)[/dim]"
+            )
         else:
-            # Non-zero exit but only warnings in stderr — might have still worked
-            if os.path.isdir(app_dir) and any(os.scandir(app_dir)):
-                console.print(f"[bold green]App pulled to {app_dir}[/bold green] [dim](with warnings)[/dim]")
-            else:
-                console.print(f"[red]Pull failed (no files created).[/red]")
-                console.print(f"[yellow]Try manually: {' '.join(pull_cmd)}[/yellow]")
+            console.print("[red]Pull failed (no files created).[/red]")
+            console.print(
+                f"[yellow]Try manually: {' '.join(pull_cmd)}[/yellow]"
+            )
     except FileNotFoundError:
         console.print("[yellow]cxas command not found. Pull manually:[/yellow]")
         console.print(f"[dim]  {' '.join(pull_cmd)}[/dim]")
@@ -593,12 +655,19 @@ def parse_args():
     parser.add_argument("--location", choices=LOCATIONS, help="CXAS location")
     parser.add_argument("--app-id", help="Existing CXAS app ID")
     parser.add_argument("--app-name", help="App display name")
-    parser.add_argument("--create-app", action="store_true", help="Create a new app")
-    parser.add_argument("--modality", choices=["audio", "text"], help="Default modality")
+    parser.add_argument(
+        "--create-app", action="store_true", help="Create a new app"
+    )
+    parser.add_argument(
+        "--modality", choices=["audio", "text"], help="Default modality"
+    )
     parser.add_argument("--model", help="Model name")
     parser.add_argument("--gcs-bucket", help="GCS bucket (gs://...)")
-    parser.add_argument("--non-interactive", action="store_true",
-                        help="Run without interactive prompts (requires --project-id)")
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Run without interactive prompts (requires --project-id)",
+    )
     return parser.parse_args()
 
 
@@ -607,7 +676,9 @@ def main_non_interactive(args):
     banner()
 
     if not args.project_id:
-        console.print("[red]--project-id is required in non-interactive mode[/red]")
+        console.print(
+            "[red]--project-id is required in non-interactive mode[/red]"
+        )
         sys.exit(1)
 
     project_id = args.project_id
@@ -633,27 +704,44 @@ def main_non_interactive(args):
 
     if args.create_app:
         if not app_name:
-            console.print("[red]--app-name is required when creating a new app[/red]")
+            console.print(
+                "[red]--app-name is required when creating a new app[/red]"
+            )
             sys.exit(1)
-        console.print(f"  [dim]Creating app '{app_name}' in {project_id}/{location}...[/dim]")
+        console.print(
+            f"  [dim]Creating app '{app_name}' in"
+            f" {project_id}/{location}...[/dim]"
+        )
         try:
             from cxas_scrapi.core.apps import Apps
-            apps_client = Apps(project_id=project_id, location=location, user_agent_extension=USER_AGENT_EXTENSION)
+
+            apps_client = Apps(
+                project_id=project_id,
+                location=location,
+                user_agent_extension=USER_AGENT_EXTENSION,
+            )
             app = apps_client.create_app(
                 app_id=str(uuid.uuid4()),
                 display_name=app_name,
                 description=None,
             )
             resource_name = getattr(app, "name", "") or ""
-            app_id = resource_name.split("/")[-1] if "/" in resource_name else app_id
-            console.print(f"  [bold green]Created![/bold green] App ID: [green]{app_id}[/green]")
+            app_id = (
+                resource_name.split("/")[-1] if "/" in resource_name else app_id
+            )
+            console.print(
+                f"  [bold green]Created![/bold green] App ID:"
+                f" [green]{app_id}[/green]"
+            )
         except Exception as e:
             console.print(f"  [red]Failed to create app: {e}[/red]")
             app_id = None
     elif not app_id:
         # List apps and let the caller pick by inspecting output,
         # or just leave app_id unset for later configuration
-        console.print("  [yellow]No --app-id provided. Listing available apps...[/yellow]")
+        console.print(
+            "  [yellow]No --app-id provided. Listing available apps...[/yellow]"
+        )
         apps = fetch_cxas_apps(project_id, location)
         if apps:
             for app in apps[:20]:
@@ -661,10 +749,15 @@ def main_non_interactive(args):
                 console.print(f"    {name}  [dim]({app['app_id']})[/dim]")
             if len(apps) > 20:
                 console.print(f"    [dim]... and {len(apps) - 20} more[/dim]")
-            console.print("\n  [yellow]Re-run with --app-id <id> to select one.[/yellow]")
+            console.print(
+                "\n  [yellow]Re-run with --app-id <id> to select one.[/yellow]"
+            )
             sys.exit(1)
         else:
-            console.print("  [yellow]No apps found. Use --create-app --app-name <name> to create one.[/yellow]")
+            console.print(
+                "  [yellow]No apps found. Use --create-app --app-name <name> to"
+                " create one.[/yellow]"
+            )
             sys.exit(1)
 
     config = {

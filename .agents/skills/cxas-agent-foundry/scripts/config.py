@@ -37,7 +37,6 @@ import json
 import os
 import sys
 
-
 _project_dir = None
 
 
@@ -45,9 +44,11 @@ def _find_workspace_root():
     """Find the workspace root by looking for .agents/, .claude/, or .gemini/ in ancestors."""
     path = os.getcwd()
     for _ in range(10):
-        if (os.path.isdir(os.path.join(path, ".agents"))
-                or os.path.isdir(os.path.join(path, ".claude"))
-                or os.path.isdir(os.path.join(path, ".gemini"))):
+        if (
+            os.path.isdir(os.path.join(path, ".agents"))
+            or os.path.isdir(os.path.join(path, ".claude"))
+            or os.path.isdir(os.path.join(path, ".gemini"))
+        ):
             return path
         parent = os.path.dirname(path)
         if parent == path:
@@ -78,7 +79,9 @@ def resolve_project_dir():
         if os.path.exists(os.path.join(candidate, "gecx-config.json")):
             _project_dir = candidate
             return _project_dir
-        print(f"Error: GECX_PROJECT={env_project} but {candidate}/gecx-config.json not found.")
+        print(
+            f"Error: GECX_PROJECT={env_project} but {candidate}/gecx-config.json not found."
+        )
         sys.exit(1)
 
     # 2. .active-project pointer (takes priority over CWD)
@@ -91,7 +94,9 @@ def resolve_project_dir():
             if os.path.exists(os.path.join(candidate, "gecx-config.json")):
                 _project_dir = candidate
                 return _project_dir
-            print(f"Error: Active project '{name}' but {candidate}/gecx-config.json not found.")
+            print(
+                f"Error: Active project '{name}' but {candidate}/gecx-config.json not found."
+            )
             sys.exit(1)
 
     # 3. CWD has gecx-config.json (fallback for single-project setups)
@@ -103,7 +108,11 @@ def resolve_project_dir():
     projects = []
     for entry in os.listdir(workspace):
         full = os.path.join(workspace, entry)
-        if os.path.isdir(full) and not entry.startswith(".") and os.path.exists(os.path.join(full, "gecx-config.json")):
+        if (
+            os.path.isdir(full)
+            and not entry.startswith(".")
+            and os.path.exists(os.path.join(full, "gecx-config.json"))
+        ):
             projects.append(full)
 
     if len(projects) == 1:
@@ -111,12 +120,18 @@ def resolve_project_dir():
         return _project_dir
     elif len(projects) > 1:
         names = [os.path.basename(p) for p in projects]
-        print(f"Error: Multiple projects found ({', '.join(names)}). Set the active project:")
+        print(
+            f"Error: Multiple projects found ({', '.join(names)}). Set the active project:"
+        )
         print(f"  echo '{names[0]}' > .active-project")
         sys.exit(1)
 
-    print("Error: No project found. Create a project folder with gecx-config.json:")
-    print("  mkdir myproject && python .agents/skills/cxas-agent-foundry/scripts/configure.py")
+    print(
+        "Error: No project found. Create a project folder with gecx-config.json:"
+    )
+    print(
+        "  mkdir myproject && python .agents/skills/cxas-agent-foundry/scripts/configure.py"
+    )
     sys.exit(1)
 
 
@@ -136,7 +151,9 @@ def load_config():
     """
     config_file = get_project_path("gecx-config.json")
     if not os.path.exists(config_file):
-        print(f"Error: {config_file} not found. Create gecx-config.json with your project settings.")
+        print(
+            f"Error: {config_file} not found. Create gecx-config.json with your project settings."
+        )
         sys.exit(1)
 
     with open(config_file) as f:
@@ -145,7 +162,9 @@ def load_config():
     project = config.get("gcp_project_id")
     app_id = config.get("deployed_app_id")
     if not project or not app_id:
-        print(f"Error: gecx-config.json missing 'gcp_project_id' or 'deployed_app_id'.")
+        print(
+            "Error: gecx-config.json missing 'gcp_project_id' or 'deployed_app_id'."
+        )
         sys.exit(1)
 
     config.setdefault("location", "us")

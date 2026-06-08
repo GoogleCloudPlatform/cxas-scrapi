@@ -18,7 +18,8 @@
 Usage:
   python scripts/scrapi-eval-runner.py push [--priority P0]
   python scripts/scrapi-eval-runner.py push-goldens <yaml_file_or_dir>
-  python scripts/scrapi-eval-runner.py run [--priority P0] [--channel audio] [--runs 5]
+  python scripts/scrapi-eval-runner.py run [--priority P0] [--channel audio]
+  [--runs 5]
   python scripts/scrapi-eval-runner.py run-goldens [--channel text] [--runs 1]
   python scripts/scrapi-eval-runner.py results <run_id>
   python scripts/scrapi-eval-runner.py status
@@ -26,21 +27,20 @@ Usage:
 """
 
 import argparse
-import sys
-import time
-import yaml
-import json
 import os
+import sys
 from datetime import datetime
 
 import pandas as pd
+import yaml
 from rich.console import Console
 from rich.progress import track
 
 console = Console()
+from config import get_project_path, load_app_name
+
 from cxas_scrapi.core.evaluations import Evaluations
 from cxas_scrapi.utils.eval_utils import EvalUtils
-from config import load_app_name, get_project_path
 
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/scrapi-eval-runner"
 
@@ -53,15 +53,21 @@ REPORTS_DIR = get_project_path("eval-reports")
 def load_yaml():
     if not os.path.exists(EVALS_YAML):
         return {"meta": {}, "evals": []}
-    with open(EVALS_YAML, "r") as f:
+    with open(EVALS_YAML) as f:
         return yaml.safe_load(f) or {"meta": {}, "evals": []}
 
 
 def save_yaml(data):
     os.makedirs(os.path.dirname(EVALS_YAML), exist_ok=True)
     with open(EVALS_YAML, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True,
-                  sort_keys=False, width=200)
+        yaml.dump(
+            data,
+            f,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            width=200,
+        )
 
 
 def get_app_name():
@@ -69,7 +75,9 @@ def get_app_name():
 
 
 def get_evals_client():
-    return Evaluations(app_name=load_app_name(), user_agent_extension=USER_AGENT_EXTENSION)
+    return Evaluations(
+        app_name=load_app_name(), user_agent_extension=USER_AGENT_EXTENSION
+    )
 
 
 def get_eval_utils():
@@ -79,13 +87,18 @@ def get_eval_utils():
 def filter_evals(data, priority=None, tag=None):
     evals = data.get("evals", []) if isinstance(data, dict) else data
     if priority:
-        evals = [e for e in evals if e.get("priority", "").upper() == priority.upper()]
+        evals = [
+            e
+            for e in evals
+            if e.get("priority", "").upper() == priority.upper()
+        ]
     if tag:
         evals = [e for e in evals if tag in e.get("tags", [])]
     return evals
 
 
 # --- Commands ---
+
 
 def cmd_status(args):
     """Show sync status between YAML and platform."""
@@ -99,9 +112,12 @@ def cmd_status(args):
         for name, resource in evals_map.get(category, {}).items():
             platform[name] = resource
 
-    yaml_evals = filter_evals(data, args.priority, getattr(args, 'tag', None))
+    yaml_evals = filter_evals(data, args.priority, getattr(args, "tag", None))
 
-    print(f"{'Eval Name':45s} {'YAML':6s} {'Platform':10s} {'Synced':8s} {'Score':8s}")
+    print(
+        f"{'Eval Name':45s} {'YAML':6s} {'Platform':10s} {'Synced':8s}"
+        f" {'Score':8s}"
+    )
     print("-" * 85)
     seen = set()
     for ev in yaml_evals:
@@ -109,10 +125,19 @@ def cmd_status(args):
         seen.add(name)
         on_platform = name in platform
         yaml_id = ev.get("eval_id", "")
-        platform_id = platform.get(name, "").split("/")[-1] if on_platform else ""
-        synced = "Yes" if yaml_id and platform_id and yaml_id == platform_id else "No"
+        platform_id = (
+            platform.get(name, "").split("/")[-1] if on_platform else ""
+        )
+        synced = (
+            "Yes"
+            if yaml_id and platform_id and yaml_id == platform_id
+            else "No"
+        )
         score = ev.get("last_run_score", "-") or "-"
-        print(f"  {name:43s} {'Yes':6s} {'Yes' if on_platform else 'No':10s} {synced:8s} {score:8s}")
+        print(
+            f"  {name:43s} {'Yes':6s} {'Yes' if on_platform else 'No':10s}"
+            f" {synced:8s} {score:8s}"
+        )
 
     # Platform-only evals
     for name in sorted(platform.keys()):
@@ -134,7 +159,7 @@ def cmd_push(args):
         for name, resource in evals_map.get(category, {}).items():
             platform[name] = resource
 
-    yaml_evals = filter_evals(data, args.priority, getattr(args, 'tag', None))
+    yaml_evals = filter_evals(data, args.priority, getattr(args, "tag", None))
     print(f"Pushing {len(yaml_evals)} evals to platform...")
 
     for ev in track(yaml_evals, description="Pushing Evals"):
@@ -156,8 +181,13 @@ def cmd_push(args):
         meta_tools = meta.get("tools", {})
         if expect_tools and meta_tools:
             scenario["scenarioExpectations"] = [
-                {"toolExpectation": {"expectedToolCall": {"tool": meta_tools[t]}}}
-                for t in expect_tools if t in meta_tools
+                {
+                    "toolExpectation": {
+                        "expectedToolCall": {"tool": meta_tools[t]}
+                    }
+                }
+                for t in expect_tools
+                if t in meta_tools
             ]
 
         # Resolve LLM criteria expectations
@@ -165,7 +195,9 @@ def cmd_push(args):
         meta_expectations = meta.get("expectations", {})
         if expect_criteria and meta_expectations:
             scenario["evaluationExpectations"] = [
-                meta_expectations[c] for c in expect_criteria if c in meta_expectations
+                meta_expectations[c]
+                for c in expect_criteria
+                if c in meta_expectations
             ]
 
         eval_payload = {"displayName": name, "scenario": scenario}
@@ -193,7 +225,7 @@ def cmd_push(args):
             console.print(f"  FAILED: {name}: {e}")
 
     save_yaml(data)
-    print(f"\nDone. YAML updated with new eval_ids.")
+    print("\nDone. YAML updated with new eval_ids.")
 
 
 def cmd_run(args):
@@ -202,7 +234,7 @@ def cmd_run(args):
     client = get_evals_client()
     app_name = get_app_name()
 
-    yaml_evals = filter_evals(data, args.priority, getattr(args, 'tag', None))
+    yaml_evals = filter_evals(data, args.priority, getattr(args, "tag", None))
     eval_names = [ev["name"] for ev in yaml_evals if ev.get("eval_id")]
 
     if not eval_names:
@@ -221,11 +253,13 @@ def cmd_run(args):
             modality=channel,
             run_count=runs,
         )
-        print(f"Run triggered successfully.")
+        print("Run triggered successfully.")
         # Try to extract run ID from response
-        if hasattr(run_response, 'operation') and hasattr(run_response.operation, 'name'):
+        if hasattr(run_response, "operation") and hasattr(
+            run_response.operation, "name"
+        ):
             print(f"Operation: {run_response.operation.name}")
-        elif hasattr(run_response, 'name'):
+        elif hasattr(run_response, "name"):
             print(f"Run: {run_response.name}")
         else:
             print(f"Response: {run_response}")
@@ -239,7 +273,9 @@ def _score_result_audio(result) -> bool:
     In audio mode, taskCompleted is broken (always False).
     Use goalScore AND allExpectationsSatisfied instead.
     """
-    res_dict = type(result).to_dict(result) if not isinstance(result, dict) else result
+    res_dict = (
+        type(result).to_dict(result) if not isinstance(result, dict) else result
+    )
     sr = res_dict.get("scenario_result", {})
     goal = sr.get("user_goal_satisfaction_result", {}).get("score", 0)
     all_exp = sr.get("all_expectations_satisfied", False)
@@ -247,7 +283,9 @@ def _score_result_audio(result) -> bool:
 
 
 def _is_error(result) -> bool:
-    res_dict = type(result).to_dict(result) if not isinstance(result, dict) else result
+    res_dict = (
+        type(result).to_dict(result) if not isinstance(result, dict) else result
+    )
     exec_state = res_dict.get("execution_state", 0)
     if isinstance(exec_state, int):
         return exec_state == 3  # ERROR
@@ -269,7 +307,9 @@ def cmd_results(args):
     print(f"Fetching results for run: {run_id.split('/')[-1]}")
 
     try:
-        results = utils.wait_for_run_and_get_results(run_id, timeout_seconds=1800)
+        results = utils.wait_for_run_and_get_results(
+            run_id, timeout_seconds=1800
+        )
         print(f"Got {len(results)} results.")
     except TimeoutError:
         print("Run timed out after 30 minutes.")
@@ -290,7 +330,11 @@ def cmd_results(args):
     errors = 0
 
     for result in results:
-        res_dict = type(result).to_dict(result) if not isinstance(result, dict) else result
+        res_dict = (
+            type(result).to_dict(result)
+            if not isinstance(result, dict)
+            else result
+        )
 
         if _is_error(result):
             errors += 1
@@ -299,7 +343,9 @@ def cmd_results(args):
         # Get eval name
         result_name = res_dict.get("name", "")
         eval_resource = "/".join(result_name.split("/")[:-2])
-        display_name = name_lookup.get(eval_resource, eval_resource.split("/")[-1])
+        display_name = name_lookup.get(
+            eval_resource, eval_resource.split("/")[-1]
+        )
 
         if audio:
             passed = _score_result_audio(result)
@@ -307,7 +353,7 @@ def cmd_results(args):
             # Text mode: use platform's evaluation_status
             status = res_dict.get("evaluation_status", 0)
             if isinstance(status, int):
-                passed = (status == 1)  # 1 = PASS
+                passed = status == 1  # 1 = PASS
             else:
                 passed = str(status).upper() == "PASS"
 
@@ -322,12 +368,18 @@ def cmd_results(args):
     total_scored = sum(s["total"] for s in eval_scores.values())
     pct = 100 * total_pass / total_scored if total_scored else 0
 
-    scoring_method = "audio (goal+expectations)" if audio else "platform (evaluation_status)"
+    scoring_method = (
+        "audio (goal+expectations)" if audio else "platform (evaluation_status)"
+    )
     print(f"\n=== Results ({scoring_method}) ===")
-    print(f"Overall: {total_pass}/{total_scored} ({pct:.1f}%) | Errors: {errors}\n")
+    print(
+        f"Overall: {total_pass}/{total_scored} ({pct:.1f}%) |"
+        f" Errors: {errors}\n"
+    )
 
-    sorted_evals = sorted(eval_scores.items(),
-                          key=lambda x: x[1]["pass"] / max(x[1]["total"], 1))
+    sorted_evals = sorted(
+        eval_scores.items(), key=lambda x: x[1]["pass"] / max(x[1]["total"], 1)
+    )
     for name, s in sorted_evals:
         score = f"{s['pass']}/{s['total']}"
         marker = " <<<" if s["pass"] < s["total"] else ""
@@ -335,7 +387,11 @@ def cmd_results(args):
 
     # Update YAML scores
     yaml_evals = data.get("evals", [])
-    run_short_id = args.run_id if not args.run_id.startswith("projects/") else args.run_id.split("/")[-1]
+    run_short_id = (
+        args.run_id
+        if not args.run_id.startswith("projects/")
+        else args.run_id.split("/")[-1]
+    )
 
     for ev in yaml_evals:
         if ev["name"] in eval_scores:
@@ -344,7 +400,7 @@ def cmd_results(args):
             ev["last_run_id"] = run_short_id
 
     save_yaml(data)
-    print(f"\nYAML updated with scores.")
+    print("\nYAML updated with scores.")
 
 
 def cmd_report(args):
@@ -360,7 +416,9 @@ def cmd_report(args):
     print(f"Generating report for run: {run_id.split('/')[-1]}")
 
     try:
-        results = utils.wait_for_run_and_get_results(run_id, timeout_seconds=1800)
+        results = utils.wait_for_run_and_get_results(
+            run_id, timeout_seconds=1800
+        )
     except Exception as e:
         print(f"Error: {e}")
         return
@@ -382,7 +440,7 @@ def cmd_report(args):
         latency_summary = pd.DataFrame()
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
-    run_short = run_id.split("/")[-1][:8]
+    run_id.split("/")[-1][:8]
 
     os.makedirs(REPORTS_DIR, exist_ok=True)
     report_path = os.path.join(REPORTS_DIR, f"scrapi_report_{timestamp}.md")
@@ -404,19 +462,21 @@ def cmd_report(args):
         yaml_lookup[ev["name"]] = ev
 
     with open(report_path, "w") as f:
-        f.write(f"# Eval Report (SCRAPI)\n\n")
+        f.write("# Eval Report (SCRAPI)\n\n")
         f.write(f"**Run ID:** `{run_id.split('/')[-1]}`\n")
         f.write(f"**Date:** {timestamp}\n")
         f.write(f"**Pass Rate:** {pct:.1f}% ({passed}/{total})\n\n")
-        f.write(f"---\n\n")
+        f.write("---\n\n")
 
         # Results table
-        f.write(f"## Results by Eval\n\n")
-        f.write(f"| Score | Eval | PRD | Severity |\n")
-        f.write(f"|-------|------|-----|----------|\n")
+        f.write("## Results by Eval\n\n")
+        f.write("| Score | Eval | PRD | Severity |\n")
+        f.write("|-------|------|-----|----------|\n")
 
-        sorted_evals = sorted(eval_scores.items(),
-                              key=lambda x: x[1]["pass"] / max(x[1]["total"], 1))
+        sorted_evals = sorted(
+            eval_scores.items(),
+            key=lambda x: x[1]["pass"] / max(x[1]["total"], 1),
+        )
         for name, s in sorted_evals:
             score = f"{s['pass']}/{s['total']}"
             ev_meta = yaml_lookup.get(name, {})
@@ -426,7 +486,7 @@ def cmd_report(args):
 
         # Failures
         if not failures_df.empty:
-            f.write(f"\n## Failure Details\n\n")
+            f.write("\n## Failure Details\n\n")
             for name in failures_df["display_name"].unique():
                 name_failures = failures_df[failures_df["display_name"] == name]
                 f.write(f"\n### {name}\n\n")
@@ -434,28 +494,43 @@ def cmd_report(args):
                     ftype = row.get("failure_type", "?")
                     expected = str(row.get("expected", ""))[:150]
                     actual = str(row.get("actual", ""))[:150]
-                    f.write(f"- **{ftype}**: expected `{expected}` | actual `{actual}`\n")
+                    f.write(
+                        f"- **{ftype}**: expected `{expected}` |"
+                        f" actual `{actual}`\n"
+                    )
 
         # Custom expectations (metadata)
         if not metadata_df.empty:
             exp_df = metadata_df[metadata_df["type"] == "Custom Expectation"]
             if not exp_df.empty:
-                f.write(f"\n## Custom Expectation Results\n\n")
-                f.write(f"| Eval | Expectation | Outcome | Score |\n")
-                f.write(f"|------|-------------|---------|-------|\n")
+                f.write("\n## Custom Expectation Results\n\n")
+                f.write("| Eval | Expectation | Outcome | Score |\n")
+                f.write("|------|-------------|---------|-------|\n")
                 for _, row in exp_df.iterrows():
                     exp_text = str(row.get("expected", ""))[:60]
-                    f.write(f"| {row['display_name']} | {exp_text}... | {row.get('outcome', '-')} | {row.get('score', '-')} |\n")
+                    f.write(
+                        f"| {row['display_name']} | {exp_text}... |"
+                        f" {row.get('outcome', '-')} |"
+                        f" {row.get('score', '-')} |\n"
+                    )
 
         # Latency
         if not latency_summary.empty:
-            f.write(f"\n## Latency Summary\n\n")
-            f.write(f"| Eval | Avg Turn | p50/p90/p99 Turn |\n")
-            f.write(f"|------|----------|------------------|\n")
+            f.write("\n## Latency Summary\n\n")
+            f.write("| Eval | Avg Turn | p50/p90/p99 Turn |\n")
+            f.write("|------|----------|------------------|\n")
             for _, row in latency_summary.iterrows():
-                f.write(f"| {row['display_name']} | {row.get('Average (Turn)', '-')} | {row.get('p50 | p90 | p99 (Turn)', '-')} |\n")
+                f.write(
+                    f"| {row['display_name']} |"
+                    f" {row.get('Average (Turn)', '-')} |"
+                    f" {row.get('p50 | p90 | p99 (Turn)', '-')} |\n"
+                )
 
-        f.write(f"\n---\n_Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} via scrapi-eval-runner_\n")
+        f.write(
+            f"\n---\n_Generated"
+            f" {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} via"
+            " scrapi-eval-runner_\n"
+        )
 
     print(f"\nReport written to: {report_path}")
 
@@ -486,8 +561,11 @@ def _diff_golden(local_dict, remote_eval):
     if missing:
         # Show abbreviated resource ids so the message is readable
         sample = sorted(m.split("/")[-1] for m in missing)[:3]
-        more = f" (+{len(missing)-3} more)" if len(missing) > 3 else ""
-        return True, f"{len(missing)} expectation(s) removed: {', '.join(sample)}{more}"
+        more = f" (+{len(missing) - 3} more)" if len(missing) > 3 else ""
+        return (
+            True,
+            f"{len(missing)} expectation(s) removed: {', '.join(sample)}{more}",
+        )
 
     return False, None
 
@@ -523,11 +601,15 @@ def cmd_push_goldens(args):
 
     # Pull current platform state up front so we don't list per file
     evals_map = client.get_evaluations_map(reverse=True)
-    platform_goldens = evals_map.get("goldens", {})  # display_name -> resource_path
+    platform_goldens = evals_map.get(
+        "goldens", {}
+    )  # display_name -> resource_path
 
     print(f"Pushing golden evals from {len(yaml_files)} file(s)...")
     if args.force_recreate:
-        print("  Mode: --force-recreate (delete + create for every existing eval)")
+        print(
+            "  Mode: --force-recreate (delete + create for every existing eval)"
+        )
 
     counts = {"created": 0, "updated": 0, "recreated": 0, "failed": 0}
 
@@ -553,23 +635,38 @@ def cmd_push_goldens(args):
                     reason = "--force-recreate"
                 else:
                     remote_eval = client.get_evaluation(remote_path)
-                    needs_recreate, diff_reason = _diff_golden(eval_dict, remote_eval)
+                    needs_recreate, diff_reason = _diff_golden(
+                        eval_dict, remote_eval
+                    )
                     action = "recreate" if needs_recreate else "update"
                     reason = diff_reason
 
                 if action == "create":
-                    result = client.create_evaluation(eval_dict, app_name=app_name)
-                    print(f"  Created:   {name} -> {result.name.split('/')[-1]}")
+                    result = client.create_evaluation(
+                        eval_dict, app_name=app_name
+                    )
+                    print(
+                        f"  Created:   {name} -> {result.name.split('/')[-1]}"
+                    )
                     counts["created"] += 1
                 elif action == "update":
-                    result = utils.update_evaluation(eval_dict, app_name=app_name)
-                    print(f"  Updated:   {name} -> {result.name.split('/')[-1]}")
+                    result = utils.update_evaluation(
+                        eval_dict, app_name=app_name
+                    )
+                    print(
+                        f"  Updated:   {name} -> {result.name.split('/')[-1]}"
+                    )
                     counts["updated"] += 1
                 else:  # recreate
                     client.delete_evaluation(remote_path, force=True)
-                    result = client.create_evaluation(eval_dict, app_name=app_name)
+                    result = client.create_evaluation(
+                        eval_dict, app_name=app_name
+                    )
                     suffix = f"  ({reason})" if reason else ""
-                    print(f"  Recreated: {name} -> {result.name.split('/')[-1]}{suffix}")
+                    print(
+                        f"  Recreated: {name} ->"
+                        f" {result.name.split('/')[-1]}{suffix}"
+                    )
                     counts["recreated"] += 1
             except Exception as e:
                 console.print(f"  FAILED:    {name}: {e}")
@@ -589,12 +686,19 @@ def cmd_run_goldens(args):
     app_name = get_app_name()
 
     from config import load_config as _load_shared_config
+
     raw = _load_shared_config()
     modality = raw.get("modality", "text")
 
     if args.channel and args.channel != modality:
-        print(f"ERROR: Cannot run evals in '{args.channel}' mode. gecx-config.json specifies modality '{modality}'.")
-        print("To fix: Remove the --channel flag or ensure it matches the app's configured modality.")
+        print(
+            f"ERROR: Cannot run evals in '{args.channel}' mode."
+            f" gecx-config.toml specifies modality '{modality}'."
+        )
+        print(
+            "To fix: Remove the --channel flag or ensure it matches the app's"
+            " configured modality."
+        )
         sys.exit(1)
 
     channel = args.channel or raw.get("default_channel", modality)
@@ -608,7 +712,9 @@ def cmd_run_goldens(args):
             run_count=runs,
         )
         print(f"Golden eval run triggered ({channel}, {runs} runs).")
-        if hasattr(run_response, 'operation') and hasattr(run_response.operation, 'name'):
+        if hasattr(run_response, "operation") and hasattr(
+            run_response.operation, "name"
+        ):
             print(f"Operation: {run_response.operation.name}")
         else:
             print(f"Response: {run_response}")
@@ -620,16 +726,23 @@ def main():
     try:
         import cxas_scrapi  # noqa: F401
     except ImportError:
-        print("Error: cxas-scrapi not installed. Activate venv (source .venv/bin/activate) and install cxas-scrapi first.")
+        print(
+            "Error: cxas-scrapi not installed. Activate venv (source"
+            " .venv/bin/activate) and install cxas-scrapi first."
+        )
         sys.exit(1)
 
-    parser = argparse.ArgumentParser(description="Eval runner using cxas-scrapi")
+    parser = argparse.ArgumentParser(
+        description="Eval runner using cxas-scrapi"
+    )
     sub = parser.add_subparsers(dest="command")
 
     # status
     p_status = sub.add_parser("status", help="Show sync status")
     p_status.add_argument("--priority", default=None)
-    p_status.add_argument("--tag", default=None, help="Filter by tag (e.g. outage, escalation)")
+    p_status.add_argument(
+        "--tag", default=None, help="Filter by tag (e.g. outage, escalation)"
+    )
 
     # push
     p_push = sub.add_parser("push", help="Push evals to platform")
@@ -644,12 +757,25 @@ def main():
     p_run.add_argument("--runs", type=int, default=5)
 
     # push-goldens
-    p_push_g = sub.add_parser("push-goldens", help="Push golden evals from YAML (diff-aware upsert)")
-    p_push_g.add_argument("source", nargs="?", default=None,
-                           help="YAML file or directory (default: evals/goldens/)")
-    p_push_g.add_argument("--force-recreate", action="store_true", default=False,
-                           help="Delete + create every existing eval, bypassing the truncation diff. "
-                                "Use when the platform copy is suspect or you want a hard reset.")
+    p_push_g = sub.add_parser(
+        "push-goldens", help="Push golden evals from YAML (diff-aware upsert)"
+    )
+    p_push_g.add_argument(
+        "source",
+        nargs="?",
+        default=None,
+        help="YAML file or directory (default: evals/goldens/)",
+    )
+    p_push_g.add_argument(
+        "--force-recreate",
+        action="store_true",
+        default=False,
+        help=(
+            "Delete + create every existing eval, bypassing the truncation"
+            " diff. "
+            "Use when the platform copy is suspect or you want a hard reset."
+        ),
+    )
 
     # run-goldens
     p_run_g = sub.add_parser("run-goldens", help="Run all golden evals")
@@ -659,8 +785,11 @@ def main():
     # results
     p_results = sub.add_parser("results", help="Fetch and score results")
     p_results.add_argument("run_id", help="Run ID or full resource name")
-    p_results.add_argument("--audio", action="store_true",
-                           help="Use audio scoring (goal+expectations, skip taskCompleted)")
+    p_results.add_argument(
+        "--audio",
+        action="store_true",
+        help="Use audio scoring (goal+expectations, skip taskCompleted)",
+    )
 
     # report
     p_report = sub.add_parser("report", help="Generate markdown report")

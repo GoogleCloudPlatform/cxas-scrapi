@@ -19,7 +19,8 @@ Usage:
   python scripts/generate-iteration-report.py snapshot
   python scripts/generate-iteration-report.py report
   python scripts/generate-iteration-report.py report --iteration 3
-  python scripts/generate-iteration-report.py report --message "Fixed escalation by adding set_variables tool"
+  python scripts/generate-iteration-report.py report --message "Fixed escalation
+  by adding set_variables tool"
 """
 
 import argparse
@@ -29,15 +30,15 @@ import os
 import shutil
 import sys
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(__file__))
-from config import load_config, load_app_name, get_project_path
+from config import get_output_dir, get_project_path, load_app_name, load_config
 
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/generate-iteration-report"
 
 
-ITERATIONS_DIR = get_project_path("eval-reports", "iterations")
+ITERATIONS_DIR = os.path.join(get_output_dir(), "iterations")
 DIFF_EXTENSIONS = {".txt", ".py"}
 
 
@@ -45,9 +46,11 @@ def _load_triage_module():
     """Load triage-results.py (hyphenated, can't be imported normally)."""
     try:
         import triage_results  # type: ignore
+
         return triage_results
     except ImportError:
         import importlib.util
+
         spec = importlib.util.spec_from_file_location(
             "triage_results",
             os.path.join(os.path.dirname(__file__), "triage-results.py"),
@@ -61,12 +64,15 @@ def _load_triage_module():
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _escape(text: str) -> str:
-    return (str(text)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;"))
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 def _get_app_dir(config: dict) -> str:
@@ -88,7 +94,7 @@ def _detect_next_iteration() -> int:
     return max(existing) + 1 if existing else 1
 
 
-def _latest_iteration() -> Optional[int]:
+def _latest_iteration() -> int | None:
     """Return the highest existing iteration number, or None."""
     if not os.path.isdir(ITERATIONS_DIR):
         return None
@@ -110,8 +116,11 @@ def _snapshot_dir(n: int) -> str:
     return os.path.join(_iteration_dir(n), "snapshot")
 
 
-def _collect_diffable_files(directory: str) -> Dict[str, str]:
-    """Collect contents of .txt and .py files under directory, keyed by relative path."""
+def _collect_diffable_files(directory: str) -> dict[str, str]:
+    """Collect contents of .txt and .py files under directory.
+
+    Keyed by relative path.
+    """
     files = {}
     if not os.path.isdir(directory):
         return files
@@ -130,10 +139,13 @@ def _collect_diffable_files(directory: str) -> Dict[str, str]:
     return files
 
 
-def _compute_diffs(old_files: Dict[str, str], new_files: Dict[str, str]) -> List[Dict[str, Any]]:
+def _compute_diffs(
+    old_files: dict[str, str], new_files: dict[str, str]
+) -> list[dict[str, Any]]:
     """Compute unified diffs between two sets of files.
 
-    Returns a list of dicts: {"path": str, "diff": str, "status": "added"|"removed"|"modified"}
+    Returns a list of dicts: {"path": str, "diff": str, "status":
+    "added"|"removed"|"modified"}
     """
     all_paths = sorted(set(old_files.keys()) | set(new_files.keys()))
     diffs = []
@@ -142,24 +154,53 @@ def _compute_diffs(old_files: Dict[str, str], new_files: Dict[str, str]) -> List
         new = new_files.get(path)
         if old is None:
             # New file
-            diff_lines = list(difflib.unified_diff(
-                [], new.splitlines(keepends=True),
-                fromfile=f"a/{path}", tofile=f"b/{path}", lineterm=""
-            ))
-            diffs.append({"path": path, "diff": "\n".join(diff_lines), "status": "added"})
+            diff_lines = list(
+                difflib.unified_diff(
+                    [],
+                    new.splitlines(keepends=True),
+                    fromfile=f"a/{path}",
+                    tofile=f"b/{path}",
+                    lineterm="",
+                )
+            )
+            diffs.append(
+                {"path": path, "diff": "\n".join(diff_lines), "status": "added"}
+            )
         elif new is None:
             # Removed file
-            diff_lines = list(difflib.unified_diff(
-                old.splitlines(keepends=True), [],
-                fromfile=f"a/{path}", tofile=f"b/{path}", lineterm=""
-            ))
-            diffs.append({"path": path, "diff": "\n".join(diff_lines), "status": "removed"})
+            diff_lines = list(
+                difflib.unified_diff(
+                    old.splitlines(keepends=True),
+                    [],
+                    fromfile=f"a/{path}",
+                    tofile=f"b/{path}",
+                    lineterm="",
+                )
+            )
+            diffs.append(
+                {
+                    "path": path,
+                    "diff": "\n".join(diff_lines),
+                    "status": "removed",
+                }
+            )
         elif old != new:
-            diff_lines = list(difflib.unified_diff(
-                old.splitlines(keepends=True), new.splitlines(keepends=True),
-                fromfile=f"a/{path}", tofile=f"b/{path}", lineterm=""
-            ))
-            diffs.append({"path": path, "diff": "\n".join(diff_lines), "status": "modified"})
+            diff_lines = list(
+                difflib.unified_diff(
+                    old.splitlines(keepends=True),
+                    new.splitlines(keepends=True),
+                    fromfile=f"a/{path}",
+                    tofile=f"b/{path}",
+                    lineterm="",
+                )
+            )
+            diffs.append(
+                {
+                    "path": path,
+                    "diff": "\n".join(diff_lines),
+                    "status": "modified",
+                }
+            )
     return diffs
 
 
@@ -167,8 +208,12 @@ def _compute_diffs(old_files: Dict[str, str], new_files: Dict[str, str]) -> List
 # Snapshot
 # ---------------------------------------------------------------------------
 
+
 def do_snapshot(config: dict) -> int:
-    """Copy app_dir to the next iteration snapshot. Returns the iteration number."""
+    """Copy app_dir to the next iteration snapshot.
+
+    Returns the iteration number.
+    """
     app_dir = _get_app_dir(config)
     if not os.path.isdir(app_dir):
         print(f"Error: app directory '{app_dir}' not found.")
@@ -186,7 +231,8 @@ def do_snapshot(config: dict) -> int:
 # Eval results (triage)
 # ---------------------------------------------------------------------------
 
-def _fetch_eval_results() -> Optional[Dict[str, Any]]:
+
+def _fetch_eval_results() -> dict[str, Any] | None:
     """Fetch latest golden eval results using triage-results logic.
 
     Returns a triage dict or None if results unavailable.
@@ -205,7 +251,9 @@ def _fetch_eval_results() -> Optional[Dict[str, Any]]:
 
     try:
         app_name = load_app_name()
-        client = Evaluations(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+        client = Evaluations(
+            app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+        )
     except Exception as e:
         print(f"  Warning: Could not initialize Evaluations client: {e}")
         return None
@@ -262,66 +310,116 @@ def _fetch_eval_results() -> Optional[Dict[str, Any]]:
 # HTML report
 # ---------------------------------------------------------------------------
 
-def _render_diff_html(diffs: List[Dict[str, Any]]) -> str:
+
+def _render_diff_html(diffs: list[dict[str, Any]]) -> str:
     """Render diffs as syntax-highlighted HTML blocks."""
     if not diffs:
-        return '<p style="color:#888;">No changes detected (baseline iteration or identical files).</p>'
+        return (
+            '<p style="color:#888;">No changes detected (baseline iteration or'
+            " identical files).</p>"
+        )
 
     html = ""
     for d in diffs:
         status_badge = {
-            "added": '<span style="background:#d4edda;color:#155724;padding:2px 8px;border-radius:4px;font-size:0.8em;">ADDED</span>',
-            "removed": '<span style="background:#f8d7da;color:#721c24;padding:2px 8px;border-radius:4px;font-size:0.8em;">REMOVED</span>',
-            "modified": '<span style="background:#fff3cd;color:#856404;padding:2px 8px;border-radius:4px;font-size:0.8em;">MODIFIED</span>',
+            "added": (
+                '<span style="background:#d4edda;color:#155724;padding:2px'
+                ' 8px;border-radius:4px;font-size:0.8em;">ADDED</span>'
+            ),
+            "removed": (
+                '<span style="background:#f8d7da;color:#721c24;padding:2px'
+                ' 8px;border-radius:4px;font-size:0.8em;">REMOVED</span>'
+            ),
+            "modified": (
+                '<span style="background:#fff3cd;color:#856404;padding:2px'
+                ' 8px;border-radius:4px;font-size:0.8em;">MODIFIED</span>'
+            ),
         }.get(d["status"], "")
 
         lines_html = ""
         for line in d["diff"].split("\n"):
             escaped = _escape(line)
             if line.startswith("+") and not line.startswith("+++"):
-                lines_html += f'<span style="color:#155724;background:#d4edda;display:block;">{escaped}</span>'
+                lines_html += (
+                    '<span style="color:#155724;background:#d4edda;'
+                    f'display:block;">{escaped}</span>'
+                )
             elif line.startswith("-") and not line.startswith("---"):
-                lines_html += f'<span style="color:#721c24;background:#f8d7da;display:block;">{escaped}</span>'
+                lines_html += (
+                    '<span style="color:#721c24;background:#f8d7da;'
+                    f'display:block;">{escaped}</span>'
+                )
             elif line.startswith("@@"):
-                lines_html += f'<span style="color:#0366d6;display:block;">{escaped}</span>'
+                lines_html += (
+                    '<span style="color:#0366d6;'
+                    f'display:block;">{escaped}</span>'
+                )
             else:
                 lines_html += f'<span style="display:block;">{escaped}</span>'
 
-        html += f"""<details style="margin:8px 0;">
-<summary style="cursor:pointer;font-weight:bold;padding:4px 0;">{_escape(d["path"])} {status_badge}</summary>
-<pre style="background:#f6f8fa;padding:12px;border-radius:6px;font-size:0.85em;overflow-x:auto;margin:4px 0;line-height:1.4;">{lines_html}</pre>
-</details>
-"""
+        html += (
+            '<details style="margin:8px 0;">\n'
+            '<summary style="cursor:pointer;font-weight:bold;padding:4px 0;">'
+            f'{_escape(d["path"])} {status_badge}</summary>\n'
+            '<pre style="background:#f6f8fa;padding:12px;border-radius:6px;'
+            'font-size:0.85em;overflow-x:auto;margin:4px 0;'
+            f'line-height:1.4;">{lines_html}</pre>\n'
+            '</details>\n'
+        )
     return html
 
 
-def _render_triage_html(triage: Dict[str, Any]) -> str:
+def _render_triage_html(triage: dict[str, Any]) -> str:
     """Render triage failure groups as HTML."""
     failures = triage.get("failures", {})
     if not failures:
-        return '<p style="color:#27ae60;font-weight:bold;">No failures detected.</p>'
+        return (
+            '<p style="color:#27ae60;font-weight:bold;">'
+            "No failures detected.</p>"
+        )
 
-    category_order = ["TIMEOUT", "SCORES_PASS_BUT_FAIL", "EXTRA_TURNS", "EXPECTATION_FAIL", "TOOL_MISSING", "TEXT_MISMATCH", "UNKNOWN"]
+    category_order = [
+        "TIMEOUT",
+        "SCORES_PASS_BUT_FAIL",
+        "EXTRA_TURNS",
+        "EXPECTATION_FAIL",
+        "TOOL_MISSING",
+        "TEXT_MISMATCH",
+        "UNKNOWN",
+    ]
     html = ""
     for cat in category_order:
         items = failures.get(cat)
         if not items:
             continue
-        html += f'<div style="background:#fff;border-left:4px solid #e74c3c;padding:10px 14px;margin:8px 0;border-radius:4px;">'
-        html += f'<b style="color:#c0392b;">{_escape(cat)}</b> ({len(items)})<ul style="margin:4px 0 0 0;padding-left:20px;">'
+        html += (
+            '<div style="background:#fff;border-left:4px solid'
+            ' #e74c3c;padding:10px 14px;margin:8px 0;border-radius:4px;">'
+        )
+        html += (
+            f'<b style="color:#c0392b;">{_escape(cat)}</b> ({len(items)})<ul'
+            ' style="margin:4px 0 0 0;padding-left:20px;">'
+        )
         for eval_name, detail in items:
-            html += f'<li><b>{_escape(eval_name)}</b>: {_escape(detail)}</li>'
-        html += '</ul></div>\n'
+            html += f"<li><b>{_escape(eval_name)}</b>: {_escape(detail)}</li>"
+        html += "</ul></div>\n"
     return html
 
 
-def _render_per_eval_table(per_eval: Dict[str, Any]) -> str:
+def _render_per_eval_table(per_eval: dict[str, Any]) -> str:
     """Render per-eval pass/fail table as HTML."""
     if not per_eval:
         return '<p style="color:#888;">No eval data available.</p>'
 
     html = '<table style="border-collapse:collapse;width:100%;margin:10px 0;">'
-    html += '<tr style="background:#2c3e50;color:white;"><th style="padding:8px 12px;text-align:left;">Eval</th><th style="padding:8px 12px;text-align:center;">Pass</th><th style="padding:8px 12px;text-align:center;">Total</th><th style="padding:8px 12px;text-align:center;">Rate</th><th style="padding:8px 12px;text-align:left;">Status</th></tr>\n'
+    html += (
+        '<tr style="background:#2c3e50;color:white;"><th style="padding:8px'
+        ' 12px;text-align:left;">Eval</th><th style="padding:8px'
+        ' 12px;text-align:center;">Pass</th><th style="padding:8px'
+        ' 12px;text-align:center;">Total</th><th style="padding:8px'
+        ' 12px;text-align:center;">Rate</th><th style="padding:8px'
+        ' 12px;text-align:left;">Status</th></tr>\n'
+    )
 
     for name in sorted(per_eval.keys()):
         info = per_eval[name]
@@ -333,18 +431,24 @@ def _render_per_eval_table(per_eval: Dict[str, Any]) -> str:
         else:
             status = '<span style="color:#e74c3c;font-weight:bold;">FAIL</span>'
             row_bg = ' style="background:#fef5f5;"'
-        html += f'<tr{row_bg}><td style="padding:8px 12px;">{_escape(name)}</td><td style="padding:8px 12px;text-align:center;">{p}</td><td style="padding:8px 12px;text-align:center;">{t}</td><td style="padding:8px 12px;text-align:center;">{rate:.0f}%</td><td style="padding:8px 12px;">{status}</td></tr>\n'
+        html += (
+            f'<tr{row_bg}><td style="padding:8px 12px;">{_escape(name)}</td><td'
+            f' style="padding:8px 12px;text-align:center;">{p}</td><td'
+            f' style="padding:8px 12px;text-align:center;">{t}</td><td'
+            f' style="padding:8px 12px;text-align:center;">{rate:.0f}%</td><td'
+            f' style="padding:8px 12px;">{status}</td></tr>\n'
+        )
 
-    html += '</table>'
+    html += "</table>"
     return html
 
 
 def build_report_html(
     iteration: int,
     config: dict,
-    diffs: List[Dict[str, Any]],
-    triage: Optional[Dict[str, Any]],
-    message: Optional[str] = None,
+    diffs: list[dict[str, Any]],
+    triage: dict[str, Any] | None,
+    message: str | None = None,
 ) -> str:
     """Build a self-contained HTML report."""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -363,28 +467,48 @@ def build_report_html(
         run_short = ""
         time_str = ""
 
-    pct_color = "#27ae60" if pct >= 90 else ("#f57c00" if pct >= 70 else "#e74c3c")
+    pct_color = (
+        "#27ae60" if pct >= 90 else ("#f57c00" if pct >= 70 else "#e74c3c")
+    )
 
     message_html = ""
     if message:
-        message_html = f'<div style="background:#e8eaf6;padding:12px 16px;border-radius:6px;margin:12px 0;border-left:4px solid #3f51b5;"><b>Rationale:</b> {_escape(message)}</div>'
+        message_html = (
+            '<div style="background:#e8eaf6;padding:12px'
+            " 16px;border-radius:6px;margin:12px 0;border-left:4px solid"
+            f' #3f51b5;"><b>Rationale:</b> {_escape(message)}</div>'
+        )
 
     eval_summary_html = ""
     if triage:
-        eval_summary_html = f"""
-    <div style="display:flex;gap:24px;align-items:center;margin:12px 0;">
-      <div style="font-size:2.2em;font-weight:bold;color:{pct_color};">{pct:.0f}%</div>
-      <div>
-        <b>{passed}/{total}</b> evals passed<br>
-        <span style="color:#666;font-size:0.85em;">Run: {_escape(run_short)} | {_escape(time_str)}</span>
-      </div>
-    </div>"""
+        eval_summary_html = (
+            '<div style="display:flex;gap:24px;align-items:center;'
+            'margin:12px 0;">\n'
+            '  <div style="font-size:2.2em;font-weight:bold;'
+            f'color:{pct_color};">{pct:.0f}%</div>\n'
+            '  <div>\n'
+            f'    <b>{passed}/{total}</b> evals passed<br>\n'
+            '    <span style="color:#666;font-size:0.85em;">'
+            f'Run: {_escape(run_short)} | {_escape(time_str)}</span>\n'
+            '  </div>\n'
+            '</div>'
+        )
     else:
-        eval_summary_html = '<p style="color:#888;">Eval results not available.</p>'
+        eval_summary_html = (
+            '<p style="color:#888;">Eval results not available.</p>'
+        )
 
     diff_html = _render_diff_html(diffs)
-    triage_html = _render_triage_html(triage) if triage else '<p style="color:#888;">No triage data available.</p>'
-    per_eval_html = _render_per_eval_table(triage.get("per_eval", {})) if triage else '<p style="color:#888;">No per-eval data available.</p>'
+    triage_html = (
+        _render_triage_html(triage)
+        if triage
+        else '<p style="color:#888;">No triage data available.</p>'
+    )
+    per_eval_html = (
+        _render_per_eval_table(triage.get("per_eval", {}))
+        if triage
+        else '<p style="color:#888;">No per-eval data available.</p>'
+    )
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -481,7 +605,8 @@ def build_report_html(
 # Experiment log & results tracking
 # ---------------------------------------------------------------------------
 
-def _get_prev_results(iteration: int) -> Optional[Tuple[int, int]]:
+
+def _get_prev_results(iteration: int) -> tuple[int, int] | None:
     """Load passed/total from the previous iteration's results.json."""
     prev_dir = _iteration_dir(iteration - 1)
     prev_results = os.path.join(prev_dir, "results.json")
@@ -499,7 +624,9 @@ def _get_prev_results(iteration: int) -> Optional[Tuple[int, int]]:
         return None
 
 
-def _load_previous_per_eval(iteration: int) -> Dict[Tuple[str, str], Dict[str, int]]:
+def _load_previous_per_eval(
+    iteration: int,
+) -> dict[tuple[str, str], dict[str, int]]:
     """Load previous iteration's per_eval, keyed by (eval_type, eval_name).
 
     Returns ``{(eval_type, eval_name): {"pass": int, "total": int}}`` —
@@ -517,7 +644,7 @@ def _load_previous_per_eval(iteration: int) -> Dict[Tuple[str, str], Dict[str, i
     except (json.JSONDecodeError, OSError):
         return {}
 
-    out: Dict[Tuple[str, str], Dict[str, int]] = {}
+    out: dict[tuple[str, str], dict[str, int]] = {}
     by_type = data.get("per_eval_by_type")
     if isinstance(by_type, dict):
         for eval_type, per_eval in by_type.items():
@@ -544,7 +671,9 @@ def _load_previous_per_eval(iteration: int) -> Dict[Tuple[str, str], Dict[str, i
     return out
 
 
-def _load_previous_typed_pass_rates(iteration: int) -> Dict[str, Tuple[int, int]]:
+def _load_previous_typed_pass_rates(
+    iteration: int,
+) -> dict[str, tuple[int, int]]:
     """Load prior iteration's pass/total per eval type.
 
     Returns ``{type: (passed, total)}`` for each type present in the prior
@@ -562,23 +691,29 @@ def _load_previous_typed_pass_rates(iteration: int) -> Dict[str, Tuple[int, int]
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
-    out: Dict[str, Tuple[int, int]] = {}
+    out: dict[str, tuple[int, int]] = {}
     by_type = data.get("per_eval_by_type")
     if not isinstance(by_type, dict):
         return out
     for eval_type, per_eval in by_type.items():
         if not isinstance(per_eval, dict):
             continue
-        total = sum(int(info.get("total", 0)) for info in per_eval.values()
-                    if isinstance(info, dict))
-        passed = sum(int(info.get("pass", 0)) for info in per_eval.values()
-                     if isinstance(info, dict))
+        total = sum(
+            int(info.get("total", 0))
+            for info in per_eval.values()
+            if isinstance(info, dict)
+        )
+        passed = sum(
+            int(info.get("pass", 0))
+            for info in per_eval.values()
+            if isinstance(info, dict)
+        )
         if total > 0:
             out[eval_type] = (passed, total)
     return out
 
 
-def _extract_iteration_message(iteration: int) -> Optional[str]:
+def _extract_iteration_message(iteration: int) -> str | None:
     """Pull the ``--message`` for ``iteration`` from experiment_log.md.
 
     The log is structured as ``## Iteration N — YYYY-MM-DD`` followed by a
@@ -592,14 +727,17 @@ def _extract_iteration_message(iteration: int) -> Optional[str]:
     try:
         with open(log_path) as f:
             for line in f:
-                if line.startswith(target_header) or line.startswith(f"## Iteration {iteration}\n"):
+                if line.startswith(target_header) or line.startswith(
+                    f"## Iteration {iteration}\n"
+                ):
                     capture_next = True
                     continue
                 if capture_next:
                     stripped = line.strip()
                     if stripped.startswith("**Change:**"):
-                        return stripped[len("**Change:**"):].strip()
-                    # If we hit the next iteration header before finding Change:, give up.
+                        return stripped[len("**Change:**") :].strip()
+                    # If we hit the next iteration header before finding
+                    # Change:, give up.
                     if stripped.startswith("## Iteration "):
                         return None
     except OSError:
@@ -607,7 +745,9 @@ def _extract_iteration_message(iteration: int) -> Optional[str]:
     return None
 
 
-def _compute_status(iteration: int, passed: int, total: int) -> Tuple[str, int, Optional[str]]:
+def _compute_status(
+    iteration: int, passed: int, total: int
+) -> tuple[str, int, str | None]:
     """Compute status, delta, and comparison string.
 
     Returns (status, delta, comparison_str).
@@ -627,7 +767,7 @@ def _compute_status(iteration: int, passed: int, total: int) -> Tuple[str, int, 
         return ("unchanged", 0, comparison)
 
 
-def _get_latest_callback_results() -> Optional[Tuple[int, int]]:
+def _get_latest_callback_results() -> tuple[int, int] | None:
     """Read callback test results and return (passed, total)."""
     rows = _load_callback_test_rows()
     if not rows:
@@ -637,19 +777,21 @@ def _get_latest_callback_results() -> Optional[Tuple[int, int]]:
     return (passed, total) if total > 0 else None
 
 
-def _get_latest_tool_test_results() -> Optional[Tuple[int, int]]:
+def _get_latest_tool_test_results() -> tuple[int, int] | None:
     """Read tool test results and return (passed, total)."""
     rows = _load_tool_test_rows()
     if not rows:
         return None
     total = len(rows)
-    passed = sum(1 for r in rows if r.get("passed", False) or r.get("status") == "PASSED")
+    passed = sum(
+        1 for r in rows if r.get("passed", False) or r.get("status") == "PASSED"
+    )
     return (passed, total) if total > 0 else None
 
 
 def _load_callback_test_rows() -> list:
     """Load raw callback_test_results.json rows for downstream triage."""
-    path = get_project_path("eval-reports", "callback_test_results.json")
+    path = os.path.join(get_output_dir(), "callback_test_results.json")
     if not os.path.isfile(path):
         return []
     try:
@@ -662,7 +804,7 @@ def _load_callback_test_rows() -> list:
 
 def _load_tool_test_rows() -> list:
     """Load raw tool_test_results.json rows for downstream triage."""
-    path = get_project_path("eval-reports", "tool_test_results.json")
+    path = os.path.join(get_output_dir(), "tool_test_results.json")
     if not os.path.isfile(path):
         return []
     try:
@@ -675,11 +817,15 @@ def _load_tool_test_rows() -> list:
 
 def _load_sim_rows() -> list:
     """Load the most recent sim_results_*.json results array."""
-    reports_dir = get_project_path("eval-reports")
+    reports_dir = get_output_dir()
     if not os.path.isdir(reports_dir):
         return []
     sim_files = sorted(
-        [f for f in os.listdir(reports_dir) if f.startswith("sim_results_") and f.endswith(".json")],
+        [
+            f
+            for f in os.listdir(reports_dir)
+            if f.startswith("sim_results_") and f.endswith(".json")
+        ],
         reverse=True,
     )
     if not sim_files:
@@ -713,7 +859,9 @@ def _next_log_iteration() -> int:
     return max_iter + 1
 
 
-def _append_experiment_log(iteration: int, triage: Optional[Dict[str, Any]], message: Optional[str]):
+def _append_experiment_log(
+    iteration: int, triage: dict[str, Any] | None, message: str | None
+):
     """Append a structured entry to <project>/experiment_log.md."""
     log_path = get_project_path("experiment_log.md")
     ts = datetime.now().strftime("%Y-%m-%d")
@@ -728,7 +876,7 @@ def _append_experiment_log(iteration: int, triage: Optional[Dict[str, Any]], mes
     else:
         g_total = g_passed = 0
 
-    status, delta, comparison = _compute_status(iteration, g_passed, g_total)
+    status, _delta, comparison = _compute_status(iteration, g_passed, g_total)
 
     # Sim, callback, tool results
     sim = _get_latest_sim_pass_rate()
@@ -738,7 +886,10 @@ def _append_experiment_log(iteration: int, triage: Optional[Dict[str, Any]], mes
     # Create file with header if it doesn't exist
     if not os.path.isfile(log_path):
         with open(log_path, "w") as f:
-            f.write("# Experiment Log\n\nTracking what was tried, results across all eval types, and failure details.\n\n")
+            f.write(
+                "# Experiment Log\n\nTracking what was tried,"
+                " results across all eval types, and failure details.\n\n"
+            )
 
     # Build the entry
     change_text = message or "(no description)"
@@ -779,32 +930,52 @@ def _append_experiment_log(iteration: int, triage: Optional[Dict[str, Any]], mes
                     eval_counts[eval_name] = {"count": 0, "detail": detail}
                 eval_counts[eval_name]["count"] += 1
             for eval_name, info in eval_counts.items():
-                count_str = f" x{info['count']}" if info['count'] > 1 else ""
-                detail_str = f": {info['detail'][:100]}" if info['detail'] else ""
+                count_str = f" x{info['count']}" if info["count"] > 1 else ""
+                detail_str = (
+                    f": {info['detail'][:100]}" if info["detail"] else ""
+                )
                 lines.append(f"- `{cat}` {eval_name}{count_str}{detail_str}")
 
     # Sim failure breakdown
     if sim and sim[0] < sim[1]:
-        reports_dir = get_project_path("eval-reports")
+        reports_dir = get_output_dir()
         sim_files = sorted(
-            [f for f in os.listdir(reports_dir) if f.startswith("sim_results_") and f.endswith(".json")],
+            [
+                f
+                for f in os.listdir(reports_dir)
+                if f.startswith("sim_results_") and f.endswith(".json")
+            ],
             reverse=True,
         )
         if sim_files:
             try:
                 with open(os.path.join(reports_dir, sim_files[0])) as f:
                     sim_data = json.load(f)
-                sim_results = sim_data if isinstance(sim_data, list) else sim_data.get("results", [])
-                failed_sims = [r for r in sim_results if not r.get("passed", False) and not r.get("error")]
+                sim_results = (
+                    sim_data
+                    if isinstance(sim_data, list)
+                    else sim_data.get("results", [])
+                )
+                failed_sims = [
+                    r
+                    for r in sim_results
+                    if not r.get("passed", False) and not r.get("error")
+                ]
                 if failed_sims:
                     lines.append("")
                     lines.append("**Sim failures:**")
                     for r in failed_sims:
                         name = r.get("name", "?")
                         exp_details = r.get("expectation_details", [])
-                        failed_exps = [e for e in exp_details if e.get("status") != "Met"]
+                        failed_exps = [
+                            e for e in exp_details if e.get("status") != "Met"
+                        ]
                         for fe in failed_exps:
-                            lines.append(f"- `{name}`: {fe.get('expectation', '?')[:80]} — {fe.get('justification', '?')[:80]}")
+                            lines.append(
+                                f"- `{name}`: "
+                                f"{fe.get('expectation', '?')[:80]} —"
+                                f" {fe.get('justification', '?')[:80]}"
+                            )
             except (json.JSONDecodeError, OSError):
                 pass
 
@@ -816,7 +987,9 @@ def _append_experiment_log(iteration: int, triage: Optional[Dict[str, Any]], mes
     print(f"Experiment log: {log_path}")
 
 
-def _append_results_tsv(iteration: int, triage: Optional[Dict[str, Any]], message: Optional[str]):
+def _append_results_tsv(
+    iteration: int, triage: dict[str, Any] | None, message: str | None
+):
     """Append a row to <project>/results.tsv."""
     tsv_path = get_project_path("results.tsv")
     ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -836,7 +1009,7 @@ def _append_results_tsv(iteration: int, triage: Optional[Dict[str, Any]], messag
     cb = _get_latest_callback_results()
     tool = _get_latest_tool_test_results()
 
-    status, delta, _ = _compute_status(iteration, g_passed, g_total)
+    status, _delta, _ = _compute_status(iteration, g_passed, g_total)
     msg = (message or "").replace("\t", " ").replace("\n", " ")
 
     def _rate(passed, total):
@@ -845,13 +1018,18 @@ def _append_results_tsv(iteration: int, triage: Optional[Dict[str, Any]], messag
     # Create file with header if it doesn't exist
     if not os.path.isfile(tsv_path):
         with open(tsv_path, "w") as f:
-            f.write("iteration\ttimestamp\tgoldens\tsims\ttool_tests\tcallback_tests\tstatus\tmessage\n")
+            f.write(
+                "iteration\ttimestamp\tgoldens\tsims\ttool_tests\t"
+                "callback_tests\tstatus\tmessage\n"
+            )
 
-    row = (f"{iteration}\t{ts}\t{_rate(g_passed, g_total)}\t"
-           f"{_rate(sim[0], sim[1]) if sim else '-'}\t"
-           f"{_rate(tool[0], tool[1]) if tool else '-'}\t"
-           f"{_rate(cb[0], cb[1]) if cb else '-'}\t"
-           f"{status}\t{msg}\n")
+    row = (
+        f"{iteration}\t{ts}\t{_rate(g_passed, g_total)}\t"
+        f"{_rate(sim[0], sim[1]) if sim else '-'}\t"
+        f"{_rate(tool[0], tool[1]) if tool else '-'}\t"
+        f"{_rate(cb[0], cb[1]) if cb else '-'}\t"
+        f"{status}\t{msg}\n"
+    )
     with open(tsv_path, "a") as f:
         f.write(row)
     print(f"Results TSV: {tsv_path}")
@@ -861,14 +1039,21 @@ def _append_results_tsv(iteration: int, triage: Optional[Dict[str, Any]], messag
 # Report command
 # ---------------------------------------------------------------------------
 
-def _get_latest_sim_pass_rate() -> Optional[Tuple[int, int]]:
-    """Read the latest sim results from eval-reports/ and return (passed, total)."""
-    reports_dir = get_project_path("eval-reports")
+
+def _get_latest_sim_pass_rate() -> tuple[int, int] | None:
+    """Read the latest sim results from eval-reports/ and return (passed,
+    total).
+    """
+    reports_dir = get_output_dir()
     if not os.path.isdir(reports_dir):
         return None
     # Find the most recent sim_results_*.json
     sim_files = sorted(
-        [f for f in os.listdir(reports_dir) if f.startswith("sim_results_") and f.endswith(".json")],
+        [
+            f
+            for f in os.listdir(reports_dir)
+            if f.startswith("sim_results_") and f.endswith(".json")
+        ],
         reverse=True,
     )
     if not sim_files:
@@ -878,16 +1063,27 @@ def _get_latest_sim_pass_rate() -> Optional[Tuple[int, int]]:
             data = json.load(f)
         results = data if isinstance(data, list) else data.get("results", [])
         total = len(results)
-        passed = sum(1 for r in results if r.get("passed", False) or r.get("status") == "PASSED")
+        passed = sum(
+            1
+            for r in results
+            if r.get("passed", False) or r.get("status") == "PASSED"
+        )
         return (passed, total) if total > 0 else None
     except (json.JSONDecodeError, OSError):
         return None
 
 
 def _format_regressions(
-    golden_regression: bool, golden_prev_pct: float, golden_curr_pct: float, agent_failures: int,
-    tool_regression: bool, tool_prev: Optional[Tuple[int, int]], tool_now: Optional[Tuple[int, int]],
-    cb_regression: bool, cb_prev: Optional[Tuple[int, int]], cb_now: Optional[Tuple[int, int]],
+    golden_regression: bool,
+    golden_prev_pct: float,
+    golden_curr_pct: float,
+    agent_failures: int,
+    tool_regression: bool,
+    tool_prev: tuple[int, int] | None,
+    tool_now: tuple[int, int] | None,
+    cb_regression: bool,
+    cb_prev: tuple[int, int] | None,
+    cb_now: tuple[int, int] | None,
 ) -> str:
     """Build a human-readable summary of which eval types regressed."""
     parts = []
@@ -897,14 +1093,23 @@ def _format_regressions(
             f"({agent_failures} real failure(s))"
         )
     if tool_regression and tool_prev and tool_now:
-        parts.append(f"tool tests {tool_prev[0]}/{tool_prev[1]} → {tool_now[0]}/{tool_now[1]}")
+        parts.append(
+            f"tool tests {tool_prev[0]}/{tool_prev[1]} →"
+            f" {tool_now[0]}/{tool_now[1]}"
+        )
     if cb_regression and cb_prev and cb_now:
-        parts.append(f"callback tests {cb_prev[0]}/{cb_prev[1]} → {cb_now[0]}/{cb_now[1]}")
+        parts.append(
+            f"callback tests {cb_prev[0]}/{cb_prev[1]} →"
+            f" {cb_now[0]}/{cb_now[1]}"
+        )
     return ", ".join(parts) if parts else "(none)"
 
 
-def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any]]):
-    """Revert cxas_app/ to previous iteration snapshot if a REAL regression occurred.
+def _do_auto_revert(
+    config: dict, iteration: int, triage: dict[str, Any] | None
+):
+    """Revert cxas_app/ to previous iteration snapshot if a REAL regression
+    occurred.
 
     Triggers on ANY of these regressions (each gated independently):
       - **Goldens** dropped AND failures are REAL agent issues (TOOL_MISSING,
@@ -935,9 +1140,11 @@ def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any
     curr_pct = 100 * passed / total if total else 0
 
     failures = triage.get("failures", {})
-    agent_failures = (len(failures.get("TOOL_MISSING", []))
-                      + len(failures.get("TEXT_MISMATCH", []))
-                      + len(failures.get("EXPECTATION_FAIL", [])))
+    agent_failures = (
+        len(failures.get("TOOL_MISSING", []))
+        + len(failures.get("TEXT_MISMATCH", []))
+        + len(failures.get("EXPECTATION_FAIL", []))
+    )
 
     golden_dropped = curr_pct < prev_pct
     golden_regression = golden_dropped and agent_failures > 0
@@ -949,22 +1156,30 @@ def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any
     cb_now = _get_latest_callback_results()
     tool_prev = prev_typed.get("tool_test")
     cb_prev = prev_typed.get("callback_test")
-    tool_regression = bool(tool_now and tool_prev and tool_now[0] < tool_prev[0])
+    tool_regression = bool(
+        tool_now and tool_prev and tool_now[0] < tool_prev[0]
+    )
     cb_regression = bool(cb_now and cb_prev and cb_now[0] < cb_prev[0])
 
     if not (golden_regression or tool_regression or cb_regression):
         if golden_dropped and agent_failures == 0:
-            platform_failures = (len(failures.get("TIMEOUT", []))
-                                 + len(failures.get("SCORES_PASS_BUT_FAIL", []))
-                                 + len(failures.get("UNKNOWN", [])))
-            print(f"Goldens dropped ({prev_pct:.0f}% → {curr_pct:.0f}%) but all "
-                  f"{platform_failures} failure(s) are platform issues. "
-                  f"NOT reverting — not an agent regression.")
+            platform_failures = (
+                len(failures.get("TIMEOUT", []))
+                + len(failures.get("SCORES_PASS_BUT_FAIL", []))
+                + len(failures.get("UNKNOWN", []))
+            )
+            print(
+                f"Goldens dropped ({prev_pct:.0f}% → {curr_pct:.0f}%) but all "
+                f"{platform_failures} failure(s) are platform issues. "
+                "NOT reverting — not an agent regression."
+            )
         return False
 
     # Sim counter-signal applies to ALL regression types.
     prev_sim = None
-    prev_results_path = os.path.join(_iteration_dir(iteration - 1), "results.json")
+    prev_results_path = os.path.join(
+        _iteration_dir(iteration - 1), "results.json"
+    )
     if os.path.isfile(prev_results_path):
         try:
             with open(prev_results_path) as f:
@@ -978,54 +1193,81 @@ def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any
         curr_sim_pct = 100 * curr_sim[0] / curr_sim[1] if curr_sim[1] else 0
         if curr_sim_pct > prev_sim_pct:
             regs = _format_regressions(
-                golden_regression, prev_pct, curr_pct, agent_failures,
-                tool_regression, tool_prev, tool_now,
-                cb_regression, cb_prev, cb_now,
+                golden_regression,
+                prev_pct,
+                curr_pct,
+                agent_failures,
+                tool_regression,
+                tool_prev,
+                tool_now,
+                cb_regression,
+                cb_prev,
+                cb_now,
             )
-            print(f"{regs} regressed but sims improved "
-                  f"({prev_sim_pct:.0f}% → {curr_sim_pct:.0f}%). "
-                  f"NOT reverting — mixed signal. Investigate: the change may help real "
-                  f"conversations but the test expectation may need updating.")
+            print(
+                f"{regs} regressed but sims improved ({prev_sim_pct:.0f}% →"
+                f" {curr_sim_pct:.0f}%). NOT reverting — mixed signal."
+                " Investigate: the change may help real conversations but the"
+                " test expectation may need updating."
+            )
             return False
 
     # Real regression + no sim improvement → revert.
     prev_snapshot = _snapshot_dir(iteration - 1)
     app_dir = _get_app_dir(config)
     if not os.path.isdir(prev_snapshot):
-        print(f"Warning: Previous snapshot not found at {prev_snapshot}. Cannot revert.")
+        print(
+            f"Warning: Previous snapshot not found at {prev_snapshot}. Cannot"
+            " revert."
+        )
         return False
 
     shutil.copytree(prev_snapshot, app_dir, dirs_exist_ok=True)
     regs = _format_regressions(
-        golden_regression, prev_pct, curr_pct, agent_failures,
-        tool_regression, tool_prev, tool_now,
-        cb_regression, cb_prev, cb_now,
+        golden_regression,
+        prev_pct,
+        curr_pct,
+        agent_failures,
+        tool_regression,
+        tool_prev,
+        tool_now,
+        cb_regression,
+        cb_prev,
+        cb_now,
     )
     sim_note = ""
     if curr_sim is not None and prev_sim is not None:
-        sim_note = f" Sims {'dropped' if curr_sim[0] < prev_sim[0] else 'flat'}."
-    print(f"REGRESSION: {regs}.{sim_note} "
-          f"Reverted {app_dir}/ to iteration {iteration - 1} snapshot.")
+        sim_note = (
+            f" Sims {'dropped' if curr_sim[0] < prev_sim[0] else 'flat'}."
+        )
+    print(
+        f"REGRESSION: {regs}.{sim_note} "
+        f"Reverted {app_dir}/ to iteration {iteration - 1} snapshot."
+    )
 
     # Update experiment_log.md — replace the status line for this iteration
     log_path = get_project_path("experiment_log.md")
     if os.path.isfile(log_path):
-        with open(log_path, "r") as f:
+        with open(log_path) as f:
             content = f.read()
         # Find and update the status line for this iteration
         import re
+
         content = re.sub(
-            rf"(## Iteration {iteration} .*?\n\*\*Change:\*\*.*?\n\*\*Result:\*\*.*?\n\*\*Status:\*\*) .+",
+            rf"(## Iteration {iteration}"
+            r" .*?\n\*\*Change:\*\*.*?\n\*\*Result:\*\*.*?\n"
+            r"\*\*Status:\*\*) .+",
             r"\1 reverted",
             content,
         )
         with open(log_path, "w") as f:
             f.write(content)
 
-    # Update results.tsv — replace the status in the last line for this iteration
+    # Update results.tsv — replace the status in the last line for this
+    # iteration
     tsv_path = get_project_path("results.tsv")
     if os.path.isfile(tsv_path):
-        with open(tsv_path, "r") as f:
+        with open(tsv_path) as f:
             lines = f.readlines()
         for i in range(len(lines) - 1, -1, -1):
             parts = lines[i].split("\t")
@@ -1044,8 +1286,11 @@ def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any
 PLATFORM_FAILURE_CATEGORIES = ("TIMEOUT", "EVAL_ERROR", "SCORES_PASS_BUT_FAIL")
 
 
-def _was_previously_passing(prev_per_eval: Dict[Tuple[str, str], Dict[str, int]],
-                            eval_type: str, eval_name: str) -> bool:
+def _was_previously_passing(
+    prev_per_eval: dict[tuple[str, str], dict[str, int]],
+    eval_type: str,
+    eval_name: str,
+) -> bool:
     """True iff the eval existed in the prior iteration and ran 100% pass."""
     info = prev_per_eval.get((eval_type, eval_name))
     if info is None:
@@ -1057,9 +1302,9 @@ def _was_previously_passing(prev_per_eval: Dict[Tuple[str, str], Dict[str, int]]
 
 
 def _split_clusters_by_regression(
-    clusters: List[Dict[str, Any]],
-    iteration: Optional[int],
-) -> List[Dict[str, Any]]:
+    clusters: list[dict[str, Any]],
+    iteration: int | None,
+) -> list[dict[str, Any]]:
     """Tag clusters with regression metadata and split mixed clusters in two.
 
     A cluster member is a "regression" iff it passed every run in the prior
@@ -1092,37 +1337,53 @@ def _split_clusters_by_regression(
     regression_context_template = {
         "previous_iteration": iteration - 1,
         "previous_message": prior_message,
-        "previous_snapshot_dir": prior_snapshot if os.path.isdir(prior_snapshot) else None,
+        "previous_snapshot_dir": (
+            prior_snapshot if os.path.isdir(prior_snapshot) else None
+        ),
     }
 
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for cluster in clusters:
         eval_type = cluster.get("eval_type", "golden")
-        regressed = [n for n in cluster.get("eval_names", [])
-                     if _was_previously_passing(prev_per_eval, eval_type, n)]
-        new_failing = [n for n in cluster.get("eval_names", []) if n not in regressed]
+        regressed = [
+            n
+            for n in cluster.get("eval_names", [])
+            if _was_previously_passing(prev_per_eval, eval_type, n)
+        ]
+        new_failing = [
+            n for n in cluster.get("eval_names", []) if n not in regressed
+        ]
 
         if regressed and not new_failing:
             cluster["regression_status"] = "regression"
             cluster["regressed_evals"] = regressed
             cluster["regression_context"] = dict(regression_context_template)
-            cluster["priority_score"] = cluster.get("priority_score", 0) + 50_000
+            cluster["priority_score"] = (
+                cluster.get("priority_score", 0) + 50_000
+            )
             out.append(cluster)
         elif new_failing and not regressed:
             cluster["regression_status"] = "new"
             out.append(cluster)
         else:
-            # Mixed: split into one regression cluster + one new-failure cluster.
+            # Mixed: split into one regression cluster + one new-failure
+            # cluster.
             reg_cluster = dict(cluster)
             reg_cluster["eval_names"] = regressed
             reg_cluster["eval_count"] = len(regressed)
             reg_cluster["regression_status"] = "regression"
             reg_cluster["regressed_evals"] = regressed
-            reg_cluster["regression_context"] = dict(regression_context_template)
-            reg_cluster["priority_score"] = cluster.get("priority_score", 0) + 50_000
+            reg_cluster["regression_context"] = dict(
+                regression_context_template
+            )
+            reg_cluster["priority_score"] = (
+                cluster.get("priority_score", 0) + 50_000
+            )
             if "eval_pass_rates" in cluster:
                 reg_cluster["eval_pass_rates"] = {
-                    k: v for k, v in cluster["eval_pass_rates"].items() if k in regressed
+                    k: v
+                    for k, v in cluster["eval_pass_rates"].items()
+                    if k in regressed
                 }
 
             new_cluster = dict(cluster)
@@ -1131,7 +1392,9 @@ def _split_clusters_by_regression(
             new_cluster["regression_status"] = "new"
             if "eval_pass_rates" in cluster:
                 new_cluster["eval_pass_rates"] = {
-                    k: v for k, v in cluster["eval_pass_rates"].items() if k in new_failing
+                    k: v
+                    for k, v in cluster["eval_pass_rates"].items()
+                    if k in new_failing
                 }
 
             out.append(reg_cluster)
@@ -1140,12 +1403,12 @@ def _split_clusters_by_regression(
 
 
 def _build_run_summary(
-    triage: Optional[Dict[str, Any]],
+    triage: dict[str, Any] | None,
     reverted: bool,
-    revert_reason: Optional[str],
-    message: Optional[str],
-    iteration: Optional[int] = None,
-) -> Dict[str, Any]:
+    revert_reason: str | None,
+    message: str | None,
+    iteration: int | None = None,
+) -> dict[str, Any]:
     """Build the structured run summary that callers consume programmatically.
 
     Triages failures from all four eval types (golden, sim, tool_test,
@@ -1170,7 +1433,11 @@ def _build_run_summary(
     cb_triage = tr.triage_callback_test_results(cb_rows) if cb_rows else None
 
     by_type = {
-        "golden": {"passed": g_passed, "failed": g_total - g_passed, "total": g_total},
+        "golden": {
+            "passed": g_passed,
+            "failed": g_total - g_passed,
+            "total": g_total,
+        },
     }
     if sim_triage:
         by_type["sim"] = {
@@ -1195,10 +1462,10 @@ def _build_run_summary(
     passed = sum(t["passed"] for t in by_type.values())
     failed = total - passed
 
-    # Foundation categories (TOOL_TEST_FAIL, CALLBACK_TEST_FAIL) sit just below
-    # EVAL_ERROR — they're deterministic, isolated, easy to fix, and cascade
-    # into golden/sim failures. Sim-specific categories sit lower; SIM_USER_OFF_SCRIPT
-    # and SIM_TASK_INCOMPLETE are usually eval-side fixes.
+    # Foundation categories (TOOL_TEST_FAIL, CALLBACK_TEST_FAIL) sit just
+    # below EVAL_ERROR — they're deterministic, isolated, easy to fix, and
+    # cascade into golden/sim failures. Sim-specific categories sit lower;
+    # SIM_USER_OFF_SCRIPT and SIM_TASK_INCOMPLETE are usually eval-side fixes.
     category_priority = {
         "EVAL_ERROR": 0,
         "TOOL_TEST_FAIL": 1,
@@ -1216,7 +1483,8 @@ def _build_run_summary(
         "UNKNOWN": 13,
     }
 
-    # Build flat_failures across all four eval types, tagging each with eval_type.
+    # Build flat_failures across all four eval types, tagging each with
+    # eval_type.
     # top_failures is an INDEX (eval_name + category + run_id + eval_type) for
     # prioritization and to feed into triage-failure dispatches. It deliberately
     # does NOT carry a "reason" / "detail" field — that field looked diagnostic
@@ -1226,15 +1494,17 @@ def _build_run_summary(
     run_id = triage.get("run_short", "") if triage else ""
     flat_failures = []
 
-    def _accumulate(eval_type: str, per_eval_dict: Dict[str, Any]):
+    def _accumulate(eval_type: str, per_eval_dict: dict[str, Any]):
         for eval_name, info in per_eval_dict.items():
             for category, _detail in info.get("failures", []):
-                flat_failures.append({
-                    "eval_name": eval_name,
-                    "eval_type": eval_type,
-                    "category": category,
-                    "run_id": run_id,
-                })
+                flat_failures.append(
+                    {
+                        "eval_name": eval_name,
+                        "eval_type": eval_type,
+                        "category": category,
+                        "run_id": run_id,
+                    }
+                )
 
     _accumulate("golden", (triage or {}).get("per_eval", {}))
     if sim_triage:
@@ -1253,7 +1523,7 @@ def _build_run_summary(
     # ones unconditionally, then sorts by cluster size within category.
     failure_clusters = []
 
-    def _accumulate_clusters(eval_type: str, raw_clusters: Dict[str, list]):
+    def _accumulate_clusters(eval_type: str, raw_clusters: dict[str, list]):
         for category, clusters in raw_clusters.items():
             cat_pri = category_priority.get(category, 99)
             for c in clusters:
@@ -1266,19 +1536,28 @@ def _build_run_summary(
                     "eval_count": eval_count,
                     "eval_names": c.get("eval_names", []),
                     "run_id": run_id,
-                    "priority_score": (15 - cat_pri) * 1000 + min(eval_count, 999),
+                    "priority_score": (15 - cat_pri) * 1000
+                    + min(eval_count, 999),
                 }
                 if c.get("eval_pass_rates"):
                     entry["eval_pass_rates"] = c["eval_pass_rates"]
                 failure_clusters.append(entry)
 
-    _accumulate_clusters("golden", (triage or {}).get("failure_clusters", {}) or {})
+    _accumulate_clusters(
+        "golden", (triage or {}).get("failure_clusters", {}) or {}
+    )
     if sim_triage:
-        _accumulate_clusters("sim", sim_triage.get("failure_clusters", {}) or {})
+        _accumulate_clusters(
+            "sim", sim_triage.get("failure_clusters", {}) or {}
+        )
     if tool_triage:
-        _accumulate_clusters("tool_test", tool_triage.get("failure_clusters", {}) or {})
+        _accumulate_clusters(
+            "tool_test", tool_triage.get("failure_clusters", {}) or {}
+        )
     if cb_triage:
-        _accumulate_clusters("callback_test", cb_triage.get("failure_clusters", {}) or {})
+        _accumulate_clusters(
+            "callback_test", cb_triage.get("failure_clusters", {}) or {}
+        )
 
     # Phase 3: regression detection. For each cluster member, look up the
     # previous iteration's pass rate. An eval was "previously passing" iff its
@@ -1288,7 +1567,9 @@ def _build_run_summary(
     # paths even though the surface symptom is identical. Regression clusters
     # carry `regression_context` so the triage subagent reads the prior
     # iteration's `--message` and instruction diff before flipping the fix.
-    failure_clusters = _split_clusters_by_regression(failure_clusters, iteration)
+    failure_clusters = _split_clusters_by_regression(
+        failure_clusters, iteration
+    )
 
     failure_clusters.sort(key=lambda c: -c["priority_score"])
     failure_clusters = failure_clusters[:10]
@@ -1328,7 +1609,13 @@ def _build_run_summary(
     }
 
 
-def do_report(config: dict, iteration: Optional[int] = None, message: Optional[str] = None, auto_revert: bool = False, json_summary: Optional[str] = None):
+def do_report(
+    config: dict,
+    iteration: int | None = None,
+    message: str | None = None,
+    auto_revert: bool = False,
+    json_summary: str | None = None,
+):
     """Generate an iteration report, auto-snapshotting if needed."""
     app_dir = _get_app_dir(config)
 
@@ -1338,7 +1625,8 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
             print(f"Error: No snapshot found for iteration {iteration}.")
             sys.exit(1)
     else:
-        # Auto-detect: if a snapshot already exists for the next iteration, use it;
+        # Auto-detect: if a snapshot already exists for the next iteration,
+        # use it;
         # otherwise, take a snapshot first.
         latest = _latest_iteration()
         if latest is not None and os.path.isdir(_snapshot_dir(latest)):
@@ -1364,7 +1652,10 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
         diffs = _compute_diffs(old_files, new_files)
         print(f"  {len(diffs)} file(s) changed.")
     else:
-        print(f"Iteration {iteration} is the baseline (no previous iteration to diff against).")
+        print(
+            f"Iteration {iteration} is the baseline"
+            " (no previous iteration to diff against)."
+        )
         diffs = []
 
     # Fetch eval results
@@ -1385,15 +1676,22 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
         tool_rows = _load_tool_test_rows()
         cb_rows = _load_callback_test_rows()
         sim_triage = tr.triage_sim_results(sim_rows) if sim_rows else None
-        tool_triage = tr.triage_tool_test_results(tool_rows) if tool_rows else None
-        cb_triage = tr.triage_callback_test_results(cb_rows) if cb_rows else None
+        tool_triage = (
+            tr.triage_tool_test_results(tool_rows) if tool_rows else None
+        )
+        cb_triage = (
+            tr.triage_callback_test_results(cb_rows) if cb_rows else None
+        )
 
-        def _ser_per_eval(p: Dict[str, Any]) -> Dict[str, Any]:
+        def _ser_per_eval(p: dict[str, Any]) -> dict[str, Any]:
             return {
                 name: {
                     "pass": info["pass"],
                     "total": info["total"],
-                    "failures": [(cat, detail) for cat, detail in info.get("failures", [])],
+                    "failures": [
+                        (cat, detail)
+                        for cat, detail in info.get("failures", [])
+                    ],
                 }
                 for name, info in (p or {}).items()
             }
@@ -1409,12 +1707,19 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
                 for cat, items in triage.get("failures", {}).items()
             },
             "per_eval": _ser_per_eval(triage.get("per_eval", {})),
-            # Phase 3: typed per_eval blocks so regression detection can span types.
+            # Phase 3: typed per_eval blocks so regression detection can
+            # span types.
             "per_eval_by_type": {
                 "golden": _ser_per_eval(triage.get("per_eval", {})),
-                "sim": _ser_per_eval(sim_triage.get("per_eval") if sim_triage else {}),
-                "tool_test": _ser_per_eval(tool_triage.get("per_eval") if tool_triage else {}),
-                "callback_test": _ser_per_eval(cb_triage.get("per_eval") if cb_triage else {}),
+                "sim": _ser_per_eval(
+                    sim_triage.get("per_eval") if sim_triage else {}
+                ),
+                "tool_test": _ser_per_eval(
+                    tool_triage.get("per_eval") if tool_triage else {}
+                ),
+                "callback_test": _ser_per_eval(
+                    cb_triage.get("per_eval") if cb_triage else {}
+                ),
             },
         }
         with open(results_path, "w") as f:
@@ -1423,8 +1728,15 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
     else:
         # Save empty results to mark that we tried
         with open(results_path, "w") as f:
-            json.dump({"total": 0, "passed": 0, "note": "Eval results not available"}, f, indent=2)
-        print(f"  No eval results available. Empty results saved to {results_path}")
+            json.dump(
+                {"total": 0, "passed": 0, "note": "Eval results not available"},
+                f,
+                indent=2,
+            )
+        print(
+            "  No eval results available. Empty results saved to"
+            f" {results_path}"
+        )
 
     # Generate HTML
     html = build_report_html(iteration, config, diffs, triage, message=message)
@@ -1441,17 +1753,24 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
     reverted = False
     revert_reason = None
     if auto_revert and triage:
-        total = triage.get("total", 0)
-        passed = triage.get("passed", 0)
+        triage.get("total", 0)
+        triage.get("passed", 0)
         reverted = _do_auto_revert(config, iteration, triage)
         if reverted:
-            revert_reason = f"Golden pass rate regressed at iteration {iteration}; reverted to iteration {iteration - 1} snapshot."
+            revert_reason = (
+                f"Golden pass rate regressed at iteration {iteration};"
+                f" reverted to iteration {iteration - 1} snapshot."
+            )
 
     # Structured summary for programmatic callers (the iteration loop reads this
     # instead of parsing stdout).
     if json_summary:
-        summary = _build_run_summary(triage, reverted, revert_reason, message, iteration=iteration)
-        os.makedirs(os.path.dirname(os.path.abspath(json_summary)), exist_ok=True)
+        summary = _build_run_summary(
+            triage, reverted, revert_reason, message, iteration=iteration
+        )
+        os.makedirs(
+            os.path.dirname(os.path.abspath(json_summary)), exist_ok=True
+        )
         with open(json_summary, "w") as f:
             json.dump(summary, f, indent=2)
         print(f"\nJSON summary: {json_summary}")
@@ -1461,6 +1780,7 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Snapshot agent state and generate iteration reports"
@@ -1468,25 +1788,42 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     # snapshot
-    subparsers.add_parser("snapshot", help="Save current app state as a new iteration snapshot")
+    subparsers.add_parser(
+        "snapshot", help="Save current app state as a new iteration snapshot"
+    )
 
     # report
-    report_parser = subparsers.add_parser("report", help="Generate an iteration report")
-    report_parser.add_argument(
-        "--iteration", type=int, default=None,
-        help="Regenerate report for a specific iteration number"
+    report_parser = subparsers.add_parser(
+        "report", help="Generate an iteration report"
     )
     report_parser.add_argument(
-        "--message", default=None,
-        help="Add a rationale / change description to the report"
+        "--iteration",
+        type=int,
+        default=None,
+        help="Regenerate report for a specific iteration number",
     )
     report_parser.add_argument(
-        "--auto-revert", action="store_true", default=False,
-        help="Automatically revert cxas_app/ to previous snapshot if pass rate regressed"
+        "--message",
+        default=None,
+        help="Add a rationale / change description to the report",
     )
     report_parser.add_argument(
-        "--json-summary", default=None,
-        help="Write a structured run summary (status, pass rate, by_type, top_failures, reverted) to this path. Used by the debug iteration loop to read results without parsing stdout."
+        "--auto-revert",
+        action="store_true",
+        default=False,
+        help=(
+            "Automatically revert cxas_app/ to previous snapshot if pass rate"
+            " regressed"
+        ),
+    )
+    report_parser.add_argument(
+        "--json-summary",
+        default=None,
+        help=(
+            "Write a structured run summary (status, pass rate, by_type,"
+            " top_failures, reverted) to this path. Used by the debug iteration"
+            " loop to read results without parsing stdout."
+        ),
     )
 
     args = parser.parse_args()
@@ -1498,13 +1835,22 @@ def main():
     try:
         config = load_config()
     except SystemExit:
-        print("Error: Could not load gecx-config.json. Ensure you are in the project root.")
+        print(
+            "Error: Could not load gecx-config.toml. Ensure you are in"
+            " the project root."
+        )
         sys.exit(1)
 
     if args.command == "snapshot":
         do_snapshot(config)
     elif args.command == "report":
-        do_report(config, iteration=args.iteration, message=args.message, auto_revert=args.auto_revert, json_summary=args.json_summary)
+        do_report(
+            config,
+            iteration=args.iteration,
+            message=args.message,
+            auto_revert=args.auto_revert,
+            json_summary=args.json_summary,
+        )
 
 
 if __name__ == "__main__":
