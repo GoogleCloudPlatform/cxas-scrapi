@@ -290,6 +290,14 @@ class SchemaValid(Rule):
             if key.startswith("_comment_"):
                 data.pop(key)
 
+        # For evaluations, if it's a golden/deterministic evaluation,
+        # bypass scenario validation
+        if self.target == "evaluation_config" and (
+            "golden" in data or "Golden" in data
+        ):
+            data.pop("scenario", None)
+            data.pop("Scenario", None)
+
         try:
             _validate_fields(data, self._proto_type, path=str(resource_dir))
         except ValueError as e:
