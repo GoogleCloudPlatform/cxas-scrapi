@@ -88,7 +88,9 @@ def _make_service(*, with_grouping: bool = False) -> SimpleNamespace:
         tools={
             "billing_lookup": IRTool(
                 id="billing_lookup",
-                name="projects/p/locations/us/apps/demo-uuid/tools/billing_lookup",
+                name=(
+                    "projects/p/locations/us/apps/demo-uuid/tools/billing_lookup"
+                ),
                 type="PYTHON",
                 payload={
                     "displayName": "billing_lookup",
@@ -107,8 +109,7 @@ def _make_service(*, with_grouping: bool = False) -> SimpleNamespace:
             "billing_api": IRTool(
                 id="billing_api",
                 name=(
-                    "projects/p/locations/us/apps/demo-uuid/toolsets/"
-                    "billing_api"
+                    "projects/p/locations/us/apps/demo-uuid/toolsets/billing_api"
                 ),
                 type="TOOLSET",
                 payload={
@@ -329,10 +330,16 @@ def test_flush_never_raises_when_service_state_bad(tmp_path, caplog):
 )
 def test_service_declares_all_planned_checkpoints(name):
     """Sanity check that every documented checkpoint name actually fires
-    in ``service.py``. Catches accidental rename/removal."""
-    src = Path("src/cxas_scrapi/migration/service.py").read_text(
-        encoding="utf-8"
+
+    in ``service.py``. Catches accidental rename/removal.
+    """
+    repo_root = Path(__file__).parents[3]
+    candidate_src = (
+        repo_root / "src" / "cxas_scrapi" / "migration" / "service.py"
     )
+    candidate_flat = repo_root / "migration" / "service.py"
+    service_path = candidate_src if candidate_src.exists() else candidate_flat
+    src = service_path.read_text(encoding="utf-8")
     assert f'"{name}"' in src, f"checkpoint {name!r} not wired in service.py"
 
 

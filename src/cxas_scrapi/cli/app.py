@@ -26,6 +26,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from cxas_scrapi.core import workspace as ws
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.versions import Versions
@@ -33,20 +34,53 @@ from cxas_scrapi.core.versions import Versions
 logger = logging.getLogger(__name__)
 
 
+def _get_project_and_location(args: argparse.Namespace) -> tuple[str, str]:
+    """Resolve project_id and location dynamically, prioritizing command line arguments."""
+    project_id = getattr(args, "project_id", None)
+    location = getattr(args, "location", None)
+
+    if not project_id or not location:
+        try:
+            config = ws.load_workspace_config()
+            if not project_id:
+                project_id = config.get("gcp_project_id")
+            if not location:
+                location = config.get("location", "us")
+        except Exception:
+            pass
+
+    if not project_id or not location:
+        print(
+            "Error: Could not determine project_id or location.\n"
+            "Please specify --project-id and --location or run this command from "
+            "within an active workspace."
+        )
+        sys.exit(1)
+
+    return project_id, location
+
+
 def _resolve_app_args(
     app_identifier: str, args: argparse.Namespace
 ) -> tuple[Apps, str, str]:
     """Resolves project, location, Apps client, app_name, and display_name."""
-    project_id = (
-        Common._get_project_id(app_identifier)
-        if Common._get_project_id(app_identifier)
-        else getattr(args, "project_id", None)
-    )
-    location = (
-        Common._get_location(app_identifier)
-        if Common._get_location(app_identifier)
-        else getattr(args, "location", None)
-    )
+    project_id = getattr(args, "project_id", None)
+    location = getattr(args, "location", None)
+
+    if not project_id:
+        project_id = Common._get_project_id(app_identifier)
+    if not location:
+        location = Common._get_location(app_identifier)
+
+    if not project_id or not location:
+        try:
+            config = ws.load_workspace_config()
+            if not project_id:
+                project_id = config.get("gcp_project_id")
+            if not location:
+                location = config.get("location", "us")
+        except Exception:
+            pass
 
     if not project_id or not location:
         print(
@@ -56,10 +90,25 @@ def _resolve_app_args(
         sys.exit(1)
 
     apps_client = Apps(project_id=project_id, location=location)
-    app_name = app_identifier
-    display_name = app_identifier
 
-    if "projects/" not in app_identifier:
+    if "projects/" in app_identifier:
+        orig_proj = Common._get_project_id(app_identifier)
+        orig_loc = Common._get_location(app_identifier)
+        if orig_proj != project_id or orig_loc != location:
+            parts = app_identifier.split("/")
+            if len(parts) >= 6:
+                app_id = parts[5]
+                app_name = (
+                    f"projects/{project_id}/locations/{location}/apps/{app_id}"
+                )
+            else:
+                app_name = app_identifier
+        else:
+            app_name = app_identifier
+        display_name = app_identifier.rsplit("/", maxsplit=1)[-1]
+    else:
+        app_name = app_identifier
+        display_name = app_identifier
         app = apps_client.get_app_by_display_name(app_identifier)
         if app:
             app_name = app.name
@@ -89,14 +138,36 @@ def _handle_import_result(result: Any, success_verb: str) -> str | None:
 
 def app_pull(args: argparse.Namespace) -> None:
     """Handles the 'pull' command."""
-    print(f"Pulling app: {args.app}")
+    app_arg = args.app
+    if not app_arg:
+        try:
+            config = ws.load_workspace_config()
+            app_arg = config.get("deployed_app_id")
+        except Exception:
+            pass
 
-    apps_client, app_name, _ = _resolve_app_args(args.app, args)
+    if not app_arg:
+        print(
+            "Error: No app provided and no deployed_app_id configured in active"
+            " profile."
+        )
+        sys.exit(1)
+
+    print(f"Pulling app: {app_arg}")
+    apps_client, app_name, _ = _resolve_app_args(app_arg, args)
+
+    target_dir = args.target_dir
+    if not target_dir:
+        try:
+            config = ws.load_workspace_config()
+            target_dir = config.get("app_dir", "app")
+        except Exception:
+            target_dir = "."
 
     _app_pull(
         apps_client,
         app_name,
-        args.target_dir,
+        target_dir,
         getattr(args, "overwrite", False),
     )
 
@@ -118,16 +189,35 @@ def _app_pull(
         if not os.path.exists(target_dir):
             os.makedirs(target_dir)
 
-        # Extract content to target directory.
+        # Extract content directly to target directory, stripping top-level folder
         with zipfile.ZipFile(io.BytesIO(response.app_content)) as z:
             export_members = z.namelist()
-            z.extractall(target_dir)
+            if export_members:
+                top_dir = export_members[0].split("/")[0]
+                for member in z.infolist():
+                    member_parts = member.filename.split("/")
+                    if len(member_parts) > 1 and member_parts[0] == top_dir:
+                        # Reconstruct path relative to top_dir
+                        rel_path = "/".join(member_parts[1:])
+                        if not rel_path:
+                            continue
+                        target_path = os.path.join(target_dir, rel_path)
+                        if member.is_dir():
+                            os.makedirs(target_path, exist_ok=True)
+                        else:
+                            os.makedirs(
+                                os.path.dirname(target_path), exist_ok=True
+                            )
+                            with (
+                                z.open(member) as source,
+                                open(target_path, "wb") as target,
+                            ):
+                                shutil.copyfileobj(source, target)
 
         # Handle overwrite logic if requested
         if overwrite and export_members:
-            # Find the top level directory name in the zip (app name)
             top_dir = export_members[0].split("/")[0]
-            app_root = os.path.join(target_dir, top_dir)
+            app_root = target_dir
 
             if os.path.exists(app_root):
                 # Build set of exported paths relative to app_root
@@ -167,8 +257,7 @@ def _app_pull(
                                 if local_rel_path not in export_set:
                                     file_path = os.path.join(root, name)
                                     print(
-                                        "Removing non-exported file: "
-                                        f"{file_path}"
+                                        f"Removing non-exported file: {file_path}"
                                     )
                                     os.remove(file_path)
 
@@ -191,8 +280,7 @@ def _app_pull(
                                     # any files inside it)
                                     if not os.listdir(dir_path):
                                         print(
-                                            "Removing empty non-exported dir: "
-                                            f"{dir_path}"
+                                            f"Removing empty non-exported dir: {dir_path}"
                                         )
                                         os.rmdir(dir_path)
 
@@ -203,21 +291,36 @@ def _app_pull(
         sys.exit(1)
 
 
-def app_push(args: argparse.Namespace) -> str | None:
+def app_push(args: argparse.Namespace) -> str | None:  # noqa: C901
     """Handles the 'push' command."""
     # We will reuse the deploy_agent logic from main.py, slightly adjusted.
-    app_dir = args.app_dir if args.app_dir else "."
+    app_dir = args.app_dir
+    if not app_dir:
+        try:
+            config = ws.load_workspace_config()
+            app_dir = config.get("app_dir", "app")
+        except Exception:
+            app_dir = "."
     print(f"Pushing app from {app_dir}...")
 
     target_app = getattr(args, "to", None)
     app_name_arg = getattr(args, "app_name", None)
     identifier = target_app or app_name_arg
 
+    if not identifier:
+        try:
+            config = ws.load_workspace_config()
+            identifier = config.get("deployed_app_id")
+        except Exception:
+            pass
+
     if identifier:
         apps_client, app_name, display_name = _resolve_app_args(
             identifier, args
         )
-        print("Pushing to existing app... Overwriting if supported.")
+        print(
+            f"Pushing to existing app {app_name}... Overwriting if supported."
+        )
     else:
         apps_client = Apps(project_id=args.project_id, location=args.location)
         app_name = None
@@ -228,7 +331,9 @@ def app_push(args: argparse.Namespace) -> str | None:
         app_dir=app_dir,
         apps_client=apps_client,
         target_app_name=getattr(args, "app_name", None) or app_name,
-        identifier=getattr(args, "to", None) or getattr(args, "app_name", None),
+        identifier=getattr(args, "to", None)
+        or getattr(args, "app_name", None)
+        or identifier,
         display_name=getattr(args, "display_name", None) or display_name,
         env_file=getattr(args, "env_file", None),
         args=args,
@@ -281,13 +386,12 @@ def _app_push(
             dst_path = os.path.join(inner_dir, "environment.json")
             shutil.copy2(env_file, dst_path)
             print(
-                f"Included custom environment file "
+                "Included custom environment file "
                 f"from {env_file} as environment.json"
             )
         else:
             print(
-                f"Warning: Custom environment file "
-                f"'{env_file}' not found. Skipping."
+                f"Warning: Custom environment file '{env_file}' not found. Skipping."
             )
 
     # ZIP does not support timestamps before 1980.
@@ -366,7 +470,8 @@ def _app_push(
 def app_create(args: argparse.Namespace) -> None:
     """Handles the 'create' command."""
     print(f"Creating app: {args.name}")
-    apps_client = Apps(project_id=args.project_id, location=args.location)
+    project_id, location = _get_project_and_location(args)
+    apps_client = Apps(project_id=project_id, location=location)
     try:
         app = apps_client.create_app(
             app_id=args.app_id,
@@ -389,20 +494,12 @@ def app_delete(args: argparse.Namespace) -> None:
         project_id = Common._get_project_id(app_name_arg)
         location = Common._get_location(app_name_arg)
         app_name = app_name_arg
-    elif args.display_name and args.project_id and args.location:
+    elif args.display_name:
         print(f"Deleting App by Display Name: {args.display_name}")
-        project_id = args.project_id
-        location = args.location
+        project_id, location = _get_project_and_location(args)
         app_name = None
     else:
-        print(
-            "Error: Must provide either --app_name OR "
-            "(--display_name, --project_id, --location)"
-        )
-        sys.exit(1)
-
-    if not project_id or not location:
-        print("Error: Could not determine project_id or location.")
+        print("Error: Must provide either --app_name OR --display-name")
         sys.exit(1)
 
     apps_client = Apps(project_id=project_id, location=location)
@@ -466,8 +563,9 @@ def app_branch(args: argparse.Namespace) -> None:
 
 def apps_list(args: argparse.Namespace) -> None:
     """Handles the 'apps list' command."""
-    print(f"Listing apps for project {args.project_id} in {args.location}...")
-    apps_client = Apps(project_id=args.project_id, location=args.location)
+    project_id, location = _get_project_and_location(args)
+    print(f"Listing apps for project {project_id} in {location}...")
+    apps_client = Apps(project_id=project_id, location=location)
     try:
         apps = apps_client.list_apps()
         if not apps:
@@ -514,7 +612,7 @@ def apps_get(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def app_lint(args: argparse.Namespace) -> None:
+def app_lint(args: argparse.Namespace) -> None:  # noqa: C901
     """Handles the 'lint' command."""
     from cxas_scrapi.utils.linter import (  # noqa: PLC0415
         SINGLE_RESOURCE_RULES,
@@ -554,9 +652,8 @@ def app_lint(args: argparse.Namespace) -> None:
         if not json_output:
             print(f"Validating {flag}: {resource_path.name}")
             print("=" * 60)
-        if rule_obj is not None:
-            for result in rule_obj.check(resource_path, "", context):
-                report.add(result)
+        for result in rule_obj.check(resource_path, "", context):
+            report.add(result)
         report.print_and_exit(json_output, show_fixes)
         return
 
@@ -601,9 +698,7 @@ def app_lint(args: argparse.Namespace) -> None:
                             "file": str(app_dir),
                             "severity": "error",
                             "rule_id": "SETUP",
-                            "message": (
-                                f"No app directory found under {app_dir}"
-                            ),
+                            "message": f"No app directory found under {app_dir}",
                         }
                     ]
                 )
@@ -651,12 +746,15 @@ def app_lint(args: argparse.Namespace) -> None:
 
 def app_init(args: argparse.Namespace) -> None:
     """Handles the 'init' command -- copies skill files."""
-    import shutil  # noqa: PLC0415
 
     target_dir = Path(getattr(args, "target_dir", ".")).resolve()
     force = getattr(args, "force", False)
     skills_root = Path(sys.prefix) / "share" / "cxas-scrapi" / "skills"
 
+    # 1. Write default gecx-config.json if it does not exist
+    ws.create_default_config(str(target_dir))
+
+    # 2. Copy skills
     if not skills_root.exists():
         print(f"ERROR: Bundled skills not found at {skills_root}")
         print(

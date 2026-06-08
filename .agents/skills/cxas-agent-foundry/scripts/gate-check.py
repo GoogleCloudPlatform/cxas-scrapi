@@ -37,7 +37,7 @@ import subprocess
 import sys
 import uuid
 
-from config import get_project_path, load_config
+from config import get_output_dir, get_project_path, load_config
 
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/gate-check"
 
@@ -638,7 +638,7 @@ def main():
     if args.save:
         out_path = args.save
     else:
-        reports_dir = get_project_path("eval-reports")
+        reports_dir = get_output_dir()
         os.makedirs(reports_dir, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         out_path = os.path.join(reports_dir, f"gate-check-{ts}.json")

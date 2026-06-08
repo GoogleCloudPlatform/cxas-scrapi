@@ -57,6 +57,13 @@ def test_readme_links():
             target_path = README_PATH.parent / clean_link
 
             if not target_path.exists():
+                # Fallback for flat layout (e.g. monorepo flat layout)
+                prefix = "src/cxas_scrapi/"
+                if clean_link.startswith(prefix):
+                    flat_link = clean_link[len(prefix) :]
+                    fallback_path = README_PATH.parent / flat_link
+                    if fallback_path.exists():
+                        continue
                 broken_links.append(
                     f"Internal: {link} (Path not found: {target_path})"
                 )

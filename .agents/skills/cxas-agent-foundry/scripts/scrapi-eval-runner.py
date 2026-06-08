@@ -37,7 +37,7 @@ from rich.console import Console
 from rich.progress import track
 
 console = Console()
-from config import get_project_path, load_app_name
+from config import get_output_dir, get_project_path, load_app_name
 
 from cxas_scrapi.core.evaluations import Evaluations
 from cxas_scrapi.utils.eval_utils import EvalUtils
@@ -47,7 +47,7 @@ USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/scrapi-eval-runner"
 
 EVALS_YAML = get_project_path("evals", "scenarios", "scenarios.yaml")
 GOLDEN_EVALS_DIR = get_project_path("evals", "goldens")
-REPORTS_DIR = get_project_path("eval-reports")
+REPORTS_DIR = get_output_dir()
 
 
 def load_yaml():

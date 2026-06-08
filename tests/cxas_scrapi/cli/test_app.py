@@ -26,6 +26,26 @@ import pytest
 from cxas_scrapi.cli import app as cli_app
 
 
+@pytest.fixture(autouse=True)
+def clear_workspace_cache():
+    from cxas_scrapi.core import workspace as ws
+
+    ws._workspace_config_cache = None
+    ws._project_dir = None
+    ws._active_project_cache = None
+    with (
+        mock.patch(
+            "cxas_scrapi.core.workspace.resolve_project_dir",
+            side_effect=ValueError("No active project"),
+        ),
+        mock.patch(
+            "cxas_scrapi.core.workspace.find_workspace_root",
+            return_value=None,
+        ),
+    ):
+        yield
+
+
 @pytest.fixture
 def mock_apps_client():
     with mock.patch(
@@ -174,7 +194,7 @@ def test_app_pull(
     # Create a dummy zip file in memory representing the LRO response
     dummy_zip_io = io.BytesIO()
     with zipfile.ZipFile(dummy_zip_io, "w") as zf:
-        zf.writestr("app.yaml", "name: Test App")
+        zf.writestr("test_app/app.yaml", "name: Test App")
     dummy_zip_bytes = dummy_zip_io.getvalue()
 
     mock_lro = mock.MagicMock()
@@ -191,7 +211,134 @@ def test_app_pull(
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
 
+@mock.patch("cxas_scrapi.core.workspace.load_workspace_config")
+def test_app_pull_resolves_default_target_dir_from_workspace_config(
+    mock_load_config,
+    mock_apps_client,
+    mock_common_get_project_id,
+    mock_common_get_location,
+    tmp_path,
+):
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=None,
+        project_id="test-project",
+        location="us",
+    )
+
+    mock_load_config.return_value = {
+        "app_dir": str(tmp_path / "custom_app_dir")
+    }
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("test_app/app.yaml", "name: Test App")
+    dummy_zip_bytes = dummy_zip_io.getvalue()
+
+    mock_lro = mock.MagicMock()
+    mock_response = mock.MagicMock()
+    mock_response.app_content = dummy_zip_bytes
+    mock_lro.result.return_value = mock_response
+    mock_apps_client.export_app.return_value = mock_lro
+
+    cli_app.app_pull(args)
+
+    assert os.path.exists(os.path.join(tmp_path, "custom_app_dir", "app.yaml"))
+
+
+@mock.patch("cxas_scrapi.core.workspace.load_workspace_config")
+def test_app_pull_resolves_app_from_workspace_config(
+    mock_load_config,
+    mock_apps_client,
+    mock_common_get_project_id,
+    mock_common_get_location,
+    tmp_path,
+):
+    args = argparse.Namespace(
+        app=None,
+        target_dir=str(tmp_path / "pulled_app"),
+        project_id="test-project",
+        location="us",
+    )
+
+    mock_load_config.return_value = {
+        "deployed_app_id": (
+            "projects/test-project/locations/us/apps/config_app_id"
+        )
+    }
+
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("test_app/app.yaml", "name: Config App")
+    dummy_zip_bytes = dummy_zip_io.getvalue()
+
+    mock_lro = mock.MagicMock()
+    mock_response = mock.MagicMock()
+    mock_response.app_content = dummy_zip_bytes
+    mock_lro.result.return_value = mock_response
+    mock_apps_client.export_app.return_value = mock_lro
+
+    cli_app.app_pull(args)
+
+    mock_apps_client.export_app.assert_called_once_with(
+        app_name="projects/test-project/locations/us/apps/config_app_id"
+    )
+    assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
+
+
+@mock.patch("cxas_scrapi.core.workspace.load_workspace_config")
+@mock.patch("cxas_scrapi.cli.app._app_push")
+def test_app_push_resolves_target_from_workspace_config(
+    mock_internal_push,
+    mock_load_config,
+    mock_apps_client,
+    mock_common_get_project_id,
+    mock_common_get_location,
+    tmp_path,
+):
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        app_name=None,
+        display_name=None,
+        project_id="test-project",
+        location="us",
+    )
+
+    with open(os.path.join(tmp_path, "app.yaml"), "w") as f:
+        f.write("name: test")
+
+    mock_load_config.return_value = {
+        "deployed_app_id": (
+            "projects/test-project/locations/us/apps/config_app_id"
+        ),
+        "app_dir": str(tmp_path),
+    }
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/config_app_id"
+    mock_apps_client.get_app.return_value = mock_app
+
+    cli_app.app_push(args)
+
+    mock_internal_push.assert_called_once()
+    called_kwargs = mock_internal_push.call_args.kwargs
+    assert (
+        called_kwargs["target_app_name"]
+        == "projects/test-project/locations/us/apps/config_app_id"
+    )
+    assert (
+        called_kwargs["identifier"]
+        == "projects/test-project/locations/us/apps/config_app_id"
+    )
+
+
 def test_app_push(mock_apps_client, tmp_path):
+
     args = argparse.Namespace(
         app_dir=str(tmp_path),
         to=None,
@@ -219,6 +366,34 @@ def test_app_push(mock_apps_client, tmp_path):
     call_args = mock_apps_client.import_as_new_app.call_args[1]
     assert call_args["display_name"] == "New App Name"
     assert "app_content" in call_args
+
+
+@mock.patch("cxas_scrapi.core.workspace.load_workspace_config")
+def test_app_push_resolves_default_app_dir_from_workspace_config(
+    mock_load_config, mock_apps_client, tmp_path
+):
+    args = argparse.Namespace(
+        app_dir=None,
+        to=None,
+        display_name="New App Name",
+        project_id="test-project",
+        location="us",
+    )
+
+    mock_load_config.return_value = {"app_dir": str(tmp_path)}
+
+    with open(os.path.join(tmp_path, "app.yaml"), "w") as f:
+        f.write("name: test")
+
+    mock_imported_app = mock.MagicMock()
+    mock_imported_app.name = "projects/test-project/locations/us/apps/new-id"
+    mock_lro = mock.MagicMock()
+    mock_lro.result.return_value = mock_imported_app
+    mock_apps_client.import_as_new_app.return_value = mock_lro
+
+    cli_app.app_push(args)
+
+    mock_apps_client.import_as_new_app.assert_called_once()
 
 
 def test_app_branch(
@@ -442,7 +617,7 @@ def test_app_lint_json_output(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415
+    import json  # noqa: PLC0415,I001
 
     parsed = json.loads(captured.out)
     assert isinstance(parsed, list)
@@ -460,7 +635,7 @@ def test_app_lint_validate_only(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415
+    import json  # noqa: PLC0415,I001
 
     results = json.loads(captured.out)
     valid_prefixes = ("A", "S", "V")
@@ -482,7 +657,7 @@ def test_app_lint_only_filter(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415
+    import json  # noqa: PLC0415,I001
 
     results = json.loads(captured.out)
     for r in results:
@@ -503,7 +678,7 @@ def test_app_lint_rule_filter(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415
+    import json  # noqa: PLC0415,I001
 
     results = json.loads(captured.out)
     for r in results:
@@ -600,3 +775,27 @@ def test_app_push_create_version(mock_versions_cls, mock_apps_client, tmp_path):
     mock_versions_inst.create_version.assert_called_once()
     expected = "projects/test-project/locations/us/apps/new-id/versions/v1"
     assert args.created_version_name == expected
+
+
+def test_resolve_app_args_reconstructs_with_overridden_project_and_location(
+    mock_apps_client,
+    mock_common_get_project_id,
+    mock_common_get_location,
+):
+    args = argparse.Namespace(
+        project_id="overridden-project",
+        location="overridden-location",
+    )
+    app_identifier = "projects/default-project/locations/us/apps/my-app"
+
+    mock_common_get_project_id.return_value = "default-project"
+    mock_common_get_location.return_value = "us"
+
+    from cxas_scrapi.cli.app import _resolve_app_args
+
+    _client, app_name, display_name = _resolve_app_args(app_identifier, args)
+
+    assert app_name == (
+        "projects/overridden-project/locations/overridden-location/apps/my-app"
+    )
+    assert display_name == "my-app"

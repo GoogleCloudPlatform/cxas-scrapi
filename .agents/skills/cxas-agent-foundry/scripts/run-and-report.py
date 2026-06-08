@@ -33,7 +33,7 @@ import os
 import subprocess
 import sys
 
-
+import cxas_scrapi.core.workspace as ws
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -60,47 +60,24 @@ def _run(
 
 
 def _ensure_eval_reports_dir():
-    """Create <project>/eval-reports/ if missing.
+    """Create configured output directory if missing.
 
-    Defensive — `setup-project.py` already creates this at bootstrap, but a
-    user might delete it manually. The iteration loop's shell redirect to
-    `<project>/eval-reports/last-run.log` (and the various result JSONs the
-    sub-scripts write under this directory) all need the parent to exist.
-    Note: this runs *after* the shell has already opened the redirect target,
-    so it doesn't help the very first invocation on a fresh project — that's
-    what `setup-project.py` covers.
-
-    Returns silently when no project marker is found (e.g., `--help`
-    invocation from a random directory) so we don't create stray dirs.
+    Defensive — setup-project.py already creates this at bootstrap, but a
+    user might delete it manually.
     """
-    project = _resolve_project_dir()
-    if project:
-        os.makedirs(os.path.join(project, "eval-reports"), exist_ok=True)
+    try:
+        output_dir = ws.get_output_dir()
+        os.makedirs(output_dir, exist_ok=True)
+    except Exception:
+        pass
 
 
 def _resolve_project_dir():
     """Return the project root, or None when no project marker is found.
 
-    Walks up from cwd looking for `.active-project` (whose contents name the
-    active project folder) or a `gecx-config.json` in the cwd itself.
+    Delegates to the workspace core engine to find the active project directory.
     """
-    cwd = os.getcwd()
-    for _ in range(10):
-        active = os.path.join(cwd, ".active-project")
-        if os.path.isfile(active):
-            try:
-                with open(active) as f:
-                    name = f.read().strip()
-                return os.path.join(cwd, name) if name else cwd
-            except OSError:
-                return cwd
-        if os.path.isfile(os.path.join(cwd, "gecx-config.json")):
-            return cwd
-        parent = os.path.dirname(cwd)
-        if parent == cwd:
-            return None
-        cwd = parent
-    return None
+    return ws.find_project_dir()
 
 
 def main():

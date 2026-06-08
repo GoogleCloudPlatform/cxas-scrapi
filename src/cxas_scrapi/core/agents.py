@@ -17,7 +17,7 @@
 from typing import Any
 
 from google.cloud.ces_v1beta import AgentServiceClient, types
-from google.protobuf import field_mask_pb2
+from google.protobuf.field_mask_pb2 import FieldMask
 
 from cxas_scrapi.core.apps import Apps
 
@@ -35,6 +35,7 @@ class Agents(Apps):
         **kwargs,
     ):
         """Initializes the Agents client."""
+
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
 
@@ -104,8 +105,8 @@ class Agents(Apps):
             agent_type: One of 'llm', 'dfcx'.
             model: (LLM) Model name to use.
             instruction: (LLM) System instruction.
-            timeout: (LLM) Timeout (not standard field yet? ignoring for
-                now or mapping to model_settings).
+            timeout: (LLM) Timeout (not standard field yet? ignoring for now or
+              mapping to model_settings).
             dfcx_agent_resource: (DFCX) Full resource name of DFCX agent.
             **kwargs: Additional fields for types.Agent.
         """
@@ -152,7 +153,7 @@ class Agents(Apps):
 
         # Update Mask
         paths = list(kwargs.keys())
-        mask = field_mask_pb2.FieldMask(paths=paths)
+        mask = FieldMask(paths=paths)
 
         request = types.UpdateAgentRequest(agent=agent_data, update_mask=mask)
         return self.client.update_agent(request=request)

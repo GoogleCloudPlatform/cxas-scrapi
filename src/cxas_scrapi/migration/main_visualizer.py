@@ -15,6 +15,7 @@
 """Master visualizer coordinating topology graph and detailed Rich trees."""
 
 import io
+import os
 import uuid
 from typing import Any
 
@@ -29,6 +30,8 @@ from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 from rich.tree import Tree
+
+from cxas_scrapi.core import workspace as ws
 
 try:
     from google.colab import files  # type: ignore[import]
@@ -47,12 +50,22 @@ from cxas_scrapi.migration.playbook_visualizer import PlaybookTreeVisualizer
 
 class MainVisualizer:
     """Coordinates topology graph and detailed Rich trees with an
+
     interactive zoom UI (designed for Jupyter / Colab environments).
     """
 
-    def __init__(self, selected_data: dict[str, Any]):
+    def __init__(
+        self, selected_data: dict[str, Any], output_dir: str | None = None
+    ):
         self.data = selected_data
         self.console = Console(force_terminal=False, width=120)
+        if output_dir is None:
+            try:
+                self.output_dir = ws.get_output_dir()
+            except Exception:
+                self.output_dir = "."
+        else:
+            self.output_dir = output_dir
 
     def _build_tools_tree(self) -> Tree:
         """Build a Rich Tree summarising tools and webhooks."""
@@ -71,8 +84,7 @@ class MainVisualizer:
                 )
                 if "description" in tool_data:
                     tool_node.add(
-                        f"[dim]Description:[/] "
-                        f"{escape(tool_data['description'])}"
+                        f"[dim]Description:[/] {escape(tool_data['description'])}"
                     )
                 if (
                     "openApiSpec" in tool_data
@@ -80,7 +92,7 @@ class MainVisualizer:
                 ):
                     tool_node.add("[dim]Type:[/] OpenAPI Toolset")
                     tool_node.add(
-                        f"[dim]Schema:[/] "
+                        "[dim]Schema:[/] "
                         f"{escape(tool_data['openApiSpec']['textSchema'])}"
                     )
                 if "dataStoreSpec" in tool_data or "dataStoreTool" in tool_data:
@@ -90,7 +102,7 @@ class MainVisualizer:
                     tool_node.add("[dim]Type:[/] Data Store")
                     if "dataStoreConnections" in data_store:
                         tool_node.add(
-                            f"[dim]Connections:[/] "
+                            "[dim]Connections:[/] "
                             f"{escape(str(data_store['dataStoreConnections']))}"
                         )
 
@@ -113,17 +125,17 @@ class MainVisualizer:
                     webhook_node.add(f"[dim]Type:[/] {escape(wt)}")
                     if generic_web_service.get("httpMethod"):
                         webhook_node.add(
-                            f"[dim]Method:[/] "
+                            "[dim]Method:[/] "
                             f"{escape(generic_web_service.get('httpMethod'))}"
                         )
                     if generic_web_service.get("requestBody"):
                         webhook_node.add(
-                            f"[dim]Request Body:[/] "
+                            "[dim]Request Body:[/] "
                             f"{escape(generic_web_service.get('requestBody'))}"
                         )
                     if generic_web_service.get("parameterMapping"):
                         webhook_node.add(
-                            f"[dim]Param Map:[/] "
+                            "[dim]Param Map:[/] "
                             f"{escape(str(generic_web_service.get('parameterMapping')))}"
                         )
 
@@ -333,7 +345,7 @@ class MainVisualizer:
             prefix: Filename prefix for exported files.
         """
         dot = HighLevelGraphVisualizer(self.data).build(show_code_blocks=False)
-        svg_filename = f"{prefix}_topology.svg"
+        svg_filename = os.path.join(self.output_dir, f"{prefix}_topology.svg")
         dot.render(outfile=svg_filename, format="svg", cleanup=True)
 
         buf = io.StringIO()
@@ -370,7 +382,9 @@ class MainVisualizer:
                     )
                 )
 
-        md_filename = f"{prefix}_detailed_resources.md"
+        md_filename = os.path.join(
+            self.output_dir, f"{prefix}_detailed_resources.md"
+        )
         with open(md_filename, "w", encoding="utf-8") as md_file:
             md_file.write(buf.getvalue())
 

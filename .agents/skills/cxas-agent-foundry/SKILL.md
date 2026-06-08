@@ -51,7 +51,6 @@ python .agents/skills/cxas-agent-foundry/scripts/sync-callbacks.py --from-local 
 
 # Cold-start setup (first-time only — venv + project bootstrap)
 .agents/skills/cxas-agent-foundry/scripts/setup.sh
-python .agents/skills/cxas-agent-foundry/scripts/setup-project.py
 ```
 
 **Disambiguation:** `gate-check.py` and `inspect-app.py` overlap on "show me the architecture" but `gate-check.py` is the answer whenever the user is about to push, finished building, or wants a verification pass. `inspect-app.py` is for a quick "what's in here" look without the verification gates. When in doubt, use `gate-check.py`.
@@ -78,13 +77,13 @@ For running evals: there is no sub-agent. Use `scripts/run-and-report.py --json-
 Before routing to any sub-skill, check these signals in order:
 
 1. **Virtualenv exists?** -- Check if `.venv/` directory exists
-2. **Config exists?** -- Check if `.active-project` file exists and the referenced `<project>/gecx-config.json` exists
+2. **Config exists?** -- Check if `.scrapi/active-project` file exists and the referenced `<project>/gecx-config.toml` exists
 3. **Has built before?** -- Check if any `<project>/cxas_app/` directory has content
 
 | Signal | Action |
 |--------|--------|
 | No `.venv/` or no config | **First-time setup needed.** Load `references/setup.md` before doing anything else. |
-| `gecx-config.json` exists but no `cxas_app/` content | Returning user, new project. Route normally. |
+| `gecx-config.toml` exists but no `cxas_app/` content | Returning user, new project. Route normally. |
 | All exist | Returning user. Route normally. |
 
 ## Detect Intent and Route

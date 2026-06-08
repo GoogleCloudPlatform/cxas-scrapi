@@ -28,13 +28,34 @@ agent=$(echo "$input" | jq -r 'if .tool_input then "claude" else "gemini" end')
 if echo "$cmd" | grep -qE 'update_agent'; then
   # Auto-pull latest agent state to keep local files in sync
   project_dir=$(resolve_project_dir)
-  config_file="${project_dir}/gecx-config.json"
+  local config_file="${project_dir}/gecx-config.toml"
+  local is_toml=true
+  if [ ! -f "$config_file" ]; then
+    config_file="${project_dir}/gecx-config.json"
+    is_toml=false
+  fi
   pull_msg=""
   if [ -n "$project_dir" ] && [ -f "$config_file" ]; then
-    app_dir="${project_dir}/$(jq -r '.app_dir // "cxas_app/"' "$config_file")"
-    project=$(jq -r '.gcp_project_id' "$config_file")
-    location=$(jq -r '.location' "$config_file")
-    app_id=$(jq -r '.deployed_app_id' "$config_file")
+    local app_dir_val
+    local project
+    local location
+    local app_id
+    if [ "$is_toml" = true ]; then
+      app_dir_val=$(parse_toml_key "app-dir" "$config_file")
+      project=$(parse_toml_key "gcp-project-id" "$config_file")
+      location=$(parse_toml_key "location" "$config_file")
+      app_id=$(parse_toml_key "deployed-app-id" "$config_file")
+    else
+      app_dir_val=$(jq -r '.app_dir // "cxas_app/"' "$config_file")
+      project=$(jq -r '.gcp_project_id' "$config_file")
+      location=$(jq -r '.location' "$config_file")
+      app_id=$(jq -r '.deployed_app_id' "$config_file")
+    fi
+    : "${app_dir_val:=cxas_app/}"
+    app_dir="${project_dir}/${app_dir_val}"
+    project=$(echo "$project" | tr -d '[:space:]')
+    location=$(echo "$location" | tr -d '[:space:]')
+    app_id=$(echo "$app_id" | tr -d '[:space:]')
     app_resource="projects/${project}/locations/${location}/apps/${app_id}"
     if GOOGLE_CLOUD_PROJECT="$project" cxas pull "$app_resource" --project-id "$project" --location "$location" --target-dir "$app_dir" 2>/dev/null; then
       pull_msg="AUTO-SYNC: Pulled latest agent state to $app_dir. "

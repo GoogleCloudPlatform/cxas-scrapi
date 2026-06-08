@@ -58,6 +58,13 @@ from cxas_scrapi.cli.versions_cli import (
     app_versions_compare,
     app_versions_list,
 )
+from cxas_scrapi.cli.workspace import (
+    workspace_create,
+    workspace_set,
+    workspace_show,
+    workspace_unset,
+)
+from cxas_scrapi.core import workspace as ws
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
@@ -536,11 +543,17 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         generate_combined_report_from_dir,
     )
 
-    output_path = (
-        args.gcs_path
-        or args.output
-        or os.path.join(args.output_dir, "combined_report.html")
-    )
+    gcs_path = args.gcs_path
+    if not gcs_path:
+        try:
+            config = ws.load_workspace_config()
+            gcs_path = config.get("gcs_path")
+        except Exception:
+            pass
+
+    output_path = gcs_path or args.output
+    if not output_path and getattr(args, "output_dir", None):
+        output_path = os.path.join(args.output_dir, "combined_report.html")
 
     include_list = args.include.split(",") if args.include else []
     filter_files_list = (
@@ -565,7 +578,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     sim_parallel = getattr(args, "sim_parallel", 5)
     golden_timeout = getattr(args, "golden_timeout", 600)
 
-    generate_combined_report_from_dir(
+    actual_output_path = generate_combined_report_from_dir(
         output_dir=args.output_dir,
         golden_run=args.golden_run,
         app_name=args.app_name,
@@ -575,7 +588,6 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         tool_test_file=args.tool_test_file,
         goldens_dir=args.goldens_dir,
         simulation_dir=args.simulation_dir,
-        format=args.format,
         include=include_list,
         modality=args.modality,
         runs=args.runs,
@@ -588,7 +600,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         if getattr(args, "burst_noise_files", None)
         else None,
     )
-    print(f"Combined report generated at {output_path}")
+    print(f"Combined report generated at {actual_output_path}")
 
 
 def test_tools(args: argparse.Namespace) -> None:
@@ -1074,25 +1086,131 @@ def get_parser() -> argparse.ArgumentParser:
         required=False,
     )
 
+    parser.add_argument(
+        "--project-dir",
+        "-p",
+        help="Override the active GECX project directory path.",
+        required=False,
+    )
+
     def _add_project_location_args(
         subparser: argparse.ArgumentParser, required: bool = True
     ) -> None:
         """Helper to add standard GCP args to subparsers."""
-        help_suffix = "" if required else " (Optional if using Display Name)"
+        # Load configuration safely by catching exceptions (which prevents startup exit(1) crash)
+        config = {}
+        try:
+            config = ws.load_workspace_config()
+        except Exception:
+            pass
+
+        default_project = config.get("gcp_project_id")
+        default_location = (
+            config.get("location", "us") if default_project else None
+        )
+
+        # Arguments are resolved dynamically at runtime, so they are not required at parser level
+        is_required = False
+        help_suffix = " (Optional, loaded from active profile)"
+
         subparser.add_argument(
             "--project-id",
-            required=required,
+            required=is_required,
+            default=default_project,
             help=f"The GCP Project ID.{help_suffix}",
         )
         subparser.add_argument(
             "--location",
-            required=required,
+            required=is_required,
+            default=default_location,
             help=f"The GCP Location (e.g., global, us-central1).{help_suffix}",
         )
 
     subparsers = parser.add_subparsers(
-        title="Commands", dest="command", required=True
+        title="Commands", dest="command", required=False
     )
+
+    # Parser for 'workspace'
+    parser_workspace = subparsers.add_parser(
+        "workspace", help="Manage GECX workspace configuration."
+    )
+    parser_workspace.set_defaults(
+        func=lambda args: parser_workspace.print_help()
+    )
+    workspace_subparsers = parser_workspace.add_subparsers(
+        title="Workspace Commands", dest="workspace_command", required=False
+    )
+
+    parser_workspace_set = workspace_subparsers.add_parser(
+        "set", help="Set the active GECX project workspace directory."
+    )
+    parser_workspace_set.add_argument(
+        "target_dir",
+        nargs="?",
+        help="Path to the GECX project directory.",
+    )
+    parser_workspace_set.add_argument(
+        "--profile",
+        help="Set the active configuration profile (e.g., prod.us-central1).",
+    )
+    parser_workspace_set.add_argument(
+        "--project-id",
+        dest="gcp_project_id",
+        help="Update the GCP Project ID.",
+    )
+    parser_workspace_set.add_argument(
+        "--app-id",
+        dest="deployed_app_id",
+        help="Update the deployed CXAS App ID.",
+    )
+    parser_workspace_set.add_argument(
+        "--location",
+        help="Update the GCP Location.",
+    )
+    parser_workspace_set.add_argument(
+        "--app-dir",
+        help="Update the local app directory path.",
+    )
+    parser_workspace_set.add_argument(
+        "--evals-dir",
+        help="Update the evaluations directory path.",
+    )
+    parser_workspace_set.add_argument(
+        "--output-dir",
+        help="Update the output directory path.",
+    )
+    parser_workspace_set.add_argument(
+        "--model",
+        help="Update the default Gemini model.",
+    )
+    parser_workspace_set.add_argument(
+        "--modality",
+        choices=["text", "audio"],
+        help="Update the evaluation execution modality.",
+    )
+    parser_workspace_set.set_defaults(
+        func=workspace_set, parser=parser_workspace_set
+    )
+
+    parser_workspace_show = workspace_subparsers.add_parser(
+        "show", help="Show the current project's configuration."
+    )
+    parser_workspace_show.set_defaults(func=workspace_show)
+
+    parser_workspace_create = workspace_subparsers.add_parser(
+        "create", help="Create a default gecx-config.json file."
+    )
+    parser_workspace_create.add_argument(
+        "--target-dir",
+        default=".",
+        help="Directory to initialize config (default: current directory).",
+    )
+    parser_workspace_create.set_defaults(func=workspace_create)
+
+    parser_workspace_unset = workspace_subparsers.add_parser(
+        "unset", help="Unset the active workspace project configuration."
+    )
+    parser_workspace_unset.set_defaults(func=workspace_unset)
 
     # Parser for 'migrate'
     parser_migrate = subparsers.add_parser("migrate", help="Migration tools.")
@@ -2015,8 +2133,9 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'apps'
     parser_apps = subparsers.add_parser("apps", help="Manage apps (list, get).")
+    parser_apps.set_defaults(func=lambda args: parser_apps.print_help())
     apps_subparsers = parser_apps.add_subparsers(
-        title="Apps Commands", dest="apps_command", required=True
+        title="Apps Commands", dest="apps_command", required=False
     )
 
     parser_apps_list = apps_subparsers.add_parser("list", help="List all apps.")
@@ -2035,10 +2154,11 @@ def get_parser() -> argparse.ArgumentParser:
     parser_convs = subparsers.add_parser(
         "conversations", help="Manage conversations (list, get)."
     )
+    parser_convs.set_defaults(func=lambda args: parser_convs.print_help())
     convs_subparsers = parser_convs.add_subparsers(
         title="Conversations Commands",
         dest="conversations_command",
-        required=True,
+        required=False,
     )
 
     parser_convs_list = convs_subparsers.add_parser(
@@ -2064,10 +2184,11 @@ def get_parser() -> argparse.ArgumentParser:
     parser_deps = subparsers.add_parser(
         "deployments", help="Manage deployments (list, create, promote)."
     )
+    parser_deps.set_defaults(func=lambda args: parser_deps.print_help())
     deps_subparsers = parser_deps.add_subparsers(
         title="Deployments Commands",
         dest="deployments_command",
-        required=True,
+        required=False,
     )
 
     parser_deps_list = deps_subparsers.add_parser(
@@ -2124,17 +2245,21 @@ def get_parser() -> argparse.ArgumentParser:
     parser_local = subparsers.add_parser(
         "local", help="Local workspace operations."
     )
+    parser_local.set_defaults(func=lambda args: parser_local.print_help())
     local_subparsers = parser_local.add_subparsers(
-        title="Local Commands", dest="local_command", required=True
+        title="Local Commands", dest="local_command", required=False
     )
 
     parser_local_create = local_subparsers.add_parser(
         "create", help="Create local templates for CXAS components."
     )
+    parser_local_create.set_defaults(
+        func=lambda args: parser_local_create.print_help()
+    )
     local_create_subparsers = parser_local_create.add_subparsers(
         title="Create Local Commands",
         dest="create_local_command",
-        required=True,
+        required=False,
     )
 
     parser_local_create_agent = local_create_subparsers.add_parser(
@@ -2169,8 +2294,9 @@ def get_parser() -> argparse.ArgumentParser:
     parser_versions = subparsers.add_parser(
         "versions", help="Manage CXAS app versions (list, compare)."
     )
+    parser_versions.set_defaults(func=lambda args: parser_versions.print_help())
     versions_subparsers = parser_versions.add_subparsers(
-        title="Versions Commands", dest="versions_command", required=True
+        title="Versions Commands", dest="versions_command", required=False
     )
 
     parser_versions_list = versions_subparsers.add_parser(
@@ -2247,6 +2373,9 @@ def get_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = get_parser()
     args = parser.parse_args()
+
+    if getattr(args, "project_dir", None):
+        ws._project_dir = os.path.abspath(args.project_dir)
 
     if getattr(args, "oauth_token", None):
         os.environ["CXAS_OAUTH_TOKEN"] = args.oauth_token
