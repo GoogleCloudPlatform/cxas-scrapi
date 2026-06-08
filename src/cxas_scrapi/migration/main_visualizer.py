@@ -47,10 +47,6 @@ from cxas_scrapi.migration.graph_visualizer import HighLevelGraphVisualizer
 from cxas_scrapi.migration.playbook_visualizer import PlaybookTreeVisualizer
 
 
-class VisualizationError(Exception):
-    """Raised when visualization fails (e.g. missing external dependency)."""
-
-
 class MainVisualizer:
     """Coordinates topology graph and detailed Rich trees with an
     interactive zoom UI (designed for Jupyter / Colab environments).
