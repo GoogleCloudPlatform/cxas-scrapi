@@ -15,7 +15,7 @@
 """Playbook-level Rich tree visualizer for DFCX agents."""
 
 import re
-from typing import Any, Dict
+from typing import Any
 
 from rich.markup import escape
 from rich.text import Text
@@ -25,7 +25,7 @@ from rich.tree import Tree
 class PlaybookTreeVisualizer:
     """Generates a detailed Rich Tree for a single Playbook."""
 
-    def __init__(self, playbook_data: Dict[str, Any]):
+    def __init__(self, playbook_data: dict[str, Any]):
         self.pb = playbook_data
 
     def _render_steps(self, parent_node, steps):

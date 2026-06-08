@@ -858,7 +858,7 @@ class StructuralConsolidator:
                     per_group_timeout_s,
                 )
                 return "timeout"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Step 2A failed for %s: %s", group_name, exc)
                 return "error"
 
@@ -888,7 +888,7 @@ class StructuralConsolidator:
                     per_group_timeout_s,
                 )
                 return "timeout"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Step 2B failed for %s: %s", group_name, exc)
                 return "error"
 

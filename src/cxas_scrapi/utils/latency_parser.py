@@ -16,8 +16,9 @@
 
 import logging
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Dict, List
+from typing import Any
 
 import pandas as pd
 from rich.progress import track
@@ -31,8 +32,8 @@ class LatencyParser:
 
     @staticmethod
     def fetch_conversation_traces(
-        conv_ids: List[str], get_conversation_func: Callable
-    ) -> Dict[str, Any]:
+        conv_ids: list[str], get_conversation_func: Callable
+    ) -> dict[str, Any]:
         """Fetches detailed conversation traces concurrently with rate
         limiting."""
         traces = {}
@@ -81,24 +82,24 @@ class LatencyParser:
 
     @staticmethod
     def _process_spans(
-        spans: List[Dict],
+        spans: list[dict],
         context_id: str,
         t_idx: int,
-        tool_rows: List,
-        callback_rows: List,
-        guardrail_rows: List,
-        llm_rows: List,
+        tool_rows: list,
+        callback_rows: list,
+        guardrail_rows: list,
+        llm_rows: list,
         context_key: str = "conversation_id",
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Recursively walks span trees and accumulates granular component
         attributes."""
         sums = {"LLM": 0.0, "Guardrail": 0.0, "Callback": 0.0}
         for s in spans:
-            name = s.get("name")
+            name: str | None = s.get("name")
             duration = LatencyParser._parse_duration_ms(s.get("duration", "0s"))
             attrs = s.get("attributes", {})
 
-            if name in sums:
+            if name and name in sums:
                 sums[name] += duration
 
             if name == "Tool":
@@ -171,14 +172,20 @@ class LatencyParser:
 
     @staticmethod
     def build_summary_df(
-        df_d: pd.DataFrame, group_cols: List[str]
+        df_d: pd.DataFrame, group_cols: list[str]
     ) -> pd.DataFrame:
         """Aggregates a detailed DataFrame into counts and latency
         percentiles."""
         if df_d.empty:
             return pd.DataFrame(
-                columns=group_cols
-                + ["count", "Average (ms)", "p50 (ms)", "p90 (ms)", "p99 (ms)"]
+                columns=[
+                    *group_cols,
+                    "count",
+                    "Average (ms)",
+                    "p50 (ms)",
+                    "p90 (ms)",
+                    "p99 (ms)",
+                ]
             )
 
         agg_df = (
@@ -213,14 +220,14 @@ class LatencyParser:
 
     @staticmethod
     def _build_llm_summary_df(
-        df_d: pd.DataFrame, group_cols: List[str]
+        df_d: pd.DataFrame, group_cols: list[str]
     ) -> pd.DataFrame:
         """Aggregates a detailed LLM DataFrame into counts, percentiles, and
         average tokens."""
         if df_d.empty:
             return pd.DataFrame(
-                columns=group_cols
-                + [
+                columns=[
+                    *group_cols,
                     "count",
                     "Average Input Tokens",
                     "Average (ms)",
@@ -264,8 +271,8 @@ class LatencyParser:
 
     @staticmethod
     def extract_trace_metrics(
-        traces: Dict[str, Any], context_type: str = "conversation"
-    ) -> Dict[str, pd.DataFrame]:
+        traces: dict[str, Any], context_type: str = "conversation"
+    ) -> dict[str, pd.DataFrame]:
         """
         Extracts execution traces from Conversation history objects.
 

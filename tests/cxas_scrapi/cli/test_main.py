@@ -39,6 +39,32 @@ def test_get_parser():
     assert args.location == "us"
 
 
+def test_get_parser_llm_lint():
+    """Test that the parser can parse the llm-lint command."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "llm-lint",
+            "--agent-dir",
+            "/path/to/agent",
+            "--project-id",
+            "test-project",
+            "--location",
+            "us-central1",
+            "--model",
+            "gemini-2.5-flash",
+            "--output",
+            "/path/to/output.md",
+        ]
+    )
+    assert args.command == "llm-lint"
+    assert args.agent_dir == "/path/to/agent"
+    assert args.project_id == "test-project"
+    assert args.location == "us-central1"
+    assert args.model == "gemini-2.5-flash"
+    assert args.output == "/path/to/output.md"
+
+
 def test_cli_installed_help():
     """Test that the 'cxas' command is installed and executable (verifies
     setup.py)."""
@@ -221,3 +247,21 @@ def test_deployments_promote(mock_app_push, mock_deps_cls):
             "projects/test-project/locations/global/apps/test-app/versions/v1"
         ),
     )
+
+
+def test_get_parser_run_session_use_tool_fakes():
+    """Test that the parser parses run-session with --use-tool-fakes."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "run-session",
+            "text",
+            "projects/test-project/locations/global/apps/test-app",
+            "--use-tool-fakes",
+        ]
+    )
+    assert args.command == "run-session"
+    assert args.modality == "text"
+    expected_app = "projects/test-project/locations/global/apps/test-app"
+    assert args.app_name == expected_app
+    assert args.use_tool_fakes is True

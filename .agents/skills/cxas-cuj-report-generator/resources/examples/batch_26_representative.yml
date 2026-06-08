@@ -1,0 +1,48 @@
+subintent_id: support-refund-delay
+subintent_name: Dispute Late Delivery
+parent_cuj: Customer Support
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: 'Hi, my delivery order #9982 took over two hours to arrive, and the food was completely cold when it got here. I''d like a full refund.'
+- speaker: Agent
+  text: I am so incredibly sorry for this terrible delay and the cold food! Let me check the delivery dispatch logs right now.
+- speaker: Agent
+  text: Querying driver dispatch transit logs.
+  tool_call:
+    name: lookup_delivery_logs
+    payload:
+      order_id: '9982'
+    response:
+      status: success
+      transit_time_minutes: 125
+      delayed: true
+- speaker: Agent
+  text: I see the transit time was indeed two hours and five minutes, which is completely unacceptable! I will process a full refund of thirty dollars and ninety-eight cents back to your card immediately.
+- speaker: User
+  text: Thank you. I appreciate the quick resolution.
+- speaker: Agent
+  text: Processing card refund credit for delayed delivery.
+  tool_call:
+    name: issue_customer_credit
+    payload:
+      order_id: '9982'
+      refund_amount: 30.98
+      reason: Extremely late delivery (125 mins)
+    response:
+      status: success
+      refund_reference: REF-DELAY-88
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

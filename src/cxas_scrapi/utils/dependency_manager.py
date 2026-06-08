@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ class SessionDependencyManager:
     def __init__(self):
         self._memory_cache = {}
 
-    def resolve_session_id(self, test_name: str) -> Optional[str]:
+    def resolve_session_id(self, test_name: str) -> str | None:
         """Resolves a test name to a session ID from memory cache."""
         if test_name in self._memory_cache:
             logger.debug(f"Found session ID for {test_name} in memory cache.")

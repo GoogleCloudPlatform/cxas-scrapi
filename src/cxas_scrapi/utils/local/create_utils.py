@@ -40,7 +40,7 @@ AGENT_INSTRUCTION_TEMPLATE = """
   <text_formatting>
     <chunking>
       - Never write dense paragraphs; users scan, they do not read.
-      - Limit text blocks to a maximum of 1–2 sentences.
+      - Limit text blocks to a maximum of 1-2 sentences.
       - Insert a line break between every distinct idea to maximize white space.
     </chunking>
     <bolding>
@@ -145,8 +145,8 @@ class CreateUtils:
         self,
         display_name: str,
         app_dir: str,
-        tool_type: str = None,
-        add_to_agent: str = None,
+        tool_type: str | None = None,
+        add_to_agent: str | None = None,
     ) -> str:
         """
         Creates a tool of a given type.
@@ -262,7 +262,7 @@ class CreateUtils:
             raise FileNotFoundError(
                 f"Agent '{display_name}' config not found at '{json_file}'."
             )
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             agent_data = json.load(f)
 
         agent = types.Agent()

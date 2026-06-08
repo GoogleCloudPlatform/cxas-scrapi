@@ -21,7 +21,7 @@ import logging
 import os
 import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -48,9 +48,9 @@ class HistoricalContextConfig(BaseModel):
     """Configuration for historical context, either a raw session ID, a test
     name, or explicit utterances."""
 
-    session_id: Optional[str] = None
-    test_name: Optional[str] = None
-    utterances: Optional[List[Dict[str, Any]]] = None
+    session_id: str | None = None
+    test_name: str | None = None
+    utterances: list[dict[str, Any]] | None = None
 
     @model_validator(mode="after")
     def check_mutually_exclusive(self):
@@ -84,17 +84,17 @@ class TurnExpectation(BaseModel):
     """Data model for a single-turn expectation."""
 
     type: TurnOperator
-    value: Optional[Any] = None
+    value: Any | None = None
 
 
 class TurnStep(BaseModel):
     """Data model for a single step inside a multi-turn conversation."""
 
     turn: str
-    user: Optional[str] = None
-    event: Optional[str] = None
-    variables: Dict[str, Any] = Field(default_factory=dict)
-    config: Dict[str, Any] = Field(default_factory=dict)
+    user: str | None = None
+    event: str | None = None
+    variables: dict[str, Any] = Field(default_factory=dict)
+    config: dict[str, Any] = Field(default_factory=dict)
     expectations: list[TurnExpectation | str] = Field(default_factory=list)
 
 
@@ -102,21 +102,21 @@ class TurnTestCase(BaseModel):
     """Data model for a single-turn test case."""
 
     name: str
-    tags: List[str] = Field(default_factory=list)
-    user: Optional[str] = None
-    event: Optional[str] = None
-    variables: Dict[str, Any] = Field(default_factory=dict)
-    historical_contexts: Optional[HistoricalContextConfig] = None
-    turn_count: Optional[int] = None
-    config: Dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    user: str | None = None
+    event: str | None = None
+    variables: dict[str, Any] = Field(default_factory=dict)
+    historical_contexts: HistoricalContextConfig | None = None
+    turn_count: int | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
     expectations: list[TurnExpectation | str] = Field(default_factory=list)
-    turns: Optional[List[TurnStep]] = None
+    turns: list[TurnStep] | None = None
 
 
 class DependencyResolutionError(Exception):
     """Exception raised when a test dependency cannot be resolved."""
 
-    def __init__(self, message: str, skip_result: Dict[str, Any]):
+    def __init__(self, message: str, skip_result: dict[str, Any]):
         self.message = message
         self.skip_result = skip_result
         super().__init__(self.message)
@@ -129,7 +129,7 @@ class TurnEvals:
         self,
         app_name: str,
         creds=None,
-        rate_limiter: Optional[RateLimiter] = None,
+        rate_limiter: RateLimiter | None = None,
     ):
         """Initializes the TurnEvals class.
 
@@ -162,14 +162,14 @@ class TurnEvals:
 
     def load_turn_test_cases_from_file(
         self, test_file_path: str
-    ) -> List[TurnTestCase]:
+    ) -> list[TurnTestCase]:
         """Loads turn tests from a YAML file."""
-        with open(test_file_path, "r", encoding="utf-8") as f:
+        with open(test_file_path, encoding="utf-8") as f:
             return self.load_turn_test_cases_from_yaml(f.read())
 
     def load_turn_tests_from_dir(
         self, directory_path: str = "turn_tests"
-    ) -> List[TurnTestCase]:
+    ) -> list[TurnTestCase]:
         """Recursively loads all YAML turn tests from a directory."""
         all_tests = []
         if not os.path.exists(directory_path):
@@ -190,7 +190,7 @@ class TurnEvals:
 
     def load_turn_test_cases_from_yaml(
         self, yaml_data: str
-    ) -> List[TurnTestCase]:
+    ) -> list[TurnTestCase]:
         """Loads turn tests from a YAML string."""
         raw_data = yaml.safe_load(yaml_data)
         if not raw_data:
@@ -206,7 +206,7 @@ class TurnEvals:
                 t["name"] = t["conversation"]
 
         global_config = raw_data.get("config", {})
-        adapter = TypeAdapter(List[TurnTestCase])
+        adapter = TypeAdapter(list[TurnTestCase])
         tests = adapter.validate_python(raw_tests)
 
         for t in tests:
@@ -255,10 +255,10 @@ class TurnEvals:
 
     def _extract_tools_from_span(
         self,
-        span: Dict[str, Any],
-        called_tools: List[str],
-        tool_inputs: Dict[str, Any],
-        tool_outputs: Dict[str, Any],
+        span: dict[str, Any],
+        called_tools: list[str],
+        tool_inputs: dict[str, Any],
+        tool_outputs: dict[str, Any],
     ):
         """Recursively extract tool calls from a span and its children."""
         if span.get("name") == "Tool":
@@ -278,7 +278,7 @@ class TurnEvals:
                 child, called_tools, tool_inputs, tool_outputs
             )
 
-    def _extract_signals(self, turn_response: Any) -> Dict[str, Any]:
+    def _extract_signals(self, turn_response: Any) -> dict[str, Any]:
         """Extracts text, tools, and transfers from a turn response."""
 
         try:
@@ -393,7 +393,7 @@ class TurnEvals:
             "target_agent": target_agent,
         }
 
-    def _resolve_historical_context(self, case: TurnTestCase) -> Optional[Any]:
+    def _resolve_historical_context(self, case: TurnTestCase) -> Any | None:
         """Resolves historical context for a test case.
 
         Args:
@@ -650,8 +650,8 @@ class TurnEvals:
         return results
 
     def _topological_sort(
-        self, cases: List[TurnTestCase]
-    ) -> List[TurnTestCase]:
+        self, cases: list[TurnTestCase]
+    ) -> list[TurnTestCase]:
         """Sorts test cases topologically based on their dependencies.
 
         Args:
@@ -694,7 +694,7 @@ class TurnEvals:
 
     def run_turn_tests(
         self,
-        test_cases: List[TurnTestCase],
+        test_cases: list[TurnTestCase],
         debug: bool = False,
         session_id_prefix: str = "turn_eval_",
     ) -> pd.DataFrame:

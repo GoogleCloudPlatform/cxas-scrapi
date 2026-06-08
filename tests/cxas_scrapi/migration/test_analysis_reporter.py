@@ -334,3 +334,97 @@ def test_service_declares_all_planned_checkpoints(name):
         encoding="utf-8"
     )
     assert f'"{name}"' in src, f"checkpoint {name!r} not wired in service.py"
+
+
+# --- Grouping Review (Phase 3) --------------------------------------------
+
+
+def test_snapshot_pending_grouping_defaults_none():
+    snap = MigrationAnalysisSnapshot(app_name="X", target_name="x")
+    assert snap.pending_grouping is None
+    assert snap.to_dict()["pending_grouping"] is None
+
+
+def test_snapshot_pending_grouping_serializes_through(tmp_path):
+    b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
+    b.snapshot.pending_grouping = {
+        "groupings": {
+            "RootAgent": {
+                "agents": ["Flow A", "Flow B"],
+                "rationale": "main entrypoint",
+                "journey": "greet + route",
+                "is_root": True,
+            },
+        },
+        "all_flow_names": ["Flow A", "Flow B"],
+        "root_key": "RootAgent",
+        "status": "awaiting_confirmation",
+        "session_id": "abc-123",
+    }
+    b.flush()
+    data = json.loads(b.json_path.read_text())
+    pg = data["pending_grouping"]
+    assert pg["status"] == "awaiting_confirmation"
+    assert pg["groupings"]["RootAgent"]["is_root"] is True
+    assert pg["groupings"]["RootAgent"]["agents"] == ["Flow A", "Flow B"]
+
+
+def test_html_renders_grouping_tab_hidden_when_pending_is_none(tmp_path):
+    svc = _make_service()
+    b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
+    b.update_from_service(svc)
+    b.flush()
+    html = b.html_path.read_text(encoding="utf-8")
+    # Tab markup is always present in template but starts hidden.
+    assert 'id="tab-grouping"' in html
+    assert 'style="display:none;"' in html
+
+
+def test_html_renders_grouping_tab_with_pending_data(tmp_path):
+    svc = _make_service()
+    b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
+    b.update_from_service(svc)
+    b.snapshot.pending_grouping = {
+        "groupings": {
+            "RootAgent": {
+                "agents": ["Flow A"],
+                "is_root": True,
+                "rationale": "core",
+                "journey": "",
+            },
+            "Helpers": {
+                "agents": ["Flow B"],
+                "is_root": False,
+                "rationale": "",
+                "journey": "",
+            },
+        },
+        "all_flow_names": ["Flow A", "Flow B"],
+        "root_key": "RootAgent",
+        "status": "awaiting_confirmation",
+        "session_id": "s-1",
+    }
+    b.flush()
+    html = b.html_path.read_text(encoding="utf-8")
+    # The renderer runs client-side; we just check the data made it into
+    # the embedded report-data blob and the template scaffolding shipped.
+    assert '"pending_grouping"' in html
+    assert "RootAgent" in html
+    assert "Helpers" in html
+    assert "renderGroupingReview" in html
+    assert 'id="panel-grouping"' in html
+
+
+def test_html_confirm_button_disabled_without_live_endpoint(tmp_path):
+    """In file:// read-only mode, the Confirm/Abort buttons are disabled."""
+    svc = _make_service()
+    b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
+    b.update_from_service(svc)
+    b.flush()
+    html = b.html_path.read_text(encoding="utf-8")
+    # Static template ships with buttons disabled by default; the live
+    # server (Phase 4) injects __REVIEW_ENDPOINT__ to enable them.
+    assert 'id="gr-confirm"' in html
+    assert 'id="gr-abort"' in html
+    # Either explicit `disabled` attribute or the no-endpoint title.
+    assert "Live server not running" in html

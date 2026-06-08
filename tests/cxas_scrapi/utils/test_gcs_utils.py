@@ -95,7 +95,7 @@ def test_download_string_decodes(mock_client_cls):
     mock_blob = Mock()
     mock_client.bucket.return_value = mock_bucket
     mock_bucket.blob.return_value = mock_blob
-    mock_blob.download_as_bytes.return_value = "héllo".encode("utf-8")
+    mock_blob.download_as_bytes.return_value = "héllo".encode()
 
     gcs = GCSUtils()
     assert gcs.download_string("gs://b/p") == "héllo"

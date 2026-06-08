@@ -16,7 +16,6 @@
 
 import json
 import re
-from typing import Dict, List, Tuple
 
 from cxas_scrapi.migration.data_models import DFCXAgentIR
 
@@ -113,8 +112,8 @@ class DependencyAnalyzer:
                         self._add_edge(flow_id, route["targetFlow"])
 
     def get_impact(
-        self, selected_ids: List[str]
-    ) -> Tuple[List[str], List[str]]:
+        self, selected_ids: list[str]
+    ) -> tuple[list[str], list[str]]:
         """Returns (outgoing_deps, incoming_refs) based on selection."""
         selected_set = set(selected_ids)
 
@@ -136,7 +135,7 @@ class DependencyAnalyzer:
 
         return list(outgoing), list(incoming)
 
-    def get_details(self, res_id: str) -> Dict[str, str]:
+    def get_details(self, res_id: str) -> dict[str, str]:
         return {
             "name": self.name_map.get(res_id, "Unknown"),
             "type": self.type_map.get(res_id, "Unknown"),

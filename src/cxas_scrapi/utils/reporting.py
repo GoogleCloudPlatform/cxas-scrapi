@@ -14,21 +14,25 @@
 
 """Utility functions for generating reports."""
 
+import datetime
 import glob
 import json
 import os
-from datetime import datetime
-from typing import Any, Dict, List
+from collections.abc import Mapping, Sequence
+from typing import Any
 
+import jinja2
 import pandas as pd
 import yaml
-from jinja2 import Template
 
-from cxas_scrapi.core.tools import Tools
+from cxas_scrapi.core import tools
 from cxas_scrapi.evals import runner as evals_runner
-from cxas_scrapi.utils.eval_utils import EvalUtils
-from cxas_scrapi.utils.gcs_utils import GCSUtils
-from cxas_scrapi.utils.report_components import load_component
+from cxas_scrapi.utils import (
+    base_components,
+    eval_utils,
+    gcs_utils,
+    report_components,
+)
 
 
 def _escape(text):
@@ -79,159 +83,25 @@ def _format_trace_line(line, tools_map):
 
 def _get_html_head(ts):
     """Return the HTML head with CSS and JS."""
+    css_path = os.path.join(
+        os.path.dirname(__file__), "../resources/components/base/base.css"
+    )
+    js_path = os.path.join(
+        os.path.dirname(__file__), "../resources/components/base/interaction.js"
+    )
+    with open(css_path, encoding="utf-8") as f:
+        css = f.read()
+    with open(js_path, encoding="utf-8") as f:
+        js = f.read()
     return f"""<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
 <title>Simulation Report - {ts}</title>
 <style>
-  body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 20px;
-    background: #f8f9fa;
-  }}
-  h1 {{
-    color: #1a1a2e;
-    border-bottom: 3px solid #e94560;
-    padding-bottom: 10px;
-  }}
-  h2 {{ color: #1a1a2e; margin-top: 30px; }}
-  .summary {{
-    background: white;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    margin-bottom: 20px;
-  }}
-  .summary .big {{ font-size: 2em; font-weight: bold; }}
-  .pass {{ color: #27ae60; }}
-  .fail {{ color: #e74c3c; }}
-  .error {{ color: #e67e22; }}
-  table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
-  th,
-  td {{
-    text-align: left;
-    padding: 8px 12px;
-    border-bottom: 1px solid #ddd;
-  }}
-  th {{ background: #2c3e50; color: white; }}
-  tr:hover {{ background: #f5f5f5; }}
-  .eval-card {{
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    margin: 15px 0;
-    overflow: hidden;
-  }}
-  .eval-header {{
-    padding: 12px 16px;
-    font-weight: bold;
-    cursor: pointer;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }}
-  .eval-header.pass-bg {{
-    background: #d4edda;
-    border-left: 4px solid #27ae60;
-  }}
-  .eval-header.fail-bg {{
-    background: #f8d7da;
-    border-left: 4px solid #e74c3c;
-  }}
-  .eval-body {{ padding: 0 16px 16px; }}
-  .transcript {{
-    background: #f8f9fa;
-    border-radius: 6px;
-    padding: 12px;
-    margin: 8px 0;
-    font-size: 0.9em;
-  }}
-  .transcript .user {{ color: #2980b9; margin: 6px 0; }}
-  .transcript .agent {{ color: #27ae60; margin: 6px 0; }}
-  .transcript .system {{ color: #e67e22; margin: 4px 0; font-size: 0.85em; }}
-  .badge {{
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 0.8em;
-    font-weight: bold;
-  }}
-  .badge.pass {{ background: #d4edda; color: #155724; }}
-  .badge.fail {{ background: #f8d7da; color: #721c24; }}
-  .badge.met {{ background: #d4edda; color: #155724; }}
-  .badge.not-met {{ background: #f8d7da; color: #721c24; }}
-  .expectation {{
-    margin: 6px 0;
-    padding: 8px;
-    background: #f0f0f0;
-    border-radius: 4px;
-  }}
-  .step {{
-    margin: 6px 0;
-    padding: 8px;
-    border-left: 3px solid #3498db;
-    background: #f0f8ff;
-  }}
-  .meta {{ color: #666; font-size: 0.85em; }}
-  details {{ margin: 4px 0; }}
-  summary {{ cursor: pointer; font-weight: bold; padding: 4px 0; }}
-  .tool-details {{
-    margin: 4px 0;
-    padding: 4px 8px;
-    background: #f3e8ff;
-    border-radius: 4px;
-    border-left: 3px solid #8e44ad;
-  }}
-  .tool-summary {{
-    font-weight: normal;
-    font-size: 0.9em;
-    color: #6c3483;
-    padding: 2px 0;
-  }}
-  .tool-data {{
-    margin: 4px 0;
-    padding: 8px;
-    background: #faf5ff;
-    border-radius: 4px;
-    font-size: 0.8em;
-    white-space: pre-wrap;
-    word-break: break-word;
-    overflow-x: auto;
-  }}
-  .tool-section {{ font-size: 0.85em; color: #555; margin-top: 6px; }}
-  .run-dot {{
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    margin-right: 3px;
-    cursor: pointer;
-    border: 2px solid transparent;
-    transition: border-color 0.15s;
-  }}
-  .run-dot:hover {{ border-color: #333; }}
-  .run-dot.p {{ background: #27ae60; }}
-  .run-dot.f {{ background: #e74c3c; }}
-  .run-dot.e {{ background: #e67e22; }}
-  .session-link {{ font-size: 0.85em; color: #3498db; margin: 4px 0; }}
-  .session-link a {{ color: #3498db; text-decoration: none; }}
-  .session-link a:hover {{ text-decoration: underline; }}
+{css}
 </style>
 <script>
-function jumpToRun(evalName, runIdx) {{
-  var card = document.getElementById('eval-' + evalName);
-  if (!card) return;
-  var details = card.querySelectorAll('details.run-detail');
-  details.forEach(function(d) {{ d.removeAttribute('open'); }});
-  if (details[runIdx]) {{
-    details[runIdx].setAttribute('open', '');
-  }}
-  setTimeout(function() {{
-    card.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-  }}, 50);
-}}
+{js}
 </script>
 </head><body>
 """
@@ -292,7 +162,7 @@ def _render_session_link(session_id, ces_base):
             f"{ces_base}?panel=conversation_list&id={session_id}&source=EVAL"
         )
         return (
-            f'<div class="session-link">Session: '
+            '<div class="session-link">Session: '
             f'<a href="{session_url}" target="_blank">'
             f"<code>{session_id}</code></a></div>\n"
         )
@@ -310,7 +180,7 @@ def _render_session_parameters(sparams):
         "&#9881; <b>Session Parameters</b></summary>"
     )
     html += (
-        f'<pre class="tool-data">'
+        '<pre class="tool-data">'
         f"{_escape(json.dumps(sparams, indent=2))}</pre></details>\n"
     )
     return html
@@ -364,7 +234,9 @@ def _parse_trace(trace, tools_map):
             if not stripped_line:
                 continue
             formatted_line = _format_trace_line(stripped_line, tools_map)
-            if formatted_line.startswith("Agent Text (Diag):"):
+            if formatted_line.startswith(
+                "Agent Text (Diag):"
+            ) or formatted_line.startswith("User Query:"):
                 continue
             elif formatted_line.startswith("Agent Text:"):
                 parsed_lines.append(
@@ -427,19 +299,19 @@ def _render_merged_items(merged):
             )
             lbl = lbl.split("/")[-1] if "/" in lbl else lbl
             html += (
-                f'<details class="tool-details"><summary class="tool-summary">'
+                '<details class="tool-details"><summary class="tool-summary">'
                 f"&#128295; <b>{_escape(lbl)}</b></summary>"
             )
             if args:
                 html += (
-                    f'<div class="tool-section"><b>Input:</b></div>'
+                    '<div class="tool-section"><b>Input:</b></div>'
                     f'<pre class="tool-data">{_escape(args)}</pre>'
                 )
             if kind == "tool_pair":
                 _, _, result = item[2].partition(" with result ")
                 if result:
                     html += (
-                        f'<div class="tool-section"><b>Output:</b></div>'
+                        '<div class="tool-section"><b>Output:</b></div>'
                         f'<pre class="tool-data">{_escape(result)}</pre>'
                     )
             html += "</details>\n"
@@ -447,7 +319,7 @@ def _render_merged_items(merged):
             lbl, _, result = item[1].partition(" with result ")
             lbl = lbl.replace("Tool Response: ", "").split("/")[-1]
             html += (
-                f'<details class="tool-details"><summary class="tool-summary">'
+                '<details class="tool-details"><summary class="tool-summary">'
                 f"&#128228; <b>{_escape(lbl)}</b> response</summary>"
             )
             if result:
@@ -455,16 +327,16 @@ def _render_merged_items(merged):
             html += "</details>\n"
         elif kind == "agent_transfer":
             html += (
-                f'<div class="system">&#128256; <b>Agent Transfer:</b>'
+                '<div class="system">&#128256; <b>Agent Transfer:</b>'
                 f" {_escape(item[1])}</div>\n"
             )
         elif kind == "custom_payload":
             html += (
-                f'<details class="tool-details">'
-                f'<summary class="tool-summary">'
-                f"&#128230; <b>Custom Payload</b></summary>"
+                '<details class="tool-details">'
+                '<summary class="tool-summary">'
+                "&#128230; <b>Custom Payload</b></summary>"
                 f'<pre class="tool-data">{_escape(item[1])}</pre>'
-                f"</details>\n"
+                "</details>\n"
             )
         else:
             html += f'<div class="system">{_escape(item[1])}</div>\n'
@@ -496,7 +368,7 @@ def _get_run_detail(r, ces_base, tools_map):
     html = ""
     run_cls = "pass" if r.get("passed") else "fail"
     session_id = r.get("session_id", "")
-    html += f'<details class="run-detail"{"" if not r.get("passed") else ""}>\n'
+    html += '<details class="run-detail">\n'
     html += (
         f"<summary>Run {r['run']} — "
         f'<span class="{run_cls}">'
@@ -531,32 +403,41 @@ def _get_run_detail(r, ces_base, tools_map):
     return html
 
 
-def _upload_to_gcs(output_path: str, html: str) -> str | None:
+def _upload_to_gcs(output_path: str, html_content: str) -> str | None:
     """Uploads the report to GCS and returns the mTLS URL or None on failure."""
     try:
-        gcs = GCSUtils()
-        mtls_url = gcs.upload_string(output_path, html)
+        gcs = gcs_utils.GCSUtils()
+        mtls_url = gcs.upload_string(output_path, html_content)
         print(f"Report uploaded to GCS: {output_path}")
         print(f"Authenticated URL: {mtls_url}")
         return mtls_url
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"WARNING: GCS upload failed ({e}). Falling back to local file.")
         return None
 
 
 def generate_html_report(
-    results: List[Dict[str, Any]],
+    results: list[dict[str, Any]],
     output_path: str,
     modality: str,
     model: str,
     app_name: str = "",
-    wall_clock_s: float = None,
-    user_agent_extension: str = None,
-):
+    wall_clock_s: float | None = None,
+    user_agent_extension: str | None = None,
+) -> None:
     """Generate an HTML report and save it locally or upload to GCS.
 
     If output_path starts with 'gs://', the report is uploaded to GCS.
     If the upload fails, it falls back to saving a local file.
+
+    Args:
+      results: The list of evaluation result dicts.
+      output_path: The local or GCS file path to write the HTML report to.
+      modality: The modality used for the evaluation (e.g., 'text').
+      model: The model name used for the evaluation.
+      app_name: The CX Agent Studio (CXAS) agent resource name.
+      wall_clock_s: Total elapsed execution time in seconds.
+      user_agent_extension: Optional user agent extension string.
     """
     total = len(results)
     passed = sum(1 for r in results if r.get("passed"))
@@ -575,10 +456,10 @@ def generate_html_report(
     tools_map = {}
     if app_name:
         try:
-            tools_map = Tools(
+            tools_map = tools.Tools(
                 app_name=app_name, user_agent_extension=user_agent_extension
             ).get_tools_map()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
     parts = app_name.split("/") if app_name else []
@@ -594,7 +475,7 @@ def generate_html_report(
         else ""
     )
 
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     html = _get_html_head(ts)
     html += _get_summary_block(
@@ -639,19 +520,41 @@ def generate_html_report(
 
 
 def generate_combined_html_report(
-    golden_results=None,
-    sim_results=None,
-    tool_results=None,
-    callback_results=None,
-    output_path="",
-    app_name="",
-    golden_modality="text",
-    sim_modality="text",
-    sim_wall_clock_s=None,
-    user_agent_extension=None,
-):
-    """Generate combined HTML report based on results from multiple sources."""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    golden_results: list[dict[str, Any]] | None = None,
+    sim_results: list[dict[str, Any]] | None = None,
+    tool_results: list[dict[str, Any]] | None = None,
+    callback_results: list[dict[str, Any]] | None = None,
+    output_path: str = "",
+    app_name: str = "",
+    golden_modality: str = "text",
+    sim_modality: str = "text",
+    sim_wall_clock_s: float | None = None,
+    user_agent_extension: str | None = None,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
+) -> str:
+    """Generate combined HTML report based on results from multiple sources.
+
+    Args:
+      golden_results: The list of golden evaluation results.
+      sim_results: The list of simulation evaluation results.
+      tool_results: The list of tool evaluation results.
+      callback_results: The list of callback evaluation results.
+      output_path: The path to save the HTML report (local or GCS).
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      golden_modality: The modality used for the golden evaluations.
+      sim_modality: The modality used for the simulation evaluations.
+      sim_wall_clock_s: Total elapsed execution time for simulations in seconds.
+      user_agent_extension: Optional user agent extension string.
+      bg_noise_file: Path to background noise audio file to play during
+        replay.
+      burst_noise_files: List of paths to burst noise audio files injected
+        during replay.
+
+    Returns:
+      The rendered HTML report markup string.
+    """
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     g_total = len(golden_results) if golden_results else 0
     g_passed = (
@@ -792,13 +695,13 @@ def generate_combined_html_report(
                         if ctype == "transfer":
                             if actual == "(missed)":
                                 reason = (
-                                    f"Routing missed: expected transfer to "
-                                    f"{expected}"
+                                    "Routing missed: expected transfer to"
+                                    f" {expected}"
                                 )
                             else:
                                 reason = (
-                                    f"Wrong routing: expected {expected}, "
-                                    f"got {actual}"
+                                    f"Wrong routing: expected {expected},"
+                                    f" got {actual}"
                                 )
                         elif ctype == "tool_call" and actual == "(missed)":
                             if expected:
@@ -837,7 +740,7 @@ def generate_combined_html_report(
             for exp in r.get("expectation_details", []):
                 if exp.get("status") == "Not Met":
                     reason = (
-                        f"Expectation not met: "
+                        "Expectation not met: "
                         f"{exp.get('expectation', '')[:60]}"
                     )
                     failure_groups.setdefault(reason, set()).add(
@@ -882,10 +785,10 @@ def generate_combined_html_report(
     tools_map = {}
     if app_name:
         try:
-            tools_map = Tools(
+            tools_map = tools.Tools(
                 app_name=app_name, user_agent_extension=user_agent_extension
             ).get_tools_map()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
     # Process traces for simulation results to simplify template
@@ -897,7 +800,11 @@ def generate_combined_html_report(
                 for entry in trace:
                     for raw_line in entry.split("\n"):
                         line = raw_line.strip()
-                        if not line or line.startswith("Agent Text (Diag):"):
+                        if (
+                            not line
+                            or line.startswith("Agent Text (Diag):")
+                            or line.startswith("User Query:")
+                        ):
                             continue
                         for path, dname in tools_map.items():
                             line = line.replace(path, dname)
@@ -928,13 +835,82 @@ def generate_combined_html_report(
                         merged.append((kind, text))
                 r["_processed_trace"] = merged
 
+    # Compile Tool evaluation table via Python Component
+    if tool_results:
+        t_pct = 100 * t_passed / t_total if t_total else 0
+        t_pct_str = f"{t_pct:.0f}"
+        rows = [
+            report_components.ToolRow(
+                passed_str="true" if r["passed"] else "false",
+                status_class="pass" if r["passed"] else "fail",
+                status=r.get("status", "?"),
+                tool_name=r.get("tool", "?"),
+                test_name=r.get("name", "?"),
+                latency=(
+                    f"{r.get('latency_ms', 0):.0f}ms"
+                    if r.get("latency_ms")
+                    else "-"
+                ),
+                errors=str(r.get("errors", ""))[:100],
+            )
+            for r in sorted(tool_results, key=lambda x: x.get("passed", False))
+        ]
+
+    if tool_results:
+        tool_results_html = report_components.ToolCard(
+            passed=t_passed,
+            total=t_total,
+            pct_str=t_pct_str,
+            tool_rows=base_components.Raw(
+                "\n".join(row.render() for row in rows)
+            ),
+        ).render()
+    else:
+        tool_results_html = ""
+
+    # Compile Callback evaluation table via Python Component
+    if callback_results:
+        c_pct = 100 * c_passed / c_total if c_total else 0
+        c_pct_str = f"{c_pct:.0f}"
+        rows = [
+            report_components.CallbackRow(
+                passed_str="true" if r["passed"] else "false",
+                status_class="pass" if r["passed"] else "fail",
+                status=r.get("status", "?"),
+                agent_name=r.get("agent", "?"),
+                callback_type=r.get("callback_type", "?"),
+                test_name=r.get("name", "?"),
+                error=str(r.get("error", ""))[:100],
+            )
+            for r in sorted(
+                callback_results, key=lambda x: x.get("passed", False)
+            )
+        ]
+
+    if callback_results:
+        callback_results_html = report_components.CallbackCard(
+            passed=c_passed,
+            total=c_total,
+            pct_str=c_pct_str,
+            callback_rows=base_components.Raw(
+                "\n".join(row.render() for row in rows)
+            ),
+        ).render()
+    else:
+        callback_results_html = ""
+
+    f_patterns = report_components.FailurePatterns(
+        failure_groups=failure_groups
+    )
+    failure_patterns_html = f_patterns.render()
     template_path = os.path.join(
         os.path.dirname(__file__), "combined_report_template.html"
     )
-    with open(template_path, "r") as f:
+    with open(template_path) as f:
         template_content = f.read()
-    template = Template(template_content)
+    template = jinja2.Template(template_content)
     html = template.render(
+        failure_patterns_html=failure_patterns_html,
         ts=ts,
         pct=pct,
         passed=passed,
@@ -962,13 +938,24 @@ def generate_combined_html_report(
         _escape=_escape,
         _fmt_duration=_fmt_duration,
         json=json,
-        css_content=load_component("base/base.css"),
-        js_interaction=load_component("base/interaction.js"),
+        bg_noise_file=(
+            os.path.basename(bg_noise_file) if bg_noise_file else None
+        ),
+        burst_noise_files=burst_noise_files,
+        tool_results_html=tool_results_html,
+        callback_results_html=callback_results_html,
     )
+
+    # Wrap compiled body dynamically in declarative BaseShell scaffold envelope.
+    report = report_components.BaseShell(
+        title=f"Combined Eval Report - {ts}",
+        body_content=[base_components.Raw(html)],
+    )
+    html_out = report.render()
 
     if output_path:
         if output_path.startswith("gs://"):
-            mtls_url = _upload_to_gcs(output_path, html)
+            mtls_url = _upload_to_gcs(output_path, html_out)
             if not mtls_url:
                 # Fallback to local file if upload failed
                 filename = output_path.rsplit("/", maxsplit=1)[-1]
@@ -976,12 +963,12 @@ def generate_combined_html_report(
                     filename = "report_fallback.html"
                 output_path = filename
                 with open(output_path, "w") as f:
-                    f.write(html)
+                    f.write(html_out)
         else:
             with open(output_path, "w") as f:
-                f.write(html)
+                f.write(html_out)
 
-    return html
+    return html_out
 
 
 def _outcome_str(val):
@@ -990,14 +977,104 @@ def _outcome_str(val):
     return str(val) if val else "?"
 
 
+def _compile_tool_results_card(
+    *,
+    tool_results: Sequence[Mapping[str, Any]],
+    t_passed: int,
+    t_total: int,
+) -> report_components.ToolCard | str:
+    """Compile the ToolCard component declaratively without premature rendering.
+
+    Args:
+      tool_results: Sequence of raw tool validation outcomes..
+      t_passed: Number of successful tool test cases..
+      t_total: Total number of tool test cases executed..
+
+    Returns:
+      A ToolCard component or empty string if empty.
+    """
+    if not tool_results:
+        return ""
+    t_pct = 100 * t_passed / t_total if t_total else 0
+    rows = (
+        report_components.ToolRow(
+            passed=r["passed"],
+            status_class="pass" if r["passed"] else "fail",
+            status=r.get("status", "?"),
+            tool_name=r.get("tool", "?"),
+            test_name=r.get("name", "?"),
+            latency_ms=r.get("latency_ms"),
+            errors=r.get("errors", "")[:100],
+        )
+        for r in sorted(tool_results, key=lambda x: x.get("passed", False))
+    )
+    return report_components.ToolCard(
+        passed=t_passed,
+        total=t_total,
+        pct_str=f"{t_pct:.0f}",
+        tool_rows=base_components.ComponentGroup(list(rows)),
+    )
+
+
+def _compile_callback_results_card(
+    *,
+    callback_results: Sequence[Mapping[str, Any]],
+    c_passed: int,
+    c_total: int,
+) -> report_components.CallbackCard | str:
+    """Compile the CallbackCard component declaratively without premature
+
+    rendering.
+
+    Args:
+      callback_results: Sequence of raw callback execution outcomes..
+      c_passed: Number of successful callback test cases..
+      c_total: Total number of callback test cases executed..
+
+    Returns:
+      A CallbackCard component or empty string if empty.
+    """
+    if not callback_results:
+        return ""
+    c_pct = 100 * c_passed / c_total if c_total else 0
+    rows = (
+        report_components.CallbackRow(
+            passed=r["passed"],
+            status_class="pass" if r["passed"] else "fail",
+            status=r.get("status", "?"),
+            agent_name=r.get("agent", "?"),
+            callback_type=r.get("callback_type", "?"),
+            test_name=r.get("name", "?"),
+            error=r.get("error", "")[:100],
+        )
+        for r in sorted(callback_results, key=lambda x: x.get("passed", False))
+    )
+    return report_components.CallbackCard(
+        passed=c_passed,
+        total=c_total,
+        pct_str=f"{c_pct:.0f}",
+        callback_rows=base_components.ComponentGroup(list(rows)),
+    )
+
+
 def load_golden_results(
-    run_id, app_name, include=None, user_agent_extension=None
-):
-    """Fetch golden results and parse into report-friendly format."""
+    run_id: str, app_name: str, include: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """Fetch golden results and parse into report-friendly format.
+
+    Args:
+      run_id: The evaluation run ID to load results for.
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      include: Categories of evaluations to include (e.g. 'goldens',
+        'scenarios').
+
+    Returns:
+      A list of formatted evaluation result dictionaries.
+    """
     if include is None:
         include = ["goldens", "scenarios"]
 
-    utils = EvalUtils(app_name=app_name)
+    utils = eval_utils.EvalUtils(app_name=app_name)
     full_run_id = (
         run_id
         if run_id.startswith("projects/")
@@ -1098,14 +1175,13 @@ def load_golden_results(
                         at.get("target_agent", "").split("/")[-1],
                     )
                     obs = o.get("observed_agent_transfer", {})
-                    comp["actual"] = (
-                        obs.get(
+                    if obs:
+                        comp["actual"] = obs.get(
                             "display_name",
                             obs.get("target_agent", "").split("/")[-1],
                         )
-                        if obs
-                        else "(missed)"
-                    )
+                    else:
+                        comp["actual"] = "(missed)"
                 else:
                     continue
 
@@ -1156,7 +1232,7 @@ def load_golden_results(
                         turn_input = ("event", str(ui["event"]))
                 if turn_input:
                     turn_inputs.append(turn_input)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
         for i, turn in enumerate(turns):
@@ -1196,8 +1272,15 @@ def load_golden_results(
     return results
 
 
-def _load_sim_test_cases(yaml_path: str) -> list[dict]:
-    """Loads sim files and merges common params and expectations."""
+def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
+    """Loads sim files and merges common params and expectations.
+
+    Args:
+      yaml_path: Path to the YAML test cases file.
+
+    Returns:
+      List of merged evaluation test case dicts.
+    """
     with open(yaml_path) as f:
         data = yaml.safe_load(f) or {}
     if isinstance(data, list):
@@ -1227,10 +1310,17 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict]:
     return merged_cases
 
 
-def load_sim_results(json_path, sim_evals_yaml=None):
+def load_sim_results(json_path: str, sim_evals_yaml: str | None = None):
     """Load sim results from JSON file.
 
     Handles both old (list) and new (envelope) formats.
+
+    Args:
+      json_path: The JSON file path containing evaluation results.
+      sim_evals_yaml: Optional path to simulation evals YAML definition file.
+
+    Returns:
+      A tuple containing the list of simulation results and the wall clock time.
     """
     with open(json_path) as f:
         data = json.load(f)
@@ -1258,14 +1348,21 @@ def load_sim_results(json_path, sim_evals_yaml=None):
                     r["session_parameters"] = templates[r["name"]].get(
                         "session_parameters", {}
                     )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
     return results, wall_clock_s
 
 
-def load_tool_test_results(csv_or_json_path):
-    """Load tool test results from a CSV or JSON file."""
+def load_tool_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
+    """Load tool test results from a CSV or JSON file.
+
+    Args:
+      csv_or_json_path: Path to the CSV or JSON tool test results file.
+
+    Returns:
+      A list of formatted tool test result dictionaries.
+    """
     if csv_or_json_path.endswith(".csv"):
         df = pd.read_csv(csv_or_json_path)
     else:
@@ -1285,8 +1382,15 @@ def load_tool_test_results(csv_or_json_path):
     return results
 
 
-def load_callback_test_results(csv_or_json_path):
-    """Load callback test results from a CSV or JSON file."""
+def load_callback_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
+    """Load callback test results from a CSV or JSON file.
+
+    Args:
+      csv_or_json_path: Path to the CSV or JSON callback test results file.
+
+    Returns:
+      A list of formatted callback test result dictionaries.
+    """
     if csv_or_json_path.endswith(".csv"):
         df = pd.read_csv(csv_or_json_path)
     else:
@@ -1307,25 +1411,52 @@ def load_callback_test_results(csv_or_json_path):
 
 
 def generate_combined_report_from_dir(
-    output_dir,
-    golden_run=None,
-    app_name=None,
-    output_path=None,
-    run=False,
-    app_dir=None,
-    tool_test_file=None,
-    goldens_dir=None,
-    simulation_dir=None,
-    format="html",
-    include=None,
-    modality="text",
-    runs=1,
-    filter_files=None,
-    filter_tags=None,
-    parallel=1,
-    golden_timeout=600,
-):
-    """Load results from directory and generate combined HTML report."""
+    output_dir: str,
+    golden_run: str | None = None,
+    app_name: str | None = None,
+    output_path: str | None = None,
+    run: bool = False,
+    app_dir: str | None = None,
+    tool_test_file: str | None = None,
+    goldens_dir: str | None = None,
+    simulation_dir: str | None = None,
+    include: list[str] | None = None,
+    modality: str = "text",
+    runs: int = 1,
+    filter_files: list[str] | None = None,
+    filter_tags: list[str] | None = None,
+    parallel: int = 1,
+    golden_timeout: int = 600,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
+) -> str:
+    """Load results from directory and generate combined HTML report.
+
+    Args:
+      output_dir: Directory containing the evaluation results.
+      golden_run: The golden evaluation run ID.
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      output_path: Optional GCS or local path to write the HTML report to.
+      run: If True, triggers execution of evals before compiling report.
+      app_dir: Directory containing CX Agent Studio (CXAS) agent code.
+      tool_test_file: Path to tool tests definition file.
+      goldens_dir: Directory containing golden test cases.
+      simulation_dir: Directory containing simulation test cases.
+      include: List of evaluation types to include ('sims', 'goldens', etc).
+      modality: The modality used for the evaluation (e.g., 'text').
+      runs: Number of simulation runs.
+      filter_files: List of specific files to filter evaluations by.
+      filter_tags: List of specific tags to filter evaluations by.
+      parallel: Degree of parallelism for the runs.
+      golden_timeout: Golden run execution timeout in seconds.
+      bg_noise_file: Path to background noise audio file to play during
+        replay.
+      burst_noise_files: List of paths to burst noise audio files injected
+        during replay.
+
+    Returns:
+      The rendered combined HTML report string.
+    """
     if not os.path.isdir(output_dir):
         raise ValueError(f"{output_dir} is not a directory.")
 
@@ -1352,6 +1483,8 @@ def generate_combined_report_from_dir(
             parallel=parallel,
             golden_timeout=golden_timeout,
             include=include,
+            bg_noise_file=bg_noise_file,
+            burst_noise_files=burst_noise_files,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed
@@ -1477,28 +1610,55 @@ def generate_combined_report_from_dir(
         app_name=app_name or "",
         golden_modality=modality,
         sim_modality=modality,
+        bg_noise_file=bg_noise_file,
+        burst_noise_files=burst_noise_files,
     )
 
 
 def run_all_evals(
-    app_name,
-    app_dir=None,
-    tool_test_file=None,
-    goldens_dir=None,
-    simulation_dir=None,
-    output_dir=None,
-    modality="text",
-    runs=1,
-    filter_files=None,
-    filter_tags=None,
-    parallel=1,
-    golden_timeout=600,
-    include=None,
-):
+    app_name: str,
+    app_dir: str | None = None,
+    tool_test_file: str | None = None,
+    goldens_dir: str | None = None,
+    simulation_dir: str | None = None,
+    output_dir: str | None = None,
+    modality: str = "text",
+    runs: int = 1,
+    filter_files: list[str] | None = None,
+    filter_tags: list[str] | None = None,
+    parallel: int = 1,
+    golden_timeout: int = 600,
+    include: list[str] | None = None,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
+) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
     Deprecated legacy wrapper. Use
     `cxas_scrapi.evals.runner.run_all_evals` directly.
+
+    Args:
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      app_dir: Directory containing CX Agent Studio (CXAS) agent code.
+      tool_test_file: Path to tool tests definition file.
+      goldens_dir: Directory containing golden test cases.
+      simulation_dir: Directory containing simulation test cases.
+      output_dir: Directory to write output evaluation results.
+      modality: The modality used for the evaluation (e.g., 'text').
+      runs: Number of simulation runs.
+      filter_files: List of specific files to filter evaluations by.
+      filter_tags: List of specific tags to filter evaluations by.
+      parallel: Degree of parallelism for the runs.
+      golden_timeout: Golden run execution timeout in seconds.
+      include: List of evaluation types to include.
+      bg_noise_file: Path to background noise audio file to play during
+        replay.
+      burst_noise_files: List of paths to burst noise audio files injected
+        during replay.
+
+    Returns:
+      A dict containing lists of results for 'simulation', 'golden', 'tool', and
+      'callback'.
     """
     return evals_runner.run_all_evals(
         app_name=app_name,
@@ -1514,4 +1674,6 @@ def run_all_evals(
         parallel=parallel,
         golden_timeout=golden_timeout,
         include=include,
+        bg_noise_file=bg_noise_file,
+        burst_noise_files=burst_noise_files,
     )

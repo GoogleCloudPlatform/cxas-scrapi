@@ -16,7 +16,6 @@
 
 import logging
 import re
-from typing import Optional
 
 from google.api_core import exceptions as api_exceptions
 from google.cloud import secretmanager
@@ -31,7 +30,9 @@ class SecretManagerUtils:
         self.project_id = project_id
         self.client = secretmanager.SecretManagerServiceClient()
 
-    def create_or_get_secret(self, secret_id: str, payload: str = None) -> str:
+    def create_or_get_secret(
+        self, secret_id: str, payload: str | None = None
+    ) -> str:
         """Retrieves a Secret via Secret ID, or creates a new one if it
         doesn't exist.
 
@@ -86,7 +87,7 @@ class SecretManagerUtils:
 
     def create_secret_with_version(
         self, secret_id: str, secret_payload: str
-    ) -> Optional[str]:
+    ) -> str | None:
         """Creates a secret if it doesn't exist, adds a new version with the
         provided payload, and returns the resource name of the new version.
         """

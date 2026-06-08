@@ -16,7 +16,7 @@ import base64
 import logging
 import re
 import urllib.parse
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
@@ -45,8 +45,8 @@ class DFCXToolConverter:
         return sanitized
 
     def convert_cx_tool_to_ps_resource(
-        self, cx_tool: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, cx_tool: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Converts a DFCX tool structure to a CXAS resource payload."""
         display_name = cx_tool.get("displayName", "unnamed_tool")
         description = cx_tool.get("description", "")
@@ -322,8 +322,8 @@ class DFCXToolConverter:
             return None
 
     def convert_webhook_to_openapi_toolset(
-        self, cx_webhook: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, cx_webhook: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Converts a DFCX Webhook into a generalized Polysynth OpenAPI
         Toolset payload.
         """

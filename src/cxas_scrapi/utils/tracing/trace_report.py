@@ -242,7 +242,7 @@ def _chunk_to_entry(
     role: str,
     turn_idx: int,
 ) -> dict[str, Any] | None:
-    if "text" in chunk and chunk["text"]:
+    if chunk.get("text"):
         kind = "user" if role.lower() == "user" else "agent"
         return {
             "kind": kind,
@@ -250,7 +250,7 @@ def _chunk_to_entry(
             "role": role,
             "text": chunk["text"],
         }
-    if "transcript" in chunk and chunk["transcript"]:
+    if chunk.get("transcript"):
         return {
             "kind": "user" if role.lower() == "user" else "agent",
             "turn": turn_idx,

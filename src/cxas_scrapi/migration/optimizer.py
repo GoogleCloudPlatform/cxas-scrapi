@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 from cxas_scrapi.migration.data_models import (
     IRTool,
@@ -25,8 +25,8 @@ class CXASOptimizer:
     def __init__(self, ir: MigrationIR, gemini_client: GeminiGenerate):
         self.ir = ir
         self.gemini = gemini_client
-        self.dependency_map: Dict[str, List[Dict[str, str]]] = {}
-        self.optimization_logs: List[Dict[str, Any]] = []
+        self.dependency_map: dict[str, list[dict[str, str]]] = {}
+        self.optimization_logs: list[dict[str, Any]] = []
 
     def log_action(self, stage: str, action: str, details: str):
         """Logs an optimization action for the post-migration report."""
@@ -333,13 +333,13 @@ class CXASOptimizer:
         print("\n" + "=" * 50)
         print("STAGE 1 DEBUG: POST-REPLACEMENT VERIFICATION")
         if self.ir.agents:
-            sample_agent = list(self.ir.agents.values())[0]
+            sample_agent = next(iter(self.ir.agents.values()))
             print(
                 f"Sample Agent ({sample_agent.display_name}) Instruction:\n"
                 f"{sample_agent.instruction[:500]}...\n"
             )
         if self.ir.tools:
-            sample_tool = list(self.ir.tools.values())[0]
+            sample_tool = next(iter(self.ir.tools.values()))
             sample_tool_name = sample_tool.payload.get(
                 "displayName", sample_tool.id
             )

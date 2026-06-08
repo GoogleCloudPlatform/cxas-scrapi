@@ -30,7 +30,7 @@ By default, the linter looks for a `cxaslint.yaml` config file in the current di
 To run against a specific directory:
 
 ```bash
-cxas lint --app_dir cxas_app/My\ Support\ Agent
+cxas lint --app-dir cxas_app/My\ Support\ Agent
 ```
 
 To get JSON output (useful for CI):

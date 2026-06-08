@@ -29,7 +29,6 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -75,7 +74,7 @@ class LintResult:
     rule_id: str
     severity: Severity
     message: str
-    line: Optional[int] = None
+    line: int | None = None
     fix_suggestion: str = ""
 
     def __str__(self):
@@ -198,8 +197,8 @@ class Rule(ABC):
         self,
         file: str,
         message: str,
-        severity: Optional[Severity] = None,
-        line: Optional[int] = None,
+        severity: Severity | None = None,
+        line: int | None = None,
         fix: str = "",
     ) -> LintResult:
         return LintResult(
@@ -295,7 +294,7 @@ class RuleRegistry:
         for r in rules:
             self.register(r)
 
-    def get(self, rule_id: str) -> Optional[Rule]:
+    def get(self, rule_id: str) -> Rule | None:
         return self._rules.get(rule_id)
 
     def all_rules(self) -> list[Rule]:
@@ -395,8 +394,8 @@ class Discovery:
         self,
         app_dir: Path,
         evals_dir: Path,
-        limit_agents: Optional[set[str]] = None,
-        limit_tools: Optional[set[str]] = None,
+        limit_agents: set[str] | None = None,
+        limit_tools: set[str] | None = None,
     ):
         self.app_dir = app_dir
         self.evals_dir = evals_dir
@@ -404,7 +403,7 @@ class Discovery:
         self.limit_tools = limit_tools
         self.app_root = self._find_app_root()
 
-    def _find_app_root(self) -> Optional[Path]:
+    def _find_app_root(self) -> Path | None:
         """Find the actual app root directory.
 
         Handles two layouts:
@@ -423,7 +422,7 @@ class Discovery:
                     return d
         return None
 
-    def discover_global_instruction(self) -> Optional[Path]:
+    def discover_global_instruction(self) -> Path | None:
         """Return path to ``global_instruction.txt`` if it exists."""
         if not self.app_root:
             return None
@@ -522,7 +521,7 @@ class Discovery:
             result[rel] = yaml_path
         return result
 
-    def discover_app_config(self) -> Optional[Path]:
+    def discover_app_config(self) -> Path | None:
         """Return path to ``app.json`` or ``app.yaml``."""
         if not self.app_root:
             return None
@@ -613,7 +612,7 @@ def build_registry() -> RuleRegistry:
 def get_toolset_tools(
     app_root: Path,
     toolset_name: str,
-    allowed_tool_ids: list[str] = None,
+    allowed_tool_ids: list[str] | None = None,
 ) -> ToolsetResolution:
     """Parses toolset config and resolves its validation behavior and tools.
 
@@ -705,14 +704,14 @@ def build_context(
     )
 
 
-def run_rules(  # noqa: C901
+def run_rules(
     registry: RuleRegistry,
     config: LintConfig,
     context: LintContext,
     discovery: Discovery,
     report: LintReport,
-    categories: Optional[list[str]] = None,
-    specific_rules: Optional[set[str]] = None,
+    categories: list[str] | None = None,
+    specific_rules: set[str] | None = None,
 ):
     """Run lint rules against discovered files."""
 

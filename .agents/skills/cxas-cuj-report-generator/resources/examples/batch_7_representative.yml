@@ -1,30 +1,49 @@
-subintent_id: delivery-setup
-subintent_name: Delivery Setup
-parent_cuj: General Customer Support
+subintent_id: order-cancel
+subintent_name: Cancel Active Order
+parent_cuj: Digital Ordering
 turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
 - speaker: User
-  text: Hi, I'd like to set up delivery for my weekly meal plan.
+  text: 'Hi, I just placed an order #9982, but I need to cancel it right away if possible.'
 - speaker: Agent
-  text: I can certainly help you with that. To get started, I'll check your rewards account for delivery eligibility.
+  text: Oh, let me check if the kitchen has started preparing it yet. If not, we can definitely cancel it.
 - speaker: Agent
-  text: Calling tool get_rewards_account
+  text: Checking if order preparation has started.
   tool_call:
-    name: get_rewards_account
-    parameters:
-      customer_id: '12345'
+    name: get_order_status
+    payload:
+      order_id: '9982'
+    response:
+      status: success
+      order_state: received
+      cancelable: true
 - speaker: Agent
-  text: Good news! Your plan supports free delivery for orders over $20. Which items would you like to order?
+  text: Good news, they haven't started prepping it yet! Would you like me to go ahead and cancel the order and issue a full refund?
 - speaker: User
-  text: My Burgers and Fries.
+  text: Yes, please cancel it. Thank you.
 - speaker: Agent
-  text: Great. I'll initiate the order for those now. You'll receive a confirmation email once the kitchen processes the request.
+  text: Cancelling order in system and processing refund.
+  tool_call:
+    name: cancel_order
+    payload:
+      order_id: '9982'
+    response:
+      status: success
+      cancelled: true
+      refund_ref: REF-ORD-22
 - speaker: Agent
-  text: Calling webhook setup_food_delivery
-  webhook_call:
-    endpoint: setup_food_delivery
-    payload_patch:
-      items:
-      - Burgers
-      - Fries
+  text: 'Alright, order #9982 has been successfully cancelled, and a full refund has been issued back to your card. You''ll get an email confirmation shortly.'
 - speaker: Agent
-  text: All set. Is there anything else I can assist you with today?
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success
