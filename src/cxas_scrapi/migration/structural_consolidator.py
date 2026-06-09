@@ -21,6 +21,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 import re
 from typing import Any
 
@@ -46,6 +47,7 @@ GROUP_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{2,84}$")
 AGENT_REF_RE = re.compile(r"{@AGENT:\s*([^}]+)}")
 SENTINEL_REFS = {"END_SESSION", "END_FLOW"}
 DEFAULT_PER_GROUP_TIMEOUT_S = 600
+
 
 
 # ---------------------------------------------------------------------------
@@ -790,10 +792,8 @@ class StructuralConsolidator:
     ) -> dict[str, str]:
         """Synthesize PIF XML instructions for each consolidated group.
 
-        Each per-group call is wrapped in `asyncio.wait_for(..., timeout=...)`
-        so a single hang on Gemini doesn't block the others. On timeout or
-        error, the existing concatenated instruction stays in place and the
-        group is recorded in the returned status dict.
+        Each group gets its own 2A + 2B pair of Gemini calls, all gathered
+        concurrently up to the GeminiGenerate semaphore limit.
 
         Returns a per-group status dict like
         ``{group_name: "ok" | "timeout" | "error"}``.
@@ -808,6 +808,17 @@ class StructuralConsolidator:
         available_groups_context = self._build_available_groups_context(
             groupings
         )
+
+        # Pre-create context caches for the shared prompt prefixes so that
+        # inputs 2–4 (global vars / toolsets / tools) for 2A and input 3
+        # (available tools) for 2B are not re-sent on every per-group call.
+        # Cache creation may return None if the content is below the minimum
+        # token threshold; the designer falls back to uncached generation.
+        sys_2a, shared_2a = AsyncAgentDesigner.build_2a_shared_context(self.ir)
+        cache_2a = await self.gemini.create_cache(sys_2a, shared_2a)
+
+        sys_2b, shared_2b = AsyncAgentDesigner.build_2b_shared_context(self.ir)
+        cache_2b = await self.gemini.create_cache(sys_2b, shared_2b)
 
         async def _one(group_name: str, members: list[str]) -> str:
             combined_tree = _build_combined_tree_view(
@@ -828,6 +839,7 @@ class StructuralConsolidator:
                         target_ir=self.ir,
                         available_groups=available_groups_context,
                         self_group=group_name,
+                        cached_content_name=cache_2a,
                     ),
                     timeout=per_group_timeout_s,
                 )
@@ -851,13 +863,10 @@ class StructuralConsolidator:
                         flow_name=group_name,
                         blueprint=blueprint,
                         tree_view=combined_tree,
-                        # Pass the IR so the 2B prompt receives the exact
-                        # tool registry — prevents Gemini from
-                        # hallucinating ``_wrapper`` / ``_tool`` suffixes
-                        # on tool IDs that don't actually exist.
                         target_ir=self.ir,
                         available_groups=available_groups_context,
                         self_group=group_name,
+                        cached_content_name=cache_2b,
                     ),
                     timeout=per_group_timeout_s,
                 )
@@ -880,24 +889,27 @@ class StructuralConsolidator:
                 m2g,
                 member_display_to_group,
                 group_name,
-                # Gemini may emit a consolidated group name directly when
-                # the synthesis prompt advertises them — accept those as
-                # exact matches without going through the member lookup.
                 group_names=set(groupings.keys()),
             )
             consolidated_ir.agents[group_name].instruction = xml_instructions
             return "ok"
 
-        statuses: dict[str, str] = {}
-        results = await asyncio.gather(
-            *(
-                _one(group_name, payload.get("agents", []))
-                for group_name, payload in groupings.items()
-            ),
-            return_exceptions=False,
-        )
-        for (group_name, _), status in zip(
-            groupings.items(), results, strict=True
-        ):
-            statuses[group_name] = status
-        return statuses
+        try:
+            results = await asyncio.gather(
+                *(
+                    _one(group_name, payload.get("agents", []))
+                    for group_name, payload in groupings.items()
+                ),
+                return_exceptions=False,
+            )
+        finally:
+            for cache_name in filter(None, [cache_2a, cache_2b]):
+                await self.gemini.delete_cache(cache_name)
+
+        return {
+            group_name: status
+            for (group_name, _), status in zip(
+                groupings.items(), results, strict=True
+            )
+        }
+

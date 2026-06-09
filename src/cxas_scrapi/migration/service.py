@@ -16,6 +16,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -117,7 +118,9 @@ class MigrationService:
             location=gemini_location,
             credentials=credentials,
             model_name="gemini-3.1-pro-preview",
-            max_concurrent_requests=3,
+            max_concurrent_requests=int(
+                os.environ.get("GEMINI_MAX_CONCURRENT", "15")
+            ),
         )
 
         self.exporter = ConversationalAgentsAPI()
@@ -339,9 +342,9 @@ class MigrationService:
             bundle.config.target_name if bundle else None, bundle=bundle
         )
 
-        # --- Variable dedup (always runs) -----------------------------------
+        # --- Variable dedup (in-memory; deploy happens in step 9) -----------
         optimizer = await stage_runner.run_stage_with_redeploy(
-            self, stage=1, console=console
+            self, stage=1, console=console, deploy=False
         )
         stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage_1")
         self._analysis_checkpoint(
@@ -349,30 +352,6 @@ class MigrationService:
             f"Stage 1 variable deduplication complete; "
             f"{len(self.ir.parameters)} variables remain.",
         )
-
-        # --- CXAS Version checkpoint: Post-Dedup ----------------------------
-        if dedup_version_label and self.ir.metadata.app_resource_name:
-            try:
-                Versions(self.ir.metadata.app_resource_name).create_version(
-                    display_name=dedup_version_label,
-                    description="Stage 1 Part A: variable de-duplication",
-                )
-                logger.info(
-                    "Created CXAS Version %s (dedup).", dedup_version_label
-                )
-                if bundle is not None:
-                    bundle.version_checkpoints.append(
-                        (
-                            dedup_version_label,
-                            "Stage 1 Part A: variable de-duplication",
-                        )
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to create CXAS Version %s (dedup): %s",
-                    dedup_version_label,
-                    exc,
-                )
 
         # --- Gemini consolidation (always runs) ------------------------------
         accepted_groupings = await self._run_stage_1_consolidation(

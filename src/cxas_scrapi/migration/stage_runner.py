@@ -93,6 +93,7 @@ async def run_stage_with_redeploy(
     service: MigrationService,
     stage: int,
     console: Console,
+    deploy: bool = True,
 ) -> CXASOptimizer:
     """Run a single CXASOptimizer stage and push the resulting IR changes
     via update-pass deploys. Used by stage_1.py / stage_2.py.
@@ -100,8 +101,11 @@ async def run_stage_with_redeploy(
     Steps:
       1. Mark every IR agent COMPILED so the update-pass deploy knows to push.
       2. Run optimize_stageN.
-      3. Call _deploy_base_resources(is_update_pass=True).
-      4. Call _deploy_pending_agents(is_update_pass=True).
+      3. (if deploy=True) Call _deploy_base_resources(is_update_pass=True).
+      4. (if deploy=True) Call _deploy_pending_agents(is_update_pass=True).
+
+    Pass deploy=False to skip the intermediate CXAS push and keep changes
+    purely in-memory (e.g. Stage 1 dedup, where the next step reads from IR).
 
     Returns the optimizer instance so the caller can read optimization_logs.
     """
@@ -120,13 +124,14 @@ async def run_stage_with_redeploy(
             service.ir, service.gemini_client, console
         )
 
-    console.print(f"\n[cyan]Pushing Stage {stage} changes to CXAS…[/]")
-    try:
-        await service._deploy_base_resources(is_update_pass=True)
-        await service._deploy_pending_agents(is_update_pass=True)
-    except Exception as exc:
-        logger.error("Stage %d redeploy failed: %s", stage, exc)
-        console.print(f"[red]Stage {stage} redeploy failed: {exc}[/]")
-        raise
+    if deploy:
+        console.print(f"\n[cyan]Pushing Stage {stage} changes to CXAS…[/]")
+        try:
+            await service._deploy_base_resources(is_update_pass=True)
+            await service._deploy_pending_agents(is_update_pass=True)
+        except Exception as exc:
+            logger.error("Stage %d redeploy failed: %s", stage, exc)
+            console.print(f"[red]Stage {stage} redeploy failed: {exc}[/]")
+            raise
 
     return optimizer
