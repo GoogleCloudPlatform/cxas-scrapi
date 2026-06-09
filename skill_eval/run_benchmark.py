@@ -292,6 +292,25 @@ class BenchmarkOrchestrator:
                 )
             finally:
                 await head.close()
+                # Clean up SUT virtual environment to prevent tmpfs inode exhaustion
+                # while preserving text log files for HTML reporting.
+                if hasattr(head, "_workspace_dir"):
+                    venv_path = os.path.join(head._workspace_dir, ".venv")
+                    if os.path.exists(venv_path):
+                        logging.info(
+                            "[%s] Cleaning up SUT virtualenv at %s to reclaim inodes...",
+                            head.name,
+                            venv_path,
+                        )
+                        import shutil
+                        try:
+                            shutil.rmtree(venv_path)
+                        except Exception as ex:
+                            logging.warning(
+                                "Failed to clean up SUT virtualenv at %s: %s",
+                                venv_path,
+                                ex,
+                            )
 
     async def update_reports(
         self, partial_res: benchmark.ConversationResult | None = None
