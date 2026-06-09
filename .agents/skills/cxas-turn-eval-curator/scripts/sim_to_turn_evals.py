@@ -92,12 +92,14 @@ def _parse_local_trace(trace_lines):
 
     turns: List[Any] = []
     cur = None
+    in_agent_text = False
     for block in trace_lines:
         for line in str(block).split("\n"):
             line = line.rstrip()
             if line.startswith("User: "):
                 cur = Turn(user=line[6:].strip(), tool_calls=[])
                 turns.append(cur)
+                in_agent_text = False
                 continue
             if line.startswith("Agent Text: "):  # excludes "Agent Text (Diag):"
                 if cur is None:
@@ -105,11 +107,13 @@ def _parse_local_trace(trace_lines):
                     turns.append(cur)
                 txt = line[len("Agent Text: "):].strip()
                 cur.agent = f"{cur.agent} {txt}".strip() if cur.agent else txt
+                in_agent_text = True
                 continue
             if cur is None:
                 continue
             m = _TOOLCALL_RE.search(line)
             if m:
+                in_agent_text = False
                 try:
                     args = ast.literal_eval(m.group("args"))
                 except (ValueError, SyntaxError):
@@ -123,6 +127,7 @@ def _parse_local_trace(trace_lines):
                 continue
             mr = _TOOLRESPONSE_RE.search(line)
             if mr:
+                in_agent_text = False
                 name = mr.group("name")
                 try:
                     res_val = ast.literal_eval(mr.group("result"))
@@ -138,11 +143,15 @@ def _parse_local_trace(trace_lines):
                 continue
             mt = _TRANSFER_RE.search(line)
             if mt:
+                in_agent_text = False
                 target = mt.group("target").removeprefix("Transferred to ").strip()
                 cur.tool_calls.append(
                     ToolCall(action=_TRANSFER_ACTION, args={"agent": target})
                 )
                 continue
+            if in_agent_text and line.strip():
+                txt = line.strip()
+                cur.agent = f"{cur.agent} {txt}".strip() if cur.agent else txt
     return turns
 
 

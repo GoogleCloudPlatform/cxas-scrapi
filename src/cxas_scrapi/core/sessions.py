@@ -54,6 +54,7 @@ except ImportError:
 from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
+from cxas_scrapi.core.agents import Agents
 
 logger = logging.getLogger(__name__)
 
@@ -925,6 +926,7 @@ class Sessions(Common):
         input_audio_config: dict[str, Any] | None = None,
         output_audio_config: dict[str, Any] | None = None,
         deployment_id: str | None = None,
+        entry_agent: str | None = None,
         historical_contexts: list[dict[str, Any]] | str | None = None,
         turn_count: int | None = None,
         modality: Modality | str = Modality.TEXT,
@@ -981,6 +983,17 @@ class Sessions(Common):
             "session": f"{self.app_name}/sessions/{session_id}",
             "use_tool_fakes": use_tool_fakes,
         }
+        if entry_agent:
+            if not entry_agent.startswith("projects/"):
+                agents_client = Agents(app_name=self.app_name, creds=self.creds)
+                agents_map = agents_client.get_agents_map(reverse=True)
+                if entry_agent in agents_map:
+                    entry_agent = agents_map[entry_agent]
+                else:
+                    logger.warning(
+                        f"Could not resolve entry_agent display name: {entry_agent}"
+                    )
+            config["entry_agent"] = entry_agent
         inputs = []
 
         if modality == Modality.AUDIO:

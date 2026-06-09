@@ -244,8 +244,19 @@ class TurnEvals:
                 except json.JSONDecodeError:
                     pass
 
-            # Recursive check if both are dicts
-            if isinstance(v, dict) and isinstance(super_val, dict):
+            if isinstance(super_val, list):
+                if isinstance(v, dict):
+                    match_found = False
+                    for item in super_val:
+                        if isinstance(item, dict) and self._check_dict_subset(v, item):
+                            match_found = True
+                            break
+                    if not match_found:
+                        return False
+                else:
+                    if v not in super_val and str(v) not in [str(x) for x in super_val]:
+                        return False
+            elif isinstance(v, dict) and isinstance(super_val, dict):
                 if not self._check_dict_subset(v, super_val):
                     return False
             elif super_val != v:
@@ -268,10 +279,10 @@ class TurnEvals:
                 if tool_name not in called_tools:
                     called_tools.append(tool_name)
 
-                if "args" in attrs and tool_name not in tool_inputs:
-                    tool_inputs[tool_name] = attrs["args"]
-                if "response" in attrs and tool_name not in tool_outputs:
-                    tool_outputs[tool_name] = attrs["response"]
+                if "args" in attrs:
+                    tool_inputs.setdefault(tool_name, []).append(attrs["args"])
+                if "response" in attrs:
+                    tool_outputs.setdefault(tool_name, []).append(attrs["response"])
 
         for child in span.get("childSpans", []):
             self._extract_tools_from_span(
@@ -309,8 +320,7 @@ class TurnEvals:
                 tool_name = tc.get("displayName", tc.get("tool", ""))
                 if tool_name and tool_name not in called_tools:
                     called_tools.append(tool_name)
-                if tool_name not in tool_inputs:
-                    tool_inputs[tool_name] = tc.get("args", {})
+                tool_inputs.setdefault(tool_name, []).append(tc.get("args", {}))
 
         def add_snippet(snippet: str):
             nonlocal full_text
@@ -352,13 +362,11 @@ class TurnEvals:
                         tool_name = tc.get("displayName", tc.get("tool", ""))
                         if tool_name and tool_name not in called_tools:
                             called_tools.append(tool_name)
-                        if tool_name not in tool_inputs:
-                            tool_inputs[tool_name] = tc.get("args", {})
+                        tool_inputs.setdefault(tool_name, []).append(tc.get("args", {}))
                     if "toolResponse" in chunk:
                         tr = chunk["toolResponse"]
                         tool_name = tr.get("displayName", tr.get("tool", ""))
-                        if tool_name not in tool_outputs:
-                            tool_outputs[tool_name] = tr.get("response", {})
+                        tool_outputs.setdefault(tool_name, []).append(tr.get("response", {}))
                     if "agentTransfer" in chunk:
                         at = chunk["agentTransfer"]
                         target_agent = at.get("displayName", "")
@@ -382,8 +390,7 @@ class TurnEvals:
                     tool_name = tc.get("displayName", tc.get("tool", ""))
                     if tool_name and tool_name not in called_tools:
                         called_tools.append(tool_name)
-                    if tool_name not in tool_inputs:
-                        tool_inputs[tool_name] = tc.get("args", {})
+                    tool_inputs.setdefault(tool_name, []).append(tc.get("args", {}))
 
         return {
             "full_text": full_text,
@@ -553,9 +560,12 @@ class TurnEvals:
                     # 2) Fallback to checking nested argument dicts for
                     # any tool
                     match_found = False
-                    for _t_name, t_args in tool_inputs.items():
-                        if self._check_dict_subset(expected, t_args):
-                            match_found = True
+                    for _t_name, args_list in tool_inputs.items():
+                        for t_args in args_list:
+                            if isinstance(t_args, dict) and self._check_dict_subset(expected, t_args):
+                                match_found = True
+                                break
+                        if match_found:
                             break
                     if not match_found:
                         status = "FAILURE"
@@ -580,9 +590,12 @@ class TurnEvals:
                     # 2) Fallback to checking nested response dicts for
                     # any tool
                     match_found = False
-                    for _t_name, t_resp in tool_outputs.items():
-                        if self._check_dict_subset(expected, t_resp):
-                            match_found = True
+                    for _t_name, resp_list in tool_outputs.items():
+                        for t_resp in resp_list:
+                            if isinstance(t_resp, dict) and self._check_dict_subset(expected, t_resp):
+                                match_found = True
+                                break
+                        if match_found:
                             break
                     if not match_found:
                         status = "FAILURE"
