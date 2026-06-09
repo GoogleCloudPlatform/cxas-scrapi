@@ -178,6 +178,7 @@ nav:
       - guides/evaluation/index.md
       - Platform Goldens: guides/evaluation/platform-goldens.md
       - Local Simulations: guides/evaluation/local-simulations.md
+      - Advanced Simulations: guides/evaluation/advanced-simulations.md
       - Tool Tests: guides/evaluation/tool-tests.md
       - Callback Tests: guides/evaluation/callback-tests.md
       - Turn Evals: guides/evaluation/turn-evals.md

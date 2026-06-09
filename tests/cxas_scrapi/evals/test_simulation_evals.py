@@ -990,3 +990,61 @@ def test_simulation_evals_init_with_rate_limiter(mock_sessions):
         app_name,
         rate_limiter=mock_rate_limiter,
     )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulation_evals_passes_historical_contexts_and_tool_fakes(
+    mock_llm_conv_class, mock_sessions_class
+):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("I want to book a flight", {}),
+        ("New York", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_response = MagicMock()
+    mock_output = MagicMock()
+    mock_output.text = "OK"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {
+        "steps": [],
+        "use_tool_fakes": True,
+        "historical_contexts": [{"user": "hello"}],
+    }
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+    )
+
+    # First turn
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        text="I want to book a flight",
+        variables={},
+        modality="text",
+        use_tool_fakes=True,
+        historical_contexts=[{"user": "hello"}],
+    )
+    # Second turn
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        text="New York",
+        variables={},
+        modality="text",
+        use_tool_fakes=True,
+        historical_contexts=None,
+    )
+

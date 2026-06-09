@@ -404,6 +404,8 @@ class SimulationEvals(Apps):
         variables: Dict[str, Any],
         modality: str,
         console_logging: bool,
+        use_tool_fakes: bool = False,
+        historical_contexts: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
         """Sends a request to the CES Agent with exponential backoff for
         transient errors.
@@ -417,6 +419,8 @@ class SimulationEvals(Apps):
                         event=user_utterance.removeprefix("event:").strip(),
                         variables=variables,
                         modality=modality,
+                        use_tool_fakes=use_tool_fakes,
+                        historical_contexts=historical_contexts,
                     )
                 elif user_utterance.startswith("dtmf:"):
                     response = self.sessions_client.run(
@@ -424,6 +428,8 @@ class SimulationEvals(Apps):
                         dtmf=user_utterance.removeprefix("dtmf:").strip(),
                         variables=variables,
                         modality=modality,
+                        use_tool_fakes=use_tool_fakes,
+                        historical_contexts=historical_contexts,
                     )
                 else:
                     response = self.sessions_client.run(
@@ -431,6 +437,8 @@ class SimulationEvals(Apps):
                         text=user_utterance,
                         variables=variables,
                         modality=modality,
+                        use_tool_fakes=use_tool_fakes,
+                        historical_contexts=historical_contexts,
                     )
                 break
             except Exception as e:
@@ -495,14 +503,21 @@ class SimulationEvals(Apps):
         detailed_trace = []
         detailed_trace.append(f"User: {user_utterance}")
 
+        use_tool_fakes = test_case.get("use_tool_fakes", False)
+        historical_contexts = test_case.get("historical_contexts", None)
+        is_first_turn = True
+
         while user_utterance:
             response = self._send_request_with_retry(
-                session_id,
-                user_utterance,
-                accumulated_variables,
-                modality,
-                console_logging,
+                session_id=session_id,
+                user_utterance=user_utterance,
+                variables=accumulated_variables,
+                modality=modality,
+                console_logging=console_logging,
+                use_tool_fakes=use_tool_fakes,
+                historical_contexts=historical_contexts if is_first_turn else None,
             )
+            is_first_turn = False
             if not response:
                 break
 
