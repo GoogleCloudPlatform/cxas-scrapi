@@ -71,6 +71,7 @@ _TRANSFER_ACTION = "transfer_to_agent"
 _TRANSFER_TARGET_KEYS = ("agent", "agent_name", "target_agent")
 # Default arg keys worth pinning as tool_input assertions (stable identifiers).
 _DEFAULT_INPUT_KEYS = ("account_id", "customer_id", "ticket_id", "line_id")
+_NOISY_INPUT_KEYS = {"reason", "issueDescription", "customerConfirmationText", "summary", "requestBody"}
 
 # The local sim trace embeds tool calls / transfers as lines INSIDE the
 # multi-line "Agent Text: ... blocks, which the library's own line-start
@@ -133,10 +134,7 @@ def _parse_local_trace(trace_lines):
                     None,
                 )
                 if match:
-                    if isinstance(res_val, dict) and "result" in res_val:
-                        match.output = res_val["result"]
-                    else:
-                        match.output = res_val
+                    match.output = res_val
                 continue
             mt = _TRANSFER_RE.search(line)
             if mt:
@@ -185,10 +183,20 @@ def _harvest_expectations(
     """
     exps: List[Dict[str, Any]] = []
     seen = set()
-    for tc in getattr(turn, "tool_calls", []) or []:
+    tool_calls = getattr(turn, "tool_calls", []) or []
+    
+    # Identify the last transfer to avoid asserting intermediate transfers
+    last_transfer_idx = -1
+    for idx, tc in enumerate(tool_calls):
+        if tc.action == _TRANSFER_ACTION:
+            last_transfer_idx = idx
+
+    for idx, tc in enumerate(tool_calls):
         action = tc.action
         args = tc.args or {}
         if action == _TRANSFER_ACTION:
+            if idx != last_transfer_idx:
+                continue
             target = next(
                 (args[k] for k in _TRANSFER_TARGET_KEYS if args.get(k)),
                 "unknown",
@@ -204,10 +212,11 @@ def _harvest_expectations(
             seen.add(key)
             exps.append({"type": "tool_called", "value": action})
 
+        # Filter out noisy keys from input assertions to prevent flakiness
         if "*" in input_keys:
-            pinned = args
+            pinned = {k: v for k, v in args.items() if k not in _NOISY_INPUT_KEYS}
         else:
-            pinned = {k: args[k] for k in input_keys if k in args}
+            pinned = {k: args[k] for k in input_keys if k in args and k not in _NOISY_INPUT_KEYS}
         if pinned:
             pkey = ("tool_input", json.dumps(pinned, sort_keys=True, default=str))
             if pkey not in seen:
@@ -219,7 +228,13 @@ def _harvest_expectations(
             if "*" in output_keys:
                 pinned_out = out
             else:
-                pinned_out = {k: out[k] for k in output_keys if k in out}
+                pinned_out = {}
+                if "result" in out and isinstance(out["result"], dict):
+                    inner_pinned = {k: out["result"][k] for k in output_keys if k in out["result"]}
+                    if inner_pinned:
+                        pinned_out["result"] = inner_pinned
+                top_pinned = {k: out[k] for k in output_keys if k in out}
+                pinned_out.update(top_pinned)
             value = {action: pinned_out}  # {} => assert the tool returned
             okey = ("tool_output", json.dumps(value, sort_keys=True, default=str))
             if okey not in seen:
@@ -558,9 +573,9 @@ def main() -> None:
                         "assertions (empty -> existence-only). Session mode only.")
     p.add_argument("--no-tool-output", action="store_true",
                    help="Do not emit tool_output assertions.")
-    p.add_argument("--carry-expectations", action="store_true", default=True,
+    p.add_argument("--carry-expectations", action="store_true", default=False,
                    help="Attach the sim's free-text expectations (LLM-judged) "
-                        "to each scenario's last probe (default).")
+                        "to each scenario's last probe.")
     p.add_argument("--no-carry-expectations", dest="carry_expectations",
                    action="store_false")
     p.add_argument("--include-text", action="store_true",
