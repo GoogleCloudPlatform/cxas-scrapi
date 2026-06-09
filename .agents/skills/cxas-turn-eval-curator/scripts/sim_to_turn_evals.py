@@ -532,6 +532,8 @@ def main() -> None:
                         "(default: 1).")
     p.add_argument("--only-passing", action="store_true",
                    help="Only convert scenarios whose sim run passed.")
+    p.add_argument("--write-results",
+                   help="Save the raw captured sim results (trajectories) JSON to this path.")
     p.add_argument("--review", action="store_true",
                    help="Print harvested assertions for curation.")
     args = p.parse_args()
@@ -548,6 +550,12 @@ def main() -> None:
     if not results:
         print("No sim results to convert.", file=sys.stderr)
         sys.exit(1)
+
+    if args.write_results:
+        import json
+        with open(args.write_results, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, default=str)
+        print(f"Saved raw sim results (trajectories) to {args.write_results}")
 
     print("Building turn-eval probes...")
     creds = getattr(sim, "creds", None) if sim else None
