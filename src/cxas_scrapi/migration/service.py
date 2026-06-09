@@ -18,8 +18,9 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict
+from typing import TYPE_CHECKING, Any
 
 import google.protobuf.duration_pb2
 from google.cloud.ces_v1beta import types
@@ -140,12 +141,12 @@ class MigrationService:
             reporter=self.reporter,
         )
 
-        self.ir = {}
+        self.ir: MigrationIR | None = None
         self.source_agent_data = None
         # Migration analysis report — instantiated lazily once a target_name
         # is known. Reset for each migration so per-target state is clean.
         self._analysis_builder: MigrationAnalysisBuilder | None = None
-        self._analysis_bundle: "IRBundle | None" = None
+        self._analysis_bundle: IRBundle | None = None
 
     # ------------------------------------------------------------------
     # Migration analysis report helpers
@@ -181,7 +182,7 @@ class MigrationService:
                 app_name=app_name,
                 output_dir=output_dir,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("could not init migration analysis report: %s", exc)
             self._analysis_builder = None
         return self._analysis_builder
@@ -196,7 +197,7 @@ class MigrationService:
             self._analysis_builder.record_phase(phase, what_changed, kind=kind)
             self._analysis_builder.update_from_service(self)
             self._analysis_builder.flush()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "migration analysis checkpoint %r failed: %s", phase, exc
             )
@@ -366,7 +367,7 @@ class MigrationService:
                             "Stage 1 Part A: variable de-duplication",
                         )
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Failed to create CXAS Version %s (dedup): %s",
                     dedup_version_label,
@@ -406,7 +407,7 @@ class MigrationService:
                         bundle.version_checkpoints.append(
                             (version_label, description)
                         )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning(
                         "Failed to create CXAS Version %s (consolidation): %s",
                         version_label,
@@ -494,7 +495,7 @@ class MigrationService:
             grouping_path = f"{bundle.config.target_name}_grouping.json"
             structural_consolidator.persist_grouping(groupings, grouping_path)
             logger.info("Persisted grouping → %s", grouping_path)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Failed to persist grouping JSON: %s", exc)
 
         # 7. Synthesize per-group PIF instructions.
@@ -518,7 +519,7 @@ class MigrationService:
         # exists and the suffixed form doesn't — strictly safe
         # rewrites. Genuine hallucinations (refs with no near match)
         # are left for integrity_checks to surface.
-        rewrites, unhealed = structural_consolidator.heal_tool_refs(self.ir)
+        rewrites, _unhealed = structural_consolidator.heal_tool_refs(self.ir)
         if rewrites:
             logger.info(
                 "Healed %d tool-ref mismatches (e.g. %s)",
@@ -551,7 +552,7 @@ class MigrationService:
             self.topology_linker.link_and_finalize_topology(
                 self.ir, self.source_agent_data, groupings=groupings
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Topology linking failed: %s", exc)
 
         # Synchronize bundle.ir before calling finalizers!
@@ -614,7 +615,7 @@ class MigrationService:
                     ),
                 )
                 logger.info("Created CXAS Version %s.", version_label)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Failed to create CXAS Version %s: %s",
                     version_label,
@@ -643,7 +644,7 @@ class MigrationService:
                         len(test_counts),
                         unit_tests_path,
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Unit test regeneration failed: %s", exc)
             if test_counts:
                 self._analysis_checkpoint(
@@ -661,7 +662,7 @@ class MigrationService:
                     lint_passed,
                     lint_output,
                 ) = await post_deploy_lint.run_post_deploy_lint(self, console)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Lint did not run: %s", exc)
             if lint_passed is not None:
                 outcome = "passed" if lint_passed else "failed"
@@ -710,7 +711,7 @@ class MigrationService:
                     reporter.set_lint_result(lint_passed, lint_output)
                 reporter.export(write_report_to)
                 logger.info("Optimization report → %s", write_report_to)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Report generation failed: %s", exc)
 
         # --- Optional bundle persist ----------------------------------------
@@ -803,7 +804,7 @@ class MigrationService:
                     bundle.version_checkpoints.append(
                         (version_label, "Stage 3: parent-child topology wiring")
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Failed to create CXAS Version %s (topology): %s",
                     version_label,
@@ -850,7 +851,7 @@ class MigrationService:
         bundle.save(path)
         return path
 
-    def _inject_system_variables(self, dynamic_params: list = None):
+    def _inject_system_variables(self, dynamic_params: list | None = None):
         """Injects global system variables required by migration tooling and
         callbacks.
         """
@@ -2344,9 +2345,9 @@ class MigrationService:
 
     async def _process_single_flow(
         self,
-        flow_wrapper: Dict[str, Any],
+        flow_wrapper: dict[str, Any],
         target_app_resource_name: str,
-        parameter_name_map: Dict[str, str],
+        parameter_name_map: dict[str, str],
     ):
         """Processes a single DFCX flow: resolves dependencies, visualizes,
         generates instructions and tools, and deploys them.

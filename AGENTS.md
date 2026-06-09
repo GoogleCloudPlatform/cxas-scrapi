@@ -23,10 +23,10 @@ Run the setup script to create a virtual environment and install the `cxas-scrap
 ```bash
 .agents/skills/cxas-agent-foundry/scripts/setup.sh          # Full setup (install + configure)
 .agents/skills/cxas-agent-foundry/scripts/setup.sh --configure  # Reconfigure only
-source .venv/bin/activate
 ```
 
 Requires Python 3.10+ and [astral-uv](https://docs.astral.sh/uv/getting-started/installation/).
+  - Always execute `cxas` commands using `uv run cxas` instead of using .venv/.
 
 ## Available Skills
 

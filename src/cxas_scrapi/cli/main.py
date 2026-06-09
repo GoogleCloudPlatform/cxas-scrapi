@@ -23,7 +23,6 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Dict, List
 
 import pandas as pd
 from google.api_core.exceptions import NotFound
@@ -198,11 +197,11 @@ def push_eval(args: argparse.Namespace) -> None:
 
 def wait_for_evaluation_completion(
     eval_utils: EvalUtils,
-    old_result_ids: List[str],
+    old_result_ids: list[str],
     app_name: str,
     expected_count: int = 1,
     timeout_seconds: int = 600,
-) -> Dict[str, pd.DataFrame]:
+) -> dict[str, pd.DataFrame]:
     """Waits for all new evaluation results to appear."""
     print(f"Waiting for {expected_count} evaluation(s) to complete...")
     start_time = time.time()
@@ -255,8 +254,8 @@ def wait_for_evaluation_completion(
     sys.exit(1)
 
 
-def filter_metrics_and_assess(  # noqa: C901
-    df_dict_new_run: Dict[str, pd.DataFrame],
+def filter_metrics_and_assess(
+    df_dict_new_run: dict[str, pd.DataFrame],
     filter_auto_metrics: bool,
 ) -> bool:
     """Assesses the evaluation run and returns True if passed,
@@ -349,7 +348,7 @@ def filter_metrics_and_assess(  # noqa: C901
     return passed
 
 
-def run_eval(args: argparse.Namespace) -> None:  # noqa: C901
+def run_eval(args: argparse.Namespace) -> None:
     """Handles the 'run' command."""
 
     print(f"Triggering evaluation for App: {args.app_name}")
@@ -584,6 +583,10 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         filter_tags=filter_tags_list,
         parallel=sim_parallel,
         golden_timeout=golden_timeout,
+        bg_noise_file=getattr(args, "bg_noise_file", None),
+        burst_noise_files=getattr(args, "burst_noise_files", "").split(",")
+        if getattr(args, "burst_noise_files", None)
+        else None,
     )
     print(f"Combined report generated at {output_path}")
 
@@ -883,7 +886,10 @@ def run_session(args: argparse.Namespace) -> None:
                 continue
 
             res = session_client.run(
-                session_id=session_id, text=user_input, modality=args.modality
+                session_id=session_id,
+                text=user_input,
+                modality=args.modality,
+                use_tool_fakes=args.use_tool_fakes,
             )
             session_client.parse_result(res)
     except Exception as e:
@@ -1471,6 +1477,17 @@ def get_parser() -> argparse.ArgumentParser:
         default=600,
         help="Timeout in seconds waiting for remote goldens. Defaults to 600.",
     )
+    parser_report.add_argument(
+        "--bg-noise-file",
+        help="Optional: Path to continuous background noise audio file.",
+    )
+    parser_report.add_argument(
+        "--burst-noise-files",
+        help=(
+            "Optional: Comma-separated list of paths to burst noise audio "
+            "files."
+        ),
+    )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
     parser_test_tools = subparsers.add_parser(
@@ -1689,6 +1706,12 @@ def get_parser() -> argparse.ArgumentParser:
     parser_run_session.add_argument(
         "app_name",
         help="The app name (projects/.../locations/.../apps/...).",
+    )
+    parser_run_session.add_argument(
+        "--use-tool-fakes",
+        action="store_true",
+        default=False,
+        help="Use fake tools for the session if available.",
     )
     parser_run_session.set_defaults(func=run_session)
 

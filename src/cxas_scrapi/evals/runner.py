@@ -33,17 +33,19 @@ def run_all_evals(
     app_name: str,
     modality: str = "text",
     runs: int = 1,
-    goldens_dir: str = None,
-    tool_test_file: str = None,
-    simulation_dir: str = None,
-    app_dir: str = None,
-    output_dir: str = None,
-    filter_files: list[str] = None,
-    filter_tags: list[str] = None,
+    goldens_dir: str | None = None,
+    tool_test_file: str | None = None,
+    simulation_dir: str | None = None,
+    app_dir: str | None = None,
+    output_dir: str | None = None,
+    filter_files: list[str] | None = None,
+    filter_tags: list[str] | None = None,
     parallel: int = 1,
     golden_timeout: int = 600,
-    include: list[str] = None,
+    include: list[str] | None = None,
     rate_limiter: RateLimiter | None = None,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
 ):
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -237,6 +239,8 @@ def run_all_evals(
                         runs=runs,
                         parallel=parallel,
                         modality=modality,
+                        background_noise_file=bg_noise_file,
+                        burst_noise_files=burst_noise_files,
                     )
                     results["simulation"] = sim_results
                     if output_dir:

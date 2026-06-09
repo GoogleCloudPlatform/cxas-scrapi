@@ -39,3 +39,24 @@ repos:
             - tests/
         always_run: true
         pass_filenames: false
+
+    # Block third-party brand / company names in added diff lines.
+    # Implemented via a Gemini call in scripts/check_brands.py — only
+    # the allowed-brand list lives in the script (Google + first-party
+    # products + Cymbal as the fictitious-brand placeholder). Requires
+    # `gcloud auth application-default login` + a resolvable GCP
+    # project. Set BRAND_CHECK_SKIP=1 to bypass deliberately.
+    -   id: brand-check-code
+        name: brand-check (added diff lines, via Gemini)
+        entry: python3 scripts/check_brands.py --code-files
+        language: system
+        types: [python]
+
+    # Same check, applied to the in-flight commit message. Runs in the
+    # commit-msg stage so contributors must install that stage explicitly:
+    #     pre-commit install --hook-type commit-msg
+    -   id: brand-check-msg
+        name: brand-check (commit message, via Gemini)
+        entry: python3 scripts/check_brands.py --commit-msg
+        language: system
+        stages: [commit-msg]

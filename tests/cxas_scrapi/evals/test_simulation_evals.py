@@ -199,13 +199,22 @@ def test_user_simulator(mock_llm_conv_class, mock_sessions_class):
 
     # Assertions
     mock_sessions.run.assert_any_call(
-        session_id="123", event="welcome", variables={}, modality="text"
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
     )
     mock_sessions.run.assert_any_call(
         session_id="123",
         text="I want to book a flight",
         variables={},
         modality="text",
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
     )
     mock_eval_conv.next_user_utterance.assert_any_call("Where to?")
     mock_eval_conv.next_user_utterance.assert_any_call("Flight booked.")
@@ -267,13 +276,22 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
     )
 
     mock_sessions.run.assert_any_call(
-        session_id="123", event="welcome", variables={}, modality="audio"
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="audio",
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
     )
     mock_sessions.run.assert_any_call(
         session_id="123",
         text="I want to book a flight",
         variables={},
         modality="audio",
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
     )
 
     # Verify text was extracted from Diagnostic Info
@@ -336,7 +354,7 @@ def test_parse_agent_response_agent_transfer():
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
-    agent_text, trace_chunks, session_ended = simulator._parse_agent_response(
+    _agent_text, trace_chunks, session_ended = simulator._parse_agent_response(
         mock_response
     )
 
@@ -373,7 +391,7 @@ def test_parse_agent_response_custom_payload():
         "cxas_scrapi.evals.simulation_evals.Sessions._expand_pb_struct",
         return_value={"key": "value"},
     ):
-        agent_text, trace_chunks, session_ended = (
+        _agent_text, trace_chunks, session_ended = (
             simulator._parse_agent_response(mock_response)
         )
 
@@ -482,16 +500,62 @@ def test_llm_user_check_conversation_status_max_turns():
     assert conv._check_conversation_status() is False
 
 
-def test_llm_user_handle_first_turn():
+def test_llm_user_get_active_step_index():
     mock_genai_client = MagicMock()
     test_case = {
-        "steps": [{"goal": "greet", "static_utterance": "Hello"}],
+        "steps": [{"goal": "greet"}, {"goal": "ask_hours"}],
+    }
+    conv = LLMUserConversation(mock_genai_client, "model", test_case)
+    # Initially first step is active (index 0)
+    assert conv._get_active_step_index() == 0
+
+    # Mark first step as completed
+    conv.steps_progress[0].status = StepStatus.COMPLETED
+    assert conv._get_active_step_index() == 1
+
+    # Mark second step as completed
+    conv.steps_progress[1].status = StepStatus.COMPLETED
+    assert conv._get_active_step_index() is None
+
+
+def test_llm_user_next_user_utterance_static_utterance_bypass():
+    mock_genai_client = MagicMock()
+    test_case = {
+        "steps": [
+            {
+                "goal": "greet",
+                "static_utterance": "Hello First Step",
+                "inject_variables": {"var1": "val1"},
+            },
+            {"goal": "ask_hours", "static_utterance": "What are the hours?"},
+        ],
         "session_parameters": {"user_id": "123"},
     }
     conv = LLMUserConversation(mock_genai_client, "model", test_case)
-    utterance, params = conv._handle_first_turn()
-    assert utterance == "Hello"
-    assert params["user_id"] == "123"
+
+    # 1. First Turn (Turn 0): Should bypass LLM and return first step's
+    # static utterance
+    utterance, variables = conv.next_user_utterance()
+    assert utterance == "Hello First Step"
+    assert variables == {"user_id": "123", "var1": "val1"}
+    assert conv.steps_progress[0].status == StepStatus.COMPLETED
+    assert conv.steps_progress[0].justification == (
+        "Static utterance sent (bypassed LLM)."
+    )
+    mock_genai_client.generate.assert_not_called()
+
+    # 2. Second Turn (Turn 1): Active step is now index 1 which is also
+    # static. Should bypass LLM again.
+    utterance, variables = conv.next_user_utterance(
+        "Agent response to first step"
+    )
+    assert utterance == "What are the hours?"
+    assert variables == {"user_id": "123"}
+    assert conv.steps_progress[1].status == StepStatus.COMPLETED
+    assert conv.steps_progress[1].justification == (
+        "Static utterance sent (bypassed LLM)."
+    )
+    mock_genai_client.generate.assert_not_called()
 
 
 def test_simulation_evals_add_agent_text():
@@ -974,6 +1038,8 @@ def test_simulation_evals_adds_final_agent_response_on_session_ended(
     mock_eval_conv._add_agent_response.assert_any_call(
         "Transferring to associate now."
     )
+    # Verify that final agent response triggers evaluation
+    mock_eval_conv._next_user_utterance.assert_called_once()
 
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
@@ -994,23 +1060,20 @@ def test_simulation_evals_init_with_rate_limiter(mock_sessions):
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
-def test_simulation_evals_passes_historical_contexts_and_tool_fakes(
+def test_simulation_evals_simulate_conversation_use_tool_fakes(
     mock_llm_conv_class, mock_sessions_class
 ):
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
     mock_eval_conv.next_user_utterance.side_effect = [
-        ("I want to book a flight", {}),
-        ("New York", {}),
+        ("event: welcome", {}),
         ("", {}),
     ]
     mock_eval_conv.steps_progress = []
 
     mock_response = MagicMock()
-    mock_output = MagicMock()
-    mock_output.text = "OK"
-    mock_response.outputs = [mock_output]
+    mock_response.outputs = []
     mock_sessions.run.return_value = mock_response
 
     app_name = "projects/test/locations/us/apps/123-abc"
@@ -1018,6 +1081,46 @@ def test_simulation_evals_passes_historical_contexts_and_tool_fakes(
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
+    test_case = {"steps": []}
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+        use_tool_fakes=True,
+    )
+
+    mock_sessions.run.assert_called_once_with(
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=True,
+    )
+    
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulation_evals_passes_historical_contexts_and_tool_fakes(
+    mock_llm_conv_class, mock_sessions_class
+):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("I want to book a flight", {}),
+        ("New York", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+    mock_response = MagicMock()
+    mock_output = MagicMock()
+    mock_output.text = "OK"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
     test_case = {
         "steps": [],
         "use_tool_fakes": True,
@@ -1028,7 +1131,6 @@ def test_simulation_evals_passes_historical_contexts_and_tool_fakes(
         session_id="123",
         console_logging=False,
     )
-
     # First turn
     mock_sessions.run.assert_any_call(
         session_id="123",
@@ -1048,3 +1150,71 @@ def test_simulation_evals_passes_historical_contexts_and_tool_fakes(
         historical_contexts=None,
     )
 
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name)
+
+    evals._run_single_simulation_job = MagicMock(return_value={"status": "ok"})
+    test_cases = [{"name": "tc1"}]
+
+    results = evals.run_simulations(
+        test_cases=test_cases,
+        runs=1,
+        parallel=1,
+        model="gemini-1.5-flash",
+        use_tool_fakes=True,
+    )
+
+    assert len(results) == 1
+    evals._run_single_simulation_job.assert_called_once_with(
+        test_cases[0],
+        0,
+        1,
+        "gemini-1.5-flash",
+        "text",
+        False,
+        1,
+        None,
+        None,
+        use_tool_fakes=True,
+    )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
+    mock_sessions,
+):
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name)
+
+    evals._run_single_simulation_job = MagicMock(return_value={"status": "ok"})
+    test_cases = [{"name": "tc1"}, {"name": "tc2"}]
+
+    results = evals.run_simulations(
+        test_cases=test_cases,
+        runs=1,
+        parallel=2,
+        model="gemini-1.5-flash",
+        use_tool_fakes=True,
+    )
+
+    assert len(results) == 2
+    assert evals._run_single_simulation_job.call_count == 2
+    evals._run_single_simulation_job.assert_any_call(
+        test_cases[0],
+        0,
+        1,
+        "gemini-1.5-flash",
+        "text",
+        False,
+        2,
+        None,
+        None,
+        use_tool_fakes=True,
+    )

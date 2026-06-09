@@ -15,14 +15,14 @@
 import datetime
 import functools
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 from cxas_scrapi.utils.gemini import GeminiGenerate
 
 
 class ChangelogUtils:
     @staticmethod
-    def _get_nested_val(data: Dict, path: List[str], default=None):
+    def _get_nested_val(data: dict, path: list[str], default=None):
         """Safely gets a value from a nested dictionary."""
         if not isinstance(data, dict):
             return default
@@ -37,7 +37,7 @@ class ChangelogUtils:
             return default
 
     @staticmethod
-    def _extract_relevant_parts(resource: Dict, resource_type: str) -> Dict:
+    def _extract_relevant_parts(resource: dict, resource_type: str) -> dict:
         """Extracts key fields from a resource object for comparison."""
         if not resource:
             return {}
@@ -140,7 +140,7 @@ class ChangelogUtils:
         return parts
 
     @staticmethod
-    def _format_changelog_for_prompt(changelog: Dict[str, Any]) -> str:
+    def _format_changelog_for_prompt(changelog: dict[str, Any]) -> str:
         """Formats changelog info, providing Original/New snippets for
         Updates."""
         action = changelog.get("action")
@@ -202,8 +202,8 @@ class ChangelogUtils:
 
     @staticmethod
     def get_changelogs_since_last_version(
-        all_changelogs: List[Dict[str, Any]], versions: List[Any]
-    ) -> List[Dict[str, Any]]:
+        all_changelogs: list[dict[str, Any]], versions: list[Any]
+    ) -> list[dict[str, Any]]:
         """Retrieves changelogs created after the most recent app version."""
         if not versions:
             print("No versions found. Returning all changelogs.")
@@ -250,8 +250,8 @@ class ChangelogUtils:
     @staticmethod
     def summarize_changelogs(
         vertex_client_or_project: Any,
-        changelogs: List[Dict[str, Any]],
-        project_id: str = None,
+        changelogs: list[dict[str, Any]],
+        project_id: str | None = None,
     ) -> str:
         """Summarizes each non-evaluation changelog into a simple, specific
         one-liner."""

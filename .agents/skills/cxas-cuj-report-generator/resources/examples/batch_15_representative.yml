@@ -1,0 +1,34 @@
+subintent_id: delivery-status-check
+subintent_name: Track Active Delivery
+parent_cuj: Delivery Logistics
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: 'Hi, my delivery order #9982 was supposed to be here by now. Where is the driver?'
+- speaker: Agent
+  text: I'm very sorry for the delay! Let me look up the driver's live GPS location right now.
+- speaker: Agent
+  text: Checking active delivery driver location.
+  tool_call:
+    name: get_delivery_tracking_url
+    payload:
+      order_id: '9982'
+    response:
+      status: success
+      driver_name: John
+      tracking_url: https://track.example.com/order/9982
+      eta: 5 minutes
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

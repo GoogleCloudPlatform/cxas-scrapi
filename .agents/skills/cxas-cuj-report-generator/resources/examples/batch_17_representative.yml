@@ -1,0 +1,35 @@
+subintent_id: loyalty-check-points
+subintent_name: Check Points Balance
+parent_cuj: Loyalty & Rewards
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I want to check my loyalty points balance. My phone number is 555-123-4567.
+- speaker: Agent
+  text: I'd be happy to look that up for you! Give me just a moment while I query your profile.
+- speaker: Agent
+  text: Querying customer rewards profile database.
+  tool_call:
+    name: get_loyalty_profile
+    payload:
+      phone_number: 555-123-4567
+    response:
+      status: success
+      points_balance: 250
+      tier: Gold
+- speaker: Agent
+  text: Alright, I've found your account! You have a balance of two hundred and fifty points and are in our Gold tier. You're eligible to redeem points for a free appetizer or dessert today!
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

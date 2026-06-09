@@ -1,16 +1,59 @@
-subintent_id: account-verification
-subintent_name: Account Verification
-parent_cuj: General Customer Support
+subintent_id: reserve-table
+subintent_name: Reserve Table
+parent_cuj: Table Bookings
 turns:
 - speaker: Agent
-  text: To get started, I'll need your account number. What is that number?
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
 - speaker: User
-  text: Sure, it's one two three four five six.
+  text: Hey there, I'd like to book a table for tonight if you guys have space.
 - speaker: Agent
-  text: Calling tool verify_account
+  text: Sure thing, I can help you with that! How many people are in your party, and what time were you thinking?
+- speaker: User
+  text: It'll be a party of four, around seven thirty.
+- speaker: Agent
+  text: Alright, let me check what we have available for four people at seven thirty tonight.
   tool_call:
-    name: verify_account
-    parameters:
-      account_number: '123456'
+    name: check_table_availability
+    payload:
+      party_size: 4
+      time: '19:30'
+      date: tonight
+    response:
+      status: success
+      available: true
+      table_id: '12'
 - speaker: Agent
-  text: Thank you. I've verified your account. How can I help you today?
+  text: Okay, we have a nice, quiet booth available! I can lock that in for you right now. Do you have any special requests, like a high chair?
+- speaker: User
+  text: Oh, actually, yes, we'll need one high chair, please. And the quiet booth sounds perfect.
+- speaker: Agent
+  text: Perfect, let me reserve that table and add the high chair request for you.
+  tool_call:
+    name: create_reservation
+    payload:
+      party_size: 4
+      time: '19:30'
+      date: tonight
+      table_id: '12'
+      special_requests:
+        high_chair: 1
+        section: quiet
+    response:
+      status: success
+      reservation_id: RES-7766
+      confirmed: true
+- speaker: Agent
+  text: Alright, you're all set! I've confirmed your reservation for tonight at seven thirty for a party of four. We'll have that quiet booth and a high chair ready for you.
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

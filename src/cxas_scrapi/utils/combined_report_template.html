@@ -1,14 +1,3 @@
-<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<title>Combined Eval Report - {{ ts }}</title>
-<style>
-  {{ css_content }}
-</style>
-<script>
-  {{ js_interaction }}
-</script>
-</head><body>
 <h1>Combined Eval Report</h1>
 <div class="summary">
   <div class="summary-top">
@@ -37,6 +26,13 @@
           <br><span class='meta'>{{ _fmt_duration(sim_wall_clock_s) }}</span>
         {% elif s_dur > 0 %}
           <br><span class='meta'>~{{ _fmt_duration(s_dur) }}</span>
+        {% endif %}
+        {% if bg_noise_file or burst_noise_files %}
+          <div style="font-size:0.85em;color:#e67e22;margin-top:6px;">
+            <b>Noise Injection Active:</b>
+            {% if bg_noise_file %}<br>BG: {{ bg_noise_file }}{% endif %}
+            {% if burst_noise_files %}<br>Burst: {{ burst_noise_files | length }} file(s){% endif %}
+          </div>
         {% endif %}
       </div>
     {% endif %}
@@ -107,18 +103,8 @@
   {% endfor %}
 </table>
 
-{% if failure_groups %}
-  <h2>Failure Patterns</h2>
-  {% for reason, evals in failure_groups.items() | sort(attribute='1', reverse=true) %}
-    <div class="failure-group">
-      <h3>{{ reason | escape }}</h3>
-      <div class="affected">{{ evals | length }} eval(s):
-        {% for type, name in evals | sort %}
-          <span class="affected-item" style="cursor:pointer" onclick="jumpTo('{{ type }}', '{{ name | replace("'", "\\'") }}')">{{ name | escape }} ({{ type }})</span>
-        {% endfor %}
-      </div>
-    </div>
-  {% endfor %}
+{% if failure_patterns_html %}
+  {{ failure_patterns_html | safe }}
 {% endif %}
 
 {% if golden_results %}
@@ -392,42 +378,10 @@
   {% endfor %}
 {% endif %}
 
-{% if tool_results %}
-  {% set t_pct = 100 * t_passed / t_total if t_total else 0 %}
-  <h2 id="section-tools">Tool Tests <span class="meta">({{ t_passed }}/{{ t_total }} — {{ "%.0f" | format(t_pct) }}%)</span></h2>
-  <table>
-    <tr><th>Result</th><th>Tool</th><th>Test</th><th>Latency</th><th>Errors</th></tr>
-    {% for r in tool_results | sort(attribute='passed') %}
-      {% set cls = "pass" if r["passed"] else "fail" %}
-      {% set passed_str = "true" if r["passed"] else "false" %}
-      {% set lat = "%.0fms" | format(r["latency_ms"]) if r.get("latency_ms") else "-" %}
-      <tr data-passed="{{ passed_str }}">
-        <td class="{{ cls }}"><b>{{ r["status"] }}</b></td>
-        <td>{{ r["tool"] | escape }}</td>
-        <td>{{ r["name"] | escape }}</td>
-        <td>{{ lat }}</td>
-        <td>{{ r.get("errors", "") | string | truncate(100) | escape }}</td>
-      </tr>
-    {% endfor %}
-  </table>
+{% if tool_results_html %}
+  {{ tool_results_html | safe }}
 {% endif %}
 
-{% if callback_results %}
-  {% set c_pct = 100 * c_passed / c_total if c_total else 0 %}
-  <h2 id="section-callbacks">Callback Tests <span class="meta">({{ c_passed }}/{{ c_total }} — {{ "%.0f" | format(c_pct) }}%)</span></h2>
-  <table>
-    <tr><th>Result</th><th>Agent</th><th>Callback</th><th>Test</th><th>Error</th></tr>
-    {% for r in callback_results | sort(attribute='passed') %}
-      {% set cls = "pass" if r["passed"] else "fail" %}
-      {% set passed_str = "true" if r["passed"] else "false" %}
-      <tr data-passed="{{ passed_str }}">
-        <td class="{{ cls }}"><b>{{ r["status"] }}</b></td>
-        <td>{{ r["agent"] | escape }}</td>
-        <td>{{ r["callback_type"] | escape }}</td>
-        <td>{{ r["name"] | escape }}</td>
-        <td>{{ r.get("error", "") | string | truncate(100) | escape }}</td>
-      </tr>
-    {% endfor %}
-  </table>
+{% if callback_results_html %}
+  {{ callback_results_html | safe }}
 {% endif %}
-</body></html>

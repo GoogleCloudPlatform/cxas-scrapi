@@ -20,7 +20,7 @@ import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 import pydantic
@@ -91,7 +91,7 @@ class SimulationReport:
     def __init__(
         self,
         goals_df: pd.DataFrame,
-        expectations_df: Optional[pd.DataFrame] = None,
+        expectations_df: pd.DataFrame | None = None,
     ):
         self.goals_df = goals_df
         self.expectations_df = expectations_df
@@ -152,7 +152,7 @@ class Conversation:
 
     def next_user_utterance(
         self, last_agent_response: str
-    ) -> tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Gets the next user utterance and variables to inject."""
         raise NotImplementedError
 
@@ -174,7 +174,7 @@ class LLMUserConversation(Conversation):
         self,
         genai_client: GeminiGenerate,
         genai_model: str,
-        test_case: Dict[str, Any],
+        test_case: dict[str, Any],
         max_turns: int = _MAX_TURNS,
     ):
         super().__init__()
@@ -198,7 +198,7 @@ class LLMUserConversation(Conversation):
                 )
             )
         self.expectations = test_case.get("expectations", [])
-        self.expectation_results: List[ExpectationResult] = []
+        self.expectation_results: list[ExpectationResult] = []
 
     def _check_conversation_status(self) -> bool:
         """Checks if the conversation should continue."""
@@ -213,18 +213,12 @@ class LLMUserConversation(Conversation):
 
         return True
 
-    def _handle_first_turn(self) -> Optional[tuple[str, Dict[str, Any]]]:
-        """Handles the special logic for the first turn."""
-        if self.current_turn != 0:
-            return None
-
-        session_params = self.test_case.get("session_parameters", {})
-        if not self.test_case["steps"][0].get("static_utterance", None):
-            return _FIRST_UTTERANCE, session_params
-
-        inject_vars = self.test_case["steps"][0].get("inject_variables", {})
-        merged_vars = {**session_params, **inject_vars}
-        return self.test_case["steps"][0]["static_utterance"], merged_vars
+    def _get_active_step_index(self) -> int | None:
+        """Finds the index of the first step that is not completed."""
+        for i, prog in enumerate(self.steps_progress):
+            if prog.status != StepStatus.COMPLETED:
+                return i
+        return None
 
     def _prepare_llm_prompt(self) -> str:
         """Prepares the prompt for the LLM user."""
@@ -248,7 +242,7 @@ class LLMUserConversation(Conversation):
         )
         return prompt
 
-    def _next_user_utterance(self) -> tuple[str, Dict[str, Any]]:
+    def _next_user_utterance(self) -> tuple[str, dict[str, Any]]:
         """Generates the next user utterance and variables to inject based
         on the conversation history.
 
@@ -265,9 +259,27 @@ class LLMUserConversation(Conversation):
         if not self._check_conversation_status():
             return "", {}
 
-        first_turn = self._handle_first_turn()
-        if first_turn:
-            return first_turn
+        active_idx = self._get_active_step_index()
+        if active_idx is not None:
+            active_step_prog = self.steps_progress[active_idx]
+            if active_step_prog.step.static_utterance:
+                # Mark static step as completed
+                active_step_prog.status = StepStatus.COMPLETED
+                active_step_prog.justification = (
+                    "Static utterance sent (bypassed LLM)."
+                )
+
+                utterance = active_step_prog.step.static_utterance
+                session_params = self.test_case.get("session_parameters", {})
+                inject_vars = self.test_case["steps"][active_idx].get(
+                    "inject_variables", {}
+                )
+                merged_vars = {**session_params, **inject_vars}
+                return utterance, merged_vars
+
+        if self.current_turn == 0:
+            session_params = self.test_case.get("session_parameters", {})
+            return _FIRST_UTTERANCE, session_params
 
         prompt = self._prepare_llm_prompt()
 
@@ -338,7 +350,7 @@ class SimulationEvals(Apps):
     def __init__(
         self,
         app_name: str,
-        rate_limiter: Optional[RateLimiter] = None,
+        rate_limiter: RateLimiter | None = None,
         **kwargs,
     ):
         self.app_name = app_name
@@ -401,9 +413,11 @@ class SimulationEvals(Apps):
         self,
         session_id: str,
         user_utterance: str,
-        variables: Dict[str, Any],
+        variables: dict[str, Any],
         modality: str,
         console_logging: bool,
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
         historical_contexts: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
@@ -419,6 +433,8 @@ class SimulationEvals(Apps):
                         event=user_utterance.removeprefix("event:").strip(),
                         variables=variables,
                         modality=modality,
+                        background_noise_file=background_noise_file,
+                        burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
                         historical_contexts=historical_contexts,
                     )
@@ -428,6 +444,8 @@ class SimulationEvals(Apps):
                         dtmf=user_utterance.removeprefix("dtmf:").strip(),
                         variables=variables,
                         modality=modality,
+                        background_noise_file=background_noise_file,
+                        burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
                         historical_contexts=historical_contexts,
                     )
@@ -437,6 +455,8 @@ class SimulationEvals(Apps):
                         text=user_utterance,
                         variables=variables,
                         modality=modality,
+                        background_noise_file=background_noise_file,
+                        burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
                         historical_contexts=historical_contexts,
                     )
@@ -467,11 +487,14 @@ class SimulationEvals(Apps):
 
     def simulate_conversation(
         self,
-        test_case: Dict[str, Any],
+        test_case: dict[str, Any],
         model: str = _DEFAULT_GEMINI_MODEL,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         console_logging: bool = True,
         modality: str = "text",
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
+        use_tool_fakes: bool = False,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
 
@@ -503,7 +526,6 @@ class SimulationEvals(Apps):
         detailed_trace = []
         detailed_trace.append(f"User: {user_utterance}")
 
-        use_tool_fakes = test_case.get("use_tool_fakes", False)
         historical_contexts = test_case.get("historical_contexts", None)
         is_first_turn = True
 
@@ -514,6 +536,13 @@ class SimulationEvals(Apps):
                 variables=accumulated_variables,
                 modality=modality,
                 console_logging=console_logging,
+                session_id,
+                user_utterance,
+                accumulated_variables,
+                modality,
+                console_logging,
+                background_noise_file,
+                burst_noise_files,
                 use_tool_fakes=use_tool_fakes,
                 historical_contexts=historical_contexts if is_first_turn else None,
             )
@@ -532,6 +561,9 @@ class SimulationEvals(Apps):
             if session_ended:
                 if agent_text:
                     eval_conv._add_agent_response(agent_text)
+                # Ensure the final agent response is evaluated
+                # so that steps_progress is updated on session end.
+                eval_conv._next_user_utterance()
                 if console_logging:
                     print(
                         "\nSession has been closed by the Agent via "
@@ -559,8 +591,8 @@ class SimulationEvals(Apps):
         return eval_conv
 
     def _prepare_simulation_jobs(
-        self, test_cases: List[Dict[str, Any]], runs: int
-    ) -> List[tuple[Dict[str, Any], int]]:
+        self, test_cases: list[dict[str, Any]], runs: int
+    ) -> list[tuple[dict[str, Any], int]]:
         """Prepares a list of simulation jobs to run."""
         jobs = []
         for tc in test_cases:
@@ -570,14 +602,17 @@ class SimulationEvals(Apps):
 
     def _run_single_simulation_job(
         self,
-        tc: Dict[str, Any],
+        tc: dict[str, Any],
         run_idx: int,
         runs: int,
         model: str,
         modality: str,
         verbose: bool,
         parallel: int,
-    ) -> Dict[str, Any]:
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
+        use_tool_fakes: bool = False,
+    ) -> dict[str, Any]:
         """Runs a single simulation job and returns the results."""
         name = tc["name"]
         label = f"{name} (run {run_idx + 1}/{runs})"
@@ -591,6 +626,9 @@ class SimulationEvals(Apps):
                 session_id=session_id,
                 console_logging=verbose and parallel <= 1,
                 modality=modality,
+                background_noise_file=background_noise_file,
+                burst_noise_files=burst_noise_files,
+                use_tool_fakes=use_tool_fakes,
             )
             duration_s = round(time.time() - _start, 1)
 
@@ -631,7 +669,11 @@ class SimulationEvals(Apps):
                 "session_id": session_id,
                 "session_parameters": tc.get("session_parameters", {}),
                 "transcript": conv.get_transcript(),
-                "detailed_trace": getattr(conv, "detailed_trace", []),
+                "detailed_trace": getattr(
+                    conv,
+                    "_detailed_trace",
+                    getattr(conv, "detailed_trace", []),
+                ),
                 "step_details": [
                     {
                         "goal": p.step.goal,
@@ -661,13 +703,16 @@ class SimulationEvals(Apps):
 
     def _aggregate_simulation_results(
         self,
-        jobs: List[tuple[Dict[str, Any], int]],
+        jobs: list[tuple[dict[str, Any], int]],
         runs: int,
         parallel: int,
         model: str,
         modality: str,
         verbose: bool,
-    ) -> List[Dict[str, Any]]:
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
+        use_tool_fakes: bool = False,
+    ) -> list[dict[str, Any]]:
         """Aggregates results from multiple simulation jobs."""
         results = []
         with Progress() as progress:
@@ -684,6 +729,9 @@ class SimulationEvals(Apps):
                             modality,
                             verbose,
                             parallel,
+                            background_noise_file,
+                            burst_noise_files,
+                            use_tool_fakes=use_tool_fakes,
                         )
                     )
                     progress.update(task_id, advance=1)
@@ -700,6 +748,9 @@ class SimulationEvals(Apps):
                             modality,
                             verbose,
                             parallel,
+                            background_noise_file,
+                            burst_noise_files,
+                            use_tool_fakes=use_tool_fakes,
                         ): (tc["name"], run_idx)
                         for tc, run_idx in jobs
                     }
@@ -711,13 +762,16 @@ class SimulationEvals(Apps):
 
     def run_simulations(
         self,
-        test_cases: List[Dict[str, Any]],
+        test_cases: list[dict[str, Any]],
         runs: int = 1,
         parallel: int = 1,
         model: str = _DEFAULT_GEMINI_MODEL,
         modality: str = "text",
         verbose: bool = False,
-    ) -> List[Dict[str, Any]]:
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
+        use_tool_fakes: bool = False,
+    ) -> list[dict[str, Any]]:
         """Runs multiple simulations, optionally in parallel.
 
         Args:
@@ -727,10 +781,19 @@ class SimulationEvals(Apps):
             model: Gemini model to use.
             modality: 'text' or 'audio'.
             verbose: Whether to log to console (only active if parallel=1).
+            use_tool_fakes: Use fake tools for the session if available.
         """
         jobs = self._prepare_simulation_jobs(test_cases, runs)
         return self._aggregate_simulation_results(
-            jobs, runs, parallel, model, modality, verbose
+            jobs,
+            runs,
+            parallel,
+            model,
+            modality,
+            verbose,
+            background_noise_file,
+            burst_noise_files,
+            use_tool_fakes=use_tool_fakes,
         )
 
     def _add_agent_text(self, turn: Turn, text: str) -> None:
@@ -757,14 +820,14 @@ class SimulationEvals(Apps):
                 tc_obj.output = response
                 break
 
-    def _handle_text_chunk(self, chunk: Dict[str, Any], turn: Turn) -> None:
+    def _handle_text_chunk(self, chunk: dict[str, Any], turn: Turn) -> None:
         """Processes a text chunk from the platform response."""
         text = chunk.get("text", "").strip()
         if text:
             self._add_agent_text(turn, text)
 
     def _handle_tool_call_chunk(
-        self, chunk: Dict[str, Any], turn: Turn
+        self, chunk: dict[str, Any], turn: Turn
     ) -> None:
         """Processes a tool call chunk from the platform response."""
         tc = chunk["tool_call"]
@@ -773,7 +836,7 @@ class SimulationEvals(Apps):
         turn.tool_calls.append(ToolCall(action=tool_name, args=args))
 
     def _handle_tool_response_chunk(
-        self, chunk: Dict[str, Any], turn: Turn
+        self, chunk: dict[str, Any], turn: Turn
     ) -> None:
         """Processes a tool response chunk from the platform response."""
         tr = chunk["tool_response"]
@@ -782,7 +845,7 @@ class SimulationEvals(Apps):
         self._match_tool_response(turn, tool_name, response)
 
     def _handle_agent_transfer_chunk(
-        self, chunk: Dict[str, Any], turn: Turn
+        self, chunk: dict[str, Any], turn: Turn
     ) -> None:
         """Processes an agent transfer chunk from the platform response."""
         # For golden export, we represent this as a special tool call or skip if
@@ -795,7 +858,7 @@ class SimulationEvals(Apps):
             ToolCall(action="transfer_to_agent", args={"agent": target})
         )
 
-    def _handle_payload_chunk(self, chunk: Dict[str, Any], turn: Turn) -> None:
+    def _handle_payload_chunk(self, chunk: dict[str, Any], turn: Turn) -> None:
         """Processes a custom payload chunk from the platform response."""
         # Custom payloads don't have a direct field in Turn/ToolCall model
         # for golden export usually, but we could add to agent text as a note
@@ -803,7 +866,7 @@ class SimulationEvals(Apps):
         self._add_agent_text(turn, f"[Custom Payload]: {json.dumps(payload)}")
 
     def _process_platform_chunk(
-        self, chunk: Dict[str, Any], turn: Turn
+        self, chunk: dict[str, Any], turn: Turn
     ) -> None:
         """Dispatches platform chunks to their respective handlers."""
         if "text" in chunk:
@@ -818,8 +881,8 @@ class SimulationEvals(Apps):
             self._handle_payload_chunk(chunk, turn)
 
     def _parse_platform_messages(
-        self, messages: List[Dict[str, Any]], turns: List[Turn]
-    ) -> Optional[Turn]:
+        self, messages: list[dict[str, Any]], turns: list[Turn]
+    ) -> Turn | None:
         """Parses a list of platform messages into turns."""
         current_turn = turns[-1] if turns else None
 
@@ -843,7 +906,7 @@ class SimulationEvals(Apps):
 
         return current_turn
 
-    def _get_turns_from_platform(self, session_id: str) -> List[Turn]:
+    def _get_turns_from_platform(self, session_id: str) -> list[Turn]:
         """Fetches and parses turns from the platform conversation history."""
         ch = ConversationHistory(app_name=self.app_name, creds=self.creds)
         conv_obj = ch.get_conversation(session_id)
@@ -854,7 +917,7 @@ class SimulationEvals(Apps):
             self._parse_platform_messages(p_turn.get("messages", []), turns)
         return turns
 
-    def _parse_trace_line(self, line: str, turns: List[Turn]) -> Optional[Turn]:
+    def _parse_trace_line(self, line: str, turns: list[Turn]) -> Turn | None:
         """Parses a single line from the local trace."""
         current_turn = turns[-1] if turns else None
 
@@ -884,14 +947,14 @@ class SimulationEvals(Apps):
 
         return current_turn
 
-    def _get_turns_from_local_trace(self, trace: List[str]) -> List[Turn]:
+    def _get_turns_from_local_trace(self, trace: list[str]) -> list[Turn]:
         """Parses turns from the local simulation trace (fallback)."""
         turns = []
         for line in trace:
             self._parse_trace_line(line, turns)
         return turns
 
-    def _get_turns(self, res: Dict[str, Any]) -> List[Turn]:
+    def _get_turns(self, res: dict[str, Any]) -> list[Turn]:
         """Orchestrates turn retrieval with platform-to-local fallback."""
         session_id = res.get("session_id")
         if not session_id:
@@ -910,8 +973,8 @@ class SimulationEvals(Apps):
 
     def export_results_to_golden(
         self,
-        results: List[Dict[str, Any]],
-        output_path: Optional[str] = None,
+        results: list[dict[str, Any]],
+        output_path: str | None = None,
     ) -> str:
         """Exports simulation results to a Golden Evaluation YAML file.
 

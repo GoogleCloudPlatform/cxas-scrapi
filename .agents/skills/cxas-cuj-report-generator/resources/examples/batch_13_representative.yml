@@ -1,0 +1,58 @@
+subintent_id: order-reorder-past
+subintent_name: Reorder Past Order
+parent_cuj: Digital Ordering
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I want to place the exact same order I had last Tuesday, but I don't remember the items.
+- speaker: Agent
+  text: I can look up your order history for you! Can you please provide the phone number associated with your account?
+- speaker: User
+  text: Yes, it's 555-123-4567.
+- speaker: Agent
+  text: Retrieving order history from loyalty phone binding.
+  tool_call:
+    name: get_order_history
+    payload:
+      phone_number: 555-123-4567
+    response:
+      status: success
+      past_orders:
+      - order_id: '9876'
+        date: last Tuesday
+        items:
+        - Spicy Chicken Pasta
+        - Tiramisu
+        total: 23.98
+- speaker: Agent
+  text: I found your order! Last Tuesday you ordered the Spicy Chicken Pasta and a Tiramisu for a total of twenty-three ninety-eight. Would you like me to reorder those exact same items for pickup?
+- speaker: User
+  text: Yes, please reorder that exact meal.
+- speaker: Agent
+  text: Submitting pickup reorder.
+  tool_call:
+    name: place_order
+    payload:
+      order_type: pickup
+      items:
+      - Spicy Chicken Pasta
+      - Tiramisu
+      total_amount: 23.98
+    response:
+      status: success
+      order_id: '9986'
+      pickup_time: 20 minutes
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

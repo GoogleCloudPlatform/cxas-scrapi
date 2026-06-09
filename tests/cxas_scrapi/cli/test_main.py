@@ -247,3 +247,21 @@ def test_deployments_promote(mock_app_push, mock_deps_cls):
             "projects/test-project/locations/global/apps/test-app/versions/v1"
         ),
     )
+
+
+def test_get_parser_run_session_use_tool_fakes():
+    """Test that the parser parses run-session with --use-tool-fakes."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "run-session",
+            "text",
+            "projects/test-project/locations/global/apps/test-app",
+            "--use-tool-fakes",
+        ]
+    )
+    assert args.command == "run-session"
+    assert args.modality == "text"
+    expected_app = "projects/test-project/locations/global/apps/test-app"
+    assert args.app_name == expected_app
+    assert args.use_tool_fakes is True

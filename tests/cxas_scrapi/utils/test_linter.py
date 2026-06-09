@@ -90,7 +90,7 @@ def test_lint_result_to_dict():
     assert d["file"] == "app.json"
     assert d["rule_id"] == "A001"
     assert d["severity"] == "error"
-    assert d["line"] == 5  # noqa: PLR2004
+    assert d["line"] == 5
     assert d["fix_suggestion"] == "Fix the JSON syntax"
 
 
@@ -105,7 +105,7 @@ def test_lint_report_add_and_counts():
 
     assert len(report.errors) == 1
     assert len(report.warnings) == 1
-    assert len(report.results) == 3  # noqa: PLR2004
+    assert len(report.results) == 3
 
 
 def test_lint_report_to_json():
@@ -151,7 +151,7 @@ def test_rule_registry_lookup():
 
 def test_rule_decorator_deduplication():
     """@rule with same ID twice should not create duplicates."""
-    from cxas_scrapi.utils.linter import _RULE_REGISTRY  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import _RULE_REGISTRY  # noqa: PLC0415
 
     # Record the initial count so the test is additive-safe
     initial_count = sum(len(v) for v in _RULE_REGISTRY.values())
@@ -192,14 +192,14 @@ def test_rule_decorator_deduplication():
 
 def test_reset_registry():
     """reset_registry() clears all registered rules."""
-    from cxas_scrapi.utils.linter import (  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import (  # noqa: PLC0415
         _REGISTERED_IDS,
         _RULE_REGISTRY,
     )
 
     # Ensure there are rules registered
     registry = build_registry()
-    assert len(registry.all_rules()) >= 60  # noqa: PLR2004
+    assert len(registry.all_rules()) >= 60
 
     # Reset
     reset_registry()
@@ -215,21 +215,21 @@ def test_reset_registry():
 
     # Re-populate for other tests by forcing re-registration
     # (reload the rule modules so decorators fire again)
-    import importlib  # noqa: PLC0415,I001
+    import importlib  # noqa: PLC0415
 
-    import cxas_scrapi.utils.lint_rules.callbacks as mod_c  # noqa: PLC0415,I001
-    import cxas_scrapi.utils.lint_rules.config as mod_a  # noqa: PLC0415,I001
-    import cxas_scrapi.utils.lint_rules.evals as mod_e  # noqa: PLC0415,I001
-    import cxas_scrapi.utils.lint_rules.instructions as mod_i  # noqa: PLC0415,I001
-    import cxas_scrapi.utils.lint_rules.schema as mod_v  # noqa: PLC0415,I001
-    import cxas_scrapi.utils.lint_rules.structure as mod_s  # noqa: PLC0415,I001
-    import cxas_scrapi.utils.lint_rules.tools as mod_t  # noqa: PLC0415,I001
+    import cxas_scrapi.utils.lint_rules.callbacks as mod_c  # noqa: PLC0415
+    import cxas_scrapi.utils.lint_rules.config as mod_a  # noqa: PLC0415
+    import cxas_scrapi.utils.lint_rules.evals as mod_e  # noqa: PLC0415
+    import cxas_scrapi.utils.lint_rules.instructions as mod_i  # noqa: PLC0415
+    import cxas_scrapi.utils.lint_rules.schema as mod_v  # noqa: PLC0415
+    import cxas_scrapi.utils.lint_rules.structure as mod_s  # noqa: PLC0415
+    import cxas_scrapi.utils.lint_rules.tools as mod_t  # noqa: PLC0415
 
     for mod in [mod_i, mod_c, mod_t, mod_e, mod_a, mod_s, mod_v]:
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    assert len(registry_restored.all_rules()) == 65  # noqa: PLR2004
+    assert len(registry_restored.all_rules()) == 65
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -519,7 +519,7 @@ def test_discovery_filtering(tmp_path):
 def test_build_registry_all_rules():
     registry = build_registry()
     all_rules = registry.all_rules()
-    assert len(all_rules) == 65  # noqa: PLR2004
+    assert len(all_rules) == 65
 
 
 def test_build_context(tmp_path):
@@ -580,7 +580,7 @@ def test_run_rules_handles_directory_targets(tmp_path):
     context = build_context(tmp_path, config, discovery)
     registry = build_registry()
 
-    from unittest.mock import patch  # noqa: PLC0415,I001
+    from unittest.mock import patch  # noqa: PLC0415
 
     with patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"):
         report = LintReport()
@@ -612,7 +612,7 @@ def test_run_rules_with_gecx_nested_layout(tmp_path):
     context = build_context(tmp_path, config, discovery)
     registry = build_registry()
 
-    from unittest.mock import patch  # noqa: PLC0415,I001
+    from unittest.mock import patch  # noqa: PLC0415
 
     with patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"):
         report = LintReport()
@@ -631,7 +631,7 @@ def test_run_rules_with_gecx_nested_layout(tmp_path):
 
 def test_structure_rules_dispatched_by_target(tmp_path):
     """Structure rules are dispatched by target property."""
-    from cxas_scrapi.utils.linter import (  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import (  # noqa: PLC0415
         _REGISTERED_IDS,
         _RULE_REGISTRY,
     )

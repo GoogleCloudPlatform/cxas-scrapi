@@ -16,7 +16,7 @@ import asyncio
 import logging
 import random
 import threading
-from typing import Any, Optional
+from typing import Any
 
 from google import genai
 
@@ -70,12 +70,12 @@ class GeminiGenerate:
 
     def _build_generation_config(
         self,
-        system_prompt: Optional[str] = None,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        temperature: Optional[float] = 1.0,
-        thinking_level: Optional[str] = None,
-    ) -> Optional[genai.types.GenerateContentConfig]:
+        system_prompt: str | None = None,
+        response_mime_type: str | None = None,
+        response_schema: Any | None = None,
+        temperature: float | None = 1.0,
+        thinking_level: str | None = None,
+    ) -> genai.types.GenerateContentConfig | None:
         """Helper to construct GenerateContentConfig for the GenAI SDK."""
         config_args = {}
         if system_prompt:
@@ -98,13 +98,13 @@ class GeminiGenerate:
     def generate(
         self,
         prompt: str,
-        system_prompt: Optional[str] = None,
-        model_name: Optional[str] = None,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        temperature: Optional[float] = 1.0,
-        thinking_level: Optional[str] = None,
-    ) -> Optional[Any]:
+        system_prompt: str | None = None,
+        model_name: str | None = None,
+        response_mime_type: str | None = None,
+        response_schema: Any | None = None,
+        temperature: float | None = 1.0,
+        thinking_level: str | None = None,
+    ) -> Any | None:
         """Generates content using the Gemini model.
 
         Args:
@@ -147,13 +147,13 @@ class GeminiGenerate:
     def generate_with_parts(
         self,
         parts: list[Any],
-        system_prompt: Optional[str] = None,
-        model_name: Optional[str] = None,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        temperature: Optional[float] = 1.0,
-        thinking_level: Optional[str] = None,
-    ) -> Optional[Any]:
+        system_prompt: str | None = None,
+        model_name: str | None = None,
+        response_mime_type: str | None = None,
+        response_schema: Any | None = None,
+        temperature: float | None = 1.0,
+        thinking_level: str | None = None,
+    ) -> Any | None:
         """Generates content from a list of multimodal Parts.
 
         Useful for audio analysis where one part is a `genai.types.Part`
@@ -203,14 +203,14 @@ class GeminiGenerate:
     async def generate_async(
         self,
         prompt: str,
-        system_prompt: Optional[str] = None,
-        model_name: Optional[str] = None,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
+        system_prompt: str | None = None,
+        model_name: str | None = None,
+        response_mime_type: str | None = None,
+        response_schema: Any | None = None,
         max_retries: int = 5,
         base_delay_seconds: int = 10,
-        temperature: Optional[float] = 1.0,
-    ) -> Optional[Any]:
+        temperature: float | None = 1.0,
+    ) -> Any | None:
         """Generates content asynchronously using the Gemini model.
 
         Args:

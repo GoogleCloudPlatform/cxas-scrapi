@@ -46,7 +46,7 @@ def test_i001_missing_tags(tmp_path, context):
     f.write_text("Just some text without tags.")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 3  # noqa: PLR2004
+    assert len(results) == 3
     tags = {r.message for r in results}
     assert any("<role>" in t for t in tags)
     assert any("<persona>" in t for t in tags)
@@ -417,7 +417,7 @@ def test_c003_camelcase_detected(tmp_path, context):
     f.write_text("def myFunction(x): pass\ndef anotherFunc(y): pass")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
     assert any("myFunction" in r.message for r in results)
 
 
@@ -942,7 +942,7 @@ def test_t007_not_snake_case(tmp_path, context):
     )
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
 
 
 def test_t007_snake_case_ok(tmp_path, context):
@@ -1403,7 +1403,7 @@ def test_e010_old_format(tmp_path, context):
     f.write_text("tool_name: get_balance\ntest_cases:\n  - input: {}")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
 
 
 def test_e010_correct_key(tmp_path, context):
@@ -1501,7 +1501,7 @@ def test_a002_missing_required_fields(tmp_path, context):
     f.write_text('{"description": "test"}')
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
     fields = {r.message for r in results}
     assert any("name" in m for m in fields)
     assert any("displayName" in m for m in fields)
@@ -1511,7 +1511,7 @@ def test_a002_missing_required_fields(tmp_path, context):
 
 
 def test_v001_app_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")
@@ -1526,7 +1526,7 @@ def test_v001_app_valid(tmp_path, context):
 
 
 def test_v001_app_missing_config(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")
@@ -1540,7 +1540,7 @@ def test_v001_app_missing_config(tmp_path, context):
 
 
 def test_v002_agent_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1556,7 +1556,7 @@ def test_v002_agent_valid(tmp_path, context):
 
 
 def test_v002_agent_missing_config(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1570,7 +1570,7 @@ def test_v002_agent_missing_config(tmp_path, context):
 
 
 def test_v003_tool_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V003")
@@ -1585,7 +1585,7 @@ def test_v003_tool_valid(tmp_path, context):
 
 
 def test_v005_guardrail_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V005")
@@ -1600,7 +1600,7 @@ def test_v005_guardrail_valid(tmp_path, context):
 
 
 def test_v006_evaluation_invalid_field(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V006")
@@ -1618,7 +1618,7 @@ def test_v006_evaluation_invalid_field(tmp_path, context):
 
 
 def test_schema_missing_referenced_file(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1636,7 +1636,7 @@ def test_schema_missing_referenced_file(tmp_path, context):
 
 
 def test_schema_missing_required_field(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")

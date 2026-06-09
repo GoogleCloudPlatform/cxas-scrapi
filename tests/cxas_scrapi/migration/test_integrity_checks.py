@@ -73,7 +73,7 @@ def test_end_session_in_agent_tools_is_not_flagged():
     )
     current = _ir()  # empty registry
 
-    blocking, warnings = check_consolidation_integrity(optimized, current)
+    blocking, _warnings = check_consolidation_integrity(optimized, current)
 
     assert blocking == []
 
@@ -91,7 +91,7 @@ def test_set_session_variables_sentinel_is_not_flagged():
     )
     current = _ir()
 
-    blocking, warnings = check_consolidation_integrity(optimized, current)
+    blocking, _warnings = check_consolidation_integrity(optimized, current)
 
     assert blocking == []
 
@@ -110,7 +110,7 @@ def test_genuinely_unknown_tool_in_agent_tools_is_flagged():
     )
     current = _ir()
 
-    blocking, warnings = check_consolidation_integrity(optimized, current)
+    blocking, _warnings = check_consolidation_integrity(optimized, current)
 
     assert any("nonexistent_tool" in b for b in blocking)
 
@@ -127,7 +127,7 @@ def test_known_tool_resolves_via_short_id():
     )
     current = _ir(tools={"authenticate_user": "PYTHON"})
 
-    blocking, warnings = check_consolidation_integrity(optimized, current)
+    blocking, _warnings = check_consolidation_integrity(optimized, current)
 
     assert blocking == []
 
@@ -144,7 +144,7 @@ def test_end_session_in_instruction_is_not_flagged():
     )
     current = _ir()
 
-    blocking, warnings = check_consolidation_integrity(optimized, current)
+    blocking, _warnings = check_consolidation_integrity(optimized, current)
 
     assert blocking == []
 
@@ -159,6 +159,6 @@ def test_unknown_agent_ref_is_flagged():
     )
     current = _ir()
 
-    blocking, warnings = check_consolidation_integrity(optimized, current)
+    blocking, _warnings = check_consolidation_integrity(optimized, current)
 
     assert any("NonExistentGroup" in b for b in blocking)

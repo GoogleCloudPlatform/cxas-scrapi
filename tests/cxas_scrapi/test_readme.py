@@ -26,7 +26,7 @@ def is_ignored(url):
 def test_readme_links():
     assert README_PATH.exists(), f"README.md not found at {README_PATH}"
 
-    with open(README_PATH, "r", encoding="utf-8") as f:
+    with open(README_PATH, encoding="utf-8") as f:
         content = f.read()
 
     links = extract_links(content)

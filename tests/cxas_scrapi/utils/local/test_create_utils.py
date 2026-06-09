@@ -48,14 +48,14 @@ def test_create_agent(tmp_path):
     json_file = target_dir / f"{safe_name}.json"
     assert json_file.exists()
 
-    with open(json_file, "r") as f:
+    with open(json_file) as f:
         data = json.load(f)
         assert data["displayName"] == display_name
         assert data["instruction"] == f"agents/{safe_name}/instruction.txt"
 
     instruction_file = target_dir / "instruction.txt"
     assert instruction_file.exists()
-    with open(instruction_file, "r") as f:
+    with open(instruction_file) as f:
         content = f.read()
         assert "<role>" in content
 
@@ -101,7 +101,7 @@ def test_create_tool_non_python(tmp_path):
     json_file = target_dir / f"{safe_name}.json"
     assert json_file.exists()
 
-    with open(json_file, "r") as f:
+    with open(json_file) as f:
         data = json.load(f)
         assert data["displayName"] == display_name
 
@@ -137,7 +137,7 @@ def test_create_tool_python(tmp_path):
     json_file = target_dir / f"{safe_name}.json"
     assert json_file.exists()
 
-    with open(json_file, "r") as f:
+    with open(json_file) as f:
         data = json.load(f)
         assert data["displayName"] == display_name
         assert data["pythonFunction"]["name"] == safe_name
@@ -145,7 +145,7 @@ def test_create_tool_python(tmp_path):
     code_file = target_dir / "python_function" / "python_code.py"
     assert code_file.exists()
 
-    with open(code_file, "r") as f:
+    with open(code_file) as f:
         content = f.read()
         assert f"def {safe_name}() -> dict:" in content
 
@@ -182,7 +182,7 @@ def test_create_tool_openapi(tmp_path):
     json_file = target_dir / f"{safe_name}.json"
     assert json_file.exists()
 
-    with open(json_file, "r") as f:
+    with open(json_file) as f:
         data = json.load(f)
         assert data["displayName"] == display_name
 
@@ -218,7 +218,7 @@ def test_create_tool_datastore(tmp_path):
     json_file = target_dir / f"{safe_name}.json"
     assert json_file.exists()
 
-    with open(json_file, "r") as f:
+    with open(json_file) as f:
         data = json.load(f)
         assert data["displayName"] == display_name
 
@@ -315,7 +315,7 @@ def test_create_tool_add_to_agent(tmp_path):
     assert Path(result_path) == tmp_path / "tools" / safe_name
 
     # Verify agent updated
-    with open(agent_json_file, "r") as f:
+    with open(agent_json_file) as f:
         print(agent_json_file)
         updated_agent = json.load(f)
         print(updated_agent)

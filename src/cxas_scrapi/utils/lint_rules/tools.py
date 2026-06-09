@@ -20,7 +20,6 @@ Validates agent tool Python files against CXAS conventions.
 import json
 import re
 from pathlib import Path
-from typing import Optional
 
 from cxas_scrapi.utils.linter import (
     LintContext,
@@ -33,7 +32,7 @@ from cxas_scrapi.utils.linter import (
 FUNC_DEF_RE = re.compile(r"def\s+(\w+)\s*\(([^)]*)\)")
 
 
-def _load_tool_config(file_path: Path) -> tuple[Optional[dict], Optional[Path]]:
+def _load_tool_config(file_path: Path) -> tuple[dict | None, Path | None]:
     """Load the tool JSON config from the tool directory.
 
     Tool layout: tools/<name>/python_function/python_code.py

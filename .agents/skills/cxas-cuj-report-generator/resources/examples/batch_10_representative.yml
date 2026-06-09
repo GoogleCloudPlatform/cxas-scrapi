@@ -1,18 +1,57 @@
-subintent_id: pausehold-on
-subintent_name: Pause/Hold On
-parent_cuj: General Customer Support
+subintent_id: order-bulk-pizza
+subintent_name: Bulk Pizza Order
+parent_cuj: Digital Ordering
 turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
 - speaker: User
-  text: Hang on a second, I need to find my loyalty card.
+  text: Hi, I need to place a large bulk order of ten pizzas for a party tomorrow. Is that something you can handle?
 - speaker: Agent
-  text: No problem at all. I'll stay on the line. Just let me know when you're ready.
+  text: That sounds like a fun event! Yes, we can definitely handle that. Let me check our kitchen capacity and calculate a bulk discount quote for you.
 - speaker: Agent
-  text: Calling webhook set_session_state
-  webhook_call:
-    endpoint: set_session_state
-    payload_patch:
-      status: waiting
+  text: Checking kitchen capacity and calculating bulk discount.
+  tool_call:
+    name: calculate_bulk_quote
+    payload:
+      item_name: Large Pizza
+      quantity: 10
+      date: tomorrow
+    response:
+      status: success
+      capacity_available: true
+      regular_price: 180.0
+      bulk_discount: 27.0
+      bulk_total: 153.0
+- speaker: Agent
+  text: Good news, we have the capacity! We can also offer you a fifteen percent bulk discount, bringing your total to one hundred and fifty-three dollars instead of one hundred and eighty. Shall I schedule this order for tomorrow?
 - speaker: User
-  text: Okay, I've got it now.
+  text: Yes, please. We'd like it delivered at one PM tomorrow.
 - speaker: Agent
-  text: Great! Please go ahead with the information.
+  text: Scheduling bulk delivery order in calendar.
+  tool_call:
+    name: place_bulk_order
+    payload:
+      item_name: Large Pizza
+      quantity: 10
+      delivery_time: '13:00'
+      date: tomorrow
+      total_amount: 153.0
+    response:
+      status: success
+      order_id: '9984'
+      confirmed: true
+- speaker: Agent
+  text: 'Perfect! Your bulk order #9984 is officially confirmed for delivery tomorrow at one PM. I''ve emailed the receipt to you.'
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

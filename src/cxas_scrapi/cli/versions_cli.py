@@ -19,9 +19,7 @@ import difflib
 import json
 import logging
 import os
-import subprocess
 import sys
-import tempfile
 import time
 from typing import Any
 
@@ -94,7 +92,7 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils")
 
 def _load_template(filename: str) -> str:
     template_path = os.path.join(TEMPLATE_DIR, filename)
-    with open(template_path, "r", encoding="utf-8") as f:
+    with open(template_path, encoding="utf-8") as f:
         return f.read()
 
 
@@ -102,62 +100,11 @@ HTML_DIFF_BLOCK_TEMPLATE = _load_template("versions_diff_block_template.html")
 HTML_REPORT_TEMPLATE = _load_template("versions_compare_report_template.html")
 
 
-def _upload_to_codebin(title: str, content: str) -> str | None:
-    """Uploads HTML content to Codebin using internal gosso and returns url."""
-    gosso_path = "/google/bin/releases/gosso/gosso"
-    if not os.path.exists(gosso_path):
-        return None
-
-    target_url = "https://codebin.googleplex.com/api/prototypes"
-    post_data = {
-        "title": title,
-        "content": content,
-    }
-
-    # Write payload to temp file to avoid shell leakage or escaping issues
-    with tempfile.NamedTemporaryFile(
-        mode="w+", encoding="utf-8", delete=False, suffix=".json"
-    ) as temp_file:
-        json.dump(post_data, temp_file)
-        temp_file_path = temp_file.name
-
-    try:
-        cmd = [
-            gosso_path,
-            "-method=POST",
-            f"-url={target_url}",
-            f"-data_file={temp_file_path}",
-            "-header=Content-Type: application/json",
-            "-header=Accept: application/json",
-        ]
-
-        res = subprocess.run(
-            cmd, capture_output=True, text=True, check=True, timeout=15
-        )
-
-        # Clean up temp file
-        try:
-            os.remove(temp_file_path)
-        except Exception:
-            pass
-
-        response_json = json.loads(res.stdout)
-        if "id" in response_json:
-            doc_id = response_json["id"]
-            return f"https://codebin.googleplex.com/view/{doc_id}"
-    except Exception as e:
-        logger.warning("Codebin upload failed: %s", e)
-        # Clean up temp file on error
-        try:
-            os.remove(temp_file_path)
-        except Exception:
-            pass
-    return None
-
-
 def app_versions_list(args: argparse.Namespace) -> None:
     """Handles the 'versions list' command."""
-    apps_client, app_name, display_name = _resolve_app_args(args.app_name, args)
+    _apps_client, app_name, display_name = _resolve_app_args(
+        args.app_name, args
+    )
     console = Console()
     console.print(
         "\n[bold blue]Listing versions for App:[/] [bold"
@@ -303,7 +250,7 @@ def _generate_html_report(
     v2: Any,
     diff_blocks: list[dict[str, Any]],
 ) -> None:
-    """Layer 3: Generate collapsible HTML report and upload to Codebin."""
+    """Layer 3: Generate collapsible HTML report."""
 
     def _resolve_report_path(args) -> str:
         if args.output and args.output.endswith(".html"):
@@ -379,52 +326,15 @@ def _generate_html_report(
         diff_blocks=diff_blocks_joined,
     )
 
-    gosso_path = "/google/bin/releases/gosso/gosso"
-    use_codebin = os.path.exists(gosso_path)
-
-    codebin_url = None
-    if use_codebin:
-        try:
-            console.print("  [dim]Uploading report to Codebin...[/]")
-            title = (
-                f"Compare: {args.source[:8]} vs {args.target[:8]} "
-                f"({display_name})"
-            )
-            codebin_url = _upload_to_codebin(title, webpage)
-        except Exception as e:
-            console.print(f"  [yellow]⚠️ Codebin upload failed: {e}[/]")
-
-    # Set report URL and resolve disk writes only if required
-    if codebin_url:
-        report_url = codebin_url
-        # If the user explicitly requested a local output HTML file,
-        # we save it permanently.
-        if args.output and args.output.endswith(".html"):
-            try:
-                report_path = _resolve_report_path(args)
-                with open(report_path, "w") as f:
-                    f.write(webpage)
-            except Exception as e:
-                console.print(
-                    f"  [yellow]⚠️ Could not save local report: {e}[/]"
-                )
-    else:
-        # Fallback: Codebin failed or not used,
-        # so we write a local report on disk
-        try:
-            report_path = _resolve_report_path(args)
-            with open(report_path, "w") as f:
-                f.write(webpage)
-            report_url = f"file://{report_path}"
-            if use_codebin:
-                console.print(
-                    "  [yellow]⚠️ Upload failed. Saved fallback local report.[/]"
-                )
-        except Exception as e:
-            report_url = "Failed to generate report"
-            console.print(
-                f"  [red]❌ Could not save fallback local report: {e}[/]"
-            )
+    # Save report locally on disk
+    try:
+        report_path = _resolve_report_path(args)
+        with open(report_path, "w") as f:
+            f.write(webpage)
+        report_url = f"file://{report_path}"
+    except Exception as e:
+        console.print(f"  [yellow]⚠️ Could not save local report: {e}[/]")
+        report_url = "Failed to generate report"
 
     console.print(
         "\n[bold green]🌐 Self-contained interactive HTML diff report "
@@ -451,7 +361,9 @@ def app_versions_compare(args: argparse.Namespace) -> None:
     """Handles the 'versions compare' command."""
     console = Console()
 
-    apps_client, app_name, display_name = _resolve_app_args(args.app_name, args)
+    _apps_client, app_name, display_name = _resolve_app_args(
+        args.app_name, args
+    )
 
     def get_clean_json(proto_message) -> str:
         d = (
@@ -866,7 +778,7 @@ def app_versions_compare(args: argparse.Namespace) -> None:
         if args.verbose:
             _print_verbose_diff(console, diff_blocks)
 
-        # LAYER 3: Collapsible HTML Report & Codebin upload
+        # LAYER 3: Collapsible HTML Report
         should_gen_html = (
             args.web
             or (args.output and args.output.endswith(".html"))

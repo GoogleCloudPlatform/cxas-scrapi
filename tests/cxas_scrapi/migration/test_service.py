@@ -585,7 +585,7 @@ async def test_run_stage_2_run_lint_invokes_post_deploy_lint():
 async def test_run_stage_3_requires_grouping_on_bundle():
     service = _make_service()
     bundle = _make_bundle()  # bundle.grouping is None
-    with pytest.raises(RuntimeError, match="bundle.grouping"):
+    with pytest.raises(RuntimeError, match=r"bundle\.grouping"):
         await service.run_stage_3(bundle=bundle)
 
 

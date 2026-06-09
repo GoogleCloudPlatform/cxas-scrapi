@@ -124,7 +124,7 @@ async def run_stage_with_redeploy(
     try:
         await service._deploy_base_resources(is_update_pass=True)
         await service._deploy_pending_agents(is_update_pass=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("Stage %d redeploy failed: %s", stage, exc)
         console.print(f"[red]Stage {stage} redeploy failed: {exc}[/]")
         raise

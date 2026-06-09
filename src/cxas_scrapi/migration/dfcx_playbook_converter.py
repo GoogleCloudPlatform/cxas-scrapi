@@ -14,7 +14,7 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +34,14 @@ class DFCXPlaybookConverter:
 
     @staticmethod
     def recursively_extract_instructions(
-        steps: List[Dict[str, Any]], level: int = 0
-    ) -> List[str]:
+        steps: list[dict[str, Any]], level: int = 0
+    ) -> list[str]:
         instruction_lines = []
         indent = "    " * level
         for step in steps:
             if "text" in step:
                 instruction_lines.append(f"{indent}- {step['text']}")
-            if "steps" in step and step["steps"]:
+            if step.get("steps"):
                 instruction_lines.extend(
                     DFCXPlaybookConverter.recursively_extract_instructions(
                         step["steps"], level + 1
@@ -130,14 +130,14 @@ class DFCXPlaybookConverter:
 
     def convert_cx_playbook_to_ps_agent(
         self,
-        cx_playbook: Dict[str, Any],
-        tool_map: Dict[str, Any],  # Map of DFCX ID -> IRTool
-        generated_description: Optional[str],
-        parameter_name_map: Dict[str, str],
-        cx_tool_display_name_to_id_map: Dict[str, str],
-        master_inline_action_map: Dict[str, str],
+        cx_playbook: dict[str, Any],
+        tool_map: dict[str, Any],  # Map of DFCX ID -> IRTool
+        generated_description: str | None,
+        parameter_name_map: dict[str, str],
+        cx_tool_display_name_to_id_map: dict[str, str],
+        master_inline_action_map: dict[str, str],
         default_model: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Converts a pre-processed DFCX Playbook to a CXAS Agent payload."""
 
         instruction_text = ""

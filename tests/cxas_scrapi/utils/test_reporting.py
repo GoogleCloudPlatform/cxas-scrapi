@@ -32,7 +32,7 @@ from cxas_scrapi.utils.reporting import (
 )
 
 
-@patch("cxas_scrapi.utils.reporting.GCSUtils")
+@patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils")
 def test_upload_to_gcs_success(mock_gcs_cls):
     mock_gcs = mock_gcs_cls.return_value
     mock_gcs.upload_string.return_value = (
@@ -43,7 +43,7 @@ def test_upload_to_gcs_success(mock_gcs_cls):
     assert res == "https://storage.mtls.cloud.google.com/bucket/report.html"
 
 
-@patch("cxas_scrapi.utils.reporting.GCSUtils")
+@patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils")
 def test_upload_to_gcs_failure(mock_gcs_cls):
     mock_gcs = mock_gcs_cls.return_value
     mock_gcs.upload_string.side_effect = Exception("error")
@@ -104,7 +104,7 @@ def test_generate_html_report_gcs_fallback_no_extension(
 
 
 @patch("cxas_scrapi.utils.reporting._get_html_head")
-@patch("cxas_scrapi.utils.reporting.Tools")
+@patch("cxas_scrapi.utils.reporting.tools.Tools")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_tools_failure(
     mock_file, mock_tools_cls, mock_get_html_head
@@ -279,7 +279,7 @@ def test_generate_combined_html_report(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         content = f.read()
         assert "Combined Eval Report" in content
         assert "test_golden" in content
@@ -347,7 +347,7 @@ def test_generate_combined_report_from_dir(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         content = f.read()
         assert "Combined Eval Report" in content
         assert "test_sim" in content
@@ -384,7 +384,7 @@ def test_generate_combined_report_from_dir_include_all(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         content = f.read()
         assert "test_sim" in content
         assert "test_tool" in content
@@ -725,6 +725,8 @@ def test_run_all_evals_dict_based_simulations(
         runs=1,
         parallel=1,
         modality="text",
+        background_noise_file=None,
+        burst_noise_files=None,
     )
 
 

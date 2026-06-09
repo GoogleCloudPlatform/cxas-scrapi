@@ -605,7 +605,7 @@ def test_analyze_audio_uses_yaml_prompt_override(traces_obj, monkeypatch):
         traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
     )
     traces_obj.analyze_audio("c1", metrics=["agent_cutoff"])
-    args, kwargs = fake_gem.generate_with_parts.call_args
+    _args, kwargs = fake_gem.generate_with_parts.call_args
     parts = kwargs["parts"]
     # Last part is the prompt string; preceding ones are audio Parts.
     assert parts[-1] == "custom override prompt"
@@ -849,7 +849,7 @@ def test_bundle_skips_failing_audio_download(traces_obj, tmp_path, monkeypatch):
 
 
 def test_report_bug_requires_bucket(traces_obj):
-    with pytest.raises(ValueError, match="bug_report.bucket"):
+    with pytest.raises(ValueError, match=r"bug_report\.bucket"):
         traces_obj.report_bug("c1", reason="r")
 
 

@@ -19,7 +19,7 @@ from cxas_scrapi.prompts.llm_lint_prompts import (
 from cxas_scrapi.prompts.llm_user_prompts import LLM_USER_PROMPT
 
 __all__ = [
-    "LLM_USER_PROMPT",
     "LLM_LINT_SYSTEM_PROMPT",
     "LLM_LINT_USER_PROMPT",
+    "LLM_USER_PROMPT",
 ]

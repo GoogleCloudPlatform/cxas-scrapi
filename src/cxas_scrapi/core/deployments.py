@@ -15,7 +15,7 @@
 """Core Deployments class for CXAS Scrapi."""
 
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any
 
 from google.cloud.ces_v1beta import types
 from google.protobuf import field_mask_pb2
@@ -48,10 +48,10 @@ class Deployments(Apps):
     def __init__(
         self,
         app_name: str,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         """Initializes the Deployments client."""
@@ -72,7 +72,7 @@ class Deployments(Apps):
 
     @classmethod
     def _build_web_widget_config(
-        cls, kwargs: Dict[str, Any], mask_paths: List[str] | None = None
+        cls, kwargs: dict[str, Any], mask_paths: list[str] | None = None
     ) -> types.ChannelProfile.WebWidgetConfig | None:
         """Helper to build WebWidgetConfig and update mask paths."""
         wwc_fields = ["modality", "theme", "web_widget_title"]
@@ -112,20 +112,20 @@ class Deployments(Apps):
 
         return wwc
 
-    def list_deployments(self) -> List[types.Deployment]:
+    def list_deployments(self) -> list[types.Deployment]:
         """Lists deployments within a specific app."""
         request = types.ListDeploymentsRequest(parent=self.app_name)
         response = self.client.list_deployments(request=request)
         return list(response)
 
-    def get_deployments_map(self, reverse: bool = False) -> Dict[str, str]:
+    def get_deployments_map(self, reverse: bool = False) -> dict[str, str]:
         """Creates a map of Deployment full names to display names.
 
         Args:
             reverse: If True, map display_name -> name.
         """
         deployments = self.list_deployments()
-        deployments_dict: Dict[str, str] = {}
+        deployments_dict: dict[str, str] = {}
 
         for deployment in deployments:
             display_name = deployment.display_name
@@ -152,7 +152,7 @@ class Deployments(Apps):
         channel_type: ChannelType | str = ChannelType.API,
         modality: Modality | str | None = None,
         theme: Theme | str | None = None,
-        web_widget_title: str = None,
+        web_widget_title: str | None = None,
         disable_dtmf: bool = False,
         disable_barge_in_control: bool = False,
     ) -> types.Deployment:
