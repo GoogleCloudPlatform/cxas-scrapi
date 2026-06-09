@@ -530,12 +530,7 @@ class SimulationEvals(Apps):
         is_first_turn = True
 
         while user_utterance:
-            response = self._send_request_with_retry(
-                session_id=session_id,
-                user_utterance=user_utterance,
-                variables=accumulated_variables,
-                modality=modality,
-                console_logging=console_logging,
+            response = self._send_request_with_retry(                
                 session_id,
                 user_utterance,
                 accumulated_variables,
