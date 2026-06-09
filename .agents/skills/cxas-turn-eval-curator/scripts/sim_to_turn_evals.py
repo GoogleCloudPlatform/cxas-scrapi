@@ -77,11 +77,12 @@ _DEFAULT_INPUT_KEYS = ("account_id", "customer_id", "ticket_id", "line_id")
 # parser misses. We parse them directly so conversion works without the
 # platform conversation fetch (which may be unavailable / not retained).
 _TOOLCALL_RE = re.compile(r"Tool Call:\s*(?P<name>\S+)\s+with args\s+(?P<args>\{.*\})\s*$")
+_TOOLRESPONSE_RE = re.compile(r"Tool Response:\s*(?P<name>\S+)\s+with result\s+(?P<result>\{.*\})\s*$")
 _TRANSFER_RE = re.compile(r"Agent Transfer:\s*(?P<target>.+?)\s*$")
 
 
 def _parse_local_trace(trace_lines):
-    """Parse SimulationEvals detailed_trace into Turn objects WITH tool calls.
+    """Parse SimulationEvals detailed_trace into Turn objects WITH tool calls and outputs.
 
     Richer than SimulationEvals._get_turns_from_local_trace, which only reads
     line starts and therefore drops embedded ``Tool Call:`` lines.
@@ -118,6 +119,24 @@ def _parse_local_trace(trace_lines):
                         args=args if isinstance(args, dict) else {},
                     )
                 )
+                continue
+            mr = _TOOLRESPONSE_RE.search(line)
+            if mr:
+                name = mr.group("name")
+                try:
+                    res_val = ast.literal_eval(mr.group("result"))
+                except (ValueError, SyntaxError):
+                    res_val = {}
+                match = next(
+                    (t for t in reversed(cur.tool_calls)
+                     if t.action == name and t.output is None),
+                    None,
+                )
+                if match:
+                    if isinstance(res_val, dict) and "result" in res_val:
+                        match.output = res_val["result"]
+                    else:
+                        match.output = res_val
                 continue
             mt = _TRANSFER_RE.search(line)
             if mt:
@@ -331,7 +350,7 @@ def _build_probes(app_name, creds, results, args) -> List[Dict[str, Any]]:
                 continue  # need a user input to probe this turn
             exps = _harvest_expectations(
                 turn, input_keys, output_keys,
-                want_output and source == "platform",
+                want_output,
             )
             if args.include_text:
                 text = _agent_text(turn)
@@ -531,9 +550,9 @@ def main() -> None:
                         "read-after-write consistency (default: 5).")
     p.add_argument("--fetch-delay", type=float, default=2.0,
                    help="Base seconds between fetch retries (linear backoff).")
-    p.add_argument("--input-keys", default=",".join(_DEFAULT_INPUT_KEYS),
+    p.add_argument("--input-keys", default="*",
                    help="Comma-separated tool-arg keys to pin as tool_input "
-                        "assertions.")
+                        "assertions (default: * to include all).")
     p.add_argument("--output-keys", default="status",
                    help="Comma-separated tool-response keys to pin as tool_output "
                         "assertions (empty -> existence-only). Session mode only.")
