@@ -20,6 +20,7 @@ import datetime
 import json
 import os
 import pathlib
+import shutil
 import sys
 import tempfile
 import traceback
@@ -302,7 +303,6 @@ class BenchmarkOrchestrator:
                             head.name,
                             venv_path,
                         )
-                        import shutil
                         try:
                             shutil.rmtree(venv_path)
                         except Exception as ex:
