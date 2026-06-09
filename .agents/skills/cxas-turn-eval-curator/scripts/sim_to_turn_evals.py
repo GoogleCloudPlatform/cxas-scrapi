@@ -185,7 +185,10 @@ def _harvest_expectations(
             seen.add(key)
             exps.append({"type": "tool_called", "value": action})
 
-        pinned = {k: args[k] for k in input_keys if k in args}
+        if "*" in input_keys:
+            pinned = args
+        else:
+            pinned = {k: args[k] for k in input_keys if k in args}
         if pinned:
             pkey = ("tool_input", json.dumps(pinned, sort_keys=True, default=str))
             if pkey not in seen:
@@ -194,7 +197,10 @@ def _harvest_expectations(
 
         out = getattr(tc, "output", None)
         if want_output and isinstance(out, dict):
-            pinned_out = {k: out[k] for k in output_keys if k in out}
+            if "*" in output_keys:
+                pinned_out = out
+            else:
+                pinned_out = {k: out[k] for k in output_keys if k in out}
             value = {action: pinned_out}  # {} => assert the tool returned
             okey = ("tool_output", json.dumps(value, sort_keys=True, default=str))
             if okey not in seen:
@@ -272,25 +278,26 @@ def _parse_conversation_turns(conv_dict):
 
 
 def _reconstruct(app_name, creds, res, args):
-    """Return (turns, effective_context). Prefer the real platform conversation
-    (full tool args+outputs, faithful session replay); fall back to the local
-    trace (text + tool args + transfers, no outputs) only if the fetch fails."""
+    """Return (turns, source). Prefer the real platform conversation
+    (full tool args+outputs) to get rich expectations; fall back to the local
+    trace (text + tool args + transfers, no outputs) only if the fetch fails or
+    no session_id is available."""
     sid = res.get("session_id")
-    if sid and args.context in ("auto", "session"):
+    if sid:
         try:
             cd = _fetch_conversation_dict(
                 app_name, creds, sid, args.fetch_retries, args.fetch_delay
             )
-            return _parse_conversation_turns(cd), "session"
+            return _parse_conversation_turns(cd), "platform"
         except Exception as e:  # noqa: BLE001
             print(
                 f"  ! platform fetch failed for {res.get('name')} after "
                 f"{args.fetch_retries} tries ({type(e).__name__}); "
-                f"falling back to local trace (no tool outputs, no replay).",
+                f"falling back to local trace (no tool outputs).",
                 file=sys.stderr,
             )
 
-    return _parse_local_trace(res.get("detailed_trace", [])), "utterances"
+    return _parse_local_trace(res.get("detailed_trace", [])), "local"
 
 
 def _build_probes(app_name, creds, results, args) -> List[Dict[str, Any]]:
@@ -305,7 +312,7 @@ def _build_probes(app_name, creds, results, args) -> List[Dict[str, Any]]:
             print(f"  - skip {name}: sim did not pass (--only-passing)")
             continue
 
-        turns, effective = _reconstruct(app_name, creds, res, args)
+        turns, source = _reconstruct(app_name, creds, res, args)
         if not turns:
             print(f"  - skip {name}: no turns reconstructed")
             continue
@@ -324,7 +331,7 @@ def _build_probes(app_name, creds, results, args) -> List[Dict[str, Any]]:
                 continue  # need a user input to probe this turn
             exps = _harvest_expectations(
                 turn, input_keys, output_keys,
-                want_output and effective == "session",
+                want_output and source == "platform",
             )
             if args.include_text:
                 text = _agent_text(turn)
@@ -341,7 +348,19 @@ def _build_probes(app_name, creds, results, args) -> List[Dict[str, Any]]:
             }
             # Prefix context: turns before this user input.
             prefix = turns[:i]
-            if effective == "session":
+            
+            # Determine if we should generate session_id context:
+            # We use session_id context IF:
+            # 1. User requested "session" or "auto"
+            # 2. AND we successfully got platform conversation (source == "platform")
+            # 3. AND session_id is present in the results
+            use_session_context = (
+                args.context in ("session", "auto")
+                and source == "platform"
+                and res.get("session_id") is not None
+            )
+
+            if use_session_context:
                 probe["historical_contexts"] = {"session_id": res["session_id"]}
                 probe["turn_count"] = i  # include i prior turns
             else:
@@ -364,7 +383,7 @@ def _build_probes(app_name, creds, results, args) -> List[Dict[str, Any]]:
 
         if not scenario_probes:
             print(f"  - skip {name}: no assertion-bearing turns "
-                  f"(context={effective})")
+                  f"(context={source})")
         probes.extend(scenario_probes)
 
     return probes
@@ -502,10 +521,11 @@ def main() -> None:
     p.add_argument("--no-tool-fakes", dest="use_tool_fakes",
                    action="store_false")
     p.add_argument("--context", choices=["auto", "session", "utterances"],
-                   default="session",
-                   help="Prefix replay strategy (default: session — replay the "
-                        "REAL conversation via session_id+turn_count; falls back "
-                        "to inline utterances only if the fetch fails).")
+                   default="utterances",
+                   help="Prefix replay strategy (default: utterances — replay using "
+                        "inline utterances and variables; session replays the "
+                        "REAL conversation via session_id+turn_count; auto uses "
+                        "session if platform fetch succeeds, else utterances).")
     p.add_argument("--fetch-retries", type=int, default=5,
                    help="Attempts to fetch each conversation, to ride out "
                         "read-after-write consistency (default: 5).")
