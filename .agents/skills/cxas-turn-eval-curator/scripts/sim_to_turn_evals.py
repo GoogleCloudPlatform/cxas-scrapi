@@ -45,6 +45,18 @@ python .agents/skills/cxas-turn-eval-curator/scripts/sim_to_turn_evals.py \
     --output evals/turn_tests/from_sims.yaml --review
 """
 
+# Force urllib3 to use python's standard ssl module even if pyopenssl is installed.
+# This prevents ValueError: "Context has already been used to create a Connection".
+import os
+os.environ["GOOGLE_API_USE_CLIENT_CERTIFICATE"] = "false"
+
+try:
+    import urllib3.contrib.pyopenssl
+    urllib3.contrib.pyopenssl.inject_into_urllib3 = lambda: None
+    urllib3.contrib.pyopenssl.extract_from_urllib3()
+except ImportError:
+    pass
+
 import argparse
 import ast
 import json

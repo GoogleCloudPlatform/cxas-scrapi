@@ -141,7 +141,7 @@ class GeminiGenerate:
                 return response.parsed
             return response.text
         except Exception as e:
-            logger.error(f"Gemini generation failed: {e}")
+            logger.exception("Gemini generation failed")
             return None
 
     def generate_with_parts(
@@ -197,7 +197,7 @@ class GeminiGenerate:
                 return response.parsed
             return response.text
         except Exception as e:
-            logger.error(f"Gemini multimodal generation failed: {e}")
+            logger.exception("Gemini multimodal generation failed")
             return None
 
     async def generate_async(
