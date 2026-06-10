@@ -790,8 +790,10 @@ class StructuralConsolidator:
     ) -> dict[str, str]:
         """Synthesize PIF XML instructions for each consolidated group.
 
-        Each group gets its own 2A + 2B pair of Gemini calls, all gathered
-        concurrently up to the GeminiGenerate semaphore limit.
+        Each per-group call is wrapped in `asyncio.wait_for(..., timeout=...)`
+        so a single hang on Gemini doesn't block the others. On timeout or
+        error, the existing concatenated instruction stays in place and the
+        group is recorded in the returned status dict.
 
         Returns a per-group status dict like
         ``{group_name: "ok" | "timeout" | "error"}``.
@@ -861,6 +863,10 @@ class StructuralConsolidator:
                         flow_name=group_name,
                         blueprint=blueprint,
                         tree_view=combined_tree,
+                        # Pass the IR so the 2B prompt receives the exact
+                        # tool registry — prevents Gemini from
+                        # hallucinating ``_wrapper`` / ``_tool`` suffixes
+                        # on tool IDs that don't actually exist.
                         target_ir=self.ir,
                         available_groups=available_groups_context,
                         self_group=group_name,
@@ -887,6 +893,9 @@ class StructuralConsolidator:
                 m2g,
                 member_display_to_group,
                 group_name,
+                # Gemini may emit a consolidated group name directly when
+                # the synthesis prompt advertises them — accept those as
+                # exact matches without going through the member lookup.
                 group_names=set(groupings.keys()),
             )
             consolidated_ir.agents[group_name].instruction = xml_instructions
