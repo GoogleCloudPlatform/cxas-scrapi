@@ -45,9 +45,11 @@ python .agents/skills/cxas-turn-eval-curator/scripts/sim_to_turn_evals.py \
     --output evals/turn_tests/from_sims.yaml --review
 """
 
-# Force urllib3 to use python's standard ssl module even if pyopenssl is installed.
-# This prevents ValueError: "Context has already been used to create a Connection".
+# Force urllib3 to use python's standard ssl module even if pyopenssl is
+# installed. This prevents ValueError: "Context has already been used to create
+# a Connection".
 import os
+
 os.environ["GOOGLE_API_USE_CLIENT_CERTIFICATE"] = "false"
 
 try:
@@ -63,39 +65,56 @@ import json
 import re
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+import yaml
+
+from cxas_scrapi.core.conversation_history import ConversationHistory
+from cxas_scrapi.core.sessions import Sessions
+from cxas_scrapi.evals.simulation_evals import SimulationEvals
+from cxas_scrapi.utils.eval_utils import ToolCall, Turn
 
 # Transfers are surfaced by the harness as this synthetic tool call.
 _TRANSFER_ACTION = "transfer_to_agent"
 _TRANSFER_TARGET_KEYS = ("agent", "agent_name", "target_agent")
 # Default arg keys worth pinning as tool_input assertions (stable identifiers).
 _DEFAULT_INPUT_KEYS = ("account_id", "customer_id", "ticket_id", "line_id")
-_NOISY_INPUT_KEYS = {"reason", "issueDescription", "customerConfirmationText", "summary", "requestBody"}
+_NOISY_INPUT_KEYS = {
+    "reason",
+    "issueDescription",
+    "customerConfirmationText",
+    "summary",
+    "requestBody",
+}
 
 # The local sim trace embeds tool calls / transfers as lines INSIDE the
 # multi-line "Agent Text: ... blocks, which the library's own line-start
 # parser misses. We parse them directly so conversion works without the
 # platform conversation fetch (which may be unavailable / not retained).
-_TOOLCALL_RE = re.compile(r"Tool Call:\s*(?P<name>\S+)\s+with args\s+(?P<args>\{.*\})\s*$")
-_TOOLRESPONSE_RE = re.compile(r"Tool Response:\s*(?P<name>\S+)\s+with result\s+(?P<result>\{.*\})\s*$")
+_TOOLCALL_RE = re.compile(
+    r"Tool Call:\s*(?P<name>\S+)\s+with args\s+(?P<args>\{.*\})\s*$"
+)
+_TOOLRESPONSE_RE = re.compile(
+    r"Tool Response:\s*(?P<name>\S+)\s+with result\s+(?P<result>\{.*\})\s*$"
+)
 _TRANSFER_RE = re.compile(r"Agent Transfer:\s*(?P<target>.+?)\s*$")
 
 
 def _parse_local_trace(trace_lines):
-    """Parse SimulationEvals detailed_trace into Turn objects WITH tool calls and outputs.
+    """Parse SimulationEvals detailed_trace into Turn objects.
 
-    Richer than SimulationEvals._get_turns_from_local_trace, which only reads
-    line starts and therefore drops embedded ``Tool Call:`` lines.
+    Includes tool calls and outputs. Richer than
+    SimulationEvals._get_turns_from_local_trace, which only reads line starts
+    and therefore drops embedded ``Tool Call:`` lines.
     """
-    from cxas_scrapi.utils.eval_utils import Turn, ToolCall  # noqa: PLC0415
 
-    turns: List[Any] = []
+
+    turns: list[Any] = []
     cur = None
     in_agent_text = False
     for block in trace_lines:
-        for line in str(block).split("\n"):
-            line = line.rstrip()
+        for raw_line in str(block).split("\n"):
+            line = raw_line.rstrip()
             if line.startswith("User: "):
                 cur = Turn(user=line[6:].strip(), tool_calls=[])
                 turns.append(cur)
@@ -144,7 +163,11 @@ def _parse_local_trace(trace_lines):
             mt = _TRANSFER_RE.search(line)
             if mt:
                 in_agent_text = False
-                target = mt.group("target").removeprefix("Transferred to ").strip()
+                target = (
+                    mt.group("target")
+                    .removeprefix("Transferred to ")
+                    .strip()
+                )
                 cur.tool_calls.append(
                     ToolCall(action=_TRANSFER_ACTION, args={"agent": target})
                 )
@@ -165,7 +188,7 @@ def _agent_text(turn) -> str:
     return str(a).strip()
 
 
-def _as_utterance(turn) -> List[Dict[str, Any]]:
+def _as_utterance(turn) -> list[dict[str, Any]]:
     """Render a reconstructed Turn as historical_contexts.utterances entries."""
     out = []
     user = getattr(turn, "user", None)
@@ -183,17 +206,18 @@ def _as_utterance(turn) -> List[Dict[str, Any]]:
 
 def _harvest_expectations(
     turn, input_keys, output_keys, want_output
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Turn observed tool calls / transfers into deterministic expectations.
 
     ``want_output`` emits tool_output assertions when the captured turn carries
     tool responses (only available from the real platform record, not the local
-    trace). ``output_keys`` pins specific response keys; empty -> existence-only.
+    trace). ``output_keys`` pins specific response keys; empty ->
+    existence-only.
     """
-    exps: List[Dict[str, Any]] = []
+    exps: list[dict[str, Any]] = []
     seen = set()
     tool_calls = getattr(turn, "tool_calls", []) or []
-    
+
     # Identify the last transfer to avoid asserting intermediate transfers
     last_transfer_idx = -1
     for idx, tc in enumerate(tool_calls):
@@ -223,11 +247,20 @@ def _harvest_expectations(
 
         # Filter out noisy keys from input assertions to prevent flakiness
         if "*" in input_keys:
-            pinned = {k: v for k, v in args.items() if k not in _NOISY_INPUT_KEYS}
+            pinned = {
+                k: v for k, v in args.items() if k not in _NOISY_INPUT_KEYS
+            }
         else:
-            pinned = {k: args[k] for k in input_keys if k in args and k not in _NOISY_INPUT_KEYS}
+            pinned = {
+                k: args[k]
+                for k in input_keys
+                if k in args and k not in _NOISY_INPUT_KEYS
+            }
         if pinned:
-            pkey = ("tool_input", json.dumps(pinned, sort_keys=True, default=str))
+            pkey = (
+                "tool_input",
+                json.dumps(pinned, sort_keys=True, default=str),
+            )
             if pkey not in seen:
                 seen.add(pkey)
                 exps.append({"type": "tool_input", "value": pinned})
@@ -239,13 +272,20 @@ def _harvest_expectations(
             else:
                 pinned_out = {}
                 if "result" in out and isinstance(out["result"], dict):
-                    inner_pinned = {k: out["result"][k] for k in output_keys if k in out["result"]}
+                    inner_pinned = {
+                        k: out["result"][k]
+                        for k in output_keys
+                        if k in out["result"]
+                    }
                     if inner_pinned:
                         pinned_out["result"] = inner_pinned
                 top_pinned = {k: out[k] for k in output_keys if k in out}
                 pinned_out.update(top_pinned)
             value = {action: pinned_out}  # {} => assert the tool returned
-            okey = ("tool_output", json.dumps(value, sort_keys=True, default=str))
+            okey = (
+                "tool_output",
+                json.dumps(value, sort_keys=True, default=str),
+            )
             if okey not in seen:
                 seen.add(okey)
                 exps.append({"type": "tool_output", "value": value})
@@ -255,8 +295,6 @@ def _harvest_expectations(
 def _fetch_conversation_dict(app_name, creds, sid, attempts, delay):
     """Fetch the real platform conversation, retrying past the read-after-write
     eventual-consistency window (a fresh sim's conversation can briefly 404)."""
-    from cxas_scrapi.core.conversation_history import ConversationHistory  # noqa: PLC0415
-
     ch = ConversationHistory(app_name=app_name, creds=creds)
     last = None
     for a in range(attempts):
@@ -271,10 +309,11 @@ def _fetch_conversation_dict(app_name, creds, sid, attempts, delay):
 
 
 def _parse_conversation_turns(conv_dict):
-    """Parse a platform conversation dict into native turns (1:1 with
-    conv_dict['turns'], so the index doubles as turn_count) WITH tool outputs."""
-    from cxas_scrapi.core.sessions import Sessions  # noqa: PLC0415
-    from cxas_scrapi.utils.eval_utils import Turn, ToolCall  # noqa: PLC0415
+    """Parse a platform conversation dict into native turns.
+
+    The turns map 1:1 with conv_dict['turns'], so the index doubles as
+    turn_count. Includes tool outputs.
+    """
 
     turns = []
     for p_turn in conv_dict.get("turns", []):
@@ -343,11 +382,11 @@ def _reconstruct(app_name, creds, res, args):
     return _parse_local_trace(res.get("detailed_trace", [])), "local"
 
 
-def _build_probes(app_name, creds, results, args) -> List[Dict[str, Any]]:
+def _build_probes(app_name, creds, results, args) -> list[dict[str, Any]]:
     input_keys = [k.strip() for k in args.input_keys.split(",") if k.strip()]
     output_keys = [k.strip() for k in args.output_keys.split(",") if k.strip()]
     want_output = not args.no_tool_output
-    probes: List[Dict[str, Any]] = []
+    probes: list[dict[str, Any]] = []
 
     for res in results:
         name = res.get("name", "sim")
@@ -385,17 +424,18 @@ def _build_probes(app_name, creds, results, args) -> List[Dict[str, Any]]:
             if len(exps) < args.min_assertions:
                 continue
 
-            probe: Dict[str, Any] = {
+            probe: dict[str, Any] = {
                 "conversation": f"{name}__t{i}",
                 "tags": ["from-sim", args.modality.lower(), name],
             }
             # Prefix context: turns before this user input.
             prefix = turns[:i]
-            
+
             # Determine if we should generate session_id context:
             # We use session_id context IF:
             # 1. User requested "session" or "auto"
-            # 2. AND we successfully got platform conversation (source == "platform")
+            # 2. AND we successfully got platform conversation (source ==
+            #    "platform")
             # 3. AND session_id is present in the results
             use_session_context = (
                 args.context in ("session", "auto")
@@ -407,7 +447,7 @@ def _build_probes(app_name, creds, results, args) -> List[Dict[str, Any]]:
                 probe["historical_contexts"] = {"session_id": res["session_id"]}
                 probe["turn_count"] = i  # include i prior turns
             else:
-                utts: List[Dict[str, Any]] = []
+                utts: list[dict[str, Any]] = []
                 for t in prefix:
                     utts.extend(_as_utterance(t))
                 if utts:
@@ -433,7 +473,6 @@ def _build_probes(app_name, creds, results, args) -> List[Dict[str, Any]]:
 
 
 def _write_yaml(probes, args) -> str:
-    import yaml
 
     doc = {
         "config": {"modality": args.modality},
@@ -443,13 +482,19 @@ def _write_yaml(probes, args) -> str:
         doc["config"]["use_tool_fakes"] = True
 
     header = (
-        "# AUTO-GENERATED from simulation runs by scripts/sim_to_turn_evals.py.\n"
-        "# Each probe replays a frozen prefix and asserts ONE turn deterministically.\n"
-        "# REVIEW before trusting: generation bakes in observed behavior incl. bugs.\n"
-        f"# Run:  cxas sxs --app-name-a <baseline> --app-name-b <candidate> \\\n"
+        "# AUTO-GENERATED from simulation runs by "
+        "scripts/sim_to_turn_evals.py.\n"
+        "# Each probe replays a frozen prefix and asserts ONE turn "
+        "deterministically.\n"
+        "# REVIEW before trusting: generation bakes in observed behavior "
+        "incl. bugs.\n"
+        f"# Run:  cxas sxs --app-name-a <baseline> "
+        f"--app-name-b <candidate> \\\n"
         f"#               --eval-file {args.output}\n\n"
     )
-    body = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False, width=100)
+    body = yaml.safe_dump(
+        doc, sort_keys=False, default_flow_style=False, width=100
+    )
     out = header + body
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(out)
@@ -478,7 +523,6 @@ def _review(probes) -> None:
 
 def _local_load_sim_test_cases(yaml_path: str) -> list[dict]:
     """Fallback parser when cxas_scrapi.utils.reporting is not available."""
-    import yaml
     with open(yaml_path) as f:
         data = yaml.safe_load(f) or {}
     if isinstance(data, list):
@@ -508,14 +552,17 @@ def _local_load_sim_test_cases(yaml_path: str) -> list[dict]:
     return merged_cases
 
 
-def _load_results(sim, args) -> List[Dict[str, Any]]:
+def _load_results(sim, args) -> list[dict[str, Any]]:
     if args.sim_results:
         with open(args.sim_results, encoding="utf-8") as f:
             data = json.load(f)
-        # Accept either a bare list or {"simulation": [...]} / {"results": [...]}
+        # Accept either a bare list or {"simulation": [...]} /
+        # {"results": [...]}
         if isinstance(data, dict):
-            data = data.get("simulation") or data.get("results") or data.get(
-                "sims", []
+            data = (
+                data.get("simulation")
+                or data.get("results")
+                or data.get("sims", [])
             )
         print(f"Loaded {len(data)} sim results from {args.sim_results}")
         return data
@@ -525,7 +572,9 @@ def _load_results(sim, args) -> List[Dict[str, Any]]:
         raise ValueError("SimulationEvals client is not initialized.")
 
     try:
-        from cxas_scrapi.utils.reporting import _load_sim_test_cases  # noqa: PLC0415
+        from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
+            _load_sim_test_cases,
+        )
     except (ImportError, ModuleNotFoundError):
         _load_sim_test_cases = _local_load_sim_test_cases
 
@@ -555,31 +604,36 @@ def main() -> None:
                    help="Modality for the capture run (default: audio).")
     p.add_argument("--runs", type=int, default=1,
                    help="Runs per scenario during capture (default: 1).")
-    p.add_argument("--output", required=True, help="Output turn-eval YAML path.")
+    p.add_argument("--output", required=True,
+                   help="Output turn-eval YAML path.")
 
     p.add_argument("--modality", default="AUDIO",
-                   help="Modality the GENERATED probes run in (default: AUDIO).")
+                   help="Modality the GENERATED probes run in "
+                        "(default: AUDIO).")
     p.add_argument("--use-tool-fakes", action="store_true", default=True,
-                   help="Set use_tool_fakes in the generated config (default).")
+                   help="Set use_tool_fakes in the generated config "
+                        "(default).")
     p.add_argument("--no-tool-fakes", dest="use_tool_fakes",
                    action="store_false")
     p.add_argument("--context", choices=["auto", "session", "utterances"],
                    default="utterances",
-                   help="Prefix replay strategy (default: utterances — replay using "
-                        "inline utterances and variables; session replays the "
-                        "REAL conversation via session_id+turn_count; auto uses "
-                        "session if platform fetch succeeds, else utterances).")
+                   help="Prefix replay strategy (default: utterances — replay "
+                        "using inline utterances and variables; session "
+                        "replays the REAL conversation via "
+                        "session_id+turn_count; auto uses session if platform "
+                        "fetch succeeds, else utterances).")
     p.add_argument("--fetch-retries", type=int, default=5,
                    help="Attempts to fetch each conversation, to ride out "
                         "read-after-write consistency (default: 5).")
     p.add_argument("--fetch-delay", type=float, default=2.0,
                    help="Base seconds between fetch retries (linear backoff).")
     p.add_argument("--input-keys", default="*",
-                   help="Comma-separated tool-arg keys to pin as tool_input "
-                        "assertions (default: * to include all).")
+                   help="Comma-separated tool-arg keys to pin as "
+                        "tool_input assertions (default: * to include all).")
     p.add_argument("--output-keys", default="status",
-                   help="Comma-separated tool-response keys to pin as tool_output "
-                        "assertions (empty -> existence-only). Session mode only.")
+                   help="Comma-separated tool-response keys to pin as "
+                        "tool_output assertions (empty -> existence-only). "
+                        "Session mode only.")
     p.add_argument("--no-tool-output", action="store_true",
                    help="Do not emit tool_output assertions.")
     p.add_argument("--carry-expectations", action="store_true", default=False,
@@ -596,7 +650,8 @@ def main() -> None:
     p.add_argument("--only-passing", action="store_true",
                    help="Only convert scenarios whose sim run passed.")
     p.add_argument("--write-results",
-                   help="Save the raw captured sim results (trajectories) JSON to this path.")
+                   help="Save the raw captured sim results (trajectories) "
+                        "JSON to this path.")
     p.add_argument("--review", action="store_true",
                    help="Print harvested assertions for curation.")
     args = p.parse_args()
@@ -606,7 +661,6 @@ def main() -> None:
 
     sim = None
     if args.run:
-        from cxas_scrapi.evals.simulation_evals import SimulationEvals  # noqa: PLC0415
         sim = SimulationEvals(app_name=args.app_name)
 
     results = _load_results(sim, args)
@@ -615,7 +669,6 @@ def main() -> None:
         sys.exit(1)
 
     if args.write_results:
-        import json
         with open(args.write_results, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, default=str)
         print(f"Saved raw sim results (trajectories) to {args.write_results}")

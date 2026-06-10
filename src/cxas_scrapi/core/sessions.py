@@ -51,10 +51,10 @@ try:
     from pydub import AudioSegment
 except ImportError:
     AudioSegment = None
+from cxas_scrapi.core.agents import Agents
 from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
-from cxas_scrapi.core.agents import Agents
 
 logger = logging.getLogger(__name__)
 
@@ -991,7 +991,8 @@ class Sessions(Common):
                     entry_agent = agents_map[entry_agent]
                 else:
                     logger.warning(
-                        f"Could not resolve entry_agent display name: {entry_agent}"
+                        "Could not resolve entry_agent display name: %s",
+                        entry_agent,
                     )
             config["entry_agent"] = entry_agent
         inputs = []

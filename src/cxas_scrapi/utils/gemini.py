@@ -140,7 +140,7 @@ class GeminiGenerate:
             if response_mime_type == "application/json" and response_schema:
                 return response.parsed
             return response.text
-        except Exception as e:
+        except Exception:
             logger.exception("Gemini generation failed")
             return None
 
@@ -196,7 +196,7 @@ class GeminiGenerate:
             if response_mime_type == "application/json" and response_schema:
                 return response.parsed
             return response.text
-        except Exception as e:
+        except Exception:
             logger.exception("Gemini multimodal generation failed")
             return None
 
