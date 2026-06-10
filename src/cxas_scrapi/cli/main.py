@@ -551,9 +551,19 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         except Exception:
             pass
 
+    output_dir = args.output_dir
+    if not output_dir:
+        try:
+            config = ws.load_workspace_config()
+            output_dir = config.get("output-dir")
+        except Exception:
+            pass
+        if not output_dir:
+            output_dir = ".scrapi-out"
+
     output_path = gcs_path or args.output
-    if not output_path and getattr(args, "output_dir", None):
-        output_path = os.path.join(args.output_dir, "combined_report.html")
+    if not output_path and output_dir:
+        output_path = os.path.join(output_dir, "combined_report.html")
 
     include_list = args.include.split(",") if args.include else []
     filter_files_list = (
@@ -579,7 +589,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     golden_timeout = getattr(args, "golden_timeout", 600)
 
     actual_output_path = generate_combined_report_from_dir(
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         golden_run=args.golden_run,
         app_name=args.app_name,
         output_path=output_path,
@@ -1498,8 +1508,7 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_report.add_argument(
         "--output-dir",
-        required=True,
-        help="Directory containing eval results (sim_results.json, etc.).",
+        help="Directory containing eval results (sim_results.json, etc.). Defaults to workspace output-dir.",
     )
     parser_report.add_argument(
         "--output",
