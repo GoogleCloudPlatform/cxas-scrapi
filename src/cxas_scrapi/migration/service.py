@@ -16,7 +16,6 @@ import asyncio
 import io
 import json
 import logging
-import os
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -118,9 +117,7 @@ class MigrationService:
             location=gemini_location,
             credentials=credentials,
             model_name="gemini-3.1-pro-preview",
-            max_concurrent_requests=int(
-                os.environ.get("GEMINI_MAX_CONCURRENT", "15")
-            ),
+            max_concurrent_requests=15,
         )
 
         self.exporter = ConversationalAgentsAPI()

@@ -217,7 +217,12 @@ class GeminiGenerate:
                 model=self.model_name,
                 config={
                     "system_instruction": system_prompt,
-                    "contents": [shared_content],
+                    "contents": [
+                        genai.types.Content(
+                            role="user",
+                            parts=[genai.types.Part.from_text(text=shared_content)],
+                        )
+                    ],
                     "ttl": f"{ttl_seconds}s",
                 },
             )
