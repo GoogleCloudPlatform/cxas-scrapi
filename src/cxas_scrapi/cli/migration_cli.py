@@ -38,8 +38,9 @@ from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from cxas_scrapi.core.constants import DEFAULT_MODEL
 from cxas_scrapi.migration import grouping_review
-from cxas_scrapi.migration.config import AGENT_MODELS, DEFAULT_MODEL
+from cxas_scrapi.migration.config import AGENT_MODELS
 from cxas_scrapi.migration.data_models import (
     DFCXAgentIR,
     IRBundle,

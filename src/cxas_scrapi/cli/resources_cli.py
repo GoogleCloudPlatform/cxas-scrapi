@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,18 +18,12 @@
 import argparse
 import sys
 
-from google.cloud.ces_v1beta import types
-
-from cxas_scrapi.core.agents import Agents
-from cxas_scrapi.core.callbacks import Callbacks
-from cxas_scrapi.core.common import Common
-from cxas_scrapi.core.tools import Tools
-from cxas_scrapi.core.variables import Variables
-
 
 def tools_list(args: argparse.Namespace) -> None:
     """Lists both tools and toolsets within a specific app."""
     print(f"Listing tools and toolsets for App: {args.app_name}")
+    from cxas_scrapi.core.common import Common
+    from cxas_scrapi.core.tools import Tools
 
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
@@ -74,6 +69,8 @@ def tools_list(args: argparse.Namespace) -> None:
 
 def tools_delete(args: argparse.Namespace) -> None:
     """Deletes a specific tool or toolset."""
+    from cxas_scrapi.core.common import Common
+
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
         print(
@@ -83,6 +80,7 @@ def tools_delete(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     print(f"Deleting tool/toolset '{args.name}' from App: {app_name}")
+    from cxas_scrapi.core.tools import Tools
 
     try:
         tools_client = Tools(app_name=app_name)
@@ -117,6 +115,8 @@ def tools_delete(args: argparse.Namespace) -> None:
 
 def callbacks_list(args: argparse.Namespace) -> None:
     """Lists callbacks attached to agents."""
+    from cxas_scrapi.core.common import Common
+
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
         print(
@@ -124,6 +124,9 @@ def callbacks_list(args: argparse.Namespace) -> None:
             "name in the format 'projects/.../locations/.../apps/...'"
         )
         sys.exit(1)
+
+    from cxas_scrapi.core.agents import Agents
+    from cxas_scrapi.core.callbacks import Callbacks
 
     try:
         agents_client = Agents(app_name=app_name)
@@ -186,6 +189,8 @@ def callbacks_list(args: argparse.Namespace) -> None:
 
 def callbacks_delete(args: argparse.Namespace) -> None:
     """Deletes a callback from an agent by index."""
+    from cxas_scrapi.core.common import Common
+
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
         print(
@@ -193,6 +198,9 @@ def callbacks_delete(args: argparse.Namespace) -> None:
             "name in the format 'projects/.../locations/.../apps/...'"
         )
         sys.exit(1)
+
+    from cxas_scrapi.core.agents import Agents
+    from cxas_scrapi.core.callbacks import Callbacks
 
     try:
         agents_client = Agents(app_name=app_name)
@@ -236,6 +244,8 @@ def callbacks_delete(args: argparse.Namespace) -> None:
 
 def variables_list(args: argparse.Namespace) -> None:
     """Lists variable declarations in an app."""
+    from cxas_scrapi.core.common import Common
+
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
         print(
@@ -245,6 +255,8 @@ def variables_list(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     print(f"Listing variable declarations for App: {app_name}")
+
+    from cxas_scrapi.core.variables import Variables
 
     try:
         variables_client = Variables(app_name=app_name)
@@ -260,6 +272,8 @@ def variables_list(args: argparse.Namespace) -> None:
             for v in variables:
                 schema = getattr(v, "schema", None)
                 try:
+                    from google.cloud.ces_v1beta import types  # noqa: PLC0415
+
                     decl_schema = types.App.VariableDeclaration.Schema
                     v_type = decl_schema.Type(schema.type_).name
                 except Exception:
@@ -283,6 +297,8 @@ def variables_list(args: argparse.Namespace) -> None:
             for v in variables:
                 schema = getattr(v, "schema", None)
                 try:
+                    from google.cloud.ces_v1beta import types  # noqa: PLC0415
+
                     decl_schema = types.App.VariableDeclaration.Schema
                     v_type = decl_schema.Type(schema.type_).name
                 except Exception:
@@ -301,6 +317,8 @@ def variables_list(args: argparse.Namespace) -> None:
 
 def variables_delete(args: argparse.Namespace) -> None:
     """Deletes a variable declaration from the app."""
+    from cxas_scrapi.core.common import Common
+
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
         print(
@@ -310,6 +328,8 @@ def variables_delete(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     print(f"Deleting variable '{args.name}' from App: {app_name}")
+
+    from cxas_scrapi.core.variables import Variables
 
     try:
         variables_client = Variables(app_name=app_name)
