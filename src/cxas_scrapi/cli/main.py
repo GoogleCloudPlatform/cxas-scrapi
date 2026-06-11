@@ -543,23 +543,16 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         generate_combined_report_from_dir,
     )
 
-    gcs_path = args.gcs_path
-    if not gcs_path:
-        try:
-            config = ws.load_workspace_config()
-            gcs_path = config.get("gcs_path")
-        except Exception:
-            pass
+    config = {}
+    config_error = None
+    try:
+        config = ws.load_workspace_config()
+    except Exception as e:
+        config_error = str(e)
 
-    output_dir = args.output_dir
-    if not output_dir:
-        try:
-            config = ws.load_workspace_config()
-            output_dir = config.get("output-dir")
-        except Exception:
-            pass
-        if not output_dir:
-            output_dir = ".scrapi-out"
+    gcs_path = args.gcs_path or config.get("gcs_path")
+
+    output_dir = args.output_dir or config.get("output_dir") or ".scrapi-out"
 
     output_path = gcs_path or args.output
     if not output_path and output_dir:
@@ -577,13 +570,62 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         else []
     )
 
-    if getattr(args, "input_dir", None):
+    app_name = args.app_name
+    if not app_name:
+        if config:
+            project = config.get("gcp_project_id")
+            location = config.get("location", "us")
+            app_id = config.get("deployed_app_id")
+            if project and app_id:
+                app_name = (
+                    f"projects/{project}/locations/{location}/apps/{app_id}"
+                )
+            else:
+                missing = []
+                if not project:
+                    missing.append("gcp-project-id")
+                if not app_id:
+                    missing.append("deployed-app-id")
+                raise ValueError(
+                    f"App name was not found in your active profile inside gecx-config.toml (missing keys: {', '.join(missing)}). "
+                    "It is highly preferred to define this configuration in gecx-config.toml by running "
+                    "'cxas workspace set --deployed-app-id <app-id> --gcp-project-id <project-id>'. "
+                    "Do not use the CLI flag --app-name unless you are overriding the default configuration for "
+                    "one-time runs or temporary tests."
+                )
+        else:
+            raise ValueError(
+                f"App name was not provided on the CLI, and failed to load workspace configuration from gecx-config.toml (Error: {config_error}). "
+                "It is highly preferred to initialize the workspace with 'cxas init' and define this in your gecx-config.toml. "
+                "Only use the CLI flag --app-name for one-time overrides or temporary tests."
+            )
+
+    input_dir = getattr(args, "input_dir", None)
+    if not input_dir:
+        if config:
+            input_dir = config.get("evals_dir")
+            if not input_dir:
+                raise ValueError(
+                    "Evaluations directory was not found in your active profile inside gecx-config.toml (missing key: evals-dir). "
+                    "It is highly preferred to define this configuration in gecx-config.toml by running "
+                    "'cxas workspace set --evals-dir <path>'. "
+                    "Do not use the CLI flag --input-dir unless you are overriding the default configuration for "
+                    "one-time runs or temporary tests."
+                )
+        else:
+            raise ValueError(
+                f"Evaluations directory was not provided on the CLI, and failed to load workspace configuration from gecx-config.toml (Error: {config_error}). "
+                "It is highly preferred to initialize the workspace with 'cxas init' and define this in your gecx-config.toml. "
+                "Only use the CLI flag --input-dir for one-time overrides or temporary tests."
+            )
+
+    if input_dir:
         if args.tool_test_file == "evals/tool_tests/":
-            args.tool_test_file = os.path.join(args.input_dir, "tool_tests/")
+            args.tool_test_file = os.path.join(input_dir, "tool_tests/")
         if args.goldens_dir == "evals/goldens/":
-            args.goldens_dir = os.path.join(args.input_dir, "goldens/")
+            args.goldens_dir = os.path.join(input_dir, "goldens/")
         if args.simulation_dir == "evals/simulations/":
-            args.simulation_dir = os.path.join(args.input_dir, "simulations/")
+            args.simulation_dir = os.path.join(input_dir, "simulations/")
 
     sim_parallel = getattr(args, "sim_parallel", 5)
     golden_timeout = getattr(args, "golden_timeout", 600)
@@ -591,7 +633,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     actual_output_path = generate_combined_report_from_dir(
         output_dir=output_dir,
         golden_run=args.golden_run,
-        app_name=args.app_name,
+        app_name=app_name,
         output_path=output_path,
         run=args.run,
         app_dir=args.app_dir,
