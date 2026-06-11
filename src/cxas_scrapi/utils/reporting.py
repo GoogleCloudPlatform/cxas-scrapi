@@ -349,14 +349,25 @@ def _render_merged_items(merged):
         elif kind == "guardrail_trigger":
             lbl, _, raw_json = item[1].partition(" | JSON: ")
             try:
-                pretty_json = json.dumps(json.loads(raw_json), indent=2)
+                attrs = json.loads(raw_json).get("attributes", {})
             except Exception:
-                pretty_json = raw_json
+                attrs = {}
+            _SKIP = {"triggered", "name"}
+            _ORDER = ["type", "stage", "agent", "reason"]
+            kv_rows = ""
+            for key in _ORDER:
+                val = attrs.get(key)
+                if val not in (None, "", False):
+                    kv_rows += f"<dt>{_escape(key)}</dt><dd>{_escape(str(val))}</dd>"
+            for key, val in attrs.items():
+                if key not in _SKIP and key not in _ORDER and val not in (None, "", False):
+                    kv_rows += f"<dt>{_escape(key)}</dt><dd>{_escape(str(val))}</dd>"
+            kv_html = f'<dl class="guardrail-kv">{kv_rows}</dl>' if kv_rows else ""
             html += (
-                '<details class="tool-details" style="background:#fff9f5;border-left-color:#e67e22;">'
-                '<summary class="tool-summary" style="color:#d35400;">&#10071; <b>Guardrail Triggered:</b>'
+                '<details class="tool-details guardrail-details">'
+                '<summary class="tool-summary guardrail-summary">&#10071; <b>Guardrail Triggered:</b>'
                 f" {_escape(lbl)}</summary>"
-                f'<pre class="tool-data" style="background:#fff9f5;">{_escape(pretty_json)}</pre>'
+                f"{kv_html}"
                 "</details>\n"
             )
         else:

@@ -457,6 +457,37 @@ summary {
   margin-top: 6px;
 }
 
+.guardrail-details {
+  background: #fff4eb;
+  border-left-color: #e67e22;
+}
+
+.guardrail-summary {
+  color: #a04010;
+}
+
+.guardrail-kv {
+  margin: 6px 0 2px 0;
+  padding: 0;
+  font-size: 0.85em;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 10px;
+}
+
+.guardrail-kv dt {
+  font-weight: 600;
+  color: #a04010;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.guardrail-kv dd {
+  margin: 0;
+  color: #3a2010;
+  word-break: break-word;
+}
+
 /* Interactive controls panel */
 .controls {
   display: flex;
@@ -766,5 +797,22 @@ tr.hidden-row {
 
   .audio-label {
     color: #64b5f6;
+  }
+
+  .guardrail-details {
+    background: #2a1a05;
+    border-left-color: #e67e22;
+  }
+
+  .guardrail-summary {
+    color: #f0a050;
+  }
+
+  .guardrail-kv dt {
+    color: #f0a050;
+  }
+
+  .guardrail-kv dd {
+    color: #e0e0e0;
   }
 }
