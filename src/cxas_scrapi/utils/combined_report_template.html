@@ -363,6 +363,12 @@
                             <pre class="tool-data">{{ result | escape }}</pre>
                           {% endif %}
                         </details>
+                      {% elif kind == "guardrail_trigger" %}
+                        {% set lbl, _, raw_json = item[1].partition(" | JSON: ") %}
+                        <details class="tool-details" style="background:#fff9f5;border-left-color:#e67e22;">
+                          <summary class="tool-summary" style="color:#d35400;">&#10071; <b>Guardrail Triggered:</b> {{ lbl | escape }}</summary>
+                          <pre class="tool-data" style="background:#fff9f5;">{{ raw_json | escape }}</pre>
+                        </details>
                       {% else %}
                         <div class="system">{{ item[1] | escape }}</div>
                       {% endif %}

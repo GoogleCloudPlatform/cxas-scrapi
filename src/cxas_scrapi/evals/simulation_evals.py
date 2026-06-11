@@ -786,6 +786,7 @@ class SimulationEvals(Apps):
                     }
                     for r in conv.expectation_results
                 ],
+                "guardrail_details": getattr(conv, "guardrail_details", []),
             }
         except Exception as e:
             print(f"  ERROR  {label}: {e}")

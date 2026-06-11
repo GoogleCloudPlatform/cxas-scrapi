@@ -263,6 +263,13 @@ def _parse_trace(trace, tools_map):
                         formatted_line[len("Custom Payload:") :].strip(),
                     )
                 )
+            elif formatted_line.startswith("Guardrail Trigger:"):
+                parsed_lines.append(
+                    (
+                        "guardrail_trigger",
+                        formatted_line[len("Guardrail Trigger:") :].strip(),
+                    )
+                )
             else:
                 parsed_lines.append(("system", formatted_line))
     return parsed_lines
@@ -339,6 +346,19 @@ def _render_merged_items(merged):
                 f'<pre class="tool-data">{_escape(item[1])}</pre>'
                 "</details>\n"
             )
+        elif kind == "guardrail_trigger":
+            lbl, _, raw_json = item[1].partition(" | JSON: ")
+            try:
+                pretty_json = json.dumps(json.loads(raw_json), indent=2)
+            except Exception:
+                pretty_json = raw_json
+            html += (
+                '<details class="tool-details" style="background:#fff9f5;border-left-color:#e67e22;">'
+                '<summary class="tool-summary" style="color:#d35400;">&#10071; <b>Guardrail Triggered:</b>'
+                f" {_escape(lbl)}</summary>"
+                f'<pre class="tool-data" style="background:#fff9f5;">{_escape(pretty_json)}</pre>'
+                "</details>\n"
+            )
         else:
             html += f'<div class="system">{_escape(item[1])}</div>\n'
     return html
@@ -370,6 +390,7 @@ def _get_run_detail(r, ces_base, tools_map):
     run_cls = "pass" if r.get("passed") else "fail"
     session_id = r.get("session_id", "")
     html += '<details class="run-detail">\n'
+    g_count = len(r.get("guardrail_details", []))
     html += (
         f"<summary>Run {r['run']} — "
         f'<span class="{run_cls}">'
@@ -378,7 +399,8 @@ def _get_run_detail(r, ces_base, tools_map):
     html += (
         f" | goals: {r.get('goals', '?')} | "
         f"expectations: {r.get('expectations', '?')} | "
-        f"turns: {r.get('turns', '?')}</summary>\n"
+        f"turns: {r.get('turns', '?')} | "
+        f"guardrails: {g_count}</summary>\n"
     )
 
     html += _render_session_link(session_id, ces_base)
@@ -819,6 +841,13 @@ def generate_combined_html_report(
                             parsed.append(("tool_call", line))
                         elif line.startswith("Tool Response"):
                             parsed.append(("tool_resp", line))
+                        elif line.startswith("Guardrail Trigger:"):
+                            parsed.append(
+                                (
+                                    "guardrail_trigger",
+                                    line[len("Guardrail Trigger:") :].strip(),
+                                )
+                            )
                         else:
                             parsed.append(("system", line))
 
