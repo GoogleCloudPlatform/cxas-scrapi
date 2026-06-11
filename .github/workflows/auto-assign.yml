@@ -1,54 +1,51 @@
-name: "Auto Assign Reviewer"
+name: Auto Assign Reviewer
 
+# Use pull_request_target to ensure the workflow has write permissions
+# even when the PR originates from a fork.
 on:
   pull_request_target:
     types: [opened, ready_for_review, reopened]
 
+# Explicitly grant the required write permissions
 permissions:
   pull-requests: write
 
 jobs:
-  assign:
-    name: Assign Random Reviewer
+  assign-reviewer:
+    # Do not assign reviewers to Draft PRs
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout maintainers file
+      - name: Checkout base repository
         uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            .github/maintainers.txt
-          sparse-checkout-cone-mode: false
+        # We checkout the base repository (main) to securely read maintainers.txt.
+        # This prevents executing untrusted code from the fork.
 
-      - name: Pick and Assign
+      - name: Assign Random Reviewer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
-          # 1. Read maintainers from file, ignoring empty lines and comments
-          mapfile -t reviewer_array < <(grep -v '^#' .github/maintainers.txt | grep -v '^\s*$')
+          # 1. Check if reviewers are already assigned
+          EXISTING_REVIEWERS=$(gh pr view "$PR_URL" --json reviewRequests -q '.reviewRequests | length')
 
-          # 2. Identify the author of the PR
-          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
-
-          # 3. Create a pool of reviewers excluding the author
-          pool=()
-          for r in "${reviewer_array[@]}"; do
-            # Trim whitespace
-            r=$(echo "$r" | xargs)
-            if [ "$r" != "$PR_AUTHOR" ]; then
-              pool+=("$r")
-            fi
-          done
-
-          if [ ${#pool[@]} -eq 0 ]; then
-            echo "No eligible reviewers found."
+          if [ "$EXISTING_REVIEWERS" -gt 0 ]; then
+            echo "Reviewer already requested. Exiting."
             exit 0
           fi
 
-          # 4. Pick a random index
-          RANDOM_INDEX=$(( RANDOM % ${#pool[@]} ))
-          SELECTED_REVIEWER=${pool[$RANDOM_INDEX]}
+          # 2. Read maintainers and filter out the author
+          # Ignores comments (#), empty lines, and the author (case-insensitive)
+          MAINTAINERS=$(grep -v "^#" .github/maintainers.txt | grep -v "^$" | grep -v -i "^${AUTHOR}$" || true)
 
-          echo "Selected $SELECTED_REVIEWER for review."
+          if [ -z "$MAINTAINERS" ]; then
+            echo "No eligible maintainers found after filtering out the author."
+            exit 0
+          fi
 
-          # 5. Use GitHub CLI to add the reviewer
-          gh pr edit ${{ github.event.pull_request.html_url }} --add-reviewer "$SELECTED_REVIEWER"
+          # 3. Pick a random reviewer using shuf
+          REVIEWER=$(echo "$MAINTAINERS" | shuf -n 1)
+
+          echo "Assigning @$REVIEWER as reviewer..."
+          gh pr edit "$PR_URL" --add-reviewer "$REVIEWER"
