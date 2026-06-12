@@ -1094,3 +1094,68 @@ def run_resume(args: argparse.Namespace) -> None:
                 no_persist=False,
             )
         )
+
+
+def run_migration_dashboard(args: argparse.Namespace) -> None:
+    """Handles the unified 'cxas migrate dfcx' command, routing to
+    non-interactive run / optimize stages or the interactive TUI dashboard.
+    """
+    if getattr(args, "run", False):
+        # Validate E2E requirements
+        if not (
+            getattr(args, "source_agent_id", None)
+            or getattr(args, "source_zip", None)
+        ):
+            print(
+                "Error: You must provide either --source-agent-id or "
+                "--source-zip for non-interactive --run."
+            )
+            sys.exit(1)
+        if not getattr(args, "project_id", None):
+            print(
+                "Error: Target --project-id is required for "
+                "non-interactive --run."
+            )
+            sys.exit(1)
+        if not getattr(args, "target_name", None):
+            print(
+                "Error: Target --target-name is required for "
+                "non-interactive --run."
+            )
+            sys.exit(1)
+
+        run_end_to_end(args)
+
+    elif getattr(args, "optimize", False):
+        # Validate stage requirements
+        if not getattr(args, "stage", None):
+            print(
+                "Error: You must specify a target --stage (1, 2, 3, "
+                "or resume) when using --optimize."
+            )
+            sys.exit(1)
+
+        # Set default flags
+        args.yes = True  # optimize stage is non-interactive by default
+
+        if args.stage == "1":
+            if not getattr(args, "version_label", None):
+                args.version_label = "0.0.3"
+            run_stage_1(args)
+        elif args.stage == "2":
+            if not getattr(args, "version_label", None):
+                args.version_label = "0.0.4"
+            run_stage_2(args)
+        elif args.stage == "3":
+            if not getattr(args, "version_label", None):
+                args.version_label = "0.0.5"
+            run_stage_3(args)
+        elif args.stage == "resume":
+            args.yes = False  # resume is interactive picker
+            run_resume(args)
+
+    else:
+        # Default: Interactive TUI Dashboard Mode
+        dashboard = MigrationCLI()
+        cx_api = ConversationalAgentsAPI()
+        dashboard.run(default_agent_name=args.default_agent_name, cx_api=cx_api)

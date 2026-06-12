@@ -98,10 +98,8 @@ def test_cli_installed_help():
         )
 
 
-@mock.patch("cxas_scrapi.core.apps.Apps", autospec=True)
-@mock.patch(
-    "cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True
-)
+@mock.patch("cxas_scrapi.cli.conversations.Apps", autospec=True)
+@mock.patch("cxas_scrapi.cli.conversations.ConversationHistory", autospec=True)
 def test_conversations_list(mock_ch_cls, mock_apps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app"
@@ -133,10 +131,8 @@ def test_conversations_list_invalid_app_name(capsys):
     assert "Error: Invalid App Name format" in captured.out
 
 
-@mock.patch("cxas_scrapi.core.apps.Apps", autospec=True)
-@mock.patch(
-    "cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True
-)
+@mock.patch("cxas_scrapi.cli.conversations.Apps", autospec=True)
+@mock.patch("cxas_scrapi.cli.conversations.ConversationHistory", autospec=True)
 def test_conversations_get(mock_ch_cls, mock_apps_cls):
     args = argparse.Namespace(
         conversation_resource_name="projects/test-project/locations/global/apps/test-app/conversations/test-conv"
@@ -173,7 +169,7 @@ def test_conversations_get_invalid_conversation_name(capsys):
     assert "Error: Invalid Conversation Resource Name format" in captured.out
 
 
-@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.cli.deployments.Deployments", autospec=True)
 def test_deployments_list(mock_deps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app"
@@ -189,7 +185,7 @@ def test_deployments_list(mock_deps_cls):
     mock_deps_inst.list_deployments.assert_called_once()
 
 
-@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.cli.deployments.Deployments", autospec=True)
 def test_deployments_create(mock_deps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app",
@@ -210,8 +206,8 @@ def test_deployments_create(mock_deps_cls):
     )
 
 
-@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
-@mock.patch("cxas_scrapi.cli.app.app_push", autospec=True)
+@mock.patch("cxas_scrapi.cli.deployments.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.cli.deployments.app_push", autospec=True)
 def test_deployments_promote(mock_app_push, mock_deps_cls):
     args = argparse.Namespace(
         app_resource_name="projects/test-project/locations/global/apps/test-app",
