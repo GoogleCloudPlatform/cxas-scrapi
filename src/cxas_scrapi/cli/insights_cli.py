@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 """CLI module for handling Insights Operations."""
 
 # Copyright 2026 Google LLC

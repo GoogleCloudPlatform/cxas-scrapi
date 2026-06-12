@@ -25,3 +25,5 @@ AGENT_MODELS = [
     "gemini-3.1-flash-live",
     "gemini-3.1-pro-preview",
 ]
+
+DEFAULT_MODEL = "gemini-3.1-flash-live"

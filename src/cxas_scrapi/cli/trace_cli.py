@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 """Argparse subcommand handlers for `cxas trace`.
 
 The handlers are intentionally thin: they only build a `Traces` instance and
