@@ -161,6 +161,7 @@ nav:
     - Self-Healing Errors: patterns/self-healing.md
   - Tutorials:
     - tutorials/index.md
+    - Agentic Development Environment: tutorials/agentic-development-env.md
     - Restaurant Reservation: tutorials/restaurant-reservation.md
   - Guides:
     - guides/index.md
