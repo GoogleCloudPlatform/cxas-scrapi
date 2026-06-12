@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -244,6 +243,8 @@ def callbacks_delete(args: argparse.Namespace) -> None:
 
 def variables_list(args: argparse.Namespace) -> None:
     """Lists variable declarations in an app."""
+    from google.cloud.ces_v1beta import types
+
     from cxas_scrapi.core.common import Common
 
     app_name = Common._get_app_name(args.app_name)
@@ -272,8 +273,6 @@ def variables_list(args: argparse.Namespace) -> None:
             for v in variables:
                 schema = getattr(v, "schema", None)
                 try:
-                    from google.cloud.ces_v1beta import types  # noqa: PLC0415
-
                     decl_schema = types.App.VariableDeclaration.Schema
                     v_type = decl_schema.Type(schema.type_).name
                 except Exception:
@@ -297,8 +296,6 @@ def variables_list(args: argparse.Namespace) -> None:
             for v in variables:
                 schema = getattr(v, "schema", None)
                 try:
-                    from google.cloud.ces_v1beta import types  # noqa: PLC0415
-
                     decl_schema = types.App.VariableDeclaration.Schema
                     v_type = decl_schema.Type(schema.type_).name
                 except Exception:

@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +14,8 @@
 
 """CLI script for running CXAS SCRAPI evaluations."""
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import json
@@ -24,14 +25,63 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING
 
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
 from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
-from cxas_scrapi.core.constants import DEFAULT_MODEL
+
+DEFAULT_MODEL = "gemini-3.1-flash-live"
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from cxas_scrapi.cli.app import (
+        app_branch,
+        app_create,
+        app_delete,
+        app_init,
+        app_lint,
+        app_pull,
+        app_push,
+        apps_get,
+        apps_list,
+    )
+    from cxas_scrapi.cli.create_local import handle_local_create
+    from cxas_scrapi.cli.llm_lint import llm_lint
+    from cxas_scrapi.cli.versions_cli import (
+        app_versions_compare,
+        app_versions_list,
+    )
+    from cxas_scrapi.core.github import init_github_action
+    from cxas_scrapi.utils.eval_utils import EvalUtils
+else:
+    from cxas_scrapi.cli.utils import LazyCallable
+
+    app_branch = LazyCallable("cxas_scrapi.cli.app", "app_branch")
+    app_create = LazyCallable("cxas_scrapi.cli.app", "app_create")
+    app_delete = LazyCallable("cxas_scrapi.cli.app", "app_delete")
+    app_init = LazyCallable("cxas_scrapi.cli.app", "app_init")
+    app_lint = LazyCallable("cxas_scrapi.cli.app", "app_lint")
+    app_pull = LazyCallable("cxas_scrapi.cli.app", "app_pull")
+    app_push = LazyCallable("cxas_scrapi.cli.app", "app_push")
+    apps_get = LazyCallable("cxas_scrapi.cli.app", "apps_get")
+    apps_list = LazyCallable("cxas_scrapi.cli.app", "apps_list")
+    handle_local_create = LazyCallable(
+        "cxas_scrapi.cli.create_local", "handle_local_create"
+    )
+    llm_lint = LazyCallable("cxas_scrapi.cli.llm_lint", "llm_lint")
+    app_versions_list = LazyCallable(
+        "cxas_scrapi.cli.versions_cli", "app_versions_list"
+    )
+    app_versions_compare = LazyCallable(
+        "cxas_scrapi.cli.versions_cli", "app_versions_compare"
+    )
+    init_github_action = LazyCallable(
+        "cxas_scrapi.core.github", "init_github_action"
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -172,12 +222,12 @@ def push_eval(args: argparse.Namespace) -> None:
 
 
 def wait_for_evaluation_completion(
-    eval_utils: Any,
+    eval_utils: EvalUtils,
     old_result_ids: list[str],
     app_name: str,
     expected_count: int = 1,
     timeout_seconds: int = 600,
-) -> dict[str, Any]:
+) -> dict[str, pd.DataFrame]:
     """Waits for all new evaluation results to appear."""
     import pandas as pd
 
@@ -233,7 +283,7 @@ def wait_for_evaluation_completion(
 
 
 def filter_metrics_and_assess(
-    df_dict_new_run: dict[str, Any],
+    df_dict_new_run: dict[str, pd.DataFrame],
     filter_auto_metrics: bool,
 ) -> bool:
     """Assesses the evaluation run and returns True if passed,
@@ -1156,98 +1206,6 @@ def deployments_promote(args: argparse.Namespace) -> None:
     except Exception as e:
         print(f"Error during promotion: {e}")
         sys.exit(1)
-
-
-def app_branch(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.app import app_branch as _app_branch
-
-    _app_branch(args)
-
-
-def app_create(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.app import app_create as _app_create
-
-    _app_create(args)
-
-
-def app_delete(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.app import app_delete as _app_delete
-
-    _app_delete(args)
-
-
-def app_init(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.app import app_init as _app_init
-
-    _app_init(args)
-
-
-def app_lint(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.app import app_lint as _app_lint
-
-    _app_lint(args)
-
-
-def app_pull(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.app import app_pull as _app_pull
-
-    _app_pull(args)
-
-
-def app_push(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.app import app_push as _app_push
-
-    _app_push(args)
-
-
-def apps_get(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.app import apps_get as _apps_get
-
-    _apps_get(args)
-
-
-def apps_list(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.app import apps_list as _apps_list
-
-    _apps_list(args)
-
-
-def handle_local_create(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.create_local import (
-        handle_local_create as _handle_local_create,
-    )
-
-    _handle_local_create(args)
-
-
-def llm_lint(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.llm_lint import llm_lint as _llm_lint
-
-    _llm_lint(args)
-
-
-def app_versions_list(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.versions_cli import (
-        app_versions_list as _app_versions_list,
-    )
-
-    _app_versions_list(args)
-
-
-def app_versions_compare(args: argparse.Namespace) -> None:
-    from cxas_scrapi.cli.versions_cli import (
-        app_versions_compare as _app_versions_compare,
-    )
-
-    _app_versions_compare(args)
-
-
-def init_github_action(args: argparse.Namespace) -> None:
-    from cxas_scrapi.core.github import (
-        init_github_action as _init_github_action,
-    )
-
-    _init_github_action(args)
 
 
 def get_parser() -> argparse.ArgumentParser:

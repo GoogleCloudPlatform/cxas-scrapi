@@ -17,11 +17,6 @@
 import importlib
 from typing import TYPE_CHECKING, Any
 
-# To keep the CLI startup time under 130ms, we lazy-load packages at runtime.
-# Using `if TYPE_CHECKING:` allows IDEs, type checkers, and static analyzers
-# to see the eager imports statically for full autocompletion and type-safety.
-# At runtime, TYPE_CHECKING is False, triggering the dynamic lazy loader in
-# __getattr__.
 if TYPE_CHECKING:
     from .common import Common
 else:
