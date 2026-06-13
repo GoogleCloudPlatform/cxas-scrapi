@@ -323,6 +323,97 @@ def test_create_tool_add_to_agent(tmp_path):
         assert display_name in updated_agent["tools"]
 
 
+def test_create_guardrail_llm_policy(tmp_path):
+    """Test create_guardrail creates directory and JSON correctly."""
+    utils = CreateUtils()
+    app_dir = str(tmp_path)
+    (tmp_path / "agents").mkdir()
+    display_name = "My Test Guardrail"
+    safe_name = "My_Test_Guardrail"
+
+    result_path = utils.create_guardrail(display_name, app_dir)
+
+    target_dir = tmp_path / "guardrails" / safe_name
+    assert Path(result_path) == target_dir
+    assert target_dir.exists()
+
+    json_file = target_dir / f"{safe_name}.json"
+    assert json_file.exists()
+
+    with open(json_file) as f:
+        data = json.load(f)
+        assert data["displayName"] == display_name
+        assert data["enabled"] is True
+        assert "llmPolicy" in data
+        assert data["llmPolicy"]["policyScope"] == "AGENT_RESPONSE"
+        assert "CRITICAL RULE" in data["llmPolicy"]["prompt"]
+        assert "TRIGGER CRITERIA" in data["llmPolicy"]["prompt"]
+        assert "DO NOT FLAG" in data["llmPolicy"]["prompt"]
+
+
+def test_create_guardrail_adds_to_app_json(tmp_path):
+    """Test create_guardrail adds display name to app.json guardrails list."""
+    utils = CreateUtils()
+    app_dir = str(tmp_path)
+    (tmp_path / "agents").mkdir()
+
+    app_json = tmp_path / "app.json"
+    with open(app_json, "w") as f:
+        json.dump({"displayName": "My App", "guardrails": ["Existing"]}, f)
+
+    utils.create_guardrail("New Guardrail", app_dir)
+
+    with open(app_json) as f:
+        app_data = json.load(f)
+    assert "New Guardrail" in app_data["guardrails"]
+    assert "Existing" in app_data["guardrails"]
+
+
+def test_create_guardrail_creates_guardrails_key_in_app_json(tmp_path):
+    """Test create_guardrail creates guardrails key if missing from app.json."""
+    utils = CreateUtils()
+    app_dir = str(tmp_path)
+    (tmp_path / "agents").mkdir()
+
+    app_json = tmp_path / "app.json"
+    with open(app_json, "w") as f:
+        json.dump({"displayName": "My App"}, f)
+
+    utils.create_guardrail("New Guardrail", app_dir)
+
+    with open(app_json) as f:
+        app_data = json.load(f)
+    assert app_data["guardrails"] == ["New Guardrail"]
+
+
+def test_create_guardrail_already_exists(tmp_path):
+    """Test create_guardrail raises FileExistsError when directory exists."""
+    utils = CreateUtils()
+    app_dir = str(tmp_path)
+    (tmp_path / "agents").mkdir()
+    display_name = "My Test Guardrail"
+    safe_name = "My_Test_Guardrail"
+
+    (tmp_path / "guardrails" / safe_name).mkdir(parents=True)
+
+    with pytest.raises(FileExistsError) as exc_info:
+        utils.create_guardrail(display_name, app_dir)
+    assert "already exists" in str(exc_info.value)
+
+
+def test_create_guardrail_unsupported_type(tmp_path):
+    """Test create_guardrail raises ValueError for unsupported type."""
+    utils = CreateUtils()
+    app_dir = str(tmp_path)
+    (tmp_path / "agents").mkdir()
+
+    with pytest.raises(ValueError) as exc_info:
+        utils.create_guardrail(
+            "My Guardrail", app_dir, guardrail_type="INVALID"
+        )
+    assert "Unsupported guardrail type" in str(exc_info.value)
+
+
 def test_create_tool_add_to_agent_missing(tmp_path):
     """Test create_tool with missing add_to_agent raises FileNotFoundError."""
     utils = CreateUtils()

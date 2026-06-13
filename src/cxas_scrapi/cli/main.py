@@ -2171,6 +2171,23 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_local_create_tool.set_defaults(func=handle_local_create)
 
+    parser_local_create_guardrail = local_create_subparsers.add_parser(
+        "guardrail", help="Create local guardrail template."
+    )
+    parser_local_create_guardrail.add_argument(
+        "name", help="Display name of the guardrail."
+    )
+    parser_local_create_guardrail.add_argument(
+        "guardrail_type",
+        nargs="?",
+        default="llm_policy",
+        help="Type of guardrail (default: llm_policy).",
+    )
+    parser_local_create_guardrail.add_argument(
+        "--app-dir", default=".", help="App directory."
+    )
+    parser_local_create_guardrail.set_defaults(func=handle_local_create)
+
     # Subparsers for 'versions'
     parser_versions = subparsers.add_parser(
         "versions", help="Manage CXAS app versions (list, compare)."

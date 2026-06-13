@@ -154,6 +154,7 @@ nav:
     - Error Handling: design-guide/error-handling.md
     - Variables & State: design-guide/variables.md
     - Callbacks: design-guide/callbacks.md
+    - Guardrails: design-guide/guardrails.md
   - Patterns:
     - patterns/index.md
     - Slot Filling: patterns/slot-filling.md
