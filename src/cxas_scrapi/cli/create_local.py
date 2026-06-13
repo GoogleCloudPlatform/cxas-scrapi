@@ -45,6 +45,13 @@ def handle_local_create(args: argparse.Namespace) -> None:
                 tool_type=tool_type,
                 add_to_agent=add_to_agent,
             )
+        elif type_name == "guardrail":
+            guardrail_type = getattr(args, "guardrail_type", "llm_policy")
+            path = create_utils.create_guardrail(
+                display_name=args.name,
+                app_dir=app_dir,
+                guardrail_type=guardrail_type,
+            )
         print(f"Successfully created local template at: {path}")
     except Exception as e:
         print(f"Failed to create local template: {e}")
