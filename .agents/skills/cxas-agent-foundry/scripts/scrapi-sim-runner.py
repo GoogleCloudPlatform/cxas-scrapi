@@ -386,6 +386,7 @@ def cmd_run(args):
         modality=modality,
         verbose=args.verbose,
         use_tool_fakes=args.use_tool_fakes,
+        capture_agent_audio=args.capture_agent_audio,
     )
 
     # Summary
@@ -484,6 +485,12 @@ def main():
         action="store_true",
         default=False,
         help="Evaluate test results using only expectations (ignore goal success_criteria)",
+    )
+    p_run.add_argument(
+        "--capture-agent-audio",
+        action="store_true",
+        default=False,
+        help="Capture real-time agent output audio as WAV files",
     )
     p_run.add_argument(
         "--gcs-report-path",

@@ -15,8 +15,11 @@
 """Eval conversation classes for CXAS Scrapi."""
 
 import enum
+import functools
+import inspect
 import json
 import re
+import shutil
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -340,6 +343,28 @@ class LLMUserConversation(Conversation):
         return SimulationReport(goals_df, expectations_df)
 
 
+def cleanup_session_dir(func):
+    """Decorator to ensure session temporary directory is deleted on exit."""
+    sig = inspect.signature(func)
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        bound = sig.bind(self, *args, **kwargs)
+        bound.apply_defaults()
+
+        session_id = bound.arguments.get("session_id")
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+            bound.arguments["session_id"] = session_id
+
+        try:
+            return func(*bound.args, **bound.kwargs)
+        finally:
+            shutil.rmtree(f"/tmp/scrapi_evals/{session_id}", ignore_errors=True)
+
+    return wrapper
+
+
 class SimulationEvals(Apps):
     """Wrapper class to simulate entire multi-turn conversations with a
     CXAS Agent."""
@@ -393,11 +418,18 @@ class SimulationEvals(Apps):
         detailed_trace: list[str],
         model: str,
         console_logging: bool,
+        capture_agent_audio: bool = False,
     ) -> None:
         """Evaluates expectations against the conversation trace.
 
         Modifies `eval_conv.expectation_results` in place.
         """
+        audio_paths = (
+            getattr(eval_conv, "agent_audio_paths", None)
+            if capture_agent_audio
+            else None
+        )
+
         if eval_conv.expectations and isinstance(eval_conv.expectations, list):
             if console_logging:
                 print("\nEvaluating Expectations...")
@@ -407,6 +439,7 @@ class SimulationEvals(Apps):
                 model_name=model,
                 trace=detailed_trace,
                 expectations=eval_conv.expectations,
+                audio_paths=audio_paths,
             )
 
     def _send_request_with_retry(
@@ -416,6 +449,8 @@ class SimulationEvals(Apps):
         variables: dict[str, Any],
         modality: str,
         console_logging: bool,
+        turn_num: int | None = None,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
@@ -432,6 +467,8 @@ class SimulationEvals(Apps):
                         event=user_utterance.removeprefix("event:").strip(),
                         variables=variables,
                         modality=modality,
+                        turn_num=turn_num,
+                        capture_agent_audio=capture_agent_audio,
                         background_noise_file=background_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
@@ -442,6 +479,8 @@ class SimulationEvals(Apps):
                         dtmf=user_utterance.removeprefix("dtmf:").strip(),
                         variables=variables,
                         modality=modality,
+                        turn_num=turn_num,
+                        capture_agent_audio=capture_agent_audio,
                         background_noise_file=background_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
@@ -452,6 +491,8 @@ class SimulationEvals(Apps):
                         text=user_utterance,
                         variables=variables,
                         modality=modality,
+                        turn_num=turn_num,
+                        capture_agent_audio=capture_agent_audio,
                         background_noise_file=background_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
@@ -481,6 +522,7 @@ class SimulationEvals(Apps):
             if step_prog.justification:
                 print(f"  Justification: {step_prog.justification}")
 
+    @cleanup_session_dir
     def simulate_conversation(
         self,
         test_case: dict[str, Any],
@@ -489,6 +531,7 @@ class SimulationEvals(Apps):
         session_id: str | None = None,
         console_logging: bool = True,
         modality: str = "text",
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
@@ -504,13 +547,15 @@ class SimulationEvals(Apps):
         """
         sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
         eval_model = eval_model or _DEFAULT_GEMINI_MODEL
-        if session_id is None:
-            session_id = str(uuid.uuid4())
         eval_conv = LLMUserConversation(
             genai_client=self.genai_client,
             genai_model=sim_user_model,
             test_case=test_case,
         )
+
+        # Initialize audio paths tracking
+        eval_conv.agent_audio_paths = {}
+        current_sim_turn = 0
 
         if console_logging:
             print(
@@ -533,12 +578,21 @@ class SimulationEvals(Apps):
                 accumulated_variables,
                 modality,
                 console_logging,
-                background_noise_file,
-                burst_noise_files,
+                turn_num=current_sim_turn,
+                capture_agent_audio=capture_agent_audio,
+                background_noise_file=background_noise_file,
+                burst_noise_files=burst_noise_files,
                 use_tool_fakes=use_tool_fakes,
             )
             if not response:
                 break
+
+            # Extract and save the agent turn audio WAV if present
+            # in response.
+            if response and getattr(response, "agent_audio_paths", None):
+                audio_path = response.agent_audio_paths.get(0)
+                if audio_path:
+                    eval_conv.agent_audio_paths[current_sim_turn] = audio_path
 
             if console_logging:
                 self.sessions_client.parse_result(response)
@@ -571,12 +625,21 @@ class SimulationEvals(Apps):
             if user_utterance:
                 detailed_trace.append(f"User: {user_utterance}")
 
+            current_sim_turn += 1
+
         if console_logging:
             self._print_completion_status(eval_conv)
 
         self._evaluate_expectations(
-            eval_conv, detailed_trace, eval_model, console_logging
+            eval_conv,
+            detailed_trace,
+            eval_model,
+            console_logging,
+            capture_agent_audio=capture_agent_audio,
         )
+        eval_conv._session_id = session_id
+        eval_conv.session_id = session_id
+        eval_conv._detailed_trace = detailed_trace
         eval_conv.detailed_trace = detailed_trace
         return eval_conv
 
@@ -600,6 +663,7 @@ class SimulationEvals(Apps):
         modality: str,
         verbose: bool,
         parallel: int,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
@@ -618,6 +682,7 @@ class SimulationEvals(Apps):
                 session_id=session_id,
                 console_logging=verbose and parallel <= 1,
                 modality=modality,
+                capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
                 burst_noise_files=burst_noise_files,
                 use_tool_fakes=use_tool_fakes,
@@ -702,6 +767,7 @@ class SimulationEvals(Apps):
         eval_model: str,
         modality: str,
         verbose: bool,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
@@ -723,8 +789,9 @@ class SimulationEvals(Apps):
                             modality,
                             verbose,
                             parallel,
-                            background_noise_file,
-                            burst_noise_files,
+                            capture_agent_audio=capture_agent_audio,
+                            background_noise_file=background_noise_file,
+                            burst_noise_files=burst_noise_files,
                             use_tool_fakes=use_tool_fakes,
                         )
                     )
@@ -743,8 +810,9 @@ class SimulationEvals(Apps):
                             modality,
                             verbose,
                             parallel,
-                            background_noise_file,
-                            burst_noise_files,
+                            capture_agent_audio=capture_agent_audio,
+                            background_noise_file=background_noise_file,
+                            burst_noise_files=burst_noise_files,
                             use_tool_fakes=use_tool_fakes,
                         ): (tc["name"], run_idx)
                         for tc, run_idx in jobs
@@ -764,6 +832,7 @@ class SimulationEvals(Apps):
         eval_model: str | None = _DEFAULT_GEMINI_MODEL,
         modality: str = "text",
         verbose: bool = False,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
@@ -779,6 +848,7 @@ class SimulationEvals(Apps):
             modality: 'text' or 'audio'.
             verbose: Whether to log to console (only active if parallel=1).
             use_tool_fakes: Use fake tools for the session if available.
+            capture_agent_audio: If True, capture real-time agent audio WAVs.
         """
         sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
         eval_model = eval_model or _DEFAULT_GEMINI_MODEL
@@ -791,8 +861,9 @@ class SimulationEvals(Apps):
             eval_model,
             modality,
             verbose,
-            background_noise_file,
-            burst_noise_files,
+            capture_agent_audio=capture_agent_audio,
+            background_noise_file=background_noise_file,
+            burst_noise_files=burst_noise_files,
             use_tool_fakes=use_tool_fakes,
         )
 

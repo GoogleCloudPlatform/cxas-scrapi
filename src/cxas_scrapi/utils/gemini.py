@@ -68,6 +68,34 @@ class GeminiGenerate:
             )
         return self._thread_local.client
 
+    def _build_contents(
+        self,
+        prompt: str | list[Any],
+        audio_path: str | None = None,
+        audio_bytes: bytes | None = None,
+    ) -> list[Any]:
+        """Helper to construct contents for the model including audio."""
+        contents = []
+        if isinstance(prompt, list):
+            contents.extend(prompt)
+        else:
+            contents.append(prompt)
+
+        if audio_bytes:
+            contents.append(
+                genai.types.Part.from_bytes(
+                    data=audio_bytes, mime_type="audio/wav"
+                )
+            )
+        elif audio_path:
+            with open(audio_path, "rb") as f:
+                contents.append(
+                    genai.types.Part.from_bytes(
+                        data=f.read(), mime_type="audio/wav"
+                    )
+                )
+        return contents
+
     def _build_generation_config(
         self,
         system_prompt: str | None = None,
@@ -97,18 +125,20 @@ class GeminiGenerate:
 
     def generate(
         self,
-        prompt: str,
+        prompt: str | list[Any],
         system_prompt: str | None = None,
         model_name: str | None = None,
         response_mime_type: str | None = None,
         response_schema: Any | None = None,
         temperature: float | None = 1.0,
         thinking_level: str | None = None,
+        audio_path: str | None = None,
+        audio_bytes: bytes | None = None,
     ) -> Any | None:
         """Generates content using the Gemini model.
 
         Args:
-            prompt: The user prompt.
+            prompt: The user prompt (can be a list for multi-part contents).
             system_prompt: Optional system prompt/instruction.
             model_name: Optional override for the model name.
             response_mime_type: Optional MIME type for the response (e.g.,
@@ -118,6 +148,8 @@ class GeminiGenerate:
             temperature: Optional temperature setting. Defaults to 1.0.
             thinking_level: Optional Vertex `ThinkingConfig` budget; one of
               "low" / "medium" / "high". `None` disables thinking entirely.
+            audio_path: Optional path to an audio file.
+            audio_bytes: Optional raw audio bytes.
 
         Returns:
             The generated text response or parsed object, or None on failure.
@@ -132,9 +164,11 @@ class GeminiGenerate:
             thinking_level=thinking_level,
         )
 
+        contents = self._build_contents(prompt, audio_path, audio_bytes)
+
         try:
             response = self.client.models.generate_content(
-                model=target_model, contents=prompt, config=config
+                model=target_model, contents=contents, config=config
             )
 
             if response_mime_type == "application/json" and response_schema:
@@ -246,7 +280,7 @@ class GeminiGenerate:
 
     async def generate_async(
         self,
-        prompt: str,
+        prompt: str | list[Any],
         system_prompt: str | None = None,
         model_name: str | None = None,
         response_mime_type: str | None = None,
@@ -255,6 +289,8 @@ class GeminiGenerate:
         base_delay_seconds: int = 10,
         temperature: float | None = 1.0,
         cached_content_name: str | None = None,
+        audio_path: str | None = None,
+        audio_bytes: bytes | None = None,
     ) -> Any | None:
         """Generates content asynchronously using the Gemini model.
 
@@ -273,6 +309,8 @@ class GeminiGenerate:
             cached_content_name: Optional resource name returned by
               create_cache(). When provided, system_prompt is ignored and the
               generation config references the cache instead.
+            audio_path: Optional path to an audio file.
+            audio_bytes: Optional raw audio bytes.
 
         Returns:
             The generated text response or parsed object, or None on failure.
@@ -292,12 +330,14 @@ class GeminiGenerate:
                 temperature=temperature,
             )
 
+        contents = self._build_contents(prompt, audio_path, audio_bytes)
+
         for attempt in range(max_retries):
             try:
                 # ACQUIRE SEMAPHORE: Wait if too many requests are running
                 async with self.semaphore:
                     response = await self.client.aio.models.generate_content(
-                        model=target_model, contents=prompt, config=config
+                        model=target_model, contents=contents, config=config
                     )
 
                 if response_mime_type == "application/json" and response_schema:

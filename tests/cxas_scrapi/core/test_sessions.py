@@ -641,6 +641,98 @@ def test_check_audio_requirements_no_project_id_raises_error():
     assert "Project ID could not be determined" in str(exc_info.value)
 
 
+@patch("cxas_scrapi.core.sessions.wave.open")
+@patch("cxas_scrapi.core.sessions.os.makedirs")
+def test_bidi_session_handler_audio_writing_enabled(
+    mock_makedirs, mock_wave_open
+):
+    """Test BidiSessionHandler writes audio WAV.
+
+    Triggered when capture_agent_audio is True.
+    """
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config=config,
+        inputs=[],
+        capture_agent_audio=True,
+    )
+
+    # Receive some audio bytes first
+    msg_audio = types.BidiSessionServerMessage(
+        session_output=types.SessionOutput(audio=b"audio_bytes")
+    )
+    json_audio = json_format.MessageToJson(
+        msg_audio._pb, preserving_proto_field_name=False
+    )
+    handler._on_message(MagicMock(), json_audio)
+
+    # Now trigger turn completed
+    msg_complete = types.BidiSessionServerMessage(
+        session_output=types.SessionOutput(turn_completed=True)
+    )
+    json_complete = json_format.MessageToJson(
+        msg_complete._pb, preserving_proto_field_name=False
+    )
+
+    handler._on_message(MagicMock(), json_complete)
+
+    # Verify audio file was written
+    mock_makedirs.assert_called_once_with("/tmp/scrapi_evals/s1", exist_ok=True)
+    mock_wave_open.assert_called_once_with(
+        "/tmp/scrapi_evals/s1/turn_0_agent.wav", "wb"
+    )
+
+    # Verify turn_audio_paths was populated
+    assert handler.turn_audio_paths == {
+        0: "/tmp/scrapi_evals/s1/turn_0_agent.wav"
+    }
+
+
+@patch("cxas_scrapi.core.sessions.wave.open")
+@patch("cxas_scrapi.core.sessions.os.makedirs")
+def test_bidi_session_handler_audio_writing_disabled(
+    mock_makedirs, mock_wave_open
+):
+    """Test BidiSessionHandler skips audio WAV.
+
+    Triggered when capture_agent_audio is False.
+    """
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config=config,
+        inputs=[],
+        capture_agent_audio=False,
+    )
+
+    # Receive some audio bytes first
+    msg_audio = types.BidiSessionServerMessage(
+        session_output=types.SessionOutput(audio=b"audio_bytes")
+    )
+    json_audio = json_format.MessageToJson(
+        msg_audio._pb, preserving_proto_field_name=False
+    )
+    handler._on_message(MagicMock(), json_audio)
+
+    # Now trigger turn completed
+    msg_complete = types.BidiSessionServerMessage(
+        session_output=types.SessionOutput(turn_completed=True)
+    )
+    json_complete = json_format.MessageToJson(
+        msg_complete._pb, preserving_proto_field_name=False
+    )
+
+    handler._on_message(MagicMock(), json_complete)
+
+    # Verify audio file was NOT written
+    mock_makedirs.assert_not_called()
+    mock_wave_open.assert_not_called()
+    assert handler.turn_audio_paths == {}
+
+
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
 def test_sessions_rate_limiting(mock_client_cls):
     """Test Sessions.run with rate limiting."""
