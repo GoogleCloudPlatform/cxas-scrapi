@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import uuid
+import wave
 from enum import Enum
 from typing import Any
 
@@ -56,6 +57,22 @@ from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
 
 logger = logging.getLogger(__name__)
+
+
+class ScrapiRunSessionResponse:
+    """Wrapper around types.RunSessionResponse.
+
+    Supports arbitrary attributes.
+    """
+
+    def __init__(
+        self, original_response: Any, agent_audio_paths: dict[int, str]
+    ):
+        self._original_response = original_response
+        self.agent_audio_paths = agent_audio_paths
+
+    def __getattr__(self, name: str):
+        return getattr(self._original_response, name)
 
 
 class Modality(str, Enum):
@@ -181,6 +198,8 @@ class BidiSessionHandler:
         config: dict[str, Any],
         inputs: list[dict[str, Any]],
         user_agent: str | None = None,
+        turn_num: int | None = None,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
     ):
@@ -189,9 +208,15 @@ class BidiSessionHandler:
         self.config = config
         self.inputs = inputs
         self.user_agent = user_agent
+        self.turn_num = turn_num
+        self.capture_agent_audio = capture_agent_audio
         self.agent_turn_manager = AgentTurnManager()
         self.ws_app: websocket.WebSocketApp | None = None
         self.outputs = []
+        self.current_agent_turn_idx = 0
+        self.turn_audio_buffers = {}
+        self.turn_audio_paths = {}
+
         self._close_status_code: int | None = None
         self._close_msg: str | None = None
         self._connection_error: BaseException | None = None
@@ -457,6 +482,16 @@ class BidiSessionHandler:
                     self.agent_turn_manager.add_audio(
                         response.session_output.audio
                     )
+                    if (
+                        self.current_agent_turn_idx
+                        not in self.turn_audio_buffers
+                    ):
+                        self.turn_audio_buffers[self.current_agent_turn_idx] = (
+                            bytearray()
+                        )
+                    self.turn_audio_buffers[self.current_agent_turn_idx].extend(
+                        response.session_output.audio
+                    )
 
                 if response.session_output.turn_completed:
                     logging.debug(
@@ -464,6 +499,48 @@ class BidiSessionHandler:
                         "Waiting for audio playback."
                     )
                     self.agent_turn_manager.mark_turn_completed()
+
+                    # Get the active buffer
+                    buffer = self.turn_audio_buffers.get(
+                        self.current_agent_turn_idx, b""
+                    )
+                    if buffer and self.capture_agent_audio:
+                        session_name = self.config.get("session", "")
+                        session_id = (
+                            session_name.split("/sessions/")[-1]
+                            if "/sessions/" in session_name
+                            else str(uuid.uuid4())
+                        )
+                        current_turn = (
+                            self.turn_num or 0
+                        ) + self.current_agent_turn_idx
+                        os.makedirs(
+                            f"/tmp/scrapi_evals/{session_id}", exist_ok=True
+                        )
+                        wav_filename = (
+                            f"/tmp/scrapi_evals/{session_id}/"
+                            f"turn_{current_turn}_agent.wav"
+                        )
+
+                        try:
+                            with wave.open(wav_filename, "wb") as wav_file:
+                                wav_file.setnchannels(1)
+                                wav_file.setsampwidth(2)
+                                wav_file.setframerate(16000)
+                                wav_file.writeframes(buffer)
+                            self.turn_audio_paths[
+                                self.current_agent_turn_idx
+                            ] = wav_filename
+                            logging.info(
+                                f"Wrote agent turn audio to {wav_filename}"
+                            )
+                        except Exception as audio_err:
+                            logging.error(
+                                f"Failed to write WAV file {wav_filename}:"
+                                f" {audio_err}"
+                            )
+
+                    self.current_agent_turn_idx += 1
 
         except Exception as e:
             logging.debug("Failed to parse message: %s", e)
@@ -556,7 +633,11 @@ class BidiSessionHandler:
                 close_msg=str(self._connection_error),
             )
 
-        return types.RunSessionResponse(outputs=self.outputs)
+        original_response = types.RunSessionResponse(outputs=self.outputs)
+        return ScrapiRunSessionResponse(
+            original_response=original_response,
+            agent_audio_paths=self.turn_audio_paths,
+        )
 
 
 class Sessions(Common):
@@ -879,6 +960,8 @@ class Sessions(Common):
         self,
         config: dict,
         inputs: list[dict[str, Any]],
+        turn_num: int | None = None,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
     ):
@@ -898,6 +981,8 @@ class Sessions(Common):
             config,
             inputs,
             user_agent=self.user_agent,
+            turn_num=turn_num,
+            capture_agent_audio=capture_agent_audio,
             background_noise_file=background_noise_file,
             bg_noise_snr=bg_noise_snr,
         )
@@ -929,6 +1014,8 @@ class Sessions(Common):
         turn_count: int | None = None,
         modality: Modality | str = Modality.TEXT,
         use_tool_fakes: bool = False,
+        turn_num: int | None = None,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
     ):
@@ -1128,12 +1215,16 @@ class Sessions(Common):
                 return self.async_bidi_run_session(
                     config=config,
                     inputs=inputs,
+                    turn_num=turn_num,
+                    capture_agent_audio=capture_agent_audio,
                     background_noise_file=background_noise_file,
                 )
             elif inputs:
                 return self.async_bidi_run_session(
                     config=config,
                     inputs=inputs,
+                    turn_num=turn_num,
+                    capture_agent_audio=capture_agent_audio,
                     background_noise_file=background_noise_file,
                 )
             else:
@@ -1172,7 +1263,12 @@ class Sessions(Common):
                 )
 
             if final_response:
-                return types.RunSessionResponse(outputs=all_outputs)
+                return ScrapiRunSessionResponse(
+                    original_response=types.RunSessionResponse(
+                        outputs=all_outputs
+                    ),
+                    agent_audio_paths={},
+                )
             return final_response
         else:
             if text is None and not inputs:

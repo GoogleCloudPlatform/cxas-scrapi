@@ -15,6 +15,7 @@
 """Tests for evaluation utility functions."""
 
 import sys
+import tempfile
 from unittest.mock import MagicMock, mock_open, patch
 
 # Mock dependencies before importing EvalUtils
@@ -25,7 +26,11 @@ sys.modules["google.cloud.secretmanager"] = MagicMock()
 sys.modules["google.cloud.bigquery"] = MagicMock()
 sys.modules["pandas_gbq"] = MagicMock()
 
-from cxas_scrapi.utils.eval_utils import EvalUtils, Turn  # noqa: E402
+from cxas_scrapi.utils.eval_utils import (  # noqa: E402
+    EvalUtils,
+    Turn,
+    evaluate_expectations,
+)
 
 
 def test_evals_to_dataframe_empty():
@@ -430,6 +435,42 @@ def test_process_conversation_expectations():
         mock_find.assert_any_call(
             llm_prompt="Dict prompt", display_name="My Name"
         )
+
+
+def test_evaluate_expectations_with_audio_paths():
+    """Test evaluate_expectations interleaves audio parts when requested."""
+    mock_client = MagicMock()
+    mock_client.generate.return_value = MagicMock(results=[])
+
+    with tempfile.NamedTemporaryFile(suffix=".wav") as temp_audio:
+        temp_audio.write(b"dummy audio data")
+        temp_audio.flush()
+
+        audio_paths = {0: temp_audio.name}
+        trace = ["User: hello", "Agent: hi there"]
+        expectations = [
+            {
+                "title": "Audio Audit",
+                "expectation": "Spoken audio must match text",
+                "requires_audio_paths": True,
+            }
+        ]
+
+        evaluate_expectations(
+            gemini_client=mock_client,
+            model_name="gemini-2.5-flash",
+            trace=trace,
+            expectations=expectations,
+            audio_paths=audio_paths,
+        )
+
+        assert mock_client.generate.called
+        kwargs = mock_client.generate.call_args.kwargs
+        prompt = kwargs["prompt"]
+
+        prompt_text = prompt[0]
+        assert "interleaved raw audio files below" in prompt_text
+        assert "Audio Audit: Spoken audio must match text" in prompt_text
 
 
 def test_eval_utils_credentials_propagation():
