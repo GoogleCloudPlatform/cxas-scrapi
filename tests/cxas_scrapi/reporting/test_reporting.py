@@ -483,7 +483,7 @@ def test_run_all_evals_substring_filtering(
 @patch("os.path.exists")
 @patch("os.path.isdir")
 @patch("cxas_scrapi.evals.runner.RunEvaluationOperationMetadata")
-@patch("cxas_scrapi.reporting.reporter.load_golden_results")
+@patch("cxas_scrapi.evals.runner.load_golden_results")
 @patch("yaml.safe_load")
 @patch("builtins.open", new_callable=mock_open)
 def test_run_all_evals_tag_filtering(

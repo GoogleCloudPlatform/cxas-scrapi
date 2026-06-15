@@ -27,6 +27,10 @@ from cxas_scrapi.evals.simulation_evals import SimulationEvals
 from cxas_scrapi.evals.tool_evals import ToolEvals
 from cxas_scrapi.utils.eval_utils import EvalUtils
 from cxas_scrapi.utils.rate_limiter import RateLimiter
+from cxas_scrapi.evals.result_loaders import (
+    _load_sim_test_cases,
+    load_golden_results,
+)
 
 
 def run_all_evals(
@@ -53,10 +57,7 @@ def run_all_evals(
     This high-level orchestration function decouples execution logic from pure
     HTML report generation.
     """
-    from cxas_scrapi.reporting.reporter import (  # noqa: PLC0415
-        _load_sim_test_cases,
-        load_golden_results,
-    )
+
 
     results = {"callback": [], "tool": [], "golden": [], "simulation": []}
 
