@@ -23,68 +23,25 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
+import tenacity #not a brand name, this is an import
 
 from cxas_scrapi.utils.gemini import GeminiGenerate
 from utils import cosine_similarity
-
-
-class CategorizationResult(BaseModel):
-    """Schema for LLM categorization of instruction segments."""
-
-    is_testable: bool = Field(
-        description=(
-            "True if this is a substantive, testable instruction. False if it "
-            "is conversational filler, generic greeting, or non-testable "
-            "boilerplate."
-        )
-    )
-    category: str = Field(
-        description=(
-            "Category of the instruction: 'Functional Intent', "
-            "'Behavioral Constraint', or 'Untestable'"
-        )
-    )
-    reasoning: str = Field(description="Reason for the decision")
-
-
-class SentimentAnalysisResult(BaseModel):
-    """Schema for LLM sentiment analysis of user prompts."""
-
-    has_behavioral_diversity: bool = Field(
-        description=(
-            "True if the test suite contains phrasing aimed at testing the "
-            "personal, role or behaviour of the agent. False otherwise."
-        )
-    )
-    reasoning: str = Field(description="Reason for the decision")
-
-
-class InstructionSegmentCoverageResult(BaseModel):
-    """Schema for the LLM evaluation of instruction segment coverage."""
-
-    is_covered: bool = Field(
-        description=(
-            "true if at least one evaluation chunk explicitly tests the "
-            "instruction, false otherwise."
-        )
-    )
-    covering_chunk_indices: List[int] = Field(
-        default_factory=list,
-        description=(
-            "The 0-based indices of all candidate chunks that test the "
-            "instruction. Empty list if none."
-        )
-    )
-    reasoning: str = Field(
-        description="A brief reasoning string explaining the decision."
-    )
+from models import (
+    InstructionSegment,
+    InstructionCategory,
+    CoverageStatus,
+    CategorizationResult,
+    SentimentAnalysisResult,
+    InstructionSegmentCoverageResult,
+)
 
 
 async def analyze_instruction_categories(
-    instruction_segments: List[Dict[str, Any]],
+    instruction_segments: List[InstructionSegment],
     gemini_client: Optional[GeminiGenerate] = None,
     errors: Optional[List[str]] = None,
-) -> List[Dict[str, Any]]:
+) -> List[InstructionSegment]:
     """Runs LLM classification on instruction segments to categorize them."""
     if not gemini_client or not instruction_segments:
         return instruction_segments
@@ -96,14 +53,14 @@ async def analyze_instruction_categories(
 
     sem = asyncio.Semaphore(5)
 
-    async def process_segment(segment: Dict[str, Any]) -> None:
+    async def process_segment(segment: InstructionSegment) -> None:
         async with sem:
             prompt = f"""
             Analyze the following GECX AI Agent instruction segment.
 
             Instruction:
             <INSTRUCTION>
-            {segment["full_text"]}
+            {segment.full_text}
             </INSTRUCTION>
 
             Determine if this instruction is testable. An instruction is NOT
@@ -141,43 +98,46 @@ async def analyze_instruction_categories(
                             "category", "Functional Intent"
                         )
 
-                    segment["is_testable"] = is_testable
+                    segment.is_testable = is_testable
 
                     if not is_testable or "untestable" in cat.lower():
-                        segment["category"] = "Untestable"
-                        segment["is_testable"] = False
+                        segment.category = InstructionCategory.UNTESTABLE
+                        segment.is_testable = False
                     elif "functional" in cat.lower():
-                        segment["category"] = "Functional Intent"
+                        segment.category = InstructionCategory.FUNCTIONAL_INTENT
                     elif (
                         "behavioral" in cat.lower()
                         or "persona" in cat.lower()
                         or "constraint" in cat.lower()
                     ):
-                        segment["category"] = "Behavioral Constraint"
+                        segment.category = InstructionCategory.BEHAVIORAL_CONSTRAINT
                     else:
-                        segment["category"] = cat
+                        try:
+                            segment.category = InstructionCategory(cat)
+                        except ValueError:
+                            segment.category = InstructionCategory.RULES
             except (OSError, UnicodeDecodeError) as e:
                 err_msg = (
                     f"LLM categorization failed for segment "
-                    f"'{segment['directive']}': {e}"
+                    f"'{segment.directive}': {e}"
                 )
                 print(f"Warning: {err_msg}")
                 if errors is not None:
                     errors.append(err_msg)
-                segment["is_testable"] = True
-                if segment.get("category") not in [
-                    "Functional Intent",
-                    "Behavioral Constraint",
-                    "Untestable",
+                segment.is_testable = True
+                if segment.category not in [
+                    InstructionCategory.FUNCTIONAL_INTENT,
+                    InstructionCategory.BEHAVIORAL_CONSTRAINT,
+                    InstructionCategory.UNTESTABLE,
                 ]:
-                    orig_cat = segment.get("category", "Rules")
+                    orig_cat = segment.category.value if isinstance(segment.category, InstructionCategory) else "Rules"
                     if (
                         "rule" in orig_cat.lower()
                         or "persona" in orig_cat.lower()
                     ):
-                        segment["category"] = "Behavioral Constraint"
+                        segment.category = InstructionCategory.BEHAVIORAL_CONSTRAINT
                     else:
-                        segment["category"] = "Functional Intent"
+                        segment.category = InstructionCategory.FUNCTIONAL_INTENT
 
     tasks = [process_segment(seg) for seg in instruction_segments]
     await asyncio.gather(*tasks)
@@ -185,14 +145,14 @@ async def analyze_instruction_categories(
 
 
 async def extract_instruction_coverage(
-    instruction_segments: List[Dict[str, Any]],
+    instruction_segments: List[InstructionSegment],
     eval_chunks: List[Dict[str, Any]],
     called_tools: Set[str],
     gemini_client: Optional[GeminiGenerate] = None,
     errors: Optional[List[str]] = None,
 ) -> Tuple[
-    List[Dict[str, Any]],
-    List[Dict[str, Any]],
+    List[InstructionSegment],
+    List[InstructionSegment],
 ]:
     """Uses Vector Embeddings and LLM-as-a-judge to determine instruction
     segment coverage against pre-computed eval chunks."""
@@ -210,7 +170,7 @@ async def extract_instruction_coverage(
         )
 
     instruction_segments_texts = [
-        instruction_segment["full_text"]
+        instruction_segment.full_text
         for instruction_segment in instruction_segments
     ]
     chunk_texts = [chunk["text"] for chunk in eval_chunks]
@@ -227,14 +187,22 @@ async def extract_instruction_coverage(
             texts[i : i + batch_size] for i in range(0, len(texts), batch_size)
         ]
 
+        @tenacity.retry(
+            wait=tenacity.wait_exponential(multiplier=1, min=2, max=10),
+            stop=tenacity.stop_after_attempt(5),
+            retry=tenacity.retry_if_exception_type((OSError, UnicodeDecodeError)),
+            reraise=True
+        )
+        async def _call_generate_embeddings(batch):
+            return await asyncio.to_thread(
+                gemini_client.generate_embeddings, contents=batch
+            )
+
         async def get_batch_embeddings(batch) -> List[Any]:
             async with emb_sem:
                 try:
-                    await asyncio.sleep(1)
-                    return await asyncio.to_thread(
-                        gemini_client.generate_embeddings, contents=batch
-                    )
-                except (OSError, UnicodeDecodeError) as e:
+                    return await _call_generate_embeddings(batch)
+                except Exception as e:
                     err_msg = f"Failed to generate embeddings for batch: {e}"
                     print(f"Warning: {err_msg}")
                     if errors is not None:
@@ -340,7 +308,7 @@ async def extract_instruction_coverage(
         covering_evals = set()
         covering_chunk_texts = []
 
-        text_to_check = instruction_segment["full_text"].lower()
+        text_to_check = instruction_segment.full_text.lower()
         match_tool = re.search(r"\{@TOOL[:\s]+([^}]+)\}", text_to_check)
         if match_tool:
             tool_name = match_tool.group(1).strip()
@@ -391,7 +359,7 @@ async def extract_instruction_coverage(
                 segment_states[i]["candidate_chunks"] = candidate_chunks
                 llm_tasks.append(
                     run_llm_judge(
-                        instruction_segment["full_text"],
+                        instruction_segment.full_text,
                         candidate_chunks,
                         i,
                     )
@@ -427,26 +395,26 @@ async def extract_instruction_coverage(
 
         # Add details for JSON export
         if state["covered"]:
-            instruction_segment["reasoning"] = state.get(
+            instruction_segment.reasoning = state.get(
                 "reasoning", "Matched via direct tool reference."
             )
         else:
-            instruction_segment["reasoning"] = state.get(
+            instruction_segment.reasoning = state.get(
                 "reasoning", "No covering evaluation found."
             )
 
-        instruction_segment["covering_chunk_texts"] = state.get(
+        instruction_segment.covering_chunk_texts = state.get(
             "covering_chunk_texts", []
         )
 
         if state["covered"]:
-            instruction_segment["covered"] = "Yes"
+            instruction_segment.covered = CoverageStatus.COVERED
             covered_instruction_segments.append(instruction_segment)
         else:
-            instruction_segment["covered"] = "No"
+            instruction_segment.covered = CoverageStatus.UNCOVERED
 
         evals_set = state["covering_evals"]
-        instruction_segment["evals"] = sorted(list(evals_set))
+        instruction_segment.evals = sorted(list(evals_set))
 
     return instruction_segments, covered_instruction_segments
 

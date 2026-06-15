@@ -18,6 +18,8 @@ import math
 import re
 from typing import Any, Dict, List
 
+from models import InstructionSegment, InstructionCategory
+
 
 def find_target_agent(obj: Any) -> List[str]:
     """Recursively searches for 'targetAgent' fields in an object.
@@ -85,7 +87,7 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
 
 def parse_instruction_content(
     content: str, agent_name: str
-) -> List[Dict[str, Any]]:
+) -> List[InstructionSegment]:
     """Parses instruction file content and splits it into structured segments.
 
     Supports both XML-tagged sections (e.g., <Rules>...) and raw files
@@ -96,10 +98,10 @@ def parse_instruction_content(
         agent_name: The name of the agent owning the instructions.
 
     Returns:
-        A list of instruction segment dictionaries containing full text and
+        A list of instruction segment dataclasses containing full text and
         metadata.
     """
-    instruction_segments: List[Dict[str, Any]] = []
+    instruction_segments: List[InstructionSegment] = []
 
     def add_instruction_segment(
         quote_lines: List[str], cat_name: str, a_name: str
@@ -116,14 +118,21 @@ def parse_instruction_content(
             quote_val = (
                 f'"{q_text[:200]}..."' if len(q_text) > 200 else f'"{q_text}"'
             )
+
+            cat_enum = InstructionCategory.RULES
+            try:
+                cat_enum = InstructionCategory(cat_name)
+            except ValueError:
+                pass
+
             instruction_segments.append(
-                {
-                    "agent": a_name,
-                    "category": cat_name,
-                    "directive": directive_title,
-                    "quote": quote_val,
-                    "full_text": q_text,
-                }
+                InstructionSegment(
+                    agent=a_name,
+                    category=cat_enum,
+                    directive=directive_title,
+                    quote=quote_val,
+                    full_text=q_text,
+                )
             )
 
     def chunk_lines_into_segments(

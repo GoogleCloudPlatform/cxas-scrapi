@@ -22,41 +22,7 @@ from typing import Any, Dict, List, Set, Tuple
 
 import yaml
 from utils import find_target_agent, parse_instruction_content
-
-
-@dataclass
-class AgentProjectData:
-    """A unified data model representing the fully ingested GECX project."""
-
-    agent_dir: Path
-    all_tools: Set[str] = field(default_factory=set)
-    eval_files: List[Path] = field(default_factory=list)
-
-    # Aggregated tool coverage metrics (from ingestion)
-    called_tools: Set[str] = field(default_factory=set)
-    covered_tools: Set[str] = field(default_factory=set)
-    phantom_tools_by_file: Dict[Path, Set[str]] = field(default_factory=dict)
-
-    # Sub-agent transitions/transfers
-    declared_transfers: List[Tuple[str, str]] = field(default_factory=list)
-    parent_child_transfers: Set[Tuple[str, str]] = field(default_factory=set)
-    covered_transfers: Dict[Tuple[str, str], List[str]] = field(
-        default_factory=dict
-    )
-    desired_transfers: Set[Tuple[str, str]] = field(default_factory=set)
-    agent_directories: Dict[str, Path] = field(default_factory=dict)
-
-    # Callback coverage metrics
-    all_callbacks: Set[str] = field(default_factory=set)
-    covered_callbacks: Set[str] = field(default_factory=set)
-
-    # Pre-computed evaluation chunks for instruction similarity judge
-    eval_chunks: List[Dict[str, Any]] = field(default_factory=list)
-
-    # Ingested instruction files and raw segments
-    instruction_files: List[Path] = field(default_factory=list)
-    instruction_segments: List[Dict[str, Any]] = field(default_factory=list)
-
+from models import AgentProjectData
 
 def _append_expectations(
     data: AgentProjectData,

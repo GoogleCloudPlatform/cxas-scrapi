@@ -19,8 +19,11 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+from cxas_scrapi.utils.gcs_utils import GCSUtils
 
 from ingestion import ingest_agent_project
 from instruction_coverage import (
@@ -30,6 +33,8 @@ from instruction_coverage import (
 )
 
 from cxas_scrapi.utils.gemini import GeminiGenerate
+from models import InstructionSegment, CoverageStatus, InstructionCategory
+import dataclasses
 
 
 def generate_json_report(
@@ -40,8 +45,8 @@ def generate_json_report(
     eval_files: List[Path],
     declared_transfers: List[Tuple[str, str]],
     covered_transfers: Dict[Tuple[str, str], List[str]],
-    instruction_segments: List[Dict[str, Any]],
-    covered_instruction_segments: List[Dict[str, Any]],
+    instruction_segments: List[InstructionSegment],
+    covered_instruction_segments: List[InstructionSegment],
     instruction_files: List[Path],
     agent_dir: Path,
     total_callbacks: Set[str],
@@ -102,9 +107,9 @@ def generate_json_report(
     category_covered_counts: Dict[str, int] = {}
 
     for instruction_segment in instruction_segments:
-        cat = instruction_segment["category"]
+        cat = instruction_segment.category.value
         category_counts[cat] = category_counts.get(cat, 0) + 1
-        if instruction_segment["covered"] == "Yes":
+        if instruction_segment.covered == CoverageStatus.COVERED:
             category_covered_counts[cat] = (
                 category_covered_counts.get(cat, 0) + 1
             )
@@ -136,7 +141,16 @@ def generate_json_report(
             }
         )
 
+    def segment_to_dict(seg: InstructionSegment) -> Dict[str, Any]:
+        d = dataclasses.asdict(seg)
+        d["category"] = seg.category.value
+        d["covered"] = "Yes" if seg.covered == CoverageStatus.COVERED else "No"
+        return d
+
+    from datetime import datetime
+
     json_data: Dict[str, Any] = {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "metrics": {
             "tool_coverage_percent": tool_coverage_pct,
             "instruction_segment_coverage_percent": overall_segment_pct,
@@ -169,8 +183,8 @@ def generate_json_report(
             "evaluations": [_path_to_str(f) for f in eval_files],
         },
         "unused_evals": unused_evals,
-        "instruction_segments": instruction_segments,
-        "covered_instruction_segments": covered_instruction_segments,
+        "instruction_segments": [segment_to_dict(s) for s in instruction_segments],
+        "covered_instruction_segments": [segment_to_dict(s) for s in covered_instruction_segments],
     }
 
     with open(output_file, "w", encoding="utf-8") as f:
@@ -245,6 +259,17 @@ async def main() -> None:
             "(default: gemini-2.5-flash)."
         ),
     )
+    parser.add_argument(
+        "--skip-upload",
+        action="store_true",
+        help="Skip uploading the report to Google Cloud Storage.",
+    )
+    parser.add_argument(
+        "--gcs-uri",
+        "--gcs-report-path",
+        dest="gcs_uri",
+        help="Google Cloud Storage URI to upload the report to (overrides gecx-config.json).",
+    )
     args = parser.parse_args()
 
     agent_dir = Path(args.agent_dir)
@@ -273,27 +298,29 @@ async def main() -> None:
     print(f"Ingesting and parsing agent workspace at: {agent_dir}...")
     agent_data = ingest_agent_project(agent_dir)
 
-    print("Determining desired agent transfers with LLM...")
-    agent_data.desired_transfers = await determine_desired_transfers_with_llm(
+    print("Running transfer extraction and instruction categorization in parallel...")
+    transfer_task = determine_desired_transfers_with_llm(
         agent_data.agent_directories,
         agent_data.declared_transfers,
         gemini_client,
         errors=execution_errors,
     )
+    category_task = analyze_instruction_categories(
+        agent_data.instruction_segments, gemini_client, errors=execution_errors
+    )
+
+    agent_data.desired_transfers, agent_data.instruction_segments = await asyncio.gather(
+        transfer_task, category_task
+    )
 
     # Automatically mark every parent to child transfer as desired
     agent_data.desired_transfers.update(agent_data.parent_child_transfers)
-
-    # 2. Run classification pass on instruction segments
-    agent_data.instruction_segments = await analyze_instruction_categories(
-        agent_data.instruction_segments, gemini_client, errors=execution_errors
-    )
 
     # Filter out untestable segments
     testable_segments = [
         s
         for s in agent_data.instruction_segments
-        if s.get("is_testable", True)
+        if s.is_testable
     ]
 
     # 3. Run instruction coverage analysis pass
@@ -330,8 +357,8 @@ async def main() -> None:
     for evals in agent_data.covered_transfers.values():
         used_eval_names.update(evals)
     for seg in covered_instruction_segments:
-        if seg.get("evals"):
-            used_eval_names.update(seg["evals"])
+        if seg.evals:
+            used_eval_names.update(seg.evals)
     unused_evals = sorted(list(all_eval_names - used_eval_names))
 
     # 6. Generate clean report
@@ -357,6 +384,63 @@ async def main() -> None:
     if args.html_report:
         html_file = Path(args.html_report)
         generate_html_report(json_data, html_file)
+
+    # Look for gecx-config.json in agent_dir or parents
+    config = {}
+    current = agent_dir.resolve()
+    for _ in range(4):
+        candidate = current / "gecx-config.json"
+        if candidate.exists():
+            with open(candidate, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            break
+        if current.parent == current:
+            break
+        current = current.parent
+
+    # 7. Handle Google Cloud Storage Uploading
+    if args.skip_upload:
+        print("Skipped upload due to --skip-upload flag.")
+    else:
+        raw_gcs_uri = args.gcs_uri or config.get("gcs_report_path")
+        if not raw_gcs_uri:
+            print(
+                "Warning: No GCS URI specified via --gcs-uri or config gcs_report_path. "
+                "Skipping upload. Report remains saved locally."
+            )
+        elif not raw_gcs_uri.startswith("gs://"):
+            print(
+                f"Error: Invalid GCS URI '{raw_gcs_uri}'. Must start with 'gs://'. "
+                "Skipping GCS upload.",
+                file=sys.stderr,
+            )
+        else:
+            gcs_utils = GCSUtils()
+            app_id = config.get("deployed_app_id", "default_app_id")
+
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            report_filename = f"{timestamp}.json"
+
+            base_uri = raw_gcs_uri.replace("[deployed_app_id]", app_id).rstrip("/")
+            if app_id not in base_uri:
+                gcs_uri = f"{base_uri}/{app_id}/{report_filename}"
+            else:
+                gcs_uri = f"{base_uri}/{report_filename}"
+
+            print(f"Streaming consolidated report directly to: {gcs_uri}...")
+            try:
+                gcs_utils.upload_string(
+                    gcs_uri=gcs_uri,
+                    content=json.dumps(json_data, indent=2),
+                    content_type="application/json",
+                )
+                print("Upload complete.")
+            except Exception as e:
+                print(
+                    f"Error: GCS streaming upload failed: {e}",
+                    file=sys.stderr,
+                )
 
 
 if __name__ == "__main__":
