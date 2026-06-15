@@ -35,154 +35,16 @@ from cxas_scrapi.reporting.base_components import (
     fmt_duration,
     load_component,
 )
-from dataclasses import dataclass
-from typing import Any
-
-@dataclass
-class CategoryStats:
-    passed: int
-    total: int
-    pct: float
-    pct_str: str
-    value_class: str
-    duration_s: float
-    modality: str
-
-@dataclass
-class EvaluationStats:
-    passed_sum: int
-    total_sum: int
-    overall_pct: float
-    golden: CategoryStats
-    sim: CategoryStats
-    tool: CategoryStats
-    callback: CategoryStats
-    failure_groups: dict[str, Any]
-
-@dataclass
-class ExpectationDetail:
-    raw: dict[str, Any]
-    @property
-    def expectation(self) -> str: return str(self.raw.get("expectation", "?"))
-    @property
-    def status(self) -> str: return str(self.raw.get("status", "?"))
-    @property
-    def is_met(self) -> bool: return self.status == "Met"
-    @property
-    def justification(self) -> str: return str(self.raw.get("justification", ""))
-
-@dataclass
-class SimStepDetail:
-    raw: dict[str, Any]
-    @property
-    def goal(self) -> str: return str(self.raw.get("goal", "?"))
-    @property
-    def success_criteria(self) -> str: return str(self.raw.get("success_criteria", "?"))
-    @property
-    def status(self) -> str: return str(self.raw.get("status", "?"))
-    @property
-    def justification(self) -> str: return str(self.raw.get("justification", ""))
-
-@dataclass
-class TraceEntry:
-    raw: tuple[str, ...]
-    @property
-    def kind(self) -> str: return self.raw[0]
-    @property
-    def text(self) -> str: return self.raw[1]
-    @property
-    def result(self) -> str: return self.raw[2] if len(self.raw) > 2 else ""
-
-@dataclass
-class GoldenRunResult:
-    raw: dict[str, Any]
-    @property
-    def name(self) -> str: return str(self.raw.get("name", "?"))
-    @property
-    def passed(self) -> bool: return bool(self.raw.get("passed", False))
-    @property
-    def status(self) -> str: return "PASS" if self.passed else "FAIL"
-    @property
-    def duration_s(self) -> float: return float(self.raw.get("duration_s", 0.0))
-    @property
-    def modality(self) -> str: return str(self.raw.get("modality", "text"))
-    @property
-    def expectation_details(self) -> list[ExpectationDetail]:
-        return [ExpectationDetail(raw=x) for x in (self.raw.get("expectation_details", []) or [])]
-    @property
-    def expectations(self) -> list[ExpectationDetail]:
-        return [ExpectationDetail(raw=x) for x in (self.raw.get("expectations", []) or [])]
-    @property
-    def turns(self) -> list[dict[str, Any]]: return self.raw.get("turns", []) or []
-
-@dataclass
-class SimulationRunResult:
-    raw: dict[str, Any]
-    @property
-    def name(self) -> str: return str(self.raw.get("name", "?"))
-    @property
-    def passed(self) -> bool: return bool(self.raw.get("passed", False))
-    @property
-    def duration_s(self) -> float: return float(self.raw.get("duration_s", 0.0))
-    @property
-    def sim_wall_clock_s(self) -> float: return float(self.raw.get("sim_wall_clock_s", 0.0))
-    @property
-    def modality(self) -> str: return str(self.raw.get("modality", "text"))
-    @property
-    def run_number(self) -> int: return int(self.raw.get("run", 1))
-    @property
-    def session_id(self) -> str: return str(self.raw.get("session_id") or self.raw.get("evaluation", ""))
-    @property
-    def goals(self) -> int: return int(self.raw.get("goals", 0))
-    @property
-    def expectations(self) -> int: return int(self.raw.get("expectations", 0))
-    @property
-    def turns(self) -> int: return int(self.raw.get("turns", 0))
-    @property
-    def session_parameters(self) -> dict[str, Any]: return self.raw.get("session_parameters", {}) or {}
-    @property
-    def step_details(self) -> list[SimStepDetail]:
-        return [SimStepDetail(raw=s) for s in (self.raw.get("step_details", []) or [])]
-    @property
-    def expectation_details(self) -> list[ExpectationDetail]:
-        return [ExpectationDetail(raw=x) for x in (self.raw.get("expectation_details", []) or [])]
-    @property
-    def processed_trace(self) -> list[TraceEntry]:
-        return [TraceEntry(raw=t) for t in (self.raw.get("_processed_trace", []) or [])]
-    @property
-    def error(self) -> str: return str(self.raw.get("error", ""))
-
-@dataclass
-class ToolRunResult:
-    raw: dict[str, Any]
-    @property
-    def name(self) -> str: return str(self.raw.get("name", "?"))
-    @property
-    def passed(self) -> bool: return bool(self.raw.get("passed", False))
-    @property
-    def status(self) -> str: return str(self.raw.get("status", "?"))
-    @property
-    def tool(self) -> str: return str(self.raw.get("tool", "?"))
-    @property
-    def latency_ms(self) -> float: return float(self.raw.get("latency_ms", 0.0))
-    @property
-    def errors(self) -> str: return str(self.raw.get("errors", ""))
-
-@dataclass
-class CallbackRunResult:
-    raw: dict[str, Any]
-    @property
-    def name(self) -> str: return str(self.raw.get("name", "?"))
-    @property
-    def passed(self) -> bool: return bool(self.raw.get("passed", False))
-    @property
-    def status(self) -> str: return str(self.raw.get("status", "?"))
-    @property
-    def agent(self) -> str: return str(self.raw.get("agent", "?"))
-    @property
-    def callback_type(self) -> str: return str(self.raw.get("callback_type", "?"))
-    @property
-    def error(self) -> str: return str(self.raw.get("error", ""))
+from cxas_scrapi.reporting.result_stats import EvaluationStats
+from cxas_scrapi.reporting.result_extractors import (
+    ToolRunResult,
+    CallbackRunResult,
+    SimulationRunResult,
+    GoldenRunResult,
+    ExpectationDetail,
+    SimStepDetail,
+    TraceEntry,
+)
 
 
 class Outcome(Enum):
@@ -911,17 +773,36 @@ class GoldenSectionCard(Component):
                             )
                         )
 
-                text_val = turn.get("user_input") or "(Event/System turn)"
-                badge = Raw(f'<span class="turn-badge user">USER</span>')
+                user_input_val = turn.get("user_input")
+                user_input_comp = (
+                    UserBubble(content=user_input_val)
+                    if user_input_val
+                    else EmptyComponent()
+                )
+                sem = turn.get("semantic_score")
+                sem_html = ""
+                if sem is not None:
+                    sem_cls = f"sem-{sem}"
+                    expl = turn.get("semantic_explanation")
+                    expl_html = (
+                        f' <span class="meta">({escape(expl)})</span>'
+                        if expl
+                        else ""
+                    )
+                    sem_html = f'<span class="sem-score {sem_cls}">{sem}/4</span>{expl_html}'
+
+                badge = Raw(f'<span class="turn-badge user">USER</span> {sem_html}')
                 turns.append(
                     TurnRow(
                         row_class="turn-user",
                         turn_index=i + 1,
                         semantic_badge=badge,
-                        user_input=Raw(text_val),
+                        user_input=user_input_comp,
                         comparisons=ComponentGroup(comparisons),
                     )
                 )
+
+
 
             expectations = (
                 ExpectationOutcome(
@@ -1355,12 +1236,15 @@ class ExpectationOutcome(Component):
         self.details = details
 
     def render(self) -> str:
+        escaped_details = escape(self.details)
+        html_details = escaped_details.replace("\n", "<br>")
         return self.substitute(
-            EXPECTATION=escape(self.label),
-            STATUS_CLASS=escape(self.status_class),
-            STATUS=escape(self.status),
-            JUSTIFICATION_HTML=escape(self.details),
+            EXPECTATION=self.label,
+            STATUS_CLASS=self.status_class,
+            STATUS=self.status,
+            JUSTIFICATION_HTML=Raw(html_details),
         )
+
 
 
 class ErrorDisplay(Component):
@@ -1440,14 +1324,29 @@ class AffectedItem(Component):
         self.eval_name = eval_name
 
     def render(self) -> str:
-        badge_cls = "golden" if self.type_str == "GOLD" else "sim"
-        type_lbl = "GOLDEN" if self.type_str == "GOLD" else "SIM"
+        type_upper = self.type_str.upper()
+        if type_upper in ("GOLDEN", "GOLD"):
+            badge_cls = "golden"
+            type_lbl = "GOLDEN"
+        elif type_upper in ("SIMULATION", "SIM"):
+            badge_cls = "sim"
+            type_lbl = "SIM"
+        elif type_upper == "TOOL":
+            badge_cls = "tool"
+            type_lbl = "TOOL"
+        elif type_upper == "CALLBACK":
+            badge_cls = "callback"
+            type_lbl = "CALLBACK"
+        else:
+            badge_cls = "sim"
+            type_lbl = "SIM"
         return self.substitute(
             BADGE_CLASS=badge_cls,
             TYPE=type_lbl,
             SAFE_NAME=self.safe_name,
             EVAL_NAME=escape(self.eval_name),
         )
+
 
 
 class Report(Component):

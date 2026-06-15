@@ -14,7 +14,7 @@
 
 """Utility functions for generating reports."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import datetime
 import glob
 import json
@@ -26,23 +26,27 @@ from cxas_scrapi.core import tools
 from cxas_scrapi.reporting.base_components import ComponentGroup
 from cxas_scrapi.reporting.report_components import (
     CallbackCard,
-    CallbackRunResult,
-    CategoryStats,
     Controls,
     EmptyComponent,
-    EvaluationStats,
     FailurePatterns,
-    GoldenRunResult,
     GoldenSectionCard,
     Header,
     Report,
     ResultsTable,
     Scorecard,
-    SimulationRunResult,
     SimSectionCard,
     ToolCard,
+)
+from cxas_scrapi.reporting.report_components import fmt_duration
+from cxas_scrapi.reporting.result_extractors import (
+    CallbackRunResult,
+    GoldenRunResult,
+    SimulationRunResult,
     ToolRunResult,
-    fmt_duration,
+)
+from cxas_scrapi.reporting.result_stats import (
+    EvaluationStats,
+    get_evaluation_result_stats,
 )
 from cxas_scrapi.utils import gcs_utils
 from cxas_scrapi.evals.result_loaders import (
@@ -161,42 +165,20 @@ def generate_combined_html_report(
     tool_models = [ToolRunResult(raw=r) for r in tool_results]
     callback_models = [CallbackRunResult(raw=r) for r in callback_results]
 
-    # 4. Pre-calculate stats using inline calculation
-    def _calculate_category_stats(results: list[Any], modality: str) -> CategoryStats:
-        total = len(results)
-        passed = sum(1 for r in results if r.passed)
-        pct = (passed / total * 100.0) if total > 0 else 0.0
-        pct_str = f"{pct:.1f}%" if total > 0 else "0.0%"
-        value_class = "pass" if pct == 100.0 and total > 0 else "fail"
-        duration_s = sum(getattr(r, "duration_s", 0.0) for r in results)
-        return CategoryStats(
-            passed=passed,
-            total=total,
-            pct=pct,
-            pct_str=pct_str,
-            value_class=value_class,
-            duration_s=duration_s,
-            modality=modality,
-        )
-
-    g_stats = _calculate_category_stats(golden_models, "text")
-    s_stats = _calculate_category_stats(sim_models, "text")
-    t_stats = _calculate_category_stats(tool_models, "tool")
-    c_stats = _calculate_category_stats(callback_models, "callback")
-
-    total_sum = g_stats.total + s_stats.total + t_stats.total + c_stats.total
-    passed_sum = g_stats.passed + s_stats.passed + t_stats.passed + c_stats.passed
-    overall_pct = (passed_sum / total_sum * 100.0) if total_sum > 0 else 0.0
-
+    # 4. Pre-calculate strongly-typed metrics statistics Pandas DataFrame.
+    stats_df = get_evaluation_result_stats(
+        golden_results=golden_models,
+        sim_results=sim_models,
+        tool_results=tool_models,
+        callback_results=callback_models,
+    )
+    # Wrap compiled stats DataFrame into a strongly-typed EvaluationStats layer!
     stats = EvaluationStats(
-        passed_sum=passed_sum,
-        total_sum=total_sum,
-        overall_pct=overall_pct,
-        golden=g_stats,
-        sim=s_stats,
-        tool=t_stats,
-        callback=c_stats,
-        failure_groups={},
+        stats_df,
+        golden_results=golden_models,
+        sim_results=sim_models,
+        tool_results=tool_models,
+        callback_results=callback_models,
     )
 
     # 5. Calculate overall combined metrics cleanly from stats wrapper properties.
@@ -414,85 +396,6 @@ def _compile_callback_results_card(
         return ""
     return CallbackCard(callback_results=list(callback_results))
 
-
-def _compile_tool_results_card(
-    *,
-    tool_results: Sequence[Mapping[str, Any]],
-    t_passed: int,
-    t_total: int,
-) -> report_components.ToolCard | str:
-    """Compile the ToolCard component declaratively without premature rendering.
-
-    Args:
-      tool_results: Sequence of raw tool validation outcomes..
-      t_passed: Number of successful tool test cases..
-      t_total: Total number of tool test cases executed..
-
-    Returns:
-      A ToolCard component or empty string if empty.
-    """
-    if not tool_results:
-        return ""
-    t_pct = 100 * t_passed / t_total if t_total else 0
-    rows = (
-        report_components.ToolRow(
-            passed=r["passed"],
-            status_class="pass" if r["passed"] else "fail",
-            status=r.get("status", "?"),
-            tool_name=r.get("tool", "?"),
-            test_name=r.get("name", "?"),
-            latency_ms=r.get("latency_ms"),
-            errors=r.get("errors", "")[:100],
-        )
-        for r in sorted(tool_results, key=lambda x: x.get("passed", False))
-    )
-    return report_components.ToolCard(
-        passed=t_passed,
-        total=t_total,
-        pct_str=f"{t_pct:.0f}",
-        tool_rows=base_components.ComponentGroup(list(rows)),
-    )
-
-
-def _compile_callback_results_card(
-    *,
-    callback_results: Sequence[Mapping[str, Any]],
-    c_passed: int,
-    c_total: int,
-) -> report_components.CallbackCard | str:
-    """Compile the CallbackCard component declaratively without premature
-
-    rendering.
-
-    Args:
-      callback_results: Sequence of raw callback execution outcomes..
-      c_passed: Number of successful callback test cases..
-      c_total: Total number of callback test cases executed..
-
-    Returns:
-      A CallbackCard component or empty string if empty.
-    """
-    if not callback_results:
-        return ""
-    c_pct = 100 * c_passed / c_total if c_total else 0
-    rows = (
-        report_components.CallbackRow(
-            passed=r["passed"],
-            status_class="pass" if r["passed"] else "fail",
-            status=r.get("status", "?"),
-            agent_name=r.get("agent", "?"),
-            callback_type=r.get("callback_type", "?"),
-            test_name=r.get("name", "?"),
-            error=r.get("error", "")[:100],
-        )
-        for r in sorted(callback_results, key=lambda x: x.get("passed", False))
-    )
-    return report_components.CallbackCard(
-        passed=c_passed,
-        total=c_total,
-        pct_str=f"{c_pct:.0f}",
-        callback_rows=base_components.ComponentGroup(list(rows)),
-    )
 
 
 def generate_combined_report_from_dir(

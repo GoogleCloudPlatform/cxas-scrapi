@@ -100,6 +100,27 @@ h2 {
   cursor: pointer;
 }
 
+.failure-group .affected-item.golden {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.failure-group .affected-item.sim {
+  background: #e8eaf6;
+  color: #283593;
+}
+
+.failure-group .affected-item.tool {
+  background: #e0f2f1;
+  color: #004d40;
+}
+
+.failure-group .affected-item.callback {
+  background: #fce4ec;
+  color: #880e4f;
+}
+
+
 .pass {
   color: #27ae60;
 }
@@ -383,6 +404,15 @@ summary {
   border-radius: 4px;
 }
 
+.expectation.met-bg {
+  background: #edf7ed;
+}
+
+.expectation.not-met-bg {
+  background: #fdecea;
+}
+
+
 .step {
   margin: 6px 0;
   padding: 8px;
@@ -579,6 +609,27 @@ tr.hidden-row {
     color: #e57373;
   }
 
+  .failure-group .affected-item.golden {
+    background: #332211;
+    color: #ffb74d;
+  }
+
+  .failure-group .affected-item.sim {
+    background: #1a237e;
+    color: #9fa8da;
+  }
+
+  .failure-group .affected-item.tool {
+    background: #004d40;
+    color: #80cbc4;
+  }
+
+  .failure-group .affected-item.callback {
+    background: #880e4f;
+    color: #f48fb1;
+  }
+
+
   table {
     color: #e0e0e0;
   }
@@ -714,6 +765,15 @@ tr.hidden-row {
   .expectation {
     background: #2d2d2d;
   }
+
+  .expectation.met-bg {
+    background: #1b382b;
+  }
+
+  .expectation.not-met-bg {
+    background: #3d1e22;
+  }
+
 
   .step {
     background: #1a2a3a;
