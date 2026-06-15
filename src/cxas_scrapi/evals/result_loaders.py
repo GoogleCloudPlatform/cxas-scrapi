@@ -37,7 +37,7 @@ def load_golden_results(
 
     Args:
       run_id: The evaluation run ID to load results for.
-      app_name: Vertex AI Agent Engine app resource name.
+      app_name: CX Agent Studio (CXAS) agent resource name.
       include: Categories of evaluations to include (e.g. 'goldens', 'scenarios').
 
     Returns:

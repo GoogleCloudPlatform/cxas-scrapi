@@ -12,41 +12,66 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Core abstract visual base Component elements for cxas_scrapi
-
-HTML reporting.
-"""
+"""Core abstract visual base Component elements for cxas_scrapi HTML reporting."""
 
 from __future__ import annotations
 
 import abc
+from collections.abc import Sequence
 import functools
 import html
 import os
 import pathlib
 import re
 import string
-from collections.abc import Sequence
 from typing import Any
 
+# Resolve paths safely relative to this file using pathlib.Path E2E!
 CURRENT_DIR = pathlib.Path(__file__).parent
-COMPONENTS_DIR = (CURRENT_DIR / "../resources/components").resolve()
+COMPONENTS_DIR = (CURRENT_DIR / "resources/components").resolve()
 
+_TEMPLATE_DIRS: list[pathlib.Path] = [COMPONENTS_DIR]
+
+
+def register_template_dir(directory: str | pathlib.Path) -> None:
+    """Registers a directory to scan for HTML component templates."""
+    path = pathlib.Path(directory).resolve()
+    if path not in _TEMPLATE_DIRS:
+        _TEMPLATE_DIRS.insert(0, path)  # Prepend for highest precedence
+        # Clear the load_component cache if it is cached by relative path,
+        # or ensure cache is cleared when registry is rebuilt.
+        load_component.cache_clear()
+        build_template_registry()
+
+
+# Pre-compile regular expressions at the module level for performance E2E!
 _SNAKE_CASE_RE = re.compile(r"(?<!^)(?=[A-Z])")
 
+# Private cache mapping scanned component template basenames to relative paths.
 _TEMPLATE_PATH_BY_NAME: dict[str, str] = {}
 
 
 def build_template_registry() -> None:
     """Indexes template file paths lazily on first template resolution."""
-    for root, _, files in os.walk(COMPONENTS_DIR):
-        for file in files:
-            if file.endswith(".html"):
-                name_without_ext, _ = os.path.splitext(file)
-                rel_path = os.path.relpath(
-                    os.path.join(root, file), COMPONENTS_DIR
-                )
-                _TEMPLATE_PATH_BY_NAME[name_without_ext] = rel_path
+    _TEMPLATE_PATH_BY_NAME.clear()
+    for directory in reversed(_TEMPLATE_DIRS):
+        if not directory.exists():
+            continue
+        local_found = set()
+        for root, _, files in os.walk(directory):
+            for file in files:
+                if file.endswith(".html"):
+                    name_without_ext, _ = os.path.splitext(file)
+                    rel_path = os.path.relpath(
+                        os.path.join(root, file), directory
+                    )
+                    if name_without_ext in local_found:
+                        raise ValueError(
+                            f"Duplicate template name detected in directory {directory}:"
+                            f" {name_without_ext}"
+                        )
+                    local_found.add(name_without_ext)
+                    _TEMPLATE_PATH_BY_NAME[name_without_ext] = rel_path
 
 
 def _convert_to_snake_case(name: str) -> str:
@@ -55,11 +80,22 @@ def _convert_to_snake_case(name: str) -> str:
 
 
 @functools.cache
-def load_component(relative_path: str) -> str:
-    """Loads raw component text from the resources directory with caching."""
-    full_path = COMPONENTS_DIR / relative_path
-    with open(full_path, encoding="utf-8") as f:
+def _read_file(path: pathlib.Path) -> str:
+    with open(path, "r", encoding="utf-8") as f:
         return f.read()
+
+
+@functools.cache  # Keep cache here but we clear it in register_template_dir
+def load_component(relative_path: str) -> str:
+    """Loads raw component text searching in registered directories."""
+    for directory in _TEMPLATE_DIRS:
+        full_path = directory / relative_path
+        if full_path.exists() and full_path.is_file():
+            return _read_file(full_path.resolve())
+    raise FileNotFoundError(
+        f"Template {relative_path!r} not found in template directories:"
+        f" {_TEMPLATE_DIRS}"
+    )
 
 
 def escape(text: Any) -> str:
@@ -88,23 +124,17 @@ class Component(abc.ABC):
 
     template: str = ""
 
-    def __str__(self) -> str:
-        """Transparently redirects string interpolation to render()."""
-        return self.render()
-
     def get_resolved_template(self) -> str:
-        """Gets the resolved template HTML string resolved lazily on first
-
-        render.
+        """Gets the resolved template HTML string resolved lazily on first render.
 
         Returns:
           The resolved raw template HTML content string.
 
         Raises:
-          FileNotFoundError: If the template file cannot be found in the
-            registry.
+          FileNotFoundError: If the template file cannot be found in the registry.
         """
         if self.template:
+            # If it's a relative file path, load it dynamically and lazily!
             if self.template.endswith(".html"):
                 return load_component(self.template)
             return self.template
@@ -125,16 +155,18 @@ class Component(abc.ABC):
         """Renders the component tree recursively into raw HTML."""
         pass
 
-    def substitute(self, **kwargs: Any) -> str:
-        """Substitutes template variables dynamically while HTML-escaping
+    def __str__(self) -> str:
+        """Transparently redirects string interpolation to render() E2E."""
+        return self.render()
 
-        strings.
+    def substitute(self, **kwargs: Any) -> str:
+        """Substitutes template variables dynamically while HTML-escaping strings.
 
         Args:
           **kwargs: Variable mappings passed to template placeholders.
 
         Returns:
-          The rendered HTML markup string.
+          The rendered HTML markup string E2E.
         """
         escaped_kwargs = {}
         for k, v in kwargs.items():
@@ -160,8 +192,10 @@ class EmptyComponent(Component):
 
     def render(self) -> str:
         """Returns an empty string representing no markup."""
-        del self
-        return ""
+        try:
+            return self.substitute()
+        except FileNotFoundError:
+            return ""
 
 
 class Raw(Component):

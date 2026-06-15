@@ -1,0 +1,21 @@
+<div class="eval-card" id="eval-golden-$EVAL_NAME_ID" data-passed="$PASSED_STR">
+  <div class="eval-header $BG_CLASS">
+    <span>$EVAL_NAME <span class="badge golden">golden</span></span>
+    <span class="badge $STATUS_BADGE_CLASS">$STATUS</span>
+  </div>
+  <div class="eval-body">
+    <details class="run-detail" data-failed="$FAILED_STR">
+      <summary>Golden Evaluation — <span class="$STATUS_CLASS">$STATUS</span> | $TURN_COUNT turns$DURATION_HTML</summary>
+
+      $SESSION_LINK_HTML
+
+      $SESSION_PARAMS_HTML
+
+      <details open><summary>Conversation &amp; Comparison</summary>
+        $TURNS_HTML
+      </details>
+
+      $EXPECTATIONS_HTML
+    </details>
+  </div>
+</div>

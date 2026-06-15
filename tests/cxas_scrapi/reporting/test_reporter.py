@@ -16,20 +16,16 @@ import json
 import os
 from unittest.mock import mock_open, patch
 
-import pandas as pd
 
 from cxas_scrapi.reporting.reporter import (
-    _escape,
-    _fmt_duration,
-    _format_trace_line,
-    _load_sim_test_cases,
-    _resolve_tool_name,
     _upload_to_gcs,
     generate_combined_html_report,
     generate_combined_report_from_dir,
     generate_html_report,
     run_all_evals,
 )
+from cxas_scrapi.evals.result_loaders import _load_sim_test_cases
+import pandas as pd
 
 
 @patch("cxas_scrapi.reporting.reporter.gcs_utils.GCSUtils")
@@ -52,147 +48,28 @@ def test_upload_to_gcs_failure(mock_gcs_cls):
     assert res is None
 
 
-@patch("cxas_scrapi.reporting.reporter._get_html_head")
-@patch("cxas_scrapi.reporting.reporter._upload_to_gcs")
-@patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_gcs_success(
-    mock_file, mock_upload, mock_get_html_head
-):
-    mock_get_html_head.return_value = "<html><head></head><body>"
-    mock_upload.return_value = "https://url"
-    results = [{"name": "test", "passed": True, "run": 1}]
-
-    generate_html_report(results, "gs://bucket/report.html", "text", "model")
-
-    mock_upload.assert_called_once()
-    mock_file.assert_not_called()
-
-
-@patch("cxas_scrapi.reporting.reporter._get_html_head")
-@patch("cxas_scrapi.reporting.reporter._upload_to_gcs")
-@patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_gcs_fallback_with_extension(
-    mock_file, mock_upload, mock_get_html_head
-):
-    mock_get_html_head.return_value = "<html><head></head><body>"
-    mock_upload.return_value = None
-    results = [{"name": "test", "passed": True, "run": 1}]
-
+@patch("cxas_scrapi.reporting.reporter.generate_combined_html_report")
+def test_generate_html_report_delegates_to_combined(mock_generate_combined):
+    results = [{"name": "test", "passed": True}]
     generate_html_report(
-        results, "gs://bucket/fail_report.html", "text", "model"
+        results,
+        "output.html",
+        "text",
+        "model",
+        app_name="projects/p",
+        wall_clock_s=10.0,
+        user_agent_extension="ext",
     )
-
-    mock_upload.assert_called_once()
-    mock_file.assert_called_once_with("fail_report.html", "w")
-
-
-@patch("cxas_scrapi.reporting.reporter._get_html_head")
-@patch("cxas_scrapi.reporting.reporter._upload_to_gcs")
-@patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_gcs_fallback_no_extension(
-    mock_file, mock_upload, mock_get_html_head
-):
-    mock_get_html_head.return_value = "<html><head></head><body>"
-    mock_upload.return_value = None
-    results = [{"name": "test", "passed": True, "run": 1}]
-
-    # Path with no extension
-    generate_html_report(results, "gs://bucket/no_ext", "text", "model")
-
-    mock_upload.assert_called_once()
-    mock_file.assert_called_once_with("report_fallback.html", "w")
-
-
-@patch("cxas_scrapi.reporting.reporter._get_html_head")
-@patch("cxas_scrapi.reporting.reporter.tools.Tools")
-@patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_tools_failure(
-    mock_file, mock_tools_cls, mock_get_html_head
-):
-    mock_get_html_head.return_value = "<html><head></head><body>"
-    # Simulate Tools(app_name).get_tools_map() failing
-    mock_tools_cls.return_value.get_tools_map.side_effect = Exception(
-        "Tools failed"
+    mock_generate_combined.assert_called_once_with(
+        sim_results=results,
+        output_path="output.html",
+        app_name="projects/p",
+        sim_modality="text",
+        model="model",
+        sim_wall_clock_s=10.0,
+        user_agent_extension="ext",
+        report_title="Simulation Eval Report",
     )
-
-    results = [{"name": "test", "passed": True, "run": 1}]
-    generate_html_report(
-        results, "local.html", "text", "model", app_name="projects/p"
-    )
-
-    mock_file.assert_called_once_with("local.html", "w")
-
-
-@patch("cxas_scrapi.reporting.reporter._get_html_head")
-@patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_local(mock_file, mock_get_html_head):
-    mock_get_html_head.return_value = "<html><head></head><body>"
-    results = [
-        {
-            "name": "test_eval",
-            "passed": False,
-            "error": "Timeout",
-            "run": 1,
-            "session_id": "sess123",
-            "turns": 5,
-            "detailed_trace": ["User: hello", "Agent Text: hi"],
-            "step_details": [
-                {
-                    "goal": "g",
-                    "status": "Completed",
-                    "success_criteria": "c",
-                    "justification": "j",
-                }
-            ],
-            "expectation_details": [
-                {"expectation": "e", "status": "Met", "justification": "j2"}
-            ],
-        }
-    ]
-
-    generate_html_report(
-        results=results,
-        output_path="local.html",
-        modality="audio",
-        model="gemini-3.1-pro-preview",
-        app_name="projects/p1/locations/l1/apps/a1",
-        wall_clock_s=120.5,
-    )
-
-    mock_file.assert_called_once_with("local.html", "w")
-    content = mock_file().write.call_args[0][0]
-    assert "Simulation Eval Report" in content
-    assert "0.0%" in content
-    assert "audio" in content
-    assert "gemini-3.1-pro-preview" in content
-    assert "2.0m" in content
-    assert "test_eval" in content
-    assert "Timeout" in content
-    assert "sess123" in content
-
-
-def test_fmt_duration():
-    assert _fmt_duration(None) == ""
-    assert _fmt_duration(30) == "30.0s"
-    assert _fmt_duration(90) == "1.5m"
-
-
-def test_escape():
-    assert _escape('<script>&"') == "&lt;script&gt;&amp;&quot;"
-
-
-def test_resolve_tool_name():
-    tools_map = {"projects/p/tools/t1": "MyTool"}
-    assert _resolve_tool_name("projects/p/tools/t1", tools_map) == "MyTool"
-    assert _resolve_tool_name("projects/p/tools/t2", tools_map) == "t2"
-    assert _resolve_tool_name(None, tools_map) is None
-
-
-def test_format_trace_line():
-    tools_map = {"path/to/tool": "GreatTool"}
-    line = "Tool Call: path/to/tool with args {}"
-    assert "GreatTool" in _format_trace_line(line, tools_map)
-    assert "Unrelated" in _format_trace_line("Unrelated", tools_map)
 
 
 def test_generate_combined_html_report(tmp_path):
@@ -234,6 +111,7 @@ def test_generate_combined_html_report(tmp_path):
             "turns": 1,
             "session_id": "sess_2",
             "session_parameters": {},
+            "error": "Some simulation error",
             "step_details": [
                 {
                     "goal": "test goal",
@@ -279,13 +157,14 @@ def test_generate_combined_html_report(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path) as f:
+    with open(output_path, "r") as f:
         content = f.read()
         assert "Combined Eval Report" in content
         assert "test_golden" in content
         assert "test_sim" in content
         assert "test_tool" in content
         assert "test_callback" in content
+        assert "Some simulation error" in content
 
 
 @patch("cxas_scrapi.reporting.reporter._upload_to_gcs")
@@ -347,7 +226,7 @@ def test_generate_combined_report_from_dir(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path) as f:
+    with open(output_path, "r") as f:
         content = f.read()
         assert "Combined Eval Report" in content
         assert "test_sim" in content
@@ -384,7 +263,7 @@ def test_generate_combined_report_from_dir_include_all(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path) as f:
+    with open(output_path, "r") as f:
         content = f.read()
         assert "test_sim" in content
         assert "test_tool" in content
