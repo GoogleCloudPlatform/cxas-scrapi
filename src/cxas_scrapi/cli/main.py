@@ -468,7 +468,9 @@ def run_eval(args: argparse.Namespace) -> None:
 
         # Step 2: Trigger evaluation
         eval_client.run_evaluation(
-            evaluations=evaluations_to_run, app_name=args.app_name
+            evaluations=evaluations_to_run,
+            app_name=args.app_name,
+            modality=args.modality,
         )
         print("Evaluation triggered successfully based on CLI call.")
 

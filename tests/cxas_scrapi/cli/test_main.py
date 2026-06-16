@@ -319,3 +319,29 @@ def test_deployments_promote_with_split(mock_deps_cls):
         app_version="v2",
         traffic_split={"v1": 50, "v2": 50},
     )
+
+
+@mock.patch("cxas_scrapi.cli.main.Evaluations", autospec=True)
+@mock.patch("cxas_scrapi.cli.main.EvalUtils", autospec=True)
+def test_run_eval_modality(mock_eval_utils_cls, mock_eval_cls):
+    """Test that run_eval forwards the modality argument to run_evaluation."""
+    args = argparse.Namespace(
+        app_name="projects/test-project/locations/global/apps/test-app",
+        evaluation_id="eval-123",
+        display_name_prefix=None,
+        tags=None,
+        modality="audio",
+        wait=False,
+    )
+    mock_eval_inst = mock_eval_cls.return_value
+    mock_eval_utils_inst = mock_eval_utils_cls.return_value
+    mock_eval_utils_inst.evals_to_dataframe.return_value = {}
+
+    main_cli.run_eval(args)
+
+    mock_eval_cls.assert_called_once_with(app_name=args.app_name)
+    mock_eval_inst.run_evaluation.assert_called_once_with(
+        evaluations=["eval-123"],
+        app_name=args.app_name,
+        modality="audio",
+    )
