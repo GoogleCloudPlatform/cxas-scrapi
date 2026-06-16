@@ -330,7 +330,7 @@ def test_create_deployment_different_channels(
 def test_create_deployment_traffic_split_valid(mock_client_cls, mock_versions_cls):
     mock_client = mock_client_cls.return_value
     mock_client.create_deployment.return_value = MagicMock()
-    
+
     mock_versions = mock_versions_cls.return_value
     v1 = MagicMock()
     v1.name = "projects/p/locations/l/apps/A/versions/v1"
@@ -391,7 +391,7 @@ def test_create_deployment_traffic_split_invalid_version(mock_client_cls, mock_v
 def test_update_deployment_traffic_split_valid(mock_client_cls, mock_versions_cls):
     mock_client = mock_client_cls.return_value
     mock_client.update_deployment.return_value = MagicMock()
-    
+
     mock_versions = mock_versions_cls.return_value
     v1 = MagicMock()
     v1.name = "projects/p/locations/l/apps/A/versions/v1"

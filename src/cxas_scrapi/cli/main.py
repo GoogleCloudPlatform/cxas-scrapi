@@ -1002,7 +1002,7 @@ def deployments_create(args: argparse.Namespace) -> None:
     if not version_id and not traffic_split:
         print("Error: You must provide either `--version` (or `--version-id`) OR `--traffic-split`.")
         sys.exit(1)
-        
+
     display_name = getattr(args, "display_name", None) or args.deployment_id
     channel_type = getattr(args, "channel_type", None) or "API"
 
@@ -1019,12 +1019,12 @@ def deployments_create(args: argparse.Namespace) -> None:
 
 def deployments_promote(args: argparse.Namespace) -> None:
     """Promotes app to live traffic."""
-    
+
     if getattr(args, "deployment_id", None) and (getattr(args, "version", None) or getattr(args, "traffic_split", None)):
         app_name = args.app_name or getattr(args, "app_resource_name", None)
         print(f"Updating deployment {args.deployment_id} for App: {app_name}...")
         deployments_client = Deployments(app_name=app_name)
-        
+
         traffic_split = None
         if getattr(args, "traffic_split", None):
             try:

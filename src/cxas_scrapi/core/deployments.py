@@ -200,7 +200,7 @@ class Deployments(Apps):
         if traffic_split:
             if len(traffic_split) < 2:
                 raise ValueError("Traffic split requires at least two versions.")
-            
+
             from cxas_scrapi.core.versions import Versions
             versions_client = Versions(app_name=self.app_name, creds=self.creds)
             existing_versions = versions_client.list_versions()
@@ -213,18 +213,18 @@ class Deployments(Apps):
                 v_name = version
                 if not v_name.startswith("projects/"):
                     v_name = f"{self.app_name}/versions/{version}"
-                
+
                 if v_name not in existing_version_names:
                     raise ValueError(
                         f"Version {v_name} does not exist. Valid versions: "
                         f"{[v.split('/')[-1] for v in existing_version_names]}"
                     )
-                
+
                 allocation = types.ExperimentConfig.VersionRelease.TrafficAllocation()
                 allocation.app_version = v_name
                 allocation.traffic_percentage = split
                 version_release.traffic_allocations.append(allocation)
-            
+
             experiment_config.version_release = version_release
             deployment.experiment_config = experiment_config
 
@@ -289,7 +289,7 @@ class Deployments(Apps):
             traffic_split = kwargs.pop("traffic_split")
             if len(traffic_split) < 2:
                 raise ValueError("Traffic split requires at least two versions.")
-            
+
             from cxas_scrapi.core.versions import Versions
             versions_client = Versions(app_name=self.app_name, creds=self.creds)
             existing_versions = versions_client.list_versions()
@@ -302,18 +302,18 @@ class Deployments(Apps):
                 v_name = version
                 if not v_name.startswith("projects/"):
                     v_name = f"{self.app_name}/versions/{version}"
-                
+
                 if v_name not in existing_version_names:
                     raise ValueError(
                         f"Version {v_name} does not exist. Valid versions: "
                         f"{[v.split('/')[-1] for v in existing_version_names]}"
                     )
-                
+
                 allocation = types.ExperimentConfig.VersionRelease.TrafficAllocation()
                 allocation.app_version = v_name
                 allocation.traffic_percentage = split
                 version_release.traffic_allocations.append(allocation)
-            
+
             experiment_config.version_release = version_release
             deployment.experiment_config = experiment_config
             mask_paths.append("experiment_config")
