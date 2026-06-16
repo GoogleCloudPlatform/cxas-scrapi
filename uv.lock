@@ -950,7 +950,7 @@ wheels = [
 
 [[package]]
 name = "google-cloud-ces"
-version = "0.5.0"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-core", extra = ["grpc"] },
@@ -959,9 +959,9 @@ dependencies = [
     { name = "proto-plus" },
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2c/8e/8e7ee816d4810e71fb92ceddabc70b331d5f5de5c124e3fae83c40eca61d/google_cloud_ces-0.5.0.tar.gz", hash = "sha256:dd9b76ce1e7033ebad552bb53b179bd5914bd48adff96d809a9c0b411701e5e3", size = 909158, upload-time = "2026-05-07T08:03:55.643Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/d5/29e306295ad35c3f5d0a079ca415d640e4265b2f6908b8ef06dbd704e54a/google_cloud_ces-0.7.0.tar.gz", hash = "sha256:807c6b76f5dd73cb2d7c738b80852c707b5f49d3eb7e21acdf6c12fcc599ff66", size = 918922, upload-time = "2026-06-12T18:03:21.368Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/2c/e19f5d2aa0537ea1c0c1be430e743f138d06c85562eb8ddc479b3077a666/google_cloud_ces-0.5.0-py3-none-any.whl", hash = "sha256:2af8c08dd6124cdb2ef5cca938436352a0cc4cfe38ac8ad65bfd5bd21725c4ba", size = 767832, upload-time = "2026-05-07T08:02:25.153Z" },
+    { url = "https://files.pythonhosted.org/packages/30/b9/f123ab5431a2e442095d69da78ba8c20260460ca66620e35dee875067dd3/google_cloud_ces-0.7.0-py3-none-any.whl", hash = "sha256:a7b219a286cc0c4dcd7f18bb6fb53bba7187cb284547de190ef8d59146a4ec6c", size = 779454, upload-time = "2026-06-12T18:03:02.288Z" },
 ]
 
 [[package]]
