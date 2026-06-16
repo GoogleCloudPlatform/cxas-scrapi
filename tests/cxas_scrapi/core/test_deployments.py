@@ -325,9 +325,11 @@ def test_create_deployment_different_channels(
     args = mock_client.create_deployment.call_args[1]["request"]
     assert args.deployment.channel_profile.channel_type == expected_proto_value
 
-@patch("cxas_scrapi.core.versions.Versions")
+@patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_create_deployment_traffic_split_valid(mock_client_cls, mock_versions_cls):
+def test_create_deployment_traffic_split_valid(
+    mock_client_cls, mock_versions_cls
+):
     mock_client = mock_client_cls.return_value
     mock_client.create_deployment.return_value = MagicMock()
 
@@ -349,19 +351,28 @@ def test_create_deployment_traffic_split_valid(mock_client_cls, mock_versions_cl
     args = mock_client.create_deployment.call_args[1]["request"]
     dep = args.deployment
     assert dep.experiment_config is not None
-    assert dep.experiment_config.version_release.state == types.ExperimentConfig.State.RUNNING
+    expected_state = types.ExperimentConfig.State.RUNNING
+    assert dep.experiment_config.version_release.state == expected_state
     allocations = dep.experiment_config.version_release.traffic_allocations
     assert len(allocations) == 2
-    assert allocations[0].app_version == "projects/p/locations/l/apps/A/versions/v1"
+    assert allocations[0].app_version == (
+        "projects/p/locations/l/apps/A/versions/v1"
+    )
     assert allocations[0].traffic_percentage == 90
-    assert allocations[1].app_version == "projects/p/locations/l/apps/A/versions/v2"
+    assert allocations[1].app_version == (
+        "projects/p/locations/l/apps/A/versions/v2"
+    )
     assert allocations[1].traffic_percentage == 10
 
-@patch("cxas_scrapi.core.versions.Versions")
+@patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_create_deployment_traffic_split_invalid_len(mock_client_cls, mock_versions_cls):
+def test_create_deployment_traffic_split_invalid_len(
+    mock_client_cls, mock_versions_cls
+):
     deps = Deployments("projects/p/locations/l/apps/A")
-    with pytest.raises(ValueError, match="Traffic split requires at least two versions"):
+    with pytest.raises(
+        ValueError, match="Traffic split requires at least two versions"
+    ):
         deps.create_deployment(
             "dep_id",
             "my_dep",
@@ -369,16 +380,21 @@ def test_create_deployment_traffic_split_invalid_len(mock_client_cls, mock_versi
             traffic_split={"v1": 100}
         )
 
-@patch("cxas_scrapi.core.versions.Versions")
+@patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_create_deployment_traffic_split_invalid_version(mock_client_cls, mock_versions_cls):
+def test_create_deployment_traffic_split_invalid_version(
+    mock_client_cls, mock_versions_cls
+):
     mock_versions = mock_versions_cls.return_value
     v1 = MagicMock()
     v1.name = "projects/p/locations/l/apps/A/versions/v1"
     mock_versions.list_versions.return_value = [v1]
 
     deps = Deployments("projects/p/locations/l/apps/A")
-    with pytest.raises(ValueError, match="Version projects/p/locations/l/apps/A/versions/v2 does not exist"):
+    expected_msg = (
+        "Version projects/p/locations/l/apps/A/versions/v2 does not exist"
+    )
+    with pytest.raises(ValueError, match=expected_msg):
         deps.create_deployment(
             "dep_id",
             "my_dep",
@@ -386,9 +402,11 @@ def test_create_deployment_traffic_split_invalid_version(mock_client_cls, mock_v
             traffic_split={"v1": 90, "v2": 10}
         )
 
-@patch("cxas_scrapi.core.versions.Versions")
+@patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_update_deployment_traffic_split_valid(mock_client_cls, mock_versions_cls):
+def test_update_deployment_traffic_split_valid(
+    mock_client_cls, mock_versions_cls
+):
     mock_client = mock_client_cls.return_value
     mock_client.update_deployment.return_value = MagicMock()
 
@@ -408,15 +426,18 @@ def test_update_deployment_traffic_split_valid(mock_client_cls, mock_versions_cl
     args = mock_client.update_deployment.call_args[1]["request"]
     dep = args.deployment
     assert "experiment_config" in args.update_mask.paths
-    assert dep.experiment_config.version_release.state == types.ExperimentConfig.State.RUNNING
+    expected_state = types.ExperimentConfig.State.RUNNING
+    assert dep.experiment_config.version_release.state == expected_state
     allocations = dep.experiment_config.version_release.traffic_allocations
     assert len(allocations) == 2
     assert allocations[0].traffic_percentage == 50
     assert allocations[1].traffic_percentage == 50
 
-@patch("cxas_scrapi.core.versions.Versions")
+@patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_update_deployment_traffic_split_clear(mock_client_cls, mock_versions_cls):
+def test_update_deployment_traffic_split_clear(
+    mock_client_cls, mock_versions_cls
+):
     mock_client = mock_client_cls.return_value
     mock_client.update_deployment.return_value = MagicMock()
 

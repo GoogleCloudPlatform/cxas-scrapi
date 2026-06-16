@@ -21,6 +21,7 @@ from google.cloud.ces_v1beta import types
 from google.protobuf import field_mask_pb2
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.versions import Versions
 
 
 class Deployments(Apps):
@@ -199,9 +200,10 @@ class Deployments(Apps):
 
         if traffic_split:
             if len(traffic_split) < 2:
-                raise ValueError("Traffic split requires at least two versions.")
+                raise ValueError(
+                    "Traffic split requires at least two versions."
+                )
 
-            from cxas_scrapi.core.versions import Versions
             versions_client = Versions(app_name=self.app_name, creds=self.creds)
             existing_versions = versions_client.list_versions()
             existing_version_names = [v.name for v in existing_versions]
@@ -220,7 +222,9 @@ class Deployments(Apps):
                         f"{[v.split('/')[-1] for v in existing_version_names]}"
                     )
 
-                allocation = types.ExperimentConfig.VersionRelease.TrafficAllocation()
+                allocation = (
+                    types.ExperimentConfig.VersionRelease.TrafficAllocation()
+                )
                 allocation.app_version = v_name
                 allocation.traffic_percentage = split
                 version_release.traffic_allocations.append(allocation)
@@ -288,9 +292,10 @@ class Deployments(Apps):
         if "traffic_split" in kwargs:
             traffic_split = kwargs.pop("traffic_split")
             if len(traffic_split) < 2:
-                raise ValueError("Traffic split requires at least two versions.")
+                raise ValueError(
+                    "Traffic split requires at least two versions."
+                )
 
-            from cxas_scrapi.core.versions import Versions
             versions_client = Versions(app_name=self.app_name, creds=self.creds)
             existing_versions = versions_client.list_versions()
             existing_version_names = [v.name for v in existing_versions]
@@ -309,7 +314,9 @@ class Deployments(Apps):
                         f"{[v.split('/')[-1] for v in existing_version_names]}"
                     )
 
-                allocation = types.ExperimentConfig.VersionRelease.TrafficAllocation()
+                allocation = (
+                    types.ExperimentConfig.VersionRelease.TrafficAllocation()
+                )
                 allocation.app_version = v_name
                 allocation.traffic_percentage = split
                 version_release.traffic_allocations.append(allocation)
@@ -318,15 +325,18 @@ class Deployments(Apps):
             deployment.experiment_config = experiment_config
             mask_paths.append("experiment_config")
         elif "app_version" in kwargs:
-            # If promoting a new version without a traffic split, clear any existing experiment
+            # If promoting a new version without a traffic split,
+            # clear any existing experiment
             deployment.experiment_config = types.ExperimentConfig()
             mask_paths.append("experiment_config")
 
         # Handle remaining kwargs as top-level fields
         for key, value in kwargs.items():
-            if key == "app_version" and value and not value.startswith("projects/"):
-                value = f"{self.app_name}/versions/{value}"
-            setattr(deployment, key, value)
+            val_to_set = value
+            is_app_ver = key == "app_version"
+            if is_app_ver and value and not value.startswith("projects/"):
+                val_to_set = f"{self.app_name}/versions/{value}"
+            setattr(deployment, key, val_to_set)
             mask_paths.append(key)
 
         request = types.UpdateDeploymentRequest(
