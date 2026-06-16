@@ -398,7 +398,7 @@ and CXAS/Polysynth Architect.
     Strictly adhere to the following XML schema. Fill in the content based
     entirely on the two inputs provided.
 
-    <Agent>
+    <agent>
       <Name>{agent_name}</Name>
       <Role>
         [1-2 sentences defining the agent's primary purpose and professional
@@ -473,7 +473,7 @@ and CXAS/Polysynth Architect.
           </transitions>
         </state>
       </Conversation_Schema>
-    </Agent>""",
+    </agent>""",
     }
 
     STEP_2C_TOOLS_AND_CALLBACKS_EXPERT = {
@@ -985,7 +985,7 @@ and CXAS/Polysynth Architect.
     Strictly adhere to the following XML schema. Fill in the content based
     entirely on the two inputs provided.
 
-    <Agent>
+    <agent>
       <Name>{agent_name}</Name>
       <Role>
         [1-2 sentences defining the agent's primary purpose and professional
@@ -1060,7 +1060,7 @@ and CXAS/Polysynth Architect.
           </transitions>
         </state>
       </Conversation_Schema>
-    </Agent>""",
+    </agent>""",
         # --- Context-cache splits (shared prefix cached; per-group sent per call) ---
         "cache_shared_template": """    ### INPUT 3: AVAILABLE TOOLS — exact IDs you may reference in {{@TOOL: …}}
 
@@ -1103,7 +1103,7 @@ and CXAS/Polysynth Architect.
     Strictly adhere to the following XML schema. Fill in the content based
     entirely on the two inputs provided.
 
-    <Agent>
+    <agent>
       <Name>{agent_name}</Name>
       <Role>
         [1-2 sentences defining the agent's primary purpose and professional
@@ -1178,7 +1178,7 @@ and CXAS/Polysynth Architect.
           </transitions>
         </state>
       </Conversation_Schema>
-    </Agent>""",
+    </agent>""",
     }
 
     AGENT_DESCRIPTION = {
