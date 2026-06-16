@@ -1064,11 +1064,13 @@ def deployments_promote(args: argparse.Namespace) -> None:
             print(f"Error updating deployment: {e}")
             sys.exit(1)
 
-    if not all([
-        getattr(args, "app_resource_name", None),
-        getattr(args, "app_dir", None),
-        getattr(args, "live_deployment_resource_name", None),
-    ]):
+    if not all(
+        [
+            getattr(args, "app_resource_name", None),
+            getattr(args, "app_dir", None),
+            getattr(args, "live_deployment_resource_name", None),
+        ]
+    ):
         print(
             "Error: Missing required arguments. "
             "You must provide either `--deployment-id` with"

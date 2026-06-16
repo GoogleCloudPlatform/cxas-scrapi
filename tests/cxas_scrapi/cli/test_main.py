@@ -204,7 +204,7 @@ def test_deployments_create(mock_deps_cls):
         display_name="test-dep",
         app_version="projects/test-project/locations/global/apps/test-app/versions/v1",
         channel_type="API",
-        traffic_split=None
+        traffic_split=None,
     )
 
 
@@ -268,6 +268,7 @@ def test_get_parser_run_session_use_tool_fakes():
     assert args.app_name == expected_app
     assert args.use_tool_fakes is True
 
+
 @mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
 def test_deployments_create_with_split(mock_deps_cls):
     args = argparse.Namespace(
@@ -275,7 +276,7 @@ def test_deployments_create_with_split(mock_deps_cls):
         deployment_id="test-dep",
         version="v1",
         version_id=None,
-        traffic_split="v1:90,v2:10"
+        traffic_split="v1:90,v2:10",
     )
     mock_deps_inst = mock_deps_cls.return_value
 
@@ -289,8 +290,9 @@ def test_deployments_create_with_split(mock_deps_cls):
         display_name="test-dep",
         app_version="v1",
         channel_type="API",
-        traffic_split={"v1": 90, "v2": 10}
+        traffic_split={"v1": 90, "v2": 10},
     )
+
 
 @mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
 def test_deployments_promote_with_split(mock_deps_cls):
@@ -301,7 +303,7 @@ def test_deployments_promote_with_split(mock_deps_cls):
         app_name="projects/test-project/locations/global/apps/test-app",
         deployment_id="live-dep",
         version="v2",
-        traffic_split="v1:50,v2:50"
+        traffic_split="v1:50,v2:50",
     )
 
     mock_deps_inst = mock_deps_cls.return_value
@@ -315,5 +317,5 @@ def test_deployments_promote_with_split(mock_deps_cls):
     mock_deps_inst.update_deployment.assert_called_once_with(
         deployment_id="live-dep",
         app_version="v2",
-        traffic_split={"v1": 50, "v2": 50}
+        traffic_split={"v1": 50, "v2": 50},
     )
