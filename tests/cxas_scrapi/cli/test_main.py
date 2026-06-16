@@ -203,6 +203,8 @@ def test_deployments_create(mock_deps_cls):
         deployment_id="test-dep",
         display_name="test-dep",
         app_version="projects/test-project/locations/global/apps/test-app/versions/v1",
+        channel_type="API",
+        traffic_split=None,
     )
 
 
@@ -265,3 +267,55 @@ def test_get_parser_run_session_use_tool_fakes():
     expected_app = "projects/test-project/locations/global/apps/test-app"
     assert args.app_name == expected_app
     assert args.use_tool_fakes is True
+
+
+@mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
+def test_deployments_create_with_split(mock_deps_cls):
+    args = argparse.Namespace(
+        app_name="projects/test-project/locations/global/apps/test-app",
+        deployment_id="test-dep",
+        version="v1",
+        version_id=None,
+        traffic_split="v1:90,v2:10",
+    )
+    mock_deps_inst = mock_deps_cls.return_value
+
+    main_cli.deployments_create(args)
+
+    mock_deps_cls.assert_called_once_with(
+        app_name="projects/test-project/locations/global/apps/test-app"
+    )
+    mock_deps_inst.create_deployment.assert_called_once_with(
+        deployment_id="test-dep",
+        display_name="test-dep",
+        app_version="v1",
+        channel_type="API",
+        traffic_split={"v1": 90, "v2": 10},
+    )
+
+
+@mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
+def test_deployments_promote_with_split(mock_deps_cls):
+    args = argparse.Namespace(
+        app_resource_name=None,
+        app_dir=None,
+        live_deployment_resource_name=None,
+        app_name="projects/test-project/locations/global/apps/test-app",
+        deployment_id="live-dep",
+        version="v2",
+        traffic_split="v1:50,v2:50",
+    )
+
+    mock_deps_inst = mock_deps_cls.return_value
+    mock_deps_inst.get_deployment.return_value = mock.MagicMock()
+
+    main_cli.deployments_promote(args)
+
+    mock_deps_cls.assert_called_once_with(
+        app_name="projects/test-project/locations/global/apps/test-app"
+    )
+    mock_deps_inst.update_deployment.assert_called_once_with(
+        deployment_id="live-dep",
+        app_version="v2",
+        traffic_split={"v1": 50, "v2": 50},
+    )

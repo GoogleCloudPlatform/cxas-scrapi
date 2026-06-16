@@ -987,17 +987,100 @@ def deployments_create(args: argparse.Namespace) -> None:
     """Creates a deployment."""
     print(f"Creating deployment {args.deployment_id} for App: {args.app_name}")
 
+    traffic_split = None
+    if getattr(args, "traffic_split", None):
+        try:
+            split_parts = args.traffic_split.split(",")
+            traffic_split = {}
+            for part in split_parts:
+                k, v = part.split(":")
+                traffic_split[k] = int(v)
+        except Exception as e:
+            print(f"Error parsing traffic-split: {e}")
+            sys.exit(1)
+
+    version_id = getattr(args, "version", None) or getattr(
+        args, "version_id", None
+    )
+    if not version_id and not traffic_split:
+        print(
+            "Error: You must provide either `--version` (or `--version-id`)"
+            " OR `--traffic-split`."
+        )
+        sys.exit(1)
+
+    display_name = getattr(args, "display_name", None) or args.deployment_id
+    channel_type = getattr(args, "channel_type", None) or "API"
+
     deployments_client = Deployments(app_name=args.app_name)
     deployment = deployments_client.create_deployment(
         deployment_id=args.deployment_id,
-        display_name=args.deployment_id,
-        app_version=args.version_id,
+        display_name=display_name,
+        app_version=version_id,
+        channel_type=channel_type,
+        traffic_split=traffic_split,
     )
     print(f"Deployment created successfully: {deployment.name}")
 
 
 def deployments_promote(args: argparse.Namespace) -> None:
     """Promotes app to live traffic."""
+
+    has_id = getattr(args, "deployment_id", None)
+    has_split_or_ver = getattr(args, "version", None) or getattr(
+        args, "traffic_split", None
+    )
+    if has_id and has_split_or_ver:
+        app_name = args.app_name or getattr(args, "app_resource_name", None)
+        print(
+            f"Updating deployment {args.deployment_id} for App: {app_name}..."
+        )
+        deployments_client = Deployments(app_name=app_name)
+
+        traffic_split = None
+        if getattr(args, "traffic_split", None):
+            try:
+                split_parts = args.traffic_split.split(",")
+                traffic_split = {}
+                for part in split_parts:
+                    k, v = part.split(":")
+                    traffic_split[k] = int(v)
+            except Exception as e:
+                print(f"Error parsing traffic-split: {e}")
+                sys.exit(1)
+
+        kwargs = {}
+        if getattr(args, "version", None):
+            kwargs["app_version"] = args.version
+        if traffic_split:
+            kwargs["traffic_split"] = traffic_split
+
+        try:
+            deployments_client.update_deployment(
+                deployment_id=args.deployment_id, **kwargs
+            )
+            print("Successfully updated deployment traffic.")
+            return
+        except Exception as e:
+            print(f"Error updating deployment: {e}")
+            sys.exit(1)
+
+    if not all(
+        [
+            getattr(args, "app_resource_name", None),
+            getattr(args, "app_dir", None),
+            getattr(args, "live_deployment_resource_name", None),
+        ]
+    ):
+        print(
+            "Error: Missing required arguments. "
+            "You must provide either `--deployment-id` with"
+            " `--version`/`--traffic-split`, OR the legacy arguments: "
+            "`--app-resource-name`, `--app-dir`, and "
+            "`--live-deployment-resource-name`."
+        )
+        sys.exit(1)
+
     print(f"Promoting app {args.app_resource_name} to live traffic...")
 
     # Step 1: Push and create version
@@ -2101,9 +2184,36 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_deps_create.add_argument(
         "--version-id",
-        required=True,
+        required=False,
         help="Version ID for create_deployment.",
     )
+    parser_deps_create.add_argument(
+        "--version",
+        required=False,
+        help="Version ID for create_deployment.",
+    )
+    parser_deps_create.add_argument(
+        "--display-name",
+        required=False,
+        help="Display name for the deployment.",
+    )
+    parser_deps_create.add_argument(
+        "--channel-type",
+        required=False,
+        help="Channel type (e.g. API).",
+    )
+    parser_deps_create.add_argument(
+        "--traffic-split",
+        required=False,
+        help=(
+            "Either version or traffic split needs to be specified. Split "
+            "traffic between multiple app versions by percentage, colon "
+            "delimited. Traffic must sum to 100%%. Format: "
+            "version_id1:traffic_percentage1,version_id2:traffic_percentage2 "
+            '(e.g. "v1:90,v2:10").'
+        ),
+    )
+    _add_project_location_args(parser_deps_create, required=False)
     parser_deps_create.set_defaults(func=deployments_create)
 
     parser_deps_promote = deps_subparsers.add_parser(
@@ -2111,19 +2221,46 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_deps_promote.add_argument(
         "--app-resource-name",
-        required=True,
+        required=False,
         help="Fully qualified CXAS app resource name.",
     )
     parser_deps_promote.add_argument(
         "--app-dir",
-        required=True,
+        required=False,
         help="Path to the CXAS app directory.",
     )
     parser_deps_promote.add_argument(
         "--live-deployment-resource-name",
-        required=True,
+        required=False,
         help="Fully qualified live deployment resource name.",
     )
+    parser_deps_promote.add_argument(
+        "--app-name",
+        required=False,
+        help="The CXAS App ID.",
+    )
+    parser_deps_promote.add_argument(
+        "--deployment-id",
+        required=False,
+        help="Deployment ID.",
+    )
+    parser_deps_promote.add_argument(
+        "--version",
+        required=False,
+        help="Version ID to promote.",
+    )
+    parser_deps_promote.add_argument(
+        "--traffic-split",
+        required=False,
+        help=(
+            "Either version or traffic split needs to be specified. Split "
+            "traffic between multiple app versions by percentage, colon "
+            "delimited. Traffic must sum to 100%%. Format: "
+            "version_id1:traffic_percentage1,version_id2:traffic_percentage2 "
+            '(e.g. "v1:90,v2:10").'
+        ),
+    )
+    _add_project_location_args(parser_deps_promote, required=False)
     parser_deps_promote.set_defaults(func=deployments_promote)
 
     # Subparsers for 'local'
