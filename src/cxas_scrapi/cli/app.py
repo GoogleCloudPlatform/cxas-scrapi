@@ -16,6 +16,7 @@
 
 import argparse
 import io
+import json
 import logging
 import os
 import shutil
@@ -289,6 +290,27 @@ def _app_push(
                 f"Warning: Custom environment file "
                 f"'{env_file}' not found. Skipping."
             )
+
+    try:
+        from google.cloud.ces_v1beta import types
+
+        from cxas_scrapi.utils.tracing.app_config import AppConfig
+
+        # Load AppConfig using inner_dir.
+        # Contains app.json and environment.json if copied/present.
+        env_file_path = os.path.join(inner_dir, "environment.json")
+        cfg = AppConfig.load(
+            app_dir=inner_dir,
+            env_file=env_file_path if os.path.exists(env_file_path) else None,
+            schema_cls=types.App,
+        )
+        resolved_app = cfg.resolved_dict()
+        resolved_app_path = os.path.join(inner_dir, "app.json")
+        with open(resolved_app_path, "w") as f:
+            json.dump(resolved_app, f, indent=2)
+        print("Pre-resolved placeholders in app.json successfully.")
+    except Exception as e:
+        print(f"Warning: Could not pre-resolve placeholders in app.json: {e}")
 
     # ZIP does not support timestamps before 1980.
     # Touch files and directories in temp_dir with timestamps before 1980.

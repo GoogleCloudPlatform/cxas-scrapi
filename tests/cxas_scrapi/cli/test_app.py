@@ -16,6 +16,7 @@
 
 import argparse
 import io
+import json
 import os
 import time
 import zipfile
@@ -24,6 +25,7 @@ from unittest import mock
 import pytest
 
 from cxas_scrapi.cli import app as cli_app
+from cxas_scrapi.utils.tracing.app_config import ENV_VAR_PLACEHOLDER
 
 
 @pytest.fixture
@@ -219,6 +221,62 @@ def test_app_push(mock_apps_client, tmp_path):
     call_args = mock_apps_client.import_as_new_app.call_args[1]
     assert call_args["display_name"] == "New App Name"
     assert "app_content" in call_args
+
+
+def test_app_push_with_placeholder_resolution(mock_apps_client, tmp_path):
+    """Verify that app_push resolves placeholders in app.json before zipping."""
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        display_name="New App Name",
+        project_id="test-project",
+        location="us",
+    )
+
+    # Create app.json with a placeholder
+    app_data = {
+        "name": "test",
+        "loggingSettings": {
+            "cloudLoggingSettings": {"enableCloudLogging": ENV_VAR_PLACEHOLDER}
+        },
+    }
+    with open(os.path.join(tmp_path, "app.json"), "w") as f:
+        json.dump(app_data, f)
+
+    # Create environment.json
+    env_data = {
+        "loggingSettings": {
+            "cloudLoggingSettings": {"enableCloudLogging": "false"}
+        }
+    }
+    with open(os.path.join(tmp_path, "environment.json"), "w") as f:
+        json.dump(env_data, f)
+
+    mock_result = mock.MagicMock()
+    mock_lro = mock.MagicMock()
+    mock_imported_app = mock.MagicMock()
+    mock_imported_app.name = "projects/test-project/locations/us/apps/new-id"
+    mock_lro.result.return_value = mock_imported_app
+    mock_result = mock_lro
+
+    mock_apps_client.import_as_new_app.return_value = mock_result
+
+    cli_app.app_push(args)
+
+    mock_apps_client.import_as_new_app.assert_called_once()
+    call_args = mock_apps_client.import_as_new_app.call_args[1]
+    assert "app_content" in call_args
+
+    # Extract the zip file from memory and check app.json contents
+    zip_bytes = call_args["app_content"]
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        assert "agent/app.json" in zf.namelist()
+        with zf.open("agent/app.json") as f:
+            resolved_app = json.loads(f.read().decode("utf-8"))
+
+    # Verify enableCloudLogging was resolved to False (boolean)
+    settings = resolved_app["loggingSettings"]["cloudLoggingSettings"]
+    assert settings["enableCloudLogging"] is False
 
 
 def test_app_branch(
