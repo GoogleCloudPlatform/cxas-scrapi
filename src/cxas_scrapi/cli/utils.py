@@ -12,24 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Core module for CXAS Scrapi."""
-
-import importlib
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .common import Common
-else:
-    _LAZY_IMPORTS = {
-        "Common": "cxas_scrapi.core.common",
-    }
-
-    def __getattr__(name: str) -> Any:
-        if name in _LAZY_IMPORTS:
-            module_path = _LAZY_IMPORTS[name]
-            module = importlib.import_module(module_path)
-            return getattr(module, name)
-        raise AttributeError(f"module {__name__} has no attribute {name}")
+"""Utility functions and classes for the CLI."""
 
 
-__all__ = ["Common"]
+class LazyCallable:
+    """A proxy wrapper that lazily imports and executes a callable."""
+
+    def __init__(self, module_path: str, func_name: str):
+        self.module_path = module_path
+        self.func_name = func_name
+        self._func = None
+
+    def __call__(self, *args, **kwargs):
+        if self._func is None:
+            import importlib
+
+            module = importlib.import_module(self.module_path)
+            self._func = getattr(module, self.func_name)
+        return self._func(*args, **kwargs)

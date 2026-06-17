@@ -14,6 +14,8 @@
 
 """CLI script for running CXAS SCRAPI evaluations."""
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import json
@@ -23,58 +25,70 @@ import subprocess
 import sys
 import time
 import uuid
+from typing import TYPE_CHECKING
 
-import pandas as pd
-from google.api_core.exceptions import NotFound
-from google.protobuf.json_format import MessageToDict
-
-from cxas_scrapi import Sessions
-from cxas_scrapi.cli.app import (
-    app_branch,
-    app_create,
-    app_delete,
-    app_init,
-    app_lint,
-    app_pull,
-    app_push,
-    apps_get,
-    apps_list,
-)
-from cxas_scrapi.cli.create_local import handle_local_create
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
-from cxas_scrapi.cli.llm_lint import llm_lint
-from cxas_scrapi.cli.migration_cli import (
-    run_end_to_end,
-    run_resume,
-    run_stage_1,
-    run_stage_2,
-    run_stage_3,
-)
 from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
-from cxas_scrapi.cli.versions_cli import (
-    app_versions_compare,
-    app_versions_list,
-)
-from cxas_scrapi.core.apps import Apps
-from cxas_scrapi.core.common import Common
-from cxas_scrapi.core.conversation_history import ConversationHistory
-from cxas_scrapi.core.deployments import Deployments
-from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
-from cxas_scrapi.core.github import init_github_action
-from cxas_scrapi.evals.callback_evals import CallbackEvals
-from cxas_scrapi.evals.tool_evals import ToolEvals
-from cxas_scrapi.migration.config import DEFAULT_MODEL
-from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
-from cxas_scrapi.utils.eval_utils import EvalUtils
+
+DEFAULT_MODEL = "gemini-3.1-flash-live"
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from cxas_scrapi.cli.app import (
+        app_branch,
+        app_create,
+        app_delete,
+        app_init,
+        app_lint,
+        app_pull,
+        app_push,
+        apps_get,
+        apps_list,
+    )
+    from cxas_scrapi.cli.create_local import handle_local_create
+    from cxas_scrapi.cli.llm_lint import llm_lint
+    from cxas_scrapi.cli.versions_cli import (
+        app_versions_compare,
+        app_versions_list,
+    )
+    from cxas_scrapi.core.github import init_github_action
+    from cxas_scrapi.utils.eval_utils import EvalUtils
+else:
+    from cxas_scrapi.cli.utils import LazyCallable
+
+    app_branch = LazyCallable("cxas_scrapi.cli.app", "app_branch")
+    app_create = LazyCallable("cxas_scrapi.cli.app", "app_create")
+    app_delete = LazyCallable("cxas_scrapi.cli.app", "app_delete")
+    app_init = LazyCallable("cxas_scrapi.cli.app", "app_init")
+    app_lint = LazyCallable("cxas_scrapi.cli.app", "app_lint")
+    app_pull = LazyCallable("cxas_scrapi.cli.app", "app_pull")
+    app_push = LazyCallable("cxas_scrapi.cli.app", "app_push")
+    apps_get = LazyCallable("cxas_scrapi.cli.app", "apps_get")
+    apps_list = LazyCallable("cxas_scrapi.cli.app", "apps_list")
+    handle_local_create = LazyCallable(
+        "cxas_scrapi.cli.create_local", "handle_local_create"
+    )
+    llm_lint = LazyCallable("cxas_scrapi.cli.llm_lint", "llm_lint")
+    app_versions_list = LazyCallable(
+        "cxas_scrapi.cli.versions_cli", "app_versions_list"
+    )
+    app_versions_compare = LazyCallable(
+        "cxas_scrapi.cli.versions_cli", "app_versions_compare"
+    )
+    init_github_action = LazyCallable(
+        "cxas_scrapi.core.github", "init_github_action"
+    )
 
 logger = logging.getLogger(__name__)
 
 
 def export_eval(args: argparse.Namespace) -> None:
     """Handles the 'export' command."""
+    from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
 
     print(f"Exporting evaluation: {args.evaluation_id}")
     # Use app_name to init client. Eval ID might be full resource name.
@@ -105,6 +119,14 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
     """Handles the unified 'cxas migrate dfcx' command, routing to
     non-interactive run / optimize stages or the interactive TUI dashboard.
     """
+    from cxas_scrapi.cli.migration_cli import (
+        run_end_to_end,
+        run_resume,
+        run_stage_1,
+        run_stage_2,
+        run_stage_3,
+    )
+
     if getattr(args, "run", False):
         # Validate E2E requirements
         if not (
@@ -162,6 +184,7 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
     else:
         # Default: Interactive TUI Dashboard Mode
         from cxas_scrapi.cli.migration_cli import MigrationCLI  # noqa: PLC0415
+        from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
 
         dashboard = MigrationCLI()
         cx_api = ConversationalAgentsAPI()
@@ -169,7 +192,10 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
 
 
 def push_eval(args: argparse.Namespace) -> None:
-    """Handles the 'push' command."""
+    """Handles the 'push-eval' command."""
+    from cxas_scrapi.core.evaluations import Evaluations
+    from cxas_scrapi.utils.eval_utils import EvalUtils
+
     print(f"Pushing evaluation(s) from {args.file} to App: {args.app_name}")
 
     eval_client = Evaluations(app_name=args.app_name)
@@ -203,6 +229,8 @@ def wait_for_evaluation_completion(
     timeout_seconds: int = 600,
 ) -> dict[str, pd.DataFrame]:
     """Waits for all new evaluation results to appear."""
+    import pandas as pd
+
     print(f"Waiting for {expected_count} evaluation(s) to complete...")
     start_time = time.time()
     while time.time() - start_time < timeout_seconds:
@@ -260,6 +288,8 @@ def filter_metrics_and_assess(
 ) -> bool:
     """Assesses the evaluation run and returns True if passed,
     False otherwise."""
+    import pandas as pd
+
     passed = True
 
     df_new_run = df_dict_new_run.get("summary", pd.DataFrame())
@@ -350,6 +380,10 @@ def filter_metrics_and_assess(
 
 def run_eval(args: argparse.Namespace) -> None:
     """Handles the 'run' command."""
+    import pandas as pd
+
+    from cxas_scrapi.core.evaluations import Evaluations
+    from cxas_scrapi.utils.eval_utils import EvalUtils
 
     print(f"Triggering evaluation for App: {args.app_name}")
     eval_client = Evaluations(app_name=args.app_name)
@@ -596,6 +630,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
 
 def test_tools(args: argparse.Namespace) -> None:
     """Handles the 'test-tools' command."""
+    from cxas_scrapi.evals.tool_evals import ToolEvals
 
     print(
         f"Running tool tests for App: {args.app_name} "
@@ -628,6 +663,7 @@ def test_tools(args: argparse.Namespace) -> None:
 
 def test_callbacks(args: argparse.Namespace) -> None:
     """Handles the 'test-callbacks' command."""
+    from cxas_scrapi.evals.callback_evals import CallbackEvals
 
     print(f"Running callback tests in App directory: {args.app_dir}")
     callback_evals = CallbackEvals()
@@ -662,6 +698,7 @@ def test_callbacks(args: argparse.Namespace) -> None:
 
 def test_single_callback(args: argparse.Namespace) -> None:
     """Handles the 'test-single-callback' command."""
+    from cxas_scrapi.evals.callback_evals import CallbackEvals
 
     print(
         f"Running single callback test for "
@@ -700,6 +737,9 @@ def test_single_callback(args: argparse.Namespace) -> None:
 
 def ci_test(args: argparse.Namespace) -> None:
     """Handles the 'ci-test' command."""
+    from cxas_scrapi.cli.app import app_push
+    from cxas_scrapi.core.apps import Apps
+    from cxas_scrapi.core.evaluations import Evaluations
 
     print("Starting CI Test Lifecycle...")
 
@@ -875,6 +915,8 @@ def local_test(args: argparse.Namespace) -> None:
 
 def run_session(args: argparse.Namespace) -> None:
     """Handles the 'run-session' command."""
+    from cxas_scrapi import Sessions
+
     try:
         session_client = Sessions(args.app_name)
         session_id = session_client.create_session_id()
@@ -902,6 +944,12 @@ def run_session(args: argparse.Namespace) -> None:
 
 def conversations_list(args: argparse.Namespace) -> None:
     """Lists conversations for an app."""
+    from google.protobuf.json_format import MessageToDict
+
+    from cxas_scrapi.core.apps import Apps
+    from cxas_scrapi.core.common import Common
+    from cxas_scrapi.core.conversation_history import ConversationHistory
+
     print(f"Listing conversations for App: {args.app_name}")
 
     # Extract and validate app_name
@@ -935,6 +983,12 @@ def conversations_list(args: argparse.Namespace) -> None:
 
 def conversations_get(args: argparse.Namespace) -> None:
     """Gets details of a specific conversation."""
+    from google.protobuf.json_format import MessageToDict
+
+    from cxas_scrapi.core.apps import Apps
+    from cxas_scrapi.core.common import Common
+    from cxas_scrapi.core.conversation_history import ConversationHistory
+
     print(f"Getting conversation: {args.conversation_resource_name}")
 
     # Extract and validate app_name
@@ -966,6 +1020,10 @@ def conversations_get(args: argparse.Namespace) -> None:
 
 def deployments_list(args: argparse.Namespace) -> None:
     """Lists deployments for an app."""
+    from google.protobuf.json_format import MessageToDict
+
+    from cxas_scrapi.core.deployments import Deployments
+
     print(f"Listing deployments for App: {args.app_name}")
 
     deployments_client = Deployments(app_name=args.app_name)
@@ -987,6 +1045,8 @@ def deployments_list(args: argparse.Namespace) -> None:
 
 def deployments_create(args: argparse.Namespace) -> None:
     """Creates a deployment."""
+    from cxas_scrapi.core.deployments import Deployments
+
     print(f"Creating deployment {args.deployment_id} for App: {args.app_name}")
 
     traffic_split = None
@@ -1027,6 +1087,10 @@ def deployments_create(args: argparse.Namespace) -> None:
 
 def deployments_promote(args: argparse.Namespace) -> None:
     """Promotes app to live traffic."""
+    from google.api_core.exceptions import NotFound
+
+    from cxas_scrapi.cli.app import app_push
+    from cxas_scrapi.core.deployments import Deployments
 
     has_id = getattr(args, "deployment_id", None)
     has_split_or_ver = getattr(args, "version", None) or getattr(
