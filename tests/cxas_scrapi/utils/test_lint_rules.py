@@ -1525,6 +1525,64 @@ def test_v001_app_valid(tmp_path, context):
         assert len(results) == 0
 
 
+def test_v001_app_with_placeholders(tmp_path, context):
+    """Verify V001 passes on app config with placeholders in bool/int fields."""
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
+
+    registry = build_registry()
+    rule = registry.get("V001")
+
+    import textwrap  # noqa: PLC0415
+
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+    (app_dir / "app.yaml").write_text(
+        textwrap.dedent("""\
+            name: myapp
+            displayName: MyApp
+            rootAgent: root_agent
+            loggingSettings:
+              cloudLoggingSettings:
+                enableCloudLogging: $ENABLE_CLOUD_LOGGING
+              bigqueryExportSettings:
+                enabled: $BIGQUERY_EXPORT_ENABLED
+                project: $GCP_PROJECT_ID
+                dataset: $BQ_DATASET_NAME
+        """)
+    )
+
+    results = rule.check(app_dir, "", context)
+    assert len(results) == 0
+
+
+def test_v001_app_with_placeholders_and_invalid_field(tmp_path, context):
+    """Verify V001 still catches real schema violations with placeholders."""
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
+
+    registry = build_registry()
+    rule = registry.get("V001")
+
+    import textwrap  # noqa: PLC0415
+
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+    (app_dir / "app.yaml").write_text(
+        textwrap.dedent("""\
+            name: myapp
+            displayName: MyApp
+            rootAgent: root_agent
+            loggingSettings:
+              cloudLoggingSettings:
+                enableCloudLogging: $ENABLE_CLOUD_LOGGING
+            invalidField: some_value
+        """)
+    )
+
+    results = rule.check(app_dir, "", context)
+    assert len(results) == 1
+    assert "Proto schema validation failed" in results[0].message
+
+
 def test_v001_app_missing_config(tmp_path, context):
     from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
