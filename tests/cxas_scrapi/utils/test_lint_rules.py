@@ -1963,3 +1963,397 @@ def test_s006_tool_paths_invalid(tmp_path, context):
     results = rule.check(tool_dir, "", context)
     assert len(results) == 1
     assert "Tool pythonCode path" in results[0].message
+
+
+# ── Variable Rules (V100-V104) ───────────────────────────────────────────
+
+
+_VAR_APP_JSON = """\
+{
+  "name": "test-app",
+  "rootAgent": "Root_Agent",
+  "variableDeclarations": [
+    {
+      "name": "customer",
+      "schema": {
+        "type": "OBJECT",
+        "properties": {
+          "auth_status": {"type": "STRING"},
+          "api_failed": {"type": "STRING"},
+          "account_id": {"type": "STRING"}
+        }
+      }
+    },
+    {
+      "name": "_internal",
+      "schema": {
+        "type": "OBJECT",
+        "properties": {
+          "action_trigger": {"type": "STRING"},
+          "escalation_topic": {"type": "STRING"}
+        }
+      }
+    },
+    {"name": "flat_str", "schema": {"type": "STRING"}}
+  ]
+}
+"""
+
+
+@pytest.fixture
+def var_context(tmp_path):
+    """LintContext with an app.json containing variableDeclarations."""
+    from cxas_scrapi.utils.lint_rules.variables import _clear_schema_cache  # noqa: PLC0415,I001
+
+    (tmp_path / "app.json").write_text(_VAR_APP_JSON)
+    _clear_schema_cache()
+    return LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path / "evals",
+        app_root=tmp_path,
+    )
+
+
+def test_resolve_path_ok_leaf(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    assert resolve_path("customer.auth_status", schema) == ("ok", "STRING")
+    assert resolve_path("flat_str", schema) == ("ok", "STRING")
+
+
+def test_resolve_path_ok_object(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    assert resolve_path("customer", schema) == ("ok_object",)
+
+
+def test_resolve_path_undeclared(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    assert resolve_path("session_token", schema) == ("undeclared",)
+
+
+def test_resolve_path_stale_flat(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    # auth_status is a property of customer — flat ref is "stale"
+    assert resolve_path("auth_status", schema) == ("stale_flat", "customer")
+
+
+def test_resolve_path_no_property(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    assert resolve_path("customer.full_name", schema) == (
+        "no_property",
+        "customer",
+        "full_name",
+    )
+
+
+def test_resolve_path_not_object(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    assert resolve_path("flat_str.child", schema) == ("not_object", "flat_str")
+
+
+def test_v100_callback_undeclared(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackVariableDeclared  # noqa: PLC0415,I001
+
+    rule = CallbackVariableDeclared()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(callback_context, llm_request):\n"
+        "    state = callback_context.state\n"
+        "    token = state.get('session_token', '')\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert results[0].rule_id == "V100"
+    assert "session_token" in results[0].message
+
+
+def test_v100_callback_declared_no_error(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackVariableDeclared  # noqa: PLC0415,I001
+
+    rule = CallbackVariableDeclared()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(callback_context, llm_request):\n"
+        "    state = callback_context.state\n"
+        "    x = state.get('customer.auth_status', '')\n"
+        "    state['_internal.action_trigger'] = 'go'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v100_tool_state_update(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import ToolVariableDeclared  # noqa: PLC0415,I001
+
+    rule = ToolVariableDeclared()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def my_tool(context):\n"
+        "    context.state.update("
+        "{'missing_var': 1, 'customer.auth_status': 'ok'}"
+        ")\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert "missing_var" in results[0].message
+
+
+def test_v100_eval_undeclared(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import EvalVariableDeclared  # noqa: PLC0415,I001
+
+    rule = EvalVariableDeclared()
+    f = tmp_path / "evals" / "goldens" / "g.yaml"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        "common_session_parameters:\n"
+        "  customer:\n"
+        "    account_id: 'a1'\n"
+        "  missing_var:\n"
+        "    foo: 'bar'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    rule_ids = [r.rule_id for r in results]
+    messages = [r.message for r in results]
+    assert "V100" in rule_ids
+    assert any("missing_var" in m for m in messages)
+    # The "customer" parent and "customer.account_id" leaf should be OK
+    assert not any("customer" in m and "missing" not in m for m in messages)
+
+
+def test_v101_type_mismatch_bool(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackVariableTypeMatch  # noqa: PLC0415,I001
+
+    rule = CallbackVariableTypeMatch()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    state = cb.state\n"
+        "    state['customer.api_failed'] = False\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert results[0].rule_id == "V101"
+    assert "STRING" in results[0].message and "bool" in results[0].message
+
+
+def test_v101_type_mismatch_len_call(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import ToolVariableTypeMatch  # noqa: PLC0415,I001
+
+    rule = ToolVariableTypeMatch()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def my_tool(context):\n"
+        "    context.state['_internal.escalation_topic'] = len('abc')\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert results[0].rule_id == "V101"
+    assert "int" in results[0].message
+
+
+def test_v101_matching_type_no_error(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackVariableTypeMatch  # noqa: PLC0415,I001
+
+    rule = CallbackVariableTypeMatch()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    cb.state['customer.auth_status'] = 'ok'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v101_uninferable_rhs_skipped(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackVariableTypeMatch  # noqa: PLC0415,I001
+
+    rule = CallbackVariableTypeMatch()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    cb.state['customer.auth_status'] = some_helper()\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v102_missing_nested_property(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import ToolNestedPropertyExists  # noqa: PLC0415,I001
+
+    rule = ToolNestedPropertyExists()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def my_tool(context):\n    context.state['_internal.reason'] = 'x'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert results[0].rule_id == "V102"
+    assert "_internal" in results[0].message and "reason" in results[0].message
+
+
+def test_v102_wrong_parent(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import ToolNestedPropertyExists  # noqa: PLC0415,I001
+
+    rule = ToolNestedPropertyExists()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def my_tool(context):\n"
+        "    context.state['customer.action_trigger'] = 'x'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert "customer" in results[0].message
+    assert "action_trigger" in results[0].message
+
+
+def test_v102_typo_on_declared_parent(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        CallbackNestedPropertyExists,
+    )
+
+    rule = CallbackNestedPropertyExists()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    x = cb.state.get('_internal.escalation_topik', 'g')\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert "escalation_topik" in results[0].message
+
+
+def test_v103_stale_flat_in_callback(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackStaleFlatVar  # noqa: PLC0415,I001
+
+    rule = CallbackStaleFlatVar()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    cb.state['auth_status'] = 'ok'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert results[0].rule_id == "V103"
+    assert "customer.auth_status" in results[0].message
+
+
+def test_v103_no_match_no_warning(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackStaleFlatVar  # noqa: PLC0415,I001
+
+    rule = CallbackStaleFlatVar()
+    f = tmp_path / "python_code.py"
+    # session_token isn't a nested property of any declared OBJECT
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    cb.state.get('session_token', '')\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v104_undeclared_template_ref(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import InstructionVariableRef  # noqa: PLC0415,I001
+
+    rule = InstructionVariableRef()
+    f = tmp_path / "instruction.txt"
+    f.write_text("Greet {auth_status} and {customer.full_name} today.")
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 2
+    assert all(r.rule_id == "V104" for r in results)
+    assert any("auth_status" in r.message for r in results)
+    assert any("full_name" in r.message for r in results)
+
+
+def test_v104_skips_builtins_and_directives(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import InstructionVariableRef  # noqa: PLC0415,I001
+
+    rule = InstructionVariableRef()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "Today is {current_date}. Use {@TOOL: get_balance} and "
+        "{@AGENT: billing agent}."
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v104_skips_inline_example_block(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import InstructionVariableRef  # noqa: PLC0415,I001
+
+    rule = InstructionVariableRef()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "<inline_example>\n"
+        "Hello {undeclared_var}, your id is {bogus.path}.\n"
+        "</inline_example>\n"
+        "Otherwise, use {customer.auth_status}."
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v104_declared_object_ref_no_error(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import InstructionVariableRef  # noqa: PLC0415,I001
+
+    rule = InstructionVariableRef()
+    f = tmp_path / "instruction.txt"
+    f.write_text("Customer object: {customer}.")
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_state_visitor_skips_assignment_subscripts(tmp_path, var_context):
+    """Writes should be counted as writes, not double-counted as reads."""
+    from cxas_scrapi.utils.lint_rules.variables import _collect_state_accesses  # noqa: PLC0415,I001
+
+    src = "def f(cb):\n    cb.state['customer.api_failed'] = 'x'\n"
+    accesses = _collect_state_accesses(src)
+    kinds = [a[0] for a in accesses]
+    assert kinds == ["write"]
+
+
+def test_state_visitor_setdefault_is_write(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import _collect_state_accesses  # noqa: PLC0415,I001
+
+    src = "def f(cb):\n    cb.state.setdefault('customer.account_id', '0')\n"
+    accesses = _collect_state_accesses(src)
+    assert accesses == [("write", "customer.account_id", 2, "str")]
+
+
+def test_state_visitor_update_with_literals(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import _collect_state_accesses  # noqa: PLC0415,I001
+
+    src = "def f(cb):\n    cb.state.update({'a': True, 'b': 1})\n"
+    accesses = _collect_state_accesses(src)
+    assert ("write", "a", 2, "bool") in accesses
+    assert ("write", "b", 2, "int") in accesses
