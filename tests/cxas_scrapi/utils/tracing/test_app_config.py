@@ -16,6 +16,7 @@ import json
 import os
 
 import pytest
+from google.cloud.ces_v1beta import types
 
 from cxas_scrapi.utils.tracing.app_config import ENV_VAR_PLACEHOLDER, AppConfig
 
@@ -320,3 +321,184 @@ def test_no_environment_file_no_default_present(tmp_path):
     # No env file resolved at all.
     assert cfg.env_path is None
     assert cfg.audio_bucket() == "gs://concrete"
+
+
+def test_env_var_boolean_casting(tmp_path):
+    """Verify that resolved env string booleans are cast to primitives."""
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "loggingSettings": {
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": ENV_VAR_PLACEHOLDER
+                },
+                "bigqueryExportSettings": {
+                    "project": "proj",
+                    "dataset": "ds",
+                    "enabled": ENV_VAR_PLACEHOLDER,
+                },
+            }
+        },
+        env={
+            "loggingSettings": {
+                "cloudLoggingSettings": {"enableCloudLogging": "false"},
+                "bigqueryExportSettings": {
+                    "enabled": "true",
+                },
+            }
+        },
+    )
+    cfg = AppConfig.load(app_dir=app_dir, schema_cls=types.App)
+    assert cfg.cloud_logging_enabled() is False
+    assert cfg.bigquery_export()["enabled"] is True
+
+
+def test_custom_env_var_placeholder(tmp_path, monkeypatch):
+    """Verify that custom environment placeholders (starting with $) resolve."""
+    monkeypatch.setenv("BQ_DATASET_NAME", "my_env_dataset")
+    monkeypatch.setenv("BIGQUERY_EXPORT_ENABLED", "true")
+
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "loggingSettings": {
+                "bigqueryExportSettings": {
+                    "project": "$GCP_PROJECT_ID",
+                    "dataset": "$BQ_DATASET_NAME",
+                    "enabled": "$BIGQUERY_EXPORT_ENABLED",
+                }
+            }
+        },
+        env={
+            "GCP_PROJECT_ID": "my_env_project",
+        },
+    )
+    cfg = AppConfig.load(app_dir=app_dir, schema_cls=types.App)
+    bq = cfg.bigquery_export()
+    assert bq["project"] == "my_env_project"
+    assert bq["dataset"] == "my_env_dataset"
+    assert bq["enabled"] is True
+
+
+def test_invalid_boolean_string_is_not_coerced(tmp_path):
+    """Verify that invalid boolean string values are not coerced to True/False.
+
+    If the environment resolves a placeholder to an invalid non-boolean string,
+    AppConfig should return it as-is (e.g. "invalid_value").
+    """
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "loggingSettings": {
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": ENV_VAR_PLACEHOLDER
+                },
+                "bigqueryExportSettings": {
+                    "project": "proj",
+                    "dataset": "ds",
+                    "enabled": ENV_VAR_PLACEHOLDER,
+                },
+            }
+        },
+        env={
+            "loggingSettings": {
+                "cloudLoggingSettings": {"enableCloudLogging": "invalid_value"},
+                "bigqueryExportSettings": {
+                    "enabled": "another_invalid_value",
+                },
+            }
+        },
+    )
+    cfg = AppConfig.load(app_dir=app_dir, schema_cls=types.App)
+
+    assert cfg.cloud_logging_enabled() == "invalid_value"
+    bq = cfg.bigquery_export()
+    assert bq["enabled"] == "another_invalid_value"
+
+
+def test_resolved_dict(tmp_path, monkeypatch):
+    """Verify that resolved_dict() recursively resolves all placeholders."""
+    monkeypatch.setenv("BQ_DATASET_NAME", "my_env_dataset")
+    monkeypatch.setenv("BIGQUERY_EXPORT_ENABLED", "true")
+
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "name": "myapp",
+            "displayName": "$APP_DISPLAY_NAME",
+            "maxTurns": ENV_VAR_PLACEHOLDER,
+            "modelSettings": {
+                "model": "gemini-1.5-flash",
+                "temperature": "$MODEL_TEMP",
+            },
+            "loggingSettings": {
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": ENV_VAR_PLACEHOLDER
+                },
+                "bigqueryExportSettings": {
+                    "project": "$GCP_PROJECT_ID",
+                    "dataset": "$BQ_DATASET_NAME",
+                    "enabled": "$BIGQUERY_EXPORT_ENABLED",
+                },
+            },
+        },
+        env={
+            "APP_DISPLAY_NAME": "true",
+            "maxTurns": 10,
+            "MODEL_TEMP": "0.7",
+            "loggingSettings": {
+                "cloudLoggingSettings": {"enableCloudLogging": "false"},
+            },
+            "GCP_PROJECT_ID": "my_env_project",
+        },
+    )
+    cfg = AppConfig.load(app_dir=app_dir, schema_cls=types.App)
+    res = cfg.resolved_dict()
+
+    assert res["name"] == "myapp"
+    assert res["displayName"] == "true"
+    assert isinstance(res["displayName"], str)
+    assert res["maxTurns"] == 10
+    assert isinstance(res["maxTurns"], int)
+    assert res["modelSettings"]["temperature"] == 0.7
+    assert isinstance(res["modelSettings"]["temperature"], float)
+    settings = res["loggingSettings"]
+    assert settings["cloudLoggingSettings"]["enableCloudLogging"] is False
+    bq = settings["bigqueryExportSettings"]
+    assert bq["project"] == "my_env_project"
+    assert bq["dataset"] == "my_env_dataset"
+    assert bq["enabled"] is True
+
+
+def test_schema_guided_getter_casting(tmp_path, monkeypatch):
+    """Verify that AppConfig getters cast types based on the loaded schema."""
+    monkeypatch.setenv("BIGQUERY_EXPORT_ENABLED", "true")
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "loggingSettings": {
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": ENV_VAR_PLACEHOLDER
+                },
+                "bigqueryExportSettings": {
+                    "project": "proj",
+                    "dataset": "ds",
+                    "enabled": "$BIGQUERY_EXPORT_ENABLED",
+                },
+            }
+        },
+        env={
+            "loggingSettings": {
+                "cloudLoggingSettings": {"enableCloudLogging": "false"},
+            }
+        },
+    )
+    # Without schema: getters return raw strings
+    cfg_raw = AppConfig.load(app_dir=app_dir)
+    assert cfg_raw.cloud_logging_enabled() == "false"
+    assert cfg_raw.bigquery_export()["enabled"] == "true"
+
+    # With schema: getters automatically cast to booleans
+    cfg_schema = AppConfig.load(app_dir=app_dir, schema_cls=types.App)
+    assert cfg_schema.cloud_logging_enabled() is False
+    assert cfg_schema.bigquery_export()["enabled"] is True
