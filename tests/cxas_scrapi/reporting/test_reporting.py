@@ -18,7 +18,7 @@ from unittest.mock import mock_open, patch
 
 import pandas as pd
 
-from cxas_scrapi.utils.reporting import (
+from cxas_scrapi.reporting.reporter import (
     _escape,
     _fmt_duration,
     _format_trace_line,
@@ -32,7 +32,7 @@ from cxas_scrapi.utils.reporting import (
 )
 
 
-@patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils")
+@patch("cxas_scrapi.reporting.reporter.gcs_utils.GCSUtils")
 def test_upload_to_gcs_success(mock_gcs_cls):
     mock_gcs = mock_gcs_cls.return_value
     mock_gcs.upload_string.return_value = (
@@ -43,7 +43,7 @@ def test_upload_to_gcs_success(mock_gcs_cls):
     assert res == "https://storage.mtls.cloud.google.com/bucket/report.html"
 
 
-@patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils")
+@patch("cxas_scrapi.reporting.reporter.gcs_utils.GCSUtils")
 def test_upload_to_gcs_failure(mock_gcs_cls):
     mock_gcs = mock_gcs_cls.return_value
     mock_gcs.upload_string.side_effect = Exception("error")
@@ -52,8 +52,8 @@ def test_upload_to_gcs_failure(mock_gcs_cls):
     assert res is None
 
 
-@patch("cxas_scrapi.utils.reporting._get_html_head")
-@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("cxas_scrapi.reporting.reporter._get_html_head")
+@patch("cxas_scrapi.reporting.reporter._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_gcs_success(
     mock_file, mock_upload, mock_get_html_head
@@ -68,8 +68,8 @@ def test_generate_html_report_gcs_success(
     mock_file.assert_not_called()
 
 
-@patch("cxas_scrapi.utils.reporting._get_html_head")
-@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("cxas_scrapi.reporting.reporter._get_html_head")
+@patch("cxas_scrapi.reporting.reporter._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_gcs_fallback_with_extension(
     mock_file, mock_upload, mock_get_html_head
@@ -86,8 +86,8 @@ def test_generate_html_report_gcs_fallback_with_extension(
     mock_file.assert_called_once_with("fail_report.html", "w")
 
 
-@patch("cxas_scrapi.utils.reporting._get_html_head")
-@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("cxas_scrapi.reporting.reporter._get_html_head")
+@patch("cxas_scrapi.reporting.reporter._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_gcs_fallback_no_extension(
     mock_file, mock_upload, mock_get_html_head
@@ -103,8 +103,8 @@ def test_generate_html_report_gcs_fallback_no_extension(
     mock_file.assert_called_once_with("report_fallback.html", "w")
 
 
-@patch("cxas_scrapi.utils.reporting._get_html_head")
-@patch("cxas_scrapi.utils.reporting.tools.Tools")
+@patch("cxas_scrapi.reporting.reporter._get_html_head")
+@patch("cxas_scrapi.reporting.reporter.tools.Tools")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_tools_failure(
     mock_file, mock_tools_cls, mock_get_html_head
@@ -123,7 +123,7 @@ def test_generate_html_report_tools_failure(
     mock_file.assert_called_once_with("local.html", "w")
 
 
-@patch("cxas_scrapi.utils.reporting._get_html_head")
+@patch("cxas_scrapi.reporting.reporter._get_html_head")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_local(mock_file, mock_get_html_head):
     mock_get_html_head.return_value = "<html><head></head><body>"
@@ -288,7 +288,7 @@ def test_generate_combined_html_report(tmp_path):
         assert "test_callback" in content
 
 
-@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("cxas_scrapi.reporting.reporter._upload_to_gcs")
 def test_generate_combined_html_report_gcs_success(mock_upload):
     mock_upload.return_value = "https://url"
 
@@ -483,7 +483,7 @@ def test_run_all_evals_substring_filtering(
 @patch("os.path.exists")
 @patch("os.path.isdir")
 @patch("cxas_scrapi.evals.runner.RunEvaluationOperationMetadata")
-@patch("cxas_scrapi.utils.reporting.load_golden_results")
+@patch("cxas_scrapi.reporting.reporter.load_golden_results")
 @patch("yaml.safe_load")
 @patch("builtins.open", new_callable=mock_open)
 def test_run_all_evals_tag_filtering(

@@ -1,0 +1,1687 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Utility functions for generating reports."""
+
+import datetime
+import glob
+import json
+import os
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+import jinja2
+import pandas as pd
+import yaml
+
+from cxas_scrapi.core import tools
+from cxas_scrapi.evals import runner as evals_runner
+from cxas_scrapi.reporting import (
+    base_components,
+    report_components,
+)
+from cxas_scrapi.utils import (
+    eval_utils,
+    gcs_utils,
+)
+
+
+def _escape(text):
+    """HTML-escape a string."""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _fmt_duration(seconds):
+    """Format duration: seconds if < 60, minutes otherwise."""
+    seconds_per_minute = 60
+    if seconds is None:
+        return ""
+    if seconds >= seconds_per_minute:
+        return f"{seconds / seconds_per_minute:.1f}m"
+    return f"{seconds:.1f}s"
+
+
+def _resolve_tool_name(raw_name, tools_map):
+    """Resolve a full resource path to a display name."""
+    if not raw_name:
+        return raw_name
+    # Check reverse map (resource path → display name)
+    if raw_name in tools_map:
+        return tools_map[raw_name]
+    # Try matching by tool ID (last segment)
+    tool_id = raw_name.split("/")[-1] if "/" in raw_name else raw_name
+    for path, display in tools_map.items():
+        if path.endswith(f"/{tool_id}"):
+            return display
+    # Fallback: just use last segment
+    return tool_id if "/" in raw_name else raw_name
+
+
+def _format_trace_line(line, tools_map):
+    """Format a trace line, resolving tool IDs to display names."""
+    if "Tool Call:" in line or "Tool Response:" in line:
+        # Replace resource paths with display names
+        for path, display in tools_map.items():
+            line = line.replace(path, display)
+    return line
+
+
+def _get_html_head(ts):
+    """Return the HTML head with CSS and JS."""
+    css_path = os.path.join(
+        os.path.dirname(__file__), "../resources/components/base/base.css"
+    )
+    js_path = os.path.join(
+        os.path.dirname(__file__), "../resources/components/base/interaction.js"
+    )
+    with open(css_path, encoding="utf-8") as f:
+        css = f.read()
+    with open(js_path, encoding="utf-8") as f:
+        js = f.read()
+    return f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Simulation Report - {ts}</title>
+<style>
+{css}
+</style>
+<script>
+{js}
+</script>
+</head><body>
+"""
+
+
+def _get_summary_block(
+    passed, total, errors, modality, model, ts, wall_clock_s
+):
+    """Return the HTML summary block."""
+    pct = 100 * passed / total if total else 0
+    pass_threshold = 90
+    cls = "pass" if pct >= pass_threshold else "fail"
+    return f"""<h1>Simulation Eval Report</h1>
+<div class="summary">
+  <div class="big {cls}">{pct:.1f}%</div>
+  <div>{passed}/{total} passed | {errors} errors |
+    {modality} | model: {model}</div>
+  <div class="meta">Generated {ts}
+    {f" | Runtime: {_fmt_duration(wall_clock_s)}" if wall_clock_s else ""}</div>
+</div>
+"""
+
+
+def _get_results_table(eval_stats):
+    """Return the HTML results table."""
+    html = """
+<h2>Results by Eval</h2>
+<table>
+  <tr><th>Score</th><th>Eval</th><th>Runs</th></tr>
+"""
+    for name, s in sorted(
+        eval_stats.items(), key=lambda x: x[1]["pass"] / max(x[1]["total"], 1)
+    ):
+        score = f"{s['pass']}/{s['total']}"
+        cls = "pass" if s["pass"] == s["total"] else "fail"
+        dots = ""
+        for i, r in enumerate(s["runs"]):
+            dot_cls = "p" if r.get("passed") else ("e" if "error" in r else "f")
+            safe_name = name.replace("'", "\\'")
+            dots += (
+                f'<span class="run-dot {dot_cls}" title="Run {r["run"]}" '
+                f"onclick=\"jumpToRun('{safe_name}', {i})\"></span>"
+            )
+        html += (
+            f'  <tr><td class="{cls}"><b>{score}</b></td>'
+            f"<td>{_escape(name)}</td><td>{dots}</td></tr>\n"
+        )
+    html += "</table>\n"
+    return html
+
+
+def _render_session_link(session_id, ces_base):
+    """Render the session link."""
+    if not session_id:
+        return ""
+    if ces_base:
+        session_url = (
+            f"{ces_base}?panel=conversation_list&id={session_id}&source=EVAL"
+        )
+        return (
+            '<div class="session-link">Session: '
+            f'<a href="{session_url}" target="_blank">'
+            f"<code>{session_id}</code></a></div>\n"
+        )
+    return (
+        f'<div class="session-link">Session: <code>{session_id}</code></div>\n'
+    )
+
+
+def _render_session_parameters(sparams):
+    """Render session parameters."""
+    if not sparams:
+        return ""
+    html = (
+        '<details class="tool-details"><summary class="tool-summary">'
+        "&#9881; <b>Session Parameters</b></summary>"
+    )
+    html += (
+        '<pre class="tool-data">'
+        f"{_escape(json.dumps(sparams, indent=2))}</pre></details>\n"
+    )
+    return html
+
+
+def _render_step_details(step_details):
+    """Render step details."""
+    if not step_details:
+        return ""
+    html = ""
+    for step in step_details:
+        step_cls = "pass" if step["status"] == "Completed" else "fail"
+        html += (
+            f'<div class="step"><b>Goal:</b> {_escape(step["goal"])}<br>'
+            f"<b>Criteria:</b> {_escape(step['success_criteria'])}<br>"
+        )
+        badge_cls = step_cls.replace("pass", "met").replace("fail", "not-met")
+        html += (
+            f'<b>Status:</b> <span class="badge {badge_cls}">'
+            f"{_escape(step['status'])}</span><br>"
+        )
+        if step.get("justification"):
+            html += f"<b>Justification:</b> {_escape(step['justification'])}"
+        html += "</div>\n"
+    return html
+
+
+def _render_expectation_details(expectation_details):
+    """Render expectation details."""
+    if not expectation_details:
+        return ""
+    html = ""
+    for exp in expectation_details:
+        exp_cls = "met" if exp["status"] == "Met" else "not-met"
+        html += f'<div class="expectation"><span class="badge {exp_cls}">'
+        html += f"{_escape(exp['status'])}</span> {_escape(exp['expectation'])}"
+        if exp.get("justification"):
+            html += (
+                f'<br><span class="meta">{_escape(exp["justification"])}</span>'
+            )
+        html += "</div>\n"
+    return html
+
+
+def _parse_trace(trace, tools_map):
+    """Parse trace lines into typed entries."""
+    parsed_lines = []
+    for entry in trace:
+        for line in entry.split("\n"):
+            stripped_line = line.strip()
+            if not stripped_line:
+                continue
+            formatted_line = _format_trace_line(stripped_line, tools_map)
+            if formatted_line.startswith(
+                "Agent Text (Diag):"
+            ) or formatted_line.startswith("User Query:"):
+                continue
+            elif formatted_line.startswith("Agent Text:"):
+                parsed_lines.append(
+                    ("agent", formatted_line[len("Agent Text:") :].strip())
+                )
+            elif formatted_line.startswith("User:"):
+                parsed_lines.append(("user", formatted_line[5:].strip()))
+            elif formatted_line.startswith("Tool Call"):
+                parsed_lines.append(("tool_call", formatted_line))
+            elif formatted_line.startswith("Tool Response"):
+                parsed_lines.append(("tool_resp", formatted_line))
+            elif formatted_line.startswith("Agent Transfer:"):
+                parsed_lines.append(
+                    (
+                        "agent_transfer",
+                        formatted_line[len("Agent Transfer:") :].strip(),
+                    )
+                )
+            elif formatted_line.startswith("Custom Payload:"):
+                parsed_lines.append(
+                    (
+                        "custom_payload",
+                        formatted_line[len("Custom Payload:") :].strip(),
+                    )
+                )
+            else:
+                parsed_lines.append(("system", formatted_line))
+    return parsed_lines
+
+
+def _merge_trace_lines(parsed_lines):
+    """Merge consecutive agent lines and pair tool calls with responses."""
+    merged = []
+    for kind, text in parsed_lines:
+        if kind == "agent" and merged and merged[-1][0] == "agent":
+            merged[-1] = ("agent", merged[-1][1] + " " + text)
+        elif kind == "tool_resp" and merged and merged[-1][0] == "tool_call":
+            merged[-1] = ("tool_pair", merged[-1][1], text)
+        else:
+            merged.append((kind, text))
+    return merged
+
+
+def _render_merged_items(merged):
+    """Render merged trace items to HTML."""
+    html = ""
+    for item in merged:
+        kind = item[0]
+        if kind == "user":
+            html += f'<div class="user"><b>User:</b> {_escape(item[1])}</div>\n'
+        elif kind == "agent":
+            html += (
+                f'<div class="agent"><b>Agent:</b> {_escape(item[1])}</div>\n'
+            )
+        elif kind in ("tool_call", "tool_pair"):
+            call_text = item[1]
+            lbl, _, args = call_text.partition(" with args ")
+            lbl = lbl.replace("Tool Call: ", "").replace(
+                "Tool Call (Output): ", ""
+            )
+            lbl = lbl.split("/")[-1] if "/" in lbl else lbl
+            html += (
+                '<details class="tool-details"><summary class="tool-summary">'
+                f"&#128295; <b>{_escape(lbl)}</b></summary>"
+            )
+            if args:
+                html += (
+                    '<div class="tool-section"><b>Input:</b></div>'
+                    f'<pre class="tool-data">{_escape(args)}</pre>'
+                )
+            if kind == "tool_pair":
+                _, _, result = item[2].partition(" with result ")
+                if result:
+                    html += (
+                        '<div class="tool-section"><b>Output:</b></div>'
+                        f'<pre class="tool-data">{_escape(result)}</pre>'
+                    )
+            html += "</details>\n"
+        elif kind == "tool_resp":
+            lbl, _, result = item[1].partition(" with result ")
+            lbl = lbl.replace("Tool Response: ", "").split("/")[-1]
+            html += (
+                '<details class="tool-details"><summary class="tool-summary">'
+                f"&#128228; <b>{_escape(lbl)}</b> response</summary>"
+            )
+            if result:
+                html += f'<pre class="tool-data">{_escape(result)}</pre>'
+            html += "</details>\n"
+        elif kind == "agent_transfer":
+            html += (
+                '<div class="system">&#128256; <b>Agent Transfer:</b>'
+                f" {_escape(item[1])}</div>\n"
+            )
+        elif kind == "custom_payload":
+            html += (
+                '<details class="tool-details">'
+                '<summary class="tool-summary">'
+                "&#128230; <b>Custom Payload</b></summary>"
+                f'<pre class="tool-data">{_escape(item[1])}</pre>'
+                "</details>\n"
+            )
+        else:
+            html += f'<div class="system">{_escape(item[1])}</div>\n'
+    return html
+
+
+def _render_trace(trace, tools_map, turns):
+    """Render the conversation trace."""
+    if not trace:
+        return ""
+    html = (
+        f"<details open><summary>Conversation Trace "
+        f"({turns} turns)</summary>\n"
+        f'<div class="transcript">\n'
+    )
+
+    parsed_lines = _parse_trace(trace, tools_map)
+
+    merged = _merge_trace_lines(parsed_lines)
+
+    html += _render_merged_items(merged)
+
+    html += "</div>\n</details>\n"
+    return html
+
+
+def _get_run_detail(r, ces_base, tools_map):
+    """Return the HTML for a single run detail."""
+    html = ""
+    run_cls = "pass" if r.get("passed") else "fail"
+    session_id = r.get("session_id", "")
+    html += '<details class="run-detail">\n'
+    html += (
+        f"<summary>Run {r['run']} — "
+        f'<span class="{run_cls}">'
+        f"{'PASS' if r.get('passed') else 'FAIL'}</span>"
+    )
+    html += (
+        f" | goals: {r.get('goals', '?')} | "
+        f"expectations: {r.get('expectations', '?')} | "
+        f"turns: {r.get('turns', '?')}</summary>\n"
+    )
+
+    html += _render_session_link(session_id, ces_base)
+
+    sparams = r.get("session_parameters", {})
+    html += _render_session_parameters(sparams)
+
+    if "error" in r:
+        html += (
+            f'<div class="expectation"><b>Error:</b> '
+            f"{_escape(r['error'])}</div>\n"
+        )
+    else:
+        html += _render_step_details(r.get("step_details", []))
+
+        html += _render_expectation_details(r.get("expectation_details", []))
+
+        html += _render_trace(
+            r.get("detailed_trace", []), tools_map, r.get("turns", "?")
+        )
+
+    html += "</details>\n"
+    return html
+
+
+def _upload_to_gcs(output_path: str, html_content: str) -> str | None:
+    """Uploads the report to GCS and returns the mTLS URL or None on failure."""
+    try:
+        gcs = gcs_utils.GCSUtils()
+        mtls_url = gcs.upload_string(output_path, html_content)
+        print(f"Report uploaded to GCS: {output_path}")
+        print(f"Authenticated URL: {mtls_url}")
+        return mtls_url
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"WARNING: GCS upload failed ({e}). Falling back to local file.")
+        return None
+
+
+def generate_html_report(
+    results: list[dict[str, Any]],
+    output_path: str,
+    modality: str,
+    model: str,
+    app_name: str = "",
+    wall_clock_s: float | None = None,
+    user_agent_extension: str | None = None,
+) -> None:
+    """Generate an HTML report and save it locally or upload to GCS.
+
+    If output_path starts with 'gs://', the report is uploaded to GCS.
+    If the upload fails, it falls back to saving a local file.
+
+    Args:
+      results: The list of evaluation result dicts.
+      output_path: The local or GCS file path to write the HTML report to.
+      modality: The modality used for the evaluation (e.g., 'text').
+      model: The model name used for the evaluation.
+      app_name: The CX Agent Studio (CXAS) agent resource name.
+      wall_clock_s: Total elapsed execution time in seconds.
+      user_agent_extension: Optional user agent extension string.
+    """
+    total = len(results)
+    passed = sum(1 for r in results if r.get("passed"))
+    errors = sum(1 for r in results if "error" in r)
+
+    eval_stats = {}
+    for r in results:
+        n = r["name"]
+        if n not in eval_stats:
+            eval_stats[n] = {"pass": 0, "total": 0, "runs": []}
+        eval_stats[n]["total"] += 1
+        if r.get("passed"):
+            eval_stats[n]["pass"] += 1
+        eval_stats[n]["runs"].append(r)
+
+    tools_map = {}
+    if app_name:
+        try:
+            tools_map = tools.Tools(
+                app_name=app_name, user_agent_extension=user_agent_extension
+            ).get_tools_map()
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+    parts = app_name.split("/") if app_name else []
+    project_id_idx = 1
+    location_idx = 3
+    app_id_idx = 5
+    project_id = parts[project_id_idx] if len(parts) > project_id_idx else ""
+    location = parts[location_idx] if len(parts) > location_idx else ""
+    app_id = parts[app_id_idx] if len(parts) > app_id_idx else ""
+    ces_base = (
+        f"https://ces.cloud.google.com/projects/{project_id}/locations/{location}/apps/{app_id}"
+        if app_id
+        else ""
+    )
+
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    html = _get_html_head(ts)
+    html += _get_summary_block(
+        passed, total, errors, modality, model, ts, wall_clock_s
+    )
+
+    html += _get_results_table(eval_stats)
+    html += "\n<h2>Eval Details</h2>\n"
+
+    for name, s in sorted(
+        eval_stats.items(), key=lambda x: x[1]["pass"] / max(x[1]["total"], 1)
+    ):
+        score = f"{s['pass']}/{s['total']}"
+        cls = "pass-bg" if s["pass"] == s["total"] else "fail-bg"
+        html += f'<div class="eval-card" id="eval-{name}">\n'
+        html += (
+            f'<div class="eval-header {cls}">{_escape(name)} '
+            f"<span>{score}</span></div>\n"
+        )
+        html += '<div class="eval-body">\n'
+
+        for r in s["runs"]:
+            html += _get_run_detail(r, ces_base, tools_map)
+        html += "</div></div>\n"
+
+    html += "</body></html>"
+
+    if output_path.startswith("gs://"):
+        mtls_url = _upload_to_gcs(output_path, html)
+        if mtls_url:
+            return
+
+        # Fallback to local file if upload failed
+        filename = output_path.rsplit("/", maxsplit=1)[-1]
+        if not filename.endswith(".html"):
+            filename = "report_fallback.html"
+        output_path = filename
+
+    with open(output_path, "w") as f:
+        f.write(html)
+    print(f"Report saved locally to: {output_path}")
+
+
+def generate_combined_html_report(
+    golden_results: list[dict[str, Any]] | None = None,
+    sim_results: list[dict[str, Any]] | None = None,
+    tool_results: list[dict[str, Any]] | None = None,
+    callback_results: list[dict[str, Any]] | None = None,
+    output_path: str = "",
+    app_name: str = "",
+    golden_modality: str = "text",
+    sim_modality: str = "text",
+    sim_wall_clock_s: float | None = None,
+    user_agent_extension: str | None = None,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
+) -> str:
+    """Generate combined HTML report based on results from multiple sources.
+
+    Args:
+      golden_results: The list of golden evaluation results.
+      sim_results: The list of simulation evaluation results.
+      tool_results: The list of tool evaluation results.
+      callback_results: The list of callback evaluation results.
+      output_path: The path to save the HTML report (local or GCS).
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      golden_modality: The modality used for the golden evaluations.
+      sim_modality: The modality used for the simulation evaluations.
+      sim_wall_clock_s: Total elapsed execution time for simulations in seconds.
+      user_agent_extension: Optional user agent extension string.
+      bg_noise_file: Path to background noise audio file to play during
+        replay.
+      burst_noise_files: List of paths to burst noise audio files injected
+        during replay.
+
+    Returns:
+      The rendered HTML report markup string.
+    """
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    g_total = len(golden_results) if golden_results else 0
+    g_passed = (
+        sum(1 for r in golden_results if r.get("passed"))
+        if golden_results
+        else 0
+    )
+    s_total = len(sim_results) if sim_results else 0
+    s_passed = (
+        sum(1 for r in sim_results if r.get("passed")) if sim_results else 0
+    )
+    t_total = len(tool_results) if tool_results else 0
+    t_passed = (
+        sum(1 for r in tool_results if r.get("passed")) if tool_results else 0
+    )
+    c_total = len(callback_results) if callback_results else 0
+    c_passed = (
+        sum(1 for r in callback_results if r.get("passed"))
+        if callback_results
+        else 0
+    )
+    total = g_total + s_total + t_total + c_total
+    passed = g_passed + s_passed + t_passed + c_passed
+    pct = 100 * passed / total if total else 0
+
+    unified = []
+    if golden_results:
+        for r in golden_results:
+            scores = [
+                t["semantic_score"]
+                for t in r.get("turns", [])
+                if t.get("semantic_score") is not None
+            ]
+            avg_sem = sum(scores) / len(scores) if scores else None
+            unified.append(
+                {
+                    "name": r["name"],
+                    "type": "golden",
+                    "passed": r.get("passed", False),
+                    "score": "PASS" if r.get("passed") else "FAIL",
+                    "detail": f"sem {avg_sem:.1f}/4"
+                    if avg_sem is not None
+                    else "",
+                    "runs": 1,
+                }
+            )
+    if sim_results:
+        sim_stats = {}
+        for r in sim_results:
+            n = r["name"]
+            if n not in sim_stats:
+                sim_stats[n] = {"pass": 0, "total": 0, "runs": []}
+            sim_stats[n]["total"] += 1
+            if r.get("passed"):
+                sim_stats[n]["pass"] += 1
+            sim_stats[n]["runs"].append(r)
+        for name, s in sim_stats.items():
+            unified.append(
+                {
+                    "name": name,
+                    "type": "sim",
+                    "passed": s["pass"] == s["total"],
+                    "score": f"{s['pass']}/{s['total']}",
+                    "detail": "",
+                    "runs": s["total"],
+                    "run_results": s["runs"],
+                }
+            )
+
+    if tool_results:
+        for r in tool_results:
+            unified.append(
+                {
+                    "name": r["name"],
+                    "type": "tool",
+                    "passed": r.get("passed", False),
+                    "score": r.get("status", "?"),
+                    "detail": (
+                        f"{r.get('latency_ms', 0):.0f}ms"
+                        if r.get("latency_ms")
+                        else ""
+                    ),
+                    "runs": 1,
+                }
+            )
+
+    if callback_results:
+        for r in callback_results:
+            unified.append(
+                {
+                    "name": r["name"],
+                    "type": "callback",
+                    "passed": r.get("passed", False),
+                    "score": r.get("status", "?"),
+                    "detail": r.get("callback_type", ""),
+                    "runs": 1,
+                }
+            )
+
+    unified.sort(key=lambda x: (x["passed"], x["name"]))
+
+    parts = app_name.split("/") if app_name else []
+    project_id = parts[1] if len(parts) > 1 else ""
+    location = parts[3] if len(parts) > 3 else ""
+    app_id = parts[5] if len(parts) > 5 else ""
+    ces_base = (
+        f"https://ces.cloud.google.com/projects/{project_id}/locations/{location}/apps/{app_id}"
+        if app_id
+        else ""
+    )
+
+    # Compute summary cards data
+    g_duration = (
+        sum(r.get("duration_s", 0) or 0 for r in golden_results)
+        if golden_results
+        else 0
+    )
+    s_dur = (
+        sum(r.get("duration_s", 0) or 0 for r in sim_results)
+        if sim_results
+        else 0
+    )
+
+    # --- FAILURE GROUPING ---
+    failure_groups = {}
+
+    # Collect golden failures
+    if golden_results:
+        for r in golden_results:
+            if r.get("passed"):
+                continue
+            for turn in r.get("turns", []):
+                for comp in turn.get("comparisons", []):
+                    if comp.get("outcome") == "FAIL":
+                        ctype = comp.get("type", "?")
+                        expected = str(comp.get("expected", ""))[:60]
+                        actual = str(comp.get("actual", ""))[:60]
+                        if ctype == "transfer":
+                            if actual == "(missed)":
+                                reason = (
+                                    "Routing missed: expected transfer to"
+                                    f" {expected}"
+                                )
+                            else:
+                                reason = (
+                                    f"Wrong routing: expected {expected},"
+                                    f" got {actual}"
+                                )
+                        elif ctype == "tool_call" and actual == "(missed)":
+                            if expected:
+                                reason = f"Tool not called: {expected}"
+                            else:
+                                continue
+                        elif ctype == "tool_call" and expected != actual:
+                            reason = (
+                                f"Wrong tool: expected {expected}, got {actual}"
+                            )
+                        elif ctype == "text":
+                            reason = "Semantic similarity too low"
+                        else:
+                            continue
+                        failure_groups.setdefault(reason, set()).add(
+                            ("golden", r["name"])
+                        )
+            for exp in r.get("expectations", []):
+                if exp.get("status") == "Not Met":
+                    reason = str(exp.get("expectation", ""))[:80]
+                    failure_groups.setdefault(
+                        f"Expectation not met: {reason}", set()
+                    ).add(("golden", r["name"]))
+
+    # Collect sim failures
+    if sim_results:
+        for r in sim_results:
+            if r.get("passed"):
+                continue
+            for step in r.get("step_details", []):
+                if step.get("status") != "Completed":
+                    reason = f"Goal not completed: {step.get('goal', '')[:60]}"
+                    failure_groups.setdefault(reason, set()).add(
+                        ("sim", r["name"])
+                    )
+            for exp in r.get("expectation_details", []):
+                if exp.get("status") == "Not Met":
+                    reason = (
+                        "Expectation not met: "
+                        f"{exp.get('expectation', '')[:60]}"
+                    )
+                    failure_groups.setdefault(reason, set()).add(
+                        ("sim", r["name"])
+                    )
+
+    # Collect tool test failures
+    if tool_results:
+        for r in tool_results:
+            if r.get("passed"):
+                continue
+            errors = str(r.get("errors", ""))
+            if (
+                "operator='Operator.CONTAINS'" in errors
+                and "expected='PASSED'" in errors
+            ):
+                reason = (
+                    "Default expectation: $.result contains PASSED "
+                    "(needs customization)"
+                )
+            elif "operator='Operator" in errors:
+                reason = (
+                    errors.split(",", maxsplit=1)[0][:80]
+                    if "," in errors
+                    else errors[:80]
+                )
+            else:
+                reason = errors[:80]
+            failure_groups.setdefault(reason, set()).add(("tool", r["name"]))
+
+    # Collect callback failures
+    if callback_results:
+        for r in callback_results:
+            if r.get("passed"):
+                continue
+            reason = str(r.get("error", "Unknown error"))[:80]
+            failure_groups.setdefault(f"Callback: {reason}", set()).add(
+                ("callback", r["name"])
+            )
+
+    # Prepare tools map for template if needed
+    tools_map = {}
+    if app_name:
+        try:
+            tools_map = tools.Tools(
+                app_name=app_name, user_agent_extension=user_agent_extension
+            ).get_tools_map()
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+    # Process traces for simulation results to simplify template
+    if sim_results:
+        for r in sim_results:
+            trace = r.get("detailed_trace", [])
+            if trace:
+                parsed = []
+                for entry in trace:
+                    for raw_line in entry.split("\n"):
+                        line = raw_line.strip()
+                        if (
+                            not line
+                            or line.startswith("Agent Text (Diag):")
+                            or line.startswith("User Query:")
+                        ):
+                            continue
+                        for path, dname in tools_map.items():
+                            line = line.replace(path, dname)
+                        if line.startswith("Agent Text:"):
+                            parsed.append(
+                                ("agent", line[len("Agent Text:") :].strip())
+                            )
+                        elif line.startswith("User:"):
+                            parsed.append(("user", line[5:].strip()))
+                        elif line.startswith("Tool Call"):
+                            parsed.append(("tool_call", line))
+                        elif line.startswith("Tool Response"):
+                            parsed.append(("tool_resp", line))
+                        else:
+                            parsed.append(("system", line))
+
+                merged = []
+                for kind, text in parsed:
+                    if kind == "agent" and merged and merged[-1][0] == "agent":
+                        merged[-1] = ("agent", merged[-1][1] + " " + text)
+                    elif (
+                        kind == "tool_resp"
+                        and merged
+                        and merged[-1][0] == "tool_call"
+                    ):
+                        merged[-1] = ("tool_pair", merged[-1][1], text)
+                    else:
+                        merged.append((kind, text))
+                r["_processed_trace"] = merged
+
+    # Compile Tool evaluation table via Python Component
+    if tool_results:
+        t_pct = 100 * t_passed / t_total if t_total else 0
+        t_pct_str = f"{t_pct:.0f}"
+        rows = [
+            report_components.ToolRow(
+                passed_str="true" if r["passed"] else "false",
+                status_class="pass" if r["passed"] else "fail",
+                status=r.get("status", "?"),
+                tool_name=r.get("tool", "?"),
+                test_name=r.get("name", "?"),
+                latency=(
+                    f"{r.get('latency_ms', 0):.0f}ms"
+                    if r.get("latency_ms")
+                    else "-"
+                ),
+                errors=str(r.get("errors", ""))[:100],
+            )
+            for r in sorted(tool_results, key=lambda x: x.get("passed", False))
+        ]
+
+    if tool_results:
+        tool_results_html = report_components.ToolCard(
+            passed=t_passed,
+            total=t_total,
+            pct_str=t_pct_str,
+            tool_rows=base_components.Raw(
+                "\n".join(row.render() for row in rows)
+            ),
+        ).render()
+    else:
+        tool_results_html = ""
+
+    # Compile Callback evaluation table via Python Component
+    if callback_results:
+        c_pct = 100 * c_passed / c_total if c_total else 0
+        c_pct_str = f"{c_pct:.0f}"
+        rows = [
+            report_components.CallbackRow(
+                passed_str="true" if r["passed"] else "false",
+                status_class="pass" if r["passed"] else "fail",
+                status=r.get("status", "?"),
+                agent_name=r.get("agent", "?"),
+                callback_type=r.get("callback_type", "?"),
+                test_name=r.get("name", "?"),
+                error=str(r.get("error", ""))[:100],
+            )
+            for r in sorted(
+                callback_results, key=lambda x: x.get("passed", False)
+            )
+        ]
+
+    if callback_results:
+        callback_results_html = report_components.CallbackCard(
+            passed=c_passed,
+            total=c_total,
+            pct_str=c_pct_str,
+            callback_rows=base_components.Raw(
+                "\n".join(row.render() for row in rows)
+            ),
+        ).render()
+    else:
+        callback_results_html = ""
+
+    f_patterns = report_components.FailurePatterns(
+        failure_groups=failure_groups
+    )
+    failure_patterns_html = f_patterns.render()
+    template_path = os.path.join(
+        os.path.dirname(__file__), "combined_report_template.html"
+    )
+    with open(template_path) as f:
+        template_content = f.read()
+    template = jinja2.Template(template_content)
+    html = template.render(
+        failure_patterns_html=failure_patterns_html,
+        ts=ts,
+        pct=pct,
+        passed=passed,
+        total=total,
+        unified=unified,
+        golden_results=golden_results or [],
+        sim_results=sim_results or [],
+        tool_results=tool_results or [],
+        callback_results=callback_results or [],
+        ces_base=ces_base,
+        golden_modality=golden_modality,
+        sim_modality=sim_modality,
+        sim_wall_clock_s=sim_wall_clock_s,
+        failure_groups=failure_groups,
+        g_passed=g_passed,
+        g_total=g_total,
+        g_duration=g_duration,
+        s_passed=s_passed,
+        s_total=s_total,
+        s_dur=s_dur,
+        t_passed=t_passed,
+        t_total=t_total,
+        c_passed=c_passed,
+        c_total=c_total,
+        _escape=_escape,
+        _fmt_duration=_fmt_duration,
+        json=json,
+        bg_noise_file=(
+            os.path.basename(bg_noise_file) if bg_noise_file else None
+        ),
+        burst_noise_files=burst_noise_files,
+        tool_results_html=tool_results_html,
+        callback_results_html=callback_results_html,
+    )
+
+    # Wrap compiled body dynamically in declarative BaseShell scaffold envelope.
+    report = report_components.BaseShell(
+        title=f"Combined Eval Report - {ts}",
+        body_content=[base_components.Raw(html)],
+    )
+    html_out = report.render()
+
+    if output_path:
+        if output_path.startswith("gs://"):
+            mtls_url = _upload_to_gcs(output_path, html_out)
+            if not mtls_url:
+                # Fallback to local file if upload failed
+                filename = output_path.rsplit("/", maxsplit=1)[-1]
+                if not filename.endswith(".html"):
+                    filename = "report_fallback.html"
+                output_path = filename
+                with open(output_path, "w") as f:
+                    f.write(html_out)
+        else:
+            with open(output_path, "w") as f:
+                f.write(html_out)
+
+    return html_out
+
+
+def _outcome_str(val):
+    if isinstance(val, int):
+        return {0: "UNSPECIFIED", 1: "PASS", 2: "FAIL"}.get(val, f"?{val}")
+    return str(val) if val else "?"
+
+
+def _compile_tool_results_card(
+    *,
+    tool_results: Sequence[Mapping[str, Any]],
+    t_passed: int,
+    t_total: int,
+) -> report_components.ToolCard | str:
+    """Compile the ToolCard component declaratively without premature rendering.
+
+    Args:
+      tool_results: Sequence of raw tool validation outcomes..
+      t_passed: Number of successful tool test cases..
+      t_total: Total number of tool test cases executed..
+
+    Returns:
+      A ToolCard component or empty string if empty.
+    """
+    if not tool_results:
+        return ""
+    t_pct = 100 * t_passed / t_total if t_total else 0
+    rows = (
+        report_components.ToolRow(
+            passed=r["passed"],
+            status_class="pass" if r["passed"] else "fail",
+            status=r.get("status", "?"),
+            tool_name=r.get("tool", "?"),
+            test_name=r.get("name", "?"),
+            latency_ms=r.get("latency_ms"),
+            errors=r.get("errors", "")[:100],
+        )
+        for r in sorted(tool_results, key=lambda x: x.get("passed", False))
+    )
+    return report_components.ToolCard(
+        passed=t_passed,
+        total=t_total,
+        pct_str=f"{t_pct:.0f}",
+        tool_rows=base_components.ComponentGroup(list(rows)),
+    )
+
+
+def _compile_callback_results_card(
+    *,
+    callback_results: Sequence[Mapping[str, Any]],
+    c_passed: int,
+    c_total: int,
+) -> report_components.CallbackCard | str:
+    """Compile the CallbackCard component declaratively without premature
+
+    rendering.
+
+    Args:
+      callback_results: Sequence of raw callback execution outcomes..
+      c_passed: Number of successful callback test cases..
+      c_total: Total number of callback test cases executed..
+
+    Returns:
+      A CallbackCard component or empty string if empty.
+    """
+    if not callback_results:
+        return ""
+    c_pct = 100 * c_passed / c_total if c_total else 0
+    rows = (
+        report_components.CallbackRow(
+            passed=r["passed"],
+            status_class="pass" if r["passed"] else "fail",
+            status=r.get("status", "?"),
+            agent_name=r.get("agent", "?"),
+            callback_type=r.get("callback_type", "?"),
+            test_name=r.get("name", "?"),
+            error=r.get("error", "")[:100],
+        )
+        for r in sorted(callback_results, key=lambda x: x.get("passed", False))
+    )
+    return report_components.CallbackCard(
+        passed=c_passed,
+        total=c_total,
+        pct_str=f"{c_pct:.0f}",
+        callback_rows=base_components.ComponentGroup(list(rows)),
+    )
+
+
+def load_golden_results(
+    run_id: str, app_name: str, include: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """Fetch golden results and parse into report-friendly format.
+
+    Args:
+      run_id: The evaluation run ID to load results for.
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      include: Categories of evaluations to include (e.g. 'goldens',
+        'scenarios').
+
+    Returns:
+      A list of formatted evaluation result dictionaries.
+    """
+    if include is None:
+        include = ["goldens", "scenarios"]
+
+    utils = eval_utils.EvalUtils(app_name=app_name)
+    full_run_id = (
+        run_id
+        if run_id.startswith("projects/")
+        else f"{app_name}/evaluationRuns/{run_id}"
+    )
+
+    raw_results = utils.list_evaluation_results_by_run(full_run_id)
+
+    evals_map = utils.get_evaluations_map(app_name, reverse=False)
+    name_lookup = {}
+    for cat in ["goldens", "scenarios"]:
+        for resource, display in evals_map.get(cat, {}).items():
+            name_lookup[resource] = display
+
+    results = []
+    for r in raw_results:
+        rd = type(r).to_dict(r)
+        result_name = rd.get("name", "")
+        eval_resource = "/".join(result_name.split("/")[:-2])
+
+        is_golden = eval_resource in evals_map.get("goldens", {})
+        is_scenario = eval_resource in evals_map.get("scenarios", {})
+
+        if is_golden and "goldens" not in include:
+            continue
+        if is_scenario and "scenarios" not in include:
+            continue
+
+        display_name = name_lookup.get(
+            eval_resource, eval_resource.split("/")[-1]
+        )
+
+        status_raw = rd.get("evaluation_status", 0)
+        passed = (
+            (status_raw == 1)
+            if isinstance(status_raw, int)
+            else str(status_raw).upper() == "PASS"
+        )
+
+        golden = rd.get("golden_result", {})
+
+        turns = []
+        for i, turn in enumerate(golden.get("turn_replay_results", [])):
+            sem = turn.get("semantic_similarity_result", {})
+            turn_data = {
+                "index": i + 1,
+                "semantic_score": sem.get("score"),
+                "semantic_explanation": sem.get("explanation"),
+                "comparisons": [],
+            }
+            for o in turn.get("expectation_outcome", []):
+                exp = o.get("expectation", {})
+                outcome = _outcome_str(o.get("outcome"))
+                comp = {"outcome": outcome}
+
+                if "agent_response" in exp:
+                    chunks = exp["agent_response"].get("chunks", [])
+                    comp["type"] = "text"
+                    comp["expected"] = (
+                        chunks[0].get("text", "") if chunks else ""
+                    )
+                    obs = o.get("observed_agent_response", {})
+                    comp["actual"] = (
+                        obs.get("chunks", [{}])[0].get("text", "")
+                        if obs
+                        else "(missed)"
+                    )
+                elif "tool_call" in exp:
+                    tc = exp["tool_call"]
+                    comp["type"] = "tool_call"
+                    comp["expected"] = (
+                        tc.get("display_name")
+                        or tc.get("tool", "").split("/")[-1]
+                    )
+                    comp["expected_args"] = tc.get("args", {})
+                    obs = o.get("observed_tool_call", {})
+                    comp["actual"] = (
+                        (
+                            obs.get("display_name")
+                            or obs.get("tool", "").split("/")[-1]
+                        )
+                        if obs
+                        else "(missed)"
+                    )
+                    comp["actual_args"] = obs.get("args", {}) if obs else {}
+                    tir = o.get("toolInvocationResult", {})
+                    comp["tool_invocation_score"] = tir.get(
+                        "parameterCorrectnessScore"
+                    )
+                    comp["tool_invocation_explanation"] = tir.get("explanation")
+                elif "tool_response" in exp:
+                    continue
+                elif "agent_transfer" in exp:
+                    at = exp["agent_transfer"]
+                    comp["type"] = "transfer"
+                    comp["expected"] = at.get(
+                        "display_name",
+                        at.get("target_agent", "").split("/")[-1],
+                    )
+                    obs = o.get("observed_agent_transfer", {})
+                    if obs:
+                        comp["actual"] = obs.get(
+                            "display_name",
+                            obs.get("target_agent", "").split("/")[-1],
+                        )
+                    else:
+                        comp["actual"] = "(missed)"
+                else:
+                    continue
+
+                turn_data["comparisons"].append(comp)
+            turns.append(turn_data)
+
+        expectations = []
+        for ee in golden.get("evaluation_expectation_results", []):
+            result_val = ee.get("outcome", ee.get("result"))
+            exp_text = ee.get("prompt", ee.get("evaluation_expectation", ""))
+            explanation = ee.get("explanation", "")
+            met = (
+                result_val == 1
+                if isinstance(result_val, int)
+                else str(result_val).upper() == "PASS"
+            )
+            expectations.append(
+                {
+                    "expectation": exp_text,
+                    "status": "Met" if met else "Not Met",
+                    "justification": explanation,
+                }
+            )
+
+        session_id = ""
+        if golden.get("turn_replay_results"):
+            conv_path = golden["turn_replay_results"][0].get("conversation", "")
+            if conv_path:
+                # Extract the conversation ID (e.g. "evaluation-xxxx")
+                session_id = conv_path.split("/")[-1]
+
+        session_params = {}
+        # One entry per golden turn: ("text", "...") or ("event", "...")
+        turn_inputs = []
+        try:
+            ev_obj = utils.get_evaluation(eval_resource)
+            evd = type(ev_obj).to_dict(ev_obj)
+            golden_def = evd.get("golden", {})
+            for turn_def in golden_def.get("turns", []):
+                turn_input = None
+                for step in turn_def.get("steps", []):
+                    ui = step.get("user_input", {})
+                    if "variables" in ui:
+                        session_params.update(ui["variables"])
+                    if "text" in ui:
+                        turn_input = ("text", ui["text"])
+                    elif "event" in ui:
+                        turn_input = ("event", str(ui["event"]))
+                if turn_input:
+                    turn_inputs.append(turn_input)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+        for i, turn in enumerate(turns):
+            if i < len(turn_inputs):
+                kind, text = turn_inputs[i]
+                turn["user_input"] = text if kind == "text" else None
+            else:
+                turn["user_input"] = None
+
+        total_latency_s = 0
+        for turn_result in golden.get("turn_replay_results", []):
+            lat = turn_result.get("turn_latency", "")
+            if isinstance(lat, str) and lat.endswith("s"):
+                try:
+                    total_latency_s += float(lat.replace("s", ""))
+                except ValueError:
+                    pass
+            elif isinstance(lat, dict):
+                total_latency_s += lat.get("seconds", 0) + (
+                    lat.get("nanos", 0) / 1e9
+                )
+
+        results.append(
+            {
+                "name": display_name,
+                "passed": passed,
+                "turns": turns,
+                "expectations": expectations,
+                "session_id": session_id,
+                "session_parameters": session_params,
+                "duration_s": (
+                    round(total_latency_s, 1) if total_latency_s > 0 else None
+                ),
+            }
+        )
+
+    return results
+
+
+def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
+    """Loads sim files and merges common params and expectations.
+
+    Args:
+      yaml_path: Path to the YAML test cases file.
+
+    Returns:
+      List of merged evaluation test case dicts.
+    """
+    with open(yaml_path) as f:
+        data = yaml.safe_load(f) or {}
+    if isinstance(data, list):
+        return data
+
+    common_params = data.get("common_session_parameters", {}) or {}
+    common_expectations = data.get("common_expectations", []) or []
+    cases = data.get("evals", [])
+    if not isinstance(cases, list):
+        return []
+
+    merged_cases = []
+    for c in cases:
+        if isinstance(c, dict):
+            case_copy = c.copy()
+            # Merge session parameters
+            case_params = case_copy.get("session_parameters", {}) or {}
+            merged = common_params.copy()
+            merged.update(case_params)
+            case_copy["session_parameters"] = merged
+
+            # Merge expectations
+            case_expectations = case_copy.get("expectations", []) or []
+            case_copy["expectations"] = common_expectations + case_expectations
+
+            merged_cases.append(case_copy)
+    return merged_cases
+
+
+def load_sim_results(json_path: str, sim_evals_yaml: str | None = None):
+    """Load sim results from JSON file.
+
+    Handles both old (list) and new (envelope) formats.
+
+    Args:
+      json_path: The JSON file path containing evaluation results.
+      sim_evals_yaml: Optional path to simulation evals YAML definition file.
+
+    Returns:
+      A tuple containing the list of simulation results and the wall clock time.
+    """
+    with open(json_path) as f:
+        data = json.load(f)
+
+    wall_clock_s = None
+    # New envelope format: {"wall_clock_s": N, "results": [...]}
+    # Old format: [...]
+    if isinstance(data, dict):
+        wall_clock_s = data.get("wall_clock_s")
+        results = data.get("results", [])
+    else:
+        results = data
+
+    # Backfill session_parameters if missing
+    if sim_evals_yaml:
+        try:
+            eval_list = _load_sim_test_cases(sim_evals_yaml)
+            templates = {
+                e["name"]: e
+                for e in eval_list
+                if isinstance(e, dict) and "name" in e
+            }
+            for r in results:
+                if "session_parameters" not in r and r.get("name") in templates:
+                    r["session_parameters"] = templates[r["name"]].get(
+                        "session_parameters", {}
+                    )
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+    return results, wall_clock_s
+
+
+def load_tool_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
+    """Load tool test results from a CSV or JSON file.
+
+    Args:
+      csv_or_json_path: Path to the CSV or JSON tool test results file.
+
+    Returns:
+      A list of formatted tool test result dictionaries.
+    """
+    if csv_or_json_path.endswith(".csv"):
+        df = pd.read_csv(csv_or_json_path)
+    else:
+        df = pd.read_json(csv_or_json_path)
+    results = []
+    for _, row in df.iterrows():
+        results.append(
+            {
+                "name": row.get("test_name", row.get("test", "?")),
+                "tool": row.get("tool", "?"),
+                "passed": row.get("status", "").upper() == "PASSED",
+                "status": row.get("status", "?"),
+                "latency_ms": row.get("latency (ms)", 0),
+                "errors": row.get("errors", ""),
+            }
+        )
+    return results
+
+
+def load_callback_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
+    """Load callback test results from a CSV or JSON file.
+
+    Args:
+      csv_or_json_path: Path to the CSV or JSON callback test results file.
+
+    Returns:
+      A list of formatted callback test result dictionaries.
+    """
+    if csv_or_json_path.endswith(".csv"):
+        df = pd.read_csv(csv_or_json_path)
+    else:
+        df = pd.read_json(csv_or_json_path)
+    results = []
+    for _, row in df.iterrows():
+        results.append(
+            {
+                "name": row.get("test_name", "?"),
+                "agent": row.get("agent_name", "?"),
+                "callback_type": row.get("callback_type", "?"),
+                "passed": row.get("status", "").upper() == "PASSED",
+                "status": row.get("status", "?"),
+                "error": row.get("error_message", ""),
+            }
+        )
+    return results
+
+
+def generate_combined_report_from_dir(
+    output_dir: str,
+    golden_run: str | None = None,
+    app_name: str | None = None,
+    output_path: str | None = None,
+    run: bool = False,
+    app_dir: str | None = None,
+    tool_test_file: str | None = None,
+    goldens_dir: str | None = None,
+    simulation_dir: str | None = None,
+    include: list[str] | None = None,
+    modality: str = "text",
+    runs: int = 1,
+    filter_files: list[str] | None = None,
+    filter_tags: list[str] | None = None,
+    parallel: int = 1,
+    golden_timeout: int = 600,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
+    use_tool_fakes: bool = False,
+) -> str:
+    """Load results from directory and generate combined HTML report.
+
+    Args:
+      output_dir: Directory containing the evaluation results.
+      golden_run: The golden evaluation run ID.
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      output_path: Optional GCS or local path to write the HTML report to.
+      run: If True, triggers execution of evals before compiling report.
+      app_dir: Directory containing CX Agent Studio (CXAS) agent code.
+      tool_test_file: Path to tool tests definition file.
+      goldens_dir: Directory containing golden test cases.
+      simulation_dir: Directory containing simulation test cases.
+      include: List of evaluation types to include ('sims', 'goldens', etc).
+      modality: The modality used for the evaluation (e.g., 'text').
+      runs: Number of simulation runs.
+      filter_files: List of specific files to filter evaluations by.
+      filter_tags: List of specific tags to filter evaluations by.
+      parallel: Degree of parallelism for the runs.
+      golden_timeout: Golden run execution timeout in seconds.
+      bg_noise_file: Path to background noise audio file to play during
+        replay.
+      burst_noise_files: List of paths to burst noise audio files injected
+        during replay.
+      use_tool_fakes: Use fake tools for the session if available.
+
+    Returns:
+      The rendered combined HTML report string.
+    """
+    if not os.path.isdir(output_dir):
+        raise ValueError(f"{output_dir} is not a directory.")
+
+    if include is None or "all" in include:
+        include = ["sims", "goldens", "tools", "callbacks"]
+
+    sim_results = []
+    tool_results = []
+    callback_results = []
+    golden_results = []
+
+    if run:
+        run_results = run_all_evals(
+            app_name=app_name,
+            app_dir=app_dir,
+            tool_test_file=tool_test_file,
+            goldens_dir=goldens_dir,
+            simulation_dir=simulation_dir,
+            output_dir=output_dir,
+            modality=modality,
+            runs=runs,
+            filter_files=filter_files,
+            filter_tags=filter_tags,
+            parallel=parallel,
+            golden_timeout=golden_timeout,
+            include=include,
+            bg_noise_file=bg_noise_file,
+            burst_noise_files=burst_noise_files,
+            use_tool_fakes=use_tool_fakes,
+        )
+        sim_results = run_results["simulation"] if "sims" in include else []
+        # Map tool results to expected format if needed
+        if "tools" in include:
+            for r in run_results["tool"]:
+                tool_results.append(
+                    {
+                        "name": r.get("test_name", r.get("test", "?")),
+                        "tool": r.get("tool", "?"),
+                        "passed": r.get("status", "").upper()
+                        in ("PASSED", "PASS"),
+                        "status": r.get("status", "?"),
+                        "latency_ms": r.get("latency (ms)", 0),
+                        "errors": r.get("errors", ""),
+                    }
+                )
+        # Map callback results
+        if "callbacks" in include:
+            for r in run_results["callback"]:
+                callback_results.append(
+                    {
+                        "name": r.get("test_name", "?"),
+                        "agent": r.get("agent_name", "?"),
+                        "callback_type": r.get("callback_type", "?"),
+                        "passed": r.get("status", "").upper()
+                        in ("PASSED", "PASS"),
+                        "status": r.get("status", "?"),
+                        "error": r.get("error_message", ""),
+                    }
+                )
+        golden_results = run_results["golden"] if "goldens" in include else []
+    else:
+        sim_files = []
+        if "sims" in include:
+            sim_files = glob.glob(os.path.join(output_dir, "sim_results*.json"))
+
+        tool_files = []
+        callback_files = []
+        if "tools" in include:
+            tool_files = glob.glob(
+                os.path.join(output_dir, "tool_results*.csv")
+            )
+            tool_files.extend(
+                glob.glob(os.path.join(output_dir, "tool_results*.json"))
+            )
+        if "callbacks" in include:
+            callback_files = glob.glob(
+                os.path.join(output_dir, "callback_results*.csv")
+            )
+            callback_files.extend(
+                glob.glob(os.path.join(output_dir, "callback_results*.json"))
+            )
+
+        if sim_files:
+            with open(sim_files[0]) as f:
+                data = json.load(f)
+                # New envelope format: {"wall_clock_s": N, "results": [...]}
+                # Old format: [...]
+                if isinstance(data, dict):
+                    sim_results = data.get("results", [])
+                else:
+                    sim_results = data
+            print(f"Loaded {len(sim_results)} sim results from {sim_files[0]}")
+
+        if tool_files:
+            tf = tool_files[0]
+            if tf.endswith(".csv"):
+                df = pd.read_csv(tf)
+            else:
+                df = pd.read_json(tf)
+            for _, row in df.iterrows():
+                tool_results.append(
+                    {
+                        "name": row.get("test_name", row.get("test", "?")),
+                        "tool": row.get("tool", "?"),
+                        "passed": row.get("status", "").upper()
+                        in ("PASSED", "PASS"),
+                        "status": row.get("status", "?"),
+                        "latency_ms": row.get("latency (ms)", 0),
+                        "errors": row.get("errors", ""),
+                    }
+                )
+            print(f"Loaded {len(tool_results)} tool results from {tf}")
+
+        if callback_files:
+            cf = callback_files[0]
+            if cf.endswith(".csv"):
+                df = pd.read_csv(cf)
+            else:
+                df = pd.read_json(cf)
+            for _, row in df.iterrows():
+                callback_results.append(
+                    {
+                        "name": row.get("test_name", "?"),
+                        "agent": row.get("agent_name", "?"),
+                        "callback_type": row.get("callback_type", "?"),
+                        "passed": row.get("status", "").upper()
+                        in ("PASSED", "PASS"),
+                        "status": row.get("status", "?"),
+                        "error": row.get("error_message", ""),
+                    }
+                )
+            print(f"Loaded {len(callback_results)} callback results from {cf}")
+
+        if golden_run:
+            if not app_name:
+                raise ValueError(
+                    "--app-name is required when golden_run is specified."
+                )
+            golden_results = load_golden_results(
+                golden_run, app_name, include=include
+            )
+
+    if not output_path:
+        output_path = os.path.join(output_dir, "combined_report.html")
+
+    return generate_combined_html_report(
+        golden_results=golden_results,
+        sim_results=sim_results,
+        tool_results=tool_results,
+        callback_results=callback_results,
+        output_path=output_path,
+        app_name=app_name or "",
+        golden_modality=modality,
+        sim_modality=modality,
+        bg_noise_file=bg_noise_file,
+        burst_noise_files=burst_noise_files,
+    )
+
+
+def run_all_evals(
+    app_name: str,
+    app_dir: str | None = None,
+    tool_test_file: str | None = None,
+    goldens_dir: str | None = None,
+    simulation_dir: str | None = None,
+    output_dir: str | None = None,
+    modality: str = "text",
+    runs: int = 1,
+    filter_files: list[str] | None = None,
+    filter_tags: list[str] | None = None,
+    parallel: int = 1,
+    golden_timeout: int = 600,
+    include: list[str] | None = None,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
+    use_tool_fakes: bool = False,
+) -> dict[str, Any]:
+    """Runs all 4 types of evaluations and returns aggregated results.
+
+    Deprecated legacy wrapper. Use
+    `cxas_scrapi.evals.runner.run_all_evals` directly.
+
+    Args:
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      app_dir: Directory containing CX Agent Studio (CXAS) agent code.
+      tool_test_file: Path to tool tests definition file.
+      goldens_dir: Directory containing golden test cases.
+      simulation_dir: Directory containing simulation test cases.
+      output_dir: Directory to write output evaluation results.
+      modality: The modality used for the evaluation (e.g., 'text').
+      runs: Number of simulation runs.
+      filter_files: List of specific files to filter evaluations by.
+      filter_tags: List of specific tags to filter evaluations by.
+      parallel: Degree of parallelism for the runs.
+      golden_timeout: Golden run execution timeout in seconds.
+      include: List of evaluation types to include.
+      bg_noise_file: Path to background noise audio file to play during
+        replay.
+      burst_noise_files: List of paths to burst noise audio files injected
+        during replay.
+      use_tool_fakes: Use fake tools for the session if available.
+
+    Returns:
+      A dict containing lists of results for 'simulation', 'golden', 'tool', and
+      'callback'.
+    """
+    return evals_runner.run_all_evals(
+        app_name=app_name,
+        modality=modality,
+        runs=runs,
+        goldens_dir=goldens_dir,
+        tool_test_file=tool_test_file,
+        simulation_dir=simulation_dir,
+        app_dir=app_dir,
+        output_dir=output_dir,
+        filter_files=filter_files,
+        filter_tags=filter_tags,
+        parallel=parallel,
+        golden_timeout=golden_timeout,
+        include=include,
+        bg_noise_file=bg_noise_file,
+        burst_noise_files=burst_noise_files,
+        use_tool_fakes=use_tool_fakes,
+    )

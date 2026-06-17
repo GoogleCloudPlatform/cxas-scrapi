@@ -53,7 +53,7 @@ def run_all_evals(
     This high-level orchestration function decouples execution logic from pure
     HTML report generation.
     """
-    from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
+    from cxas_scrapi.reporting.reporter import (  # noqa: PLC0415
         _load_sim_test_cases,
         load_golden_results,
     )

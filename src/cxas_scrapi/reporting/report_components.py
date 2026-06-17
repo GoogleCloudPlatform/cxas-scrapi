@@ -19,7 +19,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 
-from cxas_scrapi.utils import base_components
+from cxas_scrapi.reporting import base_components
 
 
 class BaseShell(base_components.Component):
