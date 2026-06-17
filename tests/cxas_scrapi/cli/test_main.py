@@ -273,7 +273,7 @@ def test_get_parser_run_session_use_tool_fakes():
     assert args.use_tool_fakes is True
 
 
-@mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
 def test_deployments_create_with_split(mock_deps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app",
@@ -298,7 +298,7 @@ def test_deployments_create_with_split(mock_deps_cls):
     )
 
 
-@mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
 def test_deployments_promote_with_split(mock_deps_cls):
     args = argparse.Namespace(
         app_resource_name=None,
@@ -325,8 +325,8 @@ def test_deployments_promote_with_split(mock_deps_cls):
     )
 
 
-@mock.patch("cxas_scrapi.cli.main.Evaluations", autospec=True)
-@mock.patch("cxas_scrapi.cli.main.EvalUtils", autospec=True)
+@mock.patch("cxas_scrapi.core.evaluations.Evaluations", autospec=True)
+@mock.patch("cxas_scrapi.utils.eval_utils.EvalUtils", autospec=True)
 def test_run_eval_modality(mock_eval_utils_cls, mock_eval_cls):
     """Test that run_eval forwards the modality argument to run_evaluation."""
     args = argparse.Namespace(
