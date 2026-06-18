@@ -340,9 +340,7 @@ class MigrationService:
         )
 
         # --- Variable dedup (in-memory; deploy happens in step 9) -----------
-        optimizer = await stage_runner.run_stage_with_redeploy(
-            self, stage=1, console=console, deploy=False
-        )
+        optimizer = await stage_runner.run_stage_1(self.ir, gemini, console)
         stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage_1")
         self._analysis_checkpoint(
             "stage_1_dedup",
@@ -912,6 +910,7 @@ class MigrationService:
         )
 
         logger.info(f"Starting Hybrid Migration for: {config.target_name}")
+        self.config = config
 
         # --- 1. Populate IR Metadata & Predictable IDs ---
         target_app_uuid = str(uuid.uuid4())
@@ -1320,6 +1319,12 @@ class MigrationService:
                 "MIGRATION STAGE COMPLETE, ENTERING OPTIMIZATION PHASE..."
             )
         else:
+            logger.info(
+                "Pushing all resources to CXAS (no-consolidation path)..."
+            )
+            await self._deploy_base_resources(is_update_pass=True)
+            await self._deploy_pending_agents()
+
             logger.info("\n" + "=" * 50)
             logger.info("MIGRATION COMPLETE!")
             app_url = f"https://ces.cloud.google.com/projects/{self.project_id}/locations/{self.location}/apps/{self.ir.metadata.app_id}"
@@ -2534,7 +2539,7 @@ class MigrationService:
                 )
                 if matched_tool:
                     if (
-                        matched_tool.type == "TOOL"
+                        matched_tool.type in ("TOOL", "PYTHON")
                         and matched_tool.name
                         not in self.ir.agents[flow_name].tools
                     ):
@@ -2567,14 +2572,20 @@ class MigrationService:
                                     f"{tool.payload.get('displayName', op)}"
                                 )
 
-            # E. Keep agent local — consolidated groups are deployed after
-            # Stage 1, avoiding the CXAS 100-agent cap for large agents.
-            # Mark DEPLOYED (no resource_name) so _deploy_pending_agents
+            # E. Keep agent local if consolidating.
+            # Mark LOCAL (no resource_name) so _deploy_pending_agents
             # skips this agent; only Stage 1 consolidated groups get pushed.
-            self.ir.agents[flow_name].status = MigrationStatus.DEPLOYED
-            logger.info(
-                f"[{flow_name}] ✅ Agent synthesized (local, deploys "
-                "post-consolidation)."
-            )
+            if getattr(self, "config", None) and self.config.consolidate:
+                self.ir.agents[flow_name].status = MigrationStatus.LOCAL
+                logger.info(
+                    f"[{flow_name}] ✅ Agent synthesized (local, deploys "
+                    "post-consolidation)."
+                )
+            else:
+                self.ir.agents[flow_name].status = MigrationStatus.COMPILED
+                logger.info(
+                    f"[{flow_name}] ✅ Agent synthesized (local, "
+                    "pending deployment)."
+                )
         else:
             logger.error(f"[{flow_name}] Failed to generate blueprint.")

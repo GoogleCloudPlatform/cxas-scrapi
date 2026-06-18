@@ -97,7 +97,7 @@ class AsyncAgentDesigner:
     def build_2a_shared_context(target_ir: MigrationIR) -> tuple[str, str]:
         """Return (system_prompt, shared_content) for a 2A Gemini context cache.
 
-        The shared content covers inputs 2–4 (global vars, toolsets, tools),
+        The shared content covers inputs 2-4 (global vars, toolsets, tools),
         which are identical for every group in a single synthesis run.
         """
         global_vars = json.dumps(
@@ -195,7 +195,7 @@ class AsyncAgentDesigner:
         Gemini doesn't recommend transferring to itself.
 
         ``cached_content_name`` is the resource name of a Gemini context
-        cache holding inputs 2–4 (global vars, toolsets, tools). When
+        cache holding inputs 2-4 (global vars, toolsets, tools). When
         provided the per-call prompt contains only per-group content
         (input 1 + input 5 + output format) and the cache name is
         forwarded to generate_async.
@@ -222,7 +222,9 @@ class AsyncAgentDesigner:
                         param_name: param_data.get("schema", {}).get(
                             "type", "UNKNOWN"
                         )
-                        for param_name, param_data in target_ir.parameters.items()
+                        for param_name, param_data in (
+                            target_ir.parameters.items()
+                        )
                     },
                     indent=2,
                 )
@@ -257,8 +259,10 @@ class AsyncAgentDesigner:
                 },
                 indent=2,
             )
-            toolset_context = AsyncAgentDesigner._get_available_toolsets_context(
-                target_ir.tools
+            toolset_context = (
+                AsyncAgentDesigner._get_available_toolsets_context(
+                    target_ir.tools
+                )
             )
             system_prompt = Prompts.STEP_2A_ARCHITECTURE_EXPERT["system"]
             prompt_2a = Prompts.STEP_2A_ARCHITECTURE_EXPERT["template"].format(
@@ -354,7 +358,10 @@ class AsyncAgentDesigner:
                         target_ir.tools
                     )
                     if target_ir is not None
-                    else "(not provided — use tools from the Architecture Blueprint only)"
+                    else (
+                        "(not provided - use tools from the "
+                        "Architecture Blueprint only)"
+                    )
                 )
                 prompt_2b = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS[
                     "template"

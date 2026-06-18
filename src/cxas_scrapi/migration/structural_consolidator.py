@@ -810,7 +810,7 @@ class StructuralConsolidator:
         )
 
         # Pre-create context caches for the shared prompt prefixes so that
-        # inputs 2–4 (global vars / toolsets / tools) for 2A and input 3
+        # inputs 2-4 (global vars / toolsets / tools) for 2A and input 3
         # (available tools) for 2B are not re-sent on every per-group call.
         # Cache creation may return None if the content is below the minimum
         # token threshold; the designer falls back to uncached generation.
@@ -919,4 +919,3 @@ class StructuralConsolidator:
                 groupings.items(), results, strict=True
             )
         }
-

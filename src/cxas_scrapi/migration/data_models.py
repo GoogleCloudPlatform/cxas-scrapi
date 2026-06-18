@@ -32,6 +32,7 @@ class MigrationStatus(str, enum.Enum):
     COMPILED = "Compiled"
     GENERATED = "Generated"
     DEPLOYED = "Deployed"
+    LOCAL = "Local"
     FAILED = "Failed"
     ERROR = "Error"
     PENDING = "Pending"

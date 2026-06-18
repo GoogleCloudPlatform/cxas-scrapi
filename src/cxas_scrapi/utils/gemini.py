@@ -220,7 +220,9 @@ class GeminiGenerate:
                     "contents": [
                         genai.types.Content(
                             role="user",
-                            parts=[genai.types.Part.from_text(text=shared_content)],
+                            parts=[
+                                genai.types.Part.from_text(text=shared_content)
+                            ],
                         )
                     ],
                     "ttl": f"{ttl_seconds}s",
@@ -240,9 +242,7 @@ class GeminiGenerate:
             await self.client.aio.caches.delete(name=cache_name)
             logger.info("Deleted Gemini context cache: %s", cache_name)
         except Exception as exc:
-            logger.warning(
-                "Cache deletion failed for %s: %s", cache_name, exc
-            )
+            logger.warning("Cache deletion failed for %s: %s", cache_name, exc)
 
     async def generate_async(
         self,
