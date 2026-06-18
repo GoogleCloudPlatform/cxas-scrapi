@@ -1580,11 +1580,6 @@ def get_parser() -> argparse.ArgumentParser:
         help="Optional: GCS path to store the combined report (starts with gs://).",
     )
     parser_report.add_argument(
-        "--format",
-        default="html",
-        help="Output format (default: html).",
-    )
-    parser_report.add_argument(
         "--runs",
         type=int,
         default=1,
