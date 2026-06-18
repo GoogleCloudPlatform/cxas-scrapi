@@ -54,7 +54,6 @@ def test_combined_evals_report_cmd(tmp_path):
             self.tool_test_file = None
             self.goldens_dir = None
             self.simulation_dir = None
-            self.format = "html"
             self.include = "sims,goldens,scenarios"
             self.input_dir = None
             self.modality = "text"
@@ -78,7 +77,6 @@ def test_combined_evals_report_cmd(tmp_path):
             tool_test_file=None,
             goldens_dir=None,
             simulation_dir=None,
-            format="html",
             include=["sims", "goldens", "scenarios"],
             modality="text",
             runs=1,
@@ -108,7 +106,6 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
             self.tool_test_file = None
             self.goldens_dir = None
             self.simulation_dir = None
-            self.format = "html"
             self.include = "sims,goldens,scenarios"
             self.input_dir = None
             self.modality = "audio"
@@ -132,7 +129,6 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
             tool_test_file=None,
             goldens_dir=None,
             simulation_dir=None,
-            format="html",
             include=["sims", "goldens", "scenarios"],
             modality="audio",
             runs=5,
