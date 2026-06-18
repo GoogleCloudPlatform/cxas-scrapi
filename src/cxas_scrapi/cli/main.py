@@ -611,7 +611,6 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         tool_test_file=args.tool_test_file,
         goldens_dir=args.goldens_dir,
         simulation_dir=args.simulation_dir,
-        format=args.format,
         include=include_list,
         modality=args.modality,
         runs=args.runs,
