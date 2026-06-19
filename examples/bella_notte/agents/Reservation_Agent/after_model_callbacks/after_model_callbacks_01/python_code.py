@@ -6,10 +6,35 @@ Only _SM_KEY differs between agents.
 """
 
 import json as json_lib
+import logging
 from typing import Optional
 
 
 _SM_KEY = "sm"
+
+_LEVEL_MAP = {"DEBUG": logging.DEBUG, "INFO": logging.INFO,
+              "WARN": logging.WARNING, "ERROR": logging.ERROR}
+_LEVEL_ORDER = {"DEBUG": 0, "INFO": 1, "WARN": 2, "ERROR": 3}
+_logger = logging.getLogger("slot_filling.after_model")
+
+
+def _log(sm, tag, level="INFO", **data):
+  """Emit structured log entry; append to sm["_log"].
+
+  Args:
+    sm: Session state machine dict (callback_context.state).
+    tag: Short label identifying the log event.
+    level: Severity — DEBUG, INFO, WARN, or ERROR.
+    **data: Arbitrary key-value payload for the log entry.
+  """
+  min_level = sm.get("_log_level", "INFO")
+  if _LEVEL_ORDER.get(level, 1) < _LEVEL_ORDER.get(min_level, 1):
+    return
+  entry = {"src": "after_model", "tag": tag, "level": level,
+           "data": {k: v for k, v in data.items() if v is not None}}
+  _logger.log(_LEVEL_MAP.get(level, logging.INFO),
+              json_lib.dumps(entry, default=str))
+  sm.setdefault("_log", []).append(entry)
 
 
 def _extract_response_parts(response_parts):
@@ -56,5 +81,9 @@ def after_model_callback(
   if not extra_parts:
     return None
 
+  _log(sm, "payloads_injected", "DEBUG",
+       n_announce=len(_extract_response_parts(announce)) if announce else 0,
+       n_question=len(_extract_response_parts(question.get("parts", []))) if question else 0)
+  callback_context.state[_SM_KEY] = sm
   combined = list(llm_response.content.parts) + extra_parts
   return LlmResponse.from_parts(parts=combined)

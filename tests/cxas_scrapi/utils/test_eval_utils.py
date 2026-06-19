@@ -430,3 +430,33 @@ def test_process_conversation_expectations():
         mock_find.assert_any_call(
             llm_prompt="Dict prompt", display_name="My Name"
         )
+
+
+def test_eval_utils_credentials_propagation():
+    """Test that custom credentials and kwargs propagate down to all
+    sub-clients.
+    """
+    mock_creds = MagicMock()
+
+    # We mock out internal calls and dependencies during initialization to
+    # prevent actual side effects
+    with (
+        patch("cxas_scrapi.core.evaluations.EvaluationServiceClient"),
+        patch("cxas_scrapi.core.tools.Tools.get_tools_map") as mock_tools_map,
+        patch(
+            "cxas_scrapi.core.agents.Agents.get_agents_map"
+        ) as mock_agents_map,
+    ):
+        mock_tools_map.return_value = {}
+        mock_agents_map.return_value = {}
+
+        utils = EvalUtils(
+            app_name="projects/p/locations/l/apps/a", creds=mock_creds
+        )
+
+        assert utils.creds == mock_creds
+        assert utils.tools_client.creds == mock_creds
+        assert utils.var_client.creds == mock_creds
+        assert utils.agents_client.creds == mock_creds
+        assert utils.ch_client.creds == mock_creds
+        assert utils.eval_client.creds == mock_creds

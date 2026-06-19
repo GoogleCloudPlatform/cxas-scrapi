@@ -7,10 +7,36 @@ Prompt assembly has moved to before_model_callback.
 """
 
 import json as json_lib
+import logging
 from typing import Any, Optional
 
 
 _SM_KEY = "sm"
+
+_LEVEL_MAP = {"DEBUG": logging.DEBUG, "INFO": logging.INFO,
+              "WARN": logging.WARNING, "ERROR": logging.ERROR}
+_LEVEL_ORDER = {"DEBUG": 0, "INFO": 1, "WARN": 2, "ERROR": 3}
+_logger = logging.getLogger("slot_filling.before_agent")
+
+
+def _log(sm, tag, level="INFO", **data):
+  """Emit structured log entry; append to sm["_log"].
+
+  Args:
+    sm: Session state machine dict (callback_context.state).
+    tag: Short label identifying the log event.
+    level: Severity — DEBUG, INFO, WARN, or ERROR.
+    **data: Arbitrary key-value payload for the log entry.
+  """
+  min_level = sm.get("_log_level", "INFO")
+  if _LEVEL_ORDER.get(level, 1) < _LEVEL_ORDER.get(min_level, 1):
+    return
+  entry = {"src": "before_agent", "tag": tag, "level": level,
+           "data": {k: v for k, v in data.items() if v is not None}}
+  _logger.log(_LEVEL_MAP.get(level, logging.INFO),
+              json_lib.dumps(entry, default=str))
+  sm.setdefault("_log", []).append(entry)
+
 
 _SM_DEFAULTS = {
     "filled": {},
@@ -29,8 +55,14 @@ def _ensure_sm_initialized(sm: dict[str, Any]) -> None:
 
 
 def _resolve_config_id(callback_context):
-  """Derive config_id from the agent_config_map variable + transfer events."""
-  # 1. Scan events FIRST for any recent transfer event
+  """Derive config_id from the agent_config_map variable + transfer events.
+
+  Args:
+    callback_context: CES CallbackContext with state and events.
+
+  Returns:
+    Tuple of (config_id, source) where source describes how it was resolved.
+  """
   agent_name = None
   for event in reversed(callback_context.events):
     for part in (event.parts() or []):
@@ -52,14 +84,12 @@ def _resolve_config_id(callback_context):
     config_id = config_map.get(agent_name)
     if config_id:
       callback_context.state["_active_config_id"] = config_id
-      return config_id
+      return config_id, "transfer_event"
 
-  # 2. Fallback to cached config_id only if no new transfer was detected
   cached = callback_context.state.get("_active_config_id")
   if cached:
-    return cached
+    return cached, "cached"
 
-  # 3. Fallback to single entry map if size is 1
   raw_map = callback_context.state.get("agent_config_map", "{}")
   try:
     config_map = (
@@ -70,9 +100,9 @@ def _resolve_config_id(callback_context):
   if len(config_map) == 1:
     config_id = next(iter(config_map.values()))
     callback_context.state["_active_config_id"] = config_id
-    return config_id
+    return config_id, "single_entry_map"
 
-  return None
+  return None, None
 
 
 def before_agent_callback(
@@ -85,10 +115,11 @@ def before_agent_callback(
   sm = callback_context.state.get(_SM_KEY, {})
   _ensure_sm_initialized(sm)
 
-  config_id = _resolve_config_id(callback_context)
+  config_id, config_source = _resolve_config_id(callback_context)
 
   callback_context.state["_active_sm_key"] = _SM_KEY
   if config_id:
+    _log(sm, "config_resolved", config_id=config_id, source=config_source)
     callback_context.state["_active_config_id"] = config_id
 
   # ── Deferred rejection ───────────────────────────────────────
@@ -102,6 +133,7 @@ def before_agent_callback(
     for k in snapshot:
       pending.pop(k, None)
     sm["pending"] = pending
+    _log(sm, "rejection_applied", slots=list(snapshot.keys()))
 
   callback_context.state[_SM_KEY] = sm
 

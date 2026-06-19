@@ -21,7 +21,7 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Annotated, Any, Dict, List, NamedTuple, Optional
+from typing import Annotated, Any, NamedTuple
 
 import pandas as pd
 import yaml
@@ -89,7 +89,7 @@ class Expectation(BaseModel):
 
     path: str
     operator: Operator
-    value: Optional[Any] = None
+    value: Any | None = None
 
 
 class ToolEvals:
@@ -99,7 +99,7 @@ class ToolEvals:
         self,
         app_name: str,
         creds: Any = None,
-        user_agent_extension: str = None,
+        user_agent_extension: str | None = None,
     ):
         """Initializes the ToolEvals class.
 
@@ -135,7 +135,7 @@ class ToolEvals:
             self.tool_map = {}
 
     @staticmethod
-    def _parse_dict_input(v: Any) -> Dict[str, Any]:
+    def _parse_dict_input(v: Any) -> dict[str, Any]:
         """Allows YAML to accept a list of strings OR a custom dictionary."""
         if v is None:
             return {}
@@ -256,7 +256,7 @@ class ToolEvals:
             return actual is not None
         return False
 
-    def _parse_python_function(self, tool_dict: Dict) -> tuple[Dict, List[str]]:
+    def _parse_python_function(self, tool_dict: dict) -> tuple[dict, list[str]]:
         """Parses a Python function tool for test template arguments and
         returns."""
         template_args = {}
@@ -281,8 +281,8 @@ class ToolEvals:
         return template_args, expected_returns
 
     def _parse_openapi_toolset(
-        self, tool_dict: Dict, display_name: str
-    ) -> tuple[Dict, List[str]]:
+        self, tool_dict: dict, display_name: str
+    ) -> tuple[dict, list[str]]:
         """Parses an OpenAPI toolset for test template arguments."""
         template_args = {}
         expected_returns = []
@@ -335,11 +335,11 @@ class ToolEvals:
     def _write_tool_test_template(
         self,
         display_name: str,
-        template_args: Dict[str, Any],
-        expected_returns: List[str],
+        template_args: dict[str, Any],
+        expected_returns: list[str],
         target_dir: str,
         overwrite: bool,
-        example_data: Optional[Dict[str, Any]] = None,
+        example_data: dict[str, Any] | None = None,
     ) -> None:
         """Writes the generated tool test template to a YAML file."""
         expectations = []
@@ -408,7 +408,7 @@ class ToolEvals:
         else:
             print(f"Skipping existing test file: {file_path}")
 
-    def _mine_tool_data(self, limit: int) -> Dict[str, Dict[str, Any]]:
+    def _mine_tool_data(self, limit: int) -> dict[str, dict[str, Any]]:
         """Mines recent conversations for actual tool payloads to populate
         tests."""
         mined_data = {}
@@ -495,14 +495,14 @@ class ToolEvals:
 
     def load_tool_test_cases_from_file(
         self, test_file_path: str
-    ) -> List["ToolTestCase"]:
+    ) -> list["ToolTestCase"]:
         """Loads tool tests from a YAML file."""
-        with open(test_file_path, "r", encoding="utf-8") as f:
+        with open(test_file_path, encoding="utf-8") as f:
             return self.load_tool_test_cases_from_yaml(f.read())
 
     def load_tool_tests_from_dir(
         self, directory_path: str = "tool_tests"
-    ) -> List["ToolTestCase"]:
+    ) -> list["ToolTestCase"]:
         """Recursively loads all YAML tool tests from a directory."""
         all_tests = []
         if not os.path.exists(directory_path):
@@ -523,7 +523,7 @@ class ToolEvals:
 
     def load_tool_test_cases_from_yaml(
         self, yaml_data: str
-    ) -> List["ToolTestCase"]:
+    ) -> list["ToolTestCase"]:
         """Loads tool tests from a YAML string."""
         raw_data = yaml.safe_load(yaml_data)
         if not raw_data or "tests" not in raw_data:
@@ -532,8 +532,8 @@ class ToolEvals:
         return self.load_tool_test_cases_from_data(raw_data["tests"])
 
     def load_tool_test_cases_from_data(
-        self, test_data: List[Dict[str, Any]]
-    ) -> List["ToolTestCase"]:
+        self, test_data: list[dict[str, Any]]
+    ) -> list["ToolTestCase"]:
         """Loads tool tests from a list of dictionaries."""
         # Pre-process data to handle VariableDeclaration objects
         cleaned_data = []
@@ -548,14 +548,14 @@ class ToolEvals:
                 case_copy["variables"] = cleaned_vars
             cleaned_data.append(case_copy)
 
-        adapter = TypeAdapter(List[ToolTestCase])
+        adapter = TypeAdapter(list[ToolTestCase])
         return adapter.validate_python(cleaned_data)
 
     def validate_tool_test(
         self,
         test_case: "ToolTestCase",
         tool_response: Any,
-    ) -> List[str]:
+    ) -> list[str]:
         """Validates the tool response and variables against expectations.
 
         Returns:
@@ -594,7 +594,7 @@ class ToolEvals:
         return errors
 
     def run_tool_tests(
-        self, test_cases: List["ToolTestCase"], debug: bool = False
+        self, test_cases: list["ToolTestCase"], debug: bool = False
     ) -> pd.DataFrame:
         """Runs a list of tool tests.
 
@@ -745,8 +745,8 @@ class ToolEvals:
     def generate_tool_tests(
         self,
         target_dir: str = "tool_tests",
-        include_tools: Optional[List[str]] = None,
-        exclude_tools: Optional[List[str]] = None,
+        include_tools: list[str] | None = None,
+        exclude_tools: list[str] | None = None,
         overwrite: bool = False,
         mine_tool_data: bool = False,
         mine_conversations_limit: int = 50,
@@ -849,7 +849,7 @@ class ToolEvals:
             )
 
     def tool_tests_to_dataframe(
-        self, results: List[Dict[str, Any]]
+        self, results: list[dict[str, Any]]
     ) -> pd.DataFrame:
         """Converts tool test results to a pandas DataFrame for reporting."""
         rows = []
@@ -942,29 +942,29 @@ class ToolTestCase(BaseModel):
     tool: str
 
     # We wrap the type in Annotated to add the BeforeValidator
-    args: Annotated[Dict[str, Any], BeforeValidator(Common.empty_to_dict)] = (
+    args: Annotated[dict[str, Any], BeforeValidator(Common.empty_to_dict)] = (
         Field(
             default_factory=dict, validation_alias=AliasChoices("args", "agrs")
         )
     )
 
     variables: Annotated[
-        Dict[str, Any], BeforeValidator(ToolEvals._parse_dict_input)
+        dict[str, Any], BeforeValidator(ToolEvals._parse_dict_input)
     ] = Field(default_factory=dict)
 
     context: Annotated[
-        Dict[str, Any], BeforeValidator(ToolEvals._parse_dict_input)
+        dict[str, Any], BeforeValidator(ToolEvals._parse_dict_input)
     ] = Field(default_factory=dict)
 
     response_expectations: Annotated[
-        List[Expectation], BeforeValidator(Common.empty_to_list)
+        list[Expectation], BeforeValidator(Common.empty_to_list)
     ] = Field(
         default_factory=list,
         validation_alias=AliasPath("expectations", "response"),
     )
 
     variable_expectations: Annotated[
-        List[Expectation], BeforeValidator(Common.empty_to_list)
+        list[Expectation], BeforeValidator(Common.empty_to_list)
     ] = Field(
         default_factory=list,
         validation_alias=AliasPath("expectations", "variables"),

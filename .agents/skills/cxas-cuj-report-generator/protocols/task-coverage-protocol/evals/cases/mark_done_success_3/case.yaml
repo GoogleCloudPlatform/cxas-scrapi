@@ -1,0 +1,7 @@
+id: mark_done_success_3
+name: Mark Done Success 3 Items
+input_data: "testdir/"
+expectations:
+  - "Agent must call `manage_checklist.py done` for each of the 3 items."
+  - "The tool must succeed for each item."
+  - "Agent must report that all items are marked as done."

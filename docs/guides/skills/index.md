@@ -24,11 +24,13 @@ The `SKILL.md` file has YAML frontmatter that declares the skill's name, descrip
 │   ├── references/           # Sub-skill definitions (build, run, debug)
 │   ├── scripts/hooks/        # Hook scripts for pre-push and post-update
 │   └── assets/               # Project templates
-└── cxas-sim-eval/
-    └── SKILL.md              # Simulation eval skill
+├── cxas-sim-eval/
+│   └── SKILL.md              # Simulation eval skill
+└── ...
 ```
 
 The AI reads the `SKILL.md` as part of its context. When you invoke a skill, the AI follows the instructions in that file to complete the task. The foundry loads sub-skills (build, run, debug) from `references/` as needed.
+
 
 ---
 

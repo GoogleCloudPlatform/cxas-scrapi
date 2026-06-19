@@ -52,7 +52,7 @@ Uses SCRAPI's Sessions API with Gemini as the sim user to test flows where the c
 
 **Use for:** troubleshooting cadence, multi-step failures, knowledge base queries, any flow where tool responses determine the agent's path.
 
-**Default filter:** `run-and-report.py` runs sims with `--priority P0` by default. To run other priorities, pass `--priority P1` (single) or `--priority P0,P1,P2` (comma-separated) to the script — the value is forwarded through `run-all-evals.py` to `scrapi-sim-runner.py`.
+**Default filter:** `run-and-report.py` runs sims with `--priority P0` by default. To run other priorities, pass `--priority P1` (single) or `--priority P0,P1,P2` (comma-separated) to the script — the value is forwarded through `run-evals.py` to `scrapi-sim-runner.py`.
 
 ### 3. Tool Tests -- isolated tool validation (runs locally)
 Tests individual tools with specific inputs and validates outputs. These run against the deployed app via SCRAPI -- not pushed to the platform as eval objects.
@@ -111,11 +111,11 @@ All commands support `--priority P0` and `--tag <tag>`.
 
 `run-and-report.py` automatically generates an iteration report after each run. Reports are saved to `<project>/eval-reports/iterations/`.
 
-**For a combined cross-iteration trend report:**
+**For a combined HTML report:**
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/generate-combined-report.py
+cxas evals report --output-dir <project>/eval-reports/
 ```
 
-This produces an HTML report in `<project>/eval-reports/combined/` showing pass rate trends, per-eval stability, and regression detection across all iterations.
+This produces a combined HTML report in the output directory showing results, timeline logs, and summary charts.
 
 For guidance on interpreting reports (key metrics, triage categories, when to adjust vs fix), see `references/generating-reports.md`.

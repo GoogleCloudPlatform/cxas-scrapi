@@ -8,6 +8,7 @@
 - **instruction** (string): LLM instructions.
 - **tools** (array[string]): Tool resource names.
 - **childAgents** (array[string]): Child agent resource names.
+- **toolsets** (array[-> AgentToolset]): Toolsets associated with this agent.
 - **beforeAgentCallbacks** (array[-> Callback]): Before agent. Sequential; stops on override.
 - **afterAgentCallbacks** (array[-> Callback]): After agent.
 - **beforeModelCallbacks** (array[-> Callback]): Before each model call. Fires multiple times if multi-model-call turn.
@@ -26,3 +27,8 @@
 - **description** (string)
 - **disabled** (boolean)
 - **proactiveExecutionEnabled** (boolean): Execute on intermediate model outputs (after_model only). **ENABLE WITH CAUTION.**
+
+### AgentToolset
+Associates a toolset (and optionally specific tools within it) with an agent.
+- **toolset** (string): [required] Local display name/ID of the toolset (e.g., `"my_toolset"`).
+- **toolIds** (array[string]): Optional. Specific tool IDs (operation IDs) from the toolset that the agent can call. If omitted, the agent has access to all tools in the toolset.

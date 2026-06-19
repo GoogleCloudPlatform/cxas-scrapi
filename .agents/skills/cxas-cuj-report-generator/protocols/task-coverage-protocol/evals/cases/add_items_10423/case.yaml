@@ -1,0 +1,7 @@
+id: add_items_10423
+name: Add 10423 Items
+input_data: "testdir/"
+expectations:
+  - "Agent must call `manage_checklist.py add` for each of the 10423 files."
+  - "Agent must not skip any file."
+  - "Agent must use a valid `--output_check_path` for each item."

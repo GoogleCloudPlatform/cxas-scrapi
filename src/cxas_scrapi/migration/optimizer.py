@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 from cxas_scrapi.migration.data_models import (
     IRTool,
@@ -25,8 +25,8 @@ class CXASOptimizer:
     def __init__(self, ir: MigrationIR, gemini_client: GeminiGenerate):
         self.ir = ir
         self.gemini = gemini_client
-        self.dependency_map: Dict[str, List[Dict[str, str]]] = {}
-        self.optimization_logs: List[Dict[str, Any]] = []
+        self.dependency_map: dict[str, list[dict[str, str]]] = {}
+        self.optimization_logs: list[dict[str, Any]] = []
 
     def log_action(self, stage: str, action: str, details: str):
         """Logs an optimization action for the post-migration report."""
@@ -34,12 +34,12 @@ class CXASOptimizer:
         self.optimization_logs.append(log_entry)
         logger.info(f"[{stage}] {action}: {details}")
 
-    async def optimize_stage1(self):
+    async def optimize_stage_1(self):
         """Executes Stage 1 Variable Optimization."""
         logger.info("Starting Stage 1 Variable Optimization...")
-        await self._stage1_variable_optimization()
+        await self._stage_1_variable_optimization()
 
-    async def optimize_stage2(self):
+    async def optimize_stage_2(self):
         """Executes Stage 2 Instructions and Tool Mocks Optimization
         in parallel.
         """
@@ -48,11 +48,24 @@ class CXASOptimizer:
             "Tool Mock Optimization..."
         )
         await asyncio.gather(
-            self._stage2_instruction_optimization(),
-            self._stage2_tool_mock_optimization(),
+            self._stage_2_instruction_optimization(),
+            self._stage_2_tool_mock_optimization(),
         )
 
-    async def _stage1_variable_optimization(self):
+    @staticmethod
+    def _sanitize_variable_name(name: str) -> str:
+        if name == "DELETE":
+            return name
+        # Replace any invalid characters (not alphanumeric, underscore, or
+        # dash) with underscores
+        clean = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+        # Ensure it starts with a letter or underscore (dash/digits at start
+        # are invalid)
+        if clean and (clean[0].isdigit() or clean[0] == "-"):
+            clean = "_" + clean
+        return clean or "_var"
+
+    async def _stage_1_variable_optimization(self):
         """
         Stage 1: Granular Variable Deduplication
         Scans all instructions, tools, and callbacks to build a dependency map.
@@ -176,6 +189,12 @@ class CXASOptimizer:
                 raise ValueError("LLM returned empty mapping response.")
 
             variable_mapping = json.loads(mapping_response)
+            # Sanitize all target variable names to ensure they comply with
+            # CXAS database standards
+            variable_mapping = {
+                old_k: CXASOptimizer._sanitize_variable_name(new_v)
+                for old_k, new_v in variable_mapping.items()
+            }
         except Exception as e:
             self.log_action(
                 "Stage 1",
@@ -219,15 +238,24 @@ class CXASOptimizer:
                 print(f"  [Optimizer] Merging {old_v} -> {new_v}")
 
             if old_v in self.ir.parameters:
-                # Copy the old parameter definition and update its name
                 param_def = self.ir.parameters[old_v].copy()
-                param_def["name"] = new_v
-                new_parameters[new_v] = param_def
-            elif new_v not in new_parameters:
-                new_parameters[new_v] = {
-                    "name": new_v,
+            else:
+                param_def = {
                     "schema": {"type": "STRING"},
                 }
+
+            param_def["name"] = new_v
+
+            # Resolve description (carry over existing, merge, or use fallback)
+            existing_desc = new_parameters.get(new_v, {}).get("description", "")
+            incoming_desc = param_def.get("description", "")
+            param_def["description"] = (
+                existing_desc
+                or incoming_desc
+                or f"Optimized parameter: {new_v}"
+            )
+
+            new_parameters[new_v] = param_def
         self.ir.parameters = new_parameters
 
         # Helper to replace full word matches
@@ -314,13 +342,13 @@ class CXASOptimizer:
         print("\n" + "=" * 50)
         print("STAGE 1 DEBUG: POST-REPLACEMENT VERIFICATION")
         if self.ir.agents:
-            sample_agent = list(self.ir.agents.values())[0]
+            sample_agent = next(iter(self.ir.agents.values()))
             print(
                 f"Sample Agent ({sample_agent.display_name}) Instruction:\n"
                 f"{sample_agent.instruction[:500]}...\n"
             )
         if self.ir.tools:
-            sample_tool = list(self.ir.tools.values())[0]
+            sample_tool = next(iter(self.ir.tools.values()))
             sample_tool_name = sample_tool.payload.get(
                 "displayName", sample_tool.id
             )
@@ -339,7 +367,7 @@ class CXASOptimizer:
             "Global Variable Deduplication finished successfully.",
         )
 
-    async def _stage2_instruction_optimization(self):
+    async def _stage_2_instruction_optimization(self):
         """
         Stage 2 Instructions: Playbook State Machine Optimizer.
         Restructures instructions into structured XML State Machines.
@@ -350,17 +378,34 @@ class CXASOptimizer:
             "Restructuring instructions to State Machine XML.",
         )
 
-        playbook_agents = [
+        all_playbook_flows = [
             agent
             for agent in self.ir.agents.values()
-            if agent.type == "PLAYBOOK"
+            if agent.type in ("PLAYBOOK", "FLOW")
+        ]
+
+        playbook_agents = [
+            agent
+            for agent in all_playbook_flows
+            if "<Agent>" not in (agent.instruction or "")
         ]
 
         if not playbook_agents:
+            details = (
+                (
+                    "All Playbook and Flow sub-agents are already optimized "
+                    "XML State Machines. Skipping Stage 2 Instructions."
+                )
+                if all_playbook_flows
+                else (
+                    "No Playbook or Flow sub-agents found. "
+                    "Skipping Stage 2 Instructions."
+                )
+            )
             self.log_action(
                 "Stage 2 Instructions",
                 "Complete",
-                "No Playbook sub-agents found. Skipping Stage 2 Instructions.",
+                details,
             )
             return
 
@@ -369,12 +414,33 @@ class CXASOptimizer:
                 f"  Optimizing instructions for sub-agent: "
                 f"'{agent.display_name}'..."
             )
+            reverse_tool_map = {}
+            for tool_id, tool in self.ir.tools.items():
+                display_name = (
+                    tool.payload.get("displayName")
+                    or tool.payload.get("display_name")
+                    or tool_id
+                )
+                if tool.name:
+                    reverse_tool_map[tool.name] = display_name
+                reverse_tool_map[tool_id] = display_name
+            all_tools = []
+            for t in agent.tools:
+                if t in reverse_tool_map:
+                    all_tools.append(reverse_tool_map[t])
+                else:
+                    all_tools.append(t.split("/")[-1])
+
+            for gt in ["set_session_variables"]:
+                if gt not in all_tools:
+                    all_tools.append(gt)
+
             prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION[
                 "template"
             ].format(
                 agent_name=agent.display_name,
                 instruction=agent.instruction,
-                tools=", ".join(agent.tools),
+                tools=", ".join(all_tools),
             )
             system_prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION["system"]
             try:
@@ -387,11 +453,13 @@ class CXASOptimizer:
                     raise ValueError("LLM returned empty instruction response.")
 
                 # Strip conversational fluff if LLM ignored constraints
-                response_clean = response.strip()
-                if response_clean.startswith("```xml"):
-                    response_clean = response_clean[6:]
-                if response_clean.endswith("```"):
-                    response_clean = response_clean[:-3]
+                # Harmonization clean-up pass for malformed markdown formatting
+                response_clean = re.sub(
+                    r"^```(?:xml)?", "", response, flags=re.MULTILINE
+                )
+                response_clean = re.sub(
+                    r"```$", "", response_clean, flags=re.MULTILINE
+                )
                 response_clean = response_clean.strip()
 
                 if "set_session_variables" in response_clean:
@@ -430,7 +498,7 @@ class CXASOptimizer:
             f"successfully.",
         )
 
-    async def _stage2_tool_mock_optimization(self):
+    async def _stage_2_tool_mock_optimization(self):
         """
         Stage 2 Tool Mocks: Tool Mock Optimizer.
         Concurrently injects highly realistic happy-path mock_mode return paths.

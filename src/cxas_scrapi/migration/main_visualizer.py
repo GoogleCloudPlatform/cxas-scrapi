@@ -16,7 +16,7 @@
 
 import io
 import uuid
-from typing import Any, Dict
+from typing import Any
 
 try:
     from IPython.display import HTML, display
@@ -50,7 +50,7 @@ class MainVisualizer:
     interactive zoom UI (designed for Jupyter / Colab environments).
     """
 
-    def __init__(self, selected_data: Dict[str, Any]):
+    def __init__(self, selected_data: dict[str, Any]):
         self.data = selected_data
         self.console = Console(force_terminal=False, width=120)
 

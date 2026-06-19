@@ -32,7 +32,7 @@ from cxas_scrapi.utils.reporting import (
 )
 
 
-@patch("cxas_scrapi.utils.reporting.GCSUtils")
+@patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils")
 def test_upload_to_gcs_success(mock_gcs_cls):
     mock_gcs = mock_gcs_cls.return_value
     mock_gcs.upload_string.return_value = (
@@ -43,7 +43,7 @@ def test_upload_to_gcs_success(mock_gcs_cls):
     assert res == "https://storage.mtls.cloud.google.com/bucket/report.html"
 
 
-@patch("cxas_scrapi.utils.reporting.GCSUtils")
+@patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils")
 def test_upload_to_gcs_failure(mock_gcs_cls):
     mock_gcs = mock_gcs_cls.return_value
     mock_gcs.upload_string.side_effect = Exception("error")
@@ -52,9 +52,13 @@ def test_upload_to_gcs_failure(mock_gcs_cls):
     assert res is None
 
 
+@patch("cxas_scrapi.utils.reporting._get_html_head")
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_gcs_success(mock_file, mock_upload):
+def test_generate_html_report_gcs_success(
+    mock_file, mock_upload, mock_get_html_head
+):
+    mock_get_html_head.return_value = "<html><head></head><body>"
     mock_upload.return_value = "https://url"
     results = [{"name": "test", "passed": True, "run": 1}]
 
@@ -64,11 +68,13 @@ def test_generate_html_report_gcs_success(mock_file, mock_upload):
     mock_file.assert_not_called()
 
 
+@patch("cxas_scrapi.utils.reporting._get_html_head")
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_gcs_fallback_with_extension(
-    mock_file, mock_upload
+    mock_file, mock_upload, mock_get_html_head
 ):
+    mock_get_html_head.return_value = "<html><head></head><body>"
     mock_upload.return_value = None
     results = [{"name": "test", "passed": True, "run": 1}]
 
@@ -80,9 +86,13 @@ def test_generate_html_report_gcs_fallback_with_extension(
     mock_file.assert_called_once_with("fail_report.html", "w")
 
 
+@patch("cxas_scrapi.utils.reporting._get_html_head")
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_gcs_fallback_no_extension(mock_file, mock_upload):
+def test_generate_html_report_gcs_fallback_no_extension(
+    mock_file, mock_upload, mock_get_html_head
+):
+    mock_get_html_head.return_value = "<html><head></head><body>"
     mock_upload.return_value = None
     results = [{"name": "test", "passed": True, "run": 1}]
 
@@ -93,9 +103,13 @@ def test_generate_html_report_gcs_fallback_no_extension(mock_file, mock_upload):
     mock_file.assert_called_once_with("report_fallback.html", "w")
 
 
-@patch("cxas_scrapi.utils.reporting.Tools")
+@patch("cxas_scrapi.utils.reporting._get_html_head")
+@patch("cxas_scrapi.utils.reporting.tools.Tools")
 @patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_tools_failure(mock_file, mock_tools_cls):
+def test_generate_html_report_tools_failure(
+    mock_file, mock_tools_cls, mock_get_html_head
+):
+    mock_get_html_head.return_value = "<html><head></head><body>"
     # Simulate Tools(app_name).get_tools_map() failing
     mock_tools_cls.return_value.get_tools_map.side_effect = Exception(
         "Tools failed"
@@ -109,8 +123,10 @@ def test_generate_html_report_tools_failure(mock_file, mock_tools_cls):
     mock_file.assert_called_once_with("local.html", "w")
 
 
+@patch("cxas_scrapi.utils.reporting._get_html_head")
 @patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_local(mock_file):
+def test_generate_html_report_local(mock_file, mock_get_html_head):
+    mock_get_html_head.return_value = "<html><head></head><body>"
     results = [
         {
             "name": "test_eval",
@@ -263,7 +279,7 @@ def test_generate_combined_html_report(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         content = f.read()
         assert "Combined Eval Report" in content
         assert "test_golden" in content
@@ -331,7 +347,7 @@ def test_generate_combined_report_from_dir(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         content = f.read()
         assert "Combined Eval Report" in content
         assert "test_sim" in content
@@ -368,17 +384,17 @@ def test_generate_combined_report_from_dir_include_all(tmp_path):
     )
 
     assert os.path.exists(output_path)
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         content = f.read()
         assert "test_sim" in content
         assert "test_tool" in content
 
 
-@patch("cxas_scrapi.utils.reporting.Evaluations")
-@patch("cxas_scrapi.utils.reporting.ToolEvals")
-@patch("cxas_scrapi.utils.reporting.SimulationEvals")
-@patch("cxas_scrapi.utils.reporting.CallbackEvals")
-@patch("cxas_scrapi.utils.reporting.EvalUtils")
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
 @patch("glob.glob")
 @patch("os.path.exists")
 @patch("os.path.isdir")
@@ -416,11 +432,11 @@ def test_run_all_evals_filtering(
     )
 
 
-@patch("cxas_scrapi.utils.reporting.Evaluations")
-@patch("cxas_scrapi.utils.reporting.ToolEvals")
-@patch("cxas_scrapi.utils.reporting.SimulationEvals")
-@patch("cxas_scrapi.utils.reporting.CallbackEvals")
-@patch("cxas_scrapi.utils.reporting.EvalUtils")
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
 @patch("glob.glob")
 @patch("os.path.exists")
 @patch("os.path.isdir")
@@ -458,20 +474,22 @@ def test_run_all_evals_substring_filtering(
     )
 
 
-@patch("cxas_scrapi.utils.reporting.Evaluations")
-@patch("cxas_scrapi.utils.reporting.ToolEvals")
-@patch("cxas_scrapi.utils.reporting.SimulationEvals")
-@patch("cxas_scrapi.utils.reporting.CallbackEvals")
-@patch("cxas_scrapi.utils.reporting.EvalUtils")
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
 @patch("glob.glob")
 @patch("os.path.exists")
 @patch("os.path.isdir")
-@patch("cxas_scrapi.utils.reporting.RunEvaluationOperationMetadata")
+@patch("cxas_scrapi.evals.runner.RunEvaluationOperationMetadata")
+@patch("cxas_scrapi.utils.reporting.load_golden_results")
 @patch("yaml.safe_load")
 @patch("builtins.open", new_callable=mock_open)
 def test_run_all_evals_tag_filtering(
     mock_open_file,
     mock_yaml_load,
+    mock_load_golden,
     mock_proto,
     mock_isdir,
     mock_exists,
@@ -519,11 +537,11 @@ def test_run_all_evals_tag_filtering(
     )
 
 
-@patch("cxas_scrapi.utils.reporting.Evaluations")
-@patch("cxas_scrapi.utils.reporting.ToolEvals")
-@patch("cxas_scrapi.utils.reporting.SimulationEvals")
-@patch("cxas_scrapi.utils.reporting.CallbackEvals")
-@patch("cxas_scrapi.utils.reporting.EvalUtils")
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
 @patch("glob.glob")
 @patch("os.path.exists")
 @patch("os.path.isdir")
@@ -558,7 +576,9 @@ def test_run_all_evals_include_filtering(
     )
 
     # Assert SimulationEvals was instantiated and run
-    mock_sim_evals.assert_called_once_with(app_name="projects/p")
+    mock_sim_evals.assert_called_once_with(
+        app_name="projects/p", rate_limiter=None
+    )
     mock_sim_evals.return_value.run_simulations.assert_called_once()
 
     # Assert others were NOT called/instantiated
@@ -567,11 +587,11 @@ def test_run_all_evals_include_filtering(
     mock_callback_evals.assert_not_called()
 
 
-@patch("cxas_scrapi.utils.reporting.Evaluations")
-@patch("cxas_scrapi.utils.reporting.ToolEvals")
-@patch("cxas_scrapi.utils.reporting.SimulationEvals")
-@patch("cxas_scrapi.utils.reporting.CallbackEvals")
-@patch("cxas_scrapi.utils.reporting.EvalUtils")
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
 @patch("glob.glob")
 @patch("os.path.exists")
 @patch("os.path.isdir")
@@ -613,11 +633,11 @@ def test_run_all_evals_include_tools(
     mock_callback_evals.assert_not_called()
 
 
-@patch("cxas_scrapi.utils.reporting.Evaluations")
-@patch("cxas_scrapi.utils.reporting.ToolEvals")
-@patch("cxas_scrapi.utils.reporting.SimulationEvals")
-@patch("cxas_scrapi.utils.reporting.CallbackEvals")
-@patch("cxas_scrapi.utils.reporting.EvalUtils")
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
 @patch("glob.glob")
 @patch("os.path.exists")
 @patch("os.path.isdir")
@@ -653,11 +673,11 @@ def test_run_all_evals_include_callbacks(
     mock_tool_evals.assert_not_called()
 
 
-@patch("cxas_scrapi.utils.reporting.Evaluations")
-@patch("cxas_scrapi.utils.reporting.ToolEvals")
-@patch("cxas_scrapi.utils.reporting.SimulationEvals")
-@patch("cxas_scrapi.utils.reporting.CallbackEvals")
-@patch("cxas_scrapi.utils.reporting.EvalUtils")
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
 @patch("glob.glob")
 @patch("os.path.exists")
 @patch("os.path.isdir")
@@ -690,7 +710,9 @@ def test_run_all_evals_dict_based_simulations(
     )
 
     # Verify SimulationEvals was instantiated and run
-    mock_sim_evals.assert_called_once_with(app_name="projects/p")
+    mock_sim_evals.assert_called_once_with(
+        app_name="projects/p", rate_limiter=None
+    )
     mock_sim_evals.return_value.run_simulations.assert_called_once_with(
         [
             {
@@ -703,6 +725,9 @@ def test_run_all_evals_dict_based_simulations(
         runs=1,
         parallel=1,
         modality="text",
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
     )
 
 

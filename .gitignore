@@ -161,3 +161,13 @@ bin/
 !.agents/**
 .agents/**/__pycache__/
 .agents/**/*.pyc
+
+# Local evaluation results, scratch notebooks/scripts and temp configurations
+/evals/
+/scratch/
+/temp_sims/
+
+# Per-migration analysis report (auto-written next to <target>_ir.json by
+# `cxas migrate`; never checked in)
+*_migration_analysis.html
+*_migration_analysis.json

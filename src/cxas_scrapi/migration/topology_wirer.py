@@ -52,7 +52,7 @@ from cxas_scrapi.migration.structural_consolidator import (
 )
 
 if TYPE_CHECKING:
-    from cxas_scrapi.migration.ir_bundle import IRBundle
+    from cxas_scrapi.migration.data_models import IRBundle
 
 __all__ = [
     "apply_topology",
@@ -78,7 +78,7 @@ def _short(resource_name: str) -> str:
 
 
 def compute_group_children_hub_and_spoke(
-    bundle: "IRBundle",
+    bundle: IRBundle,
 ) -> dict[str, set[str]]:
     """Hub-and-spoke topology: root has every non-root group as a direct
     child; non-root groups have no children. Peer transfers route via root.
@@ -105,7 +105,7 @@ def compute_group_children_hub_and_spoke(
 
 
 def _build_raw_source_edges(
-    bundle: "IRBundle",
+    bundle: IRBundle,
 ) -> dict[str, set[str]]:
     """Walk the source DFCX dep graph and project every cross-group edge
     onto the consolidated groups. Returns parent_group → set(child_group).
@@ -168,7 +168,7 @@ def _has_path(edges: dict[str, set[str]], src: str, dst: str) -> bool:
 
 
 def compute_group_children_preserve_hierarchy(
-    bundle: "IRBundle",
+    bundle: IRBundle,
 ) -> dict[str, set[str]]:
     """Derive children from the source DFCX dep graph, breaking cycles.
 
@@ -211,7 +211,7 @@ def compute_group_children_preserve_hierarchy(
 
 
 def compute_group_children(
-    bundle: "IRBundle", mode: str = "hub"
+    bundle: IRBundle, mode: str = "hub"
 ) -> dict[str, set[str]]:
     """Dispatch on mode. ``"hub"`` (default) → hub-and-spoke;
     ``"hierarchy"`` → preserve-hierarchy with cycle breaker."""
@@ -226,7 +226,7 @@ def compute_group_children(
 
 
 def apply_topology(
-    bundle: "IRBundle",
+    bundle: IRBundle,
     children: dict[str, set[str]],
     *,
     dry_run: bool = False,
@@ -290,7 +290,7 @@ def apply_topology(
                     "updated",
                     {"parent": parent, "child_count": len(child_resources)},
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             failed += 1
             if progress is not None:
                 progress(
@@ -304,7 +304,7 @@ def apply_topology(
     return updated, skipped, failed
 
 
-def set_app_root_agent(bundle: "IRBundle") -> tuple[bool, str]:
+def set_app_root_agent(bundle: IRBundle) -> tuple[bool, str]:
     """Set the app's root_agent to whichever group is marked ``is_root``.
 
     Returns ``(ok, message)``. ``ok=False`` covers both "no grouping /
@@ -331,7 +331,7 @@ def set_app_root_agent(bundle: "IRBundle") -> tuple[bool, str]:
         )
         short = _short(agent.resource_name)
         return True, f"Set app start agent → {rg} ({short})"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return False, f"Failed to set app root agent: {exc}"
 
 
@@ -370,7 +370,7 @@ def delete_orphan_agents(
     """
     try:
         agents_client = Agents(app_name=app_resource_name)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if progress is not None:
             progress("init_failed", str(exc))
         return 0, 0
@@ -381,7 +381,7 @@ def delete_orphan_agents(
         pass_num += 1
         try:
             live_agents = agents_client.list_agents()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if progress is not None:
                 progress("list_failed", str(exc))
             break
@@ -412,7 +412,7 @@ def delete_orphan_agents(
                             "short": short,
                         },
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 msg = str(exc).splitlines()[0][:80]
                 failed_this_pass.append((agent.display_name, short, msg))
 
@@ -430,6 +430,6 @@ def delete_orphan_agents(
     try:
         live_agents = agents_client.list_agents()
         remaining = sum(1 for a in live_agents if a.name not in keep_resources)
-    except Exception:  # noqa: BLE001
+    except Exception:
         remaining = 0
     return total_deleted, remaining

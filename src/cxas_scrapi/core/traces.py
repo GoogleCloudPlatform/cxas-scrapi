@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import subprocess
+import urllib.parse
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from statistics import median
@@ -126,6 +127,21 @@ class Traces(Common):
             time_filter=time_filter,
             source_filter=source_filter,
         )
+        return self._rows_from_convs(
+            convs, channel_filter=channel_filter, limit=limit
+        )
+
+    def _rows_from_convs(
+        self,
+        convs: list[Any],
+        channel_filter: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Shapes raw conversation protos into summary dicts.
+
+        Applies the client-side `channel_filter` (over `input_types`) and
+        `limit` shared by `list()` and `search()`.
+        """
         rows: list[dict[str, Any]] = []
         for c in convs:
             normalized_channel = trace_report._channel_label(
@@ -133,19 +149,98 @@ class Traces(Common):
             )
             if channel_filter and normalized_channel != channel_filter.upper():
                 continue
+            source_str = _enum_name(getattr(c, "source", None))
             rows.append(
                 {
                     "id": c.name.split("/")[-1],
                     "name": c.name,
-                    "source": _enum_name(getattr(c, "source", None)),
+                    "source": source_str,
                     "channel": normalized_channel,
                     "start_time": _ts_iso(getattr(c, "start_time", None)),
                     "end_time": _ts_iso(getattr(c, "end_time", None)),
-                    "ces_url": self.console_url(c.name.split("/")[-1]),
+                    "ces_url": self.console_url(
+                        c.name.split("/")[-1], source=source_str
+                    ),
                 }
             )
             if limit and len(rows) >= limit:
                 break
+        return rows
+
+    def search(
+        self,
+        query: str,
+        match: str = "phrase",
+        time_filter: str | None = None,
+        sources: list[str] | None = None,
+        source_filter: str | None = None,
+        channel_filter: str | None = None,
+        limit: int | None = None,
+        page_size: int | None = None,
+        id_match: bool = True,
+        with_snippets: bool = False,
+        max_workers: int = 8,
+    ) -> list[dict[str, Any]]:
+        """Searches conversations by transcript content, like the console UI.
+
+        Builds an AIP-160 filter using the server-side
+        `ces_transcript.search("...")` function (matching the CES console
+        search box) and lists the conversations that match.
+
+        Args:
+            query: The text to search for.
+            match: How a multi-word query is matched: 'phrase' (one
+                contiguous `search()` call, the UI default), 'all' (every
+                word must appear, ANDed) or 'any' (any word, ORed).
+            time_filter: Optional relative time filter (e.g. '7d'). Defaults
+                to None (all time), like the UI.
+            sources: Optional list of sources (repeated field). Defaults to
+                None (all sources).
+            source_filter: Optional single source (used only if `sources` is
+                not set).
+            channel_filter: Optional client-side channel filter.
+            limit: Optional client-side cap on returned rows.
+            page_size: Optional server-side page size hint.
+            id_match: When True (default), also matches on an exact
+                `customer_conversation_id` equal to `query`, like the UI.
+            with_snippets: When True, fetches each matched conversation and
+                attaches a `snippets` list showing where the terms matched.
+            max_workers: Thread pool size used when fetching snippets.
+
+        Returns:
+            A list of conversation summary dicts (as in `list()`), optionally
+            with an added `snippets` key per row.
+        """
+        search_filter = _build_search_filter(
+            query, match=match, id_match=id_match
+        )
+        convs = self.history.list_conversations(
+            time_filter=time_filter,
+            source_filter=source_filter,
+            extra_filter=search_filter,
+            sources=sources,
+            page_size=page_size,
+        )
+        rows = self._rows_from_convs(
+            convs, channel_filter=channel_filter, limit=limit
+        )
+
+        if with_snippets and rows:
+            terms = _query_terms(query, match)
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futures = {
+                    ex.submit(self.get_normalized, r["id"]): r for r in rows
+                }
+                for fut in as_completed(futures):
+                    row = futures[fut]
+                    try:
+                        normalized = fut.result()
+                        row["snippets"] = _extract_snippets(normalized, terms)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to fetch snippets for {row['id']}: {e}"
+                        )
+                        row["snippets"] = []
         return rows
 
     def get_normalized(self, conversation_id: str) -> dict[str, Any]:
@@ -200,7 +295,8 @@ class Traces(Common):
                 conversation_id, normalized=normalized
             )
 
-        url = self.console_url(conversation_id)
+        source_str = normalized.get("source")
+        url = self.console_url(conversation_id, source=source_str)
         if fmt == "json":
             return trace_report.to_json(normalized, extras=extras)
         if fmt in ("md", "markdown"):
@@ -640,6 +736,7 @@ class Traces(Common):
             else None
         )
 
+        source_str = normalized.get("source")
         with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr(
                 "transcript.json",
@@ -648,14 +745,19 @@ class Traces(Common):
             z.writestr(
                 "transcript.md",
                 trace_report.to_markdown(
-                    normalized, console_url=self.console_url(conversation_id)
+                    normalized,
+                    console_url=self.console_url(
+                        conversation_id, source=source_str
+                    ),
                 ),
             )
             z.writestr(
                 "report.html",
                 trace_report.to_html(
                     normalized,
-                    console_url=self.console_url(conversation_id),
+                    console_url=self.console_url(
+                        conversation_id, source=source_str
+                    ),
                     audio_path=(
                         os.path.basename(audio_path) if audio_path else None
                     ),
@@ -721,7 +823,9 @@ class Traces(Common):
                 f"{base_uri}transcript.md",
                 trace_report.to_markdown(
                     normalized,
-                    console_url=self.console_url(conversation_id),
+                    console_url=self.console_url(
+                        conversation_id, source=normalized.get("source")
+                    ),
                 ),
                 content_type="text/markdown",
             )
@@ -789,12 +893,22 @@ class Traces(Common):
 
     # ---------------------------- ui / helpers ------------------------------
 
-    def console_url(self, conversation_id: str) -> str:
+    def console_url(
+        self, conversation_id: str, source: str | None = None
+    ) -> str:
+        """Builds the GECX/CES Console URL for a conversation."""
         base = self.trace_config.ui.ces_console_base.rstrip("/")
+        app_id = (self.app_name or "").split("/")[-1]
+        params = {
+            "panel": "conversation_list",
+            "id": conversation_id,
+        }
+        if source:
+            params["source"] = source
+        qs = urllib.parse.urlencode(params)
         return (
             f"{base}/projects/{self.project_id}/locations/{self.location}"
-            f"/apps/{(self.app_name or '').split('/')[-1]}/conversations/"
-            f"{conversation_id}"
+            f"/apps/{app_id}?{qs}"
         )
 
     def _metadata(self) -> dict[str, Any]:
@@ -817,6 +931,108 @@ class Traces(Common):
 
 
 # ----------------------------- module helpers -------------------------------
+
+
+def _escape_filter_literal(s: str) -> str:
+    """Escapes a string for safe use inside an AIP-160 double-quoted literal."""
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _query_terms(query: str, match: str) -> list[str]:
+    """Splits a query into the terms used for matching.
+
+    'phrase' keeps the whole query as a single term; 'all'/'any' split on
+    whitespace.
+    """
+    q = query.strip()
+    if match == "phrase":
+        return [q] if q else []
+    return q.split()
+
+
+def _build_search_filter(
+    query: str,
+    match: str = "phrase",
+    id_match: bool = True,
+) -> str:
+    """Builds the AIP-160 filter used by the console conversation search.
+
+    Mirrors the UI, which sends
+    `(customer_conversation_id="<q>" OR ces_transcript.search("<q>"))`.
+
+    Args:
+        query: The raw search text.
+        match: 'phrase' (single `search()` call), 'all' (words ANDed) or
+            'any' (words ORed).
+        id_match: When True, OR an exact `customer_conversation_id` match with
+            the transcript search (matching the UI).
+    """
+    if match not in ("phrase", "all", "any"):
+        raise ValueError(f"Unknown match mode: {match}")
+
+    terms = _query_terms(query, match)
+    if not terms:
+        raise ValueError("Search query must not be empty.")
+
+    joiner = " OR " if match == "any" else " AND "
+    search_expr = joiner.join(
+        f'ces_transcript.search("{_escape_filter_literal(t)}")' for t in terms
+    )
+    if len(terms) > 1:
+        search_expr = f"({search_expr})"
+
+    if id_match:
+        cid = _escape_filter_literal(query.strip())
+        return f'(customer_conversation_id="{cid}" OR {search_expr})'
+    return search_expr
+
+
+def _extract_snippets(
+    normalized: dict[str, Any],
+    terms: list[str],
+    max_snippets: int = 3,
+    window: int = 60,
+) -> list[dict[str, Any]]:
+    """Pulls short transcript excerpts around term matches.
+
+    Searches the same scope as the server (`user`/`agent` entry text), with a
+    case-insensitive substring match, and returns up to `max_snippets`
+    `{turn, role, kind, text}` excerpts with a `window`-char context on each
+    side of the first hit.
+    """
+    lowered = [t.lower() for t in terms if t]
+    if not lowered:
+        return []
+    snippets: list[dict[str, Any]] = []
+    for entry in normalized.get("entries", []):
+        if entry.get("kind") not in ("user", "agent"):
+            continue
+        text = entry.get("text") or ""
+        haystack = text.lower()
+        hit = next(
+            (i for i in (haystack.find(t) for t in lowered) if i != -1),
+            None,
+        )
+        if hit is None:
+            continue
+        start = max(0, hit - window)
+        end = min(len(text), hit + window)
+        excerpt = text[start:end].strip()
+        if start > 0:
+            excerpt = "…" + excerpt
+        if end < len(text):
+            excerpt = excerpt + "…"
+        snippets.append(
+            {
+                "turn": entry.get("turn"),
+                "role": entry.get("role"),
+                "kind": entry.get("kind"),
+                "text": excerpt,
+            }
+        )
+        if len(snippets) >= max_snippets:
+            break
+    return snippets
 
 
 def _enum_name(v: Any) -> str | None:
@@ -854,7 +1070,7 @@ def _percentile(values: list[float], p: int) -> float | None:
     if not values:
         return None
     s = sorted(values)
-    k = max(0, min(len(s) - 1, int(round((p / 100) * (len(s) - 1)))))
+    k = max(0, min(len(s) - 1, round((p / 100) * (len(s) - 1))))
     return s[k]
 
 

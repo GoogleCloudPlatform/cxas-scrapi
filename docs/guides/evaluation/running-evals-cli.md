@@ -49,7 +49,15 @@ Local simulations don't have a dedicated CLI command — you run them via Python
 ```python
 from cxas_scrapi.evals.simulation_evals import SimulationEvals
 
-sim_evals = SimulationEvals(app_name="projects/my-project/locations/us/apps/my-app")
+from cxas_scrapi.utils.rate_limiter import RateLimiter
+
+# Optional: configure a rate limiter to pace calls and avoid quota limits
+limiter = RateLimiter(requests_per_minute=30.0)
+
+sim_evals = SimulationEvals(
+    app_name="projects/my-project/locations/us/apps/my-app",
+    rate_limiter=limiter
+)
 
 test_case = {
     "steps": [
@@ -138,8 +146,8 @@ cxas run --app-name "$APP" --wait --filter-auto-metrics
 echo "Golden evals passed"
 
 # 4. Local simulations (slowest — run last)
-# Use the skills system's sim runner for parallel execution:
-python .agents/skills/cxas-agent-foundry/scripts/scrapi-sim-runner.py run --parallel 5
+# Run local LLM-User simulation tests in parallel with tool fakes enabled:
+cxas evals report --run --include sims --app-name "$APP" --output-dir "eval-reports" --sim-parallel 5 --use-tool-fakes
 echo "Simulation evals passed"
 
 echo "All evaluations passed!"

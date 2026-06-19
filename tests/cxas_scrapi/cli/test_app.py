@@ -17,6 +17,7 @@
 import argparse
 import io
 import os
+import time
 import zipfile
 from unittest import mock
 
@@ -73,6 +74,30 @@ def test_app_create(
 
     mock_apps_client.create_app.assert_called_once_with(
         app_id=None, display_name="Test App", description="A test app"
+    )
+
+
+def test_app_create_with_app_id(
+    mock_apps_client, mock_common_get_project_id, mock_common_get_location
+):
+    args = argparse.Namespace(
+        name="Test App",
+        description="A test app",
+        app_id="my-custom-id",
+        project_id="test-project",
+        location="us",
+    )
+
+    mock_app_response = mock.MagicMock()
+    mock_app_response.name = (
+        "projects/test-project/locations/us/apps/my-custom-id"
+    )
+    mock_apps_client.create_app.return_value = mock_app_response
+
+    cli_app.app_create(args)
+
+    mock_apps_client.create_app.assert_called_once_with(
+        app_id="my-custom-id", display_name="Test App", description="A test app"
     )
 
 
@@ -417,7 +442,7 @@ def test_app_lint_json_output(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415,I001
+    import json  # noqa: PLC0415
 
     parsed = json.loads(captured.out)
     assert isinstance(parsed, list)
@@ -435,7 +460,7 @@ def test_app_lint_validate_only(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415,I001
+    import json  # noqa: PLC0415
 
     results = json.loads(captured.out)
     valid_prefixes = ("A", "S", "V")
@@ -457,7 +482,7 @@ def test_app_lint_only_filter(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415,I001
+    import json  # noqa: PLC0415
 
     results = json.loads(captured.out)
     for r in results:
@@ -478,10 +503,100 @@ def test_app_lint_rule_filter(capsys, tmp_path):
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    import json  # noqa: PLC0415,I001
+    import json  # noqa: PLC0415
 
     results = json.loads(captured.out)
     for r in results:
         assert r["rule_id"] == "I001", (
             f"Expected only I001 with --rule I001, got {r['rule_id']}"
         )
+
+
+def test_app_push_zip_timestamp_touch(mock_apps_client, tmp_path):
+    # Create a valid root file and set its modification time
+    # to an old epoch time (e.g., year 1975)
+    old_file = os.path.join(tmp_path, "app.yaml")
+    with open(old_file, "w") as f:
+        f.write("name: test")
+
+    # Set modification time to 1975 (before 1980)
+    time_1975 = 5 * 365 * 24 * 3600  # Approx 1975
+    os.utime(old_file, (time_1975, time_1975))
+    limit = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
+    assert os.path.getmtime(old_file) < limit
+
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        display_name="New App Name",
+        project_id="test-project",
+        location="us",
+    )
+
+    mock_lro = mock.MagicMock()
+    mock_imported_app = mock.MagicMock()
+    mock_imported_app.name = "projects/test-project/locations/us/apps/new-id"
+    mock_lro.result.return_value = mock_imported_app
+    mock_apps_client.import_as_new_app.return_value = mock_lro
+
+    # Run the push - this should execute the touch logic
+    # for real on disk in temp_dir
+    cli_app.app_push(args)
+
+    # Retrieve the zip bytes passed to import_as_new_app
+    mock_apps_client.import_as_new_app.assert_called_once()
+    call_kwargs = mock_apps_client.import_as_new_app.call_args[1]
+    zip_bytes = call_kwargs["app_content"]
+
+    # Parse the zip in memory and verify that all member
+    # file timestamps are >= 1980
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        for info in zf.infolist():
+            # info.date_time is a tuple:
+            # (year, month, day, hour, minute, second)
+            err_msg = (
+                f"File {info.filename} has pre-1980 timestamp: {info.date_time}"
+            )
+            assert info.date_time[0] >= 1980, err_msg
+
+
+@mock.patch("cxas_scrapi.cli.app.Versions", autospec=True)
+def test_app_push_create_version(mock_versions_cls, mock_apps_client, tmp_path):
+    mock_apps_client.creds = mock.MagicMock()
+
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        display_name="New App Name",
+        project_id="test-project",
+        location="us",
+        create_version=True,
+        version_description="Release version 1.0",
+    )
+
+    # Create minimal app files
+    with open(os.path.join(tmp_path, "app.yaml"), "w") as f:
+        f.write("name: test")
+
+    mock_lro = mock.MagicMock()
+    mock_imported_app = mock.MagicMock()
+    mock_imported_app.name = "projects/test-project/locations/us/apps/new-id"
+    mock_lro.result.return_value = mock_imported_app
+    mock_apps_client.import_as_new_app.return_value = mock_lro
+
+    mock_versions_inst = mock_versions_cls.return_value
+    mock_version = mock.MagicMock()
+    mock_version.name = (
+        "projects/test-project/locations/us/apps/new-id/versions/v1"
+    )
+    mock_versions_inst.create_version.return_value = mock_version
+
+    cli_app.app_push(args)
+
+    mock_versions_cls.assert_called_once_with(
+        app_name="projects/test-project/locations/us/apps/new-id",
+        creds=mock_apps_client.creds,
+    )
+    mock_versions_inst.create_version.assert_called_once()
+    expected = "projects/test-project/locations/us/apps/new-id/versions/v1"
+    assert args.created_version_name == expected

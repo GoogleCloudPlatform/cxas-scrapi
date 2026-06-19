@@ -46,7 +46,7 @@ def test_i001_missing_tags(tmp_path, context):
     f.write_text("Just some text without tags.")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 3  # noqa: PLR2004
+    assert len(results) == 3
     tags = {r.message for r in results}
     assert any("<role>" in t for t in tags)
     assert any("<persona>" in t for t in tags)
@@ -193,9 +193,7 @@ def test_i014_in_global_only(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
-    (tmp_path / "global_instruction.txt").write_text(
-        "Today is ${current_date}."
-    )
+    (tmp_path / "global_instruction.txt").write_text("Today is {current_date}.")
     f = tmp_path / "instruction.txt"
     f.write_text("No date here.")
 
@@ -208,11 +206,9 @@ def test_i014_in_global_and_agent(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
-    (tmp_path / "global_instruction.txt").write_text(
-        "Today is ${current_date}."
-    )
+    (tmp_path / "global_instruction.txt").write_text("Today is {current_date}.")
     f = tmp_path / "instruction.txt"
-    f.write_text("Date: ${current_date}.")
+    f.write_text("Date: {current_date}.")
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -227,7 +223,7 @@ def test_i014_in_all_agents_not_global(tmp_path, context):
     for name in ("agent_a", "agent_b"):
         d = tmp_path / "agents" / name
         d.mkdir(parents=True)
-        (d / "instruction.txt").write_text("Date: ${current_date}.")
+        (d / "instruction.txt").write_text("Date: {current_date}.")
     # Global does not have it
     gi = tmp_path / "global_instruction.txt"
     gi.write_text("No date here.")
@@ -244,7 +240,7 @@ def test_i014_in_some_agents_not_global(tmp_path, context):
     # agent_a has it, agent_b does not
     a = tmp_path / "agents" / "agent_a"
     a.mkdir(parents=True)
-    (a / "instruction.txt").write_text("Date: ${current_date}.")
+    (a / "instruction.txt").write_text("Date: {current_date}.")
     b = tmp_path / "agents" / "agent_b"
     b.mkdir(parents=True)
     (b / "instruction.txt").write_text("No date here.")
@@ -268,12 +264,12 @@ def test_i014_in_some_agents_not_global(tmp_path, context):
 
 
 def test_i014_accepts_double_brace_syntax(tmp_path, context):
-    """${{current_date}} syntax is also valid."""
+    """{{current_date}} syntax is also valid."""
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
     f = tmp_path / "global_instruction.txt"
-    f.write_text("Today is ${{current_date}}.")
+    f.write_text("Today is {{current_date}}.")
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -421,7 +417,7 @@ def test_c003_camelcase_detected(tmp_path, context):
     f.write_text("def myFunction(x): pass\ndef anotherFunc(y): pass")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
     assert any("myFunction" in r.message for r in results)
 
 
@@ -946,7 +942,7 @@ def test_t007_not_snake_case(tmp_path, context):
     )
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
 
 
 def test_t007_snake_case_ok(tmp_path, context):
@@ -1073,6 +1069,109 @@ def test_t011_no_none_default(tmp_path, context):
     rule = NoneDefaultValue()
     f = tmp_path / "python_code.py"
     f.write_text("def my_tool(param1: str = '', param2: int = 0): pass")
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t008_json_tool_unreferenced(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import ToolDisplayNameUnreferenced  # noqa: PLC0415,I001
+
+    rule = ToolDisplayNameUnreferenced()
+    # Create an orphaned json widget tool config directly
+    # (no python_function subdir)
+    (tmp_path / "tools" / "custom_slider").mkdir(parents=True)
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.write_text('{"name": "custom_slider", "displayName": "custom_slider"}')
+
+    # Create agent that doesn't reference it
+    (tmp_path / "agents" / "root_agent").mkdir(parents=True)
+    (tmp_path / "agents" / "root_agent" / "root_agent.json").write_text(
+        '{"displayName": "root_agent", "tools": ["other_tool"]}'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "custom_slider" in results[0].message
+
+
+def test_t004_json_tool_skipped(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import FunctionNameMismatch  # noqa: PLC0415,I001
+
+    rule = FunctionNameMismatch()
+    # A widget tool json should be skipped without complaining
+    # about missing Python functions
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t012_python_function_description(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import MissingToolDescriptionInJSON  # noqa: PLC0415,I001
+
+    rule = MissingToolDescriptionInJSON()
+
+    # Case 1: has pythonFunction description
+    f = tmp_path / "tools" / "my_func" / "my_func.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        '{"displayName": "my_func", "pythonFunction": '
+        '{"description": "A great tool"}}'
+    )
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+    # Case 2: missing pythonFunction description
+    f.write_text('{"displayName": "my_func", "pythonFunction": {}}')
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "pythonFunction.description" in results[0].message
+
+
+def test_t012_widget_tool_description(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import MissingToolDescriptionInJSON  # noqa: PLC0415,I001
+
+    rule = MissingToolDescriptionInJSON()
+
+    # Case 1: has widgetTool description
+    f = tmp_path / "tools" / "my_widget" / "my_widget.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        '{"displayName": "my_widget", "widgetTool": '
+        '{"description": "A cool slider widget"}}'
+    )
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+    # Case 2: missing widgetTool description
+    f.write_text('{"displayName": "my_widget", "widgetTool": {}}')
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "widgetTool.description" in results[0].message
+
+
+def test_t001_json_tool_skipped(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import MissingAgentAction  # noqa: PLC0415,I001
+
+    rule = MissingAgentAction()
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t010_json_tool_skipped(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import ToolInvalidPythonSyntax  # noqa: PLC0415,I001
+
+    rule = ToolInvalidPythonSyntax()
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -1304,7 +1403,7 @@ def test_e010_old_format(tmp_path, context):
     f.write_text("tool_name: get_balance\ntest_cases:\n  - input: {}")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
 
 
 def test_e010_correct_key(tmp_path, context):
@@ -1402,7 +1501,7 @@ def test_a002_missing_required_fields(tmp_path, context):
     f.write_text('{"description": "test"}')
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
     fields = {r.message for r in results}
     assert any("name" in m for m in fields)
     assert any("displayName" in m for m in fields)
@@ -1412,7 +1511,7 @@ def test_a002_missing_required_fields(tmp_path, context):
 
 
 def test_v001_app_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")
@@ -1427,7 +1526,7 @@ def test_v001_app_valid(tmp_path, context):
 
 
 def test_v001_app_missing_config(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")
@@ -1441,7 +1540,7 @@ def test_v001_app_missing_config(tmp_path, context):
 
 
 def test_v002_agent_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1457,7 +1556,7 @@ def test_v002_agent_valid(tmp_path, context):
 
 
 def test_v002_agent_missing_config(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1471,7 +1570,7 @@ def test_v002_agent_missing_config(tmp_path, context):
 
 
 def test_v003_tool_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V003")
@@ -1486,7 +1585,7 @@ def test_v003_tool_valid(tmp_path, context):
 
 
 def test_v005_guardrail_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V005")
@@ -1501,7 +1600,7 @@ def test_v005_guardrail_valid(tmp_path, context):
 
 
 def test_v006_evaluation_invalid_field(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V006")
@@ -1519,7 +1618,7 @@ def test_v006_evaluation_invalid_field(tmp_path, context):
 
 
 def test_schema_missing_referenced_file(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1537,7 +1636,7 @@ def test_schema_missing_referenced_file(tmp_path, context):
 
 
 def test_schema_missing_required_field(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")

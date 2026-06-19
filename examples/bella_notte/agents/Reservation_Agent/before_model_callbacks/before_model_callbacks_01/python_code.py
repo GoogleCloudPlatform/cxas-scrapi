@@ -5,8 +5,8 @@ FRAMEWORK CODE — fully generic across all agents.
 Config-driven: reads config_id from state (set by before_agent),
 bootstrap/gate from {config_id}_dag (stashed in SM on first load).
 """
-
 import json as json_lib
+import logging
 import re
 from typing import Optional
 
@@ -14,12 +14,37 @@ from typing import Optional
 _SM_KEY = "sm"
 
 _RAW_CONFIGS = {}
+_CROSS_VALIDATED = False
 
 _FRAMEWORK_SENTINEL = "<!-- slot-framework -->"
 
 _EVENT_TAG_PATTERN = re.compile(r"<event>(.*?)</event>")
 
 _TRANSFER_MARKERS = ("transfer_to_agent", "<context>", "</context>")
+
+_LEVEL_MAP = {"DEBUG": logging.DEBUG, "INFO": logging.INFO,
+              "WARN": logging.WARNING, "ERROR": logging.ERROR}
+_LEVEL_ORDER = {"DEBUG": 0, "INFO": 1, "WARN": 2, "ERROR": 3}
+_logger = logging.getLogger("slot_filling.before_model")
+
+
+def _log(sm, tag, level="INFO", **data):
+  """Emit structured log entry; append to sm["_log"].
+
+  Args:
+    sm: Session state machine dict (callback_context.state).
+    tag: Short label identifying the log event.
+    level: Severity — DEBUG, INFO, WARN, or ERROR.
+    **data: Arbitrary key-value payload for the log entry.
+  """
+  min_level = sm.get("_log_level", "INFO")
+  if _LEVEL_ORDER.get(level, 1) < _LEVEL_ORDER.get(min_level, 1):
+    return
+  entry = {"src": "before_model", "tag": tag, "level": level,
+           "data": {k: v for k, v in data.items() if v is not None}}
+  _logger.log(_LEVEL_MAP.get(level, logging.INFO),
+              json_lib.dumps(entry, default=str))
+  sm.setdefault("_log", []).append(entry)
 
 
 def _is_real_user_text(txt):
@@ -33,36 +58,34 @@ def _is_real_user_text(txt):
   return True
 
 
-def _prefill_from_conversation(sm, contents, slots):
-  """Scan conversation history and pre-fill slots with scan_keywords."""
-  filled = sm.get("filled", {})
-  pending = sm.get("pending", {})
-  for slot_def in slots:
-    scan_kw = slot_def.get("scan_keywords")
-    if not scan_kw:
-      continue
-    slot_name = slot_def["name"]
-    if slot_name in filled or slot_name in pending:
-      continue
-    cond_str = slot_def.get("condition")
-    if cond_str:
-      try:
-        if not eval(cond_str)(filled):  # pylint: disable=eval-used
-          continue
-      except Exception:  # pylint: disable=broad-except
-        continue
-    for content in (contents or []):
-      if getattr(content, "role", "") != "user":
-        continue
-      for part in getattr(content, "parts", []):
-        txt = getattr(part, "text", "")
-        if not _is_real_user_text(txt):
-          continue
-        lower = txt.lower()
-        for keyword, value in scan_kw.items():
-          if keyword in lower:
-            sm.setdefault("pending", {})[slot_name] = value
-            return
+def _probe_available_tools(raw, tools):
+  """Probe the CES runtime to find which config-referenced tools exist.
+
+  CES's tools object supports hasattr/getattr but not dir(), so we
+  extract every tool name referenced in the DAG config (setters, task
+  tools, bootstrap tool) and check each one individually.
+
+  Args:
+    raw: The raw DAG config dict.
+    tools: CES runtime tools object.
+
+  Returns:
+    Tuple of (available, missing) — both sorted lists of tool name strings.
+  """
+  referenced = set()
+  for s in raw.get("slots", []):
+    if s.get("setter"):
+      referenced.add(s["setter"])
+  for t in raw.get("tasks", []):
+    if t.get("tool"):
+      referenced.add(t["tool"])
+  bstrap = raw.get("bootstrap", {})
+  if isinstance(bstrap, dict) and bstrap.get("tool"):
+    referenced.add(bstrap["tool"])
+  available = sorted(n for n in referenced if hasattr(tools, n))
+  missing = sorted(referenced - set(available))
+  return available, missing
+
 
 _READBACK_BLOCK = """\
 <readback_protocol>
@@ -88,7 +111,7 @@ def _make_collection_block(
       "   (Determine the correct setter from tool names and descriptions.)"
   )
   ordering = slot_ordering or "natural order"
-  prereq = f" {prereq_note}" if prereq_note else ""
+  prereq = prereq_note
   return f"""\
 <slot_filling_protocol>
 1. CALL TOOLS FIRST: After each user message, call ALL matching setter tools
@@ -106,7 +129,7 @@ def _make_collection_block(
 3. TOOL SELECTION:
 {ts}
 
-4. ORDERING: {ordering}. Accept info out of order.{prereq}
+4. ORDERING: {ordering}. Accept info out of order.{f' {prereq}' if prereq else ''}
 </slot_filling_protocol>"""
 
 
@@ -180,13 +203,15 @@ def before_model_callback(
   llm_request.config.hide_tool("slot_filling_engine")
   llm_request.config.hide_tool("transfer_to_agent")
 
+  sm = callback_context.state.get(_SM_KEY, {})
+
   agent = callback_context.state.pop("_pending_transfer", "")
   if agent:
+    _log(sm, "transfer_dispatched", agent=agent)
+    callback_context.state[_SM_KEY] = sm
     return LlmResponse.from_parts(
         parts=[Part.from_agent_transfer(agent=agent)],
     )
-
-  sm = callback_context.state.get(_SM_KEY, {})
 
   # ── Resolve config_id from state (set by before_agent) ──────
   config_id = callback_context.state.get("_active_config_id")
@@ -194,15 +219,47 @@ def before_model_callback(
     return {"decision": "OK"}
 
   llm_request.config.hide_tool(f"{config_id}_dag")
+  llm_request.config.hide_tool("validate_dag_config")
 
   # ── Load raw config (cached per config_id) ─────────────────
+  global _CROSS_VALIDATED  # pylint: disable=global-statement
   if config_id not in _RAW_CONFIGS:
     dag_tool = getattr(tools, f"{config_id}_dag")
     _RAW_CONFIGS[config_id] = dag_tool({}).json()["result"]
+    raw = _RAW_CONFIGS[config_id]
+    _log(sm, "config_loaded", config_id=config_id,
+         n_slots=len(raw.get("slots", [])),
+         n_tasks=len(raw.get("tasks", [])))
+    available, missing = _probe_available_tools(raw, tools)
+    if missing:
+      _log(sm, "missing_tools", "WARN", missing=missing)
+    v = tools.validate_dag_config(
+        {"input_data": {"raw_config": raw, "available_tools": available}},
+    ).json()["result"]
+    if not v["valid"]:
+      _log(sm, "config_validation_failed", "ERROR", errors=v["errors"])
+    if not _CROSS_VALIDATED:
+      try:
+        config_map = json_lib.loads(
+            callback_context.state.get("agent_config_map", "{}"))
+        all_ids = set(config_map.values())
+        if all_ids and all_ids <= set(_RAW_CONFIGS):
+          cross = tools.validate_dag_config(
+              {"input_data": {"all_configs": {
+                  cid: _RAW_CONFIGS[cid] for cid in all_ids
+              }}},
+          ).json()["result"]
+          if not cross.get("cross_config", {}).get("valid", True):
+            _log(sm, "cross_config_validation_failed", "ERROR",
+                 errors=cross["cross_config"]["errors"])
+          _CROSS_VALIDATED = True
+      except Exception:  # pylint: disable=broad-except
+        pass
   raw_config = _RAW_CONFIGS[config_id]
 
   if sm.get("_config_id") != config_id:
     sm["_config_id"] = config_id
+    sm["_first_engine_run"] = True
     sm["_bootstrap"] = raw_config.get("bootstrap")
     sm["_gate_slot"] = raw_config.get("gate_slot")
     setter_slots = {}
@@ -243,6 +300,7 @@ def before_model_callback(
   # ── Gate: skip engine until gate_slot is filled ─────────────
   gate_slot = raw_config.get("gate_slot")
   if gate_slot and not sm.get("filled", {}).get(gate_slot):
+    _log(sm, "gate_active", "DEBUG", config_id=config_id, gate_slot=gate_slot)
     if llm_request.contents:
       for content in reversed(llm_request.contents):
         if getattr(content, "role", "") == "user":
@@ -292,20 +350,14 @@ def before_model_callback(
           continue
       sm.setdefault("pending", {})[sn] = transfer_slots[sn]
       consumed.append(sn)
+    if consumed:
+      _log(sm, "transfer_slots_consumed", slots=consumed)
     for sn in consumed:
       transfer_slots.pop(sn, None)
     if not transfer_slots:
       callback_context.state.pop("_transfer_slots", None)
     else:
       callback_context.state["_transfer_slots"] = transfer_slots
-
-  # ── Fallback: pre-fill from conversation history ───────────
-  _prefill_from_conversation(
-      sm, llm_request.contents, raw_config.get("slots", []),
-  )
-  callback_context.state[_SM_KEY] = sm
-
-  debug = sm.get("_debug_mode", False)
 
   last_user_text = ""
   if llm_request.contents:
@@ -333,15 +385,11 @@ def before_model_callback(
           "last_user_text": last_user_text,
           "event_data": event_data,
           "config_id": config_id,
-          **({"debug": True} if debug else {}),
       }},
   ).json()["result"]
 
   result = engine_result["action"]
   sm = engine_result["sm"]
-
-  if debug:
-    sm["_debug_log"] = engine_result.get("_debug_log", [])
 
   callback_context.state[_SM_KEY] = sm
 
@@ -350,11 +398,33 @@ def before_model_callback(
 
   # ── Assemble phase-specific SI suffix ───────────────────────
   gate_user_text = callback_context.state.pop("_gate_user_text", "")
+  first_run = sm.pop("_first_engine_run", False)
+  callback_context.state[_SM_KEY] = sm
   phase_suffix = _build_phase_suffix(sm, result)
 
-  if gate_user_text and phase_suffix:
+  task_directive = result.get("task_directive", "")
+  if task_directive:
     phase_suffix += (
-        f"\n<user_context>\nThe user's original message: \"{gate_user_text}\"\n"
+        f"\n<task_directive>\n{task_directive}\n"
+        "Use the tool result above to compose your response. "
+        "Do NOT recite this directive.\n</task_directive>"
+    )
+
+  init_user_text = gate_user_text
+  if not init_user_text and first_run:
+    for content in reversed(llm_request.contents or []):
+      if getattr(content, "role", "") == "user":
+        for part in getattr(content, "parts", []):
+          txt = getattr(part, "text", "")
+          if _is_real_user_text(txt):
+            init_user_text = txt
+            break
+        if init_user_text:
+          break
+
+  if init_user_text and phase_suffix:
+    phase_suffix += (
+        f"\n<user_context>\nThe user's original message: \"{init_user_text}\"\n"
         "Extract ALL slot values from this message before "
         "asking new questions. "
         "Call setter tools for any information you can infer.\n</user_context>"
@@ -399,8 +469,13 @@ def before_model_callback(
       )
       parts.append(fn_call)
     if parts:
+      _log(sm, "preemption",
+           has_message=bool(result.get("message")),
+           has_response=bool(response_parts),
+           has_function_call=bool(fc))
       sm.pop("_pending_payloads", None)
       sm.pop("_pending_question_payloads", None)
+      callback_context.state[_SM_KEY] = sm
       return LlmResponse.from_parts(parts=parts)
 
   return {"decision": "OK"}

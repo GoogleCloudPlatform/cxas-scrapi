@@ -20,20 +20,21 @@ Validates agent instruction files against CXAS design guide best practices.
 import json
 import re
 from pathlib import Path
-from typing import Optional
 
 from cxas_scrapi.utils.linter import (
     LintContext,
     LintResult,
     Rule,
     Severity,
+    ToolsetValidationBehavior,
+    get_toolset_tools,
     rule,
 )
 
 TOOL_REF_PATTERN = re.compile(r"\{@TOOL:\s*([^}]+)\}")
 
 
-def _load_agent_config(file_path: Path) -> Optional[dict]:
+def _load_agent_config(file_path: Path) -> dict | None:
     """Load the agent JSON config adjacent to an instruction file."""
     agent_dir = file_path.parent
     agent_json = agent_dir / f"{agent_dir.name}.json"
@@ -50,7 +51,7 @@ def _extract_tool_refs(content: str) -> set[str]:
     return {m.group(1).strip() for m in TOOL_REF_PATTERN.finditer(content)}
 
 
-def _find_line(content: str, needle: str) -> Optional[int]:
+def _find_line(content: str, needle: str) -> int | None:
     """Return 1-based line number of first occurrence, or None."""
     for i, line in enumerate(content.splitlines(), 1):
         if needle in line:
@@ -138,7 +139,7 @@ class ExcessiveIfElse(Rule):
         count = sum(
             1 for line in content.split("\n") if self.IF_ELSE_RE.search(line)
         )
-        if count >= 3:  # noqa: PLR2004
+        if count >= 3:
             rel = str(file_path.relative_to(context.project_root))
             return [
                 self.make_result(
@@ -356,6 +357,18 @@ class InvalidToolRef(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
+        referenced = _extract_tool_refs(content)
+
+        # Filter out references that match workspace bypass prefixes
+        # (e.g., MCP/Connector toolsets)
+        bypass_pfx = getattr(context, "bypass_tool_prefixes", None)
+        if bypass_pfx:
+            referenced = {
+                ref
+                for ref in referenced
+                if not any(ref.startswith(pfx) for pfx in bypass_pfx)
+            }
+
         return [
             self.make_result(
                 file=rel,
@@ -365,7 +378,7 @@ class InvalidToolRef(Rule):
                     f" {', '.join(sorted(context.all_known_tools))}"
                 ),
             )
-            for ref in _extract_tool_refs(content)
+            for ref in referenced
             if ref not in context.all_known_tools
         ]
 
@@ -507,8 +520,39 @@ class ToolNotInConfig(Rule):
         if not config:
             return []
 
+        app_root = file_path.parent.parent.parent
+
         config_tools = set(config.get("tools", []))
-        missing = _extract_tool_refs(content) - config_tools
+        bypass_prefixes = set()
+
+        # Resolve toolsets and add their tools to config_tools
+        for ts_entry in config.get("toolsets", []):
+            if isinstance(ts_entry, dict):
+                toolset_name = ts_entry.get("toolset")
+                allowed_tool_ids = ts_entry.get("toolIds") or ts_entry.get(
+                    "tool_ids"
+                )
+                if toolset_name:
+                    res = get_toolset_tools(
+                        app_root, toolset_name, allowed_tool_ids
+                    )
+                    if res.behavior == ToolsetValidationBehavior.BYPASS:
+                        # Skip operation-level checks for MCP/Connector toolsets
+                        bypass_prefixes.add(f"{toolset_name}_")
+                    else:
+                        config_tools.update(res.tools)
+
+        referenced = _extract_tool_refs(content)
+
+        # Filter out referenced tools matching bypass prefixes
+        if bypass_prefixes:
+            referenced = {
+                ref
+                for ref in referenced
+                if not any(ref.startswith(pfx) for pfx in bypass_prefixes)
+            }
+
+        missing = referenced - config_tools
         rel = str(file_path.relative_to(context.project_root))
         return [
             self.make_result(
@@ -518,7 +562,7 @@ class ToolNotInConfig(Rule):
                     f" {{@TOOL: {ref}}} but agent"
                     " config does not list it"
                 ),
-                fix=f"Add '{ref}' to tools array, or remove the reference.",
+                fix=f"Add '{ref}' to tools/toolsets, or remove the reference.",
             )
             for ref in sorted(missing)
         ]
@@ -529,12 +573,12 @@ class MissingCurrentDate(Rule):
     id = "I014"
     name = "missing-current-date"
     description = (
-        "Instruction should reference ${current_date} so the"
+        "Instruction should reference {current_date} so the"
         " agent knows today's date"
     )
     default_severity = Severity.WARNING
 
-    VALID_PATTERNS = re.compile(r"\$\{current_date\}|\$\{\{current_date\}\}")
+    VALID_PATTERNS = re.compile(r"\{current_date\}|\{\{current_date\}\}")
 
     _APPLICABLE_FILES = {"instruction.txt", "global_instruction.txt"}
 
@@ -583,8 +627,8 @@ class MissingCurrentDate(Rule):
                     " not know today's date"
                 ),
                 fix=(
-                    "Add ${current_date} or"
-                    " ${{current_date}} to the"
+                    "Add {current_date} or"
+                    " {{current_date}} to the"
                     " instruction or global"
                     " instruction"
                 ),

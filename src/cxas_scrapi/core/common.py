@@ -18,7 +18,7 @@ import hashlib
 import importlib.metadata
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from google.api_core.gapic_v1.client_info import ClientInfo
 from google.auth import default
@@ -33,7 +33,7 @@ GLOBAL_SCOPES = [
     "https://www.googleapis.com/auth/generative-language.retriever",
 ]
 
-DEFAULT_API_ENDPOINT = "ces.googleapis.com"
+DEFAULT_API_ENDPOINT = os.environ.get("CES_API_ENDPOINT", "ces.googleapis.com")
 
 
 class Common:
@@ -41,12 +41,13 @@ class Common:
 
     def __init__(
         self,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
-        app_name: str = None,  # Optional: used to determine client_options
-        user_agent_extension: str = None,
+        scope: list[str] | None = None,
+        app_name: str
+        | None = None,  # Optional: used to determine client_options
+        user_agent_extension: str | None = None,
     ):
         self.scopes = GLOBAL_SCOPES
         if scope:
@@ -110,7 +111,7 @@ class Common:
         self.client_info = ClientInfo(user_agent=self.user_agent)
 
     @property
-    def token(self) -> Optional[str]:
+    def token(self) -> str | None:
         if (
             hasattr(self, "creds")
             and self.creds
@@ -120,7 +121,7 @@ class Common:
         return getattr(self, "_token", None)
 
     @token.setter
-    def token(self, value: Optional[str]):
+    def token(self, value: str | None):
         self._token = value
 
     @staticmethod
@@ -137,7 +138,7 @@ class Common:
         return hashlib.md5(text.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _get_client_options(resource_name: str) -> Dict[str, str]:
+    def _get_client_options(resource_name: str) -> dict[str, str]:
         """Determine API endpoint based on region."""
         if not resource_name:
             return {}
@@ -164,7 +165,7 @@ class Common:
         return {"api_endpoint": api_endpoint}
 
     @staticmethod
-    def _get_project_id(resource_name: str) -> Optional[str]:
+    def _get_project_id(resource_name: str) -> str | None:
         """Extract project ID from a resource string."""
         if not resource_name:
             return None
@@ -177,7 +178,7 @@ class Common:
         return None
 
     @staticmethod
-    def _get_location(resource_name: str) -> Optional[str]:
+    def _get_location(resource_name: str) -> str | None:
         """Extract location from a resource string."""
         if not resource_name:
             return None
@@ -193,6 +194,24 @@ class Common:
                 and parts[2] == "locations"
             ):
                 return parts[3]
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _get_app_name(resource_name: str) -> str | None:
+        """Extract fully-qualified app name from a resource string."""
+        if not resource_name:
+            return None
+        try:
+            parts = resource_name.split("/")
+            if (
+                len(parts) >= 6
+                and parts[0] == "projects"
+                and parts[2] == "locations"
+                and parts[4] == "apps"
+            ):
+                return "/".join(parts[:6])
         except Exception:
             pass
         return None
@@ -232,7 +251,7 @@ class Common:
             if kind == "ID":
                 current_key = value
                 try:
-                    next_kind, next_value = next(tokens)
+                    next_kind, _next_value = next(tokens)
                 except StopIteration:
                     break
 
@@ -326,7 +345,7 @@ class Common:
 
     @staticmethod
     def get_agent_text_from_outputs(
-        outputs: List[Any], separator: str = "\n"
+        outputs: list[Any], separator: str = "\n"
     ) -> str:
         """Extracts and concatenates text responses from a list of output
         objects.
@@ -350,14 +369,23 @@ class Common:
         return separator.join(agent_texts)
 
     def get_grpc_transport(self, client_class: type):
-        """Creates a customer gRPC transport for CXAS SCRAPI calls."""
-        transport_class = client_class.get_transport_class("grpc")
+        """Creates a customer transport for CXAS SCRAPI calls."""
+        transport_type = os.environ.get("CES_TRANSPORT", "grpc").lower()
 
         host = DEFAULT_API_ENDPOINT
         client_opts = getattr(self, "client_options", None)
         if client_opts and "api_endpoint" in client_opts:
             host = self.client_options["api_endpoint"]
 
+        if transport_type == "rest":
+            transport_class = client_class.get_transport_class("rest")
+            return transport_class(
+                host=host,
+                credentials=self.creds,
+                client_info=self.client_info,
+            )
+
+        transport_class = client_class.get_transport_class("grpc")
         channel = transport_class.create_channel(
             host=host,
             credentials=self.creds,

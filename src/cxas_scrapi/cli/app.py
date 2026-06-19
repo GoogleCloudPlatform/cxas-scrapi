@@ -21,12 +21,14 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.versions import Versions
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +71,7 @@ def _resolve_app_args(
     return apps_client, app_name, display_name
 
 
-def _handle_import_result(result: Any, success_verb: str) -> Optional[str]:
+def _handle_import_result(result: Any, success_verb: str) -> str | None:
     """Helper to wait for import LRO and print success message."""
     if hasattr(result, "result"):
         print("Waiting for import to complete...")
@@ -91,10 +93,20 @@ def app_pull(args: argparse.Namespace) -> None:
 
     apps_client, app_name, _ = _resolve_app_args(args.app, args)
 
-    _app_pull(apps_client, app_name, args.target_dir)
+    _app_pull(
+        apps_client,
+        app_name,
+        args.target_dir,
+        getattr(args, "overwrite", False),
+    )
 
 
-def _app_pull(apps_client: Apps, app_name: str, target_dir: str) -> None:
+def _app_pull(
+    apps_client: Apps,
+    app_name: str,
+    target_dir: str,
+    overwrite: bool = False,
+) -> None:
     """Helper to pull an app from CXAS."""
     try:
         # Export the app
@@ -108,7 +120,81 @@ def _app_pull(apps_client: Apps, app_name: str, target_dir: str) -> None:
 
         # Extract content to target directory.
         with zipfile.ZipFile(io.BytesIO(response.app_content)) as z:
+            export_members = z.namelist()
             z.extractall(target_dir)
+
+        # Handle overwrite logic if requested
+        if overwrite and export_members:
+            # Find the top level directory name in the zip (app name)
+            top_dir = export_members[0].split("/")[0]
+            app_root = os.path.join(target_dir, top_dir)
+
+            if os.path.exists(app_root):
+                # Build set of exported paths relative to app_root
+                export_set = set()
+                for member in export_members:
+                    rel_path = os.path.relpath(member, top_dir)
+                    if rel_path != ".":
+                        export_set.add(rel_path)
+
+                # Identify root level items in export (direct children of
+                # top_dir)
+                export_root_items = set()
+                for member in export_members:
+                    parts = member.split("/")
+                    if len(parts) > 1 and parts[0] == top_dir:
+                        export_root_items.add(parts[1])
+
+                # Walk the local app root bottom-up to remove files then dirs
+                for root, dirs, files in os.walk(app_root, topdown=False):
+                    rel_root = os.path.relpath(root, app_root)
+                    if rel_root == ".":
+                        rel_root = ""
+
+                    # Check files
+                    for name in files:
+                        local_rel_path = (
+                            os.path.join(rel_root, name) if rel_root else name
+                        )
+                        parts = local_rel_path.split("/")
+
+                        if len(parts) > 1:
+                            # It's a non-root level file
+                            root_item = parts[0]
+                            # Only remove if it belongs to a folder that WAS in
+                            # the export
+                            if root_item in export_root_items:
+                                if local_rel_path not in export_set:
+                                    file_path = os.path.join(root, name)
+                                    print(
+                                        "Removing non-exported file: "
+                                        f"{file_path}"
+                                    )
+                                    os.remove(file_path)
+
+                    # Check directories (remove if empty and not in export)
+                    for name in dirs:
+                        local_rel_path = (
+                            os.path.join(rel_root, name) if rel_root else name
+                        )
+                        parts = local_rel_path.split("/")
+
+                        if len(parts) > 1:
+                            root_item = parts[0]
+                            if root_item in export_root_items:
+                                if (
+                                    local_rel_path not in export_set
+                                    and (local_rel_path + "/") not in export_set
+                                ):
+                                    dir_path = os.path.join(root, name)
+                                    # Only remove if it's empty (we didn't keep
+                                    # any files inside it)
+                                    if not os.listdir(dir_path):
+                                        print(
+                                            "Removing empty non-exported dir: "
+                                            f"{dir_path}"
+                                        )
+                                        os.rmdir(dir_path)
 
         print("Successfully pulled app.")
 
@@ -117,7 +203,7 @@ def _app_pull(apps_client: Apps, app_name: str, target_dir: str) -> None:
         sys.exit(1)
 
 
-def app_push(args: argparse.Namespace) -> Optional[str]:  # noqa: C901
+def app_push(args: argparse.Namespace) -> str | None:
     """Handles the 'push' command."""
     # We will reuse the deploy_agent logic from main.py, slightly adjusted.
     app_dir = args.app_dir if args.app_dir else "."
@@ -138,24 +224,26 @@ def app_push(args: argparse.Namespace) -> Optional[str]:  # noqa: C901
         print("No target specified, using existing name if needed.")
         display_name = getattr(args, "display_name", None) or "Pushed Agent"
 
-    _app_push(
+    return _app_push(
         app_dir=app_dir,
         apps_client=apps_client,
         target_app_name=getattr(args, "app_name", None) or app_name,
         identifier=getattr(args, "to", None) or getattr(args, "app_name", None),
         display_name=getattr(args, "display_name", None) or display_name,
         env_file=getattr(args, "env_file", None),
+        args=args,
     )
 
 
 def _app_push(
     app_dir: str,
     apps_client: Apps = None,
-    target_app_name: str = None,
-    identifier: str = None,
-    display_name: str = None,
-    env_file: str = None,
-) -> Optional[str]:
+    target_app_name: str | None = None,
+    identifier: str | None = None,
+    display_name: str | None = None,
+    env_file: str | None = None,
+    args: argparse.Namespace | None = None,
+) -> str | None:
     """Helper to push an app to CXAS."""
     temp_dir = tempfile.mkdtemp()
     inner_dir = os.path.join(temp_dir, "agent")
@@ -202,6 +290,19 @@ def _app_push(
                 f"'{env_file}' not found. Skipping."
             )
 
+    # ZIP does not support timestamps before 1980.
+    # Touch files and directories in temp_dir with timestamps before 1980.
+    limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
+    for root, dirs, files in os.walk(temp_dir):
+        for name in files:
+            path = os.path.join(root, name)
+            if os.path.getmtime(path) < limit_time:
+                os.utime(path, None)
+        for name in dirs:
+            path = os.path.join(root, name)
+            if os.path.getmtime(path) < limit_time:
+                os.utime(path, None)
+
     # Zip the filtered agent directory
     temp_zip = tempfile.mktemp(suffix=".zip")
     shutil.make_archive(temp_zip.replace(".zip", ""), "zip", temp_dir)
@@ -215,16 +316,44 @@ def _app_push(
         print("Uploading to CES...")
 
         if target_app_name:
+            conflict_strategy = (
+                "OVERWRITE"
+                if args and getattr(args, "overwrite", False)
+                else None
+            )
             result = apps_client.import_app(
-                app_name=target_app_name, app_content=app_content
+                app_name=target_app_name,
+                app_content=app_content,
+                conflict_strategy=conflict_strategy,
             )
         else:
             result = apps_client.import_as_new_app(
                 display_name=display_name, app_content=app_content
             )
-        return _handle_import_result(
+        app_name = _handle_import_result(
             result, "pushed to" if identifier else "pushed"
         )
+
+        if args and getattr(args, "create_version", False) and app_name:
+            print(f"Creating version for {app_name}...")
+            versions_client = Versions(
+                app_name=app_name,
+                creds=apps_client.creds,
+            )
+            display_name = f"import-{time.strftime('%Y%m%d%H%M%S')}"
+            description = getattr(args, "version_description", None)
+            version = versions_client.create_version(
+                display_name=display_name,
+                description=description,
+            )
+            version_name = version.name
+            print(
+                f"Created app version: {version_name} "
+                f"with display name {display_name}"
+            )
+            args.created_version_name = version_name
+
+        return app_name
 
     except Exception as e:
         print(f"Failed to push app: {e}")
@@ -240,7 +369,7 @@ def app_create(args: argparse.Namespace) -> None:
     apps_client = Apps(project_id=args.project_id, location=args.location)
     try:
         app = apps_client.create_app(
-            app_id=getattr(args, "app_id", None),
+            app_id=args.app_id,
             display_name=args.name,
             description=args.description,
         )
@@ -385,7 +514,7 @@ def apps_get(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def app_lint(args: argparse.Namespace) -> None:  # noqa: C901
+def app_lint(args: argparse.Namespace) -> None:
     """Handles the 'lint' command."""
     from cxas_scrapi.utils.linter import (  # noqa: PLC0415
         SINGLE_RESOURCE_RULES,
@@ -425,8 +554,9 @@ def app_lint(args: argparse.Namespace) -> None:  # noqa: C901
         if not json_output:
             print(f"Validating {flag}: {resource_path.name}")
             print("=" * 60)
-        for result in rule_obj.check(resource_path, "", context):
-            report.add(result)
+        if rule_obj is not None:
+            for result in rule_obj.check(resource_path, "", context):
+                report.add(result)
         report.print_and_exit(json_output, show_fixes)
         return
 
@@ -436,7 +566,23 @@ def app_lint(args: argparse.Namespace) -> None:  # noqa: C901
 
     app_dir = project_root / config.app_dir
     evals_dir = project_root / config.evals_dir
-    discovery = Discovery(app_dir, evals_dir)
+
+    limit_agents = None
+    agents_arg = getattr(args, "agents", None)
+    if agents_arg:
+        limit_agents = set(a.strip() for a in agents_arg.split(","))
+
+    limit_tools = None
+    tools_arg = getattr(args, "tools", None)
+    if tools_arg:
+        limit_tools = set(t.strip() for t in tools_arg.split(","))
+
+    discovery = Discovery(
+        app_dir,
+        evals_dir,
+        limit_agents=limit_agents,
+        limit_tools=limit_tools,
+    )
 
     if not discovery.app_root:
         if not json_output:

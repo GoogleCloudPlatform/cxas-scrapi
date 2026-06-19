@@ -17,9 +17,13 @@ Here are the key concepts:
 
 ```python
 from cxas_scrapi import SimulationEvals
+from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 app_name = "projects/my-project/locations/us/apps/my-app-id"
-sim = SimulationEvals(app_name=app_name)
+
+# Optional: configure a rate limiter to pace simulation turns and prevent quota exhaustion
+limiter = RateLimiter(requests_per_minute=30.0)
+sim = SimulationEvals(app_name=app_name, rate_limiter=limiter)
 
 test_case = {
     "steps": [

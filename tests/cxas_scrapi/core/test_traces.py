@@ -167,6 +167,121 @@ def test_get_normalized(traces_obj):
     assert n["num_turns"] == 1
 
 
+# ------------------------------- search ------------------------------------
+
+
+def test_build_search_filter_phrase_with_id_match():
+    f = traces_mod._build_search_filter("app crashing")
+    assert f == (
+        '(customer_conversation_id="app crashing" OR '
+        'ces_transcript.search("app crashing"))'
+    )
+
+
+def test_build_search_filter_all_and_any():
+    f_all = traces_mod._build_search_filter(
+        "app crashing", match="all", id_match=False
+    )
+    assert f_all == (
+        '(ces_transcript.search("app") AND ces_transcript.search("crashing"))'
+    )
+    f_any = traces_mod._build_search_filter(
+        "app crashing", match="any", id_match=False
+    )
+    assert f_any == (
+        '(ces_transcript.search("app") OR ces_transcript.search("crashing"))'
+    )
+
+
+def test_build_search_filter_single_word_no_parens():
+    f = traces_mod._build_search_filter("crashing", match="all", id_match=False)
+    assert f == 'ces_transcript.search("crashing")'
+
+
+def test_build_search_filter_escapes_quotes_and_backslashes():
+    f = traces_mod._build_search_filter('a "b" \\c', id_match=False)
+    assert f == r'ces_transcript.search("a \"b\" \\c")'
+
+
+def test_build_search_filter_rejects_empty_and_bad_mode():
+    with pytest.raises(ValueError):
+        traces_mod._build_search_filter("   ")
+    with pytest.raises(ValueError):
+        traces_mod._build_search_filter("hi", match="fuzzy")
+
+
+def test_search_passes_filter_and_sources(traces_obj):
+    traces_obj.history = MagicMock()
+    traces_obj.history.list_conversations.return_value = [_conv("c-match")]
+
+    rows = traces_obj.search(
+        "crashing", sources=["LIVE", "SIMULATOR"], time_filter="7d"
+    )
+
+    assert [r["id"] for r in rows] == ["c-match"]
+    kwargs = traces_obj.history.list_conversations.call_args.kwargs
+    assert kwargs["extra_filter"] == (
+        '(customer_conversation_id="crashing" OR '
+        'ces_transcript.search("crashing"))'
+    )
+    assert kwargs["sources"] == ["LIVE", "SIMULATOR"]
+    assert kwargs["time_filter"] == "7d"
+
+
+def test_search_with_snippets(traces_obj):
+    traces_obj.history = MagicMock()
+    traces_obj.history.list_conversations.return_value = [_conv("c1")]
+    traces_obj.get_normalized = MagicMock(
+        return_value={
+            "entries": [
+                {
+                    "kind": "user",
+                    "turn": 0,
+                    "role": "user",
+                    "text": "My app keeps crashing when I open it.",
+                },
+                {
+                    "kind": "tool_call",
+                    "turn": 0,
+                    "tool": "lookup",
+                    "args": {"q": "crashing"},
+                },
+            ]
+        }
+    )
+    rows = traces_obj.search("crashing", with_snippets=True)
+    assert len(rows) == 1
+    snippets = rows[0]["snippets"]
+    assert len(snippets) == 1
+    assert snippets[0]["kind"] == "user"
+    assert "crashing" in snippets[0]["text"]
+
+
+def test_extract_snippets_scope_and_window():
+    normalized = {
+        "entries": [
+            {
+                "kind": "agent",
+                "turn": 1,
+                "role": "agent_x",
+                "text": "x" * 200 + "needle" + "y" * 200,
+            },
+            {
+                "kind": "tool_response",
+                "turn": 1,
+                "tool": "t",
+                "response": {"v": "needle"},
+            },
+        ]
+    }
+    out = traces_mod._extract_snippets(normalized, ["needle"], window=10)
+    # Only the agent entry is in scope (tool_response excluded).
+    assert len(out) == 1
+    assert "needle" in out[0]["text"]
+    assert out[0]["text"].startswith("…")
+    assert out[0]["text"].endswith("…")
+
+
 def test_get_report_all_formats(traces_obj):
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
@@ -490,7 +605,7 @@ def test_analyze_audio_uses_yaml_prompt_override(traces_obj, monkeypatch):
         traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
     )
     traces_obj.analyze_audio("c1", metrics=["agent_cutoff"])
-    args, kwargs = fake_gem.generate_with_parts.call_args
+    _args, kwargs = fake_gem.generate_with_parts.call_args
     parts = kwargs["parts"]
     # Last part is the prompt string; preceding ones are audio Parts.
     assert parts[-1] == "custom override prompt"
@@ -734,7 +849,7 @@ def test_bundle_skips_failing_audio_download(traces_obj, tmp_path, monkeypatch):
 
 
 def test_report_bug_requires_bucket(traces_obj):
-    with pytest.raises(ValueError, match="bug_report.bucket"):
+    with pytest.raises(ValueError, match=r"bug_report\.bucket"):
         traces_obj.report_bug("c1", reason="r")
 
 
@@ -808,10 +923,18 @@ def test_report_bug_skips_failing_artifacts(traces_obj, monkeypatch):
 
 
 def test_console_url_format(traces_obj):
+    # 1. Without source
     url = traces_obj.console_url("conv-1")
     assert url == (
-        "https://ces.cloud.google.com/projects/p/locations/l/apps/a/"
-        "conversations/conv-1"
+        "https://ces.cloud.google.com/projects/p/locations/l/apps/a"
+        "?panel=conversation_list&id=conv-1"
+    )
+
+    # 2. With source
+    url_with_source = traces_obj.console_url("conv-1", source="LIVE")
+    assert url_with_source == (
+        "https://ces.cloud.google.com/projects/p/locations/l/apps/a"
+        "?panel=conversation_list&id=conv-1&source=LIVE"
     )
 
 

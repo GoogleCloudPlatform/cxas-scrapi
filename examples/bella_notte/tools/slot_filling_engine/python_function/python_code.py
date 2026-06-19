@@ -1,3 +1,4 @@
+# pylint: disable=undefined-variable
 """Slot-filling DAG engine — reusable across projects.
 
 FRAMEWORK CODE — shared across all agents using the slot-filling engine.
@@ -15,6 +16,8 @@ Called from the before_model_callback via:
 
 import copy
 import datetime
+import json as json_lib
+import logging
 import random
 from typing import Any, Optional
 
@@ -210,8 +213,7 @@ _SAFE_EVAL_GLOBALS = {
 }
 
 _COMPILED_CONFIGS = {}
-_DEBUG = False
-_DEBUG_LOG = []
+_sm_ref = None
 
 
 def _compile_formatter(fmt):
@@ -266,110 +268,6 @@ def _compile_config(config: dict[str, Any]) -> dict[str, Any]:
   compiled["slots"] = compiled_slots
   compiled["tasks"] = compiled_tasks
   return compiled
-
-
-def _validate_config(config):
-  """Validate config structure and references."""
-  slots = config["slots"]
-  tasks = config["tasks"]
-  slot_map = {s["name"]: s for s in slots}
-
-  slot_names = [s["name"] for s in slots]
-  slot_set = set(slot_names)
-  task_names = {t["name"] for t in tasks}
-
-  if len(slot_names) != len(slot_set):
-    dupes = [n for n in slot_names if slot_names.count(n) > 1]
-    raise ValueError(f"Duplicate slot names: {set(dupes)}")
-
-  for task in tasks:
-    for inp in task["inputs"]:
-      if inp not in slot_set:
-        raise ValueError(
-            f"Task '{task['name']}' input '{inp}' not in slots"
-        )
-    for slot_name in task.get("outputs", {}).values():
-      if slot_name not in slot_set:
-        raise ValueError(
-            f"Task '{task['name']}' output '{slot_name}'"
-            " not in slots"
-        )
-    if not task.get("tool"):
-      raise ValueError(
-          f"Task '{task['name']}' has no 'tool' key"
-      )
-    for req in task.get("requires", []):
-      if req not in slot_set:
-        raise ValueError(
-            f"Task '{task['name']}' requires '{req}'"
-            " not in slots"
-        )
-    condition = task.get("condition")
-    if (condition is not None
-        and not callable(condition)
-        and not isinstance(condition, str)):
-      raise ValueError(
-          f"Task '{task['name']}' condition must be callable or"
-          f" string, got {type(condition)}"
-      )
-
-  for slot in slots:
-    sources = _normalize_sources(slot.get("source", "user"))
-    for source in sources:
-      if source.startswith("task:"):
-        src_task = source[5:]
-        if src_task not in task_names:
-          raise ValueError(
-              f"Slot '{slot['name']}' references unknown task"
-              f" '{src_task}'"
-          )
-    condition = slot.get("condition")
-    if (condition is not None
-        and not callable(condition)
-        and not isinstance(condition, str)):
-      raise ValueError(
-          f"Slot '{slot['name']}' condition must be callable or"
-          f" string, got {type(condition)}"
-      )
-    if "announce" in sources:
-      if not slot.get("message"):
-        raise ValueError(
-            f"Announce slot '{slot['name']}'"
-            " requires 'message'"
-        )
-      if slot.get("setter"):
-        raise ValueError(
-            f"Announce slot '{slot['name']}'"
-            " must not have 'setter'"
-        )
-    for req in slot.get("requires", []):
-      if req not in slot_set:
-        raise ValueError(
-            f"Slot '{slot['name']}' requires unknown"
-            f" '{req}'"
-        )
-
-  def _has_cycle(name, visited, stack):
-    visited.add(name)
-    stack.add(name)
-    slot_def = slot_map.get(name)
-    if slot_def:
-      for req in slot_def.get("requires", []):
-        if req not in visited:
-          if _has_cycle(req, visited, stack):
-            return True
-        elif req in stack:
-          return True
-    stack.discard(name)
-    return False
-
-  visited, stack = set(), set()
-  for name in slot_names:
-    if name not in visited:
-      if _has_cycle(name, visited, stack):
-        raise ValueError(
-            f"Circular requires involving '{name}'"
-        )
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -518,30 +416,37 @@ def _starts_affirmative(text: str) -> bool:
 # ═════════════════════════════════════════════════════════════════════
 
 
-def _log(tag, **data):
-  """Emit a structured log line."""
-  parts = " ".join(f"{k}={v!r}" for k, v in data.items())
-  line = f"[slot-filling:{tag}]" + (f" {parts}" if parts else "")
-  print(line)
-  if _DEBUG:
-    _DEBUG_LOG.append(line)
+_LEVEL_MAP = {"DEBUG": logging.DEBUG, "INFO": logging.INFO,
+              "WARN": logging.WARNING, "ERROR": logging.ERROR}
+_LEVEL_ORDER = {"DEBUG": 0, "INFO": 1, "WARN": 2, "ERROR": 3}
+_logger = logging.getLogger("slot_filling.engine")
+
+
+def _log(tag, level="INFO", **data):
+  """Emit structured log entry; append to sm["_log"]."""
+  min_level = _sm_ref.get("_log_level", "INFO") if _sm_ref else "INFO"
+  if _LEVEL_ORDER.get(level, 1) < _LEVEL_ORDER.get(min_level, 1):
+    return
+  entry = {"src": "engine", "tag": tag, "level": level,
+           "data": {k: v for k, v in data.items() if v is not None}}
+  _logger.log(_LEVEL_MAP.get(level, logging.INFO),
+              json_lib.dumps(entry, default=str))
+  if _sm_ref is not None:
+    _sm_ref.setdefault("_log", []).append(entry)
 
 
 def _log_progress(filled, pending, last_state):
-  """Log slot state changes since last turn."""
+  """Log state deltas — skip if nothing changed."""
   last_filled = last_state.get("filled", {})
   last_pending = last_state.get("pending", {})
   confirmed = sorted(
-      k for k in set(last_pending) if k in filled and k not in last_filled
-  )
+      k for k in set(last_pending) if k in filled and k not in last_filled)
   task_out = {
       k: filled[k]
-      for k in set(filled) - set(last_filled) - set(confirmed)
-  }
+      for k in set(filled) - set(last_filled) - set(confirmed)}
   new_pending = {k: pending[k] for k in set(pending) - set(last_pending)}
   rejected = sorted(
-      k for k in set(last_pending) if k not in pending and k not in filled
-  )
+      k for k in set(last_pending) if k not in pending and k not in filled)
   if not (confirmed or task_out or new_pending or rejected):
     return
   _log("progress",
@@ -554,8 +459,8 @@ def _log_progress(filled, pending, last_state):
 def _log_invoke(n, phase, filled, pending, fresh_pending, hidden, *,
                 asking=None, reading_back=None, fired=None, done=False,
                 preempted=None, deferred=None):
-  """Log a DAG invocation with current state."""
-  _log("invoke",
+  """Log invocation snapshot (DEBUG level)."""
+  _log("invoke", level="DEBUG",
        n=n, phase=phase,
        **({} if not filled else {"filled": sorted(filled)}),
        **({} if not pending else {"pending": sorted(pending)}),
@@ -643,11 +548,12 @@ def _deactivate_conditional_slots(
     deferred: dict[str, Any], retries: dict[str, Any],
 ) -> None:
   """Remove slots whose conditions are no longer met."""
+  merged_state = {**filled, **pending, **deferred}
   for slot_def in slots:
     if "condition" not in slot_def:
       continue
     name = slot_def["name"]
-    if not _is_slot_active(slot_def, filled):
+    if not _is_slot_active(slot_def, merged_state):
       if name in filled:
         filled.pop(name)
         retries.pop(f"slot:{name}", None)
@@ -806,7 +712,7 @@ def _handle_steer_back(
   # After a hard steer preemption, yield one turn to the LLM
   # so it can process the user's response to the forced question.
   if sm.pop("_hard_steer_yielded", False):
-    _log("steer_back_yield", turns=sm.get("_steer_back_turns", 0))
+    _log("steer_back_yield", "DEBUG", turns=sm.get("_steer_back_turns", 0))
     return None
 
   turns = sm.get("_steer_back_turns", 0) + 1
@@ -835,7 +741,7 @@ def _handle_steer_back(
     )
 
   if turns >= escalate_after:
-    _log("steer_back_escalate", turns=turns)
+    _log("steer_back_escalate", "WARN", turns=turns)
     exhaust = steer_back_cfg.get("on_exhaust", {})
     fc = _resolve_exhaust_action(exhaust, filled)
     if fc:
@@ -868,7 +774,7 @@ def _handle_steer_back(
       )
       msg = next_q.get("system_message", "")
     sm["_hard_steer_yielded"] = True
-    _log("steer_back_hard", turns=turns, msg=msg)
+    _log("steer_back_hard", "WARN", turns=turns, msg=msg)
     _log_invoke(inv_n, "steer_back_hard", filled, pending,
                 fresh_pending, hide_tools, preempted=msg,
                 deferred=deferred)
@@ -906,9 +812,13 @@ def _handle_post_executor(
     retries.pop(task_just, None)
     sub_context = {**filled, **result}
     task_msg = ""
+    task_directive = ""
     msg_template = task_def.get("then_say", "")
+    directive_template = task_def.get("then_directive", "")
     if msg_template:
       task_msg = msg_template.format(**sub_context)
+    if directive_template:
+      task_directive = directive_template.format(**sub_context)
     deferred_transition = sm.pop("_deferred_transition", False)
     if deferred_transition and task_msg and confirm_transition_prefix:
       task_msg = f"{confirm_transition_prefix} {task_msg}"
@@ -919,10 +829,19 @@ def _handle_post_executor(
           filled.pop(sn, None)
         task_results.clear()
         sm["status"] = "in_progress"
+        sm["_just_completed_task"] = task_just
         _log("on_complete", task=task_just,
              cleared=on_complete.get("clear_slots", []))
       else:
         sm["status"] = "complete"
+      if task_directive and not task_msg:
+        _log_invoke(inv_n, phase, filled, pending, fresh_pending,
+                    hide_tools, fired=task_just, deferred=deferred)
+        return {
+            "hide_tools": [],
+            "preempt": False,
+            "task_directive": task_directive,
+        }, "", None
       _log_invoke(inv_n, phase, filled, pending, fresh_pending,
                   hide_tools, fired=task_just, preempted=task_msg,
                   deferred=deferred)
@@ -938,9 +857,13 @@ def _handle_post_executor(
     task_resp = _resolve_response(
         task_def, "then_response", sub_context, channel,
     )
+    if task_directive and not task_msg:
+      return {
+          "task_directive": task_directive,
+      }, "", task_resp
     return None, task_msg, task_resp
 
-  _log("task", name=task_just, ok=False)
+  _log("task", "WARN", name=task_just, ok=False)
   on_failure = task_def.get("on_failure", {})
   max_retries = on_failure.get("max_retries", 0)
   retries[task_just] = retries.get(task_just, 0) + 1
@@ -951,7 +874,7 @@ def _handle_post_executor(
     fc = _resolve_exhaust_action(exhaust, filled)
     if fc:
       sm["status"] = "escalated"
-    _log("task_exhaust", name=task_just)
+    _log("task_exhaust", "ERROR", name=task_just)
     exhaust_msg = exhaust.get("say", "An error occurred.")
     _log_invoke(inv_n, phase, filled, pending, fresh_pending,
                 hide_tools, preempted=exhaust_msg, deferred=deferred)
@@ -983,12 +906,13 @@ def _build_readback_hint(
   """Build readback hint for system instruction."""
   if not fresh_pending or not pending:
     return ""
+  merged_state = {**filled, **pending}
   hint_parts = []
   for slot_def in slots:
     name = slot_def["name"]
     if name not in pending:
       continue
-    if not _is_slot_active(slot_def, filled):
+    if not _is_slot_active(slot_def, merged_state):
       continue
     formatter = _resolve_formatter(slot_def.get("readback_fmt"))
     val = formatter(pending[name]) if formatter else str(pending[name])
@@ -1010,12 +934,13 @@ def _build_readback_hint(
 
 def _build_readback(slots, pending, filled, config=None, channel=""):
   """Build readback confirmation prompt."""
+  merged_state = {**filled, **pending}
   fragments = []
   for slot_def in slots:
     name = slot_def["name"]
     if name not in pending:
       continue
-    if not _is_slot_active(slot_def, filled):
+    if not _is_slot_active(slot_def, merged_state):
       continue
     formatter = _resolve_formatter(slot_def.get("readback_fmt"))
     if formatter:
@@ -1044,9 +969,10 @@ def _find_next_question(
 ):
   """Find the next unfilled user slot to ask about."""
   deferred = deferred or {}
+  merged_state = {**filled, **pending, **deferred}
   for slot_def in slots:
     name = slot_def["name"]
-    if not _is_slot_active(slot_def, filled):
+    if not _is_slot_active(slot_def, merged_state):
       continue
     if name in filled or name in pending or name in deferred:
       continue
@@ -1055,7 +981,7 @@ def _find_next_question(
     requires = slot_def.get("requires", [])
     if not all(
         req in filled
-        or not _is_slot_active(slot_map[req], filled)
+        or not _is_slot_active(slot_map[req], merged_state)
         for req in requires
     ):
       continue
@@ -1099,9 +1025,10 @@ def _find_next_slot_action(
     'next_question', or 'all_done').
   """
   deferred = deferred or {}
+  merged_state = {**filled, **pending, **deferred}
   for slot_def in slots:
     name = slot_def["name"]
-    if not _is_slot_active(slot_def, filled):
+    if not _is_slot_active(slot_def, merged_state):
       continue
     if name in filled or name in pending or name in deferred:
       continue
@@ -1111,7 +1038,7 @@ def _find_next_slot_action(
     requires = slot_def.get("requires", [])
     if not all(
         req in filled
-        or not _is_slot_active(slot_map[req], filled)
+        or not _is_slot_active(slot_map[req], merged_state)
         for req in requires
     ):
       continue
@@ -1145,7 +1072,7 @@ def _find_next_slot_action(
 
 def _compute_dag_state(
     tasks, slots, filled, pending, task_results, slot_map,
-    deferred=None, channel="", config=None,
+    deferred=None, channel="", config=None, skip_task=None,
 ):
   """Evaluate the DAG to determine the next action.
 
@@ -1163,30 +1090,35 @@ def _compute_dag_state(
     deferred: Currently deferred slot values.
     channel: Channel identifier for channel-aware responses.
     config: Full compiled config (for readback_response).
+    skip_task: Task name to skip (just completed via on_complete).
 
   Returns:
     Action dict describing the next step (fire, next_question, etc.).
   """
+  deferred = deferred or {}
+  merged_state = {**filled, **pending, **deferred}
   for task in tasks:
     task_name = task["name"]
+    if task_name == skip_task:
+      continue
     success_key = task.get("success_check", "success")
 
     if (task_name in task_results
         and task_results[task_name].get(success_key)):
       continue
 
-    if not _is_task_active(task, filled):
+    if not _is_task_active(task, merged_state):
       continue
 
     active_inputs = [
         s for s in task["inputs"]
-        if _is_slot_active(slot_map[s], filled)
+        if _is_slot_active(slot_map[s], merged_state)
     ]
     if not all(s in filled for s in active_inputs):
       continue
     task_reqs = [
         r for r in task.get("requires", [])
-        if _is_slot_active(slot_map[r], filled)
+        if _is_slot_active(slot_map[r], merged_state)
     ]
     if not all(r in filled for r in task_reqs):
       continue
@@ -1243,7 +1175,7 @@ def _handle_slot_errors(sm, slots, channel=""):
     max_retries = validation.get("max_retries", 3)
 
     retries[retry_key] = retries.get(retry_key, 0) + 1
-    _log("slot_error", slot=slot_name,
+    _log("slot_error", "WARN", slot=slot_name,
          code=error_code, retries=retries[retry_key])
 
     if retries[retry_key] >= max_retries:
@@ -1259,7 +1191,7 @@ def _handle_slot_errors(sm, slots, channel=""):
       except KeyError:
         pass
       resp = _resolve_response(exhaust, "response", filled, channel)
-      _log("slot_error_exhaust", slot=slot_name)
+      _log("slot_error_exhaust", "ERROR", slot=slot_name)
       return msg, True, fc, resp
 
     error_messages = validation.get("errors", {})
@@ -1344,6 +1276,7 @@ def _check_deferred_groups(
     The names of slots promoted from deferred to pending.
   """
   promoted = []
+  merged_state = {**filled, **pending, **deferred}
   for task_def in tasks:
     if not task_def.get("readback_inputs"):
       continue
@@ -1359,7 +1292,7 @@ def _check_deferred_groups(
         continue
       if "user" not in _normalize_sources(sd.get("source", "user")):
         continue
-      if not _is_slot_active(sd, filled):
+      if not _is_slot_active(sd, merged_state):
         continue
       if inp in filled or inp in pending:
         continue
@@ -1377,9 +1310,11 @@ def _check_deferred_groups(
 
 def _compute_hidden_tools(
     slots, filled, pending, readback_tools, slot_map,
-    *, fresh_pending=False, executor_tools=None,
+    *, fresh_pending=False, executor_tools=None, deferred=None,
 ):
   """Determine which tools to hide from the LLM."""
+  deferred = deferred or {}
+  merged_state = {**filled, **pending, **deferred}
   hidden = []
   if pending:
     if fresh_pending:
@@ -1393,7 +1328,7 @@ def _compute_hidden_tools(
     if not setter:
       continue
     name = slot_def["name"]
-    if not _is_slot_active(slot_def, filled):
+    if not _is_slot_active(slot_def, merged_state):
       hidden.append(setter)
     elif name in filled:
       hidden.append(setter)
@@ -1401,7 +1336,7 @@ def _compute_hidden_tools(
       hidden.append(setter)
     elif not all(
         r in filled
-        or not _is_slot_active(slot_map[r], filled)
+        or not _is_slot_active(slot_map[r], merged_state)
         for r in slot_def.get("requires", [])
     ):
       hidden.append(setter)
@@ -1416,11 +1351,11 @@ def _compute_hidden_tools(
     for sd in slot_defs:
       name = sd["name"]
       if (name not in filled
-          and _is_slot_active(sd, filled)
+          and _is_slot_active(sd, merged_state)
           and not (name in pending and fresh_pending)
           and all(
               r in filled
-              or not _is_slot_active(slot_map[r], filled)
+              or not _is_slot_active(slot_map[r], merged_state)
               for r in sd.get("requires", [])
           )):
         while tool_name in hidden:
@@ -1473,7 +1408,8 @@ def _build_si_suffix(
         f"\n\n<confirmed_details>"
         f"\nThe user has already provided and confirmed the following details:"
         f"\n{confirmed_summary}"
-        f"\nDo NOT re-ask the user for these details, and do NOT call setter tools for them."
+        f"\nDo NOT re-ask the user for these details,"
+        f" and do NOT call setter tools for them."
         f"\n</confirmed_details>"
     )
 
@@ -1487,6 +1423,11 @@ def _build_si_suffix(
           f"\n\n<readback_scope>"
           f"\nYou MUST confirm ALL of the following values together"
           f" in a single readback — do NOT omit any:\n{readback_hint}"
+          f"\n\nNote: Some of these values (like name or phone number) may have been"
+          f" carried over or pre-filled from previous topics or orders. Do NOT"
+          f" ask for them again from scratch. Instead, confirm/validate them warmly"
+          f" (e.g., 'I see we have your name as John Smith, shall I put this under"
+          f" the same name?')."
           f"\n</readback_scope>"
       )
     else:
@@ -1502,7 +1443,6 @@ def _build_si_suffix(
         f"\n</deferred_collection>"
     )
   return si_suffix
-
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -1582,6 +1522,7 @@ def _run_slot_filling(
   hide_tools = _compute_hidden_tools(
       slots, filled, pending, readback_tools, slot_map,
       fresh_pending=fresh_pending, executor_tools=executor_tool_names,
+      deferred=deferred,
   )
   bootstrap_tool = config.get("bootstrap", {}).get("tool")
   if bootstrap_tool and bootstrap_tool in hide_tools:
@@ -1623,16 +1564,23 @@ def _run_slot_filling(
     return result
 
   # ── Announce slots (cascade through consecutive) ────────
+  _just_completed = sm.pop("_just_completed_task", None)
   announce_msgs = []
   announce_responses = []
   any_announce_preempt = False
   dag_result = _compute_dag_state(
       tasks, slots, filled, pending, task_results, slot_map,
       deferred=deferred, channel=channel, config=config,
+      skip_task=_just_completed,
   )
+  _announced = set()
   while dag_result["action"] == "announce":
     slot_def_a = dag_result["slot_def"]
     name_a = slot_def_a["name"]
+    if name_a in _announced:
+      _log("announce_cycle_break", "WARN", slot=name_a)
+      break
+    _announced.add(name_a)
     msg_a = slot_def_a["message"]
     try:
       msg_a = msg_a.format(**filled)
@@ -1649,52 +1597,59 @@ def _run_slot_filling(
     dag_result = _compute_dag_state(
         tasks, slots, filled, pending, task_results,
         slot_map, deferred=deferred, channel=channel, config=config,
+        skip_task=_just_completed,
     )
 
   # Skip task fire on inline confirm — the LLM needs to run first
   # to process the additional content in the user's message. The
   # task will fire on the next before_model_callback invocation
   # after the LLM calls setters for the new content.
+  _fired_this_call = set()
   if dag_result["action"] == "fire" and not inline_confirmed:
     task_def_f = dag_result["task_def"]
     task_name_f = task_def_f["name"]
-    tool_name = task_def_f["tool"]
-    active_inputs = [
-        s for s in task_def_f["inputs"]
-        if _is_slot_active(slot_map[s], filled)
-    ]
-    args = {k: filled[k] for k in active_inputs if k in filled}
-    for name in deferred_promoted:
-      if name in pending and name not in active_inputs:
-        deferred[name] = pending.pop(name)
-        _log("re_deferred", slot=name, task=task_name_f)
-    if readback_transition:
-      sm["_deferred_transition"] = True
-    sm["_last_state"] = {
-        "filled": dict(filled),
-        "pending": dict(pending),
-        "deferred": dict(deferred),
-    }
-    combined_msg = task_msg
-    if announce_msgs:
-      announce_text = " ".join(announce_msgs)
-      combined_msg = (
-          f"{announce_text} {task_msg}"
-          if task_msg else announce_text
-      )
-    _log_invoke(inv_n, phase, filled, pending, fresh_pending,
-                hide_tools, fired=task_name_f, deferred=deferred)
-    fire_hide = [t for t in hide_tools if t != tool_name]
-    fire_result = {
-        "hide_tools": fire_hide,
-        "preempt": True,
-        "force_preempt": any_announce_preempt,
-        "function_call": {"name": tool_name, "args": args},
-        "message": combined_msg,
-    }
-    if announce_responses:
-      fire_result["response"] = announce_responses
-    return fire_result
+    if task_name_f in _fired_this_call:
+      _log("task_refire_blocked", "WARN", task=task_name_f)
+    else:
+      _fired_this_call.add(task_name_f)
+      tool_name = task_def_f["tool"]
+      merged_state = {**filled, **pending, **deferred}
+      active_inputs = [
+          s for s in task_def_f["inputs"]
+          if _is_slot_active(slot_map[s], merged_state)
+      ]
+      args = {k: filled[k] for k in active_inputs if k in filled}
+      for name in deferred_promoted:
+        if name in pending and name not in active_inputs:
+          deferred[name] = pending.pop(name)
+          _log("re_deferred", slot=name, task=task_name_f)
+      if readback_transition:
+        sm["_deferred_transition"] = True
+      sm["_last_state"] = {
+          "filled": dict(filled),
+          "pending": dict(pending),
+          "deferred": dict(deferred),
+      }
+      combined_msg = task_msg
+      if announce_msgs:
+        announce_text = " ".join(announce_msgs)
+        combined_msg = (
+            f"{announce_text} {task_msg}"
+            if task_msg else announce_text
+        )
+      _log_invoke(inv_n, phase, filled, pending, fresh_pending,
+                  hide_tools, fired=task_name_f, deferred=deferred)
+      fire_hide = [t for t in hide_tools if t != tool_name]
+      fire_result = {
+          "hide_tools": fire_hide,
+          "preempt": True,
+          "force_preempt": any_announce_preempt,
+          "function_call": {"name": tool_name, "args": args},
+          "message": combined_msg,
+      }
+      if announce_responses:
+        fire_result["response"] = announce_responses
+      return fire_result
 
   dag_msg = dag_result.get("system_message", "")
   if task_msg and dag_msg:
@@ -1787,22 +1742,22 @@ def _run_slot_filling(
     unconditional = unconditional + dag_response
   if unconditional:
     sm["_pending_payloads"] = unconditional
-    _log("payload_route", path="stash_unconditional",
+    _log("payload_route", "DEBUG", path="stash_unconditional",
          n_parts=len(unconditional))
   if dag_response and not awaiting_rb:
     sm["_pending_question_payloads"] = {
         "slot": dag_result.get("slot_name"),
         "parts": dag_response,
     }
-    _log("payload_route", path="stash_question",
+    _log("payload_route", "DEBUG", path="stash_question",
          slot=dag_result.get("slot_name"),
          n_parts=len(dag_response))
   if not unconditional and not dag_response:
-    _log("payload_route", path="none")
+    _log("payload_route", "DEBUG", path="none")
 
   if preempt and combined_response:
     final["response"] = combined_response
-    _log("payload_route", path="preempt_dispatch",
+    _log("payload_route", "DEBUG", path="preempt_dispatch",
          n_parts=len(combined_response))
   return final
 
@@ -1829,20 +1784,17 @@ def slot_filling_engine(input_data: dict[str, Any]) -> dict[str, Any]:
     (the updated state machine).
   """
   # pylint: disable=global-variable-not-assigned
-  global _COMPILED_CONFIGS, _DEBUG, _DEBUG_LOG
-
-  _DEBUG = bool(input_data.get("debug"))
-  _DEBUG_LOG = []
+  global _COMPILED_CONFIGS, _sm_ref
 
   raw_config = input_data.get("raw_config", {})
   sm = input_data.get("sm", {})
+  _sm_ref = sm
   last_user_text = input_data.get("last_user_text", "")
   event_data = input_data.get("event_data") or {}
   config_id = input_data.get("config_id", "default")
 
   # ── Compile config (cached per config_id) ──────────────────
   if config_id not in _COMPILED_CONFIGS:
-    _validate_config(raw_config)
     _COMPILED_CONFIGS[config_id] = _compile_config(raw_config)
   config = _COMPILED_CONFIGS[config_id]
 
@@ -1912,6 +1864,9 @@ def slot_filling_engine(input_data: dict[str, Any]) -> dict[str, Any]:
 
   # ── Generate tool selection for before_agent_callback ───────
   filled_for_ts = sm.get("filled", {})
+  pending_for_ts = sm.get("pending", {})
+  deferred_for_ts = sm.get("deferred", {})
+  merged_for_ts = {**filled_for_ts, **pending_for_ts, **deferred_for_ts}
   ts_lines = []
   ordering_parts = []
   prereq_parts = []
@@ -1924,7 +1879,7 @@ def slot_filling_engine(input_data: dict[str, Any]) -> dict[str, Any]:
     setter = slot_def.get("setter", "")
     if name in filled_for_ts:
       continue
-    if hint and setter and _is_slot_active(slot_def, filled_for_ts):
+    if hint and setter and _is_slot_active(slot_def, merged_for_ts):
       ts_lines.append(f"   - {hint} → {setter}")
     if not slot_def.get("condition") and hint and setter:
       ordering_parts.append(name)
@@ -1956,7 +1911,5 @@ def slot_filling_engine(input_data: dict[str, Any]) -> dict[str, Any]:
   else:
     action["event_prefilled"] = False
 
-  result = {"action": action, "sm": sm}
-  if _DEBUG:
-    result["_debug_log"] = _DEBUG_LOG
-  return result
+  _sm_ref = None
+  return {"action": action, "sm": sm}

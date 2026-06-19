@@ -24,7 +24,7 @@ each tool/webhook expands further to show its python code (for
 ones). This makes large agents skimmable without a wall of text.
 
 :class:`StageReport` accumulates labeled HTML sections across the
-migrate/stage1/stage2/stage3 pipeline and emits a single multi-section
+migrate/stage_1/stage_2/stage_3 pipeline and emits a single multi-section
 report at the end. Each section becomes a top-level ``<details open>``
 block, so the result is one collapsible-friendly long-form doc.
 """
@@ -53,8 +53,8 @@ from cxas_scrapi.migration.playbook_visualizer import PlaybookTreeVisualizer
 
 __all__ = [
     "StageReport",
-    "build_mermaid_topology",
     "build_mermaid_tools_per_agent",
+    "build_mermaid_topology",
     "collect_resource_rows",
     "collect_stats",
     "generate_html_report",
@@ -1254,7 +1254,7 @@ def render_playbook_trees_html(agent_data: DFCXAgentIR) -> str:
         try:
             tree = PlaybookTreeVisualizer(playbook).build_tree()
             chunks.append(rich_to_html(Panel(tree, title="Playbook")))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             chunks.append(
                 f"<pre>Failed to render playbook: {html.escape(str(exc))}</pre>"
             )
@@ -1265,14 +1265,14 @@ def render_flow_trees_html(agent_data: DFCXAgentIR) -> str:
     chunks: list[str] = []
     try:
         resolver = FlowDependencyResolver(agent_data)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return f"<pre>Failed to build resolver: {html.escape(str(exc))}</pre>"
     for flow_wrapper in agent_data.flows:
         try:
             context = resolver.resolve(flow_wrapper)
             tree = FlowTreeVisualizer(context).build_tree()
             chunks.append(rich_to_html(Panel(tree, title="Flow")))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             chunks.append(
                 f"<pre>Failed to render flow: {html.escape(str(exc))}</pre>"
             )

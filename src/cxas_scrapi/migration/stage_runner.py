@@ -36,7 +36,7 @@ def _print_logs(optimizer: CXASOptimizer, label: str, console: Console) -> None:
         console.print(f"  • [{stage}] [cyan]{action}[/]: {details}")
 
 
-async def run_stage1(
+async def run_stage_1(
     ir: MigrationIR,
     gemini_client: GeminiGenerate,
     console: Console,
@@ -50,14 +50,14 @@ async def run_stage1(
     )
     optimizer = CXASOptimizer(ir, gemini_client)
     before = len(ir.parameters)
-    await optimizer.optimize_stage1()
+    await optimizer.optimize_stage_1()
     after = len(ir.parameters)
     console.print(f"[green]Stage 1 complete:[/] parameters {before} → {after}")
     _print_logs(optimizer, "Stage 1", console)
     return optimizer
 
 
-async def run_stage2(
+async def run_stage_2(
     ir: MigrationIR,
     gemini_client: GeminiGenerate,
     console: Console,
@@ -70,7 +70,7 @@ async def run_stage2(
         "tool mocks…[/]"
     )
     optimizer = CXASOptimizer(ir, gemini_client)
-    await optimizer.optimize_stage2()
+    await optimizer.optimize_stage_2()
     console.print("[green]Stage 2 complete.[/]")
     _print_logs(optimizer, "Stage 2", console)
     return optimizer
@@ -95,7 +95,7 @@ async def run_stage_with_redeploy(
     console: Console,
 ) -> CXASOptimizer:
     """Run a single CXASOptimizer stage and push the resulting IR changes
-    via update-pass deploys. Used by stage1.py / stage2.py.
+    via update-pass deploys. Used by stage_1.py / stage_2.py.
 
     Steps:
       1. Mark every IR agent COMPILED so the update-pass deploy knows to push.
@@ -112,15 +112,19 @@ async def run_stage_with_redeploy(
         agent.status = MigrationStatus.COMPILED
 
     if stage == 1:
-        optimizer = await run_stage1(service.ir, service.gemini_client, console)
+        optimizer = await run_stage_1(
+            service.ir, service.gemini_client, console
+        )
     else:
-        optimizer = await run_stage2(service.ir, service.gemini_client, console)
+        optimizer = await run_stage_2(
+            service.ir, service.gemini_client, console
+        )
 
     console.print(f"\n[cyan]Pushing Stage {stage} changes to CXAS…[/]")
     try:
         await service._deploy_base_resources(is_update_pass=True)
         await service._deploy_pending_agents(is_update_pass=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("Stage %d redeploy failed: %s", stage, exc)
         console.print(f"[red]Stage {stage} redeploy failed: {exc}[/]")
         raise

@@ -29,6 +29,14 @@
                 }
               }
             }
+          },
+          {
+            "expectation": {
+              "note": "Check_Transfer_To_Takeout",
+              "agentTransfer": {
+                "targetAgent": "Takeout_Agent"
+              }
+            }
           }
         ]
       },

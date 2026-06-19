@@ -19,7 +19,6 @@ Validates golden, scenario, and simulation YAML files.
 
 import re
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -44,7 +43,7 @@ def _is_tool_test(file_path: Path) -> bool:
     return "tool_tests" in file_path.stem or "tool_tests" in file_path.parts
 
 
-def _parse_yaml(content: str) -> Optional[dict]:
+def _parse_yaml(content: str) -> dict | None:
     """Parse YAML, returning None on error or empty content."""
     try:
         data = yaml.safe_load(content)

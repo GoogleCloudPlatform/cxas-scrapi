@@ -4,9 +4,9 @@ description: >-
   Migrate Dialogflow CX (DFCX) agents to CXAS (Customer Experience Agent Studio) agents.
   Use this skill when the user mentions DFCX migration, migrating agents, converting DFCX to CXAS,
   porting agents, agent migration, or post-migration optimization/consolidation. Four independently
-  runnable scripts: migrate.py (1:1), stage1.py (variable dedup + consolidation), stage2.py
-  (instruction state machines + tool mocks + lint + report), stage3.py (rewires consolidated
-  topology from source dep graph; only needed when stage1 ran consolidation). State persists
+  runnable scripts: migrate.py (1:1), stage_1.py (variable dedup + consolidation), stage_2.py
+  (instruction state machines + tool mocks + lint + report), stage_3.py (rewires consolidated
+  topology from source dep graph; only needed when stage_1 ran consolidation). State persists
   between scripts via <target>_ir.json so each can run / re-run / resume independently.
 ---
 
@@ -17,9 +17,9 @@ Four small scripts, one persistent IR bundle:
 | Script | What it does | Runtime | Output |
 |---|---|---|---|
 | `migrate.py` | 1:1 conversion of every selected playbook/flow into a CXAS agent. | ~30 min for ~40 flows | `<target>_ir.json`, `<target>_migration_report.md`, `<target>_unit_tests.json` |
-| `stage1.py` | Loads the IR bundle, runs `CXASOptimizer.optimize_stage1` (variable dedup) + optional Gemini consolidation (N→M agent grouping). Pushes via update-pass deploys. Deletes original orphans (iterative). CXAS Version `0.0.1`. | ~5 min (no consolidate) / ~15 min (with consolidate) | Updated `<target>_ir.json` (with `pre_consolidation_ir` snapshot for rollback), `<target>_grouping.json` |
-| `stage2.py` | Loads the IR bundle, runs `CXASOptimizer.optimize_stage2` (instruction state machines + tool mocks). Pushes via update-pass deploys. CXAS Version `0.0.2`. Re-generates unit tests. Lints. Writes the audit report. | ~10 min | Updated `<target>_ir.json`, `<target>_optimization_report.md`, regenerated `<target>_unit_tests.json` |
-| `stage3.py` | **Only after `stage1.py` ran consolidation.** Rewires the consolidated agents' parent → children topology by mapping the SOURCE DFCX dep graph onto the new groups (rather than relying on what the synthesized PIF XML happened to reference). Sets app `root_agent` to the `is_root` group. Idempotent — safe to re-run. `--dry-run` to preview. | ~10 sec | Updated `<target>_ir.json` stage history; CXAS app's `child_agents` set per group |
+| `stage_1.py` | Loads the IR bundle, runs `CXASOptimizer.optimize_stage1` (variable dedup) and Gemini structural consolidation (N→M agent grouping). Pushes via update-pass deploys. Deletes original orphans (iterative). CXAS Version `0.0.2` (dedup) and `0.0.3` (consolidation). | ~15 min | Updated `<target>_ir.json` (with `pre_consolidation_ir` snapshot for rollback), `<target>_grouping.json` |
+| `stage_2.py` | Loads the IR bundle, runs `CXASOptimizer.optimize_stage2` (instruction state machines + tool mocks). Pushes via update-pass deploys. CXAS Version `0.0.4`. Re-generates unit tests. Lints. Writes the audit report. | ~10 min | Updated `<target>_ir.json`, `<target>_optimization_report.md`, regenerated `<target>_unit_tests.json` |
+| `stage_3.py` | **Only after Stage 1 consolidation.** Rewires the consolidated agents' parent → children topology by mapping the SOURCE DFCX dep graph onto the new groups (rather than relying on what the synthesized PIF XML happened to reference) according to Spoke-Hub architecture style. Sets app `root_agent` to the `is_root` group. Idempotent — safe to re-run. CXAS Version `0.0.5`. | ~10 sec | Updated `<target>_ir.json` stage history; CXAS app's `child_agents` set per group |
 
 State flows through `<target>_ir.json` (a Pydantic `IRBundle` containing the `MigrationConfig`, source `DFCXAgentIR`, target `MigrationIR`, stage history, and version checkpoints). Each stage loads it from disk, mutates it, and writes it back. **No re-fetching or re-compiling between stages.**
 
@@ -28,18 +28,17 @@ State flows through `<target>_ir.json` (a Pydantic `IRBundle` containing the `Mi
 This skill (InquirerPy prompts + HTML pre-flight preview + Gemini model picker) is the right entry when you want to **interactively** drive a migration with rich pre-flight context. The same `MigrationService.run_stage*` methods this skill calls are also exposed via the canonical CLI for scripted / CI use:
 
 ```bash
-# Same plumbing, scripted (no skill scripts needed):
-cxas migrate dfcx-cxas run --source-agent-id … --project-id … --target-name … --consolidate --persist-bundle
-cxas migrate dfcx-cxas stage1 --target-name my_app          # re-run stage 1 against the bundle
-cxas migrate dfcx-cxas stage2 --target-name my_app
-cxas migrate dfcx-cxas stage3 --target-name my_app
-cxas migrate dfcx-cxas resume --target-name my_app          # interactive bundle + stage picker
+# Same E2E plumbing, non-interactive (standard optimized profile by default):
+cxas migrate dfcx --run --source-agent-id … --project-id … --target-name …
 
-# Or the existing interactive dashboard (now with opt-in consolidation / stage3 / persist-bundle):
-cxas migrate dfcx
+# Non-interactive Stage Checkpoint optimization runs:
+cxas migrate dfcx --optimize --stage 1 --target-name my_app
+cxas migrate dfcx --optimize --stage 2 --target-name my_app
+cxas migrate dfcx --optimize --stage 3 --target-name my_app --architecture hub-and-spoke
+cxas migrate dfcx --optimize --stage resume --target-name my_app  # interactive stage picker
 ```
 
-The skill, the dashboard, and the stage subcommands all go through the **same** `MigrationService.run_stage1/run_stage2/run_stage3` methods — pick whichever entry point matches your workflow.
+The skill, the dashboard, and the E2E / Checkpoint commands all go through the **same** `MigrationService.run_stage_1/run_stage_2/run_stage_3` methods — pick whichever entry point matches your workflow.
 
 ## Prerequisites
 
@@ -87,38 +86,30 @@ python .agents/skills/cxas-dfcx-migration/scripts/migrate.py \
   --preview-only --yes
 
 # Stage 1 — variable dedup + Gemini consolidation
-python .agents/skills/cxas-dfcx-migration/scripts/stage1.py --target-name my_cxas_app
-
-# Stage 1 — variable dedup ONLY (skip consolidation)
-python .agents/skills/cxas-dfcx-migration/scripts/stage1.py \
-  --target-name my_cxas_app --no-consolidate --yes
+python .agents/skills/cxas-dfcx-migration/scripts/stage_1.py --target-name my_cxas_app
 
 # Stage 1 — replay a saved grouping JSON
-python .agents/skills/cxas-dfcx-migration/scripts/stage1.py \
+python .agents/skills/cxas-dfcx-migration/scripts/stage_1.py \
   --target-name my_cxas_app --grouping-json my_cxas_app_grouping.json --yes
 
 # Stage 2 — instruction state machines + tool mocks + lint + report
-python .agents/skills/cxas-dfcx-migration/scripts/stage2.py --target-name my_cxas_app
+python .agents/skills/cxas-dfcx-migration/scripts/stage_2.py --target-name my_cxas_app
 
-# Stage 3 — rewire consolidated agent topology from source dep graph
-# (only run after stage1.py with consolidation; idempotent)
-python .agents/skills/cxas-dfcx-migration/scripts/stage3.py --target-name my_cxas_app
-
-# Stage 3 — preview the proposed parent → children mapping without applying
-python .agents/skills/cxas-dfcx-migration/scripts/stage3.py --target-name my_cxas_app --dry-run
+# Stage 3 — rewire consolidated agent parent-child topology (idempotent)
+python .agents/skills/cxas-dfcx-migration/scripts/stage_3.py --target-name my_cxas_app --architecture hub-and-spoke
 ```
 
 ## What lives in the skill vs. in `cxas_scrapi`
 
-The skill is a thin orchestrator. **Every migration / optimization step lives in `src/cxas_scrapi/migration/` and is reachable via `MigrationService.run_stage*` methods**, so the same logic powers all three entry points: this skill, `cxas migrate dfcx` (interactive dashboard), and `cxas migrate dfcx-cxas {stage1,stage2,stage3,resume,run}` (non-interactive subcommands).
+The skill is a thin orchestrator. **Every migration / optimization step lives in `src/cxas_scrapi/migration/` and is reachable via `MigrationService.run_stage_*` methods**, so the same logic powers all three entry points: this skill, `cxas migrate dfcx` (interactive TUI), and non-interactive command modes (`--run` / `--optimize`).
 
 | Operation | src/ entry point |
 |---|---|
 | Source agent fetch / zip parse | `migration/dfcx_exporter.py:ConversationalAgentsAPI` |
 | 1:1 migration | `migration/service.py:MigrationService.run_migration` |
-| **Stage 1 orchestrator** (variable dedup + optional consolidation + integrity + topology link + orphan cleanup + version + bundle persist) | `migration/service.py:MigrationService.run_stage1` |
-| **Stage 2 orchestrator** (state machines + tool mocks + unit-test regen + lint + audit report + bundle persist) | `migration/service.py:MigrationService.run_stage2` |
-| **Stage 3 orchestrator** (parent-child topology wiring) | `migration/service.py:MigrationService.run_stage3` |
+| **Stage 1 orchestrator** (variable dedup + consolidation + integrity + topology link + orphan cleanup + versions + bundle persist) | `migration/service.py:MigrationService.run_stage_1` |
+| **Stage 2 orchestrator** (state machines + tool mocks + unit-test regen + lint + audit report + bundle persist) | `migration/service.py:MigrationService.run_stage_2` |
+| **Stage 3 orchestrator** (parent-child topology wiring) | `migration/service.py:MigrationService.run_stage_3` |
 | Bundle persist convenience | `migration/service.py:MigrationService.persist_bundle` |
 | Variable dedup primitive (Stage 1) | `migration/optimizer.py:CXASOptimizer.optimize_stage1` |
 | Instruction restructuring + tool mocks primitive (Stage 2) | `migration/optimizer.py:CXASOptimizer.optimize_stage2` |
@@ -135,8 +126,8 @@ The skill is a thin orchestrator. **Every migration / optimization step lives in
 | Optimization audit report | `migration/optimization_reporter.py:OptimizationReporter` |
 | Grouping review TUI (accept / re-propose / merge / split / rename) | `cli/grouping_review.py:interactive_review` |
 | HTML pre-flight preview | `migration/html_preview.py` |
-| Post-deploy lint | `migration/post_deploy_lint.py` |
-| IR bundle persistence | `migration/ir_bundle.py:IRBundle` |
+| Post-deploy linter | `migration/post_deploy_lint.py` |
+| IR bundle persistence | `migration/data_models.py:IRBundle` |
 
 Skill-local helpers (UX glue only — InquirerPy prompts + thin
 delegations to `MigrationCLI`):
@@ -145,12 +136,12 @@ delegations to `MigrationCLI`):
 - `_shared.py` — InquirerPy variants of project/location prompts, source loader, and `MigrationConfig` assembly; plus pure delegations to `MigrationCLI` for `check_auth`, `run_dependency_analysis`, `select_resources`, `show_visualizations`.
 
 The stage scripts now import the promoted modules directly:
-``from cxas_scrapi.migration import ir_bundle, phase_tracker``
-(plus ``html_preview`` in ``migrate.py``) and call sites use the
-canonical module names (``ir_bundle.IRBundle``, ``phase_tracker.PhaseTracker``,
+``from cxas_scrapi.migration.data_models import IRBundle``
+(plus ``html_preview`` in ``migrate.py`` and ``phase_tracker``) and call sites use the
+canonical model names (``IRBundle``, ``phase_tracker.PhaseTracker``,
 ``html_preview.generate_html_report``) — no re-export shim layer.
 
-The skill's stage scripts (`migrate.py` / `stage1.py` / `stage2.py` / `stage3.py`) are now ~80-200 line shells: parse args → restore service from bundle → call the matching `MigrationService.run_stage*` → print summary. There is no orchestration logic left in the skill — only InquirerPy prompts and the HTML preview that's specific to the skill's pre-flight UX.
+The skill's stage scripts (`migrate.py` / `stage_1.py` / `stage_2.py` / `stage_3.py`) are now ~80-200 line shells: parse args → restore service from bundle → call the matching `MigrationService.run_stage_*` → print summary. There is no orchestration logic left in the skill — only InquirerPy prompts and the HTML preview that's specific to the skill's pre-flight UX.HTML preview that's specific to the skill's pre-flight UX.
 
 ## IR bundle (`<target>_ir.json`)
 

@@ -1,0 +1,49 @@
+subintent_id: support-wrong-item
+subintent_name: Report Incorrect Item
+parent_cuj: Customer Support
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: 'Hi, I just got my delivery order #9988, but instead of the Spaghetti Carbonara I ordered, I got a Tomato Pasta.'
+- speaker: Agent
+  text: Oh no, I am so sorry for that mistake! Let me check your order details right away.
+- speaker: Agent
+  text: Querying order history details.
+  tool_call:
+    name: lookup_order_history
+    payload:
+      order_id: '9988'
+    response:
+      status: success
+      items:
+      - Spaghetti Carbonara
+      total: 28.98
+- speaker: Agent
+  text: Okay, I see you indeed ordered the Spaghetti Carbonara ($28.98). Since we made an error, I can issue a full credit for the item back to your card on file. Would you like me to do that?
+- speaker: User
+  text: Yes, please refund me for that item. Thank you.
+- speaker: Agent
+  text: Issuing refund credit to card.
+  tool_call:
+    name: issue_customer_credit
+    payload:
+      order_id: '9988'
+      refund_amount: 28.98
+      reason: Wrong item received
+    response:
+      status: success
+      refund_reference: REF-CRED-55
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

@@ -1,0 +1,8 @@
+id: case_2_verification_failure
+name: Verification Failure Handling
+input_data: "testdir/"
+scenario: "Simulate the agent failing to produce output for the file."
+expectations:
+  - "Agent must add the file to the checklist."
+  - "When agent tries to mark the item as done, the tool must return an error."
+  - "Agent must not proceed to complete the checklist without resolving the error."

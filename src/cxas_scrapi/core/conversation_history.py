@@ -16,7 +16,7 @@
 
 import datetime
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 import yaml
@@ -33,11 +33,11 @@ class ConversationHistory(Common):
 
     def __init__(
         self,
-        app_name: str = None,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        app_name: str | None = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -59,7 +59,7 @@ class ConversationHistory(Common):
     def parse_conversation_to_yaml(filepath):
         """Parses a direct CXAS Conversation History textproto into the
         target FDE YAML format."""
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             text = f.read()
 
         parsed = Common.parse_textproto(text)
@@ -135,8 +135,11 @@ class ConversationHistory(Common):
 
     def list_conversations(
         self,
-        time_filter: str = None,
-        source_filter: str = None,
+        time_filter: str | None = None,
+        source_filter: str | None = None,
+        extra_filter: str | None = None,
+        sources: list[str] | None = None,
+        page_size: int | None = None,
     ) -> Any:
         """Lists conversations in the configured app.
 
@@ -144,7 +147,14 @@ class ConversationHistory(Common):
             time_filter: An optional relative time filter (e.g. '7d',
                 '24h', '1m').
             source_filter: An optional enum string filter (e.g. 'LIVE',
-                'SIMULATOR', 'EVAL').
+                'SIMULATOR', 'EVAL'). Maps to the singular ``source`` field.
+            extra_filter: An optional raw AIP-160 filter expression that is
+                ANDed with the computed time filter (e.g. a
+                ``ces_transcript.search("...")`` clause for content search).
+            sources: An optional list of enum string filters mapped to the
+                repeated ``sources`` field (e.g. ['LIVE', 'SIMULATOR']). If
+                set, takes precedence over ``source_filter``.
+            page_size: An optional server-side page size hint.
         """
         filter_str = None
         if time_filter:
@@ -170,9 +180,33 @@ class ConversationHistory(Common):
                     f"Unrecognized time_filter format: {time_filter}. Ignoring."
                 )
 
+        if extra_filter:
+            filter_str = (
+                f"{filter_str} AND {extra_filter}"
+                if filter_str
+                else extra_filter
+            )
+
         request_kwargs = {"parent": self.app_name, "filter": filter_str}
 
-        if source_filter:
+        if page_size is not None:
+            request_kwargs["page_size"] = page_size
+
+        if sources:
+            source_enums = []
+            for s in sources:
+                source_enum_val = getattr(
+                    types.Conversation.Source, s.upper(), None
+                )
+                if source_enum_val is not None:
+                    source_enums.append(source_enum_val)
+                else:
+                    logger.warning(
+                        f"Unrecognized source format: {s}. Ignoring."
+                    )
+            if source_enums:
+                request_kwargs["sources"] = source_enums
+        elif source_filter:
             source_enum_val = getattr(
                 types.Conversation.Source, source_filter.upper(), None
             )
@@ -192,9 +226,9 @@ class ConversationHistory(Common):
     def get_latency_metrics_dfs(
         self,
         time_filter: str = "7d",
-        source_filter: str = None,
+        source_filter: str | None = None,
         limit: int = 50,
-    ) -> Dict[str, pd.DataFrame]:
+    ) -> dict[str, pd.DataFrame]:
         """Generates latency metrics DataFrames from recent conversation traces.
 
         Args:

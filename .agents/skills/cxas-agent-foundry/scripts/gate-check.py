@@ -40,6 +40,7 @@ USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/gate-check"
 
 # ---------- Gate runner helpers ----------
 
+
 class GateResult:
     def __init__(self, gate, name):
         self.gate = gate
@@ -51,7 +52,9 @@ class GateResult:
         self.error = None
 
     def to_dict(self):
-        status = "skipped" if self.skipped else ("pass" if self.passed else "fail")
+        status = (
+            "skipped" if self.skipped else ("pass" if self.passed else "fail")
+        )
         return {
             "gate": self.gate,
             "name": self.name,
@@ -82,6 +85,7 @@ def _print_gate_footer(result: GateResult):
 
 # ---------- Gates ----------
 
+
 def gate1_pull_lint_push(config, app_name, skip_push=False) -> GateResult:
     """Pull platform state, lint, optionally push, re-pull, re-lint."""
     r = GateResult(1, "Pull, Lint and Push")
@@ -98,18 +102,28 @@ def gate1_pull_lint_push(config, app_name, skip_push=False) -> GateResult:
         print(f"  $ {' '.join(cmd)}")
         result = subprocess.run(cmd, env=env, capture_output=True, text=True)
         if result.returncode != 0:
-            r.findings.append({
-                "step": label,
-                "stdout": result.stdout[-2000:],
-                "stderr": result.stderr[-2000:],
-            })
+            r.findings.append(
+                {
+                    "step": label,
+                    "stdout": result.stdout[-2000:],
+                    "stderr": result.stderr[-2000:],
+                }
+            )
             return False
         return True
 
     # 1. Pull
-    pull_cmd = ["cxas", "pull", app_name,
-                "--project-id", project_id, "--location", location,
-                "--target-dir", app_dir]
+    pull_cmd = [
+        "cxas",
+        "pull",
+        app_name,
+        "--project-id",
+        project_id,
+        "--location",
+        location,
+        "--target-dir",
+        app_dir,
+    ]
     if not _run(pull_cmd, "pull"):
         r.passed = False
         r.error = "Initial pull failed"
@@ -121,12 +135,24 @@ def gate1_pull_lint_push(config, app_name, skip_push=False) -> GateResult:
     lint_clean = _run(lint_cmd, "lint")
 
     if not lint_clean:
-        r.warnings.append("Initial lint found violations — fix locally then push")
+        r.warnings.append(
+            "Initial lint found violations — fix locally then push"
+        )
 
     # 3. Push (only if lint clean and not skipped)
     if lint_clean and not skip_push:
-        push_cmd = ["cxas", "push", "--app-dir", app_dir, "--to", app_name,
-                    "--project-id", project_id, "--location", location]
+        push_cmd = [
+            "cxas",
+            "push",
+            "--app-dir",
+            app_dir,
+            "--to",
+            app_name,
+            "--project-id",
+            project_id,
+            "--location",
+            location,
+        ]
         if not _run(push_cmd, "push"):
             r.passed = False
             r.error = "Push failed"
@@ -143,7 +169,9 @@ def gate1_pull_lint_push(config, app_name, skip_push=False) -> GateResult:
         # 5. Re-lint
         if not _run(lint_cmd, "re-lint"):
             r.passed = False
-            r.error = "Re-lint after push failed — drift between local and platform"
+            r.error = (
+                "Re-lint after push failed — drift between local and platform"
+            )
             _print_gate_footer(r)
             return r
 
@@ -166,9 +194,15 @@ def gate2_agent_hierarchy(app_name) -> GateResult:
     project_id, location = parts[1], parts[3]
 
     try:
-        apps = Apps(project_id=project_id, location=location, user_agent_extension=USER_AGENT_EXTENSION)
+        apps = Apps(
+            project_id=project_id,
+            location=location,
+            user_agent_extension=USER_AGENT_EXTENSION,
+        )
         app = apps.get_app(app_name)
-        agents_client = Agents(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+        agents_client = Agents(
+            app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+        )
         agents_map = agents_client.get_agents_map(reverse=True)
         agents_by_resource = agents_client.get_agents_map(reverse=False)
     except Exception as e:
@@ -217,11 +251,19 @@ def gate3_tool_associations(app_name) -> GateResult:
     project_id, location = parts[1], parts[3]
 
     try:
-        apps = Apps(project_id=project_id, location=location, user_agent_extension=USER_AGENT_EXTENSION)
+        apps = Apps(
+            project_id=project_id,
+            location=location,
+            user_agent_extension=USER_AGENT_EXTENSION,
+        )
         app = apps.get_app(app_name)
-        agents_client = Agents(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+        agents_client = Agents(
+            app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+        )
         agents_map = agents_client.get_agents_map(reverse=True)
-        tools_client = Tools(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+        tools_client = Tools(
+            app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+        )
         tools_map = {t.display_name: t.name for t in tools_client.list_tools()}
     except Exception as e:
         r.passed = False
@@ -239,10 +281,18 @@ def gate3_tool_associations(app_name) -> GateResult:
     for agent_name, resource in agents_map.items():
         agent = agents_client.get_agent(resource)
         tool_ids = [t.split("/")[-1] for t in (agent.tools or [])]
-        per_agent[agent_name] = tool_ids
+        toolsets = [
+            {
+                "toolset": ts.toolset.split("/")[-1],
+                "tool_ids": list(ts.tool_ids) if ts.tool_ids else [],
+            }
+            for ts in getattr(agent, "toolsets", [])
+        ]
+        per_agent[agent_name] = {"tools": tool_ids, "toolsets": toolsets}
 
         is_root = (resource == app.root_agent) or (
-            agent_name == (app.root_agent.split("/")[-1] if app.root_agent else None)
+            agent_name
+            == (app.root_agent.split("/")[-1] if app.root_agent else None)
         )
         has_end = any("end_session" in t for t in (agent.tools or []))
         flag = ""
@@ -251,14 +301,31 @@ def gate3_tool_associations(app_name) -> GateResult:
             end_session_warnings.append(agent_name)
         if not has_end and not is_root:
             # Sub-agents should also have end_session per build-verification.md
-            r.warnings.append(f"Sub-agent '{agent_name}' missing end_session in tools array")
+            r.warnings.append(
+                f"Sub-agent '{agent_name}' missing end_session in tools array"
+            )
 
-        print(f"    {agent_name}: {tool_ids}{flag}")
+        tools_formatted = ", ".join(tool_ids) if tool_ids else "none"
+        ts_formatted = []
+        for ts in toolsets:
+            name = ts["toolset"]
+            if ts["tool_ids"]:
+                ts_formatted_ids = ", ".join(ts["tool_ids"])
+                ts_formatted.append(f"{name} ({ts_formatted_ids})")
+            else:
+                ts_formatted.append(f"{name} (none)")
+        ts_str = ", ".join(ts_formatted) if ts_formatted else "none"
 
-    r.findings.append({
-        "platform_tools": list(tools_map.keys()),
-        "per_agent_tools": per_agent,
-    })
+        print(
+            f"    {agent_name}: tools=[{tools_formatted}] toolsets=[{ts_str}]{flag}"
+        )
+
+    r.findings.append(
+        {
+            "platform_tools": list(tools_map.keys()),
+            "per_agent_tools": per_agent,
+        }
+    )
 
     if end_session_warnings:
         r.passed = False
@@ -279,9 +346,13 @@ def gate4_callback_inventory(app_name) -> GateResult:
     from cxas_scrapi.core.callbacks import Callbacks
 
     try:
-        agents_client = Agents(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+        agents_client = Agents(
+            app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+        )
         agents_map = agents_client.get_agents_map(reverse=True)
-        cb_client = Callbacks(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+        cb_client = Callbacks(
+            app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+        )
     except Exception as e:
         r.passed = False
         r.error = f"Failed to fetch callbacks: {e}"
@@ -304,7 +375,9 @@ def gate4_callback_inventory(app_name) -> GateResult:
                 print(f"  {agent_name}/{cb_type}: {len(cb_list)}")
         inventory[agent_name] = agent_inv
 
-    r.findings.append({"callbacks_per_agent": inventory, "total": total_callbacks})
+    r.findings.append(
+        {"callbacks_per_agent": inventory, "total": total_callbacks}
+    )
 
     # Check whether local callback tests are wired up correctly. The runner globs
     # evals/callback_tests/agents/<agent>/*_callbacks/<base>/test.py and SILENTLY
@@ -326,24 +399,34 @@ def gate4_callback_inventory(app_name) -> GateResult:
     if os.path.isdir(agents_root):
         try:
             from cxas_scrapi.evals.callback_evals import CallbackEvals
+
             cb_runner = CallbackEvals()
             # Pass empty pytest args so we just enumerate, but the runner does
             # execute tests. To avoid a slow test-run inside gate-check, just
             # glob the symlinks ourselves using the same pattern SCRAPI uses.
             import glob as _glob
-            pattern = os.path.join(agents_root, "*", "*_callbacks", "*", "test.py")
+
+            pattern = os.path.join(
+                agents_root, "*", "*_callbacks", "*", "test.py"
+            )
             for tp in _glob.glob(pattern):
                 td = os.path.dirname(tp)
                 if os.path.isfile(os.path.join(td, "python_code.py")):
                     discoverable_count += 1
         except ImportError:
-            r.warnings.append("cxas_scrapi.evals.callback_evals not importable — skipping discoverability check")
+            r.warnings.append(
+                "cxas_scrapi.evals.callback_evals not importable — skipping discoverability check"
+            )
 
-    r.findings.append({
-        "tests_authored": authored_count,
-        "tests_discoverable_by_runner": discoverable_count,
-    })
-    print(f"  Local callback tests: {authored_count} authored, {discoverable_count} discoverable")
+    r.findings.append(
+        {
+            "tests_authored": authored_count,
+            "tests_discoverable_by_runner": discoverable_count,
+        }
+    )
+    print(
+        f"  Local callback tests: {authored_count} authored, {discoverable_count} discoverable"
+    )
 
     if total_callbacks > 0 and authored_count > 0 and discoverable_count == 0:
         r.passed = False
@@ -373,7 +456,9 @@ def gate5_single_turn_smoke(app_name) -> GateResult:
     from cxas_scrapi.core.sessions import Sessions
 
     try:
-        sessions = Sessions(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+        sessions = Sessions(
+            app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+        )
         session_id = f"gate5-{uuid.uuid4().hex[:8]}"
         print(f"  session_id={session_id}, text='Hello'")
         result = sessions.run(session_id=session_id, text="Hello")
@@ -399,7 +484,9 @@ def gate6_multi_turn_smoke(app_name, prompts_file) -> GateResult:
         r.skipped = True
         print("  Skipped — pass --multi-turn <prompts.json> to enable.")
         print("  Expected file format:")
-        print('    [{"text": "I need help with my account"}, {"text": "July 12, 1948"}, ...]')
+        print(
+            '    [{"text": "I need help with my account"}, {"text": "July 12, 1948"}, ...]'
+        )
         _print_gate_footer(r)
         return r
 
@@ -414,7 +501,9 @@ def gate6_multi_turn_smoke(app_name, prompts_file) -> GateResult:
 
     from cxas_scrapi.core.sessions import Sessions
 
-    sessions = Sessions(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
+    sessions = Sessions(
+        app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION
+    )
     session_id = f"gate6-{uuid.uuid4().hex[:8]}"
     turns = []
 
@@ -435,31 +524,48 @@ def gate6_multi_turn_smoke(app_name, prompts_file) -> GateResult:
     r.passed = True
     r.findings.append({"session_id": session_id, "turns": turns})
     print("  Note: pacing must be verified by reading the printed responses —")
-    print("  agent should ask for ONE thing at a time, not dump all questions at once.")
+    print(
+        "  agent should ask for ONE thing at a time, not dump all questions at once."
+    )
     _print_gate_footer(r)
     return r
 
 
 # ---------- Main ----------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run the 6 build-verification gates against a deployed GECX app."
     )
-    parser.add_argument("--skip-push", action="store_true",
-                       help="Skip the lint+push round-trip in Gate 1 (use when you only want to verify, not modify the platform)")
-    parser.add_argument("--multi-turn", default=None,
-                       help="Path to a JSON file of prompts to run for Gate 6 (otherwise Gate 6 is skipped)")
-    parser.add_argument("--json", action="store_true",
-                       help="Print JSON result to stdout instead of pretty text")
-    parser.add_argument("--save", default=None,
-                       help="Save JSON result to a specific path (default: <project>/eval-reports/gate-check-<timestamp>.json)")
+    parser.add_argument(
+        "--skip-push",
+        action="store_true",
+        help="Skip the lint+push round-trip in Gate 1 (use when you only want to verify, not modify the platform)",
+    )
+    parser.add_argument(
+        "--multi-turn",
+        default=None,
+        help="Path to a JSON file of prompts to run for Gate 6 (otherwise Gate 6 is skipped)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print JSON result to stdout instead of pretty text",
+    )
+    parser.add_argument(
+        "--save",
+        default=None,
+        help="Save JSON result to a specific path (default: <project>/eval-reports/gate-check-<timestamp>.json)",
+    )
     args = parser.parse_args()
 
     try:
         import cxas_scrapi  # noqa: F401
     except ImportError:
-        print("Error: cxas-scrapi is not installed. Activate venv (source .venv/bin/activate) and install cxas-scrapi first.")
+        print(
+            "Error: cxas-scrapi is not installed. Activate venv (source .venv/bin/activate) and install cxas-scrapi first."
+        )
         sys.exit(1)
 
     config = load_config()
@@ -508,10 +614,14 @@ def main():
         print(json.dumps(summary, indent=2, default=str))
     else:
         print(f"\n{'=' * 60}")
-        print(f"  Summary: {summary['overall']['passed']} passed, "
-              f"{summary['overall']['failed']} failed, "
-              f"{summary['overall']['skipped']} skipped")
-        print(f"  Result: {'ALL PASS' if summary['overall']['all_pass'] else 'FAILURES — see above'}")
+        print(
+            f"  Summary: {summary['overall']['passed']} passed, "
+            f"{summary['overall']['failed']} failed, "
+            f"{summary['overall']['skipped']} skipped"
+        )
+        print(
+            f"  Result: {'ALL PASS' if summary['overall']['all_pass'] else 'FAILURES — see above'}"
+        )
         print(f"  JSON saved to: {out_path}")
         print(f"{'=' * 60}\n")
 

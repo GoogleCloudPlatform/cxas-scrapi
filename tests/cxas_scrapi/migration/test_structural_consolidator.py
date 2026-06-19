@@ -79,7 +79,7 @@ def test_heal_strips_tool_suffix_when_base_exists():
         agents={"A": "Use {@TOOL: get_account_tool}."},
     )
 
-    rewrites, unhealed = heal_tool_refs(ir)
+    rewrites, _unhealed = heal_tool_refs(ir)
 
     assert rewrites == {"get_account_tool": "get_account"}
     assert "{@TOOL: get_account}" in ir.agents["A"].instruction

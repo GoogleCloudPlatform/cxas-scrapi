@@ -16,7 +16,7 @@ import asyncio
 import logging
 import random
 import threading
-from typing import Any, Optional
+from typing import Any
 
 from google import genai
 
@@ -68,16 +68,43 @@ class GeminiGenerate:
             )
         return self._thread_local.client
 
+    def _build_generation_config(
+        self,
+        system_prompt: str | None = None,
+        response_mime_type: str | None = None,
+        response_schema: Any | None = None,
+        temperature: float | None = 1.0,
+        thinking_level: str | None = None,
+    ) -> genai.types.GenerateContentConfig | None:
+        """Helper to construct GenerateContentConfig for the GenAI SDK."""
+        config_args = {}
+        if system_prompt:
+            config_args["system_instruction"] = system_prompt
+        if response_mime_type:
+            config_args["response_mime_type"] = response_mime_type
+        if response_schema:
+            config_args["response_schema"] = response_schema
+        if temperature is not None:
+            config_args["temperature"] = temperature
+        if thinking_level:
+            config_args["thinking_config"] = genai.types.ThinkingConfig(
+                thinking_level=thinking_level
+            )
+
+        if config_args:
+            return genai.types.GenerateContentConfig(**config_args)
+        return None
+
     def generate(
         self,
         prompt: str,
-        system_prompt: Optional[str] = None,
-        model_name: Optional[str] = None,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        temperature: Optional[float] = 1.0,
-        thinking_level: Optional[str] = None,
-    ) -> Optional[Any]:
+        system_prompt: str | None = None,
+        model_name: str | None = None,
+        response_mime_type: str | None = None,
+        response_schema: Any | None = None,
+        temperature: float | None = 1.0,
+        thinking_level: str | None = None,
+    ) -> Any | None:
         """Generates content using the Gemini model.
 
         Args:
@@ -97,23 +124,13 @@ class GeminiGenerate:
         """
         target_model = model_name or self.model_name
 
-        config_args = {}
-        if system_prompt:
-            config_args["system_instruction"] = system_prompt
-        if response_mime_type:
-            config_args["response_mime_type"] = response_mime_type
-        if response_schema:
-            config_args["response_schema"] = response_schema
-        if temperature is not None:
-            config_args["temperature"] = temperature
-        if thinking_level:
-            config_args["thinking_config"] = genai.types.ThinkingConfig(
-                thinking_level=thinking_level
-            )
-
-        config = None
-        if config_args:
-            config = genai.types.GenerateContentConfig(**config_args)
+        config = self._build_generation_config(
+            system_prompt=system_prompt,
+            response_mime_type=response_mime_type,
+            response_schema=response_schema,
+            temperature=temperature,
+            thinking_level=thinking_level,
+        )
 
         try:
             response = self.client.models.generate_content(
@@ -130,13 +147,13 @@ class GeminiGenerate:
     def generate_with_parts(
         self,
         parts: list[Any],
-        system_prompt: Optional[str] = None,
-        model_name: Optional[str] = None,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        temperature: Optional[float] = 1.0,
-        thinking_level: Optional[str] = None,
-    ) -> Optional[Any]:
+        system_prompt: str | None = None,
+        model_name: str | None = None,
+        response_mime_type: str | None = None,
+        response_schema: Any | None = None,
+        temperature: float | None = 1.0,
+        thinking_level: str | None = None,
+    ) -> Any | None:
         """Generates content from a list of multimodal Parts.
 
         Useful for audio analysis where one part is a `genai.types.Part`
@@ -164,23 +181,13 @@ class GeminiGenerate:
             else:
                 contents.append(part)
 
-        config_args = {}
-        if system_prompt:
-            config_args["system_instruction"] = system_prompt
-        if response_mime_type:
-            config_args["response_mime_type"] = response_mime_type
-        if response_schema:
-            config_args["response_schema"] = response_schema
-        if temperature is not None:
-            config_args["temperature"] = temperature
-        if thinking_level:
-            config_args["thinking_config"] = genai.types.ThinkingConfig(
-                thinking_level=thinking_level
-            )
-
-        config = None
-        if config_args:
-            config = genai.types.GenerateContentConfig(**config_args)
+        config = self._build_generation_config(
+            system_prompt=system_prompt,
+            response_mime_type=response_mime_type,
+            response_schema=response_schema,
+            temperature=temperature,
+            thinking_level=thinking_level,
+        )
 
         try:
             response = self.client.models.generate_content(
@@ -193,22 +200,68 @@ class GeminiGenerate:
             logger.error(f"Gemini multimodal generation failed: {e}")
             return None
 
+    async def create_cache(
+        self,
+        system_prompt: str,
+        shared_content: str,
+        ttl_seconds: int = 300,
+    ) -> str | None:
+        """Creates a Gemini context cache for shared prompt content.
+
+        Returns the cache resource name on success, or None if the API call
+        fails (e.g. content below the minimum token threshold). Callers should
+        treat None as a signal to fall back to uncached generation.
+        """
+        try:
+            cache = await self.client.aio.caches.create(
+                model=self.model_name,
+                config={
+                    "system_instruction": system_prompt,
+                    "contents": [
+                        genai.types.Content(
+                            role="user",
+                            parts=[
+                                genai.types.Part.from_text(text=shared_content)
+                            ],
+                        )
+                    ],
+                    "ttl": f"{ttl_seconds}s",
+                },
+            )
+            logger.info("Created Gemini context cache: %s", cache.name)
+            return cache.name
+        except Exception as exc:
+            logger.warning(
+                "Cache creation failed (will proceed uncached): %s", exc
+            )
+            return None
+
+    async def delete_cache(self, cache_name: str) -> None:
+        """Deletes a Gemini context cache by resource name."""
+        try:
+            await self.client.aio.caches.delete(name=cache_name)
+            logger.info("Deleted Gemini context cache: %s", cache_name)
+        except Exception as exc:
+            logger.warning("Cache deletion failed for %s: %s", cache_name, exc)
+
     async def generate_async(
         self,
         prompt: str,
-        system_prompt: Optional[str] = None,
-        model_name: Optional[str] = None,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
+        system_prompt: str | None = None,
+        model_name: str | None = None,
+        response_mime_type: str | None = None,
+        response_schema: Any | None = None,
         max_retries: int = 5,
         base_delay_seconds: int = 10,
-        temperature: Optional[float] = 1.0,
-    ) -> Optional[Any]:
+        temperature: float | None = 1.0,
+        cached_content_name: str | None = None,
+    ) -> Any | None:
         """Generates content asynchronously using the Gemini model.
 
         Args:
-            prompt: The user prompt.
-            system_prompt: Optional system prompt/instruction.
+            prompt: The user prompt (per-call content only when using a cache).
+            system_prompt: Optional system prompt/instruction. Ignored when
+              cached_content_name is provided (system prompt lives in cache).
             model_name: Optional override for the model name.
             response_mime_type: Optional MIME type for the response (e.g.,
               'application/json').
@@ -217,25 +270,27 @@ class GeminiGenerate:
             max_retries: Maximum number of retries for transient errors.
             base_delay_seconds: Base delay for exponential backoff.
             temperature: Optional temperature setting. Defaults to 1.0.
+            cached_content_name: Optional resource name returned by
+              create_cache(). When provided, system_prompt is ignored and the
+              generation config references the cache instead.
 
         Returns:
             The generated text response or parsed object, or None on failure.
         """
         target_model = model_name or self.model_name
 
-        config_args = {}
-        if system_prompt:
-            config_args["system_instruction"] = system_prompt
-        if response_mime_type:
-            config_args["response_mime_type"] = response_mime_type
-        if response_schema:
-            config_args["response_schema"] = response_schema
-        if temperature is not None:
-            config_args["temperature"] = temperature
-
-        config = None
-        if config_args:
+        if cached_content_name:
+            config_args: dict = {"cached_content": cached_content_name}
+            if temperature is not None:
+                config_args["temperature"] = temperature
             config = genai.types.GenerateContentConfig(**config_args)
+        else:
+            config = self._build_generation_config(
+                system_prompt=system_prompt,
+                response_mime_type=response_mime_type,
+                response_schema=response_schema,
+                temperature=temperature,
+            )
 
         for attempt in range(max_retries):
             try:

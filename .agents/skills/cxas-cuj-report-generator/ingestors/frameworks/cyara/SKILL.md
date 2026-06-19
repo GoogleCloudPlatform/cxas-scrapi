@@ -27,7 +27,11 @@ to agent states.
     *   The step names (e.g., `Greeting_State`, `Ask_Identifier`) indicate the
         Agent's state or prompt. You must infer natural Agent dialogue based on
         these state names if literal text is not provided.
-5.  **Extract Metadata**: Look for intent tags to understand the high-level
+5.  **Voice-Realism Enforcement**: Ensure the inferred dialogue strictly
+    enforces the main skill's **Agent-First**, **Voice Realism (No Spoken
+    URLs)**, and **Standardized End Session** (closing with `end_session` tool
+    call) rules.
+6.  **Extract Metadata**: Look for intent tags to understand the high-level
     classification.
 
 ## Example

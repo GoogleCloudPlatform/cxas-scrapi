@@ -99,10 +99,9 @@ def test_get_tool(mock_client_cls, mock_ts_req_cls, mock_t_req_cls):
     )
 
 
-@patch("cxas_scrapi.core.tools.types.Tool")
 @patch("cxas_scrapi.core.tools.types.CreateToolRequest")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_create_tool(mock_client_cls, mock_req_cls, mock_tool_cls):
+def test_create_tool(mock_client_cls, mock_req_cls):
     mock_client = mock_client_cls.return_value
 
     def side_effect(**kwargs):
@@ -112,7 +111,6 @@ def test_create_tool(mock_client_cls, mock_req_cls, mock_tool_cls):
         return m
 
     mock_req_cls.side_effect = side_effect
-    mock_tool_cls.side_effect = side_effect
 
     t = Tools("projects/p/locations/l/apps/A")
 

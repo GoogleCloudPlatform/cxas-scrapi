@@ -22,6 +22,14 @@
           },
           {
             "expectation": {
+              "note": "Check_Transfer_To_Reservation",
+              "agentTransfer": {
+                "targetAgent": "Reservation_Agent"
+              }
+            }
+          },
+          {
+            "expectation": {
               "note": "Check_SetPartySize_Called",
               "toolCall": {
                 "tool": "set_reservation_basics",

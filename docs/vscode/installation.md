@@ -24,11 +24,14 @@ If you already have `cxas-scrapi` installed and on your `PATH` (`cxas --help` wo
 
 ## Install the extension
 
-Open the **Extensions** sidebar (`Cmd+Shift+X` / `Ctrl+Shift+X`), click the `…` menu in the top right of the panel, and pick **Install from VSIX...**:
+![Demonstration of the installation process](../assets/vscode/installation.gif)
+
+1. **Download the extension:** Download the VS Code extension VSIX package directly from [vscode-cxas-0.1.0.vsix](https://storage.googleapis.com/gassets-api-ai/cxas-scrapi-external-preview/vscode-cxas-0.1.0.vsix).
+2. Open the **Extensions** sidebar (`Cmd+Shift+X` / `Ctrl+Shift+X`), click the `…` menu in the top right of the panel, and pick **Install from VSIX...**:
 
 ![Extensions side panel showing the overflow menu with "Install from VSIX..." highlighted](../assets/vscode/install-from-vsix.png)
 
-Select the `cxas-agent-studio.vsix` file you were sent. When prompted, click **Reload Window** to activate.
+3. Select the downloaded `vscode-cxas-0.1.0.vsix` file. When prompted, click **Reload Window** to activate.
 
 After the reload, search for `cxas` in the Extensions panel to confirm the install:
 

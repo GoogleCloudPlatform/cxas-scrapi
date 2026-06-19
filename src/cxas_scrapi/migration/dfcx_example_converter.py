@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from cxas_scrapi.migration.dfcx_playbook_converter import DFCXPlaybookConverter
 
@@ -25,15 +25,15 @@ class DFCXExampleConverter:
 
     @staticmethod
     def convert_cx_example_to_ps_example(
-        cx_example: Dict[str, Any],
+        cx_example: dict[str, Any],
         ps_agent_id: str,
         ps_agent_display_name: str,
-        tool_map: Dict[str, Any],  # Map of DFCX ID -> IRTool
-        agent_id_map: Dict[str, str],
-        cx_tool_display_name_to_id_map: Dict[str, str],
-        cx_playbook_display_name_to_id_map: Dict[str, str],
-        inline_action_map: Dict[str, str],
-    ) -> Dict[str, Any]:
+        tool_map: dict[str, Any],  # Map of DFCX ID -> IRTool
+        agent_id_map: dict[str, str],
+        cx_tool_display_name_to_id_map: dict[str, str],
+        cx_playbook_display_name_to_id_map: dict[str, str],
+        inline_action_map: dict[str, str],
+    ) -> dict[str, Any]:
         """Converts a pre-processed DFCX Example to a CXAS Example payload."""
         messages = []
 

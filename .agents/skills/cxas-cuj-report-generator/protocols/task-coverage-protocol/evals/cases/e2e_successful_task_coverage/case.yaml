@@ -1,0 +1,10 @@
+id: case_1_happy_path
+name: Happy Path Execution
+input_data: "testdir/"
+expectations:
+  - "Agent must list all files in the input directory and count them."
+  - "Agent must call `manage_checklist.py init` to start a checklist."
+  - "Agent must call `manage_checklist.py add` for each file, providing a valid `--output_check_path`."
+  - "Agent must produce output files for each item."
+  - "Agent must call `manage_checklist.py done` for each item after processing."
+  - "All items must be marked as done in the final status."

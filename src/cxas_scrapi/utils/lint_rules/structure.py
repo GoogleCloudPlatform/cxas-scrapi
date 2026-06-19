@@ -31,6 +31,8 @@ from cxas_scrapi.utils.linter import (
     LintResult,
     Rule,
     Severity,
+    ToolsetValidationBehavior,
+    get_toolset_tools,
     rule,
 )
 
@@ -66,15 +68,46 @@ class AgentToolReferences(Rule):
         except (json.JSONDecodeError, OSError):
             return []
 
+        app_root = file_path.parent.parent.parent
+
         known_tools = (
             set(agent_config.get("tools", [])) | context.platform_tools
         )
+
+        bypass_prefixes = set()
+
+        # Resolve toolsets and add their tools to known_tools
+        for ts_entry in agent_config.get("toolsets", []):
+            if isinstance(ts_entry, dict):
+                toolset_name = ts_entry.get("toolset")
+                allowed_tool_ids = ts_entry.get("toolIds") or ts_entry.get(
+                    "tool_ids"
+                )
+                if toolset_name:
+                    res = get_toolset_tools(
+                        app_root, toolset_name, allowed_tool_ids
+                    )
+                    if res.behavior == ToolsetValidationBehavior.BYPASS:
+                        # Skip operation-level checks for MCP/Connector toolsets
+                        bypass_prefixes.add(f"{toolset_name}_")
+                    else:
+                        known_tools.update(res.tools)
+
         known_tools_lower = {t.lower() for t in known_tools}
 
         referenced = {
             match.group(1).strip()
             for match in self.TOOL_REF_PATTERN.finditer(content)
         }
+
+        # Filter out referenced tools matching bypass prefixes
+        if bypass_prefixes:
+            referenced = {
+                ref
+                for ref in referenced
+                if not any(ref.startswith(pfx) for pfx in bypass_prefixes)
+            }
+
         missing = {t for t in referenced if t.lower() not in known_tools_lower}
         if not missing:
             return []

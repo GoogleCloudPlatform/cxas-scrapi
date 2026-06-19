@@ -110,6 +110,70 @@ agents.update_agent(agent_name=root.name, child_agents=[sub.name])
 }
 ```
 
+### Toolsets (OpenAPI Toolsets)
+
+While standard Tools wrap a single function (like a Python sandboxed function), **Toolsets** allow you to expose multiple tools at once, typically by importing an external service specification like an OpenAPI schema.
+
+**Prefer `cxas push` over the `create_toolset` API.** Similar to tools, toolsets defined locally in the `toolsets/` directory are automatically pushed and managed.
+
+#### Local Folder Structure
+An OpenAPI toolset is defined by a directory in `toolsets/` containing a configuration JSON and the OpenAPI schema file:
+
+```
+toolsets/
+└── <toolset_name>/
+    ├── <toolset_name>.json  # Toolset configuration
+    └── open_api_toolset/
+        └── open_api_schema.yaml  # OpenAPI 3.0.0 schema
+```
+
+#### Toolset JSON Format (in `toolsets/<name>/<name>.json`):
+```json
+{
+  "displayName": "<toolset_name>",
+  "description": "Description of the toolset for the LLM.",
+  "openApiToolset": {
+    "openApiSchema": "toolsets/<toolset_name>/open_api_toolset/open_api_schema.yaml",
+    "apiAuthentication": {
+      "apiKeyConfig": {
+        "keyName": "Authorization",
+        "requestLocation": "HEADER",
+        "apiKeySecretVersion": "projects/my-project/secrets/my-api-key/versions/latest"
+      }
+    }
+  }
+}
+```
+*(Note: `apiAuthentication` is optional and supports `apiKeyConfig`, `oauthConfig`, `serviceAccountAuthConfig`, or `serviceAgentIdTokenAuthConfig`.)*
+
+#### Assigning Toolsets to an Agent (in Agent JSON)
+Unlike standard tools which are listed in the `tools` array, **toolsets are assigned to an agent using the `toolsets` array**.
+
+To assign a toolset to an agent, add an entry to the `toolsets` array in the agent's JSON file (`agents/<agent_name>/<agent_name>.json`). You can optionally restrict the agent's access to only specific tools (operations) within that toolset by providing their raw `operationId`s in the `toolIds` array:
+
+```json
+{
+  "displayName": "my_agent",
+  "tools": ["end_session"],
+  "toolsets": [
+    {
+      "toolset": "my_toolset",
+      "toolIds": ["listProducts", "getProductDetails"]
+    }
+  ]
+}
+```
+*   **`toolset`**: The local display name/ID of the toolset (e.g., `"my_toolset"`).
+*   **`toolIds`**: Optional list of raw `operationId`s from the OpenAPI schema. If omitted, the agent has access to ALL operations defined in the toolset's schema.
+
+#### Calling Toolset Tools from Callbacks
+When invoking a toolset tool directly from Python callback code (e.g., in `before_model` or `after_model`), use the combined name as a method on the `tools` global:
+
+```python
+# Call 'getProductDetails' from 'my_toolset'
+result = tools.my_toolset_getProductDetails(product_id="123")
+```
+
 **IMPORTANT -- tool naming:** Agent JSON files reference tools by `displayName`. Use **snake_case** for both `name` and `displayName` (e.g., `"lookup_benefits"`, NOT `"Lookup Benefits"`). The `displayName` must exactly match the string in the agent's `tools` array. Mismatched names cause `Reference not found` errors on push.
 
 **Tool Python code**: Tools access session state via the `context` global -- NOT as a function parameter. The platform injects `context` at runtime. `context.state` and `context.variables` are interchangeable and point to the same object.

@@ -130,6 +130,14 @@ def heal_tool_refs(ir: MigrationIR) -> tuple[dict[str, str], list[str]]:
                 base = ref[: -len(suffix)]
                 if base in known and ref not in known:
                     return base
+
+        # Prefix match check for truncated completion cutoffs (length >= 15
+        # to avoid generic collisions)
+        if len(ref) >= 15:
+            prefix_matches = [k for k in known if k.startswith(ref)]
+            if len(prefix_matches) == 1:
+                return prefix_matches[0]
+
         return None
 
     # Bogus placeholders Gemini sometimes emits when it gives up mid-list.
@@ -801,6 +809,17 @@ class StructuralConsolidator:
             groupings
         )
 
+        # Pre-create context caches for the shared prompt prefixes so that
+        # inputs 2-4 (global vars / toolsets / tools) for 2A and input 3
+        # (available tools) for 2B are not re-sent on every per-group call.
+        # Cache creation may return None if the content is below the minimum
+        # token threshold; the designer falls back to uncached generation.
+        sys_2a, shared_2a = AsyncAgentDesigner.build_2a_shared_context(self.ir)
+        cache_2a = await self.gemini.create_cache(sys_2a, shared_2a)
+
+        sys_2b, shared_2b = AsyncAgentDesigner.build_2b_shared_context(self.ir)
+        cache_2b = await self.gemini.create_cache(sys_2b, shared_2b)
+
         async def _one(group_name: str, members: list[str]) -> str:
             combined_tree = _build_combined_tree_view(
                 members, self.source_data, self.ir
@@ -820,6 +839,7 @@ class StructuralConsolidator:
                         target_ir=self.ir,
                         available_groups=available_groups_context,
                         self_group=group_name,
+                        cached_content_name=cache_2a,
                     ),
                     timeout=per_group_timeout_s,
                 )
@@ -830,7 +850,7 @@ class StructuralConsolidator:
                     per_group_timeout_s,
                 )
                 return "timeout"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Step 2A failed for %s: %s", group_name, exc)
                 return "error"
 
@@ -850,6 +870,7 @@ class StructuralConsolidator:
                         target_ir=self.ir,
                         available_groups=available_groups_context,
                         self_group=group_name,
+                        cached_content_name=cache_2b,
                     ),
                     timeout=per_group_timeout_s,
                 )
@@ -860,7 +881,7 @@ class StructuralConsolidator:
                     per_group_timeout_s,
                 )
                 return "timeout"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Step 2B failed for %s: %s", group_name, exc)
                 return "error"
 
@@ -880,16 +901,21 @@ class StructuralConsolidator:
             consolidated_ir.agents[group_name].instruction = xml_instructions
             return "ok"
 
-        statuses: dict[str, str] = {}
-        results = await asyncio.gather(
-            *(
-                _one(group_name, payload.get("agents", []))
-                for group_name, payload in groupings.items()
-            ),
-            return_exceptions=False,
-        )
-        for (group_name, _), status in zip(
-            groupings.items(), results, strict=True
-        ):
-            statuses[group_name] = status
-        return statuses
+        try:
+            results = await asyncio.gather(
+                *(
+                    _one(group_name, payload.get("agents", []))
+                    for group_name, payload in groupings.items()
+                ),
+                return_exceptions=False,
+            )
+        finally:
+            for cache_name in filter(None, [cache_2a, cache_2b]):
+                await self.gemini.delete_cache(cache_name)
+
+        return {
+            group_name: status
+            for (group_name, _), status in zip(
+                groupings.items(), results, strict=True
+            )
+        }

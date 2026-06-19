@@ -1,5 +1,133 @@
 # Changelog
 
+## [1.4.1](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.4.0...v1.4.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* fix .gitignore to prevent packaging issues ([952070e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/952070efb41613959807b3a513150ac4dfb35b40))
+
+## [1.4.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.3.0...v1.4.0) (2026-05-29)
+
+
+### Features
+
+* add audio replay capability to combined evaluation reports ([cf5b904](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/cf5b9049f408f075c8f45e3cb7ecc0a836652f57))
+* add audio replay capability to combined evaluation reports ([8ac99ac](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8ac99aced0b73c7b2041862cfcb6b0144c538ed5))
+* add cxas-loss-analysis skill for conversation loss and patterns analysis ([b6f0a27](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b6f0a271607bc0080298d0a49e49635e96fbdabe))
+* Add llm-based linting to capture semantic errors. ([6fab5a6](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6fab5a6132a6fbab5963b577424cc48ca20e9daf))
+* Add llm-based linting to capture semantic errors. ([34ab035](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/34ab0358731667817e22d266da3bc7624773574e))
+* add native support for CES_API_ENDPOINT and CES_TRANSPORT ([0ecf7fa](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/0ecf7faa9fef543e58031ea54c1e853f39199822))
+* add native support for CES_API_ENDPOINT and CES_TRANSPORT ([214f27a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/214f27abb239b43a61d70deab6868d98ee81d724))
+* **cli:** add cli commands for list version and compare version ([603612b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/603612b69ebbda4394aedbce8986085824af8c46))
+* **cli:** add cli commands for list versions and compare versions ([ba92521](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ba9252100938cd4c9e34e0549f31914fa008a2c9))
+* **cli:** add GECX tools, callbacks, and variables list/delete subcommands ([4ef9760](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4ef9760b66c80869522bea15cf886f6ace141826))
+* improve loss analysis pipeline with time filters, server-side filtering, and performance optimizations ([abecd37](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/abecd37df8f09708c5a1e6e8af614a8f5f25c2f3))
+* unify migration interfaces, implement migration profiles, fixes ([#193](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/193)) ([0d57531](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/0d57531c4490dcb4cf95fd029f44e05595200611))
+
+
+### Bug Fixes
+
+* app_name propagation in cxas create ([d9b655a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d9b655a8d7ad4dac83e9c707eb0e4117a7061367))
+* resolve lint errors and improve placeholder validation ([ab5b009](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ab5b009a9e15ef91c22acd58b54820384a3b11f0))
+* **trace:** correct GECX/CES Console URL query parameter route in console_url ([9ace03c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/9ace03cc103718d869d12e58f8d06aca9821c81e))
+
+
+### Documentation
+
+* add GoogleSearchTool schema and create tool schema generation w… ([d9758cb](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d9758cb78c4b3ff8727f07fc133b2e84e909ec5f))
+
+## [1.3.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.2.0...v1.3.0) (2026-05-22)
+
+
+### Features
+
+* add `cxas trace` for end-to-end conversation observability ([a76c35c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a76c35c7cb1f25c9f6b4b953360817eaae0fa50b)), closes [#120](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/120)
+* add DFCX conversation runner with live + history trace export ([#128](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/128)) ([5fb8a71](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5fb8a71acbdbf2b0ea6ef383a59ab17f48d71716))
+* add optimize structure consolidator ([21e9667](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/21e9667c6e49ef2e36e76ea402699f88b1cc3aac))
+* add rich response payload support to slot filling framework ([77edb75](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/77edb75b85b23e5b74ea457543c8bd3594cda538))
+* add widget tool linting and core SDK deserialization support ([1863906](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/18639061fbb406c263af6c51121732b7dd2f02d0))
+* added basic support for OpenAPI toolsets ([7a8e8d0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7a8e8d0a242192b81ea7fcd3dc97bac689372a55))
+* added fuzzy match for turn evals, case insensitive for contains turn evals ([bd1969d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bd1969dcf0f48e14a62fb9afb14d8c4357b49ce1))
+* **bella_notte:** event preemption, response propagation ([570e6ff](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/570e6ff60b6d1d2c521d527ec5179aad000d4632))
+* **bella_notte:** event preemption, response propagation, and expanded tool tests ([a6631f8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a6631f8a0196625cb3c0c018228a07efe0a5dfb7))
+* **bella_notte:** event preemption, response propagation, and expanded tool tests ([1a2fc50](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1a2fc50da55d5075e8a89896466dda405be56c69))
+* **bella_notte:** per-agent DAG tools, multi-slot setters, 3-tier steer-back ([f66f74b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f66f74bb66da2f7eb9f431a7a20c99901c3b8be2))
+* **bella_notte:** structured logging, config validation, then_direct… ([d709a28](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d709a287d8c09f53a62606bbc011929fc9b6e9e0))
+* **bella_notte:** structured logging, config validation, then_directive, engine hardening ([903d187](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/903d187bb2e8de6624b03c47f028b4c313b0d548))
+* **cli:** Address PR 84 feedback and improve CLI robustness ([552c9c9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/552c9c96dcdbac25c23e09a8455193cf87633611))
+* **cli:** Extend CLI functionality for iterating on deployments ([160fab9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/160fab91ffbc089fb7ba8b656a75e5d69dbb58ec))
+* Consolidate and improve the usability protocols, and refactor the scoping layer to be cleanly structured as a first-class agent. ([4afb355](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4afb35533a0d71cefcf0bedd0de78f76936a79eb))
+* Docs/slot filling guide ([b4c44bb](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b4c44bb38cad63ac01f101974f61fb9037010cc6))
+* implement component linting ([56a6be2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/56a6be29f21c6e94ce9c6f0202f8b0ba01f878c7))
+* implement strict local GECX linter rules and scaffolder guidelines ([bc022c4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bc022c41ae3af214c5698e5c7a470e7bcf96fcf5))
+* implement strict local GECX linter rules and scaffolder guidelines ([3d5fe4d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3d5fe4d4a2c5dc2b23ab2cfa74e4080d313d9db5))
+* promote migration helpers ([#137](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/137)) ([4bbcd29](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4bbcd29c5e6f9fb0752336c137bb6f9a2ce775db))
+* SCRAPI CUJ Report Generator. ([03b8bf4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/03b8bf48a2092b1f806befff64cb3b9e836cf6ce))
+* split DFCX→CXAS skill into resumable migrate/stage1/2/3 scripts ([eeadbe6](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/eeadbe6f682f18ffe966cd35d367f5069cef11e1))
+* split DFCX→CXAS skill into resumable migrate/stage1/2/3 scripts ([#130](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/130)) ([535299e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/535299e069a456b9ebb6697e7f2311a3bde80460))
+* support OpenAPI toolsets in SCRAPI ([57c1058](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/57c10585bafc032b909e78e897abd1b4b3531640))
+* support session variable accumulation in audio modality and pattern file filtering ([f9b452b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f9b452bf0d9f3365b24eb8cf9a7748685ff99a0c))
+* support session variable accumulation in audio modality and pattern file filtering ([539212c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/539212c992ff779e04cd15ab5741c4414320ee47))
+* topology linker html preview ([#138](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/138)) ([3c96ab5](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3c96ab58856b7685cfca21cc0be77240d6fc934a))
+* **utils:** introduce request bucket RateLimiter for API client and … ([36b9f8f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/36b9f8fd404d9820a381ea1fe53ca717b002d8b0))
+* **utils:** introduce request bucket RateLimiter for API client and evals pacing ([81a3ee2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/81a3ee2ab895844f66c9c320a5579d43aeacd020))
+
+
+### Bug Fixes
+
+* add widget tool linting and core SDK deserialization support ([dc87441](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/dc87441925aac32a134c12cd0263bb7d48c60475))
+* deprecation warning for datetime ([12cc64d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/12cc64d7a375763c3d03489d49a37e15b7bbd56b))
+* **deps:** update junit-framework monorepo to v5.14.4 ([13617cd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/13617cd7c8440472ae1fa1f39141c5b3d838d623))
+* **deps:** update junit-framework monorepo to v5.14.4 ([abb7ade](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/abb7ade486aaa43ab61c8bdfc04f73b1155c6a7a))
+* **deps:** update junit-framework monorepo to v6 ([2736e3e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2736e3eaf81e46c996924ff24a87dc04a4836184))
+* **deps:** update junit-framework monorepo to v6 ([4906e01](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4906e0164268c29568d18ae338e9180e42555db9))
+* **deps:** update junit-framework monorepo to v6.1.0 ([66e7567](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/66e756731c63dac428c60d53fbda6df2e6f72b64))
+* **deps:** update junit-framework monorepo to v6.1.0 ([641f0d8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/641f0d8b983dd3adbfc6268e92de51b296f005bd))
+* evals/turn_evals.py and utils/gemini.py lint errors fixed ([534c509](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/534c50934f4f5b7aeb4651063085dbab7abd50b0))
+* implement thread-local Client in GeminiGenerate to ensure thread safety ([d53f768](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d53f768b8c2554a4f7252c3a424496f5e5cd3859))
+* **linter:** Quick lint fixes in the CUJ report generator skill. ([f714910](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f714910dc9b8523317c2057a6bcaad2ad810efc6))
+* **linter:** validate rootAgent JSON file ([#86](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/86)) ([fb36d51](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/fb36d5198b033e30fcd1b09fb3ffef700984668c))
+* linting ([c9129e8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c9129e8ccadba8d7f10d4c618f29582506416596))
+* lockfile ([67284d3](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/67284d365e859f53a970e106e35d9a23ee0f2246))
+* make various fixes to optimize sim runner ([e463141](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e463141539a5fcc03481a39547a6771e28e05a04))
+* move migration modules to src instead of skills ([251f0ac](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/251f0ac85505615c0a92bea9743567094e7b1402))
+* remove files with just import in skills ([47ac0f7](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/47ac0f738830dc069de0466885bb6ba389112dc1))
+* remove files with just import in skills ([0523dbe](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/0523dbe1a2f29e461917054accc5ed3e384f6a9d))
+* **reporting:** handle multiline agent responses in html ([38bb898](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/38bb8981d2496965664e033c7c14c237ae88faec))
+* resolve HTML link collisions and enhance turn metrics in combined report ([92ced47](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/92ced47d066eeb517430492fa16651a46d5a3cf2))
+* resolve lint errors in app.py ([cb3ac31](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/cb3ac31f42c021dd381627f96558cae451eae267))
+* resolve parallel simulation gRPC crashes and welcome audio disclaimer race ([7edd307](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7edd307b0ad23e2eb67f320e654254b90fe09a9c))
+* resolve ruff lint and format violations ([bff83c2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bff83c2b73ba671b0ca32cc8a0b4029a7016c12b))
+* sort imports in append_turn.py ([c1b5de4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c1b5de449eb5b17e20a0a206f22d378f6e1b5441))
+* unit test fail,  grouping review moved under migration, inquirerpy dependency added ([cc85e09](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/cc85e09b1f7047c7b6ca20bbabb66184158f9caa))
+* update lockfile and uv setup ([02a6aee](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/02a6aeea399e26439425db3eb09ed824b9ee6542))
+* update variable references in cxas-agent-foundry skill and add e… ([86b7d68](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/86b7d68a7f172378088b37b341dee98665208c1f))
+* update variable references in cxas-agent-foundry skill and add enum to core class ([7bf9c41](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7bf9c41496dafe845a76bca63432a6fa37229d5e))
+
+
+### Reverts
+
+* remove unrelated gemini.py thread-safety changes ([25c2409](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/25c24097523da5a50a89e1695a729b343158db15))
+
+
+### Documentation
+
+* add comprehensive slot filling usage guide ([acd1c31](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/acd1c3174426f2390a582a646326fd8e6c5f263f))
+* add comprehensive slot filling usage guide ([a20a8aa](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a20a8aaec0cc7321b961fc1cbee0e6ec4e41656b))
+* add Critical User Journey (CUJ) Transcript and Report Generator README ([6cc4bce](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6cc4bce3d7ca9f4c297425af967c845dbf3c8bd9))
+* add DFCX migration guides, plus minor CLI configuration changes ([#117](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/117)) ([6e55b1a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6e55b1a7f6effd4dd67d900162f335c39abb4224))
+* add download link for VS Code agent studio extension VSIX ([dcb227d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/dcb227d57edd7fb56c778bac2764af6c61752c5f))
+* add download link for VS Code agent studio extension VSIX ([ca119b8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ca119b800654b0f9f338cc1a422224913dcf87fd))
+* Add GIFs for VS Code extension installation and app import ([e67f6bb](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e67f6bb6a4a7b0d07d53b8529c7a231b9b447649))
+* Add GIFs for VS Code extension installation and app import ([fb6ff2c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/fb6ff2ccfa1e4aeaab45d4fac8e14bb9144634de))
+* add usage to docs ([5cdb089](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5cdb089c57d2c421f53a47163ee53c891f2ff3ad))
+* recommend slot filling pattern for structured and sensitive flows ([da41102](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/da41102962d31099af87dd4ad52a61b1725b07c0))
+* refine ingestion protocols and unify scoping layer into framework agent ([e3ed0ab](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e3ed0ab54e1c121d04e6fc48eedbd249c58be995))
+* Update IAM roles to use roles/ces.* ([96a1b16](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/96a1b16f5c96a63841bfd50c40285d218653a82f))
+* Update IAM roles to use roles/ces.* ([954ac5d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/954ac5d246f695abbc2fb8d2ee9d3e9ca0a61555))
+* **vscode:** add VS Code extension user guide ([47d701a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/47d701a3757ccc5e5d0beab35e33d6a987d6e3a5))
+
 ## [1.2.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.1.0...v1.2.0) (2026-05-13)
 
 

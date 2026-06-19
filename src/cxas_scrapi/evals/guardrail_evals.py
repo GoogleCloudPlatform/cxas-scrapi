@@ -18,15 +18,15 @@ import datetime
 import json
 import logging
 import time
-from typing import Annotated, Any, Dict, List, NamedTuple, Optional
+from typing import Annotated, Any, NamedTuple
 
 import pandas as pd
-from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, BeforeValidator, Field
 from rich.progress import track
 
 from cxas_scrapi.core.agents import Agents
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.utils.eval_utils import EvalUtils
 
@@ -63,14 +63,14 @@ class SummaryStats(NamedTuple):
 class GuardrailTestCase(BaseModel):
     """Data model for a guardrail test case."""
 
-    name: str = "Guardrail Test"
     user_input: str
+    name: str = "Guardrail Test"
     variables: Annotated[
-        Dict[str, Any], BeforeValidator(EvalUtils.parse_variables_input)
+        dict[str, Any], BeforeValidator(EvalUtils.parse_variables_input)
     ] = Field(default_factory=dict)
-    expected_guardrail_name: Optional[str] = None
-    expected_guardrail_type: Optional[str] = None
-    expected_parameters: Optional[str] = None
+    expected_guardrail_name: str | None = None
+    expected_guardrail_type: str | None = None
+    expected_parameters: str | None = None
 
 
 class GuardrailEvals:
@@ -100,43 +100,6 @@ class GuardrailEvals:
             return name.split("/")[3]
         except IndexError as e:
             raise ValueError(f"Invalid resource name format: {name}") from e
-
-    def _search_span_dict(
-        self, span_dict: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Recursively searches a trace span dictionary for a guardrail trigger.
-
-        Looks for span attributes with keys 'name' and ('type', 'guardrailType',
-        or 'guardrail_type'), which indicate a guardrail evaluation span.
-        """
-        if not isinstance(span_dict, dict):
-            return None
-
-        # Check if the current span represents a guardrail
-        attrs = span_dict.get("attributes", {})
-        if "name" in attrs and any(
-            k in attrs for k in ("type", "guardrailType", "guardrail_type")
-        ):
-            return span_dict
-
-        # Recurse into child spans
-        child_spans = span_dict.get(
-            "childSpans", span_dict.get("child_spans", [])
-        )
-        for child in child_spans:
-            res = self._search_span_dict(child)
-            if res:
-                return res
-        return None
-
-    def get_agent_text_from_outputs(self, outputs: List[Any]) -> str:
-        """Extracts the agent text from session response outputs."""
-        texts = []
-        for out in outputs:
-            message = getattr(out, "message", None)
-            if message and hasattr(message, "text"):
-                texts.append(message.text)
-        return " - ".join(texts)
 
     def run_guardrail_tests(
         self,
@@ -206,7 +169,7 @@ class GuardrailEvals:
             }
 
             # Use test_id for name if available
-            if "test_id" in row_dict and row_dict["test_id"]:
+            if row_dict.get("test_id"):
                 row_dict["name"] = str(row_dict["test_id"])
             elif "name" not in row_dict or not row_dict["name"]:
                 row_dict["name"] = f"Test_{index}"
@@ -258,48 +221,14 @@ class GuardrailEvals:
                 )
                 latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-                outputs = getattr(res, "outputs", []) or []
-                agent_response_text = self.get_agent_text_from_outputs(outputs)
+                parsed = ParsedSessionResponse(res)
+                agent_response_text = parsed.consolidated_agent_text
 
-                for output in outputs:  # pylint: disable=not-an-iterable
-                    diagnostic_info = getattr(output, "diagnostic_info", None)
-                    if diagnostic_info and hasattr(
-                        diagnostic_info, "root_span"
-                    ):
-                        root_span = diagnostic_info.root_span
-
-                        try:
-                            # Safely unwrap the protobuf or dict trace
-                            span_dict = (
-                                MessageToDict(root_span._pb)
-                                if hasattr(root_span, "_pb")
-                                else MessageToDict(root_span)
-                            )
-                        except (
-                            AttributeError,
-                            KeyError,
-                            TypeError,
-                            ValueError,
-                        ):
-                            span_dict = (
-                                dict(root_span)
-                                if isinstance(root_span, dict)
-                                else {}
-                            )
-
-                        triggered_span = self._search_span_dict(span_dict)
-                        if triggered_span:
-                            actual_triggered = True
-                            attrs = triggered_span.get("attributes", {})
-                            actual_guardrail_name = attrs.get("name")
-                            actual_guardrail_type = attrs.get(
-                                "type",
-                                attrs.get(
-                                    "guardrailType", attrs.get("guardrail_type")
-                                ),
-                            )
-                            actual_reason = attrs.get("reason")
-                            break  # Found the triggered guardrail
+                if parsed.guardrail_trigger:
+                    actual_triggered = True
+                    actual_guardrail_name = parsed.guardrail_trigger.name
+                    actual_guardrail_type = parsed.guardrail_trigger.type
+                    actual_reason = parsed.guardrail_trigger.reason
 
             except (AttributeError, KeyError, RuntimeError, ValueError) as e:
                 error_msg = str(e)

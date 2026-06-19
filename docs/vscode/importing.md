@@ -31,6 +31,8 @@ Make sure:
 
 Run **`CXAS: Import Existing Agent`** from the Command Palette (`Cmd+Shift+P`).
 
+![Demonstration of importing an existing app](../assets/vscode/import-app.gif)
+
 ### Step 1 — GCP project ID
 
 The first prompt's title bar reads **`Import Existing Agent (1/4)`** and asks for the GCP project that owns the app. Type the project ID (e.g. `ces-deployment-dev`) and press **Enter**.

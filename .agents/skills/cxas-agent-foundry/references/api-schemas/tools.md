@@ -7,6 +7,7 @@
 - **pythonFunction** (-> PythonFunction)
 - **clientFunction** (-> ClientFunction)
 - **systemTool** (-> SystemTool)
+- **googleSearchTool** (-> GoogleSearchTool)
 - **toolFakeConfig** (-> ToolFakeConfig): Fake mode config.
 
 ### PythonFunction
@@ -27,6 +28,52 @@ Pre-defined: `end_session`, `customize_response`, `transfer_to_agent`.
 
 - **name** (string): [required]
 - **description** (string): Output only.
+
+### GoogleSearchTool
+Tool to perform Google web searches for grounding.
+
+- **name** (string): [required]
+- **description** (string)
+- **contextUrls** (list of strings): URLs fetched for context/grounding.
+- **preferredDomains** (list of strings): Domains to restrict search results to.
+- **excludeDomains** (list of strings): Domains excluded from search results.
+
+### Toolset
+Represents a collection of tools, currently supporting OpenAPI, MCP, or Connector toolsets.
+
+- **name** (string): Identifier. Format: `projects/.../locations/.../apps/.../toolsets/{toolset_id}`
+- **displayName** (string): [required] User-friendly name. Must be snake_case.
+- **description** (string): Description of the toolset.
+- **openApiToolset** (-> OpenApiToolset): Configuration for OpenAPI toolset.
+
+### OpenApiToolset
+- **openApiSchema** (string): [required] Local path to the OpenAPI schema file (relative to app root, e.g., `"toolsets/<name>/open_api_toolset/open_api_schema.yaml"`).
+- **apiAuthentication** (-> ApiAuthentication): Optional authentication configuration.
+
+### ApiAuthentication
+Oneof authentication configuration:
+- **apiKeyConfig** (-> ApiKeyConfig)
+- **oauthConfig** (-> OAuthConfig)
+- **serviceAccountAuthConfig** (-> ServiceAccountAuthConfig)
+- **serviceAgentIdTokenAuthConfig** (-> ServiceAgentIdTokenAuthConfig)
+
+### ApiKeyConfig
+- **keyName** (string): [required] Name of the header or query parameter (e.g., `"Authorization"`).
+- **requestLocation** (enum: `HEADER` | `QUERY_STRING`): [required] Where to inject the key.
+- **apiKeySecretVersion** (string): [required] Secret Manager secret version resource name (e.g., `"projects/.../secrets/.../versions/..."`).
+
+### OAuthConfig
+- **oauthGrantType** (enum: `CLIENT_CREDENTIAL`): [required] OAuth grant type.
+- **clientId** (string): [required] Client ID.
+- **clientSecretVersion** (string): [required] Secret Manager secret version resource name for client secret.
+- **tokenEndpoint** (string): [required] Token endpoint URL.
+- **scopes** (list of strings): OAuth scopes.
+
+### ServiceAccountAuthConfig
+- **serviceAccount** (string): [required] Service account email for impersonation.
+
+### ServiceAgentIdTokenAuthConfig
+- (empty object)
 
 ### ToolCall
 - **tool** (string): Tool resource name.

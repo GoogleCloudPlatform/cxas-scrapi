@@ -14,7 +14,7 @@
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from cxas_scrapi.migration.prompts import Prompts
 from cxas_scrapi.utils.gemini import GeminiGenerate
@@ -35,8 +35,8 @@ class AIAugment:
         logger.info("AIAugment service initialized.")
 
     async def generate_agent_description(
-        self, playbook_data: Dict[str, Any]
-    ) -> Optional[str]:
+        self, playbook_data: dict[str, Any]
+    ) -> str | None:
         """Generates a concise, one-sentence description for a Polysynth agent
 
         based on its source DFCX Playbook's goal and instructions.
@@ -78,8 +78,8 @@ class AIAugment:
         return None
 
     async def generate_eval_set(
-        self, agent_data: Dict[str, Any]
-    ) -> Optional[list]:
+        self, agent_data: dict[str, Any]
+    ) -> list | None:
         """Generates a structured evaluation set, instructing the LLM to
 
         dynamically size it based on agent complexity.
@@ -157,7 +157,7 @@ class AIAugment:
 
     async def evaluate_conversations(
         self, eval_results: list, eval_set: list
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Uses an LLM to evaluate conversation results against the original
 
         eval set.

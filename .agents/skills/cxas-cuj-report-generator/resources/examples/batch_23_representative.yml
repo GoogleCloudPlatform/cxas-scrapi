@@ -1,0 +1,48 @@
+subintent_id: support-allergen-check
+subintent_name: Check Menu Allergens
+parent_cuj: Customer Support
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I have a severe gluten allergy. Is the Minestrone soup gluten-free?
+- speaker: Agent
+  text: I want to make sure you stay safe! Let me check the recipe ingredients list for our Minestrone soup.
+- speaker: Agent
+  text: Checking menu recipe ingredients for allergens.
+  tool_call:
+    name: search_menu_ingredients
+    payload:
+      item_name: Minestrone
+    response:
+      status: success
+      item_name: Minestrone
+      allergens:
+      - gluten
+- speaker: Agent
+  text: I've checked the recipe. The Minestrone soup actually does contain pasta, which has **gluten**. Since your allergy is severe, I would advise against ordering it. Can I check another item for you?
+- speaker: User
+  text: Okay, thank you. What about the Tomato Basil soup?
+- speaker: Agent
+  text: Querying Tomato Basil recipe database.
+  tool_call:
+    name: search_menu_ingredients
+    payload:
+      item_name: Tomato Basil
+    response:
+      status: success
+      item_name: Tomato Basil
+      allergens: []
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

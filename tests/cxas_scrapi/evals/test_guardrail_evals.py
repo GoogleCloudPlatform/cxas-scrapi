@@ -68,7 +68,7 @@ def test_guardrail_execution_flow(
     # 1. First Response simulates a Guardrail Trigger (Profanity)
     response_triggered = MagicMock()
     output_triggered = MagicMock()
-    output_triggered.message.text = "I cannot fulfill this request."
+    output_triggered.text = "I cannot fulfill this request."
 
     # Needs to duck-type into the recursive `_search_span_dict` logic
     mock_root_span_dict = {
@@ -83,7 +83,7 @@ def test_guardrail_execution_flow(
     # 2. Second Response simulates a Pass (No guardrails triggered)
     response_clean = MagicMock()
     output_clean = MagicMock()
-    output_clean.message.text = "Here is the information you requested!"
+    output_clean.text = "Here is the information you requested!"
     output_clean.diagnostic_info.root_span = {"childSpans": []}
     response_clean.outputs = [output_clean]
 

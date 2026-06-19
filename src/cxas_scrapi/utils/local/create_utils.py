@@ -42,7 +42,7 @@ AGENT_INSTRUCTION_TEMPLATE = """
   <text_formatting>
     <chunking>
       - Never write dense paragraphs; users scan, they do not read.
-      - Limit text blocks to a maximum of 1–2 sentences.
+      - Limit text blocks to a maximum of 1-2 sentences.
       - Insert a line break between every distinct idea to maximize white space.
     </chunking>
     <bolding>
@@ -96,6 +96,31 @@ PYTHON_CODE_TEMPLATE = """def {safe_name}() -> dict:
         return {{}}
     except Exception as e:
         return {{"agent_action": f"Error in {safe_name}: {{e}}"}}
+"""
+
+LLM_POLICY_PROMPT_TEMPLATE = """\
+### CRITICAL RULE
+- <When you want the guardrail to trigger>
+- <Additional guidance to err on the side of caution to reach a \
+0% false negative goal>
+
+### TRIGGER CRITERIA
+FLAG the message if <your criteria>
+
+**Definition of <your criteria>:** <give a definition of what your \
+criteria means and what to look for>
+
+**Explicit Claims to FLAG:**
+* <list explicit examples of agent responses to flag for>
+
+**Implicit Claims to FLAG (CRITICAL):**
+You MUST flag:
+* <list implicit examples of agent responses to flag for>
+
+### DO NOT FLAG (False Positive Prevention)
+Do NOT flag if <criteria to avoid false positives>. Ignore the following:
+
+* <examples of what to avoid falsely flagging>\
 """
 
 OPENAPI_SCHEMA_TEMPLATE = """
@@ -152,6 +177,60 @@ class CreateUtils:
         if not instruction_file.exists():
             with open(instruction_file, "w", encoding="utf-8") as f:
                 f.write(AGENT_INSTRUCTION_TEMPLATE)
+
+        return str(target_dir)
+
+    def create_guardrail(
+        self,
+        display_name: str,
+        app_dir: str,
+        guardrail_type: str = "llm_policy",
+    ) -> str:
+        """Creates a guardrail template.
+
+        Args:
+            display_name: The display name of the guardrail.
+            app_dir: The directory of the app.
+            guardrail_type: The type of guardrail. Currently only
+                'llm_policy' is supported.
+
+        Returns:
+            The path to the created directory.
+        """
+        self._validate_app_dir(app_dir)
+        app_path = Path(app_dir)
+        safe_name = self._get_safe_display_name(display_name)
+
+        target_dir = app_path / "guardrails" / safe_name
+        if target_dir.exists():
+            raise FileExistsError(
+                f"Guardrail '{display_name}' already exists at '{target_dir}'."
+            )
+
+        if guardrail_type.lower() != "llm_policy":
+            raise ValueError(
+                f"Unsupported guardrail type: {guardrail_type}. "
+                "Currently only 'llm_policy' is supported."
+            )
+
+        guardrail_data = {
+            "displayName": display_name,
+            "enabled": True,
+            "action": {"generativeAnswer": {}},
+            "llmPolicy": {
+                "maxConversationMessages": 1,
+                "prompt": LLM_POLICY_PROMPT_TEMPLATE,
+                "policyScope": "AGENT_RESPONSE",
+            },
+        }
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        json_file = target_dir / f"{safe_name}.json"
+        with open(json_file, "w") as f:
+            json.dump(guardrail_data, f, indent=2)
+
+        # Add guardrail to app.json if it exists
+        self._add_guardrail_to_app(app_path, display_name)
 
         return str(target_dir)
 
@@ -264,9 +343,7 @@ class CreateUtils:
                 app_path / "agents" / agent_safe_name / "instruction.txt"
             )
             if agent_instruction_file.exists():
-                with open(
-                    agent_instruction_file, "r", encoding="utf-8"
-                ) as inst_f:
+                with open(agent_instruction_file, encoding="utf-8") as inst_f:
                     inst_content = inst_f.read()
                 tool_ref = f"{{@TOOL: {safe_name}}}"
                 if tool_ref not in inst_content:
@@ -291,7 +368,7 @@ class CreateUtils:
             raise FileNotFoundError(
                 f"Agent '{display_name}' config not found at '{json_file}'."
             )
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             agent_data = json.load(f)
 
         agent = types.Agent()
@@ -316,6 +393,25 @@ class CreateUtils:
                 f"'{safe_name}' is a Python reserved keyword."
             )
         return safe_name
+
+    def _add_guardrail_to_app(self, app_path: Path, display_name: str) -> None:
+        """Adds a guardrail display name to app.json if it exists."""
+        for ext in ("json", "yaml"):
+            app_file = app_path / f"app.{ext}"
+            if app_file.exists():
+                break
+        else:
+            return
+
+        with open(app_file) as f:
+            app_data = json.load(f)
+
+        guardrails = app_data.get("guardrails", [])
+        if display_name not in guardrails:
+            guardrails.append(display_name)
+            app_data["guardrails"] = guardrails
+            with open(app_file, "w") as f:
+                json.dump(app_data, f, indent=2)
 
     def _validate_app_dir(self, app_dir: str) -> None:
         """Validates that agents/ exists in the app directory.

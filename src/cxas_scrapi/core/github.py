@@ -506,7 +506,7 @@ def init_github_action(args: argparse.Namespace) -> None:
 
     if os.path.exists(app_yaml_path):
         try:
-            with open(app_yaml_path, "r") as f:
+            with open(app_yaml_path) as f:
                 app_data = yaml.safe_load(f)
                 if not agent_name and "displayName" in app_data:
                     agent_name = app_data["displayName"]
