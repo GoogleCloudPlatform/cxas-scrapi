@@ -25,9 +25,10 @@ import html
 import os
 import pathlib
 import re
-import string
 from collections.abc import Sequence
 from typing import Any
+
+import jinja2
 
 CURRENT_DIR = pathlib.Path(__file__).parent
 COMPONENTS_DIR = (CURRENT_DIR / "../resources/components").resolve()
@@ -150,9 +151,11 @@ class Component(abc.ABC):
                 escaped_kwargs[k] = ""
             else:
                 escaped_kwargs[k] = escape(v)
-        return string.Template(self.get_resolved_template()).substitute(
-            **escaped_kwargs
+        template_text = self.get_resolved_template()
+        jinja_template_text = re.sub(
+            r"\$\{?([A-Z0-9_]+)\}?", r"{{ \1 }}", template_text
         )
+        return jinja2.Template(jinja_template_text).render(**escaped_kwargs)
 
 
 class EmptyComponent(Component):
