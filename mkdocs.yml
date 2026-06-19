@@ -255,6 +255,7 @@ nav:
       - api/core/callbacks.md
       - api/core/conversation-history.md
       - api/core/insights.md
+      - api/core/scorecards.md
     - Evals:
       - api/evals/tool-evals.md
       - api/evals/simulation-evals.md

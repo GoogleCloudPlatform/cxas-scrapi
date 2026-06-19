@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from cxas_scrapi.core.deployments import Deployments
     from cxas_scrapi.core.evaluations import Evaluations
     from cxas_scrapi.core.guardrails import Guardrails
+    from cxas_scrapi.core.scorecards import Scorecards
     from cxas_scrapi.core.sessions import Sessions
     from cxas_scrapi.core.tools import Tools
     from cxas_scrapi.core.variables import Variables
@@ -87,6 +88,7 @@ else:
         "MainVisualizer": "cxas_scrapi.migration.main_visualizer",
         "PlaybookTreeVisualizer": "cxas_scrapi.migration.playbook_visualizer",
         "SecretManagerUtils": "cxas_scrapi.utils.secret_manager_utils",
+        "Scorecards": "cxas_scrapi.core.scorecards",
         "Sessions": "cxas_scrapi.core.sessions",
         "SimulationEvals": "cxas_scrapi.evals.simulation_evals",
         "ToolEvals": "cxas_scrapi.evals.tool_evals",
@@ -131,44 +133,7 @@ __all__ = [
     "HighLevelGraphVisualizer",
     "MainVisualizer",
     "PlaybookTreeVisualizer",
-    "SecretManagerUtils",
-    "Sessions",
-    "SimulationEvals",
-    "ToolEvals",
-    "Tools",
-    "TurnEvals",
-    "Variables",
-    "Versions",
-]
-
-
-__all__ = [
-    "Agents",
-    "Apps",
-    "BaseDFCXClient",
-    "CallbackEvals",
-    "Callbacks",
-    "ChangelogUtils",
-    "Changelogs",
-    "Common",
-    "ConversationHistory",
-    "ConversationalAgentsAPI",
-    "DFCXAgentExporter",
-    "DFCXAgents",
-    "DFCXGenerativeSettings",
-    "DFCXPlaybooks",
-    "DFCXTools",
-    "Deployments",
-    "EvalUtils",
-    "Evaluations",
-    "FlowDependencyResolver",
-    "FlowTreeVisualizer",
-    "GoogleSheetsUtils",
-    "GuardrailEvals",
-    "Guardrails",
-    "HighLevelGraphVisualizer",
-    "MainVisualizer",
-    "PlaybookTreeVisualizer",
+    "Scorecards",
     "SecretManagerUtils",
     "Sessions",
     "SimulationEvals",
