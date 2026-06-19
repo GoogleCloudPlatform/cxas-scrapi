@@ -27,7 +27,7 @@ from google.protobuf import field_mask_pb2
 from google.protobuf.json_format import MessageToDict
 
 from cxas_scrapi.core.apps import Apps
-from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT
+from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.variables import Variables
 
 
@@ -44,8 +44,14 @@ class Tools(Apps):
         **kwargs,
     ):
         """Initializes the Tools client."""
-        project_id = app_name.split("/")[1]
-        location = app_name.split("/")[3]
+        project_id = Common._get_project_id(app_name)
+        location = Common._get_location(app_name)
+        if not project_id or not location:
+            raise ValueError(
+                f"Invalid app_name format: {app_name}. "
+                "Expected format: "
+                "projects/<project>/locations/<location>/apps/<app>"
+            )
 
         super().__init__(
             project_id=project_id,
