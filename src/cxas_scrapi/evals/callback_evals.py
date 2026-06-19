@@ -15,16 +15,15 @@
 """Utility for running tests for CES agent callbacks."""
 
 import glob
-import io
+import json
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 import time
-from contextlib import redirect_stderr, redirect_stdout
 
 import pandas as pd
-import pytest
 
 from cxas_scrapi.core.agents import Agents
 
@@ -270,43 +269,82 @@ class CallbackEvals:
             with open(temp_test_path, "w", encoding="utf-8") as f:
                 f.write(test_content)
 
-            original_sys_path = sys.path.copy()
-            original_cwd = os.getcwd()
-            try:
-                sys.path.insert(0, temp_dir)
-                os.chdir(temp_dir)
+            conftest_path = os.path.join(temp_dir, "conftest.py")
+            temp_results_path = os.path.join(temp_dir, "results.json")
 
-                # Clear python_code from sys.modules to load the new code
-                if "python_code" in sys.modules:
-                    del sys.modules["python_code"]
+            conftest_content = (
+                "import os\n"
+                "import pytest\n"
+                "from cxas_scrapi.evals.callback_evals "
+                "import _TestResultCollector\n\n"
+                "def pytest_configure(config):\n"
+                "    collector = _TestResultCollector(\n"
+                "        original_file=os.environ['CALLBACK_TEST_FILE'],\n"
+                "        agent_name=os.environ['CALLBACK_AGENT_NAME'],\n"
+                "        callback_type=os.environ['CALLBACK_TYPE'],\n"
+                "        output_path=os.environ['CALLBACK_RESULTS_JSON'],\n"
+                "    )\n"
+                "    config.pluginmanager.register(\n"
+                "        collector, 'result_collector'\n"
+                "    )\n"
+            )
+            with open(conftest_path, "w", encoding="utf-8") as f:
+                f.write(conftest_content)
 
-                collector = _TestResultCollector(
-                    test_file_path, agent_name, callback_type
+            env = os.environ.copy()
+            env["CALLBACK_TEST_FILE"] = test_file_path
+            env["CALLBACK_AGENT_NAME"] = agent_name
+            env["CALLBACK_TYPE"] = callback_type
+            env["CALLBACK_RESULTS_JSON"] = temp_results_path
+
+            # Construct PYTHONPATH to search temp_dir first
+            current_pythonpath = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = os.path.pathsep.join(
+                filter(None, [temp_dir, current_pythonpath, *sys.path])
+            )
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "pytest",
+                temp_test_path,
+            ] + (pytest_args or [])
+
+            if log_file:
+                with open(log_file, "a", encoding="utf-8") as f:
+                    subprocess.run(
+                        cmd,
+                        env=env,
+                        stdout=f,
+                        stderr=f,
+                        check=False,
+                    )
+            else:
+                subprocess.run(
+                    cmd,
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
                 )
-                args = [temp_test_path] + (pytest_args or [])
-                if log_file:
-                    with open(log_file, "a", encoding="utf-8") as f:
-                        with redirect_stdout(f), redirect_stderr(f):
-                            pytest.main(args, plugins=[collector])
-                else:
-                    f = io.StringIO()
-                    with redirect_stdout(f), redirect_stderr(f):
-                        pytest.main(args, plugins=[collector])
 
-                return collector.results
-            finally:
-                sys.path = original_sys_path
-                os.chdir(original_cwd)
+            if os.path.exists(temp_results_path):
+                with open(temp_results_path, encoding="utf-8") as f:
+                    return json.load(f)
+            return []
 
 
 class _TestResultCollector:
     """Collects execution results from pytest test runs."""
 
-    def __init__(self, original_file, agent_name, callback_type):
+    def __init__(
+        self, original_file, agent_name, callback_type, output_path=None
+    ):
         self.results = []
         self.original_file = original_file
         self.agent_name = agent_name
         self.callback_type = callback_type
+        self.output_path = output_path
 
     def _get_error_message(self, report):
         if getattr(report, "longrepr", None):
@@ -350,3 +388,8 @@ class _TestResultCollector:
                     "error_message": self._get_error_message(report),
                 }
             )
+
+    def pytest_sessionfinish(self, session, exitstatus):
+        if self.output_path:
+            with open(self.output_path, "w", encoding="utf-8") as f:
+                json.dump(self.results, f, indent=2)
