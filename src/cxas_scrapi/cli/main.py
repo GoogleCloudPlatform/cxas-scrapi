@@ -916,6 +916,11 @@ def run_session(args: argparse.Namespace) -> None:
     """Handles the 'run-session' command."""
     from cxas_scrapi import Sessions
 
+    if not sys.stdin.isatty():
+        msg = "ERROR: 'run-session' requires an interactive terminal."
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+
     try:
         session_client = Sessions(args.app_name)
         session_id = session_client.create_session_id()
@@ -1221,6 +1226,15 @@ def get_parser() -> argparse.ArgumentParser:
             "Alternatively, set CXAS_OAUTH_TOKEN env var."
         ),
         required=False,
+    )
+
+    parser.add_argument(
+        "--no-input",
+        action="store_true",
+        help=(
+            "Disable all interactive prompts. Use this in CI/CD pipelines "
+            "to prevent hanging on unexpected prompts."
+        ),
     )
 
     def _add_project_location_args(

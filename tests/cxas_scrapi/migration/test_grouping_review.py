@@ -127,6 +127,7 @@ async def test_interactive_review_accept_returns_groupings_unchanged():
         patch.object(
             grouping_review.inquirer, "select", return_value=fake_select
         ),
+        patch("sys.stdin.isatty", return_value=True),
     ):
         result = await grouping_review.interactive_review(
             ir, groupings, consolidator, root_key="RootAgent"
@@ -151,6 +152,7 @@ async def test_interactive_review_quit_returns_none():
         patch.object(
             grouping_review.inquirer, "select", return_value=fake_select
         ),
+        patch("sys.stdin.isatty", return_value=True),
     ):
         result = await grouping_review.interactive_review(
             ir, groupings, consolidator
@@ -171,9 +173,10 @@ async def test_interactive_review_preview_failure_returns_none():
     )
 
     fake_console = MagicMock()
-    result = await grouping_review.interactive_review(
-        ir, groupings, consolidator, console=fake_console
-    )
+    with patch("sys.stdin.isatty", return_value=True):
+        result = await grouping_review.interactive_review(
+            ir, groupings, consolidator, console=fake_console
+        )
     assert result is None
 
 
@@ -200,6 +203,7 @@ async def test_interactive_review_repropose_then_accept():
             grouping_review.inquirer, "select", return_value=fake_select
         ),
         patch.object(grouping_review.inquirer, "text", return_value=fake_text),
+        patch("sys.stdin.isatty", return_value=True),
     ):
         result = await grouping_review.interactive_review(
             ir,

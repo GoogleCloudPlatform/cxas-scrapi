@@ -651,7 +651,6 @@ def app_lint(args: argparse.Namespace) -> None:
 
 def app_init(args: argparse.Namespace) -> None:
     """Handles the 'init' command -- copies skill files."""
-    import shutil  # noqa: PLC0415
 
     target_dir = Path(getattr(args, "target_dir", ".")).resolve()
     force = getattr(args, "force", False)
@@ -670,7 +669,9 @@ def app_init(args: argparse.Namespace) -> None:
     for item in sorted(skills_root.iterdir()):
         dest = target_dir / item.name
         if dest.exists() and not overwrite_all:
-            choice = _prompt_overwrite(item.name)
+            choice = _prompt_overwrite(
+                item.name, getattr(args, "no_input", False)
+            )
             if choice == "abort":
                 print("Aborted.")
                 sys.exit(0)
@@ -694,8 +695,17 @@ def app_init(args: argparse.Namespace) -> None:
     print(f"\nDone. {copied} installed, {skipped} skipped.")
 
 
-def _prompt_overwrite(name: str) -> str:
+def _prompt_overwrite(name: str, no_input: bool = False) -> str:
     """Prompt user for overwrite decision."""
+    if not sys.stdin.isatty() or no_input:
+        msg = (
+            f"ERROR: '{name}' already exists. "
+            "Non-interactive environment detected or --no-input specified."
+        )
+        print(msg, file=sys.stderr)
+        print("Use --force to overwrite.", file=sys.stderr)
+        sys.exit(1)
+
     while True:
         choice = (
             input(
