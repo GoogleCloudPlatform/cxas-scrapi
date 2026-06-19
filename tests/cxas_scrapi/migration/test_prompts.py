@@ -28,8 +28,13 @@ BELLA = (
 
 
 def test_step_3b_prompt_has_system_and_template_keys() -> None:
+    # The dict carries the core system + template plus optional cached-
+    # content variants (cache_shared_template / cache_per_group_template)
+    # that the designer uses when a Gemini context cache is available.
+    # We only assert the load-bearing keys are present and well-formed;
+    # extra cache-variant keys are allowed.
     p = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS
-    assert set(p.keys()) == {"system", "template"}
+    assert {"system", "template"} <= set(p.keys())
     assert isinstance(p["system"], str) and p["system"]
     assert isinstance(p["template"], str) and p["template"]
 

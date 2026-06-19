@@ -102,13 +102,23 @@ class _FakeDesigner:
 
 
 def _patch_designer_class(monkeypatch, *, xml_responses: list[str]):
-    """Patch AsyncAgentDesigner so synthesize_instructions uses the fake."""
+    """Patch AsyncAgentDesigner so synthesize_instructions uses the fake.
+
+    The consolidator calls two static-style helpers on the class before
+    constructing any instance (``build_2a_shared_context`` and
+    ``build_2b_shared_context``). We expose stubs as attributes on the
+    factory function so those class-level lookups succeed and return
+    a tuple shape the gemini cache call can accept.
+    """
     instances: list[_FakeDesigner] = []
 
     def factory(gemini_client):
         inst = _FakeDesigner(gemini_client, xml_responses=xml_responses)
         instances.append(inst)
         return inst
+
+    factory.build_2a_shared_context = lambda ir: ("sys-2a", "shared-2a")
+    factory.build_2b_shared_context = lambda ir: ("sys-2b", "shared-2b")
 
     monkeypatch.setattr(sc_module, "AsyncAgentDesigner", factory)
     return instances
@@ -123,6 +133,18 @@ def _patch_tree_view(monkeypatch):
     )
 
 
+class _FakeGemini:
+    """Minimal stand-in for ``GeminiGenerate``. The consolidator only
+    touches :meth:`create_cache` during synthesis setup; returning
+    ``None`` exercises the documented "cache below token threshold,
+    fall back to uncached generation" path."""
+
+    async def create_cache(
+        self, system_prompt: str, shared_content: str, ttl_seconds: int = 300
+    ) -> str | None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_canonical_xml_on_first_call_no_retry(monkeypatch):
     instances = _patch_designer_class(
@@ -130,7 +152,7 @@ async def test_canonical_xml_on_first_call_no_retry(monkeypatch):
     )
     _patch_tree_view(monkeypatch)
     ir = _ir()
-    consolidator = StructuralConsolidator(ir, gemini_client=None)
+    consolidator = StructuralConsolidator(ir, gemini_client=_FakeGemini())
     groupings = {"GreetAgent": {"agents": ["GreetAgent"], "is_root": True}}
     consolidated_ir = ir  # for this test we don't care about consolidation
 
@@ -151,7 +173,7 @@ async def test_bad_then_good_xml_retries_once_then_succeeds(monkeypatch):
     )
     _patch_tree_view(monkeypatch)
     ir = _ir()
-    consolidator = StructuralConsolidator(ir, gemini_client=None)
+    consolidator = StructuralConsolidator(ir, gemini_client=_FakeGemini())
     groupings = {"GreetAgent": {"agents": ["GreetAgent"], "is_root": True}}
 
     statuses = await consolidator.synthesize_instructions(ir, groupings)
@@ -175,7 +197,7 @@ async def test_bad_xml_twice_returns_warning_and_keeps_instructions(
     _patch_designer_class(monkeypatch, xml_responses=[LEGACY_XML, LEGACY_XML])
     _patch_tree_view(monkeypatch)
     ir = _ir()
-    consolidator = StructuralConsolidator(ir, gemini_client=None)
+    consolidator = StructuralConsolidator(ir, gemini_client=_FakeGemini())
     groupings = {"GreetAgent": {"agents": ["GreetAgent"], "is_root": True}}
 
     with caplog.at_level("WARNING"):
