@@ -68,7 +68,7 @@ class Conversations(BaseModel):
 class EvalUtils(Evaluations):
     """Utility class for processing and exporting CXAS Evaluation Results."""
 
-    def __init__(self, app_name: str, env: str = "PROD", **kwargs):
+    def __init__(self, app_name: str, env: str = "PROD", **kwargs: Any):
         """Initializes the EvalUtils class for processing Evaluation Results.
 
         Args:

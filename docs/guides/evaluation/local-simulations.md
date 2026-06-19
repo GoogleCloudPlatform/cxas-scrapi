@@ -218,6 +218,40 @@ for _, row in failed.iterrows():
 
 ---
 
+## Using Tool Fakes
+
+By default, simulations execute real tool calls (including webhooks or database queries) when the agent invokes a tool. During testing, you can enable **Tool Fakes** to tell the platform to return pre-defined mock/fake responses instead of running the actual tool backend.
+
+> [!NOTE]
+> Tool fakes (mock tool responses) are defined per-tool within the Agent Studio Console. See the [Mock Tool Responses](mock-tool-responses.md) guide for how to configure these in the console and write the mock handler scripts.
+
+To enable tool fakes in your simulations:
+
+### Programmatically
+Pass `use_tool_fakes=True` when calling `simulate_conversation` or `run_simulations`:
+
+```python
+eval_conv = sim_evals.simulate_conversation(
+    test_case=test_case,
+    use_tool_fakes=True,  # Bypasses real tool backends
+)
+```
+
+### Via CLI
+Run your simulations in bulk using the `cxas evals report` command with the `--run` and `--include sims` flags, specifying the agent app name, output directory, parallel workers, and the `--use-tool-fakes` flag:
+
+```bash
+cxas evals report \
+    --run \
+    --include sims \
+    --app-name "projects/my-project/locations/us/apps/my-app" \
+    --output-dir "eval-reports" \
+    --sim-parallel 5 \
+    --use-tool-fakes
+```
+
+---
+
 ## Tips for writing good simulations
 
 **Keep steps focused**

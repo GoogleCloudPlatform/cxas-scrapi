@@ -238,15 +238,24 @@ class CXASOptimizer:
                 print(f"  [Optimizer] Merging {old_v} -> {new_v}")
 
             if old_v in self.ir.parameters:
-                # Copy the old parameter definition and update its name
                 param_def = self.ir.parameters[old_v].copy()
-                param_def["name"] = new_v
-                new_parameters[new_v] = param_def
-            elif new_v not in new_parameters:
-                new_parameters[new_v] = {
-                    "name": new_v,
+            else:
+                param_def = {
                     "schema": {"type": "STRING"},
                 }
+
+            param_def["name"] = new_v
+
+            # Resolve description (carry over existing, merge, or use fallback)
+            existing_desc = new_parameters.get(new_v, {}).get("description", "")
+            incoming_desc = param_def.get("description", "")
+            param_def["description"] = (
+                existing_desc
+                or incoming_desc
+                or f"Optimized parameter: {new_v}"
+            )
+
+            new_parameters[new_v] = param_def
         self.ir.parameters = new_parameters
 
         # Helper to replace full word matches
@@ -405,7 +414,23 @@ class CXASOptimizer:
                 f"  Optimizing instructions for sub-agent: "
                 f"'{agent.display_name}'..."
             )
-            all_tools = list(agent.tools)
+            reverse_tool_map = {}
+            for tool_id, tool in self.ir.tools.items():
+                display_name = (
+                    tool.payload.get("displayName")
+                    or tool.payload.get("display_name")
+                    or tool_id
+                )
+                if tool.name:
+                    reverse_tool_map[tool.name] = display_name
+                reverse_tool_map[tool_id] = display_name
+            all_tools = []
+            for t in agent.tools:
+                if t in reverse_tool_map:
+                    all_tools.append(reverse_tool_map[t])
+                else:
+                    all_tools.append(t.split("/")[-1])
+
             for gt in ["set_session_variables"]:
                 if gt not in all_tools:
                     all_tools.append(gt)

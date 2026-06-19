@@ -117,7 +117,7 @@ class MigrationService:
             location=gemini_location,
             credentials=credentials,
             model_name="gemini-3.1-pro-preview",
-            max_concurrent_requests=3,
+            max_concurrent_requests=15,
         )
 
         self.exporter = ConversationalAgentsAPI()
@@ -339,40 +339,14 @@ class MigrationService:
             bundle.config.target_name if bundle else None, bundle=bundle
         )
 
-        # --- Variable dedup (always runs) -----------------------------------
-        optimizer = await stage_runner.run_stage_with_redeploy(
-            self, stage=1, console=console
-        )
+        # --- Variable dedup (in-memory; deploy happens in step 9) -----------
+        optimizer = await stage_runner.run_stage_1(self.ir, gemini, console)
         stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage_1")
         self._analysis_checkpoint(
             "stage_1_dedup",
             f"Stage 1 variable deduplication complete; "
             f"{len(self.ir.parameters)} variables remain.",
         )
-
-        # --- CXAS Version checkpoint: Post-Dedup ----------------------------
-        if dedup_version_label and self.ir.metadata.app_resource_name:
-            try:
-                Versions(self.ir.metadata.app_resource_name).create_version(
-                    display_name=dedup_version_label,
-                    description="Stage 1 Part A: variable de-duplication",
-                )
-                logger.info(
-                    "Created CXAS Version %s (dedup).", dedup_version_label
-                )
-                if bundle is not None:
-                    bundle.version_checkpoints.append(
-                        (
-                            dedup_version_label,
-                            "Stage 1 Part A: variable de-duplication",
-                        )
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to create CXAS Version %s (dedup): %s",
-                    dedup_version_label,
-                    exc,
-                )
 
         # --- Gemini consolidation (always runs) ------------------------------
         accepted_groupings = await self._run_stage_1_consolidation(
@@ -936,6 +910,7 @@ class MigrationService:
         )
 
         logger.info(f"Starting Hybrid Migration for: {config.target_name}")
+        self.config = config
 
         # --- 1. Populate IR Metadata & Predictable IDs ---
         target_app_uuid = str(uuid.uuid4())
@@ -1269,13 +1244,15 @@ class MigrationService:
         )
 
         # --- 6. FAST DEPLOY (Phase 1) ---
+        # Only push base resources (app, variables, toolsets) now.
+        # Individual flow agents are kept local until post-consolidation deploy
+        # to avoid hitting the CXAS 100-agent cap on large agents.
         logger.info("FAST DEPLOY: Pushing Base Resources to CXAS...")
         await self._deploy_base_resources()
-        await self._deploy_pending_agents()
 
         self._analysis_checkpoint(
             "fast_deploy_complete",
-            "Pushed base resources (app, variables, tools, agents) to CXAS.",
+            "Pushed base resources (app, variables, tools) to CXAS.",
         )
 
         # --- 8. Background Processing for Flows (Phase 2) ---
@@ -1342,6 +1319,12 @@ class MigrationService:
                 "MIGRATION STAGE COMPLETE, ENTERING OPTIMIZATION PHASE..."
             )
         else:
+            logger.info(
+                "Pushing all resources to CXAS (no-consolidation path)..."
+            )
+            await self._deploy_base_resources(is_update_pass=True)
+            await self._deploy_pending_agents()
+
             logger.info("\n" + "=" * 50)
             logger.info("MIGRATION COMPLETE!")
             app_url = f"https://ces.cloud.google.com/projects/{self.project_id}/locations/{self.location}/apps/{self.ir.metadata.app_id}"
@@ -2446,7 +2429,8 @@ class MigrationService:
                 status=MigrationStatus.COMPILED,
             )
 
-            # 1. Store & IMMEDIATELY DEPLOY Generated Python Tools
+            # 1. Register Generated Python Tools in IR (deploy deferred to
+            # post-consolidation via _deploy_base_resources update pass)
             for tool in tools_callbacks_data.get("tools", []):
                 tool_name = tool.get("name")
                 safe_tool_id = self._sanitize_resource_id(tool_name)
@@ -2473,96 +2457,10 @@ class MigrationService:
                 )
 
                 self.ir.agents[flow_name].tools.append(full_tool_name)
-
-                # DEPLOY THE TOOL NOW
                 logger.info(
-                    f"[{flow_name}] Deploying generated Python tool: "
+                    f"[{flow_name}] Registered Python tool (local): "
                     f"{safe_tool_id}"
                 )
-                try:
-                    created_tool = self.ps_tools.create_tool(
-                        tool_id=safe_tool_id,
-                        display_name=tool_name,
-                        payload=tool_payload["pythonFunction"],
-                        tool_type="python_function",
-                    )
-                    if created_tool:
-                        self.ir.tools[
-                            safe_tool_id
-                        ].status = MigrationStatus.DEPLOYED
-                except Exception as e:
-                    if "409" in str(e) or "Already exists" in str(e):
-                        logger.info(
-                            f"[{flow_name}] Tool '{safe_tool_id}' already "
-                            "exists. Attempting safe update-or-recreate "
-                            "path..."
-                        )
-                        try:
-                            # Attempt standard update first
-                            created_tool = self.ps_tools.update_tool(
-                                tool_name=full_tool_name,
-                                display_name=tool_name,
-                                python_function=tool_payload["pythonFunction"],
-                            )
-                            if created_tool:
-                                self.ir.tools[
-                                    safe_tool_id
-                                ].status = MigrationStatus.DEPLOYED
-                                logger.info(
-                                    f"[{flow_name}] Successfully updated "
-                                    f"existing tool '{safe_tool_id}'!"
-                                )
-                        except Exception as update_e:
-                            logger.warning(
-                                f"[{flow_name}] Update failed: {update_e}. "
-                                "Attempting safe Delete-and-Recreate "
-                                "fallback pass..."
-                            )
-                            try:
-                                # Dynamically de-reference this tool from all
-                                # live console agents to clear foreign key
-                                # constraints
-                                self._safe_dereference_tool_from_console(
-                                    full_tool_name
-                                )
-
-                                # Delete the old conflicting tool
-                                # resource cleanly
-                                self.ps_tools.delete_tool(full_tool_name)
-                                logger.info(
-                                    f"[{flow_name}] Successfully deleted "
-                                    f"existing tool '{safe_tool_id}'. "
-                                    "Re-creating..."
-                                )
-
-                                # Re-create the tool fresh
-                                created_tool = self.ps_tools.create_tool(
-                                    tool_id=safe_tool_id,
-                                    display_name=tool_name,
-                                    payload=tool_payload["pythonFunction"],
-                                    tool_type="python_function",
-                                )
-                                if created_tool:
-                                    self.ir.tools[
-                                        safe_tool_id
-                                    ].status = MigrationStatus.DEPLOYED
-                                    logger.info(
-                                        f"[{flow_name}] Safe "
-                                        "Delete-and-Recreate "
-                                        "fallback successful for "
-                                        f"'{safe_tool_id}'!"
-                                    )
-                            except Exception as recreate_e:
-                                logger.error(
-                                    f"[{flow_name}] Exception during safe "
-                                    f"Delete-and-Recreate fallback for "
-                                    f"'{safe_tool_id}': {recreate_e}"
-                                )
-                    else:
-                        logger.error(
-                            f"[{flow_name}] Failed to deploy tool "
-                            f"{safe_tool_id}: {e}"
-                        )
 
             # 1.5 MISSING LOGIC RESTORATION
             valid_display_names = {
@@ -2641,7 +2539,7 @@ class MigrationService:
                 )
                 if matched_tool:
                     if (
-                        matched_tool.type == "TOOL"
+                        matched_tool.type in ("TOOL", "PYTHON")
                         and matched_tool.name
                         not in self.ir.agents[flow_name].tools
                     ):
@@ -2674,50 +2572,20 @@ class MigrationService:
                                     f"{tool.payload.get('displayName', op)}"
                                 )
 
-            # E. DEPLOY THE AGENT (Missing Logic Restoration)
-            logger.info(f"[{flow_name}] Deploying agent...")
-
-            # Format Callbacks if they exist
-            callback_payload = {}
-            for cb_type, cb_code in tools_callbacks_data.get(
-                "callbacks", {}
-            ).items():
-                if cb_code:
-                    key = cb_type + "s"
-                    callback_payload[key] = [{"python_code": cb_code}]
-
-            display_name = self.ir.agents[flow_name].display_name
-            agent_payload = {
-                "description": self.ir.agents[flow_name].description,
-                "instruction": self.ir.agents[flow_name].instruction,
-                "tools": self.ir.agents[flow_name].tools,
-                "toolsets": self.ir.agents[flow_name].toolsets,
-                "model_settings": {"model": self.ir.metadata.default_model},
-            }
-            agent_payload.update(callback_payload)
-
-            try:
-                new_agent = self.ps_agents.create_agent(
-                    display_name=display_name,
-                    model=self.ir.metadata.default_model,
-                    **agent_payload,
+            # E. Keep agent local if consolidating.
+            # Mark LOCAL (no resource_name) so _deploy_pending_agents
+            # skips this agent; only Stage 1 consolidated groups get pushed.
+            if getattr(self, "config", None) and self.config.consolidate:
+                self.ir.agents[flow_name].status = MigrationStatus.LOCAL
+                logger.info(
+                    f"[{flow_name}] ✅ Agent synthesized (local, deploys "
+                    "post-consolidation)."
                 )
-                if new_agent and hasattr(new_agent, "name"):
-                    logger.info(f"[{flow_name}] -> Success! Deployed Agent.")
-                    self.ir.agents[flow_name].status = MigrationStatus.DEPLOYED
-                    self.ir.agents[flow_name].resource_name = new_agent.name
-                    self.reporter.log_agent(
-                        flow_name,
-                        new_agent.name,
-                        agent_payload["description"],
-                        self.default_model,
-                    )
-                else:
-                    logger.error(f"[{flow_name}] ❌ Failed to deploy agent.")
-            except Exception as e:
-                logger.error(
-                    f"[{flow_name}] ❌ API Exception during agent "
-                    f"deployment: {e}"
+            else:
+                self.ir.agents[flow_name].status = MigrationStatus.COMPILED
+                logger.info(
+                    f"[{flow_name}] ✅ Agent synthesized (local, "
+                    "pending deployment)."
                 )
         else:
             logger.error(f"[{flow_name}] Failed to generate blueprint.")

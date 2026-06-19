@@ -46,6 +46,7 @@ def run_all_evals(
     rate_limiter: RateLimiter | None = None,
     bg_noise_file: str | None = None,
     burst_noise_files: list[str] | None = None,
+    use_tool_fakes: bool = False,
 ):
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -241,6 +242,7 @@ def run_all_evals(
                         modality=modality,
                         background_noise_file=bg_noise_file,
                         burst_noise_files=burst_noise_files,
+                        use_tool_fakes=use_tool_fakes,
                     )
                     results["simulation"] = sim_results
                     if output_dir:

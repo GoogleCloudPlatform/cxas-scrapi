@@ -23,13 +23,11 @@ import re
 import uuid
 from typing import Any
 
-import numpy as np
 import pandas as pd
 import yaml
 from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
 from rich.progress import track
-from sklearn.metrics.pairwise import cosine_similarity
 
 from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.core.variables import Variables
@@ -480,6 +478,11 @@ class TurnEvals:
                         f"CONTAINS failed: '{expected}' not found in '{actual}'"
                     )
             elif op == TurnOperator.FUZZY_MATCH:
+                import numpy as np  # noqa: PLC0415
+                from sklearn.metrics.pairwise import (  # noqa: PLC0415
+                    cosine_similarity,
+                )
+
                 THRESHOLD = 0.75
                 actual = full_text.strip()
                 embeddings = self.genai_client.generate_embeddings(
