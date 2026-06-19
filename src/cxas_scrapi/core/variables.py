@@ -18,10 +18,10 @@ import enum
 import logging
 from typing import Any
 
-from google.cloud.ces_v1beta import types
+from google.cloud.ces_v1beta import AgentServiceClient, types
+from google.protobuf import field_mask_pb2
 from proto.marshal.collections import maps, repeated
 
-from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 
 
@@ -36,7 +36,7 @@ class VariableType(str, enum.Enum):
     ARRAY = "ARRAY"
 
 
-class Variables(Apps):
+class Variables(Common):
     """Core Class for managing Variables (App Resources)."""
 
     def __init__(
@@ -64,17 +64,39 @@ class Variables(Apps):
             )
 
         super().__init__(
-            project_id=project_id,
-            location=location,
             creds_path=creds_path,
             creds_dict=creds_dict,
             creds=creds,
             scope=scope,
+            app_name=app_name,
             **kwargs,
         )
         self.app_name = app_name
         self.app_id = app_name.rsplit("/", maxsplit=1)[-1]
         self.resource_type = "variables"
+        self.client = AgentServiceClient(
+            transport=self.get_grpc_transport(AgentServiceClient),
+            client_info=self.client_info,
+        )
+
+    def get_app(self, app_name: str) -> types.App:
+        """Gets a specific app by its full resource name."""
+        request = types.GetAppRequest(name=app_name)
+        return self.client.get_app(request=request)
+
+    def update_app(self, app_name: str, **kwargs) -> types.App:
+        """Updates specific fields of an existing App."""
+        app = types.App(name=app_name)
+        mask_paths = []
+
+        for key, value in kwargs.items():
+            setattr(app, key, value)
+            mask_paths.append(key)
+
+        request = types.UpdateAppRequest(
+            app=app, update_mask=field_mask_pb2.FieldMask(paths=mask_paths)
+        )
+        return self.client.update_app(request=request)
 
     @staticmethod
     def _check_schema_type(input_type: str | VariableType):

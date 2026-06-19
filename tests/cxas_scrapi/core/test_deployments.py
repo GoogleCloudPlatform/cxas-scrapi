@@ -20,7 +20,7 @@ from google.cloud.ces_v1beta import types
 from cxas_scrapi.core.deployments import Deployments
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_list_deployments(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_dep = MagicMock()
@@ -33,7 +33,7 @@ def test_list_deployments(mock_client_cls):
     assert res[0].name == "dep1"
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_get_deployments_map(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_dep1 = MagicMock()
@@ -54,7 +54,7 @@ def test_get_deployments_map(mock_client_cls):
     assert res_rev["n2"] == "d2"
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_get_deployment(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_dep = MagicMock()
@@ -67,7 +67,7 @@ def test_get_deployment(mock_client_cls):
     mock_client.get_deployment.assert_called_once()
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_create_deployment(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_client.create_deployment.return_value = MagicMock()
@@ -80,7 +80,7 @@ def test_create_deployment(mock_client_cls):
     assert args.deployment_id == "dep_id"
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_create_deployment_with_options(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_client.create_deployment.return_value = MagicMock()
@@ -121,7 +121,7 @@ def test_create_deployment_with_options(mock_client_cls):
     assert wwc.theme == types.ChannelProfile.WebWidgetConfig.Theme.DARK
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_update_deployment(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_client.update_deployment.return_value = MagicMock()
@@ -139,7 +139,7 @@ def test_update_deployment(mock_client_cls):
 
 @patch("cxas_scrapi.core.deployments.types.Deployment")
 @patch("cxas_scrapi.core.deployments.types.UpdateDeploymentRequest")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_update_deployment_with_options(
     mock_client_cls, mock_req_cls, mock_dep_cls
 ):
@@ -212,7 +212,7 @@ def test_build_web_widget_config():
     assert kwargs["other_arg"] == "value"
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_create_deployment_with_strings(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_client.create_deployment.return_value = MagicMock()
@@ -239,7 +239,7 @@ def test_create_deployment_with_strings(mock_client_cls):
     assert wwc.theme == types.ChannelProfile.WebWidgetConfig.Theme.DARK
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_update_deployment_all_options(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_client.update_deployment.return_value = MagicMock()
@@ -267,7 +267,7 @@ def test_update_deployment_all_options(mock_client_cls):
     assert "channel_profile.disable_barge_in_control" in mask.paths
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_delete_deployment(mock_client_cls):
     mock_client = mock_client_cls.return_value
 
@@ -307,7 +307,7 @@ def test_delete_deployment(mock_client_cls):
         ),
     ],
 )
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_create_deployment_different_channels(
     mock_client_cls, channel_type_enum, expected_proto_value
 ):
@@ -327,7 +327,7 @@ def test_create_deployment_different_channels(
 
 
 @patch("cxas_scrapi.core.deployments.Versions")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_create_deployment_traffic_split_valid(
     mock_client_cls, mock_versions_cls
 ):
@@ -364,7 +364,7 @@ def test_create_deployment_traffic_split_valid(
 
 
 @patch("cxas_scrapi.core.deployments.Versions")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_create_deployment_traffic_split_invalid_len(
     mock_client_cls, mock_versions_cls
 ):
@@ -378,7 +378,7 @@ def test_create_deployment_traffic_split_invalid_len(
 
 
 @patch("cxas_scrapi.core.deployments.Versions")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_create_deployment_traffic_split_invalid_version(
     mock_client_cls, mock_versions_cls
 ):
@@ -398,7 +398,7 @@ def test_create_deployment_traffic_split_invalid_version(
 
 
 @patch("cxas_scrapi.core.deployments.Versions")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_update_deployment_traffic_split_valid(
     mock_client_cls, mock_versions_cls
 ):
@@ -427,7 +427,7 @@ def test_update_deployment_traffic_split_valid(
 
 
 @patch("cxas_scrapi.core.deployments.Versions")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.deployments.AgentServiceClient")
 def test_update_deployment_traffic_split_clear(
     mock_client_cls, mock_versions_cls
 ):

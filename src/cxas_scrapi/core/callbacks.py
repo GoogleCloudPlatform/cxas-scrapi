@@ -21,13 +21,13 @@ import traceback
 from collections.abc import Callable
 from typing import Any
 
-from google.cloud.ces_v1beta import types
+from google.cloud.ces_v1beta import AgentServiceClient, types
 from google.protobuf import field_mask_pb2
 
-from cxas_scrapi.core.agents import Agents
+from cxas_scrapi.core.common import Common
 
 
-class Callbacks(Agents):
+class Callbacks(Common):
     """Core Class for managing Agent Callback Resources."""
 
     def __init__(self, app_name: str, **kwargs):
@@ -38,7 +38,12 @@ class Callbacks(Agents):
                 (projects/PROJECT_ID/locations/LOCATION/apps/APP_ID).
         """
         super().__init__(app_name=app_name, **kwargs)
+        self.app_name = app_name
         self.resource_type = "callbacks"
+        self.client = AgentServiceClient(
+            transport=self.get_grpc_transport(AgentServiceClient),
+            client_info=self.client_info,
+        )
 
         # Maps shorthand callback types to the exact field names in the
         # Agent proto
@@ -50,6 +55,11 @@ class Callbacks(Agents):
             "before_agent": "before_agent_callbacks",
             "after_agent": "after_agent_callbacks",
         }
+
+    def get_agent(self, agent_id: str) -> types.Agent:
+        """Gets a specific agent by its ID."""
+        request = types.GetAgentRequest(name=agent_id)
+        return self.client.get_agent(request=request)
 
     def _format_python_code(
         self, callback_type: str, code: Callable | str

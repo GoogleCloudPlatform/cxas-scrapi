@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 from cxas_scrapi.core.changelogs import Changelogs
 
 
-@patch("cxas_scrapi.core.agents.AgentServiceClient")
+@patch("cxas_scrapi.core.changelogs.AgentServiceClient")
 def test_list_changelogs(mock_client_cls):
     """Test Changelogs.list_changelogs."""
     mock_client = mock_client_cls.return_value
@@ -34,7 +34,7 @@ def test_list_changelogs(mock_client_cls):
     mock_client.list_changelogs.assert_called_once()
 
 
-@patch("cxas_scrapi.core.agents.AgentServiceClient")
+@patch("cxas_scrapi.core.changelogs.AgentServiceClient")
 def test_get_changelog(mock_client_cls):
     """Test Changelogs.get_changelog."""
     mock_client = mock_client_cls.return_value

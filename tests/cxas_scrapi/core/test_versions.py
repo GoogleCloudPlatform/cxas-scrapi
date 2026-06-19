@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 from cxas_scrapi.core.versions import Versions
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.versions.AgentServiceClient")
 def test_list_versions(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_ver = MagicMock()
@@ -31,7 +31,7 @@ def test_list_versions(mock_client_cls):
     mock_client.list_app_versions.assert_called_once()
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.versions.AgentServiceClient")
 def test_get_versions_map(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_v1 = MagicMock()
@@ -53,7 +53,7 @@ def test_get_versions_map(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.versions.types.GetAppVersionRequest")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.versions.AgentServiceClient")
 def test_get_version(mock_client_cls, mock_req_cls):
     mock_client = mock_client_cls.return_value
     mock_v = MagicMock()
@@ -79,7 +79,7 @@ def test_get_version(mock_client_cls, mock_req_cls):
 
 
 @patch("cxas_scrapi.core.versions.types.DeleteAppVersionRequest")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.versions.AgentServiceClient")
 def test_delete_version(mock_client_cls, mock_req_cls):
     mock_client = mock_client_cls.return_value
 
@@ -99,7 +99,7 @@ def test_delete_version(mock_client_cls, mock_req_cls):
 
 
 @patch("cxas_scrapi.core.versions.types.RestoreAppVersionRequest")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.versions.AgentServiceClient")
 def test_revert_version(mock_client_cls, mock_req_cls):
     mock_client = mock_client_cls.return_value
     mock_client.restore_app_version.return_value = MagicMock()

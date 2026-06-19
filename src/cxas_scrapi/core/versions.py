@@ -16,13 +16,12 @@
 
 from typing import Any
 
-from google.cloud.ces_v1beta import types
+from google.cloud.ces_v1beta import AgentServiceClient, types
 
-from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 
 
-class Versions(Apps):
+class Versions(Common):
     """Core Class for managing AppVersion Resources."""
 
     def __init__(
@@ -45,16 +44,19 @@ class Versions(Apps):
             )
 
         super().__init__(
-            project_id=project_id,
-            location=location,
             creds_path=creds_path,
             creds_dict=creds_dict,
             creds=creds,
             scope=scope,
+            app_name=app_name,
             **kwargs,
         )
         self.resource_type = "versions"
         self.app_name = app_name
+        self.client = AgentServiceClient(
+            transport=self.get_grpc_transport(AgentServiceClient),
+            client_info=self.client_info,
+        )
 
     def list_versions(self) -> list[types.AppVersion]:
         """Lists versions within the app."""

@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 from cxas_scrapi.core.guardrails import Guardrails
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.guardrails.AgentServiceClient")
 def test_list_guardrails(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_gr = MagicMock()
@@ -30,7 +30,7 @@ def test_list_guardrails(mock_client_cls):
     assert res[0].name == "projects/p/locations/l/apps/A/guardrails/gr1"
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.guardrails.AgentServiceClient")
 def test_get_guardrails_map(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_gr1 = MagicMock()
@@ -51,7 +51,7 @@ def test_get_guardrails_map(mock_client_cls):
     assert res_rev["n2"] == "projects/p/locations/l/apps/A/guardrails/g2"
 
 
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.guardrails.AgentServiceClient")
 def test_get_guardrail(mock_client_cls):
     mock_client = mock_client_cls.return_value
     mock_gr = MagicMock()
@@ -66,7 +66,7 @@ def test_get_guardrail(mock_client_cls):
 
 @patch("cxas_scrapi.core.guardrails.types.Guardrail")
 @patch("cxas_scrapi.core.guardrails.types.CreateGuardrailRequest")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.guardrails.AgentServiceClient")
 def test_create_guardrail(mock_client_cls, mock_req_cls, mock_gr_cls):
     mock_client = mock_client_cls.return_value
     mock_client.create_guardrail.return_value = MagicMock()
@@ -98,7 +98,7 @@ def test_create_guardrail(mock_client_cls, mock_req_cls, mock_gr_cls):
 
 @patch("cxas_scrapi.core.guardrails.types.Guardrail")
 @patch("cxas_scrapi.core.guardrails.types.UpdateGuardrailRequest")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.guardrails.AgentServiceClient")
 def test_update_guardrail(mock_client_cls, mock_req_cls, mock_gr_cls):
     mock_client = mock_client_cls.return_value
     mock_client.update_guardrail.return_value = MagicMock()
@@ -124,7 +124,7 @@ def test_update_guardrail(mock_client_cls, mock_req_cls, mock_gr_cls):
 
 
 @patch("cxas_scrapi.core.guardrails.types.DeleteGuardrailRequest")
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
+@patch("cxas_scrapi.core.guardrails.AgentServiceClient")
 def test_delete_guardrail(mock_client_cls, mock_req_cls):
     mock_client = mock_client_cls.return_value
 

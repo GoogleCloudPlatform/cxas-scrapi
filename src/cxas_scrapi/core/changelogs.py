@@ -14,12 +14,12 @@
 
 """Core Changelogs class for CXAS Scrapi."""
 
-from google.cloud.ces_v1beta import types
+from google.cloud.ces_v1beta import AgentServiceClient, types
 
-from cxas_scrapi.core.agents import Agents
+from cxas_scrapi.core.common import Common
 
 
-class Changelogs(Agents):
+class Changelogs(Common):
     """Core Class for managing Changelog Resources."""
 
     def __init__(self, app_name: str, **kwargs):
@@ -29,11 +29,13 @@ class Changelogs(Agents):
             app_name: The full resource name of the parent App
                 (projects/PROJECT_ID/locations/LOCATION/apps/APP_ID).
         """
-        # We inherit from Agents because it holds the AgentServiceClient
-        # which contains changelog methods
         super().__init__(app_name=app_name, **kwargs)
         self.app_name = app_name
         self.resource_type = "changelogs"
+        self.client = AgentServiceClient(
+            transport=self.get_grpc_transport(AgentServiceClient),
+            client_info=self.client_info,
+        )
 
     def list_changelogs(self) -> list[types.Changelog]:
         """Lists changelogs within the app."""

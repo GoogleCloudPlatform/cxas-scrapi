@@ -17,15 +17,14 @@
 from enum import Enum
 from typing import Any
 
-from google.cloud.ces_v1beta import types
+from google.cloud.ces_v1beta import AgentServiceClient, types
 from google.protobuf import field_mask_pb2
 
-from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.versions import Versions
 
 
-class Deployments(Apps):
+class Deployments(Common):
     """Core Class for managing Deployment Resources."""
 
     class ChannelType(Enum):
@@ -67,16 +66,19 @@ class Deployments(Apps):
             )
 
         super().__init__(
-            project_id=project_id,
-            location=location,
             creds_path=creds_path,
             creds_dict=creds_dict,
             creds=creds,
             scope=scope,
+            app_name=app_name,
             **kwargs,
         )
         self.resource_type = "deployments"
         self.app_name = app_name
+        self.client = AgentServiceClient(
+            transport=self.get_grpc_transport(AgentServiceClient),
+            client_info=self.client_info,
+        )
 
     @classmethod
     def _build_web_widget_config(

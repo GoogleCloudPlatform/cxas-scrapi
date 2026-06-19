@@ -19,8 +19,8 @@ from google.cloud.ces_v1beta import types
 from cxas_scrapi.core.callbacks import Callbacks
 
 
-@patch("cxas_scrapi.core.callbacks.Agents.get_agent")
-@patch("cxas_scrapi.core.agents.AgentServiceClient")
+@patch("cxas_scrapi.core.callbacks.Callbacks.get_agent")
+@patch("cxas_scrapi.core.callbacks.AgentServiceClient")
 def test_list_callbacks(mock_client_cls, mock_get_agent):
     """Test list_callbacks."""
     mock_agent = MagicMock()
@@ -40,8 +40,8 @@ def test_list_callbacks(mock_client_cls, mock_get_agent):
     mock_get_agent.assert_called_once_with("agent1")
 
 
-@patch("cxas_scrapi.core.callbacks.Agents.get_agent")
-@patch("cxas_scrapi.core.agents.AgentServiceClient")
+@patch("cxas_scrapi.core.callbacks.Callbacks.get_agent")
+@patch("cxas_scrapi.core.callbacks.AgentServiceClient")
 def test_get_callback(mock_client_cls, mock_get_agent):
     """Test get_callback."""
     mock_agent = MagicMock()
@@ -59,8 +59,8 @@ def test_get_callback(mock_client_cls, mock_get_agent):
     assert cb_client.get_callback("agent1", "before_model", index=5) is None
 
 
-@patch("cxas_scrapi.core.callbacks.Agents.get_agent")
-@patch("cxas_scrapi.core.agents.AgentServiceClient")
+@patch("cxas_scrapi.core.callbacks.Callbacks.get_agent")
+@patch("cxas_scrapi.core.callbacks.AgentServiceClient")
 def test_create_callback(mock_client_cls, mock_get_agent):
     """Test create_callback."""
     mock_agent = types.Agent()
@@ -79,8 +79,8 @@ def test_create_callback(mock_client_cls, mock_get_agent):
     cb_client.client.update_agent.assert_called_once()
 
 
-@patch("cxas_scrapi.core.callbacks.Agents.get_agent")
-@patch("cxas_scrapi.core.agents.AgentServiceClient")
+@patch("cxas_scrapi.core.callbacks.Callbacks.get_agent")
+@patch("cxas_scrapi.core.callbacks.AgentServiceClient")
 def test_update_callback(mock_client_cls, mock_get_agent):
     """Test update_callback."""
     mock_agent = types.Agent()
@@ -103,8 +103,8 @@ def test_update_callback(mock_client_cls, mock_get_agent):
     cb_client.client.update_agent.assert_called_once()
 
 
-@patch("cxas_scrapi.core.callbacks.Agents.get_agent")
-@patch("cxas_scrapi.core.agents.AgentServiceClient")
+@patch("cxas_scrapi.core.callbacks.Callbacks.get_agent")
+@patch("cxas_scrapi.core.callbacks.AgentServiceClient")
 def test_delete_callback(mock_client_cls, mock_get_agent):
     """Test delete_callback."""
     mock_agent = types.Agent()

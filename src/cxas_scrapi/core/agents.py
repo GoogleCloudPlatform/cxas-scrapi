@@ -19,11 +19,10 @@ from typing import Any
 from google.cloud.ces_v1beta import AgentServiceClient, types
 from google.protobuf import field_mask_pb2
 
-from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 
 
-class Agents(Apps):
+class Agents(Common):
     """Core Class for managing Agent Resources."""
 
     def __init__(
@@ -46,12 +45,11 @@ class Agents(Apps):
             )
 
         super().__init__(
-            project_id=project_id,
-            location=location,
             creds_path=creds_path,
             creds_dict=creds_dict,
             creds=creds,
             scope=scope,
+            app_name=app_name,
             **kwargs,
         )
 
