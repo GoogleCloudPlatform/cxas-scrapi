@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+import yaml
 
 from cxas_scrapi.utils.local.create_utils import CreateUtils
 
@@ -398,6 +399,41 @@ def test_create_guardrail_creates_guardrails_key_in_app_json(tmp_path):
 
     with open(app_json) as f:
         app_data = json.load(f)
+    assert app_data["guardrails"] == ["New Guardrail"]
+
+
+def test_create_guardrail_adds_to_app_yaml(tmp_path):
+    """Test create_guardrail adds display name to app.yaml guardrails list."""
+    utils = CreateUtils()
+    app_dir = str(tmp_path)
+    (tmp_path / "agents").mkdir()
+
+    app_yaml = tmp_path / "app.yaml"
+    with open(app_yaml, "w") as f:
+        yaml.safe_dump({"displayName": "My App", "guardrails": ["Existing"]}, f)
+
+    utils.create_guardrail("New Guardrail", app_dir)
+
+    with open(app_yaml) as f:
+        app_data = yaml.safe_load(f)
+    assert "New Guardrail" in app_data["guardrails"]
+    assert "Existing" in app_data["guardrails"]
+
+
+def test_create_guardrail_creates_guardrails_key_in_app_yaml(tmp_path):
+    """Test create_guardrail creates guardrails key if missing from app.yaml."""
+    utils = CreateUtils()
+    app_dir = str(tmp_path)
+    (tmp_path / "agents").mkdir()
+
+    app_yaml = tmp_path / "app.yaml"
+    with open(app_yaml, "w") as f:
+        yaml.safe_dump({"displayName": "My App"}, f)
+
+    utils.create_guardrail("New Guardrail", app_dir)
+
+    with open(app_yaml) as f:
+        app_data = yaml.safe_load(f)
     assert app_data["guardrails"] == ["New Guardrail"]
 
 

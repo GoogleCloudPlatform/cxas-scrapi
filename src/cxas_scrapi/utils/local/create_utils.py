@@ -21,6 +21,7 @@ import keyword
 import re
 from pathlib import Path
 
+import yaml
 from google.cloud.ces_v1beta import types
 from google.protobuf import json_format
 
@@ -395,7 +396,10 @@ class CreateUtils:
         return safe_name
 
     def _add_guardrail_to_app(self, app_path: Path, display_name: str) -> None:
-        """Adds a guardrail display name to app.json if it exists."""
+        """Adds a guardrail display name to app.json or app.yaml.
+
+        Only modifies the file if it exists.
+        """
         for ext in ("json", "yaml"):
             app_file = app_path / f"app.{ext}"
             if app_file.exists():
@@ -403,15 +407,23 @@ class CreateUtils:
         else:
             return
 
+        is_yaml = app_file.suffix in (".yaml", ".yml")
+
         with open(app_file) as f:
-            app_data = json.load(f)
+            if is_yaml:
+                app_data = yaml.safe_load(f) or {}
+            else:
+                app_data = json.load(f)
 
         guardrails = app_data.get("guardrails", [])
         if display_name not in guardrails:
             guardrails.append(display_name)
             app_data["guardrails"] = guardrails
             with open(app_file, "w") as f:
-                json.dump(app_data, f, indent=2)
+                if is_yaml:
+                    yaml.safe_dump(app_data, f, sort_keys=False)
+                else:
+                    json.dump(app_data, f, indent=2)
 
     def _validate_app_dir(self, app_dir: str) -> None:
         """Validates that agents/ exists in the app directory.
