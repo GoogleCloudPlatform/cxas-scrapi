@@ -313,6 +313,7 @@ class AsyncAgentDesigner:
         available_groups: str | None = None,
         self_group: str | None = None,
         cached_content_name: str | None = None,
+        feedback: str | None = None,
     ) -> str:
         """Runs the Instructions Expert prompt to generate the PIF XML.
 
@@ -332,6 +333,12 @@ class AsyncAgentDesigner:
         cache holding input 3 (available tools). When provided the
         per-call prompt contains only per-group content (inputs 1, 2, 4
         + output format) and available_tools_context is not recomputed.
+
+        ``feedback`` is an optional addendum appended to the prompt
+        body. Used by :meth:`StructuralConsolidator.synthesize_instructions`
+        when a first-pass response fails canonical-XML validation and we
+        re-prompt Gemini with the lint diagnostics so it can correct the
+        schema violations.
         """
         AsyncAgentDesigner._validate_tree_view(tree_view)
         logger.info(
