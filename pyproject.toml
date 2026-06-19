@@ -76,6 +76,10 @@ dev = [
   "ruff",
   "twine",
   "pre-commit",
+  "mdformat>=0.7.21",
+  "mdformat-gfm",
+  "mdformat-frontmatter",
+  "mdformat-gfm-alerts",
 ]
 docs = [
   "mkdocs-material[imaging]>=9.5",
