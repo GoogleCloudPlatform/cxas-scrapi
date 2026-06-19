@@ -419,7 +419,7 @@ def test_parse_agent_response_standard():
             simulator = SimulationEvals(app_name=app_name)
 
     with patch(
-        "cxas_scrapi.evals.simulation_evals.Sessions._expand_pb_struct",
+        "cxas_scrapi.evals.simulation_evals.expand_pb_struct",
         return_value={"arg": "val"},
     ):
         agent_text, trace_chunks, session_ended, _ = (
@@ -490,7 +490,7 @@ def test_parse_agent_response_custom_payload():
             simulator = SimulationEvals(app_name=app_name)
 
     with patch(
-        "cxas_scrapi.evals.simulation_evals.Sessions._expand_pb_struct",
+        "cxas_scrapi.evals.simulation_evals.expand_pb_struct",
         return_value={"key": "value"},
     ):
         _agent_text, trace_chunks, session_ended, _ = (
@@ -1008,10 +1008,8 @@ class TestSimToGolden(unittest.TestCase):
             }
         ]
 
-        # We need to mock Sessions._expand_pb_struct as it's called in the
-        # method
         with patch(
-            "cxas_scrapi.core.sessions.Sessions._expand_pb_struct",
+            "cxas_scrapi.evals.simulation_evals.expand_pb_struct",
             side_effect=lambda x: x,
         ):
             yaml_output = self.sim_evals.export_results_to_golden(results)
@@ -1136,7 +1134,7 @@ def test_simulation_evals_adds_final_agent_response_on_session_ended(
 
     test_case = {"steps": []}
     with patch(
-        "cxas_scrapi.core.sessions.Sessions._expand_pb_struct",
+        "cxas_scrapi.evals.simulation_evals.expand_pb_struct",
         return_value={},
     ):
         simulator.simulate_conversation(

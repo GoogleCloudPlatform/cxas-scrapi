@@ -12,35 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 from enum import Enum
 from typing import Any
 
-from google.protobuf import json_format
 from google.protobuf.json_format import MessageToDict
 
+from cxas_scrapi.utils.proto_utils import expand_pb_struct
+
 logger = logging.getLogger(__name__)
-
-
-def expand_pb_struct(pb_struct: Any) -> Any:
-    """Helper to recursively convert protobuf Struct/Map/Message to standard
-    Python dicts/lists.
-    """
-    try:
-        return json.loads(json_format.MessageToJson(pb_struct))
-    except Exception:
-        pass
-
-    if hasattr(pb_struct, "items"):
-        res = {}
-        for k, v in pb_struct.items():
-            res[k] = expand_pb_struct(v)
-        return res
-    elif hasattr(pb_struct, "__iter__") and not isinstance(pb_struct, str):
-        return [expand_pb_struct(item) for item in pb_struct]
-    else:
-        return pb_struct
 
 
 class ParsedGuardrailTrigger:

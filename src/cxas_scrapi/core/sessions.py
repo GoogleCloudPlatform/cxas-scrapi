@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import mimetypes
 import os
@@ -32,6 +31,7 @@ from google.auth.transport.requests import Request
 from google.cloud.ces_v1beta import SessionServiceClient, types
 from google.protobuf import json_format
 
+from cxas_scrapi.utils.proto_utils import expand_pb_struct
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 try:
@@ -737,23 +737,6 @@ class Sessions(Common):
 
         return {"mime_type": mime_type, "data": raw_bytes}
 
-    @staticmethod
-    def _expand_pb_struct(pb_struct):
-        try:
-            return json.loads(json_format.MessageToJson(pb_struct))
-        except Exception:
-            pass
-
-        if hasattr(pb_struct, "items"):
-            res = {}
-            for k, v in pb_struct.items():
-                res[k] = Sessions._expand_pb_struct(v)
-            return res
-        elif hasattr(pb_struct, "__iter__") and not isinstance(pb_struct, str):
-            return [Sessions._expand_pb_struct(item) for item in pb_struct]
-        else:
-            return pb_struct
-
     def parse_result(self, res: Any):
         """
         Parses the CX Agent Studio session response to extract and print
@@ -866,7 +849,7 @@ class Sessions(Common):
                         elif chunk_type == "tool_call":
                             tc = chunk.tool_call
                             tool_name = tc.display_name or tc.tool
-                            expanded_args = Sessions._expand_pb_struct(tc.args)
+                            expanded_args = expand_pb_struct(tc.args)
                             logging.debug(
                                 f"TOOL CALL: [{role}] {tool_name} -- "
                                 f"Args: {expanded_args}"
@@ -881,9 +864,7 @@ class Sessions(Common):
                         elif chunk_type == "tool_response":
                             tr = chunk.tool_response
                             tool_name = tr.display_name or tr.tool
-                            expanded_response = Sessions._expand_pb_struct(
-                                tr.response
-                            )
+                            expanded_response = expand_pb_struct(tr.response)
                             logging.debug(
                                 f"TOOL RESULT: [{role}] {tool_name} -- "
                                 f"Result: {expanded_response}"
@@ -909,9 +890,7 @@ class Sessions(Common):
                             )
 
                         elif chunk_type == "payload":
-                            expanded_payload = Sessions._expand_pb_struct(
-                                chunk.payload
-                            )
+                            expanded_payload = expand_pb_struct(chunk.payload)
                             logging.debug(
                                 f"CUSTOM PAYLOAD: [{role}] {expanded_payload}"
                             )

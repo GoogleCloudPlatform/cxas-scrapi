@@ -25,7 +25,6 @@ from google.auth import default
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
-from proto.marshal.collections import maps, repeated
 
 # Define global scopes used for CX Agent Studio Requests
 GLOBAL_SCOPES = [
@@ -393,31 +392,3 @@ class Common:
         )
 
         return transport_class(channel=channel)
-
-    def recurse_proto_repeated_composite(self, repeated_object):
-        """Recursively converts RepeatedComposite objects to lists."""
-        repeated_list = []
-        for item in repeated_object:
-            if isinstance(item, repeated.RepeatedComposite):
-                processed_item = self.recurse_proto_repeated_composite(item)
-                repeated_list.append(processed_item)
-            elif isinstance(item, maps.MapComposite):
-                processed_item = self.recurse_proto_marshal_to_dict(item)
-                repeated_list.append(processed_item)
-            else:
-                repeated_list.append(item)
-
-        return repeated_list
-
-    def recurse_proto_marshal_to_dict(self, marshal_object):
-        """Recursively converts MapComposite objects to dicts."""
-        new_dict = {}
-        for k, v in marshal_object.items():
-            processed_v = v
-            if isinstance(v, maps.MapComposite):
-                processed_v = self.recurse_proto_marshal_to_dict(v)
-            elif isinstance(v, repeated.RepeatedComposite):
-                processed_v = self.recurse_proto_repeated_composite(v)
-            new_dict[k] = processed_v
-
-        return new_dict

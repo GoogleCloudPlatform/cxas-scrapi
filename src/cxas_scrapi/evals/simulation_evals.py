@@ -36,6 +36,7 @@ from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.prompts import llm_user_prompts
+from cxas_scrapi.utils.proto_utils import expand_pb_struct
 from cxas_scrapi.utils.eval_utils import (
     Conversation as GoldenConversation,
 )
@@ -948,7 +949,7 @@ class SimulationEvals(Apps):
         """Processes a tool call chunk from the platform response."""
         tc = chunk["tool_call"]
         tool_name = tc.get("display_name") or tc.get("tool")
-        args = Sessions._expand_pb_struct(tc.get("args", {}))
+        args = expand_pb_struct(tc.get("args", {}))
         turn.tool_calls.append(ToolCall(action=tool_name, args=args))
 
     def _handle_tool_response_chunk(
@@ -957,7 +958,7 @@ class SimulationEvals(Apps):
         """Processes a tool response chunk from the platform response."""
         tr = chunk["tool_response"]
         tool_name = tr.get("display_name") or tr.get("tool")
-        response = Sessions._expand_pb_struct(tr.get("response", {}))
+        response = expand_pb_struct(tr.get("response", {}))
         self._match_tool_response(turn, tool_name, response)
 
     def _handle_agent_transfer_chunk(
@@ -978,7 +979,7 @@ class SimulationEvals(Apps):
         """Processes a custom payload chunk from the platform response."""
         # Custom payloads don't have a direct field in Turn/ToolCall model
         # for golden export usually, but we could add to agent text as a note
-        payload = Sessions._expand_pb_struct(chunk.get("payload", {}))
+        payload = expand_pb_struct(chunk.get("payload", {}))
         self._add_agent_text(turn, f"[Custom Payload]: {json.dumps(payload)}")
 
     def _process_platform_chunk(
