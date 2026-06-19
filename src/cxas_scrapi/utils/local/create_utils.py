@@ -17,6 +17,7 @@ Utility class for setting up templates for local ces apps.
 """
 
 import json
+import keyword
 import re
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from google.protobuf import json_format
 AGENT_INSTRUCTION_TEMPLATE = """
 <role>
   <!-- Defines the agent's core function or responsibility -->
+  <!-- Note: Today's date is ${current_date}. -->
 </role>
 
 <persona>
@@ -47,7 +49,7 @@ AGENT_INSTRUCTION_TEMPLATE = """
       - Bold the most important data points for instant visibility.
       - Always Bold: **Product Names**, **Prices**, **Dates**,
         **Order Numbers**, and **Deadlines**.
-      - Example: "The **Classic Tee** is currently **$25.00**."
+      - Example: "The **Classic Tee** is currently **${price}**."
     </bolding>
     <lists>
       - Automatically convert any mention of more than two items or steps
@@ -81,6 +83,19 @@ AGENT_INSTRUCTION_TEMPLATE = """
 <examples>
 <!--Definesfew-shot examples to guide agent behavior for specific scenarios.-->
 </examples>
+"""
+
+PYTHON_CODE_TEMPLATE = """def {safe_name}() -> dict:
+    \"\"\"Docstring explaining how to use {safe_name}.
+
+    Returns:
+        dict: The response or agent_action error.
+    \"\"\"
+    try:
+        # TODO: Implement tool logic
+        return {{}}
+    except Exception as e:
+        return {{"agent_action": f"Error in {safe_name}: {{e}}"}}
 """
 
 LLM_POLICY_PROMPT_TEMPLATE = """\
@@ -126,8 +141,7 @@ class CreateUtils:
     """Utility for creating local templates for CXAS components."""
 
     def create_agent(self, display_name: str, app_dir: str) -> str:
-        """
-        Creates a template for the specified type.
+        """Creates a template for the specified type.
 
         Args:
             display_name: The display name of the component.
@@ -156,12 +170,12 @@ class CreateUtils:
         )
         template = json_format.MessageToDict(agent_obj._pb)
 
-        with open(json_file, "w") as f:
+        with open(json_file, "w", encoding="utf-8") as f:
             json.dump(template, f, indent=2)
 
         instruction_file = target_dir / "instruction.txt"
         if not instruction_file.exists():
-            with open(instruction_file, "w") as f:
+            with open(instruction_file, "w", encoding="utf-8") as f:
                 f.write(AGENT_INSTRUCTION_TEMPLATE)
 
         return str(target_dir)
@@ -227,8 +241,7 @@ class CreateUtils:
         tool_type: str | None = None,
         add_to_agent: str | None = None,
     ) -> str:
-        """
-        Creates a tool of a given type.
+        """Creates a tool of a given type.
 
         Args:
             display_name: The display name of the tool.
@@ -249,10 +262,10 @@ class CreateUtils:
 
         if tool_type and tool_type.upper() == "PYTHON":
             target_dir = app_path / "tools" / safe_name
-            tool_obj = types.Tool(display_name=display_name)
             code_dir = app_path / "tools" / safe_name / "python_function"
             code_dir.mkdir(parents=True, exist_ok=True)
             code_file = code_dir / "python_code.py"
+            tool_obj = types.Tool(display_name=safe_name)
             tool_obj.python_function.name = safe_name
             tool_obj.python_function.description = (
                 f"Description for {display_name}"
@@ -261,8 +274,8 @@ class CreateUtils:
                 f"tools/{safe_name}/python_function/python_code.py"
             )
 
-            with open(code_file, "w") as f:
-                f.write(f"def {safe_name}() -> dict:\n    return {{}}")
+            with open(code_file, "w", encoding="utf-8") as f:
+                f.write(PYTHON_CODE_TEMPLATE.format(safe_name=safe_name))
         elif tool_type and tool_type.upper() == "OPENAPI":
             if add_to_agent:
                 raise ValueError(
@@ -270,21 +283,20 @@ class CreateUtils:
                     "processing Open API schema first."
                 )
             target_dir = app_path / "toolsets" / safe_name
-            tool_obj = types.Toolset(display_name=display_name)
             schema_dir = app_path / "toolsets" / safe_name / "open_api_toolset"
             schema_dir.mkdir(parents=True, exist_ok=True)
             schema_file = schema_dir / "open_api_schema.yaml"
-            tool_obj.display_name = safe_name
+            tool_obj = types.Toolset(display_name=safe_name)
             tool_obj.description = f"Description for {display_name}"
             tool_obj.open_api_toolset.open_api_schema = (
                 f"toolsets/{safe_name}/open_api_toolset/open_api_schema.yaml"
             )
-            with open(schema_file, "w") as f:
+            with open(schema_file, "w", encoding="utf-8") as f:
                 f.write(OPENAPI_SCHEMA_TEMPLATE)
 
         elif tool_type and tool_type.upper() == "GOOGLE_SEARCH":
             target_dir = app_path / "tools" / safe_name
-            tool_obj = types.Tool(display_name=display_name)
+            tool_obj = types.Tool(display_name=safe_name)
             tool_obj.google_search_tool = types.GoogleSearchTool()
             tool_obj.google_search_tool.name = safe_name
             tool_obj.google_search_tool.description = (
@@ -292,7 +304,7 @@ class CreateUtils:
             )
         elif tool_type and tool_type.upper() == "DATASTORE":
             target_dir = app_path / "tools" / safe_name
-            tool_obj = types.Tool(display_name=display_name)
+            tool_obj = types.Tool(display_name=safe_name)
             tool_obj.data_store_tool = types.DataStoreTool()
             tool_obj.data_store_tool.name = safe_name
             tool_obj.data_store_tool.description = (
@@ -308,7 +320,7 @@ class CreateUtils:
         tool_json_file = target_dir / f"{safe_name}.json"
         tool_template = json_format.MessageToDict(tool_obj._pb)
 
-        with open(tool_json_file, "w") as f:
+        with open(tool_json_file, "w", encoding="utf-8") as f:
             json.dump(tool_template, f, indent=2)
 
         if add_to_agent_obj:
@@ -319,16 +331,31 @@ class CreateUtils:
                 / agent_safe_name
                 / f"{agent_safe_name}.json"
             )
-            add_to_agent_obj.tools.append(display_name)
-            with open(agent_json_file, "w") as f:
+            if safe_name not in add_to_agent_obj.tools:
+                add_to_agent_obj.tools.append(safe_name)
+            with open(agent_json_file, "w", encoding="utf-8") as f:
                 json.dump(
                     json_format.MessageToDict(add_to_agent_obj._pb), f, indent=2
                 )
 
+            # Append tool reference to prevent I012 linter warning
+            agent_instruction_file = (
+                app_path / "agents" / agent_safe_name / "instruction.txt"
+            )
+            if agent_instruction_file.exists():
+                with open(agent_instruction_file, encoding="utf-8") as inst_f:
+                    inst_content = inst_f.read()
+                tool_ref = f"{{@TOOL: {safe_name}}}"
+                if tool_ref not in inst_content:
+                    with open(
+                        agent_instruction_file, "a", encoding="utf-8"
+                    ) as inst_f:
+                        inst_f.write(f"\n\n<!-- Tool ref: {tool_ref} -->")
+
         return str(target_dir)
 
     def _get_agent(self, display_name: str, app_path: Path) -> types.Agent:
-        """Gets the local agent agent."""
+        """Gets the local agent config."""
         safe_display_name = self._get_safe_display_name(display_name)
         agents_dir = app_path / "agents"
         target_dir = agents_dir / safe_display_name
@@ -350,7 +377,22 @@ class CreateUtils:
 
     def _get_safe_display_name(self, display_name: str) -> str:
         """Gets the directory safe display name."""
-        return re.sub(r"[^a-zA-Z0-9]+", "_", display_name).strip("_")
+        safe_name = (
+            re.sub(r"[^a-zA-Z0-9]+", "_", display_name).strip("_").lower()
+        )
+        if not safe_name:
+            raise ValueError(
+                f"Invalid display name '{display_name}': must contain "
+                "at least one alphanumeric character."
+            )
+        if safe_name[0].isdigit():
+            safe_name = "_" + safe_name
+        if keyword.iskeyword(safe_name):
+            raise ValueError(
+                f"Invalid display name '{display_name}': "
+                f"'{safe_name}' is a Python reserved keyword."
+            )
+        return safe_name
 
     def _add_guardrail_to_app(self, app_path: Path, display_name: str) -> None:
         """Adds a guardrail display name to app.json if it exists."""
