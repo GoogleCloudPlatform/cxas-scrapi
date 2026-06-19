@@ -17,6 +17,7 @@
 import hashlib
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from typing import Any
 
@@ -367,9 +368,17 @@ class Evaluations(Common):
 
         run_status = self.client.get_evaluation_run(name=evaluation_run_id)
 
-        results = []
-        for result_name in run_status.evaluation_results:
-            results.append(self.client.get_evaluation_result(name=result_name))
+        results_names = list(run_status.evaluation_results)
+        if not results_names:
+            return []
+
+        max_workers = min(10, len(results_names))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(self.client.get_evaluation_result, name=name)
+                for name in results_names
+            ]
+            results = [future.result() for future in futures]
 
         return results
 
