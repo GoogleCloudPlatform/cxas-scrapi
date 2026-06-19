@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from cxas_scrapi.core import traces as traces_mod
-from cxas_scrapi.core.traces import Traces
+from cxas_scrapi.core.traces import PassFailResult, Traces
 from cxas_scrapi.utils.tracing.audio_analysis import ANALYSIS_REGISTRY
 from cxas_scrapi.utils.tracing.trace_config import GeminiMetric
 
@@ -530,8 +530,8 @@ def test_analyze_audio_runs_named_subset(traces_obj, monkeypatch):
     _patch_audio_files(traces_obj, monkeypatch)
     fake_gem = MagicMock()
     fake_gem.generate_with_parts.side_effect = [
-        "PASS — voices match",
-        "FAIL — pause at 0:42",
+        PassFailResult(result="PASS", justification="voices match"),
+        PassFailResult(result="FAIL", justification="pause at 0:42"),
     ]
     monkeypatch.setattr(
         traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
@@ -556,7 +556,9 @@ def test_analyze_audio_runs_named_subset(traces_obj, monkeypatch):
 def test_analyze_audio_runs_all_when_metrics_none(traces_obj, monkeypatch):
     _patch_audio_files(traces_obj, monkeypatch)
     fake_gem = MagicMock()
-    fake_gem.generate_with_parts.return_value = "PASS — looks fine"
+    fake_gem.generate_with_parts.return_value = PassFailResult(
+        result="PASS", justification="looks fine"
+    )
     monkeypatch.setattr(
         traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
     )
@@ -567,7 +569,9 @@ def test_analyze_audio_runs_all_when_metrics_none(traces_obj, monkeypatch):
 def test_analyze_audio_skips_unknown_metric(traces_obj, monkeypatch, caplog):
     _patch_audio_files(traces_obj, monkeypatch)
     fake_gem = MagicMock()
-    fake_gem.generate_with_parts.return_value = "PASS — ok"
+    fake_gem.generate_with_parts.return_value = PassFailResult(
+        result="PASS", justification="ok"
+    )
     monkeypatch.setattr(
         traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
     )
@@ -600,7 +604,9 @@ def test_analyze_audio_uses_yaml_prompt_override(traces_obj, monkeypatch):
         "agent_cutoff": GeminiMetric(prompt="custom override prompt"),
     }
     fake_gem = MagicMock()
-    fake_gem.generate_with_parts.return_value = "PASS"
+    fake_gem.generate_with_parts.return_value = PassFailResult(
+        result="PASS", justification="PASS"
+    )
     monkeypatch.setattr(
         traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
     )
@@ -625,7 +631,9 @@ def test_analyze_audio_handles_gemini_none(traces_obj, monkeypatch):
 def test_analyze_audio_handles_unparseable_response(traces_obj, monkeypatch):
     _patch_audio_files(traces_obj, monkeypatch)
     fake_gem = MagicMock()
-    fake_gem.generate_with_parts.return_value = "no verdict here"
+    fake_gem.generate_with_parts.return_value = PassFailResult(
+        result="UNKNOWN", justification="no verdict here"
+    )
     monkeypatch.setattr(
         traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
     )
@@ -662,22 +670,6 @@ def test_list_audio_files_returns_empty_when_dir_not_found(
         traces_mod, "GCSUtils", MagicMock(return_value=fake_gcs)
     )
     assert traces_obj.list_audio_files("c1") == []
-
-
-def test_parse_pass_fail_branches():
-    assert traces_mod._parse_pass_fail(None)["result"] == "ERROR"
-    assert traces_mod._parse_pass_fail("PASS — all good")["result"] == "PASS"
-    assert traces_mod._parse_pass_fail("FAIL — bad call")["result"] == "FAIL"
-    # Sentence with PASS/FAIL embedded as a separate token.
-    assert (
-        traces_mod._parse_pass_fail("Result is PASS overall")["result"]
-        == "PASS"
-    )
-    assert (
-        traces_mod._parse_pass_fail("Final verdict: FAIL — bad")["result"]
-        == "FAIL"
-    )
-    assert traces_mod._parse_pass_fail("nothing useful")["result"] == "UNKNOWN"
 
 
 def test_triage_runs_metrics(traces_obj, monkeypatch):
@@ -808,7 +800,9 @@ def test_bundle_creates_zip(traces_obj, tmp_path, monkeypatch):
     )
 
     fake_gem = MagicMock()
-    fake_gem.generate_with_parts.return_value = "audio finding"
+    fake_gem.generate_with_parts.return_value = PassFailResult(
+        result="PASS", justification="audio finding"
+    )
     fake_gem.generate.return_value = "triage finding"
     monkeypatch.setattr(
         traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
@@ -877,7 +871,9 @@ def test_report_bug_uploads_artifacts(traces_obj, monkeypatch):
         traces_mod, "CloudLogsClient", MagicMock(return_value=fake_logs)
     )
     fake_gem = MagicMock()
-    fake_gem.generate_with_parts.return_value = "ok"
+    fake_gem.generate_with_parts.return_value = PassFailResult(
+        result="PASS", justification="ok"
+    )
     monkeypatch.setattr(
         traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
     )

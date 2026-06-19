@@ -39,6 +39,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from statistics import median
 from typing import Any
 
+import pydantic
 from google import genai
 
 from cxas_scrapi.core.common import Common
@@ -54,6 +55,18 @@ from cxas_scrapi.utils.tracing.audio_analysis import (
 )
 from cxas_scrapi.utils.tracing.cloud_logging import CloudLogsClient
 from cxas_scrapi.utils.tracing.trace_config import TraceConfig
+
+
+class PassFailResult(pydantic.BaseModel):
+    """Pydantic model representing Pass/Fail schema for Gemini audio."""
+
+    result: str = pydantic.Field(
+        description="The final test result. Must be PASS or FAIL."
+    )
+    justification: str = pydantic.Field(
+        description="Detailed reason or justification explaining the result."
+    )
+
 
 logger = logging.getLogger(__name__)
 
@@ -526,9 +539,31 @@ class Traces(Common):
             response = gem.generate_with_parts(
                 parts=parts,
                 thinking_level=self.trace_config.gemini.thinking_level,
+                response_mime_type="application/json",
+                response_schema=PassFailResult,
             )
+            if response is None:
+                parsed_res = {
+                    "result": "ERROR",
+                    "justification": "Gemini returned no response.",
+                }
+            elif isinstance(response, PassFailResult):
+                parsed_res = {
+                    "result": (
+                        response.result.upper()
+                        if response.result
+                        else "UNKNOWN"
+                    ),
+                    "justification": response.justification or "",
+                }
+            else:
+                parsed_res = {
+                    "result": str(response.get("result", "UNKNOWN")).upper(),
+                    "justification": str(response.get("justification", "")),
+                }
+
             results[str(analysis.name)] = {
-                **_parse_pass_fail(response),
+                **parsed_res,
                 "files_analyzed": analysis_files,
             }
         return results
@@ -1097,33 +1132,6 @@ def _git_sha() -> str | None:
         )
     except Exception:
         return None
-
-
-def _parse_pass_fail(response: Any) -> dict[str, str]:
-    """Best-effort parser for the `PASS / FAIL + justification` Gemini reply.
-
-    Falls back to `{result: ERROR, ...}` if Gemini returned None, and to
-    `{result: UNKNOWN, justification: <full text>}` if neither PASS nor FAIL
-    appears in the response.
-    """
-    if response is None:
-        return {
-            "result": "ERROR",
-            "justification": "Gemini returned no response.",
-        }
-    text = response if isinstance(response, str) else str(response)
-    upper = text.upper()
-    if "PASS" in upper.split():
-        result = "PASS"
-    elif "FAIL" in upper.split():
-        result = "FAIL"
-    elif text.lstrip().upper().startswith("PASS"):
-        result = "PASS"
-    elif text.lstrip().upper().startswith("FAIL"):
-        result = "FAIL"
-    else:
-        return {"result": "UNKNOWN", "justification": text.strip()}
-    return {"result": result, "justification": text.strip()}
 
 
 def _gcloud_account() -> str | None:
