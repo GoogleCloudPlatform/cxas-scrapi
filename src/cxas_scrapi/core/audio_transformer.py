@@ -62,7 +62,7 @@ class AudioTransformer:
                     client_options = ClientOptions(quota_project_id=project_id)
                     AudioTransformer._client = texttospeech.TextToSpeechClient(
                         credentials=credentials, client_options=client_options
-                     )
+                    )
 
         client = AudioTransformer._client
         synthesis_input = texttospeech.SynthesisInput(text=text)
