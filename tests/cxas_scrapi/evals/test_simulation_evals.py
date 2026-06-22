@@ -1343,4 +1343,3 @@ def test_simulation_evals_with_audio_expectations():
     assert conv.audio_expectations == [
         {"expectation": "audio expectation", "requires_audio_paths": True}
     ]
-

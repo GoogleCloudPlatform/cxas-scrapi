@@ -107,8 +107,6 @@ def run_all_evals(
                     )
                     evaluations_to_run.append(res.name)
 
-
-
     # 2. Callback tests
     if "callbacks" in include:
         if not app_dir and app_name:
@@ -275,6 +273,7 @@ def run_all_evals(
                 from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
                     load_golden_results,
                 )
+
                 batch_results = load_golden_results(batch_run_name, app_name)
                 results["golden"].extend(batch_results)
             else:
