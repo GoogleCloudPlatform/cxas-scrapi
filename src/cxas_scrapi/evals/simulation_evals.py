@@ -215,7 +215,10 @@ class LLMUserConversation(Conversation):
                 exp_dict = dict(exp)
                 exp_dict["requires_audio_paths"] = True
             else:
-                exp_dict = {"expectation": str(exp), "requires_audio_paths": True}
+                exp_dict = {
+                    "expectation": str(exp),
+                    "requires_audio_paths": True,
+                }
             self.audio_expectations.append(exp_dict)
         self.expectation_results: list[ExpectationResult] = []
 
@@ -450,7 +453,10 @@ class SimulationEvals(Apps):
         all_expectations = []
         if eval_conv.expectations:
             all_expectations.extend(eval_conv.expectations)
-        if hasattr(eval_conv, "audio_expectations") and eval_conv.audio_expectations:
+        if (
+            hasattr(eval_conv, "audio_expectations")
+            and eval_conv.audio_expectations
+        ):
             all_expectations.extend(eval_conv.audio_expectations)
 
         if all_expectations:
