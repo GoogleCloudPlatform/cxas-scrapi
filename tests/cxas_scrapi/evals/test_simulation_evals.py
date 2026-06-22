@@ -453,9 +453,12 @@ def test_parse_agent_response_agent_transfer():
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
-    _agent_text, trace_chunks, session_ended, _ = simulator._parse_agent_response(
-        mock_response
-    )
+    (
+        _agent_text,
+        trace_chunks,
+        session_ended,
+        _,
+    ) = simulator._parse_agent_response(mock_response)
 
     assert any(
         "Agent Transfer: Transferred to Billing Agent" in c
@@ -520,9 +523,12 @@ def test_parse_agent_response_diagnostic():
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
-    agent_text, trace_chunks, session_ended, _ = simulator._parse_agent_response(
-        mock_response
-    )
+    (
+        agent_text,
+        trace_chunks,
+        session_ended,
+        _,
+    ) = simulator._parse_agent_response(mock_response)
 
     assert agent_text == "Hello from diag"
     assert any("Agent Text (Diag): Hello from diag" in c for c in trace_chunks)
@@ -1329,18 +1335,14 @@ def test_simulation_evals_run_simulations_capture_agent_audio(mock_sessions):
 
 
 def test_simulation_evals_with_audio_expectations():
-    app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
-        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
-            evals = SimulationEvals(app_name=app_name)
-
     test_case = {
         "steps": [],
         "expectations": ["text expectation"],
         "audio_expectations": ["audio expectation"],
     }
-    
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate") as mock_genai:
+
+    patch_path = "cxas_scrapi.evals.simulation_evals.GeminiGenerate"
+    with patch(patch_path) as mock_genai:
         conv = LLMUserConversation(
             genai_client=mock_genai,
             genai_model="gemini-1.5-flash",
