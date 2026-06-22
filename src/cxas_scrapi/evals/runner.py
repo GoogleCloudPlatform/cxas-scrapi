@@ -29,6 +29,11 @@ from cxas_scrapi.utils.eval_utils import EvalUtils
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 
+def _chunked(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i : i + n]
+
+
 def run_all_evals(
     app_name: str,
     modality: str = "text",
@@ -41,6 +46,7 @@ def run_all_evals(
     filter_files: list[str] | None = None,
     filter_tags: list[str] | None = None,
     parallel: int = 1,
+    golden_parallel: int = 1,
     golden_timeout: int = 600,
     include: list[str] | None = None,
     rate_limiter: RateLimiter | None = None,
@@ -54,7 +60,6 @@ def run_all_evals(
     """
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
         _load_sim_test_cases,
-        load_golden_results,
     )
 
     results = {"callback": [], "tool": [], "golden": [], "simulation": []}
@@ -63,7 +68,6 @@ def run_all_evals(
 
     # 1. Platform goldens (Trigger async)
     evaluations_to_run = []
-    run_name = None
     if "goldens" in include:
         if not goldens_dir:
             goldens_dir = "evals/goldens/"
@@ -102,29 +106,7 @@ def run_all_evals(
                     )
                     evaluations_to_run.append(res.name)
 
-            if evaluations_to_run:
-                print(f"Running evaluations: {evaluations_to_run}")
-                operation = eval_client.run_evaluation(
-                    evaluations=evaluations_to_run,
-                    app_name=app_name,
-                    modality=modality,
-                    run_count=runs,
-                )
 
-                print(
-                    "  Waiting for evaluation run name to appear in operation "
-                    "metadata..."
-                )
-                for i in range(12):
-                    time.sleep(10)
-                    refreshed = operation._refresh(None)
-                    meta = RunEvaluationOperationMetadata()
-                    meta._pb.ParseFromString(refreshed.metadata.value)
-                    if meta.evaluation_run:
-                        run_name = meta.evaluation_run
-                        print(f"  Run name resolved: {run_name}")
-                        break
-                    print(f"  Waiting... ({(i + 1) * 10}s)")
 
     # 2. Callback tests
     if "callbacks" in include:
@@ -248,13 +230,55 @@ def run_all_evals(
                         with open(save_path, "w") as f:
                             json.dump(sim_results, f, indent=2)
 
-    # 5. Platform goldens (Wait for results)
-    if "goldens" in include and run_name:
-        print(f"Waiting for evaluation run {run_name} to complete...")
-        utils = EvalUtils(app_name=app_name)
-        utils.wait_for_run_and_get_results(
-            run_name=run_name, timeout_seconds=golden_timeout
+    # 5. Platform goldens (Run and Wait in Batches)
+    if "goldens" in include and evaluations_to_run:
+        print(
+            f"Running {len(evaluations_to_run)} evaluations in batches of "
+            f"size {golden_parallel}..."
         )
-        results["golden"] = load_golden_results(run_name, app_name)
+        utils = EvalUtils(app_name=app_name)
+
+        batches = list(_chunked(evaluations_to_run, golden_parallel))
+        for idx, batch in enumerate(batches):
+            print(
+                f"\n  [Batch {idx + 1}/{len(batches)}] "
+                f"Triggering evaluations: {batch}"
+            )
+            operation = eval_client.run_evaluation(
+                evaluations=batch,
+                app_name=app_name,
+                modality=modality,
+                run_count=runs,
+            )
+
+            # Resolve run name
+            batch_run_name = None
+            print("    Waiting for evaluation run name to resolve...")
+            for i in range(12):
+                time.sleep(10)
+                refreshed = operation._refresh(None)
+                meta = RunEvaluationOperationMetadata()
+                meta._pb.ParseFromString(refreshed.metadata.value)
+                if meta.evaluation_run:
+                    batch_run_name = meta.evaluation_run
+                    print(f"    Run name resolved: {batch_run_name}")
+                    break
+                print(f"    Waiting... ({(i + 1) * 10}s)")
+
+            if batch_run_name:
+                print(f"    Waiting for run {batch_run_name} to complete...")
+                utils.wait_for_run_and_get_results(
+                    run_name=batch_run_name, timeout_seconds=golden_timeout
+                )
+                from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
+                    load_golden_results,
+                )
+                batch_results = load_golden_results(batch_run_name, app_name)
+                results["golden"].extend(batch_results)
+            else:
+                print(
+                    f"    ERROR: Failed to resolve run name for batch "
+                    f"{idx + 1}. Skipping."
+                )
 
     return results

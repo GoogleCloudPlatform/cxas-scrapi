@@ -1193,6 +1193,10 @@ class Sessions(Common):
                     text = [text]
                 audio_transformer = AudioTransformer()
                 input_audio_bytes = []
+                lang_code = "en-US"
+                if variables and "locale" in variables:
+                    lang_code = variables["locale"]
+
                 for input in text:
                     input_audio_bytes.append(
                         audio_transformer.text_to_speech_bytes(
@@ -1201,6 +1205,7 @@ class Sessions(Common):
                             project_id=self.project_id,
                             background_noise_file=background_noise_file,
                             burst_noise_files=burst_noise_files,
+                            language_code=lang_code,
                         )
                     )
                 for input_data in input_audio_bytes:

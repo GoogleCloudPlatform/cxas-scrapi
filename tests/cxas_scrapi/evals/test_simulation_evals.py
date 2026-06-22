@@ -422,7 +422,7 @@ def test_parse_agent_response_standard():
         "cxas_scrapi.evals.simulation_evals.Sessions._expand_pb_struct",
         return_value={"arg": "val"},
     ):
-        agent_text, trace_chunks, session_ended = (
+        agent_text, trace_chunks, session_ended, _ = (
             simulator._parse_agent_response(mock_response)
         )
 
@@ -453,7 +453,7 @@ def test_parse_agent_response_agent_transfer():
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
-    _agent_text, trace_chunks, session_ended = simulator._parse_agent_response(
+    _agent_text, trace_chunks, session_ended, _ = simulator._parse_agent_response(
         mock_response
     )
 
@@ -490,7 +490,7 @@ def test_parse_agent_response_custom_payload():
         "cxas_scrapi.evals.simulation_evals.Sessions._expand_pb_struct",
         return_value={"key": "value"},
     ):
-        _agent_text, trace_chunks, session_ended = (
+        _agent_text, trace_chunks, session_ended, _ = (
             simulator._parse_agent_response(mock_response)
         )
 
@@ -520,7 +520,7 @@ def test_parse_agent_response_diagnostic():
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
-    agent_text, trace_chunks, session_ended = simulator._parse_agent_response(
+    agent_text, trace_chunks, session_ended, _ = simulator._parse_agent_response(
         mock_response
     )
 
@@ -1316,3 +1316,29 @@ def test_simulation_evals_run_simulations_capture_agent_audio(mock_sessions):
         burst_noise_files=None,
         use_tool_fakes=False,
     )
+
+
+def test_simulation_evals_with_audio_expectations():
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name)
+
+    test_case = {
+        "steps": [],
+        "expectations": ["text expectation"],
+        "audio_expectations": ["audio expectation"],
+    }
+    
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate") as mock_genai:
+        conv = LLMUserConversation(
+            genai_client=mock_genai,
+            genai_model="gemini-1.5-flash",
+            test_case=test_case,
+        )
+
+    assert conv.expectations == ["text expectation"]
+    assert conv.audio_expectations == [
+        {"expectation": "audio expectation", "requires_audio_paths": True}
+    ]
+

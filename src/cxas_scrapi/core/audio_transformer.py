@@ -50,6 +50,7 @@ class AudioTransformer:
         bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
         burst_noise_snr: float = 5.0,
+        language_code: str = "en-US",
     ) -> dict:
         """Converts text to speech and returns a dictionary with text and
         audio bytes without saving to disk. Background and burst noise can
@@ -61,12 +62,18 @@ class AudioTransformer:
                     client_options = ClientOptions(quota_project_id=project_id)
                     AudioTransformer._client = texttospeech.TextToSpeechClient(
                         credentials=credentials, client_options=client_options
-                    )
+                     )
 
         client = AudioTransformer._client
         synthesis_input = texttospeech.SynthesisInput(text=text)
+
+        voice_lang = language_code
+        voice_name = "en-US-Standard-A"
+        if voice_lang.lower().startswith("fr"):
+            voice_name = "fr-CA-Standard-A"
+
         voice = texttospeech.VoiceSelectionParams(
-            language_code="en-US", name="en-US-Standard-A"
+            language_code=voice_lang, name=voice_name
         )
         audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.LINEAR16,

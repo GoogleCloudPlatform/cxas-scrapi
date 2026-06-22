@@ -524,6 +524,10 @@ class MissingToolDescriptionInJSON(Rule):
 
         python_function = tool_config.get("pythonFunction")
         widget_tool = tool_config.get("widgetTool")
+        client_function = tool_config.get("clientFunction")
+        google_search_tool = tool_config.get("googleSearchTool")
+        data_store_tool = tool_config.get("dataStoreTool")
+        open_api_tool = tool_config.get("openApiTool")
 
         if python_function is not None:
             description = python_function.get("description")
@@ -539,12 +543,40 @@ class MissingToolDescriptionInJSON(Rule):
                 "Add a 'description' key to the 'widgetTool' "
                 "object in the tool's JSON file."
             )
+        elif client_function is not None:
+            description = client_function.get("description")
+            field_name = "clientFunction.description"
+            fix_msg = (
+                "Add a 'description' key to the 'clientFunction' "
+                "object in the tool's JSON file."
+            )
+        elif google_search_tool is not None:
+            description = google_search_tool.get("description")
+            field_name = "googleSearchTool.description"
+            fix_msg = (
+                "Add a 'description' key to the 'googleSearchTool' "
+                "object in the tool's JSON file."
+            )
+        elif data_store_tool is not None:
+            description = data_store_tool.get("description")
+            field_name = "dataStoreTool.description"
+            fix_msg = (
+                "Add a 'description' key to the 'dataStoreTool' "
+                "object in the tool's JSON file."
+            )
+        elif open_api_tool is not None:
+            description = open_api_tool.get("description")
+            field_name = "openApiTool.description"
+            fix_msg = (
+                "Add a 'description' key to the 'openApiTool' "
+                "object in the tool's JSON file."
+            )
         else:
             description = None
-            field_name = "pythonFunction or widgetTool description"
+            field_name = "tool description"
             fix_msg = (
-                "Add a 'description' field within the 'pythonFunction' "
-                "or 'widgetTool' object in the tool's JSON file."
+                "Add a 'description' field within the tool object "
+                "in the tool's JSON file."
             )
 
         if not description or not str(description).strip():
