@@ -14,10 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import http
 from typing import Any
 
 import requests
 from google.auth.transport.requests import Request as GoogleAuthRequest
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 from cxas_scrapi.core.common import Common
 
@@ -54,6 +57,20 @@ class Insights(Common):
         else:
             self._base_url = f"https://{base_endpoint}/{api_version}"
 
+        self.session = requests.Session()
+        retries = Retry(
+            total=5,
+            backoff_factor=1,
+            status_forcelist=[
+                http.HTTPStatus.TOO_MANY_REQUESTS,
+                http.HTTPStatus.INTERNAL_SERVER_ERROR,
+                http.HTTPStatus.BAD_GATEWAY,
+                http.HTTPStatus.SERVICE_UNAVAILABLE,
+                http.HTTPStatus.GATEWAY_TIMEOUT,
+            ],
+        )
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
+
     def _request(
         self,
         method: str,
@@ -79,7 +96,7 @@ class Insights(Common):
             "User-Agent": self.user_agent,
         }
 
-        response = requests.request(
+        response = self.session.request(
             method=method,
             url=url,
             headers=headers,
