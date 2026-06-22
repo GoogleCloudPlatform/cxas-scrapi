@@ -35,6 +35,13 @@ from cxas_scrapi.core.variables import Variables
 from cxas_scrapi.prompts import llm_user_prompts
 from cxas_scrapi.utils.latency_parser import LatencyParser
 
+# Filename constants for evaluation results
+SIM_RESULTS_FILENAME = "sim_results.json"
+TOOL_RESULTS_FILENAME = "tool_results.csv"
+CALLBACK_RESULTS_FILENAME = "callback_results.csv"
+COMBINED_REPORT_FILENAME = "combined_report.html"
+TIMESTAMP_PATTERN = r"\d{8}_\d{6}"
+
 logger = logging.getLogger(__name__)
 
 
@@ -1439,3 +1446,21 @@ def evaluate_expectations(
     except Exception as e:
         logging.getLogger(__name__).error(f"Error evaluating expectations: {e}")
         return []
+
+
+def add_timestamp_suffix(filename: str, timestamp: str | None) -> str:
+    """Appends a timestamp suffix to a filename, preserving the extension.
+
+    Args:
+        filename: The original filename (e.g., 'results.json').
+        timestamp: The timestamp string to append (e.g., '20260622_171403').
+
+    Returns:
+        The filename with the timestamp appended (e.g.,
+        'results_20260622_171403.json'), or the original filename if timestamp
+        is None or empty.
+    """
+    if not timestamp:
+        return filename
+    base, ext = os.path.splitext(filename)
+    return f"{base}_{timestamp}{ext}"
