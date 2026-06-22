@@ -98,6 +98,7 @@ def build_test_case(ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "name": name,
         "steps": template["steps"],
         "expectations": template.get("expectations", []),
+        "audio_expectations": template.get("audio_expectations", []),
         "session_parameters": template.get("session_parameters", {}),
         "metadata": {
             "prd_id": ev.get("prd_id", ""),
@@ -325,6 +326,7 @@ def cmd_run(args):
                     "name": name,
                     "steps": t["steps"],
                     "expectations": t.get("expectations", []),
+                    "audio_expectations": t.get("audio_expectations", []),
                     "session_parameters": t.get("session_parameters", {}),
                     "metadata": {},
                 })
@@ -354,6 +356,7 @@ def cmd_run(args):
                 "name": name,
                 "steps": t["steps"],
                 "expectations": t.get("expectations", []),
+                "audio_expectations": t.get("audio_expectations", []),
                 "session_parameters": t.get("session_parameters", {}),
                 "metadata": {},
             })
