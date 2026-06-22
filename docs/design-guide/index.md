@@ -26,6 +26,7 @@ This section documents the design practices that have proven effective for build
 | **Error Handling** | Return `agent_action` keys; validate early; catch exceptions | [Error Handling](error-handling.md) |
 | **Variables** | JSON schemas over individual variables; mind type coercion | [Variables](variables.md) |
 | **Callbacks** | Guard every `before_agent_callback`; use for dynamic prompting | [Callbacks](callbacks.md) |
+| **Guardrails** | Layer prompt guard, blocklists, safety, rules, and callbacks for defense in depth | [Guardrails](guardrails.md) |
 
 ---
 
@@ -39,6 +40,7 @@ If you're designing a new agent from scratch, read these pages in order:
 4. [Error Handling](error-handling.md) — build recovery paths in from the start rather than adding them after failures surface in testing.
 5. [Variables](variables.md) — understand how session state works before you write callbacks or tools that depend on it.
 6. [Callbacks](callbacks.md) — dynamic prompting and slot-filling patterns that let you build more capable agents without inflating instruction length.
+7. [Guardrails](guardrails.md) — layer safety boundaries, content filters, and behavioral rules to keep your agent on-task and compliant.
 
 ---
 
@@ -66,6 +68,9 @@ A well-organized agent project keeps configuration, code, tests, and documentati
 │   │       ├── my_tool.json                # Tool schema
 │   │       └── python_function/
 │   │           └── python_code.py
+│   ├── guardrails/
+│   │   └── My_Guardrail/
+│   │       └── guardrail_config.json       # Guardrail config
 │   ├── evaluations/          # Golden evals (each in its own named folder)
 │   ├── evaluationDatasets/   # Shared eval datasets
 │   └── evaluationExpectations/ # Reusable eval expectations

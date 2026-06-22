@@ -87,5 +87,8 @@ In practice, you'll use multiple types together. A well-tested agent typically h
 `Turn Evals`
 :   The `TurnEvals` class, the `TurnOperator` enum, and single-turn code examples.
 
-`Running Evaluations`
+[`Running Evaluations`](running-evals-cli.md)
 :   End-to-end CLI workflow, `cxas ci-test`, exit codes for CI, and combining multiple eval types.
+
+[`Mock Tool Responses`](mock-tool-responses.md)
+:   Configuring platform tool fakes in the console, custom mock python script signatures, and session-based mocking.

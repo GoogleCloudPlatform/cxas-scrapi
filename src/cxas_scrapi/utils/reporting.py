@@ -1430,6 +1430,7 @@ def generate_combined_report_from_dir(
     golden_timeout: int = 600,
     bg_noise_file: str | None = None,
     burst_noise_files: list[str] | None = None,
+    use_tool_fakes: bool = False,
 ) -> str:
     """Load results from directory and generate combined HTML report.
 
@@ -1454,6 +1455,7 @@ def generate_combined_report_from_dir(
         replay.
       burst_noise_files: List of paths to burst noise audio files injected
         during replay.
+      use_tool_fakes: Use fake tools for the session if available.
 
     Returns:
       The rendered combined HTML report string.
@@ -1487,6 +1489,7 @@ def generate_combined_report_from_dir(
             include=include,
             bg_noise_file=bg_noise_file,
             burst_noise_files=burst_noise_files,
+            use_tool_fakes=use_tool_fakes,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed
@@ -1634,6 +1637,7 @@ def run_all_evals(
     include: list[str] | None = None,
     bg_noise_file: str | None = None,
     burst_noise_files: list[str] | None = None,
+    use_tool_fakes: bool = False,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -1658,6 +1662,7 @@ def run_all_evals(
         replay.
       burst_noise_files: List of paths to burst noise audio files injected
         during replay.
+      use_tool_fakes: Use fake tools for the session if available.
 
     Returns:
       A dict containing lists of results for 'simulation', 'golden', 'tool', and
@@ -1680,4 +1685,5 @@ def run_all_evals(
         include=include,
         bg_noise_file=bg_noise_file,
         burst_noise_files=burst_noise_files,
+        use_tool_fakes=use_tool_fakes,
     )

@@ -14,6 +14,8 @@
 
 """CLI script for running CXAS SCRAPI evaluations."""
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import json
@@ -23,58 +25,70 @@ import subprocess
 import sys
 import time
 import uuid
+from typing import TYPE_CHECKING
 
-import pandas as pd
-from google.api_core.exceptions import NotFound
-from google.protobuf.json_format import MessageToDict
-
-from cxas_scrapi import Sessions
-from cxas_scrapi.cli.app import (
-    app_branch,
-    app_create,
-    app_delete,
-    app_init,
-    app_lint,
-    app_pull,
-    app_push,
-    apps_get,
-    apps_list,
-)
-from cxas_scrapi.cli.create_local import handle_local_create
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
-from cxas_scrapi.cli.llm_lint import llm_lint
-from cxas_scrapi.cli.migration_cli import (
-    run_end_to_end,
-    run_resume,
-    run_stage_1,
-    run_stage_2,
-    run_stage_3,
-)
 from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
-from cxas_scrapi.cli.versions_cli import (
-    app_versions_compare,
-    app_versions_list,
-)
-from cxas_scrapi.core.apps import Apps
-from cxas_scrapi.core.common import Common
-from cxas_scrapi.core.conversation_history import ConversationHistory
-from cxas_scrapi.core.deployments import Deployments
-from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
-from cxas_scrapi.core.github import init_github_action
-from cxas_scrapi.evals.callback_evals import CallbackEvals
-from cxas_scrapi.evals.tool_evals import ToolEvals
-from cxas_scrapi.migration.config import DEFAULT_MODEL
-from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
-from cxas_scrapi.utils.eval_utils import EvalUtils
+
+DEFAULT_MODEL = "gemini-3.1-flash-live"
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from cxas_scrapi.cli.app import (
+        app_branch,
+        app_create,
+        app_delete,
+        app_init,
+        app_lint,
+        app_pull,
+        app_push,
+        apps_get,
+        apps_list,
+    )
+    from cxas_scrapi.cli.create_local import handle_local_create
+    from cxas_scrapi.cli.llm_lint import llm_lint
+    from cxas_scrapi.cli.versions_cli import (
+        app_versions_compare,
+        app_versions_list,
+    )
+    from cxas_scrapi.core.github import init_github_action
+    from cxas_scrapi.utils.eval_utils import EvalUtils
+else:
+    from cxas_scrapi.cli.utils import LazyCallable
+
+    app_branch = LazyCallable("cxas_scrapi.cli.app", "app_branch")
+    app_create = LazyCallable("cxas_scrapi.cli.app", "app_create")
+    app_delete = LazyCallable("cxas_scrapi.cli.app", "app_delete")
+    app_init = LazyCallable("cxas_scrapi.cli.app", "app_init")
+    app_lint = LazyCallable("cxas_scrapi.cli.app", "app_lint")
+    app_pull = LazyCallable("cxas_scrapi.cli.app", "app_pull")
+    app_push = LazyCallable("cxas_scrapi.cli.app", "app_push")
+    apps_get = LazyCallable("cxas_scrapi.cli.app", "apps_get")
+    apps_list = LazyCallable("cxas_scrapi.cli.app", "apps_list")
+    handle_local_create = LazyCallable(
+        "cxas_scrapi.cli.create_local", "handle_local_create"
+    )
+    llm_lint = LazyCallable("cxas_scrapi.cli.llm_lint", "llm_lint")
+    app_versions_list = LazyCallable(
+        "cxas_scrapi.cli.versions_cli", "app_versions_list"
+    )
+    app_versions_compare = LazyCallable(
+        "cxas_scrapi.cli.versions_cli", "app_versions_compare"
+    )
+    init_github_action = LazyCallable(
+        "cxas_scrapi.core.github", "init_github_action"
+    )
 
 logger = logging.getLogger(__name__)
 
 
 def export_eval(args: argparse.Namespace) -> None:
     """Handles the 'export' command."""
+    from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
 
     print(f"Exporting evaluation: {args.evaluation_id}")
     # Use app_name to init client. Eval ID might be full resource name.
@@ -105,6 +119,14 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
     """Handles the unified 'cxas migrate dfcx' command, routing to
     non-interactive run / optimize stages or the interactive TUI dashboard.
     """
+    from cxas_scrapi.cli.migration_cli import (
+        run_end_to_end,
+        run_resume,
+        run_stage_1,
+        run_stage_2,
+        run_stage_3,
+    )
+
     if getattr(args, "run", False):
         # Validate E2E requirements
         if not (
@@ -162,6 +184,7 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
     else:
         # Default: Interactive TUI Dashboard Mode
         from cxas_scrapi.cli.migration_cli import MigrationCLI  # noqa: PLC0415
+        from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
 
         dashboard = MigrationCLI()
         cx_api = ConversationalAgentsAPI()
@@ -169,7 +192,10 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
 
 
 def push_eval(args: argparse.Namespace) -> None:
-    """Handles the 'push' command."""
+    """Handles the 'push-eval' command."""
+    from cxas_scrapi.core.evaluations import Evaluations
+    from cxas_scrapi.utils.eval_utils import EvalUtils
+
     print(f"Pushing evaluation(s) from {args.file} to App: {args.app_name}")
 
     eval_client = Evaluations(app_name=args.app_name)
@@ -203,6 +229,8 @@ def wait_for_evaluation_completion(
     timeout_seconds: int = 600,
 ) -> dict[str, pd.DataFrame]:
     """Waits for all new evaluation results to appear."""
+    import pandas as pd
+
     print(f"Waiting for {expected_count} evaluation(s) to complete...")
     start_time = time.time()
     while time.time() - start_time < timeout_seconds:
@@ -260,6 +288,8 @@ def filter_metrics_and_assess(
 ) -> bool:
     """Assesses the evaluation run and returns True if passed,
     False otherwise."""
+    import pandas as pd
+
     passed = True
 
     df_new_run = df_dict_new_run.get("summary", pd.DataFrame())
@@ -350,6 +380,10 @@ def filter_metrics_and_assess(
 
 def run_eval(args: argparse.Namespace) -> None:
     """Handles the 'run' command."""
+    import pandas as pd
+
+    from cxas_scrapi.core.evaluations import Evaluations
+    from cxas_scrapi.utils.eval_utils import EvalUtils
 
     print(f"Triggering evaluation for App: {args.app_name}")
     eval_client = Evaluations(app_name=args.app_name)
@@ -468,7 +502,9 @@ def run_eval(args: argparse.Namespace) -> None:
 
         # Step 2: Trigger evaluation
         eval_client.run_evaluation(
-            evaluations=evaluations_to_run, app_name=args.app_name
+            evaluations=evaluations_to_run,
+            app_name=args.app_name,
+            modality=args.modality,
         )
         print("Evaluation triggered successfully based on CLI call.")
 
@@ -575,7 +611,6 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         tool_test_file=args.tool_test_file,
         goldens_dir=args.goldens_dir,
         simulation_dir=args.simulation_dir,
-        format=args.format,
         include=include_list,
         modality=args.modality,
         runs=args.runs,
@@ -587,12 +622,14 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         burst_noise_files=getattr(args, "burst_noise_files", "").split(",")
         if getattr(args, "burst_noise_files", None)
         else None,
+        use_tool_fakes=getattr(args, "use_tool_fakes", False),
     )
     print(f"Combined report generated at {output_path}")
 
 
 def test_tools(args: argparse.Namespace) -> None:
     """Handles the 'test-tools' command."""
+    from cxas_scrapi.evals.tool_evals import ToolEvals
 
     print(
         f"Running tool tests for App: {args.app_name} "
@@ -625,6 +662,7 @@ def test_tools(args: argparse.Namespace) -> None:
 
 def test_callbacks(args: argparse.Namespace) -> None:
     """Handles the 'test-callbacks' command."""
+    from cxas_scrapi.evals.callback_evals import CallbackEvals
 
     print(f"Running callback tests in App directory: {args.app_dir}")
     callback_evals = CallbackEvals()
@@ -659,6 +697,7 @@ def test_callbacks(args: argparse.Namespace) -> None:
 
 def test_single_callback(args: argparse.Namespace) -> None:
     """Handles the 'test-single-callback' command."""
+    from cxas_scrapi.evals.callback_evals import CallbackEvals
 
     print(
         f"Running single callback test for "
@@ -697,6 +736,9 @@ def test_single_callback(args: argparse.Namespace) -> None:
 
 def ci_test(args: argparse.Namespace) -> None:
     """Handles the 'ci-test' command."""
+    from cxas_scrapi.cli.app import app_push
+    from cxas_scrapi.core.apps import Apps
+    from cxas_scrapi.core.evaluations import Evaluations
 
     print("Starting CI Test Lifecycle...")
 
@@ -872,6 +914,13 @@ def local_test(args: argparse.Namespace) -> None:
 
 def run_session(args: argparse.Namespace) -> None:
     """Handles the 'run-session' command."""
+    from cxas_scrapi import Sessions
+
+    if not sys.stdin.isatty():
+        msg = "ERROR: 'run-session' requires an interactive terminal."
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+
     try:
         session_client = Sessions(args.app_name)
         session_id = session_client.create_session_id()
@@ -899,6 +948,12 @@ def run_session(args: argparse.Namespace) -> None:
 
 def conversations_list(args: argparse.Namespace) -> None:
     """Lists conversations for an app."""
+    from google.protobuf.json_format import MessageToDict
+
+    from cxas_scrapi.core.apps import Apps
+    from cxas_scrapi.core.common import Common
+    from cxas_scrapi.core.conversation_history import ConversationHistory
+
     print(f"Listing conversations for App: {args.app_name}")
 
     # Extract and validate app_name
@@ -932,6 +987,12 @@ def conversations_list(args: argparse.Namespace) -> None:
 
 def conversations_get(args: argparse.Namespace) -> None:
     """Gets details of a specific conversation."""
+    from google.protobuf.json_format import MessageToDict
+
+    from cxas_scrapi.core.apps import Apps
+    from cxas_scrapi.core.common import Common
+    from cxas_scrapi.core.conversation_history import ConversationHistory
+
     print(f"Getting conversation: {args.conversation_resource_name}")
 
     # Extract and validate app_name
@@ -963,6 +1024,10 @@ def conversations_get(args: argparse.Namespace) -> None:
 
 def deployments_list(args: argparse.Namespace) -> None:
     """Lists deployments for an app."""
+    from google.protobuf.json_format import MessageToDict
+
+    from cxas_scrapi.core.deployments import Deployments
+
     print(f"Listing deployments for App: {args.app_name}")
 
     deployments_client = Deployments(app_name=args.app_name)
@@ -984,19 +1049,108 @@ def deployments_list(args: argparse.Namespace) -> None:
 
 def deployments_create(args: argparse.Namespace) -> None:
     """Creates a deployment."""
+    from cxas_scrapi.core.deployments import Deployments
+
     print(f"Creating deployment {args.deployment_id} for App: {args.app_name}")
+
+    traffic_split = None
+    if getattr(args, "traffic_split", None):
+        try:
+            split_parts = args.traffic_split.split(",")
+            traffic_split = {}
+            for part in split_parts:
+                k, v = part.split(":")
+                traffic_split[k] = int(v)
+        except Exception as e:
+            print(f"Error parsing traffic-split: {e}")
+            sys.exit(1)
+
+    version_id = getattr(args, "version", None) or getattr(
+        args, "version_id", None
+    )
+    if not version_id and not traffic_split:
+        print(
+            "Error: You must provide either `--version` (or `--version-id`)"
+            " OR `--traffic-split`."
+        )
+        sys.exit(1)
+
+    display_name = getattr(args, "display_name", None) or args.deployment_id
+    channel_type = getattr(args, "channel_type", None) or "API"
 
     deployments_client = Deployments(app_name=args.app_name)
     deployment = deployments_client.create_deployment(
         deployment_id=args.deployment_id,
-        display_name=args.deployment_id,
-        app_version=args.version_id,
+        display_name=display_name,
+        app_version=version_id,
+        channel_type=channel_type,
+        traffic_split=traffic_split,
     )
     print(f"Deployment created successfully: {deployment.name}")
 
 
 def deployments_promote(args: argparse.Namespace) -> None:
     """Promotes app to live traffic."""
+    from google.api_core.exceptions import NotFound
+
+    from cxas_scrapi.cli.app import app_push
+    from cxas_scrapi.core.deployments import Deployments
+
+    has_id = getattr(args, "deployment_id", None)
+    has_split_or_ver = getattr(args, "version", None) or getattr(
+        args, "traffic_split", None
+    )
+    if has_id and has_split_or_ver:
+        app_name = args.app_name or getattr(args, "app_resource_name", None)
+        print(
+            f"Updating deployment {args.deployment_id} for App: {app_name}..."
+        )
+        deployments_client = Deployments(app_name=app_name)
+
+        traffic_split = None
+        if getattr(args, "traffic_split", None):
+            try:
+                split_parts = args.traffic_split.split(",")
+                traffic_split = {}
+                for part in split_parts:
+                    k, v = part.split(":")
+                    traffic_split[k] = int(v)
+            except Exception as e:
+                print(f"Error parsing traffic-split: {e}")
+                sys.exit(1)
+
+        kwargs = {}
+        if getattr(args, "version", None):
+            kwargs["app_version"] = args.version
+        if traffic_split:
+            kwargs["traffic_split"] = traffic_split
+
+        try:
+            deployments_client.update_deployment(
+                deployment_id=args.deployment_id, **kwargs
+            )
+            print("Successfully updated deployment traffic.")
+            return
+        except Exception as e:
+            print(f"Error updating deployment: {e}")
+            sys.exit(1)
+
+    if not all(
+        [
+            getattr(args, "app_resource_name", None),
+            getattr(args, "app_dir", None),
+            getattr(args, "live_deployment_resource_name", None),
+        ]
+    ):
+        print(
+            "Error: Missing required arguments. "
+            "You must provide either `--deployment-id` with"
+            " `--version`/`--traffic-split`, OR the legacy arguments: "
+            "`--app-resource-name`, `--app-dir`, and "
+            "`--live-deployment-resource-name`."
+        )
+        sys.exit(1)
+
     print(f"Promoting app {args.app_resource_name} to live traffic...")
 
     # Step 1: Push and create version
@@ -1072,6 +1226,15 @@ def get_parser() -> argparse.ArgumentParser:
             "Alternatively, set CXAS_OAUTH_TOKEN env var."
         ),
         required=False,
+    )
+
+    parser.add_argument(
+        "--no-input",
+        action="store_true",
+        help=(
+            "Disable all interactive prompts. Use this in CI/CD pipelines "
+            "to prevent hanging on unexpected prompts."
+        ),
     )
 
     def _add_project_location_args(
@@ -1431,11 +1594,6 @@ def get_parser() -> argparse.ArgumentParser:
         help="Optional: GCS path to store the combined report (starts with gs://).",
     )
     parser_report.add_argument(
-        "--format",
-        default="html",
-        help="Output format (default: html).",
-    )
-    parser_report.add_argument(
         "--runs",
         type=int,
         default=1,
@@ -1487,6 +1645,11 @@ def get_parser() -> argparse.ArgumentParser:
             "Optional: Comma-separated list of paths to burst noise audio "
             "files."
         ),
+    )
+    parser_report.add_argument(
+        "--use-tool-fakes",
+        action="store_true",
+        help="Enable tool fakes (bypass real tool backends).",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
@@ -2095,9 +2258,36 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_deps_create.add_argument(
         "--version-id",
-        required=True,
+        required=False,
         help="Version ID for create_deployment.",
     )
+    parser_deps_create.add_argument(
+        "--version",
+        required=False,
+        help="Version ID for create_deployment.",
+    )
+    parser_deps_create.add_argument(
+        "--display-name",
+        required=False,
+        help="Display name for the deployment.",
+    )
+    parser_deps_create.add_argument(
+        "--channel-type",
+        required=False,
+        help="Channel type (e.g. API).",
+    )
+    parser_deps_create.add_argument(
+        "--traffic-split",
+        required=False,
+        help=(
+            "Either version or traffic split needs to be specified. Split "
+            "traffic between multiple app versions by percentage, colon "
+            "delimited. Traffic must sum to 100%%. Format: "
+            "version_id1:traffic_percentage1,version_id2:traffic_percentage2 "
+            '(e.g. "v1:90,v2:10").'
+        ),
+    )
+    _add_project_location_args(parser_deps_create, required=False)
     parser_deps_create.set_defaults(func=deployments_create)
 
     parser_deps_promote = deps_subparsers.add_parser(
@@ -2105,19 +2295,46 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_deps_promote.add_argument(
         "--app-resource-name",
-        required=True,
+        required=False,
         help="Fully qualified CXAS app resource name.",
     )
     parser_deps_promote.add_argument(
         "--app-dir",
-        required=True,
+        required=False,
         help="Path to the CXAS app directory.",
     )
     parser_deps_promote.add_argument(
         "--live-deployment-resource-name",
-        required=True,
+        required=False,
         help="Fully qualified live deployment resource name.",
     )
+    parser_deps_promote.add_argument(
+        "--app-name",
+        required=False,
+        help="The CXAS App ID.",
+    )
+    parser_deps_promote.add_argument(
+        "--deployment-id",
+        required=False,
+        help="Deployment ID.",
+    )
+    parser_deps_promote.add_argument(
+        "--version",
+        required=False,
+        help="Version ID to promote.",
+    )
+    parser_deps_promote.add_argument(
+        "--traffic-split",
+        required=False,
+        help=(
+            "Either version or traffic split needs to be specified. Split "
+            "traffic between multiple app versions by percentage, colon "
+            "delimited. Traffic must sum to 100%%. Format: "
+            "version_id1:traffic_percentage1,version_id2:traffic_percentage2 "
+            '(e.g. "v1:90,v2:10").'
+        ),
+    )
+    _add_project_location_args(parser_deps_promote, required=False)
     parser_deps_promote.set_defaults(func=deployments_promote)
 
     # Subparsers for 'local'
@@ -2164,6 +2381,23 @@ def get_parser() -> argparse.ArgumentParser:
         "--app-dir", default=".", help="App directory."
     )
     parser_local_create_tool.set_defaults(func=handle_local_create)
+
+    parser_local_create_guardrail = local_create_subparsers.add_parser(
+        "guardrail", help="Create local guardrail template."
+    )
+    parser_local_create_guardrail.add_argument(
+        "name", help="Display name of the guardrail."
+    )
+    parser_local_create_guardrail.add_argument(
+        "guardrail_type",
+        nargs="?",
+        default="llm_policy",
+        help="Type of guardrail (default: llm_policy).",
+    )
+    parser_local_create_guardrail.add_argument(
+        "--app-dir", default=".", help="App directory."
+    )
+    parser_local_create_guardrail.set_defaults(func=handle_local_create)
 
     # Subparsers for 'versions'
     parser_versions = subparsers.add_parser(

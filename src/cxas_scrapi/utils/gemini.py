@@ -234,6 +234,50 @@ class GeminiGenerate:
             logger.error(f"Gemini multimodal generation failed: {e}")
             return None
 
+    async def create_cache(
+        self,
+        system_prompt: str,
+        shared_content: str,
+        ttl_seconds: int = 300,
+    ) -> str | None:
+        """Creates a Gemini context cache for shared prompt content.
+
+        Returns the cache resource name on success, or None if the API call
+        fails (e.g. content below the minimum token threshold). Callers should
+        treat None as a signal to fall back to uncached generation.
+        """
+        try:
+            cache = await self.client.aio.caches.create(
+                model=self.model_name,
+                config={
+                    "system_instruction": system_prompt,
+                    "contents": [
+                        genai.types.Content(
+                            role="user",
+                            parts=[
+                                genai.types.Part.from_text(text=shared_content)
+                            ],
+                        )
+                    ],
+                    "ttl": f"{ttl_seconds}s",
+                },
+            )
+            logger.info("Created Gemini context cache: %s", cache.name)
+            return cache.name
+        except Exception as exc:
+            logger.warning(
+                "Cache creation failed (will proceed uncached): %s", exc
+            )
+            return None
+
+    async def delete_cache(self, cache_name: str) -> None:
+        """Deletes a Gemini context cache by resource name."""
+        try:
+            await self.client.aio.caches.delete(name=cache_name)
+            logger.info("Deleted Gemini context cache: %s", cache_name)
+        except Exception as exc:
+            logger.warning("Cache deletion failed for %s: %s", cache_name, exc)
+
     async def generate_async(
         self,
         prompt: str | list[Any],
@@ -246,12 +290,14 @@ class GeminiGenerate:
         temperature: float | None = 1.0,
         audio_path: str | None = None,
         audio_bytes: bytes | None = None,
+        cached_content_name: str | None = None,
     ) -> Any | None:
         """Generates content asynchronously using the Gemini model.
 
         Args:
-            prompt: The user prompt.
-            system_prompt: Optional system prompt/instruction.
+            prompt: The user prompt (per-call content only when using a cache).
+            system_prompt: Optional system prompt/instruction. Ignored when
+              cached_content_name is provided (system prompt lives in cache).
             model_name: Optional override for the model name.
             response_mime_type: Optional MIME type for the response (e.g.,
               'application/json').
@@ -262,18 +308,27 @@ class GeminiGenerate:
             temperature: Optional temperature setting. Defaults to 1.0.
             audio_path: Optional path to an audio file.
             audio_bytes: Optional raw audio bytes.
+            cached_content_name: Optional resource name returned by
+              create_cache(). When provided, system_prompt is ignored and the
+              generation config references the cache instead.
 
         Returns:
             The generated text response or parsed object, or None on failure.
         """
         target_model = model_name or self.model_name
 
-        config = self._build_generation_config(
-            system_prompt=system_prompt,
-            response_mime_type=response_mime_type,
-            response_schema=response_schema,
-            temperature=temperature,
-        )
+        if cached_content_name:
+            config_args: dict = {"cached_content": cached_content_name}
+            if temperature is not None:
+                config_args["temperature"] = temperature
+            config = genai.types.GenerateContentConfig(**config_args)
+        else:
+            config = self._build_generation_config(
+                system_prompt=system_prompt,
+                response_mime_type=response_mime_type,
+                response_schema=response_schema,
+                temperature=temperature,
+            )
 
         contents = self._build_contents(prompt, audio_path, audio_bytes)
 

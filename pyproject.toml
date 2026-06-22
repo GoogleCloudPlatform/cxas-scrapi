@@ -76,6 +76,10 @@ dev = [
   "ruff",
   "twine",
   "pre-commit",
+  "mdformat>=0.7.21",
+  "mdformat-gfm",
+  "mdformat-frontmatter",
+  "mdformat-gfm-alerts",
 ]
 docs = [
   "mkdocs-material[imaging]>=9.5",
@@ -131,6 +135,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"src/cxas_scrapi/cli/**" = ["PLC0415"]
 "src/cxas_scrapi/migration/prompts.py" = ["E501"]
 "src/cxas_scrapi/prompts/llm_lint_prompts.py" = ["E501"]
 # html_preview is dominated by HTML/CSS template strings; wrapping them would

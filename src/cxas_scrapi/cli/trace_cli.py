@@ -24,19 +24,18 @@ import argparse
 import csv
 import io
 import json
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from cxas_scrapi.core.traces import Traces
+
 import logging
 import platform
 import re
 import subprocess
 import sys
 
-from rich.console import Console
-from rich.table import Table
-
-from cxas_scrapi.core.traces import Traces
-
 logger = logging.getLogger(__name__)
-console = Console()
 
 
 def add_trace_args(subparser: argparse.ArgumentParser) -> None:
@@ -73,7 +72,9 @@ def add_trace_args(subparser: argparse.ArgumentParser) -> None:
     )
 
 
-def _build_traces(args: argparse.Namespace) -> Traces:
+def _build_traces(args: argparse.Namespace) -> "Traces":
+    from cxas_scrapi.core.traces import Traces
+
     return Traces(
         app_name=args.app_name,
         app_dir=getattr(args, "app_dir", "."),
@@ -111,6 +112,10 @@ def trace_list(args: argparse.Namespace) -> None:
         writer.writerows(rows)
         return
     # default: table
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
     table = Table(title=f"Conversations ({len(rows)})")
     for col in (
         "id",
@@ -191,6 +196,10 @@ def trace_search(args: argparse.Namespace) -> None:
         return
 
     # default: table
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
     table = Table(title=f'Search "{args.query}" ({len(rows)} matches)')
     for col in ("id", "source", "channel", "start_time", "end_time"):
         table.add_column(col)

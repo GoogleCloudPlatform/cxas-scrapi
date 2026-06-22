@@ -31,6 +31,7 @@ user can see the impact of their edits.
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from InquirerPy import inquirer
@@ -302,6 +303,12 @@ async def interactive_review(
         responsible for committing the consolidation.
     """
     console = console or Console()
+    if not sys.stdin.isatty():
+        console.print(
+            "[red]ERROR: interactive_review requires an interactive "
+            "terminal.[/]"
+        )
+        sys.exit(1)
     while True:
         # Preview only — the caller will re-run consolidate after accept.
         try:

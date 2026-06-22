@@ -38,7 +38,9 @@ def _ns(**overrides):
 @pytest.fixture
 def fake_traces(monkeypatch):
     fake = MagicMock()
-    monkeypatch.setattr(trace_cli, "Traces", MagicMock(return_value=fake))
+    monkeypatch.setattr(
+        "cxas_scrapi.core.traces.Traces", MagicMock(return_value=fake)
+    )
     return fake
 
 
@@ -609,7 +611,7 @@ def test_trace_open_subprocess_failure_silent(fake_traces, monkeypatch, capsys):
     fake_traces.console_url.assert_called_once_with("c1", source="LIVE")
 
 
-@patch("cxas_scrapi.cli.trace_cli.Traces")
+@patch("cxas_scrapi.core.traces.Traces")
 def test_build_traces_passes_through_args(mock_traces_cls):
     args = _ns(
         app_dir="/tmp/app",
