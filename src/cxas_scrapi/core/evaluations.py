@@ -725,6 +725,7 @@ class Evaluations(Common):
         app_name: str | None = None,
         modality: str = "text",
         run_count: int | None = None,
+        golden_run_method: str = "STABLE",
     ) -> Any:
         """Runs an evaluation on the specified app.
 
@@ -801,6 +802,17 @@ class Evaluations(Common):
 
         if run_count:
             request.run_count = run_count
+
+        if golden_run_method:
+            method_enum = getattr(
+                types.GoldenRunMethod, golden_run_method.upper(), None
+            )
+            if method_enum is not None:
+                request.golden_run_method = method_enum
+            else:
+                raise ValueError(
+                    f"Invalid golden_run_method: {golden_run_method}"
+                )
 
         if modality.lower() == "audio":
             request.config.evaluation_channel = (

@@ -1,0 +1,1612 @@
+evals:
+- name: Retry Confusion Test
+  tags: [retry, member_authentication, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "When the agent asks for your National Provider ID, reply with '1234567890'."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "invalid"
+    response_guide: "When the agent asks for the Member ID for the first time, reply with 'invalid'."
+    success_criteria: Agent asks for the Member ID again.
+  - static_utterance: "259W17936"
+    response_guide: "When the agent asks for the Member ID again after you provided an invalid one, reply with '259W17936'."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "When the agent asks for the member's Date of Birth, reply with '1985-11-16'."
+    success_criteria: Agent asks if this is for an Inpatient service.
+  expectations:
+  - 'TOOL CALL: Agent must call `unified_member_verification`.'
+
+- name: Multi-Validation Failure Test
+  tags: [retry, member_authentication, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "When the agent asks for your National Provider ID, reply with '1234567890'."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide '259W17936' as the Member ID when the agent asks for the Member ID for the first time."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1990-01-01"
+    response_guide: "Provide '1990-01-01' as the Date of Birth when the agent asks for the member's Date of Birth for the first time."
+    success_criteria: Agent states it was unable to verify the member and asks if the details are correct.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when the agent asks if the details are correct for the first time."
+    success_criteria: Agent clears the fields and asks for Member ID again.
+  - static_utterance: "259W17936"
+    response_guide: "Provide '259W17936' as the Member ID when the agent asks for the Member ID again for the second time."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1990-01-01"
+    response_guide: "Provide '1990-01-01' as the Date of Birth when the agent asks for the member's Date of Birth again for the second time."
+    success_criteria: Agent states it was unable to verify the member and asks if the details are correct.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when the agent asks if the details are correct for the second time."
+    success_criteria: Agent clears the fields and asks for Member ID again.
+  - static_utterance: "259W17936"
+    response_guide: "Provide '259W17936' as the Member ID when the agent asks for the Member ID for the third time."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1990-01-01"
+    response_guide: "Provide '1990-01-01' as the Date of Birth when the agent asks for the member's Date of Birth for the third time."
+    success_criteria: Agent escalates or hangs up.
+  expectations:
+  - Agent should call the tool `unified_member_verification` exactly 3 times before escalating.
+  - Agent should escalate or hang up after the 3rd failed verification attempt.
+
+- name: Multiple Policies - BH Transfer
+  tags: [multiple_policy, P0]
+  steps:
+  - goal: Provide a valid NPI '1234567890'. You MUST cooperate fully and answer directly.
+    success_criteria: Agent asks for Member ID.
+  - goal: Provide Member ID '276Y20486'. You MUST cooperate fully and answer directly.
+    success_criteria: Agent asks for Date of Birth.
+  - goal: Provide DOB '1990-10-20'. You MUST cooperate fully and answer directly.
+    success_criteria: Agent states it noticed multiple policies and asks about Behavioral Health.
+  - goal: Say 'Yes' to the Behavioral Health question. You MUST cooperate fully and answer directly.
+    success_criteria: Agent transfers to live agent with subject 'precert_behavioral_health'.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must ask the user ''Is this for a Behavioral Health service?'' after identifying multiple policies.'
+  - 'TOOL CALL: Agent must call `set_nga_context_variable` with subject=''precert_behavioral_health'' after user affirms.'
+  - 'NEGATIVE ASSERTION: Agent should not ask the user ''Is this for Transplant?'' if they answer Yes to the Behavioral Health question.'
+
+- name: Multiple Policies - Transplant Transfer
+  tags: [multiple_policy, P0]
+  steps:
+  - goal: Provide a valid NPI '1234567890'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks for Member ID.
+  - goal: Provide Member ID '276Y20486'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks for Date of Birth.
+  - goal: Provide DOB '1990-10-20'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent states it noticed multiple policies and asks about Behavioral Health.
+  - goal: Say 'No' to the Behavioral Health question. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks 'Is this for Transplant?'
+  - goal: Say 'Yes' to the transplant question. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent transfers to live agent with subject 'precert_AIM_Transplant'.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must ask exactly ''Is this for Transplant?'' after user denies Behavioral Health.'
+  - 'TOOL CALL: Agent must call `set_nga_context_variable` with subject=''precert_AIM_Transplant'' after user affirms transplant.'
+  - 'NEGATIVE ASSERTION: Agent should not ask if the user wants to transfer before asking about transplant.'
+
+- name: Multiple Policy BH Transplant Test
+  tags: [multiple_policy, P0]
+  steps:
+  - goal: Provide valid NPI '1234567890'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks for Member ID.
+  - goal: Provide Member ID '276Y20486'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks for Date of Birth.
+  - goal: Provide DOB '1990-10-20'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent states it noticed multiple policies and asks 'Is this for a BH service?'
+  - goal: Say 'No'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks 'Is this for Transplant?'
+  - goal: Say 'No'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks 'Would you like to transfer to agent to discuss this member or do you have other questions?'
+  - goal: Say 'No'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent routes to wrap menu.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must ask ''I noticed that this member has more than one active policy. Is this for a Behavioral Health service?'' after identifying multiple policies.'
+  - 'INSTRUCTION FOLLOWING: Agent must ask ''Would you like to transfer to agent to discuss this member or do you have other questions?'' after user says No to transplant.'
+
+- name: Multiple Policies - BH Unclear Fallback
+  tags: [multiple_policy, flaky_flow, P0]
+  steps:
+  - goal: Provide a valid NPI '1234567890'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks for Member ID.
+  - goal: Provide Member ID '276Y20486'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks for Date of Birth.
+  - goal: Provide DOB '1990-10-20'. You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent states it noticed multiple policies and asks about Behavioral Health.
+  - goal: Say something unclear to BH question (e.g., "I don't know"). You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks 'Is this for Transplant?' (Proceed to next step).
+  - goal: Say something unclear to transplant question (e.g., "Maybe"). You MUST cooperate fully and answer directly without saying 'let me check'.
+    success_criteria: Agent asks if user wants to transfer or has other questions (Proceed to next step).
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must ask exactly ''Is this for Transplant?'' after unclear response to BH question.'
+  - 'INSTRUCTION FOLLOWING: Agent must proceed to Transfer Check after unclear response to Transplant question.'
+
+- name: Member ID Max Retries Test
+  tags: [inner_retry, member_authentication, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide this NPI when the agent asks for it."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "invalid"
+    response_guide: "Say 'invalid' exactly when the agent asks for Member ID."
+    success_criteria: Agent asks for the Member ID again.
+  - static_utterance: "invalid"
+    response_guide: "Say 'invalid' exactly when the agent asks for Member ID."
+    success_criteria: Agent asks for the Member ID again.
+  - static_utterance: "invalid"
+    response_guide: "Say 'invalid' exactly when the agent asks for Member ID."
+    success_criteria: User has provided the invalid Member ID a third time.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state the failure message regarding member ID, allowing for minor variations or additional text: "In order to continue your call, we must know your member ID. Please call back when you have it."'
+
+- name: DOB Max Retries Test
+  tags: [inner_retry, member_authentication, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide this NPI when the agent asks for it."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide this Member ID when the agent asks for it."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "invalid"
+    response_guide: "Say 'invalid' exactly when the agent asks for Date of Birth."
+    success_criteria: Agent asks for Date of Birth again.
+  - static_utterance: "invalid"
+    response_guide: "Say 'invalid' exactly when the agent asks for Date of Birth."
+    success_criteria: Agent asks for Date of Birth again.
+  - static_utterance: "invalid"
+    response_guide: "Say 'invalid' exactly when the agent asks for Date of Birth."
+    success_criteria: User has provided the invalid Date of Birth a third time.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state the failure message regarding date of birth, allowing for minor variations or additional text: "In order to continue your call, we must know your date of birth. Please call back when you have it."'
+
+- name: Successful Inpatient NICU Test
+  tags: [success_flow, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide this NPI when the agent asks for it."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide this Member ID when the agent asks for it."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide this Date of Birth when asked."
+    success_criteria: Agent asks if this is for an Inpatient service.
+  - static_utterance: "Yes, it is for inpatient service."
+    response_guide: "Confirm inpatient service when asked."
+    success_criteria: Agent asks for the service type.
+  - static_utterance: "N I C U"
+    response_guide: "Say 'N I C U' when asked for the service type."
+    success_criteria: Agent states that precertification is required and asks if you want to check another service or member.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want to check another service or member."
+    success_criteria: Agent asks if you'd like a reference number.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want a reference number."
+    success_criteria: Agent asks 'Was I able to resolve what you were calling about?'.
+  - static_utterance: "Yes, thank you."
+    response_guide: "Say 'Yes, thank you.' when asked if call is resolved."
+    success_criteria: Agent ends the session successfully.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must include a polite sign-off similar to: "Thank you again for your time today. Have a wonderful day"'
+
+- name: Outpatient Transplant Transfer Test
+  tags: [transfer, P0]
+  steps:
+  - static_utterance: "Hi"
+    response_guide: "Say 'Hi' to start the conversation."
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "When the agent asks for your National Provider ID, reply with '1234567890'."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Transplant"
+    response_guide: "Say 'Transplant' when asked for the specific service."
+    success_criteria: Agent transfers or hangs up.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state the transfer message: "Let me connect you with the appropriate team to assist you with this inquiry."'
+
+- name: Inpatient Maternity Routine Test
+  tags: [maternity, inpatient, P0]
+  steps:
+  - static_utterance: "Hi"
+    response_guide: "Say 'Hi' to start the conversation."
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked for the National Provider ID."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked for the Member ID."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "Nov 16 1985"
+    response_guide: "Provide DOB 'Nov 16 1985' when asked for the Date of Birth."
+    success_criteria: Agent verifies identity and asks if this is for an inpatient service.
+  - static_utterance: "inpatient"
+    response_guide: "Say 'inpatient' when asked for the service setting."
+    success_criteria: Agent asks for service type (Maternity, Behavioral Health, etc.).
+  - static_utterance: "maternity"
+    response_guide: "Say 'maternity' when asked for the service type."
+    success_criteria: Agent asks if for Routine delivery or Complication.
+  - static_utterance: "routine"
+    response_guide: "Say 'routine' when asked about the maternity service (routine or complication)."
+    success_criteria: Agent states no pre certification is required and asks if want to check another member or another service.
+  - static_utterance: "no"
+    response_guide: "Say 'no' when asked about if you want to check another member or another service."
+    success_criteria: Agent asks if want a reference number.
+  - static_utterance: "yes"
+    response_guide: "Say 'yes' when asked if you want a reference number."
+    success_criteria: Agent provides reference number and asks if resolved.
+  - static_utterance: "yes"
+    response_guide: "Say 'yes' when asked if call is resolved."
+    success_criteria: Agent thanks user and ends call.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that no pre certification is required.'
+  - 'INSTRUCTION FOLLOWING: Agent must provide a reference number.'
+
+- name: Outpatient CPT Direct Agent Request Test
+  tags: [transfer, outpatient, P0]
+  steps:
+  - static_utterance: "Hi"
+    response_guide: "Say 'Hi' to start the conversation."
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide '1234567890' as the NPI when asked to provide a 10 digit NPI."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide '259W17936' as the Member ID when asked to provide the Member ID."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide '1985-11-16' as the Date of Birth when asked to provide the member's Date of Birth."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for the service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else'."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "i need to speak with a human agent"
+    response_guide: "Request to speak with a human agent instead of providing a CPT code."
+    success_criteria: Agent responds with "I will connect you with an associate who can help you with those questions." and transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state the verbatim message: "I will connect you with an associate who can help you with those questions."'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: Outpatient Inactive Policy CPT Collection Prompt Test
+  tags: [cpt_collection, outpatient, p0]
+  steps:
+  - static_utterance: "Hi"
+    response_guide: "Say 'Hi' to start the conversation."
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide '1234567890' as the NPI when asked to provide a 10 digit NPI."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "575W25854"
+    response_guide: "Provide Member ID '575W25854'."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "March 23, 1979"
+    response_guide: "Provide DOB 'March 23, 1979'."
+    success_criteria: Agent asks for Date of Service.
+  - static_utterance: "Aug 1, 2025"
+    response_guide: "Provide DOS 'Aug 1, 2025'."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for the service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else'."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "93461"
+    response_guide: "Provide CPT code '93461' when asked for the procedure code."
+    success_criteria: Agent states precert is required and asks if there is another code.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that pre certification is required for the service 93461, allowing for minor variations or additional text.'
+  - 'INSTRUCTION FOLLOWING: Agent must ask if the user has another procedure code.'
+
+- name: Inactive Policy Inactive DOS Test
+  tags: [member_authentication, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide '1234567890' as the NPI when asked to provide a 10 digit NPI."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "575W25854"
+    response_guide: "Provide Member ID '575W25854'."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "March 23, 1979"
+    response_guide: "Provide DOB 'March 23, 1979'."
+    success_criteria: Agent asks for Date of Service.
+  - static_utterance: "2026-01-01"
+    response_guide: "Provide DOS '2026-01-01' which results in inactive policy."
+    success_criteria: Agent states no active coverage and asks if user wants to check another member.
+  - static_utterance: "Check another member"
+    response_guide: "Say you want to check another member."
+    success_criteria: Agent asks for Member ID again.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state no active coverage and ask "Would you like to check on another member or something else?" after getting inactive_date_of_service action.'
+  - 'INSTRUCTION FOLLOWING: Agent must ask for Member ID again after user chooses to check another member.'
+
+- name: Inactive Policy Invalid DOS Today Wrap-up Test
+  tags: [inactive_policy, wrap_up, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "575W25854"
+    response_guide: "Provide Member ID '575W25854' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "March 23, 1979"
+    response_guide: "Provide DOB 'March 23, 1979' when asked."
+    success_criteria: Agent asks for Date of Service.
+  - static_utterance: "2026-01-01"
+    response_guide: "Provide the static invalid Date of Service '2026-01-01' when asked."
+    success_criteria: Agent states no active coverage and asks "Would you like to check on another member or something else?".
+  - static_utterance: "No"
+    response_guide: "You MUST say 'No' to decline checking another service or member."
+    success_criteria: Agent asks "Would you like a reference number for this call?".
+  - static_utterance: "No"
+    response_guide: "Say 'No' to decline a reference number."
+    success_criteria: Agent asks "Was I able to resolve what you were calling about?".
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' to confirm the call is resolved."
+    success_criteria: Agent ends the session successfully.
+  expectations:
+  - "INSTRUCTION FOLLOWING: Agent must state no active coverage."
+  - "INSTRUCTION FOLLOWING: Agent must offer a reference number."
+  - "INSTRUCTION FOLLOWING: Agent must ask the CSAT resolution question."
+
+- name: Outpatient CPT Something Else Transfer Test
+  tags: [transfer, outpatient, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "99202"
+    response_guide: "Provide procedure code '99202' when asked."
+    success_criteria: Agent states that precertification is not required and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service or member, or something else.
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for next steps."
+    success_criteria: Agent states it will connect you with an associate and transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is not required.'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: Wrap Menu - Something Else Intent Test
+  tags: [transfer, wrap_menu, P0]
+  steps:
+  - static_utterance: "Hello"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide '1234567890' as the NPI when asked to provide a 10 digit NPI."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide '259W17936' as the Member ID when asked to provide the Member ID."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide '1985-11-16' as the Date of Birth when asked to provide the member's Date of Birth."
+    success_criteria: Agent verifies identity and asks if inpatient.
+  - static_utterance: "inpatient"
+    response_guide: "Say 'inpatient' when asked for the service setting."
+    success_criteria: Agent asks for service type.
+  - static_utterance: "maternity"
+    response_guide: "Say 'maternity' when asked for the service type."
+    success_criteria: Agent asks if routine or complication.
+  - static_utterance: "routine"
+    response_guide: "Say 'routine' when asked about the maternity service (routine or complication)."
+    success_criteria: Agent states no precert is required and asks if check another service/member or something else.
+  - static_utterance: "I want to speak to an associate"
+    response_guide: "Say 'I want to speak to an associate' when the agent asks what else you would like to do."
+    success_criteria: Agent states transfer message and transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state the verbatim message: "I will connect you with an associate who can help you with those questions."'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+
+- name: Wrap Menu - Submit Authorization Intent Test
+  tags: [transfer, wrap_menu, P0]
+  steps:
+  - static_utterance: "Hello"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide '1234567890' as the NPI when asked to provide a 10 digit NPI."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide '259W17936' as the Member ID when asked to provide the Member ID."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide '1985-11-16' as the Date of Birth when asked to provide the member's Date of Birth."
+    success_criteria: Agent verifies identity and asks if inpatient.
+  - static_utterance: "inpatient"
+    response_guide: "Say 'inpatient' when asked for the service setting."
+    success_criteria: Agent asks for service type.
+  - static_utterance: "maternity"
+    response_guide: "Say 'maternity' when asked for the service type."
+    success_criteria: Agent asks if routine or complication.
+  - static_utterance: "complication"
+    response_guide: "Say 'complication' when asked about the maternity service (routine or complication)."
+    success_criteria: Agent states precert is required and asks if check another service/member or submit an authorization or something else.
+  - static_utterance: "I want to submit an authorization"
+    response_guide: "Say 'I want to submit an authorization' when the agent asks what else you would like to do."
+    success_criteria: Agent states transfer message and transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state the verbatim message: "I will connect you with an associate who can help you with those questions."'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: Outpatient Carelon Delegated Precert Test
+  tags: [delegation, outpatient, P0]
+  steps:
+  - static_utterance: "Hello"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide '1234567890' as the NPI when asked to provide a 10 digit NPI."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide '259W17936' as the Member ID when asked to provide the Member ID."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide '1985-11-16' as the Date of Birth when asked to provide the member's Date of Birth."
+    success_criteria: Agent verifies identity and asks if inpatient.
+  - static_utterance: "outpatient"
+    response_guide: "Say 'outpatient'."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "something else"
+    response_guide: "Say 'something else' when asked what outpatient service you are requesting."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "93461"
+    response_guide: "Provide CPT code '93461' when asked for the procedure code."
+    success_criteria: Agent states Carelon precert requirement and transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state the verbatim message: "This service requires pre-certification by Carelon Medical Benefits Management-Radiology & Cardiology. I will connect you with an associate who can help you with those questions."'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: Outpatient Other Vendor Precert Test
+  tags: [delegation, outpatient, P0]
+  steps:
+  - static_utterance: "Hello"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide '1234567890' as the NPI when asked to provide a 10 digit NPI."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide '259W17936' as the Member ID when asked to provide the Member ID."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide '1985-11-16' as the Date of Birth when asked to provide the member's Date of Birth."
+    success_criteria: Agent verifies identity and asks if inpatient.
+  - static_utterance: "outpatient"
+    response_guide: "Say 'outpatient'."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "something else"
+    response_guide: "Say 'something else' when asked what outpatient service you are requesting."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "10000"
+    response_guide: "Provide CPT code '10000' when asked for the procedure code."
+    success_criteria: Agent states precert required and routes to wrap menu.
+  - static_utterance: "I want to submit an authorization"
+    response_guide: "Say 'I want to submit an authorization' when the agent asks what else you would like to do."
+    success_criteria: Agent transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precert is required for 10000.'
+  - 'INSTRUCTION FOLLOWING: Agent must state the transfer message: "You can use Availity to submit an authorization. Your reference number is I-1807627. I will connect you with an associate who can help you with those questions."'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+
+- name: Outpatient No Vendor Precert Required Test
+  tags: [delegation, outpatient, P0]
+  steps:
+  - static_utterance: "Hello"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide '1234567890' as the NPI when asked to provide a 10 digit NPI."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide '259W17936' as the Member ID when asked to provide the Member ID."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide '1985-11-16' as the Date of Birth when asked to provide the member's Date of Birth."
+    success_criteria: Agent verifies identity and asks if inpatient.
+  - static_utterance: "outpatient"
+    response_guide: "Say 'outpatient'."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "something else"
+    response_guide: "Say 'something else' when asked what outpatient service you are requesting."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "20000"
+    response_guide: "Provide CPT code '20000' when asked for the procedure code."
+    success_criteria: Agent states precert required and asks if they have another code.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precert is required for 20000.'
+  - 'INSTRUCTION FOLLOWING: Agent must ask if the user has another procedure code for this member.'
+
+- name: Outpatient No Vendor Precert NOT Required Test
+  tags: [delegation, outpatient, P0]
+  steps:
+  - static_utterance: "Hello"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide '1234567890' as the NPI when asked to provide a 10 digit NPI."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide '259W17936' as the Member ID when asked to provide the Member ID."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide '1985-11-16' as the Date of Birth when asked to provide the member's Date of Birth."
+    success_criteria: Agent verifies identity and asks if inpatient.
+  - static_utterance: "outpatient"
+    response_guide: "Say 'outpatient'."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "something else"
+    response_guide: "Say 'something else' when asked what outpatient service you are requesting."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "99202"
+    response_guide: "Provide CPT code '99202' when asked for the procedure code."
+    success_criteria: Agent states precert not required and asks if they have another code.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that pre certification is not required for procedure code 99202.'
+  - 'INSTRUCTION FOLLOWING: Agent must ask if the user has another procedure code for this member.'
+- name: TC_62 - Outpatient Precert Not Required
+  tags: [outpatient, success_flow, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "When the agent asks for your National Provider ID, reply with '1234567890'."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "AB123"
+    response_guide: "Provide invalid procedure code 'AB123' when asked."
+    success_criteria: Agent states it's invalid and asks for a procedure code again.
+  - static_utterance: "99202"
+    response_guide: "Provide valid procedure code '99202' when asked again."
+    success_criteria: Agent states that precertification is not required and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service or member.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want to check another service or member."
+    success_criteria: Agent asks if you'd like a reference number.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want a reference number."
+    success_criteria: Agent asks 'Were we able to resolve what you were calling about?'.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if call is resolved."
+    success_criteria: Agent ends the session successfully.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is not required.'
+
+- name: TC_124 - Outpatient PreD Recommended
+  tags: [outpatient, pred_recommended, transfer, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "974057832"
+    response_guide: "Provide Member ID '974057832' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1990-11-27"
+    response_guide: "Provide DOB '1990-11-27' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "69435"
+    response_guide: "Provide procedure code '69435' when asked."
+    success_criteria: Agent states that precert is not required but pre-determination is recommended, and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service for this member, check on another member, connect to a live agent to initiate a Pre-Determination, or ask about benefits, eligibility, claims, appeals, or something else.
+  - static_utterance: "Connect to a live agent"
+    response_guide: "Say 'Connect to a live agent' to initiate Pre-Determination."
+    success_criteria: Agent states it will connect you and transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that the code is flagged for Pre-Determination or that it is recommended.'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_40 - Outpatient Precert Required
+  tags: [outpatient, precert_required, transfer, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "93461"
+    response_guide: "Provide procedure code '93461' when asked."
+    success_criteria: Agent states that precertification is required and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service for this member, check on another member, submit an authorization for one or more services, or ask about benefits, eligibility, claims, appeals, or something else.
+  - static_utterance: "Submit an authorization"
+    response_guide: "Say 'Submit an authorization' when asked for next steps."
+    success_criteria: Agent states it will connect you with an associate and transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is required.'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_12 - Inpatient Surgery Precert Required
+  tags: [inpatient, surgery, precert_required, transfer, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? is this related to Maternity, Behavioral Health, Surgery, Transplant, or something else".
+  - static_utterance: "Surgery"
+    response_guide: "Say 'Surgery' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "AB123"
+    response_guide: "Provide invalid procedure code 'AB123' when asked."
+    success_criteria: Agent states it's invalid and asks for a procedure code again.
+  - static_utterance: "93461"
+    response_guide: "Provide valid procedure code '93461' when asked again."
+    success_criteria: Agent states that precertification is required and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service for this member, check on another member, submit an authorization for one or more services, or ask about benefits, eligibility, claims, appeals, or something else.
+  - static_utterance: "Submit an authorization"
+    response_guide: "Say 'Submit an authorization' when asked for next steps."
+    success_criteria: Agent states it will connect you with an associate and transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is required.'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_19 - Inpatient ER Admission Precert Required
+  tags: [inpatient, er_admission, precert_required, transfer, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? is this related to Maternity, Behavioral Health, Surgery, Transplant, or something else".
+  - static_utterance: "something else"
+    response_guide: "Say 'something else' when asked for the specific service."
+    success_criteria: Agent asks for more details or specific service.
+  - static_utterance: "ER admission"
+    response_guide: "Say 'ER admission' when asked for more details."
+    success_criteria: Agent states that precertification is required and asks if you want to check another service or member.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want to check another service or member."
+    success_criteria: Agent asks if you'd like a reference number.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want a reference number."
+    success_criteria: Agent asks 'Were we able to resolve what you were calling about?'.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if call is resolved."
+    success_criteria: Agent ends the session successfully.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is required.'
+
+- name: TC_304 - Inpatient Musculoskeletal Transfer
+  tags: [inpatient, musculoskeletal, transfer, P0, flaky_test]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "265M90278"
+    response_guide: "Provide Member ID '265M90278' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1954-07-28"
+    response_guide: "Provide DOB '1954-07-28' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? is this related to Maternity, Behavioral Health, Surgery, Transplant, or something else".
+  - static_utterance: "Musculoskeletal"
+    response_guide: "Say 'Musculoskeletal' when asked for more details."
+    success_criteria: Agent states it will connect you with an associate and transfers.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_28 - Inpatient Maternity Routine
+  tags: [inpatient, maternity, success_flow, P0, flaky_test]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? is this related to Maternity, Behavioral Health, Surgery, Transplant, or something else".
+  - static_utterance: "Maternity"
+    response_guide: "Say 'Maternity' when asked for the specific service."
+    success_criteria: Agent asks if the case is for Routine or there was a complication.
+  - static_utterance: "Routine"
+    response_guide: "Say 'Routine' when asked about the maternity case."
+    success_criteria: Agent states that precertification is not required and asks if you want to check another service or member.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want to check another service or member."
+    success_criteria: Agent asks if you'd like a reference number.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want a reference number."
+    success_criteria: Agent asks 'Were we able to resolve what you were calling about?'.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if call is resolved."
+    success_criteria: Agent ends the session successfully.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that no pre certification is required.'
+
+- name: TC_32 - Inpatient Maternity Complication
+  tags: [inpatient, maternity, complication, transfer, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? is this related to Maternity, Behavioral Health, Surgery, Transplant, or something else".
+  - static_utterance: "Maternity"
+    response_guide: "Say 'Maternity' when asked for the specific service."
+    success_criteria: Agent asks if the case is for Routine or there was a complication.
+  - static_utterance: "Complication"
+    response_guide: "Say 'Complication' when asked about the maternity case."
+    success_criteria: Agent states that precertification is required and asks if you want to check another service or member.
+  - static_utterance: "Submit an authorization"
+    response_guide: "Say 'Submit an authorization' when asked for next steps."
+    success_criteria: Agent states it will connect you with an associate and transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is required.'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_323 - Member has Medicare Prime
+  tags: [medicare_prime, success_flow, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "99202"
+    response_guide: "Provide procedure code '99202' when asked."
+    success_criteria: Agent states that precertification is not required and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service or member.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want to check another service or member."
+    success_criteria: Agent asks if you'd like a reference number.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want a reference number."
+    success_criteria: Agent asks 'Were we able to resolve what you were calling about?'.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if call is resolved."
+    success_criteria: Agent ends the session successfully.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is not required.'
+
+- name: TC_323 - Member has COB Prime
+  tags: [cob_prime, success_flow, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "265M90278"
+    response_guide: "Provide Member ID '265M90278' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1954-07-28"
+    response_guide: "Provide DOB '1954-07-28' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "99202"
+    response_guide: "Provide procedure code '99202' when asked."
+    success_criteria: Agent states that precertification is not required and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service or member.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want to check another service or member."
+    success_criteria: Agent asks if you'd like a reference number.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want a reference number."
+    success_criteria: Agent asks 'Were we able to resolve what you were calling about?'.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if call is resolved."
+    success_criteria: Agent ends the session successfully.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is not required.'
+
+- name: TC_324 - Member has Secondary Policy
+  tags: [secondary_policy, transfer, P0, flaky_test]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "890311201"
+    response_guide: "Provide Member ID '890311201' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1978-01-01"
+    response_guide: "Provide DOB '1978-01-01' when asked."
+    success_criteria: Agent informs that the policy is secondary and asks if you want to check another service for this member, check on another member or something else.
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for other questions."
+    success_criteria: Agent states it will connect you with an associate and transfers.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_46 - Outpatient CMBM Transfer
+  tags: [outpatient, cmbm, transfer, P0, flaky_test]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "93461"
+    response_guide: "Provide procedure code '93461' when asked."
+    success_criteria: Agent asks if you have another procedure code for this member.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent states that precertification is required by another entity and transfers to live agent.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_308 - Outpatient Behavioral Health Transfer
+  tags: [outpatient, behavioral_health, transfer, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Behavioral Health"
+    response_guide: "Say 'Behavioral Health' when asked for the specific service."
+    success_criteria: Agent transfers directly to live agent.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_309 - Outpatient Transplant Transfer
+  tags: [outpatient, transplant, transfer, P0]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Transplant"
+    response_guide: "Say 'Transplant' when asked for the specific service."
+    success_criteria: Agent transfers directly to live agent.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_305 - Inpatient Behavioral Health Transfer
+  tags: [inpatient, behavioral_health, transfer]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "575W25854"
+    response_guide: "Provide Member ID '575W25854' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1979-03-23"
+    response_guide: "Provide DOB '1979-03-23' when asked."
+    success_criteria: Agent asks for Date of Service.
+  - static_utterance: "2025-05-01"
+    response_guide: "Provide DOS '2025-05-01' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? is this related to Maternity, Behavioral Health, Surgery, Transplant, or something else".
+  - static_utterance: "Behavioral Health"
+    response_guide: "Say 'Behavioral Health' when asked for the specific service."
+    success_criteria: Agent transfers directly to live agent.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_306 - Inpatient Transplant Transfer
+  tags: [inpatient, transplant, transfer, flaky_test]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? is this related to Maternity, Behavioral Health, Surgery, Transplant, or something else".
+  - static_utterance: "Transplant"
+    response_guide: "Say 'Transplant' when asked for the specific service."
+    success_criteria: Agent transfers directly to live agent.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_146 - Multi-Member Multi-Service Complex Flow
+  tags: [complex, multi_member, multi_service, flaky_test]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks for specific service.
+  - static_utterance: "something else"
+    response_guide: "Say 'something else' when asked for service."
+    success_criteria: Agent asks for more details.
+  - static_utterance: "NICU"
+    response_guide: "Say 'NICU' when asked for details."
+    success_criteria: Agent states precert required and asks what to do next.
+  - static_utterance: "Check another service"
+    response_guide: "Say 'Check another service' when asked for next steps."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks for specific service.
+  - static_utterance: "Surgery"
+    response_guide: "Say 'Surgery' when asked for service."
+    success_criteria: Agent asks for procedure code.
+  - static_utterance: "93461"
+    response_guide: "Provide procedure code '93461' when asked."
+    success_criteria: Agent states precert required and asks what to do next.
+  - static_utterance: "Check another member"
+    response_guide: "Say 'Check another member' when asked for next steps."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "974057832"
+    response_guide: "Provide Member ID '974057832' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1990-11-27"
+    response_guide: "Provide DOB '1990-11-27' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks for specific service.
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for service."
+    success_criteria: Agent asks for procedure code.
+  - static_utterance: "93461"
+    response_guide: "Provide procedure code '93461' when asked."
+    success_criteria: Agent states precert required and asks if you have another code.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if you have another code."
+    success_criteria: Agent asks for next procedure code.
+  - static_utterance: "69435"
+    response_guide: "Provide procedure code '69435' when asked."
+    success_criteria: Agent states precert not required (or pre-determination required) and asks what to do next.
+  - static_utterance: "Check another member"
+    response_guide: "Say 'Check another member' when asked for next steps."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks for specific service.
+  - static_utterance: "Maternity"
+    response_guide: "Say 'Maternity' when asked for service."
+    success_criteria: Agent asks if Routine or Complication.
+  - static_utterance: "Routine"
+    response_guide: "Say 'Routine' when asked."
+    success_criteria: Agent states precert not required and asks if you want to check another service or member.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want to check another service or member."
+    success_criteria: Agent asks if you'd like a reference number.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if you want a reference number."
+    success_criteria: Agent provides a reference number and asks if call is resolved.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if call is resolved."
+    success_criteria: Agent ends the session successfully.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is required for code 93461 and not required (or pre-determination recommended) for code 69435 and routine maternity.'
+  audio_expectations:
+  - title: "Spoken STT Telephony Mismatch Audit"
+    expectation: "The spoken audio transcript for the AGENT turns must accurately match the transcript from the bidiRunSession for the AGENT turns SEMANTICALLY. You must ignore minor telephony variations, exact capitalization differences, and interchangeable conversational fillers (like 'OK' vs 'okay'). However, you MUST flag and explain any material divergence in clinical meaning, incorrect precertification status, or severe state mismatches. (CRITICAL: You must ONLY evaluate the agent's output turns; ignore user input/transcription completely). Additionally, you MUST flag as a mismatch if the agent's spoken audio uses the terms 'prior authorization', 'pre-authorization', or 'authorization' instead of 'pre certification' or 'precertification' for procedure code checks, as using the exact pre certification terminology is required."
+
+- name: TC_10 - Multi-Code Multi-Member Flow
+  tags: [complex, multi_member, multi_code, flaky_test]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "974057832"
+    response_guide: "Provide Member ID '974057832' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1990-11-27"
+    response_guide: "Provide DOB '1990-11-27' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks for specific service.
+  - static_utterance: "Surgery"
+    response_guide: "Say 'Surgery' when asked for service."
+    success_criteria: Agent asks for procedure code.
+  - static_utterance: "93461"
+    response_guide: "Provide procedure code '93461' when asked."
+    success_criteria: Agent states precert required and asks if you have another code.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if you have another code."
+    success_criteria: Agent asks for next procedure code.
+  - static_utterance: "67900"
+    response_guide: "Provide procedure code '67900' when asked."
+    success_criteria: Agent states precert required and asks if you have another code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another code."
+    success_criteria: Agent asks what to do next.
+  - static_utterance: "Check another member"
+    response_guide: "Say 'Check another member' when asked for next steps."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Inpatient"
+    response_guide: "Say 'Inpatient' when asked for service setting."
+    success_criteria: Agent asks for specific service.
+  - static_utterance: "Surgery"
+    response_guide: "Say 'Surgery' when asked for service."
+    success_criteria: Agent asks for procedure code.
+  - static_utterance: "93461"
+    response_guide: "Provide procedure code '93461' when asked."
+    success_criteria: Agent states precert required and asks if you have another code.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if you have another code."
+    success_criteria: Agent asks for next procedure code.
+  - static_utterance: "67900"
+    response_guide: "Provide procedure code '67900' when asked."
+    success_criteria: Agent states precert required and asks if you have another code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another code."
+    success_criteria: Agent asks what to do next.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want to check another service or member."
+    success_criteria: Agent asks if you'd like a reference number.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want a reference number."
+    success_criteria: Agent asks if call is resolved.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if call is resolved."
+    success_criteria: Agent ends the session successfully.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is required for all requested codes.'
+
+- name: TC_47 - Outpatient Auth Inquiry with Invalid Code Attempts
+  tags: [outpatient, invalid_code, transfer, flaky_test]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "974057832"
+    response_guide: "Provide Member ID '974057832' when asked."
+    success_criteria: Agent asks for Member Date of Birth.
+  - static_utterance: "1990-11-27"
+    response_guide: "Provide DOB '1990-11-27' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "ABC123"
+    response_guide: "Provide invalid procedure code 'ABC123' when asked."
+    success_criteria: Agent states it's invalid and asks for a procedure code again.
+  - static_utterance: "93461"
+    response_guide: "Provide valid procedure code '93461' when asked again."
+    success_criteria: Agent states that precertification is required and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service for this member, check on another member, submit an authorization for one or more services, or something else.
+  - static_utterance: "Submit an authorization"
+    response_guide: "Say 'Submit an authorization' when asked for next steps."
+    success_criteria: Agent states it will connect you with an associate and transfers.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_55 - Outpatient PreD Recommended with Wrap Menu
+  tags: [outpatient, pred_recommended, wrap_menu, transfer]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "974057832"
+    response_guide: "Provide Member ID '974057832' when asked."
+    success_criteria: Agent asks for Member Date of Birth.
+  - static_utterance: "1990-11-27"
+    response_guide: "Provide DOB '1990-11-27' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "69435"
+    response_guide: "Provide procedure code '69435' when asked."
+    success_criteria: Agent states that precert is not required but pre-determination is recommended, and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service for this member, check on another member, connect to a live agent to initiate a Pre-Determination, or something else.
+  - static_utterance: "Check another service"
+    response_guide: "Say 'Check another service' when asked for next steps."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "99202"
+    response_guide: "Provide procedure code '99202' when asked."
+    success_criteria: Agent states that precertification is not required and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service or member, or something else.
+  - static_utterance: "Select Benefits"
+    response_guide: "Say 'Select Benefits' when asked for next steps."
+    success_criteria: Agent states it will connect you with an associate and transfers.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that pre-determination is recommended for code 69435.'
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_130 - Inactive Policy Change Intent
+  tags: [inactive_policy, outpatient, transfer]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "575W25854"
+    response_guide: "Provide Member ID '575W25854' when asked."
+    success_criteria: Agent asks for Member Date of Birth.
+  - static_utterance: "1979-03-23"
+    response_guide: "Provide DOB '1979-03-23' when asked."
+    success_criteria: Agent asks for Date of Service.
+  - static_utterance: "2025-05-01"
+    response_guide: "Provide DOS '2025-05-01' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "99202"
+    response_guide: "Provide procedure code '99202' when asked."
+    success_criteria: Agent states that precertification is not required and asks if you have another procedure code.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you have another procedure code."
+    success_criteria: Agent asks if you want to check another service or member, or something else.
+  - static_utterance: "Select Benefits"
+    response_guide: "Say 'Select Benefits' when asked for next steps."
+    success_criteria: Agent states it will connect you with an associate and transfers.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_321 - Out of Scope Member Fallback
+  tags: [outpatient, fallback, transfer, flaky_test]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "605Y20488"
+    response_guide: "Provide Member ID '605Y20488' when asked."
+    success_criteria: Agent asks for Member Date of Birth.
+  - static_utterance: "2017-02-01"
+    response_guide: "Provide DOB '2017-02-01' when asked."
+    success_criteria: Agent asks "Is this for behavioral health or transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent lists first batch of services (Cardiac, Genetic, MAC).
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for services."
+    success_criteria: Agent lists second batch of services (Musculoskeletal, Oncology, Radiology).
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for services."
+    success_criteria: Agent lists third batch of services (Sleep therapy, Upper GI).
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for services."
+    success_criteria: Agent states it will connect you with an associate and transfers.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+
+- name: TC_310 - NOC/NOS Code Transfer
+  tags: [outpatient, noc_code, transfer]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "259W17936"
+    response_guide: "Provide Member ID '259W17936' when asked."
+    success_criteria: Agent asks for Member Date of Birth.
+  - static_utterance: "1985-11-16"
+    response_guide: "Provide DOB '1985-11-16' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks "What service are you requesting? Is this related to Behavioral Health, Transplant or something else?".
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for the specific service."
+    success_criteria: Agent asks for a procedure code.
+  - static_utterance: "J3490"
+    response_guide: "Provide procedure code 'J3490' when asked."
+    success_criteria: Agent states that the code requires manual review and transfers.
+  expectations:
+  - 'TOOL CALL: Agent must call `construct_end_session_args` with outcome="escalate".'
+- name: Member ID Max Retries Edge Case Test
+  tags: [member_authentication, edge_case, P0]
+  steps:
+    - static_utterance: "Hi"
+      success_criteria: Agent asks for NPI.
+    - static_utterance: "1234567890"
+      response_guide: "Provide NPI '1234567890'."
+      success_criteria: Agent asks for Member ID.
+    - static_utterance: "ABC123"
+      response_guide: "Provide invalid Member ID format 'ABC123'."
+      success_criteria: Agent asks for the Member ID again.
+    - static_utterance: "555rS22"
+      response_guide: "Provide invalid Member ID format '555rS22'."
+      success_criteria: Agent asks for the Member ID again.
+    - static_utterance: "11qW22"
+      response_guide: "Provide invalid Member ID format '11qW22'."
+      success_criteria: Agent states failure message.
+  expectations:
+    - "INSTRUCTION FOLLOWING: Agent must state the failure message regarding member ID: 'In order to continue your call, we must know your member ID. Please call back when you have it.'"
+
+- name: DOB Max Retries Edge Case Test
+  tags: [member_authentication, edge_case, P0]
+  steps:
+    - static_utterance: "Hi"
+      success_criteria: Agent asks for NPI.
+    - static_utterance: "1234567890"
+      response_guide: "Provide NPI '1234567890'."
+      success_criteria: Agent asks for Member ID.
+    - static_utterance: "259W17936"
+      response_guide: "Provide valid Member ID '259W17936'."
+      success_criteria: Agent asks for Date of Birth.
+    - static_utterance: "1980"
+      response_guide: "Provide incomplete DOB '1980'."
+      success_criteria: Agent asks for the Date of Birth again.
+    - static_utterance: "Feb 30"
+      response_guide: "Provide invalid DOB 'Feb 30'."
+      success_criteria: Agent asks for the Date of Birth again.
+    - static_utterance: "January"
+      response_guide: "Provide incomplete DOB 'January'."
+      success_criteria: Agent states failure message.
+  expectations:
+    - 'INSTRUCTION FOLLOWING: Agent must state the failure message regarding date of birth: "In order to continue your call, we must know your date of birth. Please call back when you have it."'
+
+- name: Member Lookup Failure Edge Case Test
+  tags: [member_authentication, edge_case, P0]
+  steps:
+    - static_utterance: "Hi"
+      success_criteria: Agent asks for NPI.
+    - static_utterance: "1234567890"
+      response_guide: "Provide NPI '1234567890'."
+      success_criteria: Agent asks for Member ID.
+    - static_utterance: "259W17936"
+      response_guide: "Provide Member ID '259W17936'."
+      success_criteria: Agent asks for Date of Birth.
+    - static_utterance: "1990-01-01"
+      response_guide: "Provide DOB '1990-01-01' which will fail verification."
+      success_criteria: Agent states unable to verify and asks if details are correct.
+    - static_utterance: "Yes"
+      response_guide: "Confirm details are correct."
+      success_criteria: Agent clears fields and asks for Member ID again.
+  expectations:
+    - "TOOL CALL: Agent must call `unified_member_verification`."
+    - "INSTRUCTION FOLLOWING: Agent must clear old member_id and date_of_birth values after user confirms correct details but verification failed."
+
+- name: Member ID Escalation Test
+  tags: [member_authentication, edge_case, P0]
+  steps:
+    - static_utterance: "Hi"
+      success_criteria: Agent asks for NPI.
+    - static_utterance: "1234567890"
+      response_guide: "Provide NPI '1234567890'."
+      success_criteria: Agent asks for Member ID.
+    - static_utterance: "I need to speak to a supervisor"
+      response_guide: "Ask for supervisor."
+      success_criteria: Agent pushes back and asks for Member ID again.
+    - static_utterance: "Transfer me now"
+      response_guide: "Ask for transfer again."
+      success_criteria: Agent states transfer message and transfers.
+  expectations:
+    - "INSTRUCTION FOLLOWING: Agent must push back once when user tries to escalate during member ID collection."
+    - "INSTRUCTION FOLLOWING: Agent must transfer session after user insists on escalation a second time."
+
+- name: Correction with New DOB Test
+  tags: [member_authentication, edge_case, P0]
+  steps:
+    - static_utterance: "Hi"
+      success_criteria: Agent asks for NPI.
+    - static_utterance: "1234567890"
+      response_guide: "Provide NPI '1234567890'."
+      success_criteria: Agent asks for Member ID.
+    - static_utterance: "575W25854"
+      response_guide: "Provide valid Member ID '575W25854'."
+      success_criteria: Agent asks for Date of Birth.
+    - static_utterance: "1990-01-01"
+      response_guide: "Provide incorrect DOB '1990-01-01'."
+      success_criteria: Agent states unable to verify and asks if details are correct.
+    - static_utterance: "No, the date of birth is March 23, 1979"
+      response_guide: "Provide corrected DOB."
+      success_criteria: Agent calls verification tool again.
+  expectations:
+    - "TOOL CALL: Agent must call `unified_member_verification` with updated DOB."
+
+- name: Correction with New Member ID Test
+  tags: [member_authentication, edge_case, P0]
+  steps:
+    - static_utterance: "Hi"
+      success_criteria: Agent asks for NPI.
+    - static_utterance: "1234567890"
+      response_guide: "Provide NPI '1234567890'."
+      success_criteria: Agent asks for Member ID.
+    - static_utterance: "259W17936"
+      response_guide: "Provide valid format but wrong Member ID '259W17936'."
+      success_criteria: Agent asks for Date of Birth.
+    - static_utterance: "March 23, 1979"
+      response_guide: "Provide DOB 'March 23, 1979' (valid for a different member)."
+      success_criteria: Agent states unable to verify and asks if details are correct.
+    - static_utterance: "No, my member ID is 575W25854"
+      response_guide: "Provide corrected Member ID."
+      success_criteria: Agent calls verification tool again.
+  expectations:
+    - "TOOL CALL: Agent must call `unified_member_verification` with updated Member ID."
+
+- name: Correction with Both New Member ID and DOB Test
+  tags: [member_authentication, edge_case, P0]
+  steps:
+    - static_utterance: "Hi"
+      success_criteria: Agent asks for NPI.
+    - static_utterance: "1234567890"
+      response_guide: "Provide NPI '1234567890'."
+      success_criteria: Agent asks for Member ID.
+    - static_utterance: "ABC123456"
+      response_guide: "Provide wrong Member ID."
+      success_criteria: Agent asks for Date of Birth.
+    - static_utterance: "1990-01-01"
+      response_guide: "Provide wrong DOB."
+      success_criteria: Agent states unable to verify and asks if details are correct.
+    - static_utterance: "No, the ID is 575W25854 and DOB is March 23, 1979"
+      response_guide: "Provide both corrected Member ID and DOB."
+      success_criteria: Agent calls verification tool again.
+  expectations:
+    - "TOOL CALL: Agent must call `unified_member_verification` with both updated values."
+
+- name: Spontaneous DOS Correction Test
+  tags: [member_authentication, edge_case, P0]
+  steps:
+    - static_utterance: "Hi"
+      success_criteria: Agent asks for NPI.
+    - static_utterance: "1234567890"
+      response_guide: "Provide NPI '1234567890'."
+      success_criteria: Agent asks for Member ID.
+    - static_utterance: "575W25854"
+      response_guide: "Provide valid Member ID '575W25854'."
+      success_criteria: Agent asks for Date of Birth.
+    - static_utterance: "March 23, 1979"
+      response_guide: "Provide DOB 'March 23, 1979'."
+      success_criteria: Agent asks for Date of Service.
+    - static_utterance: "2026-01-01"
+      response_guide: "Provide invalid DOS '2026-01-01'."
+      success_criteria: Agent states no active coverage and asks if user wants to check another member.
+    - static_utterance: "No, I meant 2025-08-01"
+      response_guide: "Provide corrected DOS."
+      success_criteria: Agent calls verification tool again.
+  expectations:
+    - "TOOL CALL: Agent must call `verify_date_of_service_coverage` with updated DOS."
+
+- name: TC_99 - Pre-Determination vs Precert Member Flow
+  tags: [complex, multi_code, pre_determination]
+  steps:
+  - static_utterance: "Hi"
+    success_criteria: Agent asks for NPI.
+  - static_utterance: "1234567890"
+    response_guide: "Provide NPI '1234567890' when asked."
+    success_criteria: Agent asks for Member ID.
+  - static_utterance: "974057832"
+    response_guide: "Provide Member ID '974057832' when asked."
+    success_criteria: Agent asks for Date of Birth.
+  - static_utterance: "1990-11-27"
+    response_guide: "Provide DOB '1990-11-27' when asked."
+    success_criteria: Agent asks if this is for an Inpatient or Outpatient service.
+  - static_utterance: "Outpatient"
+    response_guide: "Say 'Outpatient' when asked for service setting."
+    success_criteria: Agent asks for specific service.
+  - static_utterance: "Something else"
+    response_guide: "Say 'Something else' when asked for service."
+    success_criteria: Agent asks for procedure code.
+  - static_utterance: "93461"
+    response_guide: "Provide procedure code '93461' when asked."
+    success_criteria: Agent states precert required and asks if you have another code.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if you have another code."
+    success_criteria: Agent asks for next procedure code.
+  - static_utterance: "69435"
+    response_guide: "Provide procedure code '69435' when asked."
+    success_criteria: Agent states precert not required (but pre-determination required) and asks what to do next.
+  - static_utterance: "No"
+    response_guide: "Say 'No' when asked if you want to check another service or member."
+    success_criteria: Agent asks if you'd like a reference number.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if you want a reference number."
+    success_criteria: Agent provides a reference number and asks if call is resolved.
+  - static_utterance: "Yes"
+    response_guide: "Say 'Yes' when asked if call is resolved."
+    success_criteria: Agent ends the session successfully.
+  expectations:
+  - 'INSTRUCTION FOLLOWING: Agent must state that precertification is required for code 93461 and not required (or pre-determination recommended) for code 69435.'
+  audio_expectations:
+  - title: "Spoken STT Telephony Mismatch Audit"
+    expectation: "The spoken audio transcript for the AGENT turns must accurately match the transcript from the bidiRunSession for the AGENT turns SEMANTICALLY. You must ignore minor telephony variations, exact capitalization differences, and interchangeable conversational fillers (like 'OK' vs 'okay'). However, you MUST flag and explain any material divergence in clinical meaning, incorrect precertification status, or severe state mismatches. (CRITICAL: You must ONLY evaluate the agent's output turns; ignore user input/transcription completely). Additionally, you MUST flag as a mismatch if the agent's spoken audio uses the terms 'prior authorization', 'pre-authorization', or 'authorization' instead of 'pre certification' or 'precertification' for procedure code checks, as using the exact pre certification terminology is required."

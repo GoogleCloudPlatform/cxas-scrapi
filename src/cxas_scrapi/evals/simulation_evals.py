@@ -149,6 +149,13 @@ class Conversation:
         """Adds an agent response to the transcript."""
         self.transcript.append(f"Agent: {agent_response}")
 
+    def _add_agent_tool_calls(self, tool_calls: list[Any]) -> None:
+        """Adds agent tool calls to the transcript."""
+        for tc in tool_calls:
+            self.transcript.append(
+                f"Agent Action: Call Tool {tc.name} with args {tc.args}"
+            )
+
     def _add_user_utterance(self, user_utterance: str) -> None:
         """Adds a user utterance to the transcript."""
         self.transcript.append(f"User: {user_utterance}")
@@ -201,6 +208,15 @@ class LLMUserConversation(Conversation):
                 )
             )
         self.expectations = test_case.get("expectations", [])
+        audio_exps = test_case.get("audio_expectations", [])
+        self.audio_expectations = []
+        for exp in audio_exps:
+            if isinstance(exp, dict):
+                exp_dict = dict(exp)
+                exp_dict["requires_audio_paths"] = True
+            else:
+                exp_dict = {"expectation": str(exp), "requires_audio_paths": True}
+            self.audio_expectations.append(exp_dict)
         self.expectation_results: list[ExpectationResult] = []
 
     def _check_conversation_status(self) -> bool:
@@ -399,17 +415,18 @@ class SimulationEvals(Apps):
 
     def _parse_agent_response(
         self, response: Any
-    ) -> tuple[str, list[str], bool]:
+    ) -> tuple[str, list[str], bool, list[Any]]:
         """Parses the agent response to extract text and trace information.
 
         Returns:
-            A tuple of (agent_text, trace_chunks, session_ended)
+            A tuple of (agent_text, trace_chunks, session_ended, tool_calls)
         """
         parsed = ParsedSessionResponse(response, tools_map=self.tools_map)
         return (
             parsed.consolidated_agent_text,
             parsed.detailed_trace,
             parsed.session_ended,
+            parsed.tool_calls,
         )
 
     def _evaluate_expectations(
@@ -430,7 +447,13 @@ class SimulationEvals(Apps):
             else None
         )
 
-        if eval_conv.expectations and isinstance(eval_conv.expectations, list):
+        all_expectations = []
+        if eval_conv.expectations:
+            all_expectations.extend(eval_conv.expectations)
+        if hasattr(eval_conv, "audio_expectations") and eval_conv.audio_expectations:
+            all_expectations.extend(eval_conv.audio_expectations)
+
+        if all_expectations:
             if console_logging:
                 print("\nEvaluating Expectations...")
 
@@ -438,7 +461,7 @@ class SimulationEvals(Apps):
                 gemini_client=self.genai_client,
                 model_name=model,
                 trace=detailed_trace,
-                expectations=eval_conv.expectations,
+                expectations=all_expectations,
                 audio_paths=audio_paths,
             )
 
@@ -597,7 +620,7 @@ class SimulationEvals(Apps):
             if console_logging:
                 self.sessions_client.parse_result(response)
 
-            agent_text, trace_chunks, session_ended = (
+            agent_text, trace_chunks, session_ended, tool_calls = (
                 self._parse_agent_response(response)
             )
             detailed_trace.append("\n".join(trace_chunks))
@@ -605,6 +628,7 @@ class SimulationEvals(Apps):
             if session_ended:
                 if agent_text:
                     eval_conv._add_agent_response(agent_text)
+                eval_conv._add_agent_tool_calls(tool_calls)
                 # Ensure the final agent response is evaluated
                 # so that steps_progress is updated on session end.
                 eval_conv._next_user_utterance()
@@ -617,6 +641,7 @@ class SimulationEvals(Apps):
 
             # Get the next simulated user utterance based on the agent's
             # response
+            eval_conv._add_agent_tool_calls(tool_calls)
             user_utterance, variables = eval_conv.next_user_utterance(
                 agent_text
             )
