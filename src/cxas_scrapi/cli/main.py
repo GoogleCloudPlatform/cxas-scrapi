@@ -32,6 +32,7 @@ from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
+from cxas_scrapi.utils.eval_utils import COMBINED_REPORT_FILENAME
 
 DEFAULT_MODEL = "gemini-3.1-flash-live"
 
@@ -572,11 +573,12 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         generate_combined_report_from_dir,
     )
 
-    output_path = (
-        args.gcs_path
-        or args.output
-        or os.path.join(args.output_dir, "combined_report.html")
-    )
+    output_dir = args.output_dir
+    timestamp = None
+    if getattr(args, "timestamped", False):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    output_path = args.gcs_path or args.output
 
     include_list = args.include.split(",") if args.include else []
     filter_files_list = (
@@ -601,8 +603,8 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     sim_parallel = getattr(args, "sim_parallel", 5)
     golden_timeout = getattr(args, "golden_timeout", 600)
 
-    generate_combined_report_from_dir(
-        output_dir=args.output_dir,
+    actual_output_path = generate_combined_report_from_dir(
+        output_dir=output_dir,
         golden_run=args.golden_run,
         app_name=args.app_name,
         output_path=output_path,
@@ -623,8 +625,9 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         if getattr(args, "burst_noise_files", None)
         else None,
         use_tool_fakes=getattr(args, "use_tool_fakes", False),
+        timestamp=timestamp,
     )
-    print(f"Combined report generated at {output_path}")
+    print(f"Combined report generated at {actual_output_path}")
 
 
 def test_tools(args: argparse.Namespace) -> None:
@@ -1548,7 +1551,7 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_report.add_argument(
         "--output",
-        help="Output path. Defaults to <evals-dir>/combined_report.html",
+        help=f"Output path. Defaults to <evals-dir>/{COMBINED_REPORT_FILENAME}",
     )
     parser_report.add_argument(
         "--golden-run",
@@ -1650,6 +1653,11 @@ def get_parser() -> argparse.ArgumentParser:
         "--use-tool-fakes",
         action="store_true",
         help="Enable tool fakes (bypass real tool backends).",
+    )
+    parser_report.add_argument(
+        "--timestamped",
+        action="store_true",
+        help="If set, nests the output files in a timestamped subdirectory.",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 

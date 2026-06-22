@@ -18,6 +18,7 @@ import datetime
 import glob
 import json
 import os
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -552,7 +553,7 @@ def generate_combined_html_report(
         during replay.
 
     Returns:
-      The rendered HTML report markup string.
+      The resolved output path or URL where the report was saved.
     """
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -964,11 +965,13 @@ def generate_combined_html_report(
                 output_path = filename
                 with open(output_path, "w") as f:
                     f.write(html_out)
+            else:
+                output_path = mtls_url
         else:
             with open(output_path, "w") as f:
                 f.write(html_out)
 
-    return html_out
+    return output_path
 
 
 def _outcome_str(val):
@@ -1430,6 +1433,7 @@ def generate_combined_report_from_dir(
     bg_noise_file: str | None = None,
     burst_noise_files: list[str] | None = None,
     use_tool_fakes: bool = False,
+    timestamp: str | None = None,
 ) -> str:
     """Load results from directory and generate combined HTML report.
 
@@ -1457,7 +1461,7 @@ def generate_combined_report_from_dir(
       use_tool_fakes: Use fake tools for the session if available.
 
     Returns:
-      The rendered combined HTML report string.
+      The resolved output path or URL where the report was saved.
     """
     if not os.path.isdir(output_dir):
         raise ValueError(f"{output_dir} is not a directory.")
@@ -1469,6 +1473,8 @@ def generate_combined_report_from_dir(
     tool_results = []
     callback_results = []
     golden_results = []
+
+    resolved_timestamp = timestamp
 
     if run:
         run_results = run_all_evals(
@@ -1488,6 +1494,7 @@ def generate_combined_report_from_dir(
             bg_noise_file=bg_noise_file,
             burst_noise_files=burst_noise_files,
             use_tool_fakes=use_tool_fakes,
+            timestamp=timestamp,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed
@@ -1522,27 +1529,53 @@ def generate_combined_report_from_dir(
     else:
         sim_files = []
         if "sims" in include:
-            sim_files = glob.glob(os.path.join(output_dir, "sim_results*.json"))
+            sim_base, sim_ext = os.path.splitext(
+                eval_utils.SIM_RESULTS_FILENAME
+            )
+            sim_files = glob.glob(
+                os.path.join(output_dir, f"{sim_base}*{sim_ext}")
+            )
 
         tool_files = []
         callback_files = []
         if "tools" in include:
+            tool_base, tool_ext = os.path.splitext(
+                eval_utils.TOOL_RESULTS_FILENAME
+            )
             tool_files = glob.glob(
-                os.path.join(output_dir, "tool_results*.csv")
+                os.path.join(output_dir, f"{tool_base}*{tool_ext}")
             )
             tool_files.extend(
-                glob.glob(os.path.join(output_dir, "tool_results*.json"))
+                glob.glob(os.path.join(output_dir, f"{tool_base}*.json"))
             )
         if "callbacks" in include:
+            cb_base, cb_ext = os.path.splitext(
+                eval_utils.CALLBACK_RESULTS_FILENAME
+            )
             callback_files = glob.glob(
-                os.path.join(output_dir, "callback_results*.csv")
+                os.path.join(output_dir, f"{cb_base}*{cb_ext}")
             )
             callback_files.extend(
-                glob.glob(os.path.join(output_dir, "callback_results*.json"))
+                glob.glob(os.path.join(output_dir, f"{cb_base}*.json"))
             )
 
         if sim_files:
-            with open(sim_files[0]) as f:
+            sim_files.sort(key=os.path.getmtime)
+            latest_sim_file = sim_files[-1]
+
+            sim_base, sim_ext = os.path.splitext(
+                eval_utils.SIM_RESULTS_FILENAME
+            )
+            sim_base_esc = re.escape(sim_base)
+            sim_ext_esc = re.escape(sim_ext)
+            pattern = (
+                rf"{sim_base_esc}_({eval_utils.TIMESTAMP_PATTERN}){sim_ext_esc}"
+            )
+            match = re.search(pattern, latest_sim_file)
+            if match:
+                resolved_timestamp = match.group(1)
+
+            with open(latest_sim_file) as f:
                 data = json.load(f)
                 # New envelope format: {"wall_clock_s": N, "results": [...]}
                 # Old format: [...]
@@ -1550,10 +1583,13 @@ def generate_combined_report_from_dir(
                     sim_results = data.get("results", [])
                 else:
                     sim_results = data
-            print(f"Loaded {len(sim_results)} sim results from {sim_files[0]}")
+            print(
+                f"Loaded {len(sim_results)} sim results from {latest_sim_file}"
+            )
 
         if tool_files:
-            tf = tool_files[0]
+            tool_files.sort(key=os.path.getmtime)
+            tf = tool_files[-1]
             if tf.endswith(".csv"):
                 df = pd.read_csv(tf)
             else:
@@ -1573,7 +1609,8 @@ def generate_combined_report_from_dir(
             print(f"Loaded {len(tool_results)} tool results from {tf}")
 
         if callback_files:
-            cf = callback_files[0]
+            callback_files.sort(key=os.path.getmtime)
+            cf = callback_files[-1]
             if cf.endswith(".csv"):
                 df = pd.read_csv(cf)
             else:
@@ -1602,9 +1639,12 @@ def generate_combined_report_from_dir(
             )
 
     if not output_path:
-        output_path = os.path.join(output_dir, "combined_report.html")
+        report_name = eval_utils.add_timestamp_suffix(
+            eval_utils.COMBINED_REPORT_FILENAME, resolved_timestamp
+        )
+        output_path = os.path.join(output_dir, report_name)
 
-    return generate_combined_html_report(
+    actual_path = generate_combined_html_report(
         golden_results=golden_results,
         sim_results=sim_results,
         tool_results=tool_results,
@@ -1616,6 +1656,7 @@ def generate_combined_report_from_dir(
         bg_noise_file=bg_noise_file,
         burst_noise_files=burst_noise_files,
     )
+    return actual_path
 
 
 def run_all_evals(
@@ -1635,6 +1676,7 @@ def run_all_evals(
     bg_noise_file: str | None = None,
     burst_noise_files: list[str] | None = None,
     use_tool_fakes: bool = False,
+    timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -1660,6 +1702,7 @@ def run_all_evals(
       burst_noise_files: List of paths to burst noise audio files injected
         during replay.
       use_tool_fakes: Use fake tools for the session if available.
+      timestamp: Optional timestamp to append to result filenames.
 
     Returns:
       A dict containing lists of results for 'simulation', 'golden', 'tool', and
@@ -1682,4 +1725,5 @@ def run_all_evals(
         bg_noise_file=bg_noise_file,
         burst_noise_files=burst_noise_files,
         use_tool_fakes=use_tool_fakes,
+        timestamp=timestamp,
     )
