@@ -16,7 +16,7 @@
 
 import enum
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from google.cloud.ces_v1beta import types
 from proto.marshal.collections import maps, repeated
@@ -41,10 +41,10 @@ class Variables(Apps):
     def __init__(
         self,
         app_name: str,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         """Initializes the Variables client.
@@ -117,12 +117,12 @@ class Variables(Apps):
 
         return variable
 
-    def list_variables(self) -> List[Any]:
+    def list_variables(self) -> list[Any]:
         """Lists variables within a specific app."""
         app = self.get_app(self.app_name)
         return list(app.variable_declarations)
 
-    def get_variable(self, variable_name: str) -> Optional[Any]:
+    def get_variable(self, variable_name: str) -> Any | None:
         """Gets a specific variable by its name within a specified app."""
         vars_list = self.list_variables()
 
@@ -136,7 +136,7 @@ class Variables(Apps):
         self,
         variable_name: str,
         variable_type: str | VariableType,
-        variable_value: Optional[Any],
+        variable_value: Any | None,
     ) -> None:
         """Creates a new variable within a specified app."""
         self._check_schema_type(variable_type)
@@ -166,7 +166,7 @@ class Variables(Apps):
         self,
         variable_name: str,
         variable_type: str | VariableType,
-        variable_value: Optional[Any],
+        variable_value: Any | None,
     ) -> None:
         """Updates a variable within a specific app.
 

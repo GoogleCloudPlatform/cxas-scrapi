@@ -22,7 +22,7 @@ sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
 )
 
-from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common  # noqa: E402
+from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 
 
 def test_common_init():

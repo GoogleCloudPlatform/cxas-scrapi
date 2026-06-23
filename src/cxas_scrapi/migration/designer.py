@@ -17,7 +17,7 @@
 import json
 import logging
 import textwrap
-from typing import Any, Dict
+from typing import Any
 
 from cxas_scrapi.migration.data_models import IRTool, MigrationIR
 from cxas_scrapi.migration.prompts import Prompts
@@ -44,7 +44,7 @@ class AsyncAgentDesigner:
 
     @staticmethod
     def _get_available_toolsets_context(
-        ir_tools_dict: Dict[str, IRTool],
+        ir_tools_dict: dict[str, IRTool],
     ) -> str:
         """Formats the loaded OpenAPI toolsets into a clean string for the LLM
         context."""
@@ -94,8 +94,50 @@ class AsyncAgentDesigner:
         )
 
     @staticmethod
+    def build_2a_shared_context(target_ir: MigrationIR) -> tuple[str, str]:
+        """Return (system_prompt, shared_content) for a 2A Gemini context cache.
+
+        The shared content covers inputs 2-4 (global vars, toolsets, tools),
+        which are identical for every group in a single synthesis run.
+        """
+        global_vars = json.dumps(
+            {
+                name: data.get("schema", {}).get("type", "UNKNOWN")
+                for name, data in target_ir.parameters.items()
+            },
+            indent=2,
+        )
+        toolsets = AsyncAgentDesigner._get_available_toolsets_context(
+            target_ir.tools
+        )
+        tools = AsyncAgentDesigner._get_available_tools_context(target_ir.tools)
+        system_prompt = Prompts.STEP_3A_CONSOLIDATION_ARCHITECTURE["system"]
+        shared_content = Prompts.STEP_3A_CONSOLIDATION_ARCHITECTURE[
+            "cache_shared_template"
+        ].format(
+            global_variables=global_vars,
+            available_backend_toolsets=toolsets,
+            available_tools=tools,
+        )
+        return system_prompt, shared_content
+
+    @staticmethod
+    def build_2b_shared_context(target_ir: MigrationIR) -> tuple[str, str]:
+        """Return (system_prompt, shared_content) for a 2B Gemini context cache.
+
+        The shared content covers input 3 (available tools), which is the same
+        across all groups in a single synthesis run.
+        """
+        tools = AsyncAgentDesigner._get_available_tools_context(target_ir.tools)
+        system_prompt = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS["system"]
+        shared_content = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS[
+            "cache_shared_template"
+        ].format(available_tools=tools)
+        return system_prompt, shared_content
+
+    @staticmethod
     def _get_available_tools_context(
-        ir_tools_dict: Dict[str, IRTool],
+        ir_tools_dict: dict[str, IRTool],
     ) -> str:
         """Render the FULL tool registry (TOOLSET + PYTHON + TOOL) as a
         flat list of exact tool IDs the LLM may reference in
@@ -110,7 +152,7 @@ class AsyncAgentDesigner:
         Also includes the ``end_session`` sentinel that's always
         auto-registered at deploy time.
         """
-        by_type: Dict[str, list[str]] = {
+        by_type: dict[str, list[str]] = {
             "TOOLSET": [],
             "PYTHON": [],
             "TOOL": [],
@@ -140,9 +182,9 @@ class AsyncAgentDesigner:
         target_ir: MigrationIR,
         available_groups: str | None = None,
         self_group: str | None = None,
-    ) -> Dict[str, Any]:
-        """Runs the Principal Architect prompt to generate the JSON
-        Blueprint.
+        cached_content_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Runs the Principal Architect prompt to generate the JSON Blueprint.
 
         ``available_groups`` is an optional pre-rendered string listing
         the other consolidated group names + their absorbed members.
@@ -151,44 +193,79 @@ class AsyncAgentDesigner:
         ``exit_routes`` / transition targets. ``self_group`` is the
         current group being synthesized, surfaced in the prompt so
         Gemini doesn't recommend transferring to itself.
+
+        ``cached_content_name`` is the resource name of a Gemini context
+        cache holding inputs 2-4 (global vars, toolsets, tools). When
+        provided the per-call prompt contains only per-group content
+        (input 1 + input 5 + output format) and the cache name is
+        forwarded to generate_async.
         """
         AsyncAgentDesigner._validate_tree_view(tree_view)
         logger.info(
             f"[{flow_name}] Starting 2A: Architecture Expert Blueprinting"
         )
 
-        global_vars_context = json.dumps(
-            {
-                param_name: param_data.get("schema", {}).get("type", "UNKNOWN")
-                for param_name, param_data in target_ir.parameters.items()
-            },
-            indent=2,
-        )
-        toolset_context = AsyncAgentDesigner._get_available_toolsets_context(
-            target_ir.tools
-        )
-        available_tools_context = (
-            AsyncAgentDesigner._get_available_tools_context(target_ir.tools)
-        )
-
         if available_groups is not None:
             system_prompt = Prompts.STEP_3A_CONSOLIDATION_ARCHITECTURE["system"]
-            template_prompt = Prompts.STEP_3A_CONSOLIDATION_ARCHITECTURE[
-                "template"
-            ]
-            prompt_2a = template_prompt.format(
-                flow_name=flow_name,
-                resource_visualization=tree_view,
-                global_variables=global_vars_context,
-                available_backend_toolsets=toolset_context,
-                available_tools=available_tools_context,
-                available_groups=available_groups,
-                self_group=self_group or flow_name,
-            )
+            if cached_content_name:
+                prompt_2a = Prompts.STEP_3A_CONSOLIDATION_ARCHITECTURE[
+                    "cache_per_group_template"
+                ].format(
+                    flow_name=flow_name,
+                    resource_visualization=tree_view,
+                    available_groups=available_groups,
+                    self_group=self_group or flow_name,
+                )
+            else:
+                global_vars_context = json.dumps(
+                    {
+                        param_name: param_data.get("schema", {}).get(
+                            "type", "UNKNOWN"
+                        )
+                        for param_name, param_data in (
+                            target_ir.parameters.items()
+                        )
+                    },
+                    indent=2,
+                )
+                toolset_context = (
+                    AsyncAgentDesigner._get_available_toolsets_context(
+                        target_ir.tools
+                    )
+                )
+                available_tools_context = (
+                    AsyncAgentDesigner._get_available_tools_context(
+                        target_ir.tools
+                    )
+                )
+                prompt_2a = Prompts.STEP_3A_CONSOLIDATION_ARCHITECTURE[
+                    "template"
+                ].format(
+                    flow_name=flow_name,
+                    resource_visualization=tree_view,
+                    global_variables=global_vars_context,
+                    available_backend_toolsets=toolset_context,
+                    available_tools=available_tools_context,
+                    available_groups=available_groups,
+                    self_group=self_group or flow_name,
+                )
         else:
+            global_vars_context = json.dumps(
+                {
+                    param_name: param_data.get("schema", {}).get(
+                        "type", "UNKNOWN"
+                    )
+                    for param_name, param_data in target_ir.parameters.items()
+                },
+                indent=2,
+            )
+            toolset_context = (
+                AsyncAgentDesigner._get_available_toolsets_context(
+                    target_ir.tools
+                )
+            )
             system_prompt = Prompts.STEP_2A_ARCHITECTURE_EXPERT["system"]
-            template_prompt = Prompts.STEP_2A_ARCHITECTURE_EXPERT["template"]
-            prompt_2a = template_prompt.format(
+            prompt_2a = Prompts.STEP_2A_ARCHITECTURE_EXPERT["template"].format(
                 flow_name=flow_name,
                 resource_visualization=tree_view,
                 global_variables=global_vars_context,
@@ -198,6 +275,7 @@ class AsyncAgentDesigner:
         response_raw = await self.gemini.generate_async(
             prompt=prompt_2a,
             system_prompt=system_prompt,
+            cached_content_name=cached_content_name,
         )
 
         blueprint = {}
@@ -229,11 +307,13 @@ class AsyncAgentDesigner:
     async def run_step_2b_instructions(
         self,
         flow_name: str,
-        blueprint: Dict[str, Any],
+        blueprint: dict[str, Any],
         tree_view: str,
         target_ir: MigrationIR | None = None,
         available_groups: str | None = None,
         self_group: str | None = None,
+        cached_content_name: str | None = None,
+        feedback: str | None = None,
     ) -> str:
         """Runs the Instructions Expert prompt to generate the PIF XML.
 
@@ -248,6 +328,17 @@ class AsyncAgentDesigner:
         valid ``{@AGENT: …}`` transfer targets so Gemini stops inventing
         agent names. Used by the StructuralConsolidator path; ignored
         by 1:1 migration.
+
+        ``cached_content_name`` is the resource name of a Gemini context
+        cache holding input 3 (available tools). When provided the
+        per-call prompt contains only per-group content (inputs 1, 2, 4
+        + output format) and available_tools_context is not recomputed.
+
+        ``feedback`` is an optional addendum appended to the prompt
+        body. Used by :meth:`StructuralConsolidator.synthesize_instructions`
+        when a first-pass response fails canonical-XML validation and we
+        re-prompt Gemini with the lint diagnostics so it can correct the
+        schema violations.
         """
         AsyncAgentDesigner._validate_tree_view(tree_view)
         logger.info(
@@ -255,41 +346,55 @@ class AsyncAgentDesigner:
         )
 
         blueprint_json_str = json.dumps(blueprint, indent=2)
-        if target_ir is not None:
-            available_tools_context = (
-                AsyncAgentDesigner._get_available_tools_context(target_ir.tools)
-            )
-        else:
-            available_tools_context = (
-                "(not provided — use tools from the Architecture "
-                "Blueprint only)"
-            )
 
         if available_groups is not None:
             system_prompt = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS["system"]
-            template_prompt = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS[
-                "template"
-            ]
-            prompt_2b = template_prompt.format(
-                agent_name=flow_name,
-                architecture_blueprint=blueprint_json_str,
-                resource_visualization=tree_view,
-                available_tools=available_tools_context,
-                available_groups=available_groups,
-                self_group=self_group or flow_name,
-            )
+            if cached_content_name:
+                prompt_2b = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS[
+                    "cache_per_group_template"
+                ].format(
+                    agent_name=flow_name,
+                    architecture_blueprint=blueprint_json_str,
+                    resource_visualization=tree_view,
+                    available_groups=available_groups,
+                    self_group=self_group or flow_name,
+                )
+            else:
+                available_tools_context = (
+                    AsyncAgentDesigner._get_available_tools_context(
+                        target_ir.tools
+                    )
+                    if target_ir is not None
+                    else (
+                        "(not provided - use tools from the "
+                        "Architecture Blueprint only)"
+                    )
+                )
+                prompt_2b = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS[
+                    "template"
+                ].format(
+                    agent_name=flow_name,
+                    architecture_blueprint=blueprint_json_str,
+                    resource_visualization=tree_view,
+                    available_tools=available_tools_context,
+                    available_groups=available_groups,
+                    self_group=self_group or flow_name,
+                )
         else:
             system_prompt = Prompts.STEP_2B_INSTRUCTIONS_EXPERT["system"]
-            template_prompt = Prompts.STEP_2B_INSTRUCTIONS_EXPERT["template"]
-            prompt_2b = template_prompt.format(
+            prompt_2b = Prompts.STEP_2B_INSTRUCTIONS_EXPERT["template"].format(
                 agent_name=flow_name,
                 architecture_blueprint=blueprint_json_str,
                 resource_visualization=tree_view,
             )
+
+        if feedback:
+            prompt_2b = f"{prompt_2b}\n\n{feedback}"
 
         response_raw = await self.gemini.generate_async(
             prompt=prompt_2b,
             system_prompt=system_prompt,
+            cached_content_name=cached_content_name,
         )
 
         xml_instructions = ""
@@ -311,10 +416,10 @@ class AsyncAgentDesigner:
     async def run_step_2c_tools_and_callbacks(
         self,
         flow_name: str,
-        blueprint: Dict[str, Any],
+        blueprint: dict[str, Any],
         tree_view: str,
         target_ir: MigrationIR,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Runs the Tools & Callbacks Expert prompt to generate Python Code."""
         AsyncAgentDesigner._validate_tree_view(tree_view)
         logger.info(

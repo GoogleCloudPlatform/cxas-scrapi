@@ -1,0 +1,57 @@
+subintent_id: order-schedule-future
+subintent_name: Schedule Future Order
+parent_cuj: Digital Ordering
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I'd like to pre-order a meal to be delivered at six PM tomorrow evening.
+- speaker: Agent
+  text: I can set up a scheduled order for you! What items would you like to pre-order?
+- speaker: User
+  text: Can I get the Spaghetti Carbonara and a Caesar Salad?
+- speaker: Agent
+  text: Verifying menu item availability for tomorrow.
+  tool_call:
+    name: verify_future_menu_availability
+    payload:
+      items:
+      - Spaghetti Carbonara
+      - Caesar Salad
+      date: tomorrow
+    response:
+      status: success
+      available: true
+      total: 28.98
+- speaker: Agent
+  text: Yes, those items are available for tomorrow! The total is twenty-eight dollars and ninety-eight cents. Shall I go ahead and schedule this for six PM tomorrow?
+- speaker: User
+  text: Yes, please. Schedule it.
+- speaker: Agent
+  text: Scheduling pre-order in delivery system.
+  tool_call:
+    name: place_scheduled_order
+    payload:
+      items:
+      - Spaghetti Carbonara
+      - Caesar Salad
+      delivery_time: '18:00'
+      date: tomorrow
+      total_amount: 28.98
+    response:
+      status: success
+      order_id: '9985'
+      scheduled_time: '18:00'
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

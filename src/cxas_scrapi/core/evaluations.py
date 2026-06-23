@@ -18,7 +18,7 @@ import hashlib
 import json
 import os
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import yaml
 from google.cloud.ces_v1beta import (
@@ -62,21 +62,21 @@ class Evaluations(Common):
             client_info=self.client_info,
         )
         self.resource_type = "evaluations"
-        self.evals_map: Dict[str, Dict[str, str]] = {}
-        self._eval_search_index: Dict[str, str] = {}
+        self.evals_map: dict[str, dict[str, str]] = {}
+        self._eval_search_index: dict[str, str] = {}
 
     @staticmethod
     def parse_eval_to_yaml(filepath):
         """Parses a CXAS Evaluation textproto file into the target FDE
         YAML format."""
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             text = f.read()
 
         parsed = Common.parse_textproto(text)
         return Evaluations.eval_dict_to_yaml(parsed)
 
     @property
-    def tools_map(self) -> Dict[str, str]:
+    def tools_map(self) -> dict[str, str]:
         """Lazily fetches and caches the tools map for resolving empty
         tool display names."""
         if getattr(self, "_tools_map", None) is None:
@@ -88,9 +88,7 @@ class Evaluations(Common):
         return self._tools_map
 
     @staticmethod
-    def eval_dict_to_yaml(
-        eval_dict, tools_map: Optional[Dict[str, str]] = None
-    ):
+    def eval_dict_to_yaml(eval_dict, tools_map: dict[str, str] | None = None):
         """Parses a CXAS Evaluation dictionary into the target FDE YAML
         format."""
         golden = eval_dict.get("golden", {})
@@ -247,7 +245,7 @@ class Evaluations(Common):
         return out_yaml
 
     @staticmethod
-    def process_export_operation(export_op: Any) -> Optional[bytes]:
+    def process_export_operation(export_op: Any) -> bytes | None:
         """Processes the export operation and returns app content bytes.
 
         Args:
@@ -289,8 +287,8 @@ class Evaluations(Common):
             return None
 
     def list_evaluations(
-        self, app_name: Optional[str] = None
-    ) -> List[types.Evaluation]:
+        self, app_name: str | None = None
+    ) -> list[types.Evaluation]:
         """Lists evaluations within a specific app.
 
         Args:
@@ -306,7 +304,7 @@ class Evaluations(Common):
 
     def list_evaluation_results(
         self, evaluation_display_name: str
-    ) -> List[types.EvaluationResult]:
+    ) -> list[types.EvaluationResult]:
         """Fetches all evaluation results for a specific evaluation.
 
         Args:
@@ -355,7 +353,7 @@ class Evaluations(Common):
 
     def list_evaluation_results_by_run(
         self, evaluation_run_id: str
-    ) -> List[types.EvaluationResult]:
+    ) -> list[types.EvaluationResult]:
         """Fetches all evaluation results associated with a specific
         evaluation run.
 
@@ -376,7 +374,7 @@ class Evaluations(Common):
         return results
 
     def build_search_index(
-        self, app_name: Optional[str] = None, force: bool = False
+        self, app_name: str | None = None, force: bool = False
     ) -> None:
         """Builds a JSON string index of all evaluations for fast searching.
 
@@ -403,11 +401,11 @@ class Evaluations(Common):
     def search_evaluations(
         self,
         app_name: str,
-        tools: Optional[List[str]] = None,
-        variables: Optional[List[str]] = None,
-        agents: Optional[List[str]] = None,
+        tools: list[str] | None = None,
+        variables: list[str] | None = None,
+        agents: list[str] | None = None,
         rebuild_index: bool = False,
-    ) -> List[str]:
+    ) -> list[str]:
         """Searches querying evaluations and filters by connected tools,
         variables, or agents.
 
@@ -464,8 +462,8 @@ class Evaluations(Common):
         return matched_evals
 
     def get_evaluations_map(
-        self, app_name: Optional[str] = None, reverse: bool = False
-    ) -> Dict[str, Dict[str, str]]:
+        self, app_name: str | None = None, reverse: bool = False
+    ) -> dict[str, dict[str, str]]:
         """Creates a map of Evaluation full names to display names,
         grouped by type.
 
@@ -479,7 +477,7 @@ class Evaluations(Common):
         app_name = app_name or self.app_name
 
         evaluations = self.list_evaluations(app_name)
-        evaluations_dict: Dict[str, Dict[str, str]] = {
+        evaluations_dict: dict[str, dict[str, str]] = {
             "goldens": {},
             "scenarios": {},
         }
@@ -506,8 +504,8 @@ class Evaluations(Common):
         return evaluations_dict
 
     def _get_or_load_evals_map(
-        self, app_name: Optional[str] = None
-    ) -> Dict[str, Dict[str, str]]:
+        self, app_name: str | None = None
+    ) -> dict[str, dict[str, str]]:
         """Gets a map of reverse evaluations from cache or loads it if
         missing."""
         if not self.evals_map:
@@ -523,7 +521,7 @@ class Evaluations(Common):
         self,
         evaluation_id: str,
         output_format: ExportFormat = ExportFormat.YAML,
-        output_path: Optional[str] = None,
+        output_path: str | None = None,
     ) -> str:
         """
         Fetches a specific evaluation and exports it to the specified format.
@@ -634,8 +632,8 @@ class Evaluations(Common):
 
     def create_evaluation(
         self,
-        evaluation: Union[types.Evaluation, Dict[str, Any]],
-        app_name: Optional[str] = None,
+        evaluation: types.Evaluation | dict[str, Any],
+        app_name: str | None = None,
     ) -> types.Evaluation:
         """Creates an evaluation.
 
@@ -664,8 +662,8 @@ class Evaluations(Common):
 
     def update_evaluation(
         self,
-        evaluation: Union[types.Evaluation, Dict[str, Any]],
-        app_name: Optional[str] = None,
+        evaluation: types.Evaluation | dict[str, Any],
+        app_name: str | None = None,
     ) -> types.Evaluation:
         """Updates an evaluation. If it doesn't exist, it creates it.
 
@@ -722,11 +720,11 @@ class Evaluations(Common):
 
     def run_evaluation(
         self,
-        evaluations: Optional[Union[str, List[str]]] = None,
-        eval_type: Optional[str] = None,
-        app_name: Optional[str] = None,
+        evaluations: str | list[str] | None = None,
+        eval_type: str | None = None,
+        app_name: str | None = None,
         modality: str = "text",
-        run_count: Optional[int] = None,
+        run_count: int | None = None,
     ) -> Any:
         """Runs an evaluation on the specified app.
 
@@ -813,10 +811,10 @@ class Evaluations(Common):
 
     def import_evaluations(
         self,
-        app_name: Optional[str] = None,
-        gcs_uri: Optional[str] = None,
-        csv_content: Optional[bytes] = None,
-        conversations: Optional[List[str]] = None,
+        app_name: str | None = None,
+        gcs_uri: str | None = None,
+        csv_content: bytes | None = None,
+        conversations: list[str] | None = None,
         conflict_strategy: int = 0,
     ) -> Any:
         """Imports evaluations into the app.
@@ -861,8 +859,8 @@ class Evaluations(Common):
         return self.client.import_evaluations(request=request)
 
     def list_evaluation_expectations(
-        self, app_name: Optional[str] = None
-    ) -> List[types.EvaluationExpectation]:
+        self, app_name: str | None = None
+    ) -> list[types.EvaluationExpectation]:
         """Lists all evaluation expectations in the given app.
 
         Args:
@@ -889,10 +887,8 @@ class Evaluations(Common):
 
     def create_evaluation_expectation(
         self,
-        evaluation_expectation: Union[
-            types.EvaluationExpectation, Dict[str, Any]
-        ],
-        app_name: Optional[str] = None,
+        evaluation_expectation: types.EvaluationExpectation | dict[str, Any],
+        app_name: str | None = None,
     ) -> types.EvaluationExpectation:
         """Creates an evaluation expectation.
 
@@ -918,7 +914,7 @@ class Evaluations(Common):
     def update_evaluation_expectation(
         self,
         evaluation_expectation: types.EvaluationExpectation,
-        update_mask: Optional[field_mask_pb2.FieldMask] = None,
+        update_mask: field_mask_pb2.FieldMask | None = None,
     ) -> types.EvaluationExpectation:
         """Updates an evaluation expectation.
 
@@ -942,8 +938,8 @@ class Evaluations(Common):
         self.client.delete_evaluation_expectation(request=request)
 
     def get_evaluation_expectation_by_display_name(
-        self, display_name: str, app_name: Optional[str] = None
-    ) -> Optional[types.EvaluationExpectation]:
+        self, display_name: str, app_name: str | None = None
+    ) -> types.EvaluationExpectation | None:
         """Gets an evaluation expectation by its display name.
 
         Args:
@@ -958,7 +954,7 @@ class Evaluations(Common):
         return None
 
     def find_or_create_evaluation_expectation(
-        self, llm_prompt: str, display_name: Optional[str] = None
+        self, llm_prompt: str, display_name: str | None = None
     ) -> str:
         """Finds or creates an evaluation expectation from an LLM prompt.
 
@@ -1005,8 +1001,8 @@ class Evaluations(Common):
         return created_exp.name
 
     def get_evaluation_thresholds(
-        self, app_name: Optional[str] = None, print_console: bool = False
-    ) -> Dict[str, Any]:
+        self, app_name: str | None = None, print_console: bool = False
+    ) -> dict[str, Any]:
         """Gets the evaluation metrics thresholds for the app.
 
         Args:

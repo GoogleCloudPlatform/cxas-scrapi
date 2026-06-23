@@ -14,7 +14,7 @@
 
 import logging
 import re
-from typing import Any, Dict, Set
+from typing import Any
 
 from cxas_scrapi.migration.data_models import (
     DFCXAgentIR,
@@ -41,10 +41,10 @@ class CXASTopologyLinker:
     def link_children_recursive(
         ir_key: str,
         ancestors: set,
-        processed_nodes: Set[str],
+        processed_nodes: set[str],
         ir: MigrationIR,
-        deployed_agent_map: Dict[str, str],
-        dfcx_id_to_display_name: Dict[str, str],
+        deployed_agent_map: dict[str, str],
+        dfcx_id_to_display_name: dict[str, str],
         source_agent_data: DFCXAgentIR,
         ps_agents: Any,
         reporter: Any,

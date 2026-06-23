@@ -1,32 +1,49 @@
-subintent_id: reservation-inquiry
-subintent_name: Reservation Inquiry
-parent_cuj: General Customer Support
+subintent_id: order-apply-promo
+subintent_name: Apply Promo Code
+parent_cuj: Digital Ordering
 turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
 - speaker: User
-  text: Hi, I need to check if I have an active reservation for tonight.
+  text: Hi, I'm trying to place an online order but my promo code 'PIZZA20' isn't working. Can you apply it?
 - speaker: Agent
-  text: I can help with that. Let me look up your reservation in the system.
+  text: Sure thing, I can help apply that! What is the subtotal of your order currently?
+- speaker: User
+  text: My subtotal is thirty dollars and ninety-eight cents.
 - speaker: Agent
-  text: Calling tool check_reservation_status
+  text: Validating promo code and applying discount.
   tool_call:
-    name: check_reservation_status
-    parameters:
-      customer_id: user123
-      date: TONIGHT
+    name: apply_discount_code
+    payload:
+      promo_code: PIZZA20
+      subtotal: 30.98
+    response:
+      status: success
+      discount_applied: 6.2
+      new_subtotal: 24.78
 - speaker: Agent
-  text: I see one active reservation for a party of 4 at 7:30 PM under the name Smith. Is that the one you were looking for?
+  text: Okay, that code worked! It saved you six dollars and twenty cents, bringing your new total to twenty-four seventy-eight. Shall I go ahead and place the order for you now?
 - speaker: User
-  text: Yes, that's it. Can we add a high chair to that reservation?
+  text: Yes, please place it. Use my default card.
 - speaker: Agent
-  text: Let me update that for you.
+  text: Submitting final discounted order.
+  tool_call:
+    name: place_order
+    payload:
+      total_amount: 24.78
+    response:
+      status: success
+      order_id: '9983'
 - speaker: Agent
-  text: Calling webhook update_reservation_details
-  webhook_call:
-    endpoint: update_reservation_details
-    payload_patch:
-      reservation_id: RES-98765
-      high_chair: true
-- speaker: Agent
-  text: I have added a high chair to your reservation. You should receive a confirmation email shortly.
+  text: Is there anything else I can help you with today?
 - speaker: User
-  text: Great, thank you.
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

@@ -16,7 +16,7 @@
 
 import re
 import textwrap
-from typing import Any, Dict, List
+from typing import Any
 
 import graphviz
 
@@ -24,11 +24,11 @@ import graphviz
 class HighLevelGraphVisualizer:
     """Generates a macroscopic directed graph matching the DFCX UI Topology."""
 
-    def __init__(self, full_data: Dict[str, Any]):
+    def __init__(self, full_data: dict[str, Any]):
         self.data = full_data
-        self.uuid_to_name: Dict[str, str] = {}
-        self.name_to_uuid: Dict[str, str] = {}
-        self.edges_accumulator: Dict[tuple, List[str]] = {}
+        self.uuid_to_name: dict[str, str] = {}
+        self.name_to_uuid: dict[str, str] = {}
+        self.edges_accumulator: dict[tuple, list[str]] = {}
 
         for pb in self.data.playbooks:
             uid = self._get_raw_id(pb)
@@ -89,7 +89,7 @@ class HighLevelGraphVisualizer:
                 return intent.get("displayName", intent_id)
         return intent_id
 
-    def _get_trigger_text(self, item: Dict[str, Any]) -> str:
+    def _get_trigger_text(self, item: dict[str, Any]) -> str:
         if "intent" in item:
             return f"Intent: {self._get_intent_name(item['intent'])}"
         if "triggerIntentId" in item:
@@ -118,7 +118,7 @@ class HighLevelGraphVisualizer:
             self.edges_accumulator[key].append(condition)
 
     def _scan_playbook_steps(
-        self, steps: List[Dict[str, Any]], pb_uuid: str
+        self, steps: list[dict[str, Any]], pb_uuid: str
     ) -> None:
         """Scan playbook instruction steps for flow, playbook, and tool refs.
 
@@ -235,7 +235,7 @@ class HighLevelGraphVisualizer:
                 self._search_webhook_refs(item, flow_uuid, trigger)
 
     def _extract_flow_routes_and_tools(
-        self, obj_list: List[Dict[str, Any]], flow_uuid: str
+        self, obj_list: list[dict[str, Any]], flow_uuid: str
     ) -> None:
         """Accumulate edges for all routes, events, and webhook calls in a flow.
 

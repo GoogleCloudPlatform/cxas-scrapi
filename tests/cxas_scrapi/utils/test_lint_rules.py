@@ -46,7 +46,7 @@ def test_i001_missing_tags(tmp_path, context):
     f.write_text("Just some text without tags.")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 3  # noqa: PLR2004
+    assert len(results) == 3
     tags = {r.message for r in results}
     assert any("<role>" in t for t in tags)
     assert any("<persona>" in t for t in tags)
@@ -193,9 +193,7 @@ def test_i014_in_global_only(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
-    (tmp_path / "global_instruction.txt").write_text(
-        "Today is ${current_date}."
-    )
+    (tmp_path / "global_instruction.txt").write_text("Today is {current_date}.")
     f = tmp_path / "instruction.txt"
     f.write_text("No date here.")
 
@@ -208,11 +206,9 @@ def test_i014_in_global_and_agent(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
-    (tmp_path / "global_instruction.txt").write_text(
-        "Today is ${current_date}."
-    )
+    (tmp_path / "global_instruction.txt").write_text("Today is {current_date}.")
     f = tmp_path / "instruction.txt"
-    f.write_text("Date: ${current_date}.")
+    f.write_text("Date: {current_date}.")
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -227,7 +223,7 @@ def test_i014_in_all_agents_not_global(tmp_path, context):
     for name in ("agent_a", "agent_b"):
         d = tmp_path / "agents" / name
         d.mkdir(parents=True)
-        (d / "instruction.txt").write_text("Date: ${current_date}.")
+        (d / "instruction.txt").write_text("Date: {current_date}.")
     # Global does not have it
     gi = tmp_path / "global_instruction.txt"
     gi.write_text("No date here.")
@@ -244,7 +240,7 @@ def test_i014_in_some_agents_not_global(tmp_path, context):
     # agent_a has it, agent_b does not
     a = tmp_path / "agents" / "agent_a"
     a.mkdir(parents=True)
-    (a / "instruction.txt").write_text("Date: ${current_date}.")
+    (a / "instruction.txt").write_text("Date: {current_date}.")
     b = tmp_path / "agents" / "agent_b"
     b.mkdir(parents=True)
     (b / "instruction.txt").write_text("No date here.")
@@ -268,12 +264,12 @@ def test_i014_in_some_agents_not_global(tmp_path, context):
 
 
 def test_i014_accepts_double_brace_syntax(tmp_path, context):
-    """${{current_date}} syntax is also valid."""
+    """{{current_date}} syntax is also valid."""
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
     f = tmp_path / "global_instruction.txt"
-    f.write_text("Today is ${{current_date}}.")
+    f.write_text("Today is {{current_date}}.")
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -317,6 +313,55 @@ def test_i014_no_agents_directory(tmp_path, context):
     # No agents dir means _all_agent_instructions_have_date returns True
     # (vacuously), so global is not flagged
     assert len(results) == 0
+
+
+def test_i015_banned_legacy_xml_tags(tmp_path, context):
+    """Instruction with legacy CamelCase / state-machine tags fires I015."""
+    from cxas_scrapi.utils.lint_rules.instructions import BannedLegacyXmlTags  # noqa: PLC0415,I001
+
+    rule = BannedLegacyXmlTags()
+    f = tmp_path / "instruction.txt"
+    content = (
+        "<Agent>\n"
+        "  <Conversation_Schema>\n"
+        '    <state id="main"><transitions>'
+        '<transition condition="x" next_state="y"/></transitions></state>\n'
+        "  </Conversation_Schema>\n"
+        "</Agent>\n"
+    )
+    f.write_text(content)
+
+    results = rule.check(f, content, context)
+    tags = {r.message for r in results}
+    assert any("<Agent>" in t for t in tags)
+    assert any("<Conversation_Schema>" in t for t in tags)
+    assert any("<state" in t for t in tags)
+    assert any("<transitions>" in t for t in tags)
+    assert any("<transition " in t for t in tags)
+
+
+def test_i015_canonical_text_ok(tmp_path, context):
+    """Canonical lowercase taskflow XML produces zero I015 findings."""
+    from cxas_scrapi.utils.lint_rules.instructions import BannedLegacyXmlTags  # noqa: PLC0415,I001
+
+    rule = BannedLegacyXmlTags()
+    f = tmp_path / "instruction.txt"
+    content = (
+        "<role>do things</role>\n"
+        "<persona>- be helpful</persona>\n"
+        "<taskflow>\n"
+        '  <subtask name="Greet">\n'
+        '    <step name="Welcome">\n'
+        "      <trigger>start</trigger>\n"
+        "      <action>1. hi</action>\n"
+        "    </step>\n"
+        "  </subtask>\n"
+        "</taskflow>\n"
+    )
+    f.write_text(content)
+
+    results = rule.check(f, content, context)
+    assert results == []
 
 
 # ── Callback Rules ───────────────────────────────────────────────────────
@@ -421,7 +466,7 @@ def test_c003_camelcase_detected(tmp_path, context):
     f.write_text("def myFunction(x): pass\ndef anotherFunc(y): pass")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
     assert any("myFunction" in r.message for r in results)
 
 
@@ -946,7 +991,7 @@ def test_t007_not_snake_case(tmp_path, context):
     )
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
 
 
 def test_t007_snake_case_ok(tmp_path, context):
@@ -1407,7 +1452,7 @@ def test_e010_old_format(tmp_path, context):
     f.write_text("tool_name: get_balance\ntest_cases:\n  - input: {}")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
 
 
 def test_e010_correct_key(tmp_path, context):
@@ -1505,7 +1550,7 @@ def test_a002_missing_required_fields(tmp_path, context):
     f.write_text('{"description": "test"}')
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
     fields = {r.message for r in results}
     assert any("name" in m for m in fields)
     assert any("displayName" in m for m in fields)
@@ -1515,7 +1560,7 @@ def test_a002_missing_required_fields(tmp_path, context):
 
 
 def test_v001_app_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")
@@ -1530,7 +1575,7 @@ def test_v001_app_valid(tmp_path, context):
 
 
 def test_v001_app_missing_config(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")
@@ -1544,7 +1589,7 @@ def test_v001_app_missing_config(tmp_path, context):
 
 
 def test_v002_agent_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1560,7 +1605,7 @@ def test_v002_agent_valid(tmp_path, context):
 
 
 def test_v002_agent_missing_config(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1574,7 +1619,7 @@ def test_v002_agent_missing_config(tmp_path, context):
 
 
 def test_v003_tool_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V003")
@@ -1589,7 +1634,7 @@ def test_v003_tool_valid(tmp_path, context):
 
 
 def test_v005_guardrail_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V005")
@@ -1604,7 +1649,7 @@ def test_v005_guardrail_valid(tmp_path, context):
 
 
 def test_v006_evaluation_invalid_field(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V006")
@@ -1622,7 +1667,7 @@ def test_v006_evaluation_invalid_field(tmp_path, context):
 
 
 def test_schema_missing_referenced_file(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1640,7 +1685,7 @@ def test_schema_missing_referenced_file(tmp_path, context):
 
 
 def test_schema_missing_required_field(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")
@@ -1918,3 +1963,397 @@ def test_s006_tool_paths_invalid(tmp_path, context):
     results = rule.check(tool_dir, "", context)
     assert len(results) == 1
     assert "Tool pythonCode path" in results[0].message
+
+
+# ── Variable Rules (V100-V104) ───────────────────────────────────────────
+
+
+_VAR_APP_JSON = """\
+{
+  "name": "test-app",
+  "rootAgent": "Root_Agent",
+  "variableDeclarations": [
+    {
+      "name": "customer",
+      "schema": {
+        "type": "OBJECT",
+        "properties": {
+          "auth_status": {"type": "STRING"},
+          "api_failed": {"type": "STRING"},
+          "account_id": {"type": "STRING"}
+        }
+      }
+    },
+    {
+      "name": "_internal",
+      "schema": {
+        "type": "OBJECT",
+        "properties": {
+          "action_trigger": {"type": "STRING"},
+          "escalation_topic": {"type": "STRING"}
+        }
+      }
+    },
+    {"name": "flat_str", "schema": {"type": "STRING"}}
+  ]
+}
+"""
+
+
+@pytest.fixture
+def var_context(tmp_path):
+    """LintContext with an app.json containing variableDeclarations."""
+    from cxas_scrapi.utils.lint_rules.variables import _clear_schema_cache  # noqa: PLC0415,I001
+
+    (tmp_path / "app.json").write_text(_VAR_APP_JSON)
+    _clear_schema_cache()
+    return LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path / "evals",
+        app_root=tmp_path,
+    )
+
+
+def test_resolve_path_ok_leaf(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    assert resolve_path("customer.auth_status", schema) == ("ok", "STRING")
+    assert resolve_path("flat_str", schema) == ("ok", "STRING")
+
+
+def test_resolve_path_ok_object(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    assert resolve_path("customer", schema) == ("ok_object",)
+
+
+def test_resolve_path_undeclared(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    assert resolve_path("session_token", schema) == ("undeclared",)
+
+
+def test_resolve_path_stale_flat(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    # auth_status is a property of customer — flat ref is "stale"
+    assert resolve_path("auth_status", schema) == ("stale_flat", "customer")
+
+
+def test_resolve_path_no_property(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    assert resolve_path("customer.full_name", schema) == (
+        "no_property",
+        "customer",
+        "full_name",
+    )
+
+
+def test_resolve_path_not_object(var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        _load_var_schema,
+        resolve_path,
+    )
+
+    schema = _load_var_schema(var_context)
+    assert resolve_path("flat_str.child", schema) == ("not_object", "flat_str")
+
+
+def test_v100_callback_undeclared(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackVariableDeclared  # noqa: PLC0415,I001
+
+    rule = CallbackVariableDeclared()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(callback_context, llm_request):\n"
+        "    state = callback_context.state\n"
+        "    token = state.get('session_token', '')\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert results[0].rule_id == "V100"
+    assert "session_token" in results[0].message
+
+
+def test_v100_callback_declared_no_error(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackVariableDeclared  # noqa: PLC0415,I001
+
+    rule = CallbackVariableDeclared()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(callback_context, llm_request):\n"
+        "    state = callback_context.state\n"
+        "    x = state.get('customer.auth_status', '')\n"
+        "    state['_internal.action_trigger'] = 'go'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v100_tool_state_update(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import ToolVariableDeclared  # noqa: PLC0415,I001
+
+    rule = ToolVariableDeclared()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def my_tool(context):\n"
+        "    context.state.update("
+        "{'missing_var': 1, 'customer.auth_status': 'ok'}"
+        ")\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert "missing_var" in results[0].message
+
+
+def test_v100_eval_undeclared(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import EvalVariableDeclared  # noqa: PLC0415,I001
+
+    rule = EvalVariableDeclared()
+    f = tmp_path / "evals" / "goldens" / "g.yaml"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        "common_session_parameters:\n"
+        "  customer:\n"
+        "    account_id: 'a1'\n"
+        "  missing_var:\n"
+        "    foo: 'bar'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    rule_ids = [r.rule_id for r in results]
+    messages = [r.message for r in results]
+    assert "V100" in rule_ids
+    assert any("missing_var" in m for m in messages)
+    # The "customer" parent and "customer.account_id" leaf should be OK
+    assert not any("customer" in m and "missing" not in m for m in messages)
+
+
+def test_v101_type_mismatch_bool(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackVariableTypeMatch  # noqa: PLC0415,I001
+
+    rule = CallbackVariableTypeMatch()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    state = cb.state\n"
+        "    state['customer.api_failed'] = False\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert results[0].rule_id == "V101"
+    assert "STRING" in results[0].message and "bool" in results[0].message
+
+
+def test_v101_type_mismatch_len_call(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import ToolVariableTypeMatch  # noqa: PLC0415,I001
+
+    rule = ToolVariableTypeMatch()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def my_tool(context):\n"
+        "    context.state['_internal.escalation_topic'] = len('abc')\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert results[0].rule_id == "V101"
+    assert "int" in results[0].message
+
+
+def test_v101_matching_type_no_error(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackVariableTypeMatch  # noqa: PLC0415,I001
+
+    rule = CallbackVariableTypeMatch()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    cb.state['customer.auth_status'] = 'ok'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v101_uninferable_rhs_skipped(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackVariableTypeMatch  # noqa: PLC0415,I001
+
+    rule = CallbackVariableTypeMatch()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    cb.state['customer.auth_status'] = some_helper()\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v102_missing_nested_property(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import ToolNestedPropertyExists  # noqa: PLC0415,I001
+
+    rule = ToolNestedPropertyExists()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def my_tool(context):\n    context.state['_internal.reason'] = 'x'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert results[0].rule_id == "V102"
+    assert "_internal" in results[0].message and "reason" in results[0].message
+
+
+def test_v102_wrong_parent(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import ToolNestedPropertyExists  # noqa: PLC0415,I001
+
+    rule = ToolNestedPropertyExists()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def my_tool(context):\n"
+        "    context.state['customer.action_trigger'] = 'x'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert "customer" in results[0].message
+    assert "action_trigger" in results[0].message
+
+
+def test_v102_typo_on_declared_parent(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import (  # noqa: PLC0415,I001
+        CallbackNestedPropertyExists,
+    )
+
+    rule = CallbackNestedPropertyExists()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    x = cb.state.get('_internal.escalation_topik', 'g')\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert "escalation_topik" in results[0].message
+
+
+def test_v103_stale_flat_in_callback(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackStaleFlatVar  # noqa: PLC0415,I001
+
+    rule = CallbackStaleFlatVar()
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    cb.state['auth_status'] = 'ok'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert results[0].rule_id == "V103"
+    assert "customer.auth_status" in results[0].message
+
+
+def test_v103_no_match_no_warning(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import CallbackStaleFlatVar  # noqa: PLC0415,I001
+
+    rule = CallbackStaleFlatVar()
+    f = tmp_path / "python_code.py"
+    # session_token isn't a nested property of any declared OBJECT
+    f.write_text(
+        "def before_model_callback(cb, llm):\n"
+        "    cb.state.get('session_token', '')\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v104_undeclared_template_ref(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import InstructionVariableRef  # noqa: PLC0415,I001
+
+    rule = InstructionVariableRef()
+    f = tmp_path / "instruction.txt"
+    f.write_text("Greet {auth_status} and {customer.full_name} today.")
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 2
+    assert all(r.rule_id == "V104" for r in results)
+    assert any("auth_status" in r.message for r in results)
+    assert any("full_name" in r.message for r in results)
+
+
+def test_v104_skips_builtins_and_directives(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import InstructionVariableRef  # noqa: PLC0415,I001
+
+    rule = InstructionVariableRef()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "Today is {current_date}. Use {@TOOL: get_balance} and "
+        "{@AGENT: billing agent}."
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v104_skips_inline_example_block(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import InstructionVariableRef  # noqa: PLC0415,I001
+
+    rule = InstructionVariableRef()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "<inline_example>\n"
+        "Hello {undeclared_var}, your id is {bogus.path}.\n"
+        "</inline_example>\n"
+        "Otherwise, use {customer.auth_status}."
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_v104_declared_object_ref_no_error(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import InstructionVariableRef  # noqa: PLC0415,I001
+
+    rule = InstructionVariableRef()
+    f = tmp_path / "instruction.txt"
+    f.write_text("Customer object: {customer}.")
+    results = rule.check(f, f.read_text(), var_context)
+    assert results == []
+
+
+def test_state_visitor_skips_assignment_subscripts(tmp_path, var_context):
+    """Writes should be counted as writes, not double-counted as reads."""
+    from cxas_scrapi.utils.lint_rules.variables import _collect_state_accesses  # noqa: PLC0415,I001
+
+    src = "def f(cb):\n    cb.state['customer.api_failed'] = 'x'\n"
+    accesses = _collect_state_accesses(src)
+    kinds = [a[0] for a in accesses]
+    assert kinds == ["write"]
+
+
+def test_state_visitor_setdefault_is_write(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import _collect_state_accesses  # noqa: PLC0415,I001
+
+    src = "def f(cb):\n    cb.state.setdefault('customer.account_id', '0')\n"
+    accesses = _collect_state_accesses(src)
+    assert accesses == [("write", "customer.account_id", 2, "str")]
+
+
+def test_state_visitor_update_with_literals(tmp_path, var_context):
+    from cxas_scrapi.utils.lint_rules.variables import _collect_state_accesses  # noqa: PLC0415,I001
+
+    src = "def f(cb):\n    cb.state.update({'a': True, 'b': 1})\n"
+    accesses = _collect_state_accesses(src)
+    assert ("write", "a", 2, "bool") in accesses
+    assert ("write", "b", 2, "int") in accesses

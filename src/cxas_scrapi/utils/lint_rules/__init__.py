@@ -22,4 +22,5 @@ from cxas_scrapi.utils.lint_rules import (  # noqa: F401
     schema,
     structure,
     tools,
+    variables,
 )

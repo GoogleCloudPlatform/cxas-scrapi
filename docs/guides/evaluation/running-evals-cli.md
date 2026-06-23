@@ -146,8 +146,8 @@ cxas run --app-name "$APP" --wait --filter-auto-metrics
 echo "Golden evals passed"
 
 # 4. Local simulations (slowest — run last)
-# Use the skills system's sim runner for parallel execution:
-python .agents/skills/cxas-agent-foundry/scripts/scrapi-sim-runner.py run --parallel 5
+# Run local LLM-User simulation tests in parallel with tool fakes enabled:
+cxas evals report --run --include sims --app-name "$APP" --output-dir "eval-reports" --sim-parallel 5 --use-tool-fakes
 echo "Simulation evals passed"
 
 echo "All evaluations passed!"

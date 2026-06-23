@@ -186,7 +186,7 @@ async def test_run_migration_success():
         "dfcx-123", use_export=True
     )
     mock_migrate.assert_called_once()
-    service._deploy_base_resources.assert_called_once()
+    assert service._deploy_base_resources.call_count == 2
     service._deploy_pending_agents.assert_called_once()
     service.topology_linker.link_and_finalize_topology.assert_called_once()
 
@@ -237,7 +237,7 @@ async def test_run_stage_1_requires_bundle():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_creates_double_versions_when_labels_set():
+async def test_run_stage_1_creates_single_version_when_labels_set():
     service = _make_service()
     fake_versions_client = MagicMock()
     bundle = _make_bundle()
@@ -301,13 +301,11 @@ async def test_run_stage_1_creates_double_versions_when_labels_set():
             dedup_version_label="0.0.2",
         )
 
-    # Double-versioning: create_version is called twice!
-    assert fake_versions_client.create_version.call_count == 2
+    # Single-versioning: create_version is called once for consolidation!
+    assert fake_versions_client.create_version.call_count == 1
     calls = fake_versions_client.create_version.call_args_list
-    assert calls[0].kwargs["display_name"] == "0.0.2"
-    assert "variable de-duplication" in calls[0].kwargs["description"]
-    assert calls[1].kwargs["display_name"] == "0.0.3"
-    assert "consolidation" in calls[1].kwargs["description"]
+    assert calls[0].kwargs["display_name"] == "0.0.3"
+    assert "consolidation" in calls[0].kwargs["description"]
 
 
 @pytest.mark.asyncio
@@ -585,7 +583,7 @@ async def test_run_stage_2_run_lint_invokes_post_deploy_lint():
 async def test_run_stage_3_requires_grouping_on_bundle():
     service = _make_service()
     bundle = _make_bundle()  # bundle.grouping is None
-    with pytest.raises(RuntimeError, match="bundle.grouping"):
+    with pytest.raises(RuntimeError, match=r"bundle\.grouping"):
         await service.run_stage_3(bundle=bundle)
 
 

@@ -50,7 +50,7 @@ def load_scorecard_template(
     _, ext = os.path.splitext(template_path)
     ext = ext.lower()
 
-    with open(template_path, "r") as f:
+    with open(template_path) as f:
         if ext in (".yaml", ".yml"):
             template_data = yaml.safe_load(f)
         elif ext == ".json5":

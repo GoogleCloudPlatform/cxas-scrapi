@@ -23,7 +23,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 
@@ -110,7 +110,7 @@ class CXASAsyncArtifactBuilder:
             logger.warning(f"    ⚠️ Failed to save {filename}: {e}")
 
     async def _run_step_1a_inventory(
-        self, flow_name: str, tree_view: str, context_data: Dict[str, Any]
+        self, flow_name: str, tree_view: str, context_data: dict[str, Any]
     ) -> str:
         """Runs Step 1A: Technical Inventory."""
         prompt_1a = Prompts.STEP_1A_INVENTORY["template"].format(
@@ -184,7 +184,7 @@ class CXASAsyncArtifactBuilder:
         tree_view: str,
         business_logic: str,
         df_reqs: pd.DataFrame,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Runs Step 1D: Tests."""
         test_instruction = (
             CXASAsyncArtifactBuilder._get_determinism_instruction(
@@ -227,9 +227,9 @@ class CXASAsyncArtifactBuilder:
         self,
         flow_name: str,
         tree_view: str,
-        context_data: Dict[str, Any],
+        context_data: dict[str, Any],
         telemetry_summary: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Runs the full Step 1 analysis in sequence."""
         logger.info(
             f"[{flow_name}] Starting Async Step 1: Analysis & Logic "

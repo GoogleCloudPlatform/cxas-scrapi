@@ -14,7 +14,7 @@
 
 """Core Agents class for CXAS Scrapi."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from google.cloud.ces_v1beta import AgentServiceClient, types
 from google.protobuf import field_mask_pb2
@@ -28,10 +28,10 @@ class Agents(Apps):
     def __init__(
         self,
         app_name: str,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         """Initializes the Agents client."""
@@ -55,20 +55,20 @@ class Agents(Apps):
             client_info=self.client_info,
         )
 
-    def list_agents(self) -> List[types.Agent]:
+    def list_agents(self) -> list[types.Agent]:
         """Lists agents within the app."""
         request = types.ListAgentsRequest(parent=self.app_name)
         response = self.client.list_agents(request=request)
         return list(response)
 
-    def get_agents_map(self, reverse: bool = False) -> Dict[str, str]:
+    def get_agents_map(self, reverse: bool = False) -> dict[str, str]:
         """Creates a map of Agent full names to display names.
 
         Args:
             reverse: If True, map display_name -> name.
         """
         agents = self.list_agents()
-        agents_dict: Dict[str, str] = {}
+        agents_dict: dict[str, str] = {}
 
         for agent in agents:
             display_name = agent.display_name
@@ -90,10 +90,10 @@ class Agents(Apps):
         display_name: str,
         agent_id: str = "",
         agent_type: str = "llm",  # llm, dfcx
-        model: Optional[str] = "gemini-2.5-flash",
-        instruction: Optional[str] = None,
-        timeout: Optional[float] = None,
-        dfcx_agent_resource: Optional[str] = None,
+        model: str | None = "gemini-2.5-flash",
+        instruction: str | None = None,
+        timeout: float | None = None,
+        dfcx_agent_resource: str | None = None,
         **kwargs: Any,
     ) -> types.Agent:
         """Creates a new agent of the specified type.

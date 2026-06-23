@@ -61,7 +61,7 @@ def test_fetch_with_explicit_times(mock_lv2):
         end_time=datetime.datetime(2026, 5, 10, 12, 1, 0),
         level="warning",
     )
-    args, kwargs = mock_client.list_entries.call_args
+    _args, kwargs = mock_client.list_entries.call_args
     assert kwargs["order_by"] == "timestamp asc"
     assert "WARNING" in kwargs["filter_"]
     assert "conv-1" in kwargs["filter_"]

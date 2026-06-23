@@ -1,29 +1,73 @@
-subintent_id: account-lockout-resolution
-subintent_name: Account Lockout Resolution
-parent_cuj: General Customer Support
+subintent_id: catering-inquiry
+subintent_name: Setup Catering Event
+parent_cuj: Event Catering
 turns:
 - speaker: Agent
-  text: Thank you for calling Customer Support. I see that your account has been locked
-    due to multiple failed login attempts. To help you get back in, I'll need to verify
-    your identity. May I have your account number?
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
 - speaker: User
-  text: Sure, it’s 1 2 3 4 5 6 7.
+  text: Hi, I need to set up a catering order for a corporate lunch next Friday.
 - speaker: Agent
-  text: Thank you. I’ve sent a verification code to the phone number ending in 4 4
-    5 5. Please read that code back to me when you receive it.
-  tool_call:
-    name: VerifyAccountID
-    parameters:
-      id: '1234567'
+  text: Oh, I'd be happy to help you set that up! How many guests are you expecting, and do you have a menu package in mind?
 - speaker: User
-  text: I got it. It’s 8 8 9 9 0 0.
+  text: We're hosting about twenty people. What packages do you guys offer?
 - speaker: Agent
-  text: Perfect. I’ve unlocked your account. You should now be able to log in with
-    your existing password. Would you like me to help you reset your password as well,
-    just in case?
+  text: Let me pull up our current catering packages for you.
   tool_call:
-    name: ValidateMFACode
-    parameters:
-      code: '889900'
+    name: get_catering_packages
+    payload:
+      guests: 20
+    response:
+      status: success
+      packages:
+      - name: Italian Feast
+        price_per_guest: 25
+      - name: Pizza Party
+        price_per_guest: 18
+- speaker: Agent
+  text: Okay, we have two popular ones. The Italian Feast is twenty-five dollars per guest, and the Pizza Party is eighteen dollars per guest. Which one sounds like a good fit?
 - speaker: User
-  text: No, I’m good now. Thanks.
+  text: Let's go with the Italian Feast. That sounds great.
+- speaker: Agent
+  text: Excellent choice. Let me calculate the quote and check our delivery availability for next Friday.
+  tool_call:
+    name: calculate_catering_quote
+    payload:
+      package_name: Italian Feast
+      guests: 20
+      date: next Friday
+    response:
+      status: success
+      quote_amount: 500.0
+      slot_available: true
+- speaker: Agent
+  text: Perfect, we have a delivery slot open! The total for twenty guests comes to five hundred dollars before taxes. Shall I go ahead and book this slot for you?
+- speaker: User
+  text: Yes, please. Let's lock it in.
+- speaker: Agent
+  text: Booking the catering slot on our calendar now.
+  tool_call:
+    name: reserve_catering_slot
+    payload:
+      package_name: Italian Feast
+      guests: 20
+      date: next Friday
+      quote_amount: 500.0
+    response:
+      status: success
+      booking_id: CAT-8899
+      contract_sent: true
+- speaker: Agent
+  text: Awesome! Your catering event is officially reserved under booking ID CAT-8899. I've just sent the contract and details to your email.
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

@@ -25,7 +25,13 @@ from cxas_scrapi.core.evaluations import Evaluations
 from cxas_scrapi.evals.callback_evals import CallbackEvals
 from cxas_scrapi.evals.simulation_evals import SimulationEvals
 from cxas_scrapi.evals.tool_evals import ToolEvals
-from cxas_scrapi.utils.eval_utils import EvalUtils
+from cxas_scrapi.utils.eval_utils import (
+    CALLBACK_RESULTS_FILENAME,
+    SIM_RESULTS_FILENAME,
+    TOOL_RESULTS_FILENAME,
+    EvalUtils,
+    add_timestamp_suffix,
+)
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 
@@ -33,17 +39,21 @@ def run_all_evals(
     app_name: str,
     modality: str = "text",
     runs: int = 1,
-    goldens_dir: str = None,
-    tool_test_file: str = None,
-    simulation_dir: str = None,
-    app_dir: str = None,
-    output_dir: str = None,
-    filter_files: list[str] = None,
-    filter_tags: list[str] = None,
+    goldens_dir: str | None = None,
+    tool_test_file: str | None = None,
+    simulation_dir: str | None = None,
+    app_dir: str | None = None,
+    output_dir: str | None = None,
+    filter_files: list[str] | None = None,
+    filter_tags: list[str] | None = None,
     parallel: int = 1,
     golden_timeout: int = 600,
-    include: list[str] = None,
+    include: list[str] | None = None,
     rate_limiter: RateLimiter | None = None,
+    bg_noise_file: str | None = None,
+    burst_noise_files: list[str] | None = None,
+    use_tool_fakes: bool = False,
+    timestamp: str | None = None,
 ):
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -135,7 +145,12 @@ def run_all_evals(
             results["callback"] = df.to_dict(orient="records")
             if output_dir:
                 df.to_csv(
-                    os.path.join(output_dir, "callback_results.csv"),
+                    os.path.join(
+                        output_dir,
+                        add_timestamp_suffix(
+                            CALLBACK_RESULTS_FILENAME, timestamp
+                        ),
+                    ),
                     index=False,
                 )
 
@@ -190,7 +205,12 @@ def run_all_evals(
                 results["tool"] = df.to_dict(orient="records")
                 if output_dir:
                     df.to_csv(
-                        os.path.join(output_dir, "tool_results.csv"),
+                        os.path.join(
+                            output_dir,
+                            add_timestamp_suffix(
+                                TOOL_RESULTS_FILENAME, timestamp
+                            ),
+                        ),
                         index=False,
                     )
 
@@ -237,10 +257,18 @@ def run_all_evals(
                         runs=runs,
                         parallel=parallel,
                         modality=modality,
+                        background_noise_file=bg_noise_file,
+                        burst_noise_files=burst_noise_files,
+                        use_tool_fakes=use_tool_fakes,
                     )
                     results["simulation"] = sim_results
                     if output_dir:
-                        save_path = os.path.join(output_dir, "sim_results.json")
+                        save_path = os.path.join(
+                            output_dir,
+                            add_timestamp_suffix(
+                                SIM_RESULTS_FILENAME, timestamp
+                            ),
+                        )
                         with open(save_path, "w") as f:
                             json.dump(sim_results, f, indent=2)
 

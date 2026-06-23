@@ -275,3 +275,36 @@ def test_parser_detailed_trace_chunks():
         in parsed.detailed_trace
     )
     assert "Custom Payload: {'p': 3.0}" in parsed.detailed_trace
+
+
+def test_parser_top_level_citations_and_payload():
+    """Test parsing top-level citations and payload."""
+    chunk = SimpleNamespace(
+        uri="gs://my-bucket/doc.pdf",
+        title="Source Doc",
+        text="This is a citation reference.",
+    )
+    citations_msg = SimpleNamespace(cited_chunks=[chunk])
+    payload_msg = {"custom_field": "custom_value"}
+
+    output = SimpleNamespace(
+        citations=citations_msg,
+        payload=payload_msg,
+        text=None,
+        end_session=None,
+        tool_calls=None,
+        diagnostic_info=None,
+    )
+
+    parsed = ParsedSessionResponse([output])
+    # Check citations
+    assert len(parsed.citations) == 1
+    assert parsed.citations[0]["uri"] == "gs://my-bucket/doc.pdf"
+    assert parsed.citations[0]["title"] == "Source Doc"
+    assert parsed.citations[0]["text"] == "This is a citation reference."
+
+    # Check custom payload
+    assert len(parsed.custom_payloads) == 1
+    assert parsed.custom_payloads[0] == {"custom_field": "custom_value"}
+    expected_trace = "Custom Payload (Output): {'custom_field': 'custom_value'}"
+    assert expected_trace in parsed.detailed_trace

@@ -1616,6 +1616,7 @@
       groupingState = JSON.parse(JSON.stringify(DATA.pending_grouping || {}));
       renderGroupingCards(groupingState);
     });
+<<<<<<< feat/gate-file-watch-fallback
 
     // Server-backed actions: Confirm, Abort, Re-propose. Only wire when
     // the live server endpoint is set; otherwise leave disabled.
@@ -1705,6 +1706,10 @@
         }
       });
     }
+=======
+    // Confirm/Abort/Re-propose are wired by the server when liveEndpoint() is set
+    // (Phase 4). Until then they stay disabled per the title tooltip.
+>>>>>>> main
   }
 
   // ----------- BOOT

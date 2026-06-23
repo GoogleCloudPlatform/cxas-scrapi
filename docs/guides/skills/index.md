@@ -26,8 +26,7 @@ The `SKILL.md` file has YAML frontmatter that declares the skill's name, descrip
 │   └── assets/               # Project templates
 ├── cxas-sim-eval/
 │   └── SKILL.md              # Simulation eval skill
-└── llm-lint/
-    └── SKILL.md              # AI-driven instruction semantic linter skill
+└── ...
 ```
 
 The AI reads the `SKILL.md` as part of its context. When you invoke a skill, the AI follows the instructions in that file to complete the task. The foundry loads sub-skills (build, run, debug) from `references/` as needed.

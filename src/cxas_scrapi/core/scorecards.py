@@ -14,13 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict, List
+from typing import Any
 
 from cxas_scrapi.core.insights import Insights
 
-QaScorecard = Dict[str, Any]
-QaScorecardRevision = Dict[str, Any]
-QaQuestion = Dict[str, Any]
+QaScorecard = dict[str, Any]
+QaScorecardRevision = dict[str, Any]
+QaQuestion = dict[str, Any]
 
 
 class Scorecards(Insights):
@@ -34,7 +34,7 @@ class Scorecards(Insights):
 
     # --- Basic CRUDL ---
 
-    def list_scorecards(self, parent: str = None) -> List[QaScorecard]:
+    def list_scorecards(self, parent: str | None = None) -> list[QaScorecard]:
         """Lists QA Scorecards for the configured parent."""
         parent = parent or self.parent
         return self._list_paginated(f"{parent}/qaScorecards", "qaScorecards")
@@ -44,7 +44,10 @@ class Scorecards(Insights):
         return self._request("GET", name)
 
     def create_scorecard(
-        self, scorecard_id: str, scorecard: QaScorecard, parent: str = None
+        self,
+        scorecard_id: str,
+        scorecard: QaScorecard,
+        parent: str | None = None,
     ) -> QaScorecard:
         """Creates a QA scorecard."""
         parent = parent or self.parent
@@ -64,7 +67,7 @@ class Scorecards(Insights):
         """Creates a new editable revision for a scorecard."""
         return self._request("POST", f"{scorecard_name}/revisions", data={})
 
-    def list_questions(self, revision_name: str) -> List[QaQuestion]:
+    def list_questions(self, revision_name: str) -> list[QaQuestion]:
         """Lists questions for a specific scorecard revision."""
         return self._list_paginated(
             f"{revision_name}/qaQuestions", "qaQuestions"

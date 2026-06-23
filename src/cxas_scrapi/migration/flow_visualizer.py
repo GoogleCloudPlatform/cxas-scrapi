@@ -14,7 +14,7 @@
 
 """Flow-level visualizers: dependency resolution and Rich tree rendering."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 from rich.markup import escape
 from rich.tree import Tree
@@ -23,7 +23,7 @@ from rich.tree import Tree
 class FlowDependencyResolver:
     """Traverses a specific Flow wrapper to find all related dependencies."""
 
-    def __init__(self, full_agent_data: Dict[str, Any]):
+    def __init__(self, full_agent_data: dict[str, Any]):
         self.full_data = full_agent_data
 
         self.intents = {
@@ -40,7 +40,7 @@ class FlowDependencyResolver:
 
         # Map webhooks by both UUID and DisplayName to handle DFCX export
         # inconsistencies where either form may appear in fulfillment refs.
-        self.webhooks: Dict[str, Any] = {}
+        self.webhooks: dict[str, Any] = {}
         for webhook_entry in full_agent_data.webhooks:
             webhook_data = (
                 webhook_entry.get("value", webhook_entry)
@@ -53,7 +53,7 @@ class FlowDependencyResolver:
             if display_name:
                 self.webhooks[display_name] = webhook_data
 
-        self.name_map: Dict[str, str] = {}
+        self.name_map: dict[str, str] = {}
         for playbook_entry in full_agent_data.playbooks:
             playbook_data = playbook_entry.get("playbook", playbook_entry)
             self.name_map[
@@ -107,7 +107,7 @@ class FlowDependencyResolver:
         return False
 
     def _scan_fulfillment(
-        self, fulfillment: Dict[str, Any], dependencies: Dict[str, Any]
+        self, fulfillment: dict[str, Any], dependencies: dict[str, Any]
     ) -> None:
         """Collect webhook references from a single fulfillment object."""
         if not fulfillment:
@@ -129,7 +129,7 @@ class FlowDependencyResolver:
                 dependencies["webhooks"][webhook_id] = self.webhooks[webhook_id]
 
     def _scan_routes(
-        self, routes: List[Dict[str, Any]], dependencies: Dict[str, Any]
+        self, routes: list[dict[str, Any]], dependencies: dict[str, Any]
     ) -> None:
         """Collect intent and fulfillment references from transition routes."""
         for route in routes:
@@ -148,7 +148,7 @@ class FlowDependencyResolver:
             )
 
     def _scan_event_handlers(
-        self, handlers: List[Dict[str, Any]], dependencies: Dict[str, Any]
+        self, handlers: list[dict[str, Any]], dependencies: dict[str, Any]
     ) -> None:
         """Collect fulfillment references from event handlers."""
         for handler in handlers:
@@ -157,7 +157,7 @@ class FlowDependencyResolver:
                 dependencies,
             )
 
-    def resolve(self, flow_wrapper: Dict[str, Any]) -> Dict[str, Any]:
+    def resolve(self, flow_wrapper: dict[str, Any]) -> dict[str, Any]:
         """Resolve all dependencies for a single flow wrapper.
 
         Args:
@@ -172,7 +172,7 @@ class FlowDependencyResolver:
         flow_data = flow_wrapper.flow_data
         pages_data = flow_wrapper.pages
 
-        dependencies: Dict[str, Any] = {
+        dependencies: dict[str, Any] = {
             "flow": flow_data,
             "pages": pages_data,
             "intents": {},
@@ -258,10 +258,10 @@ class FlowDependencyResolver:
 class FlowTreeVisualizer:
     """Generates a detailed Rich Tree for a single resolved Flow context."""
 
-    def __init__(self, context_data: Dict[str, Any]):
+    def __init__(self, context_data: dict[str, Any]):
         self.context = context_data
         self.flow = context_data["flow"]
-        self.page_names: Dict[str, str] = {}
+        self.page_names: dict[str, str] = {}
         for page_wrapper in self.context.get("pages", []):
             page_data = page_wrapper.page_data
             page_id = page_wrapper.page_id
@@ -288,7 +288,7 @@ class FlowTreeVisualizer:
                 )
         return f"ID:{intent_id}"
 
-    def _get_target_display(self, route: Dict[str, Any]) -> str:
+    def _get_target_display(self, route: dict[str, Any]) -> str:
         handler = route.get("transitionEventHandler", route)
         target_page = handler.get("targetPageId") or handler.get("targetPage")
         if target_page:

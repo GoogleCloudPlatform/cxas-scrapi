@@ -1,17 +1,65 @@
-subintent_id: billing-address-verification
-subintent_name: Billing Address Verification
-parent_cuj: General Customer Support
+subintent_id: catering-menu-change
+subintent_name: Update Catering Menu
+parent_cuj: Event Catering
 turns:
-- speaker: User
-  text: I need to verify where to send paper claims.
 - speaker: Agent
-  text: I can help with that. Are you checking the billing address for a specific
-    provider or a general facility?
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
 - speaker: User
-  text: It's for the surgery center on Main St.
+  text: Hi, I have an active catering booking, CAT-8899, and I need to change the menu package we selected.
 - speaker: Agent
-  text: I've found the address. For paper claims, please mail them to 123 Main St,
-    Suite 400, City, State, Zip. Would you like me to send this to your email?
+  text: Sure, I can help you update that! Let me grab your active booking details first.
+- speaker: Agent
+  text: Retrieving active catering booking.
   tool_call:
-    name: lookup_provider_address
-    parameters: {}
+    name: get_catering_booking
+    payload:
+      booking_id: CAT-8899
+    response:
+      status: success
+      booking_id: CAT-8899
+      package: Pizza Party
+- speaker: Agent
+  text: Alright, I see your booking is currently set to the 'Pizza Party' package. What package would you like to switch to?
+- speaker: User
+  text: We'd like to upgrade to the 'Italian Feast' package instead.
+- speaker: Agent
+  text: Updating catering package and calculating additional charges.
+  tool_call:
+    name: update_catering_package
+    payload:
+      booking_id: CAT-8899
+      new_package: Italian Feast
+    response:
+      status: success
+      updated: true
+      new_total: 500.0
+      additional_charge: 140.0
+- speaker: Agent
+  text: Okay, I've successfully switched you to the 'Italian Feast'! There's an additional charge of one hundred and forty dollars. Shall I go ahead and charge that to your card on file to finalize the change?
+- speaker: User
+  text: Yes, please do.
+- speaker: Agent
+  text: Processing additional payment charge.
+  tool_call:
+    name: process_catering_upgrade_payment
+    payload:
+      booking_id: CAT-8899
+      amount: 140.0
+    response:
+      status: success
+      payment_confirmed: true
+- speaker: Agent
+  text: Perfect, payment confirmed! I've sent an updated contract and confirmation email to you.
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success
