@@ -57,7 +57,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _all_flow_names(ir: "MigrationIR") -> list[str]:
+def _all_flow_names(ir: MigrationIR) -> list[str]:
     """Stable list of the source flow / member display names visible to
     the consolidator. Used to drive client-side orphan detection."""
     return sorted({a.display_name for a in ir.agents.values()})
@@ -66,7 +66,7 @@ def _all_flow_names(ir: "MigrationIR") -> list[str]:
 def _build_pending(
     groupings: dict[str, Any],
     *,
-    ir: "MigrationIR",
+    ir: MigrationIR,
     root_key: str | None,
     dep_summary: dict | None,
     session_id: str,
@@ -89,12 +89,12 @@ class _ReviewContext:
     def __init__(
         self,
         *,
-        ir: "MigrationIR",
+        ir: MigrationIR,
         groupings: dict[str, Any],
-        consolidator: "StructuralConsolidator",
+        consolidator: StructuralConsolidator,
         root_key: str | None,
         dep_summary: dict | None,
-        builder: "MigrationAnalysisBuilder",
+        builder: MigrationAnalysisBuilder,
         plan_path: Path,
         loop: asyncio.AbstractEventLoop,
         event: asyncio.Event,
@@ -329,12 +329,12 @@ def _free_port() -> int:
 
 async def web_review(
     *,
-    ir: "MigrationIR",
+    ir: MigrationIR,
     groupings: dict[str, Any],
-    consolidator: "StructuralConsolidator",
+    consolidator: StructuralConsolidator,
     root_key: str | None = None,
     dep_summary: dict | None = None,
-    builder: "MigrationAnalysisBuilder",
+    builder: MigrationAnalysisBuilder,
     bind_host: str = "127.0.0.1",
     bind_port: int = 0,
     timeout_s: int = 1800,

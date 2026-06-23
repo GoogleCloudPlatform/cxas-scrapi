@@ -158,7 +158,7 @@ class MigrationConfig(BaseModel):
     optimize_for_cxas: bool = False
     persist_bundle: bool = False
     interactive: bool = False
-    source_agent_data_override: Optional[DFCXAgentIR] = None
+    source_agent_data_override: DFCXAgentIR | None = None
     # Phase 4: HTML-driven grouping confirmation gate. When True (default
     # post-Phase-5), MigrationService installs the web_review callback
     # for Stage 1 consolidation. Opt-out via --no-web-confirm.

@@ -203,7 +203,7 @@ def test_apply_grouping_confirms_and_writes_plan(tmp_path, monkeypatch):
     fixed_port = 18745
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
-    _, loop, thread, shared = _start_web_review(builder=b)
+    _, _loop, thread, shared = _start_web_review(builder=b)
     base = _wait_for_server("127.0.0.1", fixed_port)
 
     # Snapshot reflects the initial proposal + session id.
@@ -310,7 +310,7 @@ def test_get_review_serves_html_with_injected_endpoint(tmp_path, monkeypatch):
     fixed_port = 18749
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
-    _, _, thread, shared = _start_web_review(builder=b)
+    _, _, thread, _shared = _start_web_review(builder=b)
     base = _wait_for_server("127.0.0.1", fixed_port)
 
     status, body = _http_get(f"{base}/review")
@@ -366,7 +366,7 @@ def test_get_root_redirects_to_review(tmp_path, monkeypatch):
     fixed_port = 18751
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
-    _, _, thread, shared = _start_web_review(builder=b)
+    _, _, thread, _shared = _start_web_review(builder=b)
     base = _wait_for_server("127.0.0.1", fixed_port)
 
     req = urllib.request.Request(f"{base}/", method="GET")
