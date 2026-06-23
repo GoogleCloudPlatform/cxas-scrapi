@@ -9,10 +9,28 @@ from cxas_scrapi.migration.data_models import (
     MigrationIR,
     MigrationStatus,
 )
+from cxas_scrapi.migration.instruction_lint import lint_instruction_text
 from cxas_scrapi.migration.prompts import Prompts
 from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.linter import LintResult
 
 logger = logging.getLogger(__name__)
+
+
+def _format_diagnostic(d: LintResult) -> str:
+    return f"[{d.rule_id}] {d.message}"
+
+
+def _build_validator_feedback(diagnostics: list[LintResult]) -> str:
+    diag_block = "\n".join(f"- {_format_diagnostic(d)}" for d in diagnostics)
+    return (
+        "### YOUR PREVIOUS RESPONSE FAILED CANONICAL-XML VALIDATION\n\n"
+        "Diagnostics:\n"
+        f"{diag_block}\n\n"
+        "CORRECT THESE ISSUES AND REGENERATE THE FULL INSTRUCTION SET. "
+        "Do not abbreviate. Do not include the original response in your "
+        "reply. Emit only the corrected XML."
+    )
 
 
 class CXASOptimizer:
@@ -47,10 +65,14 @@ class CXASOptimizer:
             "Executing Stage 2 Parallelized Playbook Instruction & "
             "Tool Mock Optimization..."
         )
+        # 1. Parallel first pass for both instructions and tool mocks
         await asyncio.gather(
             self._stage_2_instruction_optimization(),
             self._stage_2_tool_mock_optimization(),
         )
+
+        # 2. Run the Unified Self-Healing Gate
+        await self._self_heal_instructions()
 
     @staticmethod
     def _sanitize_variable_name(name: str) -> str:
@@ -443,6 +465,7 @@ class CXASOptimizer:
                 tools=", ".join(all_tools),
             )
             system_prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION["system"]
+
             try:
                 response = await self.gemini.generate_async(
                     prompt=prompt,
@@ -452,8 +475,6 @@ class CXASOptimizer:
                 if not response:
                     raise ValueError("LLM returned empty instruction response.")
 
-                # Strip conversational fluff if LLM ignored constraints
-                # Harmonization clean-up pass for malformed markdown formatting
                 response_clean = re.sub(
                     r"^```(?:xml)?", "", response, flags=re.MULTILINE
                 )
@@ -657,3 +678,143 @@ class CXASOptimizer:
             logger.error(
                 f"Failed to register 'set_session_variables' tool: {e}"
             )
+
+    async def _self_heal_instructions(self):
+        """
+        Tier 2 Quality Gate: Self-heals agent instructions in-memory.
+        Validates all optimized playbook/flow instructions and re-prompts
+        Gemini once if they fail canonical-XML schema rules.
+        """
+        from cxas_scrapi.migration.data_models import IRAgent  # noqa: PLC0415
+
+        failed_agents = []
+        for agent_name, agent in self.ir.agents.items():
+            if agent.type in ("PLAYBOOK", "FLOW"):
+                diagnostics = lint_instruction_text(
+                    agent.instruction, agent_name
+                )
+                if diagnostics:
+                    failed_agents.append((agent_name, agent, diagnostics))
+
+        if not failed_agents:
+            self.log_action(
+                "Stage 2 Instructions",
+                "Self-Healing Gate",
+                "All optimized playbooks passed canonical-schema validation. "
+                "No healing required.",
+            )
+            return
+
+        self.log_action(
+            "Stage 2 Instructions",
+            "Self-Healing Engaged",
+            f"Found {len(failed_agents)} agent(s) failing schema. "
+            "Starting parallel retries.",
+        )
+
+        async def _heal_one(
+            agent_name: str, agent: IRAgent, diagnostics: list[LintResult]
+        ):
+            diag_block = "\n".join(
+                f"  - {_format_diagnostic(d)}" for d in diagnostics
+            )
+            logger.warning(
+                "Optimized XML for %s failed canonical-schema validation "
+                "(%d issue(s)):\n%s\nRe-prompting Gemini once for repair...",
+                agent_name,
+                len(diagnostics),
+                diag_block,
+            )
+            feedback = _build_validator_feedback(diagnostics)
+
+            # Re-construct the Stage 2 prompt with the feedback
+            reverse_tool_map = {}
+            for tool_id, tool in self.ir.tools.items():
+                display_name = (
+                    tool.payload.get("displayName")
+                    or tool.payload.get("display_name")
+                    or tool_id
+                )
+                if tool.name:
+                    reverse_tool_map[tool.name] = display_name
+                reverse_tool_map[tool_id] = display_name
+            all_tools = []
+            for t in agent.tools:
+                if t in reverse_tool_map:
+                    all_tools.append(reverse_tool_map[t])
+                else:
+                    all_tools.append(t.split("/")[-1])
+            for gt in ["set_session_variables"]:
+                if gt not in all_tools:
+                    all_tools.append(gt)
+
+            prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION[
+                "template"
+            ].format(
+                agent_name=agent_name,
+                instruction=agent.instruction,
+                tools=", ".join(all_tools),
+            )
+
+            # Append feedback for propagation
+            prompt = f"{prompt}\n\n{feedback}"
+            system_prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION["system"]
+
+            try:
+                response = await self.gemini.generate_async(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    temperature=1.0,
+                )
+                if not response:
+                    raise ValueError(
+                        "LLM returned empty instruction response during retry."
+                    )
+
+                response_clean = re.sub(
+                    r"^```(?:xml)?", "", response, flags=re.MULTILINE
+                )
+                response_clean = re.sub(
+                    r"```$", "", response_clean, flags=re.MULTILINE
+                )
+                response_clean = response_clean.strip()
+
+                # Second-Pass Validation (Warning Only)
+                final_diagnostics = lint_instruction_text(
+                    response_clean, agent_name
+                )
+                if final_diagnostics:
+                    diag_block = "\n".join(
+                        f"  - {_format_diagnostic(d)}"
+                        for d in final_diagnostics
+                    )
+                    logger.warning(
+                        "Optimized XML for %s still fails schema validation "
+                        "after retry (%d issue(s)). Proceeding anyway.\n%s",
+                        agent_name,
+                        len(final_diagnostics),
+                        diag_block,
+                    )
+
+                # Save the corrected instruction
+                agent.instruction = response_clean
+                agent.status = MigrationStatus.COMPILED
+                logger.info(
+                    "Successfully healed agent instructions for '%s'.",
+                    agent_name,
+                )
+
+            except Exception as e:
+                logger.error(
+                    "Failed to self-heal agent instructions for '%s': %s",
+                    agent_name,
+                    e,
+                )
+
+        # Run all self-healing tasks concurrently
+        await asyncio.gather(
+            *(
+                _heal_one(name, agent, diags)
+                for name, agent, diags in failed_agents
+            )
+        )

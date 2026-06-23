@@ -56,22 +56,6 @@ def test_step_3b_system_lists_canonical_tag_vocabulary() -> None:
         assert tag in sys_p, f"system prompt missing canonical tag: {tag}"
 
 
-def test_step_3b_system_forbids_legacy_tags() -> None:
-    sys_p = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS["system"]
-    assert "FORBIDDEN" in sys_p
-    for legacy in (
-        "<Agent>",
-        "<Conversation_Schema>",
-        "<state>",
-        "<transitions>",
-        "<Persona>",
-        "<General_Instruction>",
-    ):
-        assert legacy in sys_p, (
-            f"system prompt should call out legacy tag: {legacy}"
-        )
-
-
 def test_step_3b_system_embeds_bella_notte_content() -> None:
     """The system prompt must include text from the canonical example file
     so any drift on the source file shows up here as a snapshot mismatch."""

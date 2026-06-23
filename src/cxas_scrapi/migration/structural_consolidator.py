@@ -909,60 +909,20 @@ class StructuralConsolidator:
                 return "empty-response"
 
             diagnostics = lint_instruction_text(xml_instructions, group_name)
+            final_status = "ok"
             if diagnostics:
+                diag_block = "\n".join(
+                    f"  - [{d.rule_id}] {d.message}" for d in diagnostics
+                )
                 logger.warning(
                     "Synthesized XML for %s failed canonical-schema "
-                    "validation (%d issue(s)); re-prompting Gemini once.",
+                    "validation (%d issue(s)). "
+                    "Proceeding to Stage 2 optimization.\n%s",
                     group_name,
                     len(diagnostics),
+                    diag_block,
                 )
-                feedback = _build_validator_feedback(diagnostics)
-                try:
-                    xml_instructions = await asyncio.wait_for(
-                        designer.run_step_2b_instructions(
-                            flow_name=group_name,
-                            blueprint=blueprint,
-                            tree_view=combined_tree,
-                            target_ir=self.ir,
-                            available_groups=available_groups_context,
-                            self_group=group_name,
-                            feedback=feedback,
-                        ),
-                        timeout=per_group_timeout_s,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "Step 2B re-prompt timed out for %s after %ds.",
-                        group_name,
-                        per_group_timeout_s,
-                    )
-                    return "timeout"
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Step 2B re-prompt failed for %s: %s", group_name, exc
-                    )
-                    return "error"
-                if not xml_instructions:
-                    return "empty-response"
-                diagnostics = lint_instruction_text(
-                    xml_instructions, group_name
-                )
-                final_status = "ok"
-                if diagnostics:
-                    diag_block = "\n".join(
-                        f"  - {_format_diagnostic(d)}" for d in diagnostics
-                    )
-                    logger.warning(
-                        "Synthesized XML for %s still fails schema "
-                        "validation after retry (%d issue(s)). "
-                        "Proceeding anyway.\n%s",
-                        group_name,
-                        len(diagnostics),
-                        diag_block,
-                    )
-                    final_status = "warning"
-            else:
-                final_status = "ok"
+                final_status = "warning"
 
             xml_instructions = rewrite_agent_refs(
                 xml_instructions,
