@@ -37,7 +37,9 @@ from cxas_scrapi.migration.flow_visualizer import (
     FlowDependencyResolver,
     FlowTreeVisualizer,
 )
+from cxas_scrapi.migration.instruction_lint import lint_instruction_text
 from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.linter import LintResult
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,24 @@ GROUP_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{2,84}$")
 AGENT_REF_RE = re.compile(r"{@AGENT:\s*([^}]+)}")
 SENTINEL_REFS = {"END_SESSION", "END_FLOW"}
 DEFAULT_PER_GROUP_TIMEOUT_S = 600
+
+
+def _format_diagnostic(r: LintResult) -> str:
+    """Single-line render of a LintResult for prompts / errors."""
+    return f"[{r.rule_id}] {r.message}"
+
+
+def _build_validator_feedback(diagnostics: list[LintResult]) -> str:
+    """Render lint diagnostics into the re-prompt feedback block."""
+    diag_block = "\n".join(f"- {_format_diagnostic(d)}" for d in diagnostics)
+    return (
+        "### YOUR PREVIOUS RESPONSE FAILED CANONICAL-XML VALIDATION\n\n"
+        "Diagnostics:\n"
+        f"{diag_block}\n\n"
+        "CORRECT THESE ISSUES AND REGENERATE THE FULL INSTRUCTION SET. "
+        "Do not abbreviate. Do not include the original response in your "
+        "reply. Emit only the corrected XML."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -888,6 +908,22 @@ class StructuralConsolidator:
             if not xml_instructions:
                 return "empty-response"
 
+            diagnostics = lint_instruction_text(xml_instructions, group_name)
+            final_status = "ok"
+            if diagnostics:
+                diag_block = "\n".join(
+                    f"  - [{d.rule_id}] {d.message}" for d in diagnostics
+                )
+                logger.warning(
+                    "Synthesized XML for %s failed canonical-schema "
+                    "validation (%d issue(s)). "
+                    "Proceeding to Stage 2 optimization.\n%s",
+                    group_name,
+                    len(diagnostics),
+                    diag_block,
+                )
+                final_status = "warning"
+
             xml_instructions = rewrite_agent_refs(
                 xml_instructions,
                 m2g,
@@ -899,7 +935,7 @@ class StructuralConsolidator:
                 group_names=set(groupings.keys()),
             )
             consolidated_ir.agents[group_name].instruction = xml_instructions
-            return "ok"
+            return final_status
 
         try:
             results = await asyncio.gather(

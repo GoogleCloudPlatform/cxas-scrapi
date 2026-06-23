@@ -634,3 +634,48 @@ class MissingCurrentDate(Rule):
                 ),
             )
         ]
+
+
+@rule("instructions")
+class BannedLegacyXmlTags(Rule):
+    id = "I015"
+    name = "banned-legacy-xml-tags"
+    description = (
+        "Instruction contains legacy CamelCase / state-machine XML tags"
+        " that diverge from the canonical taskflow schema"
+    )
+    default_severity = Severity.ERROR
+
+    BANNED_TAGS = (
+        "<Agent>",
+        "<Conversation_Schema>",
+        "<Persona>",
+        "<Role>",
+        "<General_Instruction>",
+        "<Context>",
+        "<state",
+        "<transitions>",
+        "<transition ",
+    )
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+        return [
+            self.make_result(
+                file=rel,
+                line=_find_line(content, tag),
+                message=(
+                    f"Banned legacy XML tag '{tag}' — use the canonical"
+                    " lowercase taskflow schema instead"
+                ),
+                fix=(
+                    "Rewrite into <role>/<persona>/<primary_goal>/"
+                    "<constraints>/<guidelines>/<taskflow>/<subtask>/"
+                    "<step>/<trigger>/<action>"
+                ),
+            )
+            for tag in self.BANNED_TAGS
+            if tag in content
+        ]
