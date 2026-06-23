@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout base repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         # We checkout the base repository (main) to securely read maintainers.txt.
         # This prevents executing untrusted code from the fork.
 
