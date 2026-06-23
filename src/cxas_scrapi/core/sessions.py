@@ -22,7 +22,7 @@ import threading
 import time
 import uuid
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import certifi
 import requests
@@ -34,13 +34,23 @@ from google.protobuf import json_format
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 try:
-    from IPython.display import HTML, display  # noqa: F401
+    from IPython.display import HTML, display
 
     HAS_IPYTHON = True
 except ImportError:
     HAS_IPYTHON = False
 
-from cxas_scrapi.core.audio_transformer import AudioTransformer
+from cxas_scrapi.core.audio_transformer import (
+    AUDIO_CHANNELS,
+    AUDIO_SAMPLE_RATE_HZ,
+    AUDIO_SAMPLE_WIDTH,
+    AudioTransformer,
+)
+
+try:
+    from pydub import AudioSegment
+except ImportError:
+    AudioSegment = None
 from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
@@ -60,8 +70,58 @@ BIDI_SESSION_URI = (
 AUDIO_CHUNK_SIZE = 3200
 CHUNK_DELAY = 0.1
 SILENCE_PADDING_CHUNKS = 3
-SAMPLE_RATE = 16000
-SAMPLE_WIDTH = 2
+SAMPLE_RATE = AUDIO_SAMPLE_RATE_HZ
+SAMPLE_WIDTH = AUDIO_SAMPLE_WIDTH
+
+
+# Clean WebSocket close codes (RFC 6455)
+_WS_CLEAN_CLOSE_CODES = frozenset(
+    {
+        websocket.STATUS_NORMAL,
+        websocket.STATUS_GOING_AWAY,
+        websocket.STATUS_STATUS_NOT_AVAILABLE,
+    }
+)
+
+# Extract error kind from WS close reason payload
+_BIDI_KIND_RE = re.compile(r"generic::(\w+)")
+
+# Best-effort trace ID extraction from WS close reason
+_BIDI_TRACE_RE = re.compile(
+    r"(?:trace[_-]?id|trace)[\"'\s:=]+([a-zA-Z0-9_\-]+)", re.IGNORECASE
+)
+
+
+class BidiSessionError(Exception):
+    """Raised when the bidi WebSocket terminates abnormally.
+
+    Carries structured information about the close-frame or
+    connection-level error so callers can branch on:
+      - close_status_code: WS close code (e.g., 1007, 1011); None
+        for connection-level errors that closed without a frame
+      - server_error_kind: kind parsed from
+        "[ORIGINAL ERROR] generic::<kind>:" -- e.g., "resource_exhausted"
+      - server_trace_id: best-effort trace id extraction (often None)
+      - close_msg: raw close-reason string for fallback inspection
+    """
+
+    def __init__(
+        self,
+        message: str,
+        close_status_code: int | None = None,
+        close_msg: str | None = None,
+        server_error_kind: str | None = None,
+        server_trace_id: str | None = None,
+    ):
+        super().__init__(message)
+        self.close_status_code = close_status_code
+        self.close_msg = close_msg
+        self.server_error_kind = server_error_kind
+        self.server_trace_id = server_trace_id
+
+
+# Maximum timeout per WebSocket turn run
+_BIDI_RUN_TIMEOUT_S = 120
 
 
 class AgentTurnManager:
@@ -118,9 +178,11 @@ class BidiSessionHandler:
         self,
         location: str,
         token: str,
-        config: Dict[str, Any],
-        inputs: List[Dict[str, Any]],
-        user_agent: str = None,
+        config: dict[str, Any],
+        inputs: list[dict[str, Any]],
+        user_agent: str | None = None,
+        background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
     ):
         self.uri = BIDI_SESSION_URI + location
         self.token = token
@@ -128,14 +190,78 @@ class BidiSessionHandler:
         self.inputs = inputs
         self.user_agent = user_agent
         self.agent_turn_manager = AgentTurnManager()
-        self.ws_app = None
+        self.ws_app: websocket.WebSocketApp | None = None
         self.outputs = []
+        self._close_status_code: int | None = None
+        self._close_msg: str | None = None
+        self._connection_error: BaseException | None = None
+
+        # Setup continuous background noise segment if provided
+        self.bg_noise_segment = None
+        self.bg_noise_cursor = 0
+        if background_noise_file and AudioSegment is None:
+            raise ImportError(
+                "background_noise_file was provided, but pydub is not "
+                "installed or failed to import. Please install pydub "
+                "(and audioop-lts on Python 3.13+) to enable background noise."
+            )
+        if AudioSegment and background_noise_file:
+            try:
+                # Load and format to 16000Hz, 1ch, 16-bit (sample width 2) PCM
+                segment = AudioSegment.from_file(background_noise_file)
+                segment = (
+                    segment.set_frame_rate(SAMPLE_RATE)
+                    .set_channels(AUDIO_CHANNELS)
+                    .set_sample_width(SAMPLE_WIDTH)
+                )
+
+                # Pre-scale the noise to match the target SNR relative to a
+                # standard -20.0 dBFS speech level
+                if segment.dBFS != float("-inf"):
+                    target_noise_dbfs = -20.0 - bg_noise_snr
+                    volume_change = target_noise_dbfs - segment.dBFS
+                    self.bg_noise_segment = segment + volume_change
+                    logging.debug(
+                        "Pre-scaled continuous background noise: "
+                        "target = %.2f dBFS, delta = %.2f dB",
+                        target_noise_dbfs,
+                        volume_change,
+                    )
+                else:
+                    self.bg_noise_segment = segment - 15.0
+
+            except Exception as ex:
+                logging.warning(
+                    f"Failed to load continuous background noise file: {ex}"
+                )
+
+    def _get_next_noise_chunk(self, duration_ms: int) -> bytes:
+        """Extracts the next chunk of continuous background noise PCM bytes."""
+        chunk_bytes_len = int(SAMPLE_RATE * SAMPLE_WIDTH * (duration_ms / 1000))
+
+        if self.bg_noise_segment is None:
+            return b"\x00" * chunk_bytes_len
+
+        chunk_segment = self.bg_noise_segment[
+            self.bg_noise_cursor : self.bg_noise_cursor + duration_ms
+        ]
+        self.bg_noise_cursor += duration_ms
+
+        if self.bg_noise_cursor >= len(self.bg_noise_segment):
+            self.bg_noise_cursor = 0
+
+        if len(chunk_segment) < duration_ms:
+            padding_len = duration_ms - len(chunk_segment)
+            chunk_segment = chunk_segment + self.bg_noise_segment[:padding_len]
+
+        return chunk_segment.raw_data[:chunk_bytes_len]
 
     def _send_silence(self, num_chunks: int):
-        silence_chunk = b"\x00" * AUDIO_CHUNK_SIZE
+        chunk_duration_ms = 100
         for _ in range(num_chunks):
+            noise_chunk = self._get_next_noise_chunk(chunk_duration_ms)
             query_message = types.BidiSessionClientMessage(
-                realtime_input=types.SessionInput(audio=silence_chunk)
+                realtime_input=types.SessionInput(audio=noise_chunk)
             )
             query_json = json_format.MessageToJson(
                 query_message._pb,
@@ -146,7 +272,7 @@ class BidiSessionHandler:
             time.sleep(CHUNK_DELAY)
 
     def _send_audio_message(
-        self, audio_payload: Dict[str, Any], turn_index: int
+        self, audio_payload: dict[str, Any], turn_index: int
     ):
         audio_bytes = audio_payload["audio"]
         variables = audio_payload.get("variables")
@@ -175,6 +301,31 @@ class BidiSessionHandler:
 
         for i in range(0, len(audio_bytes), AUDIO_CHUNK_SIZE):
             chunk = audio_bytes[i : i + AUDIO_CHUNK_SIZE]
+
+            # Dynamically mix continuous background noise chunk-by-chunk
+            # in real-time
+            if self.bg_noise_segment is not None:
+                try:
+                    speech_seg = AudioSegment(
+                        chunk,
+                        frame_rate=SAMPLE_RATE,
+                        sample_width=SAMPLE_WIDTH,
+                        channels=AUDIO_CHANNELS,
+                    )
+                    noise_seg = self.bg_noise_segment[
+                        self.bg_noise_cursor : self.bg_noise_cursor + 100
+                    ]
+                    self.bg_noise_cursor += 100
+                    if self.bg_noise_cursor >= len(self.bg_noise_segment):
+                        self.bg_noise_cursor = 0
+
+                    mixed_seg = speech_seg.overlay(noise_seg)
+                    chunk = mixed_seg.raw_data[: len(chunk)]
+                except Exception as ex:
+                    logging.warning(
+                        "Failed to overlay continuous noise chunk in "
+                        f"real-time: {ex}"
+                    )
 
             query_message = types.BidiSessionClientMessage(
                 realtime_input=types.SessionInput(audio=chunk)
@@ -319,6 +470,8 @@ class BidiSessionHandler:
 
     def _on_error(self, ws, error):
         logging.debug("WebSocket error: %s", error)
+        # Stash connection-level errors
+        self._connection_error = error
 
     def _on_close(self, ws, close_status_code, close_msg):
         logging.debug(
@@ -326,6 +479,9 @@ class BidiSessionHandler:
             close_status_code,
             close_msg,
         )
+        # Stash close status to verify clean closure
+        self._close_status_code = close_status_code
+        self._close_msg = close_msg
 
     def run(self):
         logging.debug("Connecting to WebSocket: %s", self.uri)
@@ -349,7 +505,56 @@ class BidiSessionHandler:
         wst.start()
 
         logging.debug("Waiting for session to complete...")
-        wst.join()
+        wst.join(timeout=_BIDI_RUN_TIMEOUT_S)
+        if wst.is_alive():
+            # Force close connection on run timeout
+            logging.warning(
+                "Bidi session exceeded %ss without completing; forcing close.",
+                _BIDI_RUN_TIMEOUT_S,
+            )
+            if self._connection_error is None:
+                self._connection_error = TimeoutError(
+                    f"bidi run timed out after {_BIDI_RUN_TIMEOUT_S}s "
+                    "(no end-of-turn or close)"
+                )
+            try:
+                self.ws_app.close()
+            except Exception:
+                pass
+            wst.join(timeout=5)
+
+        # Check for abnormal WebSocket closures
+        if (
+            self._close_status_code is not None
+            and self._close_status_code not in _WS_CLEAN_CLOSE_CODES
+        ):
+            raw = self._close_msg or ""
+            kind_match = _BIDI_KIND_RE.search(raw)
+            trace_match = _BIDI_TRACE_RE.search(raw)
+            kind = kind_match.group(1) if kind_match else None
+            trace_id = trace_match.group(1) if trace_match else None
+            summary = (
+                f"CXAS bidi session closed by server "
+                f"(code={self._close_status_code}"
+                + (f", kind={kind}" if kind else "")
+                + (f", trace_id={trace_id}" if trace_id else "")
+                + ")"
+            )
+            raise BidiSessionError(
+                summary,
+                close_status_code=self._close_status_code,
+                close_msg=raw,
+                server_error_kind=kind,
+                server_trace_id=trace_id,
+            )
+
+        # Handle connection errors without close frames
+        if self._connection_error is not None and not self.outputs:
+            raise BidiSessionError(
+                f"CXAS bidi connection error: {self._connection_error}",
+                close_status_code=None,
+                close_msg=str(self._connection_error),
+            )
 
         return types.RunSessionResponse(outputs=self.outputs)
 
@@ -358,8 +563,8 @@ class Sessions(Common):
     def __init__(
         self,
         app_name: str,
-        deployment_id: str = None,
-        rate_limiter: Optional[RateLimiter] = None,
+        deployment_id: str | None = None,
+        rate_limiter: RateLimiter | None = None,
         **kwargs,
     ):
         """Initializes the Sessions client."""
@@ -432,7 +637,7 @@ class Sessions(Common):
         return str(uuid.uuid4())
 
     @staticmethod
-    def get_file_data(file_path: str) -> Dict[str, Any]:
+    def get_file_data(file_path: str) -> dict[str, Any]:
         """
         Reads a local file, returns a blob dict.
         """
@@ -468,7 +673,7 @@ class Sessions(Common):
         else:
             return pb_struct
 
-    def parse_result(self, res: Any):  # noqa: C901
+    def parse_result(self, res: Any):
         """
         Parses the CX Agent Studio session response to extract and print
         turn-by-turn interactions including User Queries, Agent Responses,
@@ -636,7 +841,7 @@ class Sessions(Common):
                                 )
                             )
 
-    def get_structured_response(self, response) -> Dict[str, Any]:
+    def get_structured_response(self, response) -> dict[str, Any]:
         """Parse response, avoiding duplicate text from diagnostic info.
 
         Returns a dictionary with keys:
@@ -645,6 +850,8 @@ class Sessions(Common):
         - tool_responses: List of tool responses received.
         - agent_transfer: Target agent if a transfer occurred.
         - session_ended: Boolean indicating if session ended.
+        - citations: List of citations used for response generation.
+        - payload: Custom payload dict if present.
         """
         parsed = ParsedSessionResponse(response)
         return {
@@ -662,10 +869,18 @@ class Sessions(Common):
             ],
             "agent_transfer": parsed.agent_transfer,
             "session_ended": parsed.session_ended,
+            "citations": parsed.citations,
+            "payload": (
+                parsed.custom_payloads[0] if parsed.custom_payloads else None
+            ),
         }
 
     def async_bidi_run_session(
-        self, config: dict, inputs: list[dict[str, Any]]
+        self,
+        config: dict,
+        inputs: list[dict[str, Any]],
+        background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
     ):
         if self.rate_limiter:
             self.rate_limiter.wait_and_consume()
@@ -683,6 +898,8 @@ class Sessions(Common):
             config,
             inputs,
             user_agent=self.user_agent,
+            background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
         )
         return handler.run()
 
@@ -692,26 +909,28 @@ class Sessions(Common):
         request = types.RunSessionRequest(config=config, inputs=inputs)
         return self.client.run_session(request=request)
 
-    def run(  # noqa: C901
+    def run(
         self,
         session_id: str,
-        text: Optional[str | list[str]] = None,
-        dtmf: Optional[str] = None,
-        event: Optional[str] = None,
-        event_vars: Optional[Dict[str, Any]] = None,
-        blob: bytes = None,
+        text: str | list[str] | None = None,
+        dtmf: str | None = None,
+        event: str | None = None,
+        event_vars: dict[str, Any] | None = None,
+        blob: bytes | None = None,
         blob_mime_type: str = "application/octet-stream",
-        variables: Optional[Dict[str, Any]] = None,
-        tool_responses: Optional[List[Dict[str, Any]]] = None,
-        audio: bytes = None,
-        audio_config: Optional[Dict[str, Any]] = None,
-        input_audio_config: Optional[Dict[str, Any]] = None,
-        output_audio_config: Optional[Dict[str, Any]] = None,
-        deployment_id: Optional[str] = None,
-        historical_contexts: Optional[List[Dict[str, Any]] | str] = None,
-        turn_count: Optional[int] = None,
+        variables: dict[str, Any] | None = None,
+        tool_responses: list[dict[str, Any]] | None = None,
+        audio: bytes | None = None,
+        audio_config: dict[str, Any] | None = None,
+        input_audio_config: dict[str, Any] | None = None,
+        output_audio_config: dict[str, Any] | None = None,
+        deployment_id: str | None = None,
+        historical_contexts: list[dict[str, Any]] | str | None = None,
+        turn_count: int | None = None,
         modality: Modality | str = Modality.TEXT,
         use_tool_fakes: bool = False,
+        background_noise_file: str | None = None,
+        burst_noise_files: list[str] | None = None,
     ):
         """Sends inputs to a Conversational Agents Session and returns the
         response.
@@ -758,9 +977,10 @@ class Sessions(Common):
                     f"Invalid modality: {modality}. Must be 'text' or 'audio'."
                 ) from e
 
-        config = {"session": f"{self.app_name}/sessions/{session_id}"}
-        if use_tool_fakes:
-            config["use_tool_fakes"] = True
+        config = {
+            "session": f"{self.app_name}/sessions/{session_id}",
+            "use_tool_fakes": use_tool_fakes,
+        }
         inputs = []
 
         if modality == Modality.AUDIO:
@@ -796,7 +1016,7 @@ class Sessions(Common):
                 )
                 conv = ch.get_conversation(historical_contexts)
                 d = type(conv).to_dict(conv)
-                if "turns" in d and d["turns"]:
+                if d.get("turns"):
                     turns_to_process = d["turns"]
                     if turn_count is not None and turn_count > 0:
                         turns_to_process = turns_to_process[:turn_count]
@@ -892,6 +1112,8 @@ class Sessions(Common):
                             text=input,
                             credentials=self.creds,
                             project_id=self.project_id,
+                            background_noise_file=background_noise_file,
+                            burst_noise_files=burst_noise_files,
                         )
                     )
                 for input_data in input_audio_bytes:
@@ -903,9 +1125,17 @@ class Sessions(Common):
                     if variables:
                         audio_payload["variables"] = variables
                     inputs.append({"audio": audio_payload})
-                return self.async_bidi_run_session(config=config, inputs=inputs)
+                return self.async_bidi_run_session(
+                    config=config,
+                    inputs=inputs,
+                    background_noise_file=background_noise_file,
+                )
             elif inputs:
-                return self.async_bidi_run_session(config=config, inputs=inputs)
+                return self.async_bidi_run_session(
+                    config=config,
+                    inputs=inputs,
+                    background_noise_file=background_noise_file,
+                )
             else:
                 raise ValueError(
                     "Input payloads (text, audio, event, etc.) must be "
@@ -950,7 +1180,7 @@ class Sessions(Common):
             raise ValueError("Modality must be either 'text' or 'audio'.")
 
     def send_event(
-        self, unique_id: str, event_name: str, event_vars: Dict[str, Any]
+        self, unique_id: str, event_name: str, event_vars: dict[str, Any]
     ):
         if self.rate_limiter:
             self.rate_limiter.wait_and_consume()

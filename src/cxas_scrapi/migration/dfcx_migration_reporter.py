@@ -15,7 +15,7 @@
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
 from cxas_scrapi.migration.prompts import Prompts
 from cxas_scrapi.utils.gemini import GeminiGenerate
@@ -38,15 +38,15 @@ migration process,
         self.gemini_client = gemini_client
 
         # Dialogflow migration logs (retained from previous snippet)
-        self.app_info: Dict[str, str] = {}
-        self.variables: List[Dict[str, str]] = []
-        self.tools: List[Dict[str, str]] = []
-        self.agents: List[Dict[str, str]] = []
-        self.dependencies: List[Dict[str, str]] = []
-        self.examples: List[Dict[str, str]] = []
-        self.actions: List[Dict[str, str]] = []
-        self.transformations: List[Dict[str, str]] = []
-        self.skipped: List[Dict[str, str]] = []
+        self.app_info: dict[str, str] = {}
+        self.variables: list[dict[str, str]] = []
+        self.tools: list[dict[str, str]] = []
+        self.agents: list[dict[str, str]] = []
+        self.dependencies: list[dict[str, str]] = []
+        self.examples: list[dict[str, str]] = []
+        self.actions: list[dict[str, str]] = []
+        self.transformations: list[dict[str, str]] = []
+        self.skipped: list[dict[str, str]] = []
 
         # Augmented details
         self.generated_features: str = ""
@@ -75,7 +75,7 @@ migration process,
         tool_type: str,
         original_name: str,
         new_id: str,
-        ops: List[str] = None,
+        ops: list[str] | None = None,
     ):
         entry = {"type": tool_type, "original": original_name, "new_id": new_id}
         if ops:
@@ -127,7 +127,7 @@ migration process,
         )
 
     async def generate_cxas_augmented_details(
-        self, agent_config: Dict[str, Any]
+        self, agent_config: dict[str, Any]
     ):
         """Uses Gemini to generate user journeys and analyze instructions,
         tools, and callbacks based on the provided CXAS agent configuration.

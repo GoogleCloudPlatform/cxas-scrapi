@@ -520,6 +520,13 @@ class MigrationCLI:
 
     def run(self, default_agent_name: str, cx_api: Any):
         """Runs the full interactive CLI dashboard."""
+        if not sys.stdin.isatty():
+            self.console.print(
+                "[red]ERROR: Migration dashboard requires an interactive "
+                "terminal.[/]"
+            )
+            sys.exit(1)
+
         self.console.print(
             "[bold green]Welcome to the CXAS Migration Tool![/bold green]"
         )
@@ -647,7 +654,10 @@ class MigrationCLI:
                 close_tee_logging()
 
             # Display status after migration
-            if hasattr(migration_service, "ir") and migration_service.ir:
+            if (
+                hasattr(migration_service, "ir")
+                and migration_service.ir is not None
+            ):
                 self.display_status(migration_service.ir)
 
     async def _run_post_migration_opt_ins(
@@ -687,7 +697,7 @@ class MigrationCLI:
                     bundle, bundle_path, phase="migrate", status="ok"
                 )
                 self.console.print(f"[green]IR bundle saved → {bundle_path}[/]")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Bundle persist failed: %s", exc)
 
         # 2. Structural consolidation (Gemini-driven N→M grouping).
@@ -720,7 +730,7 @@ class MigrationCLI:
                 self.console.print(
                     "[green]Structural consolidation complete.[/]"
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Consolidation failed: %s", exc)
                 self.console.print(f"[yellow]Consolidation failed: {exc}[/]")
                 return
@@ -751,7 +761,7 @@ class MigrationCLI:
                     "[green]Instruction state machines & tool mocks "
                     "complete.[/]"
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Stage 2 optimization failed: %s", exc)
                 self.console.print(f"[yellow]Stage 2 failed: {exc}[/]")
 
@@ -777,7 +787,7 @@ class MigrationCLI:
                     f"[green]Stage 3 wiring: updated={updated} "
                     f"skipped={skipped} failed={failed}[/]"
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Stage 3 wiring failed: %s", exc)
                 self.console.print(f"[yellow]Stage 3 wiring failed: {exc}[/]")
 
@@ -1043,6 +1053,15 @@ def run_resume(args: argparse.Namespace) -> None:
     bundle picker and stage menu. If ``--target-name`` or ``--ir-bundle``
     is given, skips the picker and goes straight to the stage menu.
     """
+    if (
+        not sys.stdin.isatty()
+        or getattr(args, "yes", False)
+        or getattr(args, "no_input", False)
+    ):
+        _sub_console.print(
+            "[red]ERROR: 'resume' requires an interactive terminal.[/]"
+        )
+        sys.exit(1)
     if args.target_name or args.ir_bundle:
         bundle_path = _resolve_bundle_path(args)
     else:

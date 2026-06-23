@@ -37,7 +37,9 @@ from cxas_scrapi.migration.flow_visualizer import (
     FlowDependencyResolver,
     FlowTreeVisualizer,
 )
+from cxas_scrapi.migration.instruction_lint import lint_instruction_text
 from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.linter import LintResult
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,24 @@ GROUP_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{2,84}$")
 AGENT_REF_RE = re.compile(r"{@AGENT:\s*([^}]+)}")
 SENTINEL_REFS = {"END_SESSION", "END_FLOW"}
 DEFAULT_PER_GROUP_TIMEOUT_S = 600
+
+
+def _format_diagnostic(r: LintResult) -> str:
+    """Single-line render of a LintResult for prompts / errors."""
+    return f"[{r.rule_id}] {r.message}"
+
+
+def _build_validator_feedback(diagnostics: list[LintResult]) -> str:
+    """Render lint diagnostics into the re-prompt feedback block."""
+    diag_block = "\n".join(f"- {_format_diagnostic(d)}" for d in diagnostics)
+    return (
+        "### YOUR PREVIOUS RESPONSE FAILED CANONICAL-XML VALIDATION\n\n"
+        "Diagnostics:\n"
+        f"{diag_block}\n\n"
+        "CORRECT THESE ISSUES AND REGENERATE THE FULL INSTRUCTION SET. "
+        "Do not abbreviate. Do not include the original response in your "
+        "reply. Emit only the corrected XML."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -809,6 +829,17 @@ class StructuralConsolidator:
             groupings
         )
 
+        # Pre-create context caches for the shared prompt prefixes so that
+        # inputs 2-4 (global vars / toolsets / tools) for 2A and input 3
+        # (available tools) for 2B are not re-sent on every per-group call.
+        # Cache creation may return None if the content is below the minimum
+        # token threshold; the designer falls back to uncached generation.
+        sys_2a, shared_2a = AsyncAgentDesigner.build_2a_shared_context(self.ir)
+        cache_2a = await self.gemini.create_cache(sys_2a, shared_2a)
+
+        sys_2b, shared_2b = AsyncAgentDesigner.build_2b_shared_context(self.ir)
+        cache_2b = await self.gemini.create_cache(sys_2b, shared_2b)
+
         async def _one(group_name: str, members: list[str]) -> str:
             combined_tree = _build_combined_tree_view(
                 members, self.source_data, self.ir
@@ -828,6 +859,7 @@ class StructuralConsolidator:
                         target_ir=self.ir,
                         available_groups=available_groups_context,
                         self_group=group_name,
+                        cached_content_name=cache_2a,
                     ),
                     timeout=per_group_timeout_s,
                 )
@@ -838,7 +870,7 @@ class StructuralConsolidator:
                     per_group_timeout_s,
                 )
                 return "timeout"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Step 2A failed for %s: %s", group_name, exc)
                 return "error"
 
@@ -858,6 +890,7 @@ class StructuralConsolidator:
                         target_ir=self.ir,
                         available_groups=available_groups_context,
                         self_group=group_name,
+                        cached_content_name=cache_2b,
                     ),
                     timeout=per_group_timeout_s,
                 )
@@ -868,12 +901,28 @@ class StructuralConsolidator:
                     per_group_timeout_s,
                 )
                 return "timeout"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Step 2B failed for %s: %s", group_name, exc)
                 return "error"
 
             if not xml_instructions:
                 return "empty-response"
+
+            diagnostics = lint_instruction_text(xml_instructions, group_name)
+            final_status = "ok"
+            if diagnostics:
+                diag_block = "\n".join(
+                    f"  - [{d.rule_id}] {d.message}" for d in diagnostics
+                )
+                logger.warning(
+                    "Synthesized XML for %s failed canonical-schema "
+                    "validation (%d issue(s)). "
+                    "Proceeding to Stage 2 optimization.\n%s",
+                    group_name,
+                    len(diagnostics),
+                    diag_block,
+                )
+                final_status = "warning"
 
             xml_instructions = rewrite_agent_refs(
                 xml_instructions,
@@ -886,18 +935,23 @@ class StructuralConsolidator:
                 group_names=set(groupings.keys()),
             )
             consolidated_ir.agents[group_name].instruction = xml_instructions
-            return "ok"
+            return final_status
 
-        statuses: dict[str, str] = {}
-        results = await asyncio.gather(
-            *(
-                _one(group_name, payload.get("agents", []))
-                for group_name, payload in groupings.items()
-            ),
-            return_exceptions=False,
-        )
-        for (group_name, _), status in zip(
-            groupings.items(), results, strict=True
-        ):
-            statuses[group_name] = status
-        return statuses
+        try:
+            results = await asyncio.gather(
+                *(
+                    _one(group_name, payload.get("agents", []))
+                    for group_name, payload in groupings.items()
+                ),
+                return_exceptions=False,
+            )
+        finally:
+            for cache_name in filter(None, [cache_2a, cache_2b]):
+                await self.gemini.delete_cache(cache_name)
+
+        return {
+            group_name: status
+            for (group_name, _), status in zip(
+                groupings.items(), results, strict=True
+            )
+        }

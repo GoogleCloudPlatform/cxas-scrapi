@@ -198,6 +198,41 @@ if not failed.empty:
 
 ---
 
+## Using Tool Fakes
+
+You can enable tool fakes in Turn Evals to bypass real tool backends (webhooks) and use pre-configured platform fakes instead. This is done by adding `use_tool_fakes: true` in the `config:` block at either the test case level or globally in your YAML test file.
+
+### At the Test Case level
+```yaml
+test_cases:
+  - name: "order_lookup_triggers_tool"
+    config:
+      use_tool_fakes: true
+    turns:
+      - turn: user
+        user: "What's the status of order ORD-12345?"
+        expectations:
+          - type: tool_called
+            value: "lookup_order"
+```
+
+### Globally (for all tests in the file)
+```yaml
+config:
+  use_tool_fakes: true
+
+test_cases:
+  - name: "order_lookup_triggers_tool"
+    turns:
+      - turn: user
+        user: "What's the status of order ORD-12345?"
+        expectations:
+          - type: tool_called
+            value: "lookup_order"
+```
+
+---
+
 ## Integration with the skills system
 
 The Run skill includes Turn Evals as part of its combined reporting. When you run all four eval types, Turn Eval results appear in the combined report alongside tool tests, goldens, and simulations, making it easy to see the full picture at a glance.

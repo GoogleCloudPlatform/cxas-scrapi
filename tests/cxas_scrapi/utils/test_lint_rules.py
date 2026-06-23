@@ -46,7 +46,7 @@ def test_i001_missing_tags(tmp_path, context):
     f.write_text("Just some text without tags.")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 3  # noqa: PLR2004
+    assert len(results) == 3
     tags = {r.message for r in results}
     assert any("<role>" in t for t in tags)
     assert any("<persona>" in t for t in tags)
@@ -193,9 +193,7 @@ def test_i014_in_global_only(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
-    (tmp_path / "global_instruction.txt").write_text(
-        "Today is ${current_date}."
-    )
+    (tmp_path / "global_instruction.txt").write_text("Today is {current_date}.")
     f = tmp_path / "instruction.txt"
     f.write_text("No date here.")
 
@@ -208,11 +206,9 @@ def test_i014_in_global_and_agent(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
-    (tmp_path / "global_instruction.txt").write_text(
-        "Today is ${current_date}."
-    )
+    (tmp_path / "global_instruction.txt").write_text("Today is {current_date}.")
     f = tmp_path / "instruction.txt"
-    f.write_text("Date: ${current_date}.")
+    f.write_text("Date: {current_date}.")
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -227,7 +223,7 @@ def test_i014_in_all_agents_not_global(tmp_path, context):
     for name in ("agent_a", "agent_b"):
         d = tmp_path / "agents" / name
         d.mkdir(parents=True)
-        (d / "instruction.txt").write_text("Date: ${current_date}.")
+        (d / "instruction.txt").write_text("Date: {current_date}.")
     # Global does not have it
     gi = tmp_path / "global_instruction.txt"
     gi.write_text("No date here.")
@@ -244,7 +240,7 @@ def test_i014_in_some_agents_not_global(tmp_path, context):
     # agent_a has it, agent_b does not
     a = tmp_path / "agents" / "agent_a"
     a.mkdir(parents=True)
-    (a / "instruction.txt").write_text("Date: ${current_date}.")
+    (a / "instruction.txt").write_text("Date: {current_date}.")
     b = tmp_path / "agents" / "agent_b"
     b.mkdir(parents=True)
     (b / "instruction.txt").write_text("No date here.")
@@ -268,12 +264,12 @@ def test_i014_in_some_agents_not_global(tmp_path, context):
 
 
 def test_i014_accepts_double_brace_syntax(tmp_path, context):
-    """${{current_date}} syntax is also valid."""
+    """{{current_date}} syntax is also valid."""
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
     f = tmp_path / "global_instruction.txt"
-    f.write_text("Today is ${{current_date}}.")
+    f.write_text("Today is {{current_date}}.")
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -317,6 +313,55 @@ def test_i014_no_agents_directory(tmp_path, context):
     # No agents dir means _all_agent_instructions_have_date returns True
     # (vacuously), so global is not flagged
     assert len(results) == 0
+
+
+def test_i015_banned_legacy_xml_tags(tmp_path, context):
+    """Instruction with legacy CamelCase / state-machine tags fires I015."""
+    from cxas_scrapi.utils.lint_rules.instructions import BannedLegacyXmlTags  # noqa: PLC0415,I001
+
+    rule = BannedLegacyXmlTags()
+    f = tmp_path / "instruction.txt"
+    content = (
+        "<Agent>\n"
+        "  <Conversation_Schema>\n"
+        '    <state id="main"><transitions>'
+        '<transition condition="x" next_state="y"/></transitions></state>\n'
+        "  </Conversation_Schema>\n"
+        "</Agent>\n"
+    )
+    f.write_text(content)
+
+    results = rule.check(f, content, context)
+    tags = {r.message for r in results}
+    assert any("<Agent>" in t for t in tags)
+    assert any("<Conversation_Schema>" in t for t in tags)
+    assert any("<state" in t for t in tags)
+    assert any("<transitions>" in t for t in tags)
+    assert any("<transition " in t for t in tags)
+
+
+def test_i015_canonical_text_ok(tmp_path, context):
+    """Canonical lowercase taskflow XML produces zero I015 findings."""
+    from cxas_scrapi.utils.lint_rules.instructions import BannedLegacyXmlTags  # noqa: PLC0415,I001
+
+    rule = BannedLegacyXmlTags()
+    f = tmp_path / "instruction.txt"
+    content = (
+        "<role>do things</role>\n"
+        "<persona>- be helpful</persona>\n"
+        "<taskflow>\n"
+        '  <subtask name="Greet">\n'
+        '    <step name="Welcome">\n'
+        "      <trigger>start</trigger>\n"
+        "      <action>1. hi</action>\n"
+        "    </step>\n"
+        "  </subtask>\n"
+        "</taskflow>\n"
+    )
+    f.write_text(content)
+
+    results = rule.check(f, content, context)
+    assert results == []
 
 
 # ── Callback Rules ───────────────────────────────────────────────────────
@@ -421,7 +466,7 @@ def test_c003_camelcase_detected(tmp_path, context):
     f.write_text("def myFunction(x): pass\ndef anotherFunc(y): pass")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
     assert any("myFunction" in r.message for r in results)
 
 
@@ -946,7 +991,7 @@ def test_t007_not_snake_case(tmp_path, context):
     )
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
 
 
 def test_t007_snake_case_ok(tmp_path, context):
@@ -1407,7 +1452,7 @@ def test_e010_old_format(tmp_path, context):
     f.write_text("tool_name: get_balance\ntest_cases:\n  - input: {}")
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
 
 
 def test_e010_correct_key(tmp_path, context):
@@ -1505,7 +1550,7 @@ def test_a002_missing_required_fields(tmp_path, context):
     f.write_text('{"description": "test"}')
 
     results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2  # noqa: PLR2004
+    assert len(results) == 2
     fields = {r.message for r in results}
     assert any("name" in m for m in fields)
     assert any("displayName" in m for m in fields)
@@ -1515,7 +1560,7 @@ def test_a002_missing_required_fields(tmp_path, context):
 
 
 def test_v001_app_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")
@@ -1530,7 +1575,7 @@ def test_v001_app_valid(tmp_path, context):
 
 
 def test_v001_app_missing_config(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")
@@ -1544,7 +1589,7 @@ def test_v001_app_missing_config(tmp_path, context):
 
 
 def test_v002_agent_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1560,7 +1605,7 @@ def test_v002_agent_valid(tmp_path, context):
 
 
 def test_v002_agent_missing_config(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1574,7 +1619,7 @@ def test_v002_agent_missing_config(tmp_path, context):
 
 
 def test_v003_tool_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V003")
@@ -1589,7 +1634,7 @@ def test_v003_tool_valid(tmp_path, context):
 
 
 def test_v005_guardrail_valid(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V005")
@@ -1604,7 +1649,7 @@ def test_v005_guardrail_valid(tmp_path, context):
 
 
 def test_v006_evaluation_invalid_field(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V006")
@@ -1622,7 +1667,7 @@ def test_v006_evaluation_invalid_field(tmp_path, context):
 
 
 def test_schema_missing_referenced_file(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V002")
@@ -1640,7 +1685,7 @@ def test_schema_missing_referenced_file(tmp_path, context):
 
 
 def test_schema_missing_required_field(tmp_path, context):
-    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415,I001
+    from cxas_scrapi.utils.linter import build_registry  # noqa: PLC0415
 
     registry = build_registry()
     rule = registry.get("V001")

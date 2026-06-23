@@ -24,9 +24,10 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 import yaml
 from google.cloud.dialogflowcx_v3beta1 import services as cx_services
@@ -48,17 +49,17 @@ class ConversationTurn:
 
     turn: int
     user_query: str
-    agent_responses: List[str] = field(default_factory=list)
-    response_messages: List[Dict[str, Any]] = field(default_factory=list)
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    playbook_invocations: List[Dict[str, Any]] = field(default_factory=list)
-    flow_invocations: List[Dict[str, Any]] = field(default_factory=list)
-    current_page: Optional[str] = None
-    current_playbooks: List[str] = field(default_factory=list)
-    intent: Optional[str] = None
-    match_type: Optional[str] = None
-    confidence: Optional[float] = None
-    parameters: Dict[str, Any] = field(default_factory=dict)
+    agent_responses: list[str] = field(default_factory=list)
+    response_messages: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    playbook_invocations: list[dict[str, Any]] = field(default_factory=list)
+    flow_invocations: list[dict[str, Any]] = field(default_factory=list)
+    current_page: str | None = None
+    current_playbooks: list[str] = field(default_factory=list)
+    intent: str | None = None
+    match_type: str | None = None
+    confidence: float | None = None
+    parameters: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -69,9 +70,9 @@ class ConversationTrace:
     session_id: str
     language_code: str
     started_at: str
-    turns: List[ConversationTurn] = field(default_factory=list)
+    turns: list[ConversationTurn] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "agent_id": self.agent_id,
             "session_id": self.session_id,
@@ -93,11 +94,11 @@ class DFCXConversationRunner(BaseDFCXClient):
     def __init__(
         self,
         agent_id: str,
-        creds_path: Optional[str] = None,
+        creds_path: str | None = None,
         creds: Any = None,
         language_code: str = "en",
-        session_id: Optional[str] = None,
-        environment_id: Optional[str] = None,
+        session_id: str | None = None,
+        environment_id: str | None = None,
     ):
         self.agent_id = agent_id
         self.language_code = language_code
@@ -107,9 +108,9 @@ class DFCXConversationRunner(BaseDFCXClient):
         # Lazy resource clients & display-name maps.
         self._sessions_client = None
         self._history_client = None
-        self._tools_map: Optional[Dict[str, str]] = None
-        self._playbooks_map: Optional[Dict[str, str]] = None
-        self._flows_map: Optional[Dict[str, str]] = None
+        self._tools_map: dict[str, str] | None = None
+        self._playbooks_map: dict[str, str] | None = None
+        self._flows_map: dict[str, str] | None = None
 
         self.session_id = session_id or self._build_session_id(
             agent_id, environment_id
@@ -129,8 +130,8 @@ class DFCXConversationRunner(BaseDFCXClient):
     def send_message(
         self,
         text: str,
-        parameters: Optional[Dict[str, Any]] = None,
-        end_user_metadata: Optional[Dict[str, Any]] = None,
+        parameters: dict[str, Any] | None = None,
+        end_user_metadata: dict[str, Any] | None = None,
     ) -> ConversationTurn:
         """Send a single user utterance and record the traced turn."""
         logger.info("Turn %d -> %s", len(self.trace.turns) + 1, text)
@@ -158,7 +159,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             self.send_message(utterance)
         return self.trace
 
-    def list_conversations(self) -> List[Dict[str, Any]]:
+    def list_conversations(self) -> list[dict[str, Any]]:
         """List historical conversations stored for this agent.
 
         Returns a list of dicts: `{name, start_time, interaction_count}`.
@@ -236,7 +237,7 @@ class DFCXConversationRunner(BaseDFCXClient):
         cls,
         agent_id: str,
         conversation_id: str,
-        creds_path: Optional[str] = None,
+        creds_path: str | None = None,
         creds: Any = None,
         language_code: str = "en",
     ) -> "DFCXConversationRunner":
@@ -252,7 +253,7 @@ class DFCXConversationRunner(BaseDFCXClient):
         return runner
 
     @staticmethod
-    def _extract_user_input(query_input) -> Optional[str]:
+    def _extract_user_input(query_input) -> str | None:
         """Pull the user-facing text out of a recorded QueryInput."""
         if query_input is None:
             return None
@@ -291,7 +292,7 @@ class DFCXConversationRunner(BaseDFCXClient):
     # ------------------------------------------------------------------ #
 
     def _build_session_id(
-        self, agent_id: str, environment_id: Optional[str]
+        self, agent_id: str, environment_id: str | None
     ) -> str:
         sid = uuid.uuid4()
         if environment_id:
@@ -322,15 +323,15 @@ class DFCXConversationRunner(BaseDFCXClient):
     def _build_detect_intent_request(
         self,
         text: str,
-        parameters: Optional[Dict[str, Any]],
-        end_user_metadata: Optional[Dict[str, Any]],
+        parameters: dict[str, Any] | None,
+        end_user_metadata: dict[str, Any] | None,
     ):
         text_input = cx_types.session.TextInput(text=text)
         query_input = cx_types.session.QueryInput(
             text=text_input, language_code=self.language_code
         )
 
-        query_param_kwargs: Dict[str, Any] = {}
+        query_param_kwargs: dict[str, Any] = {}
         if parameters:
             query_param_kwargs["parameters"] = parameters
         if end_user_metadata:
@@ -356,7 +357,7 @@ class DFCXConversationRunner(BaseDFCXClient):
         parts = value.split("/")
         return len(parts) >= 8 and parts[0] == "projects"
 
-    def _get_tools_map(self) -> Dict[str, str]:
+    def _get_tools_map(self) -> dict[str, str]:
         if self._tools_map is not None:
             return self._tools_map
         client = cx_services.tools.ToolsClient(
@@ -370,7 +371,7 @@ class DFCXConversationRunner(BaseDFCXClient):
         }
         return self._tools_map
 
-    def _get_playbooks_map(self) -> Dict[str, str]:
+    def _get_playbooks_map(self) -> dict[str, str]:
         if self._playbooks_map is not None:
             return self._playbooks_map
         client = cx_services.playbooks.PlaybooksClient(
@@ -384,7 +385,7 @@ class DFCXConversationRunner(BaseDFCXClient):
         }
         return self._playbooks_map
 
-    def _get_flows_map(self) -> Dict[str, str]:
+    def _get_flows_map(self) -> dict[str, str]:
         if self._flows_map is not None:
             return self._flows_map
         client = cx_services.flows.FlowsClient(
@@ -446,7 +447,7 @@ class DFCXConversationRunner(BaseDFCXClient):
         # Fall back to flat response_messages when no generative trace.
         if not turn.agent_responses and getattr(res, "response_messages", None):
             for msg in res.response_messages:
-                msg_dict = MessageToDict(msg._pb)  # noqa: SLF001
+                msg_dict = MessageToDict(msg._pb)
                 turn.response_messages.append(msg_dict)
                 text_block = msg_dict.get("text", {}).get("text")
                 if text_block:
@@ -503,7 +504,7 @@ class DFCXConversationRunner(BaseDFCXClient):
                 }
             )
 
-    def _build_tool_call(self, tool_use) -> Dict[str, Any]:
+    def _build_tool_call(self, tool_use) -> dict[str, Any]:
         """Normalize a tool_use action.
 
         Inline actions (no registered tool resource) are tagged
@@ -556,7 +557,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             return empty_top_key
         return param_map
 
-    def _convert_parameters(self, params) -> Dict[str, Any]:
+    def _convert_parameters(self, params) -> dict[str, Any]:
         """Recursively turn proto MapComposite/RepeatedComposite into plain
         Python types so they can be YAML-serialized cleanly."""
         out = {}
@@ -569,8 +570,8 @@ class DFCXConversationRunner(BaseDFCXClient):
             out[key] = value
         return out
 
-    def _recurse_marshal_to_dict(self, marshal_object) -> Dict[str, Any]:
-        out: Dict[str, Any] = {}
+    def _recurse_marshal_to_dict(self, marshal_object) -> dict[str, Any]:
+        out: dict[str, Any] = {}
         for k, v in marshal_object.items():
             if isinstance(v, maps.MapComposite):
                 converted = self._recurse_marshal_to_dict(v)
@@ -581,8 +582,8 @@ class DFCXConversationRunner(BaseDFCXClient):
             out[k] = converted
         return out
 
-    def _recurse_repeated_composite(self, repeated_object) -> List[Any]:
-        out: List[Any] = []
+    def _recurse_repeated_composite(self, repeated_object) -> list[Any]:
+        out: list[Any] = []
         for item in repeated_object:
             if isinstance(item, maps.MapComposite):
                 out.append(self._recurse_marshal_to_dict(item))

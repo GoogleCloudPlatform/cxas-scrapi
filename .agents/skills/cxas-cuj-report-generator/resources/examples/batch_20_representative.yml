@@ -1,0 +1,34 @@
+subintent_id: gift-card-balance
+subintent_name: Check Gift Card Balance
+parent_cuj: Loyalty & Rewards
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I received a digital gift card code, 'GIFT-VAL-50', and I want to check the remaining balance.
+- speaker: Agent
+  text: I can certainly check that balance for you! Let me query the card code in our registry.
+- speaker: Agent
+  text: Querying gift card balance from code.
+  tool_call:
+    name: get_gift_card_balance
+    payload:
+      card_code: GIFT-VAL-50
+    response:
+      status: success
+      card_code: GIFT-VAL-50
+      balance: 50.0
+      active: true
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

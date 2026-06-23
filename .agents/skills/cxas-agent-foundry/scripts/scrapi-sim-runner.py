@@ -117,6 +117,9 @@ class EnhancedSimRunner(SimulationEvals):
         session_id: Optional[str] = None,
         console_logging: bool = True,
         modality: str = "text",
+        use_tool_fakes: bool = False,
+        background_noise_file: Optional[str] = None,
+        **kwargs: Any,
     ) -> LLMUserConversation:
         """Run a simulated conversation with variable injection."""
         if session_id is None:
@@ -150,6 +153,7 @@ class EnhancedSimRunner(SimulationEvals):
                         "session_id": session_id,
                         "text": user_utterance,
                         "modality": modality,
+                        "use_tool_fakes": use_tool_fakes,
                     }
                     # Inject variables on first turn only
                     if first_turn and session_params:
@@ -364,6 +368,7 @@ def cmd_run(args):
         model=model,
         modality=modality,
         verbose=args.verbose,
+        use_tool_fakes=args.use_tool_fakes,
     )
 
     # Summary
@@ -451,6 +456,12 @@ def main():
     p_run.add_argument("--runs", type=int, default=1)
     p_run.add_argument("--parallel", type=int, default=1, help="Number of concurrent sessions (default: 1)")
     p_run.add_argument("--verbose", action="store_true")
+    p_run.add_argument(
+        "--use-tool-fakes",
+        action="store_true",
+        default=False,
+        help="Use fake tools if available",
+    )
     p_run.add_argument(
         "--gcs-report-path",
         type=str,

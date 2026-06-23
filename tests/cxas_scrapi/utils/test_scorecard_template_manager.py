@@ -51,7 +51,7 @@ class TestScorecardTemplateManager:
         assert loaded_questions[0].get("questionBody") == "Question 1"
         assert loaded_questions[1].get("questionBody") == "Question 2"
 
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template_data = json.load(f)
 
         assert scorecard_template_manager.SCORECARD_KEY in template_data
@@ -95,7 +95,7 @@ class TestScorecardTemplateManager:
             scorecard, questions, str(path)
         )
 
-        with open(path, "r") as f:
+        with open(path) as f:
             data = json.load(f)
         assert (
             data[scorecard_template_manager.SCORECARD_KEY]["displayName"]
@@ -117,7 +117,7 @@ class TestScorecardTemplateManager:
             scorecard, questions, str(path)
         )
 
-        with open(path, "r") as f:
+        with open(path) as f:
             data = json5.load(f)
         assert (
             data[scorecard_template_manager.SCORECARD_KEY]["displayName"]
@@ -139,7 +139,7 @@ class TestScorecardTemplateManager:
             scorecard, questions, str(path)
         )
 
-        with open(path, "r") as f:
+        with open(path) as f:
             data = yaml.safe_load(f)
         assert (
             data[scorecard_template_manager.SCORECARD_KEY]["displayName"]

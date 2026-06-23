@@ -36,7 +36,7 @@ def _make_app_dir(tmp_path, app, env=None, env_name=None):
 
 
 def test_load_missing_app_json_raises(tmp_path):
-    with pytest.raises(FileNotFoundError, match="app.json not found"):
+    with pytest.raises(FileNotFoundError, match=r"app\.json not found"):
         AppConfig.load(app_dir=str(tmp_path))
 
 

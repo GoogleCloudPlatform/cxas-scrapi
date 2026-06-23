@@ -15,7 +15,7 @@
 import json
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from google.protobuf import json_format
 from google.protobuf.json_format import MessageToDict
@@ -50,8 +50,8 @@ class ParsedGuardrailTrigger:
         self,
         name: str,
         type_name: str,
-        reason: Optional[str] = None,
-        span_dict: Optional[Dict[str, Any]] = None,
+        reason: str | None = None,
+        span_dict: dict[str, Any] | None = None,
     ):
         self.name = name
         self.type = type_name
@@ -75,7 +75,7 @@ class ToolSource(str, Enum):
 class ParsedToolCall:
     """Represents a tool call made by the agent."""
 
-    def __init__(self, name: str, args: Dict[str, Any], source: ToolSource):
+    def __init__(self, name: str, args: dict[str, Any], source: ToolSource):
         self.name = name
         self.args = args
         self.source = source
@@ -103,9 +103,7 @@ class ParsedSessionResponse:
     SessionOutput lists.
     """
 
-    def __init__(
-        self, response: Any, tools_map: Optional[Dict[str, str]] = None
-    ):
+    def __init__(self, response: Any, tools_map: dict[str, str] | None = None):
         self.tools_map = tools_map or {}
         self.outputs = []
 
@@ -119,15 +117,16 @@ class ParsedSessionResponse:
         else:
             self.outputs = [response]
 
-        self.agent_texts: List[str] = []
-        self.user_texts: List[str] = []
-        self.tool_calls: List[ParsedToolCall] = []
-        self.tool_responses: List[ParsedToolResponse] = []
-        self.agent_transfer: Optional[Any] = None
-        self.custom_payloads: List[Dict[str, Any]] = []
+        self.agent_texts: list[str] = []
+        self.user_texts: list[str] = []
+        self.tool_calls: list[ParsedToolCall] = []
+        self.tool_responses: list[ParsedToolResponse] = []
+        self.agent_transfer: Any | None = None
+        self.custom_payloads: list[dict[str, Any]] = []
+        self.citations: list[dict[str, Any]] = []
         self.session_ended = False
-        self.guardrail_trigger: Optional[ParsedGuardrailTrigger] = None
-        self.detailed_trace: List[str] = []
+        self.guardrail_trigger: ParsedGuardrailTrigger | None = None
+        self.detailed_trace: list[str] = []
 
         self._parse()
 
@@ -138,8 +137,8 @@ class ParsedSessionResponse:
         return name
 
     def _search_span_dict(
-        self, span_dict: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, span_dict: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Recursively searches a trace span dictionary for a guardrail
         trigger.
         """
@@ -211,6 +210,27 @@ class ParsedSessionResponse:
                         self.session_ended = True
                 else:
                     self.session_ended = True
+
+            # Top-level Citations
+            cit_msg = getattr(output, "citations", None)
+            if cit_msg and hasattr(cit_msg, "cited_chunks"):
+                for chunk in cit_msg.cited_chunks:
+                    self.citations.append(
+                        {
+                            "uri": getattr(chunk, "uri", ""),
+                            "title": getattr(chunk, "title", ""),
+                            "text": getattr(chunk, "text", ""),
+                        }
+                    )
+
+            # Top-level custom payload Struct
+            payload_msg = getattr(output, "payload", None)
+            if payload_msg:
+                payload_val = expand_pb_struct(payload_msg)
+                self.custom_payloads.append(payload_val)
+                self.detailed_trace.append(
+                    f"Custom Payload (Output): {payload_val}"
+                )
 
             # Top-level tool calls
             tc_msg = getattr(output, "tool_calls", None)

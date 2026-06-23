@@ -1,0 +1,63 @@
+subintent_id: order-custom-sides
+subintent_name: Customize Order Toppings
+parent_cuj: Digital Ordering
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I want to order a Gourmet Burger but with custom toppings. Can I do that?
+- speaker: Agent
+  text: Absolutely! We offer full customization. What toppings would you like to add or remove?
+- speaker: User
+  text: Can I remove onions, add extra cheese, and add avocado?
+- speaker: Agent
+  text: Calculating price adjustments for custom toppings.
+  tool_call:
+    name: calculate_custom_toppings_price
+    payload:
+      base_item: Gourmet Burger
+      add_toppings:
+      - extra cheese
+      - avocado
+      remove_toppings:
+      - onions
+    response:
+      status: success
+      base_price: 14.99
+      additions_cost: 3.0
+      new_price: 17.99
+- speaker: Agent
+  text: Sure thing! Removing onions is free, extra cheese is one dollar, and avocado is two dollars, bringing your burger total to seventeen ninety-nine. Shall I add this to your order for pickup?
+- speaker: User
+  text: Yes, please add it and place the order.
+- speaker: Agent
+  text: Placing customized burger order.
+  tool_call:
+    name: place_order
+    payload:
+      items:
+      - name: Gourmet Burger
+        customization:
+          add:
+          - extra cheese
+          - avocado
+          remove:
+          - onions
+      total_amount: 17.99
+    response:
+      status: success
+      order_id: '9987'
+      pickup_time: 15 minutes
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

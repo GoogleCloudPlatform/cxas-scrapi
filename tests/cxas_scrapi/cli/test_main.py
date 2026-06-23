@@ -22,7 +22,7 @@ from unittest import mock
 import pytest
 
 from cxas_scrapi.cli import main as main_cli
-from cxas_scrapi.cli.main import get_parser
+from cxas_scrapi.cli.main import get_parser, run_session
 
 
 def test_get_parser():
@@ -37,6 +37,69 @@ def test_get_parser():
     assert args.command == "apps"
     assert args.project_id == "test-project"
     assert args.location == "us"
+
+
+def test_get_parser_llm_lint():
+    """Test that the parser can parse the llm-lint command."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "llm-lint",
+            "--agent-dir",
+            "/path/to/agent",
+            "--project-id",
+            "test-project",
+            "--location",
+            "us-central1",
+            "--model",
+            "gemini-2.5-flash",
+            "--output",
+            "/path/to/output.md",
+        ]
+    )
+    assert args.command == "llm-lint"
+    assert args.agent_dir == "/path/to/agent"
+    assert args.project_id == "test-project"
+    assert args.location == "us-central1"
+    assert args.model == "gemini-2.5-flash"
+    assert args.output == "/path/to/output.md"
+
+
+def test_get_parser_evals_report():
+    """Test that the parser can parse the evals report command."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "evals",
+            "report",
+            "--output-dir",
+            "/path/to/output",
+            "--run",
+        ]
+    )
+    assert args.command == "evals"
+    assert args.evals_command == "report"
+    assert args.output_dir == "/path/to/output"
+    assert args.run is True
+    assert args.timestamped is False
+
+
+def test_get_parser_evals_report_timestamped():
+    """Test parser parses evals report command with --timestamped."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "evals",
+            "report",
+            "--output-dir",
+            "/path/to/output",
+            "--timestamped",
+        ]
+    )
+    assert args.command == "evals"
+    assert args.evals_command == "report"
+    assert args.output_dir == "/path/to/output"
+    assert args.timestamped is True
 
 
 def test_cli_installed_help():
@@ -72,8 +135,10 @@ def test_cli_installed_help():
         )
 
 
-@mock.patch("cxas_scrapi.cli.main.Apps", autospec=True)
-@mock.patch("cxas_scrapi.cli.main.ConversationHistory", autospec=True)
+@mock.patch("cxas_scrapi.core.apps.Apps", autospec=True)
+@mock.patch(
+    "cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True
+)
 def test_conversations_list(mock_ch_cls, mock_apps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app"
@@ -105,8 +170,10 @@ def test_conversations_list_invalid_app_name(capsys):
     assert "Error: Invalid App Name format" in captured.out
 
 
-@mock.patch("cxas_scrapi.cli.main.Apps", autospec=True)
-@mock.patch("cxas_scrapi.cli.main.ConversationHistory", autospec=True)
+@mock.patch("cxas_scrapi.core.apps.Apps", autospec=True)
+@mock.patch(
+    "cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True
+)
 def test_conversations_get(mock_ch_cls, mock_apps_cls):
     args = argparse.Namespace(
         conversation_resource_name="projects/test-project/locations/global/apps/test-app/conversations/test-conv"
@@ -143,7 +210,7 @@ def test_conversations_get_invalid_conversation_name(capsys):
     assert "Error: Invalid Conversation Resource Name format" in captured.out
 
 
-@mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
 def test_deployments_list(mock_deps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app"
@@ -159,7 +226,7 @@ def test_deployments_list(mock_deps_cls):
     mock_deps_inst.list_deployments.assert_called_once()
 
 
-@mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
 def test_deployments_create(mock_deps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app",
@@ -177,11 +244,13 @@ def test_deployments_create(mock_deps_cls):
         deployment_id="test-dep",
         display_name="test-dep",
         app_version="projects/test-project/locations/global/apps/test-app/versions/v1",
+        channel_type="API",
+        traffic_split=None,
     )
 
 
-@mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
-@mock.patch("cxas_scrapi.cli.main.app_push", autospec=True)
+@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.cli.app.app_push", autospec=True)
 def test_deployments_promote(mock_app_push, mock_deps_cls):
     args = argparse.Namespace(
         app_resource_name="projects/test-project/locations/global/apps/test-app",
@@ -221,3 +290,114 @@ def test_deployments_promote(mock_app_push, mock_deps_cls):
             "projects/test-project/locations/global/apps/test-app/versions/v1"
         ),
     )
+
+
+def test_get_parser_run_session_use_tool_fakes():
+    """Test that the parser parses run-session with --use-tool-fakes."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "run-session",
+            "text",
+            "projects/test-project/locations/global/apps/test-app",
+            "--use-tool-fakes",
+        ]
+    )
+    assert args.command == "run-session"
+    assert args.modality == "text"
+    expected_app = "projects/test-project/locations/global/apps/test-app"
+    assert args.app_name == expected_app
+    assert args.use_tool_fakes is True
+
+
+@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
+def test_deployments_create_with_split(mock_deps_cls):
+    args = argparse.Namespace(
+        app_name="projects/test-project/locations/global/apps/test-app",
+        deployment_id="test-dep",
+        version="v1",
+        version_id=None,
+        traffic_split="v1:90,v2:10",
+    )
+    mock_deps_inst = mock_deps_cls.return_value
+
+    main_cli.deployments_create(args)
+
+    mock_deps_cls.assert_called_once_with(
+        app_name="projects/test-project/locations/global/apps/test-app"
+    )
+    mock_deps_inst.create_deployment.assert_called_once_with(
+        deployment_id="test-dep",
+        display_name="test-dep",
+        app_version="v1",
+        channel_type="API",
+        traffic_split={"v1": 90, "v2": 10},
+    )
+
+
+@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
+def test_deployments_promote_with_split(mock_deps_cls):
+    args = argparse.Namespace(
+        app_resource_name=None,
+        app_dir=None,
+        live_deployment_resource_name=None,
+        app_name="projects/test-project/locations/global/apps/test-app",
+        deployment_id="live-dep",
+        version="v2",
+        traffic_split="v1:50,v2:50",
+    )
+
+    mock_deps_inst = mock_deps_cls.return_value
+    mock_deps_inst.get_deployment.return_value = mock.MagicMock()
+
+    main_cli.deployments_promote(args)
+
+    mock_deps_cls.assert_called_once_with(
+        app_name="projects/test-project/locations/global/apps/test-app"
+    )
+    mock_deps_inst.update_deployment.assert_called_once_with(
+        deployment_id="live-dep",
+        app_version="v2",
+        traffic_split={"v1": 50, "v2": 50},
+    )
+
+
+@mock.patch("cxas_scrapi.core.evaluations.Evaluations", autospec=True)
+@mock.patch("cxas_scrapi.utils.eval_utils.EvalUtils", autospec=True)
+def test_run_eval_modality(mock_eval_utils_cls, mock_eval_cls):
+    """Test that run_eval forwards the modality argument to run_evaluation."""
+    args = argparse.Namespace(
+        app_name="projects/test-project/locations/global/apps/test-app",
+        evaluation_id="eval-123",
+        display_name_prefix=None,
+        tags=None,
+        modality="audio",
+        wait=False,
+    )
+    mock_eval_inst = mock_eval_cls.return_value
+    mock_eval_utils_inst = mock_eval_utils_cls.return_value
+    mock_eval_utils_inst.evals_to_dataframe.return_value = {}
+
+    main_cli.run_eval(args)
+
+    mock_eval_cls.assert_called_once_with(app_name=args.app_name)
+    mock_eval_inst.run_evaluation.assert_called_once_with(
+        evaluations=["eval-123"],
+        app_name=args.app_name,
+        modality="audio",
+    )
+
+
+def test_run_session_headless_failure(monkeypatch, capsys):
+    # Mock isatty to return False (headless environment)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    args = argparse.Namespace(app_name="dummy_app", modality="TEXT")
+
+    with pytest.raises(SystemExit) as excinfo:
+        run_session(args)
+
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    expected_msg = "ERROR: 'run-session' requires an interactive terminal."
+    assert expected_msg in captured.err

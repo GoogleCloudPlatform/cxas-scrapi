@@ -7,7 +7,7 @@ description: Run cxas lint (with optional scoping to a set of agents or tools), 
 
 **Role:** Lint mechanic for a GECX app. You apply known fix recipes from the rule table mechanically, verify each Edit by reading the file back, and re-lint until clean. You report only fixes you've verified — fabricated "clean" status is worse than honest "stuck".
 
-**Reasoning intensity: LOW** (mechanical for errors and deterministic warnings; MEDIUM for judgment-call warnings where two valid fixes exist). The fixes are recipe lookups from a table. The hard part is NOT thinking — it's (a) making sure your edits actually landed on disk and (b) recognizing which warnings need user judgment vs. which have a single mechanical fix. Per the Zero Warnings Policy in your workspace's mandates file (e.g., `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`), you fix BOTH errors and deterministic warnings; ambiguous warnings go in `unresolved` with the options for the user to decide.
+**Reasoning intensity: LOW** (mechanical for errors and deterministic warnings; MEDIUM for judgment-call warnings where two valid fixes exist). The fixes are recipe lookups from a table. The hard part is NOT thinking — it's (a) making sure your edits actually landed on disk and (b) recognizing which warnings need user judgment vs. which have a single mechanical fix. Per the Zero Warnings Policy in your workspace's mandates file (e.g., `AGENTS.md` / `CLAUDE.md`), you fix BOTH errors and deterministic warnings; ambiguous warnings go in `unresolved` with the options for the user to decide.
 
 Run `cxas lint` (scoped to specific agents/tools if provided), fix every violation using the rule recipes in `references/build.md`, and re-lint until the target scope is clean.
 
@@ -48,7 +48,7 @@ Run:
 cxas lint --app-dir <app_dir> [--agent <agents>] [--tool <tools>]
 ```
 
-Parse the output. **Per the Zero Warnings Policy in the workspace mandates file (e.g., `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`), you fix `[E]` errors AND `[W]` warnings — both are blocking.** `[I]` info lines are not blocking; log them in the summary but don't fix.
+Parse the output. **Per the Zero Warnings Policy in the workspace mandates file (e.g., `AGENTS.md` / `CLAUDE.md`), you fix `[E]` errors AND `[W]` warnings — both are blocking.** `[I]` info lines are not blocking; log them in the summary but don't fix.
 
 For warnings, treat by category:
 - **Deterministic warnings** (warnings with a single mechanical fix — e.g., I014 missing `current_date` reference, T008 unreferenced tool, S002 missing variable description): apply the fix the lint message describes.

@@ -14,10 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict, List, Optional
+import http
+from typing import Any
 
 import requests
 from google.auth.transport.requests import Request as GoogleAuthRequest
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 from cxas_scrapi.core.common import Common
 
@@ -30,10 +33,10 @@ class Insights(Common):
         project_id: str,
         location: str = "us-central1",
         api_version: str = "v1",
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         """Initializes the Insights API base client."""
@@ -54,12 +57,26 @@ class Insights(Common):
         else:
             self._base_url = f"https://{base_endpoint}/{api_version}"
 
+        self.session = requests.Session()
+        retries = Retry(
+            total=5,
+            backoff_factor=1,
+            status_forcelist=[
+                http.HTTPStatus.TOO_MANY_REQUESTS,
+                http.HTTPStatus.INTERNAL_SERVER_ERROR,
+                http.HTTPStatus.BAD_GATEWAY,
+                http.HTTPStatus.SERVICE_UNAVAILABLE,
+                http.HTTPStatus.GATEWAY_TIMEOUT,
+            ],
+        )
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
+
     def _request(
         self,
         method: str,
         path: str,
-        data: Optional[Dict[str, Any]] = None,
-        params: Optional[Dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         timeout: float = 60.0,
     ) -> Any:
         """Makes an authenticated HTTP request to the Insights REST API."""
@@ -79,7 +96,7 @@ class Insights(Common):
             "User-Agent": self.user_agent,
         }
 
-        response = requests.request(
+        response = self.session.request(
             method=method,
             url=url,
             headers=headers,
@@ -98,8 +115,8 @@ class Insights(Common):
         self,
         path: str,
         response_key: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> List[Any]:
+        params: dict[str, Any] | None = None,
+    ) -> list[Any]:
         """Helper to exhaust a paginated Insights API endpoint."""
         results = []
         page_token = None
@@ -116,11 +133,11 @@ class Insights(Common):
 
     def list_conversations(
         self,
-        filter_str: Optional[str] = None,
-        view: Optional[str] = None,
+        filter_str: str | None = None,
+        view: str | None = None,
         page_size: int = 100,
         max_pages: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Lists conversations in the configured parent location."""
         path = f"{self.parent}/conversations"
         params = {"pageSize": page_size}
@@ -143,7 +160,7 @@ class Insights(Common):
                 break
         return results
 
-    def get_conversation(self, name: str) -> Dict[str, Any]:
+    def get_conversation(self, name: str) -> dict[str, Any]:
         """Gets a single conversation by name or ID."""
         if not name.startswith("projects/"):
             name = f"{self.parent}/conversations/{name}"

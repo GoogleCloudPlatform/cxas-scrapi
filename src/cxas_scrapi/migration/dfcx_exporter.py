@@ -22,7 +22,7 @@ import re
 import traceback
 import zipfile
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from google.api_core import exceptions as api_exceptions
 from google.cloud.dialogflowcx_v3beta1 import services as cx_services
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 class BaseDFCXClient:
     """Base class for Dialogflow CX API clients to handle common logic."""
 
-    def _get_client_options(self, resource_id: str) -> Optional[Dict[str, str]]:
+    def _get_client_options(self, resource_id: str) -> dict[str, str] | None:
         """Extracts region and returns client options with the regional
         endpoint."""
         if not isinstance(resource_id, str):
@@ -67,19 +67,19 @@ class _ResourceProcessingContext:
 
     zip_file: zipfile.ZipFile
     agent_id: str
-    intent_map: Dict[str, Any] = field(default_factory=dict)
-    playbook_map: Dict[str, Any] = field(default_factory=dict)
-    tool_map: Dict[str, Any] = field(default_factory=dict)
-    entity_map: Dict[str, Any] = field(default_factory=dict)
-    webhook_map: Dict[str, Any] = field(default_factory=dict)
-    flow_map: Dict[str, Any] = field(default_factory=dict)
-    generator_map: Dict[str, Any] = field(default_factory=dict)
-    agent_trg_map: Dict[str, Any] = field(default_factory=dict)
-    code_block_map: Dict[str, Any] = field(default_factory=dict)
-    dir_name_to_full_name: Dict[str, Dict[str, str]] = field(
+    intent_map: dict[str, Any] = field(default_factory=dict)
+    playbook_map: dict[str, Any] = field(default_factory=dict)
+    tool_map: dict[str, Any] = field(default_factory=dict)
+    entity_map: dict[str, Any] = field(default_factory=dict)
+    webhook_map: dict[str, Any] = field(default_factory=dict)
+    flow_map: dict[str, Any] = field(default_factory=dict)
+    generator_map: dict[str, Any] = field(default_factory=dict)
+    agent_trg_map: dict[str, Any] = field(default_factory=dict)
+    code_block_map: dict[str, Any] = field(default_factory=dict)
+    dir_name_to_full_name: dict[str, dict[str, str]] = field(
         default_factory=dict
     )
-    display_name_to_id: Dict[str, str] = field(default_factory=dict)
+    display_name_to_id: dict[str, str] = field(default_factory=dict)
 
 
 class DFCXAgentExporter(BaseDFCXClient):
@@ -94,7 +94,7 @@ class DFCXAgentExporter(BaseDFCXClient):
 
     @staticmethod
     def _process_flat_resource(
-        ctx: "_ResourceProcessingContext", path_parts: List[str], filename: str
+        ctx: "_ResourceProcessingContext", path_parts: list[str], filename: str
     ):
         """Processes flat resources like webhooks and
         agentTransitionRouteGroups."""
@@ -120,7 +120,7 @@ class DFCXAgentExporter(BaseDFCXClient):
 
     @staticmethod
     def _process_standard_resource(
-        ctx: "_ResourceProcessingContext", path_parts: List[str], filename: str
+        ctx: "_ResourceProcessingContext", path_parts: list[str], filename: str
     ):
         """Processes standard resources with type/name/name.json structure."""
         res_type = path_parts[0]
@@ -158,7 +158,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     def _process_generative_settings(
         zip_file: zipfile.ZipFile,
         filename: str,
-        generative_settings: Dict[str, Any],
+        generative_settings: dict[str, Any],
     ) -> None:
         """Processes a generative settings file from the zip."""
         lang = filename.rsplit("/", maxsplit=1)[-1].replace(".json", "")
@@ -169,7 +169,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     def _process_test_cases(
         zip_file: zipfile.ZipFile,
         filename: str,
-        test_cases_list: List[Dict[str, Any]],
+        test_cases_list: list[dict[str, Any]],
     ) -> None:
         """Processes a test case file from the zip."""
         with zip_file.open(filename) as f:
@@ -179,7 +179,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     def _process_intent_training_phrases(
         zip_file: zipfile.ZipFile,
         filename: str,
-        intent_map: Dict[str, Any],
+        intent_map: dict[str, Any],
         full_resource_name: str,
     ) -> None:
         """Processes intent training phrases from the zip."""
@@ -193,7 +193,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     def _process_entity_type_entities(
         zip_file: zipfile.ZipFile,
         filename: str,
-        entity_map: Dict[str, Any],
+        entity_map: dict[str, Any],
         full_resource_name: str,
     ) -> None:
         """Processes entity type entities from the zip."""
@@ -207,7 +207,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     def _process_flow_pages(
         zip_file: zipfile.ZipFile,
         filename: str,
-        flow_map: Dict[str, Any],
+        flow_map: dict[str, Any],
         full_resource_name: str,
     ) -> None:
         """Processes flow pages from the zip."""
@@ -223,7 +223,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     def _process_playbook_examples(
         zip_file: zipfile.ZipFile,
         filename: str,
-        playbook_map: Dict[str, Any],
+        playbook_map: dict[str, Any],
         full_resource_name: str,
     ) -> None:
         """Processes playbook examples from the zip."""
@@ -242,7 +242,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     def _process_tool_schema(
         zip_file: zipfile.ZipFile,
         filename: str,
-        tool_map: Dict[str, Any],
+        tool_map: dict[str, Any],
         full_resource_name: str,
     ) -> None:
         """Processes tool schema from the zip."""
@@ -256,7 +256,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     def _process_generator_phrases(
         zip_file: zipfile.ZipFile,
         filename: str,
-        generator_map: Dict[str, Any],
+        generator_map: dict[str, Any],
         full_resource_name: str,
     ) -> None:
         """Processes generator phrases from the zip."""
@@ -269,7 +269,7 @@ class DFCXAgentExporter(BaseDFCXClient):
 
     def process_zip_content(
         self, zip_content: bytes, agent_id_fallback: str
-    ) -> Optional[DFCXAgentIR]:
+    ) -> DFCXAgentIR | None:
         """Parses raw ZIP bytes into the full agent IR structure."""
         try:
             with zipfile.ZipFile(io.BytesIO(zip_content), "r") as zip_file:
@@ -570,7 +570,7 @@ class DFCXAgentExporter(BaseDFCXClient):
             traceback.print_exc()
             return None
 
-    def export_agent_to_json(self, agent_id: str) -> Optional[DFCXAgentIR]:
+    def export_agent_to_json(self, agent_id: str) -> DFCXAgentIR | None:
         """Exports the agent and returns its contents as a DFCXAgentIR
         object."""
         client_options = self._get_client_options(agent_id)
@@ -603,7 +603,7 @@ class DFCXAgentExporter(BaseDFCXClient):
 class DFCXAgents(BaseDFCXClient):
     """Client for interacting with Dialogflow CX Agents."""
 
-    def get_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:
+    def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         """Retrieves the full details of a Dialogflow CX Agent."""
         client_options = self._get_client_options(agent_id)
         if not client_options:
@@ -623,7 +623,7 @@ class DFCXAgents(BaseDFCXClient):
 class DFCXPlaybooks(BaseDFCXClient):
     """Client for interacting with Dialogflow CX Playbooks."""
 
-    def list_playbooks(self, agent_id: str) -> List[Dict[str, Any]]:
+    def list_playbooks(self, agent_id: str) -> list[dict[str, Any]]:
         """Lists all playbooks for a given agent."""
         client_options = self._get_client_options(agent_id)
         if not client_options:
@@ -643,7 +643,7 @@ class DFCXPlaybooks(BaseDFCXClient):
 class DFCXTools(BaseDFCXClient):
     """Client for interacting with Dialogflow CX Tools."""
 
-    def list_tools(self, agent_id: str) -> List[Dict[str, Any]]:
+    def list_tools(self, agent_id: str) -> list[dict[str, Any]]:
         """Lists all tools for a given agent."""
         client_options = self._get_client_options(agent_id)
         if not client_options:
@@ -665,7 +665,7 @@ class DFCXGenerativeSettings(BaseDFCXClient):
 
     def get_generative_settings(
         self, agent_id: str, language_code: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Retrieves the generative settings for a given agent."""
         client_options = self._get_client_options(agent_id)
         if not client_options:
@@ -705,7 +705,7 @@ class ConversationalAgentsAPI:
 
     def fetch_full_agent_details(
         self, agent_id: str, use_export: bool = True
-    ) -> Optional[DFCXAgentIR]:
+    ) -> DFCXAgentIR | None:
         """Fetches the complete agent configuration, including all nested
         resources.
 
@@ -777,9 +777,7 @@ class ConversationalAgentsAPI:
             )
             return agent_ir
 
-    def process_local_agent_zip(
-        self, zip_bytes: bytes
-    ) -> Optional[DFCXAgentIR]:
+    def process_local_agent_zip(self, zip_bytes: bytes) -> DFCXAgentIR | None:
         """Processes a local zip file without calling the API."""
         dummy_id = (
             "projects/local-upload/locations/global/agents/uploaded-agent"

@@ -1,0 +1,37 @@
+subintent_id: support-feedback-compliment
+subintent_name: Submit Service Feedback
+parent_cuj: Customer Support
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I had a dinner reservation tonight and our server, Jessica, was absolutely incredible. I wanted to make sure she gets recognized.
+- speaker: Agent
+  text: That is so wonderful to hear! Jessica is fantastic. I can log this compliment in our staff feedback system right now. Do you remember your table number?
+- speaker: User
+  text: Yes, we were at table twelve.
+- speaker: Agent
+  text: Submitting server compliment feedback.
+  tool_call:
+    name: submit_staff_feedback
+    payload:
+      server_name: Jessica
+      table_number: '12'
+      feedback_type: compliment
+      comment: Jessica was absolutely incredible.
+    response:
+      status: success
+      feedback_recorded: true
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

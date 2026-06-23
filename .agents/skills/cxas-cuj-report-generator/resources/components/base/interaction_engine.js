@@ -9,7 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
-  let currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  let currentTheme =
+      document.documentElement.getAttribute('data-theme') || 'dark';
 
   function setTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
@@ -19,7 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
       console.warn('localStorage not available:', e);
     }
     currentTheme = theme;
-    
+
     if (theme === 'dark') {
       themeToggleIcon.textContent = '☀️';
       themeToggleText.textContent = 'Light Mode';
@@ -46,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
 let currentSelectionData = null;
 
 // Persistent Storage for Notes (in-memory, exported with HTML)
-let notesData = []; // Array of {id, rowId, start, end, text, originalText}
+let notesData = [];  // Array of {id, rowId, start, end, text, originalText}
 
 const escapeHtml = (str) => {
   if (!str) return '';
@@ -58,72 +59,73 @@ const escapeHtml = (str) => {
 };
 
 document.addEventListener('mouseup', () => {
-    const selection = window.getSelection();
-    if (selection.toString().trim().length > 0) {
-        const range = selection.getRangeAt(0);
-        const container = range.commonAncestorContainer;
-        
-        // Find the transcript-row
-        let row = container;
-        while (row && (!row.classList || !row.classList.contains('transcript-row'))) {
-            row = row.parentNode;
-        }
+  const selection = window.getSelection();
+  if (selection.toString().trim().length > 0) {
+    const range = selection.getRangeAt(0);
+    const container = range.commonAncestorContainer;
 
-        if (row) {
-            const rowContent = row.querySelector('.row-content');
-            const rowId = row.getAttribute('data-row-id');
-            
-            // Calculate offsets relative to rowContent text
-            const preSelectionRange = range.cloneRange();
-            preSelectionRange.selectNodeContents(rowContent);
-            preSelectionRange.setEnd(range.startContainer, range.startOffset);
-            const start = preSelectionRange.toString().length;
-            const end = start + selection.toString().length;
-
-            currentSelectionData = {
-                rowId: rowId,
-                start: start,
-                end: end,
-                text: selection.toString(),
-                card: row.closest('.cuj-card')
-            };
-        }
+    // Find the transcript-row
+    let row = container;
+    while (row &&
+           (!row.classList || !row.classList.contains('transcript-row'))) {
+      row = row.parentNode;
     }
+
+    if (row) {
+      const rowContent = row.querySelector('.row-content');
+      const rowId = row.getAttribute('data-row-id');
+
+      // Calculate offsets relative to rowContent text
+      const preSelectionRange = range.cloneRange();
+      preSelectionRange.selectNodeContents(rowContent);
+      preSelectionRange.setEnd(range.startContainer, range.startOffset);
+      const start = preSelectionRange.toString().length;
+      const end = start + selection.toString().length;
+
+      currentSelectionData = {
+        rowId: rowId,
+        start: start,
+        end: end,
+        text: selection.toString(),
+        card: row.closest('.cuj-card')
+      };
+    }
+  }
 });
 
 function openNoteModal() {
-    if (!currentSelectionData) {
-        alert("Please highlight some text within a transcript turn first.");
-        return;
-    }
+  if (!currentSelectionData) {
+    alert('Please highlight some text within a transcript turn first.');
+    return;
+  }
 
-    const note = {
-      id: 'note-' + Date.now(),
-      rowId: currentSelectionData.rowId,
-      start: currentSelectionData.start,
-      end: currentSelectionData.end,
-      originalText: currentSelectionData.text,
-      noteText: 'New note...'
-    };
+  const note = {
+    id: 'note-' + Date.now(),
+    rowId: currentSelectionData.rowId,
+    start: currentSelectionData.start,
+    end: currentSelectionData.end,
+    originalText: currentSelectionData.text,
+    noteText: 'New note...'
+  };
 
-    notesData.push(note);
-    renderNotesForCard(currentSelectionData.card);
+  notesData.push(note);
+  renderNotesForCard(currentSelectionData.card);
 
-    // Find the new note in the sidebar and focus it
-    const card = currentSelectionData.card;
-    const sidebar = card.querySelector('.notes-sidebar');
-    const noteItems = sidebar.querySelectorAll('.note-text');
-    const newNoteEl = noteItems[noteItems.length - 1];
-    if (newNoteEl) {
-      newNoteEl.focus();
-      const range = document.createRange();
-      range.selectNodeContents(newNoteEl);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
+  // Find the new note in the sidebar and focus it
+  const card = currentSelectionData.card;
+  const sidebar = card.querySelector('.notes-sidebar');
+  const noteItems = sidebar.querySelectorAll('.note-text');
+  const newNoteEl = noteItems[noteItems.length - 1];
+  if (newNoteEl) {
+    newNoteEl.focus();
+    const range = document.createRange();
+    range.selectNodeContents(newNoteEl);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
 
-    currentSelectionData = null;
+  currentSelectionData = null;
 }
 
 let deleteTimeout = null;
@@ -174,117 +176,118 @@ function deleteNote(noteId, card) {
 }
 
 function renderNotesForCard(card) {
-    const sidebar = card.querySelector('.notes-sidebar');
-    sidebar.innerHTML = '<h4>Notes</h4>';
-    
-    // Find all notes for rows in this card
-    const cardRowIds = Array.from(card.querySelectorAll('.transcript-row')).map(r => r.getAttribute('data-row-id'));
-    const cardNotes = notesData.filter(n => cardRowIds.includes(n.rowId));
+  const sidebar = card.querySelector('.notes-sidebar');
+  sidebar.innerHTML = '<h4>Notes</h4>';
 
-    cardNotes.forEach(note => {
-        const noteItem = document.createElement('div');
-        noteItem.className = 'note-item';
-        noteItem.innerHTML = `
+  // Find all notes for rows in this card
+  const cardRowIds = Array.from(card.querySelectorAll('.transcript-row'))
+                         .map(r => r.getAttribute('data-row-id'));
+  const cardNotes = notesData.filter(n => cardRowIds.includes(n.rowId));
+
+  cardNotes.forEach(note => {
+    const noteItem = document.createElement('div');
+    noteItem.className = 'note-item';
+    noteItem.innerHTML = `
             <div class="note-header">
                 <span class="note-ref">Ref: "${
-            escapeHtml(note.originalText)}"</span>
+        escapeHtml(note.originalText)}"</span>
                 <div class="note-actions">
                     <button onclick="deleteNote('${
-            note.id}', this.closest('.cuj-card'))">Delete</button>
+        note.id}', this.closest('.cuj-card'))">Delete</button>
                 </div>
             </div>
             <div class="note-text" contenteditable="true" onblur="updateNoteText('${
-            note.id}', this.innerText)">${escapeHtml(note.noteText)}</div>
+        note.id}', this.innerText)">${escapeHtml(note.noteText)}</div>
         `;
-        sidebar.appendChild(noteItem);
-    });
+    sidebar.appendChild(noteItem);
+  });
 
-    // Re-apply highlights to rows
-    cardRowIds.forEach(rowId => {
-        const row = card.querySelector(`[data-row-id="${rowId}"]`);
-        const rowContent = row.querySelector('.row-content');
-        const rowNotes = cardNotes.filter(n => n.rowId === rowId);
-        
-        applyHighlights(rowContent, rowNotes);
-    });
+  // Re-apply highlights to rows
+  cardRowIds.forEach(rowId => {
+    const row = card.querySelector(`[data-row-id="${rowId}"]`);
+    const rowContent = row.querySelector('.row-content');
+    const rowNotes = cardNotes.filter(n => n.rowId === rowId);
+
+    applyHighlights(rowContent, rowNotes);
+  });
 }
 
 function updateNoteText(noteId, newText) {
-    const note = notesData.find(n => n.id === noteId);
-    if (note) note.noteText = newText;
+  const note = notesData.find(n => n.id === noteId);
+  if (note) note.noteText = newText;
 }
 
 function applyHighlights(container, notes) {
-    const text = container.innerText;
-    const coverage = Array.from({length: text.length}, () => []);
-    notes.forEach(note => {
-      for (let i = note.start; i < note.end; i++) {
-        if (i >= 0 && i < text.length) {
-          coverage[i].push(note);
-        }
-      }
-    });
-
-    const notesSetChanged = (setA, setB) => {
-      if (setA.length !== setB.length) return true;
-      for (let i = 0; i < setA.length; i++) {
-        if (setA[i].id !== setB[i].id) return true;
-      }
-      return false;
-    };
-
-    let finalHtml = '';
-    let currentNotes = [];
-    let segmentStart = 0;
-
-    for (let i = 0; i <= text.length; i++) {
-      const nextNotes = i < text.length ? coverage[i] : [];
-      if (notesSetChanged(currentNotes, nextNotes) || i === text.length) {
-        if (i > segmentStart) {
-          const segmentText = text.substring(segmentStart, i);
-          if (currentNotes.length > 0) {
-            const combinedTitle =
-                currentNotes.map(n => escapeHtml(n.noteText)).join(' | ');
-            const className =
-                currentNotes.length > 1 ? 'highlight overlap' : 'highlight';
-            finalHtml += `<span class="${className}" title="${combinedTitle}">${
-                escapeHtml(segmentText)}</span>`;
-          } else {
-            finalHtml += escapeHtml(segmentText);
-          }
-        }
-        currentNotes = nextNotes;
-        segmentStart = i;
+  const text = container.innerText;
+  const coverage = Array.from({length: text.length}, () => []);
+  notes.forEach(note => {
+    for (let i = note.start; i < note.end; i++) {
+      if (i >= 0 && i < text.length) {
+        coverage[i].push(note);
       }
     }
+  });
+
+  const notesSetChanged = (setA, setB) => {
+    if (setA.length !== setB.length) return true;
+    for (let i = 0; i < setA.length; i++) {
+      if (setA[i].id !== setB[i].id) return true;
+    }
+    return false;
+  };
+
+  let finalHtml = '';
+  let currentNotes = [];
+  let segmentStart = 0;
+
+  for (let i = 0; i <= text.length; i++) {
+    const nextNotes = i < text.length ? coverage[i] : [];
+    if (notesSetChanged(currentNotes, nextNotes) || i === text.length) {
+      if (i > segmentStart) {
+        const segmentText = text.substring(segmentStart, i);
+        if (currentNotes.length > 0) {
+          const combinedTitle =
+              currentNotes.map(n => escapeHtml(n.noteText)).join(' | ');
+          const className =
+              currentNotes.length > 1 ? 'highlight overlap' : 'highlight';
+          finalHtml += `<span class="${className}" title="${combinedTitle}">${
+              escapeHtml(segmentText)}</span>`;
+        } else {
+          finalHtml += escapeHtml(segmentText);
+        }
+      }
+      currentNotes = nextNotes;
+      segmentStart = i;
+    }
+  }
 
 
-    if (finalHtml.includes('[Tool:'))
-      finalHtml = finalHtml.replace(
-          /\[Tool:(?:<[^>]+>|.)*?\]/g,
-          match => `<span class="tool">${match}</span>`);
-    if (finalHtml.includes('[Webhook:'))
-      finalHtml = finalHtml.replace(
-          /\[Webhook:(?:<[^>]+>|.)*?\]/g,
-          match => `<span class="webhook">${match}</span>`);
+  if (finalHtml.includes('[Tool:'))
+    finalHtml = finalHtml.replace(
+        /\[Tool:(?:<[^>]+>|.)*?\]/g,
+        match => `<span class="tool">${match}</span>`);
+  if (finalHtml.includes('[Webhook:'))
+    finalHtml = finalHtml.replace(
+        /\[Webhook:(?:<[^>]+>|.)*?\]/g,
+        match => `<span class="webhook">${match}</span>`);
 
-    container.innerHTML = finalHtml;
+  container.innerHTML = finalHtml;
 }
 
 function moveRowUp(btn) {
-    const row = btn.closest('.transcript-row');
-    const prev = row.previousElementSibling;
-    if (prev && prev.classList.contains('transcript-row')) {
-        row.parentNode.insertBefore(row, prev);
-    }
+  const row = btn.closest('.transcript-row');
+  const prev = row.previousElementSibling;
+  if (prev && prev.classList.contains('transcript-row')) {
+    row.parentNode.insertBefore(row, prev);
+  }
 }
 
 function moveRowDown(btn) {
-    const row = btn.closest('.transcript-row');
-    const next = row.nextElementSibling;
-    if (next && next.classList.contains('transcript-row')) {
-        row.parentNode.insertBefore(next, row);
-    }
+  const row = btn.closest('.transcript-row');
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains('transcript-row')) {
+    row.parentNode.insertBefore(next, row);
+  }
 }
 
 function deleteRow(btn) {
@@ -302,39 +305,39 @@ function deleteRow(btn) {
 }
 
 function addRow(type, btn) {
-    const container = btn.closest('.transcript-container');
-    const newRow = document.createElement('div');
-    newRow.className = 'transcript-row';
-    newRow.setAttribute('data-row-id', 'row-' + Date.now());
+  const container = btn.closest('.transcript-container');
+  const newRow = document.createElement('div');
+  newRow.className = 'transcript-row';
+  newRow.setAttribute('data-row-id', 'row-' + Date.now());
 
-    let speakerHtml = '';
-    let contentHtml = '';
-    let isCall = (type === 'T' || type === 'W');
+  let speakerHtml = '';
+  let contentHtml = '';
+  let isCall = (type === 'T' || type === 'W');
 
-    if (type === 'A') {
-      speakerHtml = '<span class="agent">Agent:</span>';
-      contentHtml = '"New turn..."';
-    } else if (type === 'U') {
-      speakerHtml = '<span class="user">User:</span>';
-      contentHtml = '"New turn..."';
-    } else if (type === 'T' || type === 'W') {
-      const callType = type === 'T' ? 'tool' : 'webhook';
-      const callLabel = type === 'T' ? 'Tool' : 'Webhook';
-      let urlInfo = '';
-      if (type === 'W') {
-        urlInfo = 'POST https://api.example.com/v1/action\n';
-      }
-
-      contentHtml = CALL_ITEM_TEMPLATE
-          .replace('$CALL_TYPE', `call-item-${callType}`)
-          .replace('$CALL_LABEL', callLabel)
-          .replace('$NAME', `New_${callType}`)
-          .replace('$URL_INFO', urlInfo)
-          .replace('$PAYLOAD', '{\n  "param": "value"\n}')
-          .replace('$RESPONSE', '{\n  "status": "success"\n}');
+  if (type === 'A') {
+    speakerHtml = '<span class="agent">Agent:</span>';
+    contentHtml = '"New turn..."';
+  } else if (type === 'U') {
+    speakerHtml = '<span class="user">User:</span>';
+    contentHtml = '"New turn..."';
+  } else if (type === 'T' || type === 'W') {
+    const callType = type === 'T' ? 'tool' : 'webhook';
+    const callLabel = type === 'T' ? 'Tool' : 'Webhook';
+    let urlInfo = '';
+    if (type === 'W') {
+      urlInfo = 'POST https://api.example.com/v1/action\n';
     }
 
-    newRow.innerHTML = `
+    contentHtml =
+        CALL_ITEM_TEMPLATE.replace('$CALL_TYPE', `call-item-${callType}`)
+            .replace('$CALL_LABEL', callLabel)
+            .replace('$NAME', `New_${callType}`)
+            .replace('$URL_INFO', urlInfo)
+            .replace('$PAYLOAD', '{\n  "param": "value"\n}')
+            .replace('$RESPONSE', '{\n  "status": "success"\n}');
+  }
+
+  newRow.innerHTML = `
         <div class="row-toolbar">
             <button onclick="openNoteModal()">+Note</button>
             <button onclick="addRow('A', this)">+A</button>
@@ -351,96 +354,95 @@ function addRow(type, btn) {
         </div>
     `;
 
-    const currentRow = btn.closest('.transcript-row');
-    if (currentRow) {
-        currentRow.after(newRow);
-    } else {
-        container.appendChild(newRow);
-    }
+  const currentRow = btn.closest('.transcript-row');
+  if (currentRow) {
+    currentRow.after(newRow);
+  } else {
+    container.appendChild(newRow);
+  }
 
-    // Add click listener for accordion
-    const header = newRow.querySelector('.call-item-header');
-    if (header) {
-      header.addEventListener('click', () => {
-        const callItem = header.closest('.call-item');
-        if (callItem) {
-          callItem.classList.toggle('collapsed');
-        }
-      });
-    }
+  // Add click listener for accordion
+  const header = newRow.querySelector('.call-item-header');
+  if (header) {
+    header.addEventListener('click', () => {
+      const callItem = header.closest('.call-item');
+      if (callItem) {
+        callItem.classList.toggle('collapsed');
+      }
+    });
+  }
 }
 
 function downloadReport() {
-    // Embed notesData into the script so they persist
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(document.documentElement.outerHTML, 'text/html');
-    
-    // Remove existing data script if any
-    const existingScript = doc.getElementById('notes-data');
-    if (existingScript) existingScript.remove();
-    
-    const dataScript = doc.createElement('script');
-    dataScript.id = 'notes-data';
-    dataScript.type = 'application/json';
-    dataScript.textContent = JSON.stringify(notesData);
-    doc.body.appendChild(dataScript);
-    
-    let currentHtml = doc.documentElement.outerHTML;
+  // Embed notesData into the script so they persist
+  const parser = new DOMParser();
+  const doc =
+      parser.parseFromString(document.documentElement.outerHTML, 'text/html');
 
-    const blob = new Blob([currentHtml], {type: 'text/html'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'subintent_report.html';
-    a.click();
+  // Remove existing data script if any
+  const existingScript = doc.getElementById('notes-data');
+  if (existingScript) existingScript.remove();
+
+  const dataScript = doc.createElement('script');
+  dataScript.id = 'notes-data';
+  dataScript.type = 'application/json';
+  dataScript.textContent = JSON.stringify(notesData);
+  doc.body.appendChild(dataScript);
+
+  let currentHtml = doc.documentElement.outerHTML;
+
+  const blob = new Blob([currentHtml], {type: 'text/html'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'subintent_report.html';
+  a.click();
 }
 
 function resetHighlights() {
-    if (confirm("Clear all notes and highlights?")) {
-        notesData = [];
-        document.querySelectorAll('.cuj-card').forEach(renderNotesForCard);
-    }
+  if (confirm('Clear all notes and highlights?')) {
+    notesData = [];
+    document.querySelectorAll('.cuj-card').forEach(renderNotesForCard);
+  }
 }
 
 // Initialization
 function init() {
-    // Handle rows that were hydrated from reconstruction script
-    document
-        .querySelectorAll(
-            '.transcript-container p, .transcript-container .turn, .transcript-container .call-item')
-        .forEach((el, idx) => {
-          // Skip if disconnected or already inside a transcript-row
-          if (!el.isConnected) return;
-          if (el.closest('.transcript-row')) return;
+  // Handle rows that were hydrated from reconstruction script
+  document
+      .querySelectorAll(
+          '.transcript-container p, .transcript-container .turn, .transcript-container .call-item')
+      .forEach((el, idx) => {
+        // Skip if disconnected or already inside a transcript-row
+        if (!el.isConnected) return;
+        if (el.closest('.transcript-row')) return;
 
-          const row = document.createElement('div');
-          row.className = 'transcript-row';
-          row.setAttribute(
-              'data-row-id',
-              el.getAttribute('data-row-id') || 'row-init-' + idx);
+        const row = document.createElement('div');
+        row.className = 'transcript-row';
+        row.setAttribute(
+            'data-row-id', el.getAttribute('data-row-id') || 'row-init-' + idx);
 
-          const speakerSpan = el.querySelector('.agent, .user');
-          const speakerHtml = speakerSpan ? speakerSpan.outerHTML : '';
+        const speakerSpan = el.querySelector('.agent, .user');
+        const speakerHtml = speakerSpan ? speakerSpan.outerHTML : '';
 
-          let contentHtml = '';
-          let isCall = el.classList.contains('call-item');
+        let contentHtml = '';
+        let isCall = el.classList.contains('call-item');
 
-          if (isCall) {
+        if (isCall) {
+          const clone = el.cloneNode(true);
+          contentHtml = clone.outerHTML;
+        } else {
+          const contentWrapper = el.querySelector('.row-content-wrapper') || el;
+          if (contentWrapper === el) {
             const clone = el.cloneNode(true);
-            contentHtml = clone.outerHTML;
+            const sp = clone.querySelector('.agent, .user');
+            if (sp) sp.remove();
+            contentHtml = clone.innerHTML;
           } else {
-            const contentWrapper =
-                el.querySelector('.row-content-wrapper') || el;
-            if (contentWrapper === el) {
-              const clone = el.cloneNode(true);
-              const sp = clone.querySelector('.agent, .user');
-              if (sp) sp.remove();
-              contentHtml = clone.innerHTML;
-            } else {
-              contentHtml = contentWrapper.innerHTML;
-            }
+            contentHtml = contentWrapper.innerHTML;
           }
+        }
 
-          row.innerHTML = `
+        row.innerHTML = `
             <div class="row-toolbar">
                 <button onclick="openNoteModal()">+Note</button>
                 <button onclick="addRow('A', this)">+A</button>
@@ -456,59 +458,223 @@ function init() {
                 ${contentHtml}
             </div>
         `;
-          el.replaceWith(row);
-          
-          // Add click listener for accordion
-          const header = row.querySelector('.call-item-header');
-          if (header) {
-            header.addEventListener('click', () => {
-              const callItem = header.closest('.call-item');
-              if (callItem) {
-                callItem.classList.toggle('collapsed');
-              }
+        el.replaceWith(row);
+
+        // Add click listener for accordion
+        const header = row.querySelector('.call-item-header');
+        if (header) {
+          header.addEventListener('click', () => {
+            const callItem = header.closest('.call-item');
+            if (callItem) {
+              callItem.classList.toggle('collapsed');
+            }
+          });
+        }
+      });
+
+  // Restructure cards for Flex Layout
+  document.querySelectorAll('.cuj-card').forEach(card => {
+    if (!card.querySelector('.main-content')) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'main-content';
+      while (card.firstChild) wrapper.appendChild(card.firstChild);
+
+      const sidebar = document.createElement('div');
+      sidebar.className = 'notes-sidebar';
+      sidebar.innerHTML = '<h4>Notes</h4>';
+
+      card.appendChild(wrapper);
+      card.appendChild(sidebar);
+    }
+  });
+
+  // Load persisted notes if any
+  const dataScript = document.getElementById('notes-data');
+  if (dataScript) {
+    notesData = JSON.parse(dataScript.textContent);
+    document.querySelectorAll('.cuj-card').forEach(renderNotesForCard);
+  } else if (window.loadedNotes) {
+    notesData = window.loadedNotes;
+    document.querySelectorAll('.cuj-card').forEach(renderNotesForCard);
+  }
+
+  // Initialize theme toggle button state
+  const currentTheme =
+      document.documentElement.getAttribute('data-theme') || 'dark';
+  const iconSpan = document.getElementById('themeToggleIcon');
+  const textSpan = document.getElementById('themeToggleText');
+  if (iconSpan && textSpan) {
+    if (currentTheme === 'dark') {
+      iconSpan.textContent = '☀️';
+      textSpan.textContent = 'Light Mode';
+    } else {
+      iconSpan.textContent = '🌙';
+      textSpan.textContent = 'Dark Mode';
+    }
+  }
+}
+
+/**
+ * Attempts to parse a text string as JSON.
+ * If parsing fails or the text is empty, returns the original trimmed text.
+ *
+ * @param {string} text - The text string to parse.
+ * @returns {Object!|Array!|string} The parsed JSON object or the original
+ *     string.
+ */
+function tryParseJson(text) {
+  if (typeof text !== 'string' || !text.trim()) return '';
+  try {
+    return JSON.parse(text.trim());
+  } catch (e) {
+    return text.trim();
+  }
+}
+
+/**
+ * Triggers a browser download of a JSON data object.
+ *
+ * @param {Object!} data - The data object to stringify and download.
+ * @param {string} filename - The default name of the downloaded file.
+ */
+function triggerJsonDownload(data, filename) {
+  const blob =
+      new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+/**
+ * Collects, packages, and exports the current page transcripts, webhooks,
+ * tool calls, and user-added notes into a structured JSON download.
+ */
+function exportTranscriptsJson() {
+  const exportData = {export_time: new Date().toISOString(), cujs: []};
+
+  // 1. Traverse CUJ sections
+  const cujSections = document.querySelectorAll('section[id^="cuj-"]');
+  cujSections.forEach(cujSec => {
+    const cujId = cujSec.id;
+    const cujTitleEl = cujSec.querySelector('h2');
+    let cujTitle = cujTitleEl ? cujTitleEl.textContent.trim() : 'Untitled CUJ';
+    cujTitle = cujTitle.replace(
+        /\s*\(Showing top \d+ examples\)\s*$/, '');  // Clean limits notice
+
+    const cujData = {id: cujId, title: cujTitle, cards: []};
+
+    // 2. Traverse Cards in this CUJ
+    const cards = cujSec.querySelectorAll('.cuj-card');
+    cards.forEach(card => {
+      const cardId = card.id;
+      const cardTitleEl = card.querySelector('.main-content h3');
+      const cardTitle =
+          cardTitleEl ? cardTitleEl.textContent.trim() : 'Untitled Card';
+
+      const cardData = {id: cardId, title: cardTitle, turns: []};
+
+      // 3. Traverse Rows in this Card
+      const rows =
+          card.querySelectorAll('.transcript-container .transcript-row');
+      rows.forEach(row => {
+        const rowId = row.getAttribute('data-row-id');
+
+        // Find notes for this row
+        const rowNotes =
+            notesData.filter(n => n.rowId === rowId).map(n => ({
+                                                           id: n.id,
+                                                           start: n.start,
+                                                           end: n.end,
+                                                           original_text:
+                                                               n.originalText,
+                                                           note_text: n.noteText
+                                                         }));
+
+        const callItemEl = row.querySelector('.row-content > .call-item');
+
+        if (callItemEl) {
+          // It's a Call Item (Tool or Webhook)
+          const isWebhook = callItemEl.classList.contains('call-item-webhook');
+          const type = isWebhook ? 'webhook' : 'tool';
+
+          const nameEl = callItemEl.querySelector(
+              '.call-item-header span[contenteditable="true"]');
+          const name = nameEl ? nameEl.textContent.trim() : '';
+
+          const payloadCodeEl =
+              callItemEl.querySelector('.payload-section pre code');
+          const payloadText = payloadCodeEl ? payloadCodeEl.textContent : '';
+
+          const responseCodeEl =
+              callItemEl.querySelector('.response-section pre code');
+          const responseText = responseCodeEl ? responseCodeEl.textContent : '';
+
+          let turnData =
+              {row_id: rowId, type: type, name: name, notes: rowNotes};
+
+          if (isWebhook) {
+            // Parse Method & URL from the Webhook Payload block (1st line
+            // contains URL info)
+            const lines = payloadText.split('\n');
+            const firstLine = lines[0].trim();
+            const match = firstLine.match(
+                /^(GET|POST|PUT|DELETE|PATCH)\s+(https?:\/\/\S+)/i);
+
+            let jsonPayloadText = payloadText;
+            if (match) {
+              turnData.method = match[1].toUpperCase();
+              turnData.url = match[2];
+              jsonPayloadText = lines.slice(1).join('\n');
+            }
+            turnData.payload = tryParseJson(jsonPayloadText);
+          } else {
+            turnData.payload = tryParseJson(payloadText);
+          }
+
+          turnData.response = tryParseJson(responseText);
+          cardData.turns.push(turnData);
+
+        } else {
+          // It's a Speaker Turn (Agent or User)
+          const agentSpan = row.querySelector('.agent');
+          const userSpan = row.querySelector('.user');
+
+          if (agentSpan || userSpan) {
+            const speaker = agentSpan ? 'Agent' : 'User';
+            const contentEl = row.querySelector('.row-content');
+
+            // Use textContent to get fully resolved editable text (works even
+            // when cards are collapsed)
+            const text = contentEl ? contentEl.textContent.trim() : '';
+
+            cardData.turns.push({
+              row_id: rowId,
+              type: 'speaker',
+              speaker: speaker,
+              text: text,
+              notes: rowNotes
             });
           }
-        });
-
-    // Restructure cards for Flex Layout
-    document.querySelectorAll('.cuj-card').forEach(card => {
-        if (!card.querySelector('.main-content')) {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'main-content';
-            while (card.firstChild) wrapper.appendChild(card.firstChild);
-            
-            const sidebar = document.createElement('div');
-            sidebar.className = 'notes-sidebar';
-            sidebar.innerHTML = '<h4>Notes</h4>';
-            
-            card.appendChild(wrapper);
-            card.appendChild(sidebar);
         }
+      });
+
+      // Only include card if it has turns
+      if (cardData.turns.length > 0) {
+        cujData.cards.push(cardData);
+      }
     });
 
-    // Load persisted notes if any
-    const dataScript = document.getElementById('notes-data');
-    if (dataScript) {
-        notesData = JSON.parse(dataScript.textContent);
-        document.querySelectorAll('.cuj-card').forEach(renderNotesForCard);
-    } else if (window.loadedNotes) {
-        notesData = window.loadedNotes;
-        document.querySelectorAll('.cuj-card').forEach(renderNotesForCard);
+    // Only include CUJ if it has cards
+    if (cujData.cards.length > 0) {
+      exportData.cujs.push(cujData);
     }
+  });
 
-    // Initialize theme toggle button state
-    const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
-    const iconSpan = document.getElementById('themeToggleIcon');
-    const textSpan = document.getElementById('themeToggleText');
-    if (iconSpan && textSpan) {
-        if (currentTheme === 'dark') {
-            iconSpan.textContent = '☀️';
-            textSpan.textContent = 'Light Mode';
-        } else {
-            iconSpan.textContent = '🌙';
-            textSpan.textContent = 'Dark Mode';
-        }
-    }
+  triggerJsonDownload(exportData, 'transcripts_export.json');
 }
 
 window.addEventListener('load', init);
