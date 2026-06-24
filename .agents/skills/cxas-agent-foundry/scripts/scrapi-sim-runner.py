@@ -31,31 +31,26 @@ import os
 import sys
 import time
 import uuid
-import yaml
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-import pandas as pd
-from google import genai
+import yaml
+from config import get_project_path, load_app_name
 
-from cxas_scrapi.core.sessions import Sessions
-from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.evals.simulation_evals import (
     LLMUserConversation,
     SimulationEvals,
     StepStatus,
+    cleanup_session_dir,
 )
-from cxas_scrapi.prompts import llm_user_prompts
 from cxas_scrapi.utils.reporting import generate_html_report
-
-
-from config import load_app_name, get_project_path
 
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/scrapi-sim-runner"
 
 
 EVALS_YAML = get_project_path("evals", "scenarios", "scenarios.yaml")
 SIM_EVALS_YAML = get_project_path("evals", "simulations", "simulations.yaml")
+SIM_TESTS_DIR = get_project_path("evals", "simulations")
 REPORTS_DIR = get_project_path("eval-reports")
 
 _DEFAULT_MODEL = "gemini-3.1-flash-lite"
@@ -64,7 +59,7 @@ _DEFAULT_MODEL = "gemini-3.1-flash-lite"
 def load_yaml():
     if not os.path.exists(EVALS_YAML):
         return {"meta": {}, "evals": []}
-    with open(EVALS_YAML, "r") as f:
+    with open(EVALS_YAML) as f:
         return yaml.safe_load(f) or {"meta": {}, "evals": []}
 
 
@@ -72,7 +67,7 @@ def load_sim_templates():
     """Load sim eval templates from simulations.yaml."""
     if not os.path.exists(SIM_EVALS_YAML):
         return {}
-    with open(SIM_EVALS_YAML, "r") as f:
+    with open(SIM_EVALS_YAML) as f:
         data = yaml.safe_load(f)
     if isinstance(data, list):
         return {ev["name"]: ev for ev in data}
@@ -83,8 +78,11 @@ def get_app_name():
     return load_app_name()
 
 
-def build_test_case(ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Build a sim test case from sim template. Variables come from simulations.yaml."""
+def build_test_case(ev: dict[str, Any]) -> dict[str, Any] | None:
+    """Build a sim test case from sim template.
+
+    Variables come from simulations.yaml.
+    """
     name = ev["name"]
     templates = load_sim_templates()
 
@@ -110,16 +108,19 @@ def build_test_case(ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 class EnhancedSimRunner(SimulationEvals):
     """Extended SimulationEvals that injects session variables."""
 
+    @cleanup_session_dir
     def simulate_conversation(
         self,
-        test_case: Dict[str, Any],
+        test_case: dict[str, Any],
         initial_utterance: str = "Hi",
         model: str = _DEFAULT_MODEL,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         console_logging: bool = True,
         modality: str = "text",
         use_tool_fakes: bool = False,
-        background_noise_file: Optional[str] = None,
+        background_noise_file: str | None = None,
+        capture_agent_audio: bool = False,
+        burst_noise_files: list[str] | None = None,
         **kwargs: Any,
     ) -> LLMUserConversation:
         """Run a simulated conversation with variable injection."""
@@ -131,6 +132,9 @@ class EnhancedSimRunner(SimulationEvals):
             genai_model=model,
             test_case=test_case,
         )
+
+        eval_conv.agent_audio_paths = {}
+        current_sim_turn = 0
 
         session_params = test_case.get("session_parameters", {})
 
@@ -150,38 +154,53 @@ class EnhancedSimRunner(SimulationEvals):
         while user_utterance:
             for attempt in range(self.max_retries):
                 try:
-                    kwargs = {
+                    run_kwargs = {
                         "session_id": session_id,
                         "text": user_utterance,
                         "modality": modality,
                         "use_tool_fakes": use_tool_fakes,
+                        "turn_num": current_sim_turn,
+                        "capture_agent_audio": capture_agent_audio,
+                        "background_noise_file": background_noise_file,
+                        "burst_noise_files": burst_noise_files,
                     }
                     # Inject variables on first turn only
                     if first_turn and session_params:
-                        kwargs["variables"] = session_params
+                        run_kwargs["variables"] = session_params
                         first_turn = False
                     else:
                         first_turn = False
 
-                    response = self.sessions_client.run(**kwargs)
+                    response = self.sessions_client.run(**run_kwargs)
                     break
                 except Exception as e:
                     if attempt == self.max_retries - 1:
                         raise e
                     if console_logging:
-                        print(f"  Retry {attempt+1}: {e}")
-                    time.sleep(self.retry_delay_base ** attempt)
+                        print(f"  Retry {attempt + 1}: {e}")
+                    time.sleep(self.retry_delay_base**attempt)
 
             if not response:
                 break
 
+            if response and getattr(response, "agent_audio_paths", None):
+                audio_path = response.agent_audio_paths.get(0)
+                if audio_path:
+                    eval_conv.agent_audio_paths[current_sim_turn] = audio_path
+
             if console_logging:
                 self.sessions_client.parse_result(response)
 
-            agent_text, trace_chunks, session_ended = self._parse_agent_response(response)
+            agent_text, trace_chunks, session_ended, tool_calls = (
+                self._parse_agent_response(response)
+            )
             detailed_trace.append("\n".join(trace_chunks))
 
             if session_ended:
+                if agent_text:
+                    eval_conv._add_agent_response(agent_text)
+                eval_conv._add_agent_tool_calls(tool_calls)
+                eval_conv._next_user_utterance()
                 if console_logging:
                     print("\nSession ended by agent (end_session).")
                 # Mark current step as completed if the session ending
@@ -194,9 +213,13 @@ class EnhancedSimRunner(SimulationEvals):
                         or "being transferred" in criteria
                     ):
                         prog.status = StepStatus.COMPLETED
-                        prog.justification = "Agent ended session via escalation/transfer — matches success criteria."
+                        prog.justification = (
+                            "Agent ended session via escalation/transfer — "
+                            "matches success criteria."
+                        )
                 break
 
+            eval_conv._add_agent_tool_calls(tool_calls)
             result = eval_conv.next_user_utterance(agent_text)
             if isinstance(result, tuple):
                 user_utterance, _ = result
@@ -205,14 +228,26 @@ class EnhancedSimRunner(SimulationEvals):
             if user_utterance:
                 detailed_trace.append(f"User: {user_utterance}")
 
+            current_sim_turn += 1
+
         if console_logging:
             print("\n--- Conversation Complete ---")
             for step_prog in eval_conv.steps_progress:
-                status_icon = "✓" if step_prog.status == StepStatus.COMPLETED else "✗"
-                print(f"  {status_icon} {step_prog.step.goal[:80]} → {step_prog.status.value}")
+                status_icon = (
+                    "✓" if step_prog.status == StepStatus.COMPLETED else "✗"
+                )
+                goal_summary = step_prog.step.goal[:60]
+                status_val = step_prog.status.value
+                print(f"  {status_icon} {goal_summary} → {status_val}")
 
         # Evaluate expectations
-        self._evaluate_expectations(eval_conv, detailed_trace, model, console_logging)
+        self._evaluate_expectations(
+            eval_conv,
+            detailed_trace,
+            model,
+            console_logging,
+            capture_agent_audio=capture_agent_audio,
+        )
 
         # Attach extra data for reporting
         eval_conv._session_id = session_id
@@ -251,11 +286,14 @@ def filter_evals(evals, priority=None, tag=None):
 
 # --- Commands ---
 
+
 def cmd_list(args):
     """List available sim test cases."""
     data = load_yaml()
     templates = load_sim_templates()
-    evals = filter_evals(data.get("evals", []), args.priority, getattr(args, 'tag', None))
+    evals = filter_evals(
+        data.get("evals", []), args.priority, getattr(args, "tag", None)
+    )
 
     print(f"{'Eval Name':45s} {'Has Template':14s} {'Priority':10s}")
     print("-" * 70)
@@ -274,7 +312,9 @@ def cmd_convert(args):
     output_dir = args.output or SIM_TESTS_DIR
     os.makedirs(output_dir, exist_ok=True)
 
-    evals = filter_evals(data.get("evals", []), args.priority, getattr(args, 'tag', None))
+    evals = filter_evals(
+        data.get("evals", []), args.priority, getattr(args, "tag", None)
+    )
 
     all_tests = []
     for ev in evals:
@@ -301,22 +341,27 @@ def cmd_run(args):
     templates = load_sim_templates()
 
     if args.eval:
-        # When specific evals are requested, source directly from simulations.yaml
+        # When specific evals are requested, source directly from
+        # simulations.yaml
         test_cases = []
         for name in args.eval:
             if name in templates:
                 t = templates[name]
-                test_cases.append({
-                    "name": name,
-                    "steps": t["steps"],
-                    "expectations": t.get("expectations", []),
-                    "audio_expectations": t.get("audio_expectations", []),
-                    "session_parameters": t.get("session_parameters", {}),
-                    "metadata": {},
-                })
+                test_cases.append(
+                    {
+                        "name": name,
+                        "steps": t["steps"],
+                        "expectations": t.get("expectations", []),
+                        "audio_expectations": t.get("audio_expectations", []),
+                        "session_parameters": t.get("session_parameters", {}),
+                        "metadata": {},
+                    }
+                )
     else:
         # Otherwise, filter scenario evals that have sim templates
-        evals = filter_evals(data.get("evals", []), args.priority, getattr(args, 'tag', None))
+        evals = filter_evals(
+            data.get("evals", []), args.priority, getattr(args, "tag", None)
+        )
         test_cases = []
         for ev in evals:
             tc = build_test_case(ev)
@@ -332,18 +377,23 @@ def cmd_run(args):
                 if tags and not prios.intersection({tg.upper() for tg in tags}):
                     continue
                 if not tags:
-                    print(f"  WARNING: sim '{name}' has no tags — including anyway (add tags for proper filtering)")
-            tag_filter = getattr(args, 'tag', None)
+                    print(
+                        f"  WARNING: sim '{name}' has no tags — including "
+                        "anyway (add tags for proper filtering)"
+                    )
+            tag_filter = getattr(args, "tag", None)
             if tag_filter and tag_filter not in tags:
                 continue
-            test_cases.append({
-                "name": name,
-                "steps": t["steps"],
-                "expectations": t.get("expectations", []),
-                "audio_expectations": t.get("audio_expectations", []),
-                "session_parameters": t.get("session_parameters", {}),
-                "metadata": {},
-            })
+            test_cases.append(
+                {
+                    "name": name,
+                    "steps": t["steps"],
+                    "expectations": t.get("expectations", []),
+                    "audio_expectations": t.get("audio_expectations", []),
+                    "session_parameters": t.get("session_parameters", {}),
+                    "metadata": {},
+                }
+            )
 
     if not test_cases:
         print("No matching evals with sim templates found.")
@@ -354,7 +404,10 @@ def cmd_run(args):
     runs = args.runs or 1
     parallel = args.parallel or 1
 
-    print(f"Running {len(test_cases)} evals x {runs} runs ({modality}, model: {model})")
+    print(
+        f"Running {len(test_cases)} evals x {runs} runs "
+        f"({modality}, model: {model})"
+    )
     if parallel > 1:
         print(f"Parallelism: {parallel} concurrent sessions")
     print(f"App: {app_name}\n")
@@ -392,7 +445,9 @@ def cmd_run(args):
         if r.get("passed"):
             eval_stats[n]["pass"] += 1
 
-    for name, s in sorted(eval_stats.items(), key=lambda x: x[1]["pass"] / max(x[1]["total"], 1)):
+    for name, s in sorted(
+        eval_stats.items(), key=lambda x: x[1]["pass"] / max(x[1]["total"], 1)
+    ):
         score = f"{s['pass']}/{s['total']}"
         marker = " <<<" if s["pass"] < s["total"] else ""
         print(f"  {score:>5}  {name}{marker}")
@@ -434,17 +489,24 @@ def cmd_run(args):
 
 def main():
     try:
-        import cxas_scrapi  # noqa: F401
+        import cxas_scrapi  # noqa: F401, PLC0415
     except ImportError:
-        print("Error: cxas-scrapi not installed. Activate venv (source .venv/bin/activate) and install cxas-scrapi first.")
+        print(
+            "Error: cxas-scrapi not installed. Activate venv "
+            "(source .venv/bin/activate) and install cxas-scrapi first."
+        )
         sys.exit(1)
 
-    parser = argparse.ArgumentParser(description="LLM-User Simulation eval runner (SCRAPI)")
+    parser = argparse.ArgumentParser(
+        description="LLM-User Simulation eval runner (SCRAPI)"
+    )
     sub = parser.add_subparsers(dest="command")
 
     p_list = sub.add_parser("list", help="List available sim test cases")
     p_list.add_argument("--priority", default=None)
-    p_list.add_argument("--tag", default=None, help="Filter by tag (e.g. outage, escalation)")
+    p_list.add_argument(
+        "--tag", default=None, help="Filter by tag (e.g. outage, escalation)"
+    )
 
     p_convert = sub.add_parser("convert", help="Export sim test cases to JSON")
     p_convert.add_argument("--priority", default=None)
@@ -453,12 +515,24 @@ def main():
 
     p_run = sub.add_parser("run", help="Run sim evals against live agent")
     p_run.add_argument("--priority", default=None)
-    p_run.add_argument("--tag", default=None, help="Filter by tag (e.g. outage, escalation)")
-    p_run.add_argument("--eval", action="append", default=None, help="Eval name (can specify multiple)")
+    p_run.add_argument(
+        "--tag", default=None, help="Filter by tag (e.g. outage, escalation)"
+    )
+    p_run.add_argument(
+        "--eval",
+        action="append",
+        default=None,
+        help="Eval name (can specify multiple)",
+    )
     p_run.add_argument("--channel", default="text", choices=["text", "audio"])
     p_run.add_argument("--model", default=None)
     p_run.add_argument("--runs", type=int, default=1)
-    p_run.add_argument("--parallel", type=int, default=1, help="Number of concurrent sessions (default: 1)")
+    p_run.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Number of concurrent sessions (default: 1)",
+    )
     p_run.add_argument("--verbose", action="store_true")
     p_run.add_argument(
         "--use-tool-fakes",
