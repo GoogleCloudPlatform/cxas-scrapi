@@ -1415,6 +1415,50 @@ def get_parser() -> argparse.ArgumentParser:
         help="Non-interactive mode: auto-confirm stages and operations.",
     )
 
+    # Grouping confirmation gate (Phase 4 — opt-in until Phase 5 default flip)
+    gate_group = parser_migrate_dfcx.add_argument_group(
+        "Grouping Confirmation Gate"
+    )
+    gate_group.add_argument(
+        "--no-web-confirm",
+        action="store_true",
+        help=(
+            "Skip the HTML grouping-confirmation gate and fall back to the"
+            " InquirerPy terminal TUI for grouping review."
+        ),
+    )
+    gate_group.add_argument(
+        "--auto-confirm-grouping",
+        action="store_true",
+        help=(
+            "Accept Gemini's proposed grouping without showing the review"
+            " gate. Intended for CI / scripted migrations."
+        ),
+    )
+    gate_group.add_argument(
+        "--web-confirm-host",
+        default="127.0.0.1",
+        help=(
+            "Bind host for the review server. Use 0.0.0.0 to allow access"
+            " from another machine. Default: 127.0.0.1"
+        ),
+    )
+    gate_group.add_argument(
+        "--web-confirm-port",
+        type=int,
+        default=0,
+        help="Bind port for the review server. 0 picks an ephemeral port.",
+    )
+    gate_group.add_argument(
+        "--web-confirm-timeout",
+        type=int,
+        default=1800,
+        help=(
+            "Seconds to wait for the user to confirm before aborting."
+            " Default: 1800 (30 min)."
+        ),
+    )
+
     # Optimization/Checkpoint Arguments (active when --optimize is specified)
     opt_group = parser_migrate_dfcx.add_argument_group(
         "Optimization / Checkpoint Stage Options (--optimize)"

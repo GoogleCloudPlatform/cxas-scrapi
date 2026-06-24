@@ -245,6 +245,7 @@ class MigrationCLI:
             profile = "standard"
             optimize_for_cxas = True
             persist_bundle = True
+            web_confirm_grouping = True
             gen_report = True
             architecture = "hub-and-spoke"
 
@@ -277,6 +278,7 @@ class MigrationCLI:
             profile = "direct"
             optimize_for_cxas = False
             persist_bundle = False
+            web_confirm_grouping = False
             gen_report = True
             architecture = "hub-and-spoke"
 
@@ -299,12 +301,17 @@ class MigrationCLI:
                     "Persist IR bundle for stage-resume?",
                     default=True,
                 )
+                web_confirm_grouping = Confirm.ask(
+                    "Review groupings in a web browser tab?",
+                    default=True,
+                )
             else:
                 architecture = "hub-and-spoke"
                 persist_bundle = Confirm.ask(
                     "Persist IR bundle for stage-resume?",
                     default=False,
                 )
+                web_confirm_grouping = False
 
             gen_report = Confirm.ask("Generate Migration Report?", default=True)
 
@@ -335,6 +342,7 @@ class MigrationCLI:
             interactive=True,
             optimize_for_cxas=optimize_for_cxas,
             persist_bundle=persist_bundle,
+            web_confirm_grouping=web_confirm_grouping,
         )
 
     def select_resources(self, agent_data: DFCXAgentIR) -> DFCXAgentIR:
@@ -720,7 +728,9 @@ class MigrationCLI:
 
                 await migration_service.run_stage_1(
                     bundle=bundle,
-                    grouping_callback=_tui_callback,
+                    grouping_callback=(
+                        None if config.web_confirm_grouping else _tui_callback
+                    ),
                     version_label="0.0.3",
                     dedup_version_label="0.0.2",
                     persist_bundle_path=(
@@ -904,6 +914,13 @@ def run_end_to_end(args: argparse.Namespace) -> None:
             args, "eval_runner_target", "Custom API Runner"
         )
 
+    # Phase 4: HTML grouping confirmation gate. Default opt-in until
+    # Phase 5 flips it to the unconditional default.
+    web_confirm_grouping = optimize_for_cxas and not getattr(
+        args, "no_web_confirm", False
+    )
+    auto_confirm_grouping = getattr(args, "auto_confirm_grouping", False)
+
     config = MigrationConfig(
         project_id=args.project_id,
         target_name=args.target_name,
@@ -918,6 +935,11 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         gen_hillclimbing_evals=gen_hillclimbing_evals,
         eval_runner_target=eval_runner_target,
         source_agent_data_override=agent_data,
+        web_confirm_grouping=web_confirm_grouping,
+        web_confirm_host=getattr(args, "web_confirm_host", "127.0.0.1"),
+        web_confirm_port=getattr(args, "web_confirm_port", 0),
+        web_confirm_timeout_s=getattr(args, "web_confirm_timeout", 1800),
+        auto_confirm_grouping=auto_confirm_grouping,
     )
 
     service = MigrationService(
@@ -949,6 +971,18 @@ def run_stage_1(args: argparse.Namespace) -> None:
     """
     service, bundle, bundle_path = _restore_service_and_bundle(args)
     persist_path = None if args.no_persist else bundle_path
+
+    # Apply CLI overrides to the restored configuration
+    if hasattr(args, "no_web_confirm"):
+        bundle.config.web_confirm_grouping = not args.no_web_confirm
+    if getattr(args, "web_confirm_host", None):
+        bundle.config.web_confirm_host = args.web_confirm_host
+    if getattr(args, "web_confirm_port", None) is not None:
+        bundle.config.web_confirm_port = args.web_confirm_port
+    if getattr(args, "web_confirm_timeout", None) is not None:
+        bundle.config.web_confirm_timeout_s = args.web_confirm_timeout
+    if hasattr(args, "auto_confirm_grouping"):
+        bundle.config.auto_confirm_grouping = args.auto_confirm_grouping
 
     async def _main():
         return await service.run_stage_1(
