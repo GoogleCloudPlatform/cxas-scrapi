@@ -394,3 +394,103 @@ def test_llm_lint_warning_on_non_recommended_callbacks(
     assert "> [!WARNING]" in content
     assert "**LINTER WARNING**" in content
     assert "before_model_callbacks/my_callback" in content
+
+
+@mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
+def test_llm_lint_flags_variable_update_instructions(mock_gemini_cls, tmp_path):
+    """Validate variable update instructions are sent to Gemini for check."""
+    agent_dir = tmp_path / "agents" / "my-agent"
+    agent_dir.mkdir(parents=True)
+    instruction_file = agent_dir / "instruction.txt"
+    instruction_file.write_text(
+        "Update variable {user_name} to the provided name.", encoding="utf-8"
+    )
+
+    config_path = tmp_path / "gecx-config.json"
+    config_data = {
+        "gcp_project_id": "test-project",
+        "location": "us-central1",
+    }
+    config_path.write_text(json.dumps(config_data), encoding="utf-8")
+
+    mock_gemini_inst = mock_gemini_cls.return_value
+    mock_gemini_inst.generate.return_value = (
+        "## SUMMARY\n"
+        "> [!WARNING]\n"
+        "> **LINTER WARNING**: Instruction attempts to update variable "
+        "values.\n"
+        "> Flagging because the agent itself cannot update the value of a "
+        "variable (see "
+        "https://docs.cloud.google.com/customer-engagement-ai/"
+        "conversational-agents/ps/variable#updating_variable_values)."
+    )
+
+    args = argparse.Namespace(
+        agent_dir=str(agent_dir),
+        project_id=None,
+        location=None,
+        model="gemini-2.5-flash",
+        output=None,
+    )
+
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        llm_lint(args)
+
+    expected_user_prompt = LLM_LINT_USER_PROMPT.format(
+        global_instruction_content="",
+        instruction_content="Update variable {user_name} to the provided name.",
+        dynamic_instruction_content="",
+    )
+    mock_gemini_inst.generate.assert_called_once_with(
+        prompt=expected_user_prompt,
+        system_prompt=LLM_LINT_SYSTEM_PROMPT,
+    )
+    assert "Variable Mutation & Updates" in LLM_LINT_SYSTEM_PROMPT
+
+    report_file = agent_dir / "llm_lint_report.md"
+    assert report_file.exists()
+    content = report_file.read_text(encoding="utf-8")
+    assert "> [!WARNING]" in content
+    assert "the agent itself cannot update the value of a variable" in content
+
+
+@mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
+def test_llm_lint_does_not_falsely_trigger_on_unrelated_instructions(
+    mock_gemini_cls, tmp_path
+):
+    """Validate unrelated instructions do not trigger update warning."""
+    agent_dir = tmp_path / "agents" / "my-agent"
+    agent_dir.mkdir(parents=True)
+    instruction_file = agent_dir / "instruction.txt"
+    instruction_file.write_text(
+        "Greet the user warmly using {user_name}. "
+        "If {is_verified} is true, display {account_balance}.",
+        encoding="utf-8",
+    )
+
+    config_path = tmp_path / "gecx-config.json"
+    config_data = {
+        "gcp_project_id": "test-project",
+        "location": "us-central1",
+    }
+    config_path.write_text(json.dumps(config_data), encoding="utf-8")
+
+    mock_gemini_inst = mock_gemini_cls.return_value
+    mock_gemini_inst.generate.return_value = "## SUMMARY\nNo issues found."
+
+    args = argparse.Namespace(
+        agent_dir=str(agent_dir),
+        project_id=None,
+        location=None,
+        model="gemini-2.5-flash",
+        output=None,
+    )
+
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        llm_lint(args)
+
+    report_file = agent_dir / "llm_lint_report.md"
+    assert report_file.exists()
+    content = report_file.read_text(encoding="utf-8")
+    expected_str = "the agent itself cannot update the value of a variable"
+    assert expected_str not in content
