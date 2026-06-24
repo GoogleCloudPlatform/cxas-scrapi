@@ -365,9 +365,9 @@
                         </details>
                       {% elif kind == "guardrail_trigger" %}
                         {% set lbl, _, raw_json = item[1].partition(" | JSON: ") %}
-                        {% set _gattrs = json.loads(raw_json).get("attributes", {}) if raw_json else {} %}
+                        {% set _gattrs = json.loads(raw_json) if raw_json else {} %}
                         {% set _gorder = ["type", "stage", "agent", "reason"] %}
-                        {% set _gskip = ["triggered", "name"] %}
+                        {% set _gskip = ["name"] %}
                         <details class="tool-details guardrail-details">
                           <summary class="tool-summary guardrail-summary">&#10071; <b>Guardrail Triggered:</b> {{ lbl | escape }}</summary>
                           <dl class="guardrail-kv">

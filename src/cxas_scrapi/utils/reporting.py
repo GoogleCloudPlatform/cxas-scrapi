@@ -256,6 +256,8 @@ def _parse_trace(trace, tools_map):
                         formatted_line[len("Agent Transfer:") :].strip(),
                     )
                 )
+            elif formatted_line.startswith("Custom Payload (Output):"):
+                continue
             elif formatted_line.startswith("Custom Payload:"):
                 parsed_lines.append(
                     (
@@ -349,10 +351,10 @@ def _render_merged_items(merged):
         elif kind == "guardrail_trigger":
             lbl, _, raw_json = item[1].partition(" | JSON: ")
             try:
-                attrs = json.loads(raw_json).get("attributes", {})
+                attrs = json.loads(raw_json)
             except Exception:
                 attrs = {}
-            _SKIP = {"triggered", "name"}
+            _SKIP = {"name"}
             _ORDER = ["type", "stage", "agent", "reason"]
             kv_rows = ""
             for key in _ORDER:

@@ -108,7 +108,7 @@ def build_test_case(ev: dict[str, Any]) -> dict[str, Any] | None:
 
 
 class EnhancedSimRunner(SimulationEvals):
-    """Extended SimulationEvals that injects session variables and extracts guardrails thread-safely."""
+    """Extended SimulationEvals that injects session variables and extracts triggered guardrails."""
 
     def _search_guardrail_spans(self, span_dict: dict[str, Any]) -> list[dict[str, Any]]:
         """Recursively searches a trace span dictionary for all guardrail evaluation spans."""
@@ -123,11 +123,12 @@ class EnhancedSimRunner(SimulationEvals):
             spans.extend(self._search_guardrail_spans(child))
         return spans
 
-    def _parse_agent_response(self, response: Any, eval_conv: Any | None = None) -> tuple:
+    def _parse_agent_response(self, response: Any) -> tuple:
         parsed = ParsedSessionResponse(response, tools_map=self.tools_map)
         agent_text = parsed.consolidated_agent_text
         trace_chunks = parsed.detailed_trace
         session_ended = parsed.session_ended
+        triggered_guardrails = []
 
         for output in response.outputs:
             diagnostic_info = getattr(output, "diagnostic_info", None)
@@ -136,27 +137,24 @@ class EnhancedSimRunner(SimulationEvals):
                 try:
                     span_dict = MessageToDict(root_span._pb) if hasattr(root_span, "_pb") else MessageToDict(root_span)
                 except Exception:
-                    span_dict = dict(root_span) if isinstance(root_span, dict) else {}
+                    span_dict = {}
 
                 for g_span in self._search_guardrail_spans(span_dict):
                     attrs = g_span.get("attributes", {})
                     if attrs.get("triggered"):
                         g_name = attrs.get("name", "Unknown Guardrail")
                         g_type = attrs.get("type", attrs.get("guardrailType", attrs.get("guardrail_type", "Unknown")))
-                        minimal_span = {"attributes": {
+                        minimal_span = {
                             "name": g_name,
                             "type": g_type,
                             "stage": attrs.get("stage"),
                             "agent": attrs.get("agent"),
                             "reason": attrs.get("reason"),
-                        }}
-                        target_obj = eval_conv if eval_conv is not None else self
-                        if not hasattr(target_obj, "_current_guardrails"):
-                            target_obj._current_guardrails = []
-                        target_obj._current_guardrails.append(minimal_span)
+                        }
+                        triggered_guardrails.append(minimal_span)
                         trace_chunks.append(f"Guardrail Trigger: {g_name} ({g_type}) | JSON: {json.dumps(minimal_span)}")
 
-        return agent_text, trace_chunks, session_ended, parsed.tool_calls
+        return agent_text, trace_chunks, session_ended, parsed.tool_calls, triggered_guardrails
 
     @cleanup_session_dir
     def simulate_conversation(
@@ -184,6 +182,7 @@ class EnhancedSimRunner(SimulationEvals):
         )
 
         eval_conv.agent_audio_paths = {}
+        eval_conv.guardrail_details = []
         current_sim_turn = 0
 
         session_params = test_case.get("session_parameters", {})
@@ -241,9 +240,10 @@ class EnhancedSimRunner(SimulationEvals):
             if console_logging:
                 self.sessions_client.parse_result(response)
 
-            agent_text, trace_chunks, session_ended, tool_calls = (
-                self._parse_agent_response(response, eval_conv=eval_conv)
+            agent_text, trace_chunks, session_ended, tool_calls, triggered_guardrails = (
+                self._parse_agent_response(response)
             )
+            eval_conv.guardrail_details.extend(triggered_guardrails)
             detailed_trace.append("\n".join(trace_chunks))
 
             if session_ended:
@@ -290,25 +290,18 @@ class EnhancedSimRunner(SimulationEvals):
                 status_val = step_prog.status.value
                 print(f"  {status_icon} {goal_summary} → {status_val}")
 
-        try:
-            self._evaluate_expectations(
-                eval_conv,
-                detailed_trace,
-                model,
-                console_logging,
-                capture_agent_audio=capture_agent_audio,
-            )
-        finally:
-            eval_conv._session_id = session_id
-            eval_conv._detailed_trace = detailed_trace
-            eval_conv.guardrail_details = getattr(
-                eval_conv, "_current_guardrails",
-                getattr(self, "_current_guardrails", [])
-            )
-            if hasattr(eval_conv, "_current_guardrails"):
-                del eval_conv._current_guardrails
-            if hasattr(self, "_current_guardrails"):
-                del self._current_guardrails
+        # Evaluate expectations
+        self._evaluate_expectations(
+            eval_conv,
+            detailed_trace,
+            model,
+            console_logging,
+            capture_agent_audio=capture_agent_audio,
+        )
+
+        # Attach extra data for reporting
+        eval_conv._session_id = session_id
+        eval_conv._detailed_trace = detailed_trace
 
         return eval_conv
 
