@@ -68,14 +68,14 @@ class Conversations(BaseModel):
 class EvalUtils(Evaluations):
     """Utility class for processing and exporting CXAS Evaluation Results."""
 
-    def __init__(self, app_name: str, env: str = "PROD", **kwargs):
+    def __init__(self, app_name: str, env: str = "PROD", **kwargs: Any):
         """Initializes the EvalUtils class for processing Evaluation Results.
 
         Args:
             app_name: CXAS App ID
                 (projects/{project}/locations/{location}/apps/{app}).
             env: Environment override (default: PROD).
-            **kwargs: Additional arguments passed to the parent class
+            **kwargs (Any): Additional arguments passed to the parent class
                 (Evaluations).
         """
         super().__init__(app_name=app_name, env=env, **kwargs)
