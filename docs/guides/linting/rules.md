@@ -440,6 +440,9 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S002 | `agent-tool-references` | Error | Instruction references tools not in the agent's tool list |
     | S003 | `callback-file-references` | Error | Agent JSON references callback files that don't exist |
     | S004 | `child-agent-references` | Error | Agent JSON references child agents that don't exist |
+    | S005 | `strict-agent-path-layout` | Error | Agent config paths must be app-relative and prefixed with `agents/{agent_name}/` |
+    | S006 | `strict-tool-path-layout` | Error | Tool config paths must be app-relative and prefixed with `tools/{tool_name}/` |
+    | S007 | `sub-agent-single-parent` | Error | Sub-agents must have at most one parent agent (tree constraint) |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 

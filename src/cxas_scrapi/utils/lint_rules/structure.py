@@ -434,7 +434,10 @@ class SubAgentSingleParent(Rule):
                         f"multiple parents: {sorted(parents)}. "
                         "Each sub-agent must have at most one parent."
                     ),
-                    fix="Remove the agent from the childAgents list of all but one parent.",
+                    fix=(
+                        "Remove the agent from the childAgents list of "
+                        "all but one parent."
+                    ),
                 )
             ]
         return []
