@@ -279,6 +279,9 @@ class LintContext:
     options: dict = field(default_factory=dict)
     bypass_tool_prefixes: set = field(default_factory=set)
     app_root: Path | None = None
+    agent_to_parents: dict[str, set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
 
     @property
     def all_known_tools(self) -> set:
@@ -705,6 +708,31 @@ def build_context(
             elif res.tools:
                 all_tool_names.update(res.tools)
 
+    # Discover agent configs to build parent-child map
+    agent_configs = discovery.discover_agent_configs()
+    display_to_agent = {
+        discovery.dir_name_to_display(name): name for name in agents
+    }
+    agent_to_parents = defaultdict(set)
+
+    for parent_name, config_path in agent_configs.items():
+        try:
+            content = config_path.read_text()
+            agent_config = json.loads(content)
+            child_agents = agent_config.get("childAgents", [])
+            for child_ref in child_agents:
+                # Resolve child_ref to agent_name
+                child_name = None
+                if child_ref in agents:
+                    child_name = child_ref
+                elif child_ref in display_to_agent:
+                    child_name = display_to_agent[child_ref]
+
+                if child_name:
+                    agent_to_parents[child_name].add(parent_name)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
     return LintContext(
         project_root=project_root,
         app_dir=discovery.app_dir,
@@ -718,6 +746,7 @@ def build_context(
         options=config.options,
         bypass_tool_prefixes=bypass_tool_prefixes,
         app_root=app_root,
+        agent_to_parents=agent_to_parents,
     )
 
 
