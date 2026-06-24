@@ -147,6 +147,7 @@ class MigrationService:
         # is known. Reset for each migration so per-target state is clean.
         self._analysis_builder: MigrationAnalysisBuilder | None = None
         self._analysis_bundle: IRBundle | None = None
+        self._review_context: Any = None
 
     # ------------------------------------------------------------------
     # Migration analysis report helpers
@@ -339,6 +340,25 @@ class MigrationService:
             bundle.config.target_name if bundle else None, bundle=bundle
         )
 
+        # Boot the review server early if enabled
+        if (
+            getattr(bundle.config, "web_confirm_grouping", False)
+            and not getattr(bundle.config, "auto_confirm_grouping", False)
+            and self._review_context is None
+        ):
+            from cxas_scrapi.migration import (  # noqa: PLC0415
+                grouping_web_review,
+            )
+
+            self._review_context = await grouping_web_review.boot_review_server(
+                ir=self.ir,
+                builder=self._analysis_builder,
+                bind_host=bundle.config.web_confirm_host,
+                bind_port=bundle.config.web_confirm_port,
+                timeout_s=bundle.config.web_confirm_timeout_s,
+                console=console,
+            )
+
         # --- Variable dedup (in-memory; deploy happens in step 9) -----------
         optimizer = await stage_runner.run_stage_1(self.ir, gemini, console)
         stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage_1")
@@ -457,6 +477,7 @@ class MigrationService:
                 bind_port=bundle.config.web_confirm_port,
                 timeout_s=bundle.config.web_confirm_timeout_s,
                 console=console,
+                active_context=self._review_context,
             )
         if grouping_callback is not None:
             reviewed = await grouping_callback(
@@ -946,6 +967,28 @@ class MigrationService:
                 default_model=config.model or self.default_model,
             )
         )
+
+        # Boot the review server early if enabled
+        if (
+            getattr(config, "web_confirm_grouping", False)
+            and not getattr(config, "auto_confirm_grouping", False)
+            and self._review_context is None
+        ):
+            from rich.console import Console  # noqa: PLC0415
+
+            from cxas_scrapi.migration import (  # noqa: PLC0415
+                grouping_web_review,
+            )
+
+            self._review_context = await grouping_web_review.boot_review_server(
+                ir=self.ir,
+                builder=self._analysis_builder,
+                bind_host=config.web_confirm_host,
+                bind_port=config.web_confirm_port,
+                timeout_s=config.web_confirm_timeout_s,
+                console=Console(),
+            )
+
         self.deployment_state = {
             "app_created": False,
             "vars_deployed": False,

@@ -90,22 +90,19 @@ class _ReviewContext:
         self,
         *,
         ir: MigrationIR,
-        groupings: dict[str, Any],
-        consolidator: StructuralConsolidator,
-        root_key: str | None,
-        dep_summary: dict | None,
         builder: MigrationAnalysisBuilder,
         plan_path: Path,
         loop: asyncio.AbstractEventLoop,
         event: asyncio.Event,
         result: dict[str, Any],
         console: Console,
+        groupings: dict[str, Any] | None = None,
+        consolidator: StructuralConsolidator | None = None,
+        root_key: str | None = None,
+        dep_summary: dict | None = None,
     ) -> None:
         self._lock = threading.Lock()
         self.ir = ir
-        self.consolidator = consolidator
-        self.root_key = root_key
-        self.dep_summary = dep_summary or {}
         self.builder = builder
         self.plan_path = plan_path
         self.loop = loop
@@ -113,19 +110,60 @@ class _ReviewContext:
         self.result = result
         self.console = console
         self.session_id = uuid.uuid4().hex
-        self.pending: dict[str, Any] = _build_pending(
-            groupings,
-            ir=ir,
-            root_key=root_key,
-            dep_summary=dep_summary,
-            session_id=self.session_id,
-        )
+        self.consolidator = consolidator
+        self.root_key = root_key
+        self.dep_summary = dep_summary or {}
+        self.server: Any = None
+        self.review_url: str = ""
+
+        if groupings is not None:
+            self.pending: dict[str, Any] = _build_pending(
+                groupings,
+                ir=ir,
+                root_key=root_key,
+                dep_summary=dep_summary,
+                session_id=self.session_id,
+            )
+        else:
+            self.pending = {
+                "status": "analyzing",
+                "groupings": {},
+                "all_flow_names": _all_flow_names(ir),
+                "root_key": None,
+                "dep_summary": {},
+                "session_id": self.session_id,
+            }
+        self._sync_snapshot()
+
+    def update(
+        self,
+        *,
+        groupings: dict[str, Any],
+        consolidator: StructuralConsolidator,
+        root_key: str | None,
+        dep_summary: dict | None,
+    ) -> None:
+        """Update the context with active proposals and consolidator."""
+        with self._lock:
+            self.consolidator = consolidator
+            self.root_key = root_key
+            self.dep_summary = dep_summary or {}
+            self.pending = _build_pending(
+                groupings,
+                ir=self.ir,
+                root_key=root_key,
+                dep_summary=dep_summary,
+                session_id=self.session_id,
+            )
+            # Switch status to awaiting confirmation
+            self.pending["status"] = "awaiting_confirmation"
         self._sync_snapshot()
 
     def _sync_snapshot(self) -> None:
         """Push the current pending payload into the report snapshot."""
         try:
-            self.builder.snapshot.pending_grouping = self.pending
+            snap = self.snapshot()  # Thread-safe copy taken under lock!
+            self.builder.snapshot.pending_grouping = snap
             self.builder.flush()
         except Exception as exc:  # noqa: BLE001
             logger.warning("analysis snapshot flush failed: %s", exc)
@@ -327,13 +365,9 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-async def web_review(
+async def boot_review_server(
     *,
     ir: MigrationIR,
-    groupings: dict[str, Any],
-    consolidator: StructuralConsolidator,
-    root_key: str | None = None,
-    dep_summary: dict | None = None,
     builder: MigrationAnalysisBuilder,
     bind_host: str = "127.0.0.1",
     bind_port: int = 0,
@@ -341,12 +375,8 @@ async def web_review(
     auto_open_browser: bool = True,
     plan_path: Path | str | None = None,
     console: Console | None = None,
-) -> dict | None:
-    """Block the pipeline until the user confirms a grouping in the browser.
-
-    Returns the (possibly edited) groupings dict, or ``None`` if the
-    user aborted or the timeout elapsed.
-    """
+) -> _ReviewContext:
+    """Start the review server early in the background. Does not block."""
     console = console or Console()
     loop = asyncio.get_running_loop()
     event = asyncio.Event()
@@ -361,10 +391,6 @@ async def web_review(
 
     ctx = _ReviewContext(
         ir=ir,
-        groupings=groupings,
-        consolidator=consolidator,
-        root_key=root_key,
-        dep_summary=dep_summary,
         builder=builder,
         plan_path=plan_path,
         loop=loop,
@@ -384,20 +410,128 @@ async def web_review(
     )
     thread.start()
 
-    # Pre-seed the plan file so the file-watch fallback (Phase 6) has
-    # something to start from, and the user can `cat` it.
+    ctx.server = server
+    ctx.review_url = review_url
+
+    banner = (
+        "\n" + "=" * 80 + "\n"
+        "🎉 MIGRATION PROGRESS DASHBOARD IS LIVE!\n\n"
+        "You can monitor the migration and optimization progress live here:\n"
+        f"[bold cyan]{review_url}[/]\n\n"
+        "👉 Once Stage 1 variable deduplication completes, this page will\n"
+        "   automatically unlock the interactive Grouping Review editor where\n"
+        "   you can customize the agent consolidation layout.\n"
+        + "=" * 80
+        + "\n"
+    )
+    console.print(banner)
+
+    if auto_open_browser:
+        try:
+            webbrowser.open_new_tab(review_url)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("could not auto-open browser: %s", exc)
+
+    return ctx
+
+
+async def web_review(
+    *,
+    ir: MigrationIR,
+    groupings: dict[str, Any],
+    consolidator: StructuralConsolidator,
+    root_key: str | None = None,
+    dep_summary: dict | None = None,
+    builder: MigrationAnalysisBuilder,
+    bind_host: str = "127.0.0.1",
+    bind_port: int = 0,
+    timeout_s: int = 1800,
+    auto_open_browser: bool = True,
+    plan_path: Path | str | None = None,
+    console: Console | None = None,
+    active_context: _ReviewContext | None = None,
+) -> dict | None:
+    """Block the pipeline until the user confirms a grouping in the browser.
+
+    If active_context is provided, reuses the running server;
+    otherwise boots a new one.
+    """
+    console = console or Console()
+
+    if active_context is not None:
+        ctx = active_context
+        ctx.update(
+            groupings=groupings,
+            consolidator=consolidator,
+            root_key=root_key,
+            dep_summary=dep_summary,
+        )
+        review_url = ctx.review_url
+        plan_path = ctx.plan_path
+        event = ctx.event
+        result = ctx.result
+    else:
+        loop = asyncio.get_running_loop()
+        event = asyncio.Event()
+        result = {"groupings": None, "aborted": False}
+
+        target_name = getattr(builder, "target_name", "migration")
+        if plan_path is None:
+            plan_path = (
+                Path(builder.output_dir) / f"{target_name}_grouping_plan.json"
+            )
+        plan_path = Path(plan_path)
+
+        ctx = _ReviewContext(
+            ir=ir,
+            builder=builder,
+            plan_path=plan_path,
+            loop=loop,
+            event=event,
+            result=result,
+            console=console,
+            groupings=groupings,
+            consolidator=consolidator,
+            root_key=root_key,
+            dep_summary=dep_summary,
+        )
+
+        # Bind the server.
+        port = bind_port if bind_port else _free_port()
+        review_url = f"http://{bind_host}:{port}/review"
+        handler_cls = _make_handler(ctx, review_url=review_url)
+        server = http.server.ThreadingHTTPServer((bind_host, port), handler_cls)
+        server.daemon_threads = True
+        thread = threading.Thread(
+            target=server.serve_forever,
+            name="grouping-review-server",
+            daemon=True,
+        )
+        thread.start()
+        ctx.server = server
+        ctx.review_url = review_url
+
+    # Pre-seed the plan file
     try:
         structural_consolidator.persist_grouping(groupings, str(plan_path))
     except Exception as exc:  # noqa: BLE001
         logger.warning("failed to pre-seed plan file: %s", exc)
 
-    console.print(f"[cyan][grouping-review] open {review_url} to confirm[/]")
-    console.print(
-        f"[cyan][grouping-review] or edit {plan_path} and save"
-        f" (timeout: {timeout_s}s)[/]"
+    banner = (
+        "\n" + "=" * 80 + "\n"
+        "🎉 INTERACTIVE GROUPING REVIEW IS LIVE!\n\n"
+        "Access your interactive migration report and confirm groupings here:\n"
+        f"[bold cyan]{review_url}[/]\n\n"
+        "👉 Use this page to drag-and-drop flows, mark root agents, and\n"
+        "   request Gemini re-proposals. Once confirmed, you can continue\n"
+        "   monitoring the optimization and deployment progress live from\n"
+        "   this same page!\n"
+        f"   (Timeout: {timeout_s}s)\n" + "=" * 80 + "\n"
     )
+    console.print(banner)
 
-    if auto_open_browser:
+    # Only auto-open if we didn't start the server early (to avoid double tabs)
+    if active_context is None and auto_open_browser:
         try:
             webbrowser.open_new_tab(review_url)
         except Exception as exc:  # noqa: BLE001
@@ -411,18 +545,9 @@ async def web_review(
         )
         ctx.abort()
     finally:
-        # NOTE: we intentionally do NOT shut down the server here. Stage
-        # 2 / Stage 3 continue rewriting <target>_migration_analysis.html
-        # via builder.flush(), and the user-held browser tab at /review
-        # keeps reading that file fresh on every refresh — so they can
-        # watch the consolidation, optimization, and topology phases
-        # complete from the same page (with the Grouping Review tab
-        # showing the confirmed plan + status badge). The server runs in
-        # a daemon thread and dies cleanly at process exit.
         console.print(
             f"[cyan][grouping-review] review server still live at"
-            f" http://{bind_host}:{server.server_address[1]}/review —"
-            f" refresh to watch Stage 2/3 progress.[/]"
+            f" {review_url} — refresh to watch Stage 2/3 progress.[/]"
         )
 
     if result["aborted"] or result["groupings"] is None:
