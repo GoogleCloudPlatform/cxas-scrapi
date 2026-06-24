@@ -1215,10 +1215,41 @@ def deployments_promote(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_help(args: argparse.Namespace) -> None:
+    """Handles the 'help' command."""
+    parser = get_parser()
+    if getattr(args, "help_command", None):
+        try:
+            parser.parse_args([args.help_command, "--help"])
+        except SystemExit:
+            pass
+    else:
+        parser.print_help()
+
+
 def get_parser() -> argparse.ArgumentParser:
     """Sets up the argument parser."""
+    description = (
+        "CXAS SCRAPI Command Line Interface — Full CI/CD Suite\n\n"
+        "The cxas CLI puts the full power of CX Agent Studio in your\n"
+        "terminal: pull/push apps, run evals, manage versions, analyze\n"
+        "conversation traces, and lint configurations or prompts.\n\n"
+        "--- Key Verification & Linting Tools — When to Run Which ---\n\n"
+        "• cxas lint     : Fast, deterministic structural linter.\n"
+        "                  Validates directory layout, YAML/JSON schemas,\n"
+        "                  app.yaml/app.json correctness, & basic structure.\n"
+        "                  When to run: Continuously during development,\n"
+        "                  in pre-commit hooks, and as a first CI gate.\n\n"
+        "• cxas llm-lint : AI semantic natural language prompt linter.\n"
+        "                  Analyzes instructions (instruction.txt,\n"
+        "                  global_instruction.txt, & dynamic callbacks)\n"
+        "                  for clarity, tone, persona, & contradictions.\n"
+        "                  When to run: When authoring prompt engineering,\n"
+        "                  before code reviews, or during qualitative QA."
+    )
+
     parser = argparse.ArgumentParser(
-        description="CXAS SCRAPI Evaluation Runner for CI/CD.",
+        description=description,
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
@@ -2140,6 +2171,17 @@ def get_parser() -> argparse.ArgumentParser:
         help="Optional path to write the markdown lint report.",
     )
     parser_llm_lint.set_defaults(func=llm_lint)
+
+    # Parser for 'help'
+    parser_help = subparsers.add_parser(
+        "help", help="Show help for the CLI or a specific command."
+    )
+    parser_help.add_argument(
+        "help_command",
+        nargs="?",
+        help="The command to show help for (e.g., lint, llm-lint, run).",
+    )
+    parser_help.set_defaults(func=cmd_help)
 
     # Parser for 'init'
     parser_init = subparsers.add_parser(
