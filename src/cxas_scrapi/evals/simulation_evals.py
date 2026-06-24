@@ -495,47 +495,36 @@ class SimulationEvals(Apps):
         """Sends a request to the CES Agent with exponential backoff for
         transient errors.
         """
+        run_kwargs = {
+            "session_id": session_id,
+            "variables": variables,
+            "modality": modality,
+            "turn_num": turn_num,
+            "capture_agent_audio": capture_agent_audio,
+            "background_noise_file": background_noise_file,
+            "burst_noise_files": burst_noise_files,
+            "use_tool_fakes": use_tool_fakes,
+        }
+        if voice_config is not None:
+            run_kwargs["voice_config"] = voice_config
+
         response = None
         for attempt in range(self.max_retries):
             try:
                 if user_utterance.startswith("event:"):
                     response = self.sessions_client.run(
-                        session_id=session_id,
                         event=user_utterance.removeprefix("event:").strip(),
-                        variables=variables,
-                        modality=modality,
-                        turn_num=turn_num,
-                        capture_agent_audio=capture_agent_audio,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
-                        use_tool_fakes=use_tool_fakes,
-                        voice_config=voice_config,
+                        **run_kwargs,
                     )
                 elif user_utterance.startswith("dtmf:"):
                     response = self.sessions_client.run(
-                        session_id=session_id,
                         dtmf=user_utterance.removeprefix("dtmf:").strip(),
-                        variables=variables,
-                        modality=modality,
-                        turn_num=turn_num,
-                        capture_agent_audio=capture_agent_audio,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
-                        use_tool_fakes=use_tool_fakes,
-                        voice_config=voice_config,
+                        **run_kwargs,
                     )
                 else:
                     response = self.sessions_client.run(
-                        session_id=session_id,
                         text=user_utterance,
-                        variables=variables,
-                        modality=modality,
-                        turn_num=turn_num,
-                        capture_agent_audio=capture_agent_audio,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
-                        use_tool_fakes=use_tool_fakes,
-                        voice_config=voice_config,
+                        **run_kwargs,
                     )
                 break
             except Exception as e:

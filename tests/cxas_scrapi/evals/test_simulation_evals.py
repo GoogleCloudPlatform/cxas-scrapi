@@ -1210,7 +1210,6 @@ def test_simulation_evals_simulate_conversation_use_tool_fakes(
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=True,
-        voice_config=None,
     )
 
 
@@ -1242,7 +1241,7 @@ def test_simulation_evals_voice_config(
 
     # Custom voice_config passed via simulate_conversation
     custom_voice = {"language_code": "fr-FR", "voice_name": "fr-FR-Standard-G"}
-    
+
     # Test 1: Passed as function argument
     simulator.simulate_conversation(
         test_case={"steps": []},
@@ -1508,8 +1507,4 @@ def test_simulation_evals_expectations_only_fallback():
             parallel=1,
         )
         assert res["passed"] is True
-=======
-        voice_config=custom_voice,
-    )
 
->>>>>>> 2888cc4 (feat(evals): propagate voice_config parameter through simulate_conversation)

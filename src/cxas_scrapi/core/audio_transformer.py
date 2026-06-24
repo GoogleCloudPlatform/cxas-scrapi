@@ -17,7 +17,7 @@ import logging
 import random
 import threading
 import wave
-from typing import Any, Dict, Optional
+from typing import Any
 
 try:
     from pydub import AudioSegment
@@ -51,7 +51,7 @@ class AudioTransformer:
         bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
         burst_noise_snr: float = 5.0,
-        voice_config: Optional[Dict[str, Any]] = None,
+        voice_config: dict[str, Any] | None = None,
     ) -> dict:
         """Converts text to speech and returns a dictionary with text and
         audio bytes without saving to disk. Background and burst noise can
@@ -69,12 +69,8 @@ class AudioTransformer:
         synthesis_input = texttospeech.SynthesisInput(text=text)
         voice_config = voice_config or {}
         language_code = voice_config.get("language_code", "en-US")
-        if "voice_name" in voice_config:
-            voice_name = voice_config["voice_name"]
-        else:
-            voice_name = "en-US-Standard-A"
-            if language_code.lower().startswith("fr"):
-                voice_name = "fr-CA-Standard-A"
+        voice_name = voice_config.get("voice_name", "en-US-Standard-A")
+
 
         voice = texttospeech.VoiceSelectionParams(
             language_code=language_code, name=voice_name

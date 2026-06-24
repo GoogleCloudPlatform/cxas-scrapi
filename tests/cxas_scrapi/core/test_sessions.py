@@ -467,7 +467,10 @@ def test_run_session_audio_modality_voice_config(
             }
         )
 
-        custom_voice = {"language_code": "fr-FR", "voice_name": "fr-FR-Standard-G"}
+        custom_voice = {
+            "language_code": "fr-FR",
+            "voice_name": "fr-FR-Standard-G",
+        }
         sessions.run(
             session_id="s1",
             text=["Bonjour"],
@@ -476,15 +479,16 @@ def test_run_session_audio_modality_voice_config(
         )
 
         mock_async_run.assert_called_once()
-        
+
         # Verify AudioTransformer was called with correct voice_config
         mock_transformer.text_to_speech_bytes.assert_called_once_with(
             text="Bonjour",
             credentials=sessions.creds,
             project_id=sessions.project_id,
             voice_config=custom_voice,
+            background_noise_file=None,
+            burst_noise_files=None,
         )
-
 
 
 @patch("cxas_scrapi.core.sessions.Sessions._check_audio_requirements")
