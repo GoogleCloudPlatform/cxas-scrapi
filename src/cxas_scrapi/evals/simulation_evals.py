@@ -36,7 +36,6 @@ from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.prompts import llm_user_prompts
-from cxas_scrapi.utils.proto_utils import expand_pb_struct
 from cxas_scrapi.utils.eval_utils import (
     Conversation as GoldenConversation,
 )
@@ -51,6 +50,7 @@ from cxas_scrapi.utils.eval_utils import (
     evaluate_expectations,
 )
 from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.proto_utils import expand_pb_struct
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 _FIRST_UTTERANCE = "event: welcome"
