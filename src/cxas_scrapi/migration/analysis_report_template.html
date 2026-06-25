@@ -1617,6 +1617,7 @@
       renderGroupingCards(groupingState);
     });
 
+
     // Server-backed actions: Confirm, Abort, Re-propose. Only wire when
     // the live server endpoint is set; otherwise leave disabled.
     const endpoint = liveEndpoint();
@@ -1705,6 +1706,8 @@
         }
       });
     }
+    // Confirm/Abort/Re-propose are wired by the server when liveEndpoint() is set
+    // (Phase 4). Until then they stay disabled per the title tooltip.
   }
 
   // ----------- BOOT

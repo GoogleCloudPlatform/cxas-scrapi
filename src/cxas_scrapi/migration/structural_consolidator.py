@@ -588,6 +588,43 @@ def validate_groupings(
 # ---------------------------------------------------------------------------
 
 
+def _rewrite_code_agent_refs(code: str, replacements: dict[str, str]) -> str:
+    """Scans Python code/callbacks and replaces occurrences of legacy agent
+    names with their consolidated group display names ONLY when used as
+    transfer or override targets. Protects parameter values.
+    """
+    if not code:
+        return code
+
+    rewritten = code
+
+    # 1. Surgical Match: Part.from_agent_transfer(agent='...') or
+    # Part.from_agent_transfer('...')
+    def _sub_transfer(match: re.Match) -> str:
+        prefix, quote, name, suffix = match.groups()
+        new_name = replacements.get(name, name)
+        return f"{prefix}{quote}{new_name}{suffix}"
+
+    transfer_re = re.compile(
+        r"(Part\.from_agent_transfer\(\s*(?:agent\s*=)?\s*)(['\"])([^'\"]+)(['\"]\s*\))"
+    )
+    rewritten = transfer_re.sub(_sub_transfer, rewritten)
+
+    # 2. Surgical Match: 'target': '...' or "target": "..." (inside dicts or
+    # JSON)
+    def _sub_target(match: re.Match) -> str:
+        prefix, quote, name, close_quote = match.groups()
+        new_name = replacements.get(name, name)
+        return f"{prefix}{quote}{new_name}{close_quote}"
+
+    target_re = re.compile(
+        r"((?:['\"]target['\"])\s*:\s*)(['\"])([^'\"]+)(['\"])"
+    )
+    rewritten = target_re.sub(_sub_target, rewritten)
+
+    return rewritten
+
+
 def consolidate(ir: MigrationIR, groupings: dict) -> MigrationIR:
     """Build a new MigrationIR whose agents are the proposed groups.
 
@@ -603,6 +640,17 @@ def consolidate(ir: MigrationIR, groupings: dict) -> MigrationIR:
     member_display_to_group = {
         ir.agents[k].display_name: g for k, g in m2g.items() if k in ir.agents
     }
+
+    # Build a comprehensive replacement map for legacy agent/flow names
+    replacements = {}
+    for group_name, payload in groupings.items():
+        group_display = _sanitize_display_name(group_name)
+        for member in payload.get("agents") or []:
+            replacements[member] = group_display
+            if member in ir.agents:
+                original_display = ir.agents[member].display_name
+                if original_display:
+                    replacements[original_display] = group_display
 
     for group_name, payload in groupings.items():
         members = payload.get("agents") or []
@@ -641,10 +689,12 @@ def consolidate(ir: MigrationIR, groupings: dict) -> MigrationIR:
             for cb_type, cb_code in (agent.callbacks or {}).items():
                 if not cb_code:
                     continue
+                # Rewrite references in the callback code before merging
+                rewritten_cb = _rewrite_code_agent_refs(cb_code, replacements)
                 callbacks[cb_type] = (
                     callbacks.get(cb_type, "")
                     + ("\n\n" if callbacks.get(cb_type) else "")
-                    + cb_code
+                    + rewritten_cb
                 )
 
             types.add(agent.type)
@@ -665,6 +715,17 @@ def consolidate(ir: MigrationIR, groupings: dict) -> MigrationIR:
             callbacks=callbacks or None,
             status=MigrationStatus.COMPILED,
         )
+
+    # Rewrite references in Python tool codes inside the consolidated IR
+    for tool in new_ir.tools.values():
+        if tool.type == "PYTHON" and tool.payload:
+            py_func = tool.payload.get("pythonFunction")
+            if py_func and "python_code" in py_func:
+                original_code = py_func["python_code"]
+                rewritten_code = _rewrite_code_agent_refs(
+                    original_code, replacements
+                )
+                py_func["python_code"] = rewritten_code
 
     return new_ir
 

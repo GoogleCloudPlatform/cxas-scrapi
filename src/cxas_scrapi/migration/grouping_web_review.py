@@ -102,6 +102,7 @@ class _ReviewContext:
         dep_summary: dict | None = None,
     ) -> None:
         self._lock = threading.Lock()
+        self.resolved = False
         self.ir = ir
         self.builder = builder
         self.plan_path = plan_path
@@ -182,30 +183,41 @@ class _ReviewContext:
         """Validate the user-edited grouping. On success, persist the plan,
         resolve the asyncio Event, and return []. On failure, return a list
         of error strings without resolving."""
+        if self.resolved or self.event.is_set():
+            return []
         try:
             structural_consolidator.validate_groupings(
                 self.ir, new_groupings, self.root_key
             )
         except Exception as exc:  # noqa: BLE001
             return [str(exc)]
-        # Persist plan
+
+        with self._lock:
+            if self.resolved:
+                return []
+            self.resolved = True
+            self.pending["groupings"] = new_groupings
+            self.pending["status"] = "confirmed"
+            self.result["groupings"] = new_groupings
+            self.result["aborted"] = False
+
+        # Run I/O and signaling outside the lock to prevent deadlocks on the
+        # event loop!
         try:
             structural_consolidator.persist_grouping(
                 new_groupings, str(self.plan_path)
             )
         except Exception as exc:  # noqa: BLE001
             return [f"failed to persist plan: {exc}"]
-        with self._lock:
-            self.pending["groupings"] = new_groupings
-            self.pending["status"] = "confirmed"
-            self.result["groupings"] = new_groupings
-            self.result["aborted"] = False
         self._sync_snapshot()
         self.loop.call_soon_threadsafe(self.event.set)
         return []
 
     def abort(self) -> None:
         with self._lock:
+            if self.resolved:
+                return
+            self.resolved = True
             self.pending["status"] = "aborted"
             self.result["groupings"] = None
             self.result["aborted"] = True
@@ -363,6 +375,63 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+async def _watch_plan_file(
+    ctx: _ReviewContext, *, poll_interval_s: float = 1.0
+) -> None:
+    """Background task: poll plan_path's mtime and apply on change.
+
+    Converges with the POST /api/grouping path via ctx.apply_grouping —
+    whichever fires first wins; the other becomes a no-op once the
+    asyncio.Event is set.
+    """
+    try:
+        baseline = ctx.plan_path.stat().st_mtime
+    except OSError:
+        baseline = 0.0
+    while not ctx.event.is_set():
+        await asyncio.sleep(poll_interval_s)
+        if ctx.event.is_set():
+            return
+        try:
+            mtime = ctx.plan_path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime <= baseline:
+            continue
+        baseline = mtime
+        try:
+            text = ctx.plan_path.read_text(encoding="utf-8")
+            parsed = json.loads(text)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "[grouping-review] file-watch: %s is not valid JSON: %s",
+                ctx.plan_path,
+                exc,
+            )
+            continue
+        if not isinstance(parsed, dict):
+            logger.warning(
+                "[grouping-review] file-watch: %s does not contain a"
+                " grouping dict; ignoring.",
+                ctx.plan_path,
+            )
+            continue
+        errors = ctx.apply_grouping(parsed)
+        if errors:
+            logger.warning(
+                "[grouping-review] file-watch: edits to %s failed"
+                " validation: %s",
+                ctx.plan_path,
+                "; ".join(errors),
+            )
+            continue
+        ctx.console.print(
+            f"[cyan][grouping-review] file-watch: detected change to"
+            f" {ctx.plan_path.name}; consolidation resuming.[/]"
+        )
+        return
 
 
 async def boot_review_server(
@@ -537,6 +606,7 @@ async def web_review(
         except Exception as exc:  # noqa: BLE001
             logger.debug("could not auto-open browser: %s", exc)
 
+    watcher_task = asyncio.create_task(_watch_plan_file(ctx))
     try:
         await asyncio.wait_for(event.wait(), timeout=timeout_s)
     except asyncio.TimeoutError:
@@ -545,6 +615,19 @@ async def web_review(
         )
         ctx.abort()
     finally:
+        watcher_task.cancel()
+        try:
+            await watcher_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+        # NOTE: we intentionally do NOT shut down the server here. Stage
+        # 2 / Stage 3 continue rewriting <target>_migration_analysis.html
+        # via builder.flush(), and the user-held browser tab at /review
+        # keeps reading that file fresh on every refresh — so they can
+        # watch the consolidation, optimization, and topology phases
+        # complete from the same page (with the Grouping Review tab
+        # showing the confirmed plan + status badge). The server runs in
+        # a daemon thread and dies cleanly at process exit.
         console.print(
             f"[cyan][grouping-review] review server still live at"
             f" {review_url} — refresh to watch Stage 2/3 progress.[/]"

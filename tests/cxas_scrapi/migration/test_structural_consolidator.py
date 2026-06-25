@@ -24,8 +24,38 @@ from cxas_scrapi.migration.data_models import (
 from cxas_scrapi.migration.structural_consolidator import (
     StructuralConsolidator,
     _normalize_agent_ref,
+    consolidate,
     heal_tool_refs,
     rewrite_agent_refs,
+)
+
+MOCK_TOOL_CODE = (
+    "def authenticate_user() -> dict:\n"
+    "    # Target should be rewritten, but subflow "
+    "parameter value must remain untouched!\n"
+    "    directives = []\n"
+    "    directives.append({\n"
+    "        'action': 'add_override',\n"
+    "        'target': 'Subflows',\n"
+    "        'parameters': {'subflow': 'Agent Escalation'}\n"
+    "    })\n"
+    "    directives.append({\n"
+    "        'action': 'agentTransfer',\n"
+    "        'target': 'Exits and Transfers'\n"
+    "    })\n"
+    "    return {'__cxas_system_directives__': directives}"
+)
+
+MOCK_CALLBACK_CODE = (
+    "def before_model_callback(callback_context, llm_request):\n"
+    "    # Cross-group transfers should be rewritten,\n"
+    "    # same-group transfers should be stripped/rewritten appropriately\n"
+    "    if error:\n"
+    "        return LlmResponse.from_parts(parts=[\n"
+    "            Part.from_agent_transfer(agent='Subflows'),\n"
+    "            Part.from_agent_transfer('Exits and Transfers')\n"
+    "        ])\n"
+    "    return None"
 )
 
 
@@ -391,3 +421,80 @@ def test_build_available_groups_context_lists_groups_with_members():
 def test_build_available_groups_context_empty_groupings():
     context = StructuralConsolidator._build_available_groups_context({})
     assert "no other consolidated groups" in context
+
+
+def test_consolidate_rewrites_code_agent_refs_surgically():
+    # 1. Build a mock IR containing a Python tool and callback with legacy refs
+    ir = MigrationIR(
+        metadata=IRMetadata(app_name="projects/p/locations/us/apps/X"),
+        tools={
+            "authenticate_user": IRTool(
+                id="authenticate_user",
+                name="projects/p/locations/us/apps/X/tools/authenticate_user",
+                type="PYTHON",
+                payload={"pythonFunction": {"python_code": MOCK_TOOL_CODE}},
+            )
+        },
+        agents={
+            "RootAgent": IRAgent(
+                type="PLAYBOOK",
+                display_name="RootAgent",
+                instruction="Welcome",
+                callbacks={"before_model_callback": MOCK_CALLBACK_CODE},
+            ),
+            "Subflows": IRAgent(
+                type="FLOW",
+                display_name="Subflows",
+                instruction="Subflow handling",
+            ),
+            "Exits and Transfers": IRAgent(
+                type="FLOW",
+                display_name="Exits and Transfers",
+                instruction="Exit handling",
+            ),
+        },
+    )
+
+    # 2. Define consolidated groupings (Subflows and Exits and Transfers
+    # merged into SessionTerminationAgent)
+    groupings = {
+        "RootAgent": {
+            "agents": ["RootAgent"],
+            "is_root": True,
+        },
+        "SessionTerminationAgent": {
+            "agents": ["Subflows", "Exits and Transfers"],
+            "is_root": False,
+        },
+    }
+
+    # 3. Run consolidate!
+    consolidated_ir = consolidate(ir, groupings)
+
+    # 4. Assertions!
+    # A. Check the python tool code:
+    # 'target': 'Subflows' -> 'target': 'SessionTerminationAgent'
+    # 'target': 'Exits and Transfers' -> 'target': 'SessionTerminationAgent'
+    # 'subflow': 'Agent Escalation' -> UNTOUCHED!
+    tool_code = consolidated_ir.tools["authenticate_user"].payload[
+        "pythonFunction"
+    ]["python_code"]
+    assert "'target': 'SessionTerminationAgent'" in tool_code
+    assert "'target': 'SessionTerminationAgent'" in tool_code
+    assert "'subflow': 'Agent Escalation'" in tool_code  # Protected!
+    assert (
+        "'subflow': 'SessionTerminationAgent'" not in tool_code
+    )  # Not corrupted!
+
+    # B. Check the callback code in RootAgent:
+    # agent='Subflows' -> agent='SessionTerminationAgent'
+    # 'Exits and Transfers' -> 'SessionTerminationAgent'
+    cb_code = consolidated_ir.agents["RootAgent"].callbacks[
+        "before_model_callback"
+    ]
+    assert (
+        "Part.from_agent_transfer(agent='SessionTerminationAgent')" in cb_code
+    )
+    assert "Part.from_agent_transfer('SessionTerminationAgent')" in cb_code
+    assert "Subflows" not in cb_code
+    assert "Exits and Transfers" not in cb_code
