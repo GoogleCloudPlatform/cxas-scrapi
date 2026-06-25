@@ -364,6 +364,130 @@ def test_i015_canonical_text_ok(tmp_path, context):
     assert results == []
 
 
+def test_i016_flags_prose_state_machine(tmp_path, context):
+    """Co-occurring control-flow + retry signals fire one result."""
+    from cxas_scrapi.utils.lint_rules.instructions import ProseStateMachine  # noqa: PLC0415,I001
+
+    rule = ProseStateMachine()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "<action>\n"
+        'If user says no, go to step "Ask Again".\n'
+        'If user confirms, proceed to subtask "Conclusion". STOP.\n'
+        "Second attempt: apologize and transfer.\n"
+        "</action>\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "state machine in prose" in results[0].message
+    assert results[0].line is not None
+
+
+def test_i016_clean_instruction_passes(tmp_path, context):
+    """A declarative, goal-oriented instruction does not fire."""
+    from cxas_scrapi.utils.lint_rules.instructions import ProseStateMachine  # noqa: PLC0415,I001
+
+    rule = ProseStateMachine()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "<role>You help guests book a table.</role>\n"
+        "<taskflow>\n"
+        '  <subtask name="gather_details">\n'
+        "    <step>Ask for the date if not provided.</step>\n"
+        "    <step>Ask for the party size if not provided.</step>\n"
+        "    <step>Once both are known, call check_availability.</step>\n"
+        "  </subtask>\n"
+        "</taskflow>\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_i016_high_confidence_singleton_fires_alone(tmp_path, context):
+    """A retry counter read in prose fires on its own (high-confidence)."""
+    from cxas_scrapi.utils.lint_rules.instructions import ProseStateMachine  # noqa: PLC0415,I001
+
+    rule = ProseStateMachine()
+    f = tmp_path / "instruction.txt"
+    f.write_text("If {no_match_retry_counter} is 0, ask once more.\n")
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "counter_cmp" in results[0].message
+
+
+def test_i016_state_write_fires_alone(tmp_path, context):
+    """Persisting an UPPER_SNAKE state value (update_params) is high-conf."""
+    from cxas_scrapi.utils.lint_rules.instructions import ProseStateMachine  # noqa: PLC0415,I001
+
+    rule = ProseStateMachine()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "Call update_params with"
+        ' value=\'{"flow_status": "BAG_VERIFICATION"}\'.\n'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "state_write" in results[0].message
+
+
+def test_i016_inline_example_is_skipped(tmp_path, context):
+    """Control-flow tokens inside an inline_example must not count."""
+    from cxas_scrapi.utils.lint_rules.instructions import ProseStateMachine  # noqa: PLC0415,I001
+
+    rule = ProseStateMachine()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "<inline_example>\n"
+        'If user says no, go to step "Ask Again". STOP.\n'
+        'Second attempt: proceed to subtask "X".\n'
+        "</inline_example>\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_i016_plain_forward_jumps_do_not_fire_alone(tmp_path, context):
+    """Benign sequential 'proceed to subtask' navigation must not fire."""
+    from cxas_scrapi.utils.lint_rules.instructions import ProseStateMachine  # noqa: PLC0415,I001
+
+    rule = ProseStateMachine()
+    f = tmp_path / "instruction.txt"
+    # Forward jumps only (no conditions, no loops, no other category).
+    f.write_text(
+        'When done, proceed to subtask "two".\n'
+        'When done, proceed to subtask "three".\n'
+        'When done, proceed to subtask "four".\n'
+        'When done, proceed to subtask "five".\n'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_i016_config_thresholds(tmp_path, context):
+    """options.I016 lowers the firing thresholds."""
+    from cxas_scrapi.utils.lint_rules.instructions import ProseStateMachine  # noqa: PLC0415,I001
+
+    rule = ProseStateMachine()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        'If user says yes, go to step "A".\nIf user says no, go to step "B".\n'
+    )
+
+    # Default min_strong_edges=3 → two conditional jumps do not fire.
+    assert len(rule.check(f, f.read_text(), context)) == 0
+
+    # Lower the strong-edge threshold → fires.
+    context.options = {"I016": {"min_strong_edges": 2}}
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+
+
 # ── Callback Rules ───────────────────────────────────────────────────────
 
 

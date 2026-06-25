@@ -154,6 +154,44 @@ Assistant: "What date were you thinking — this weekend, or further out?"
 
 ---
 
+## Do not encode a state machine in the prompt
+
+The most damaging instruction anti-pattern is hand-building a finite-state machine inside the prompt and asking the model to execute it on every turn: reading a counter variable, comparing it to a literal, branching to a named step, writing state back, and following `agent_action` codes verbatim. LLMs execute this kind of imperative control flow unreliably — they lose track of which "state" they are in, fire steps out of order, and skip the counter increments. Control flow, retry limits, and routing belong in **deterministic code** (callbacks and slot-filling DAG transitions), not in prose.
+
+=== "Bad"
+
+    ```xml
+    <step name="Confirm Quantity">
+      <trigger>{noCount} is "0" or "1"</trigger>
+      <action>
+        1. Ask: "Just to confirm, are you returning {returnQuantity}?"
+        - If Yes: Proceed to subtask "Return Reason". STOP.
+        - If No:
+          - If {noCount} is "0": Call {@TOOL: update_params_batch} with
+            (noCount="1"). Loop back to step "Elicit Quantity".
+          - If {noCount} is "1": Call {@TOOL: update_params_batch} with
+            (isAgentTransfer="true"). Transition to "agent_transfer". STOP.
+      </action>
+    </step>
+    ```
+
+    This is a retry state machine in prose: a counter the model must read and increment, a back-edge loop, hard `STOP` transitions, and a transfer escalation — all delegated to the LLM. The linter flags this as **[I016 `prose-state-machine`](../guides/linting/rules.md)**.
+
+=== "Good"
+
+    ```xml
+    <taskflow>
+      <subtask name="confirm_quantity">
+        <step>Confirm the quantity the guest wants to return.</step>
+        <step>Once confirmed, call set_return_quantity with the value.</step>
+      </subtask>
+    </taskflow>
+    ```
+
+    The prompt states the goal and calls a setter tool. The retry counter, the "ask again vs. escalate" decision, and the transfer are owned by a `before_model`/`after_model` callback that keeps state in Python (a `_retries` dict). See the [slot-filling pattern](../patterns/slot-filling.md): *the LLM is a language interface, not a state machine.*
+
+---
+
 ## The Actionability Test
 
 When writing a step or constraint, apply this test: **can you write a failing eval for it?**
