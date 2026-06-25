@@ -861,3 +861,84 @@ async def test_run_stage_1_skips_web_review_when_auto_confirm():
         )
 
     assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_stage_1_boots_server_early_and_passes_to_web_review():
+    """Verify that the service boots the review server early and reuses
+    its context during consolidation.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    service = _make_service()
+    service._ensure_analysis_builder("test_agent")
+
+    bundle = _make_bundle()
+    bundle.config.web_confirm_grouping = True
+    bundle.config.auto_confirm_grouping = False
+    bundle.config.web_confirm_host = "127.0.0.1"
+    bundle.config.web_confirm_port = 0
+    bundle.config.web_confirm_timeout_s = 1800
+    bundle.config.target_name = "test_agent"
+
+    fake_consolidator = MagicMock()
+    fake_consolidator.propose_groupings = AsyncMock(
+        return_value={"G": {"agents": ["Root Agent"], "is_root": True}}
+    )
+    fake_consolidator.synthesize_instructions = AsyncMock(return_value={})
+
+    fake_context = MagicMock()
+
+    boot_mock = AsyncMock(return_value=fake_context)
+    review_mock = AsyncMock(
+        return_value={"G": {"agents": ["Root Agent"], "is_root": True}}
+    )
+
+    with (
+        patch(
+            "cxas_scrapi.migration.stage_runner.run_stage_1",
+            new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.StructuralConsolidator",
+            return_value=fake_consolidator,
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "detect_root_key",
+            return_value="RootAgent",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "validate_groupings",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "persist_grouping",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.integrity_checks."
+            "check_consolidation_integrity",
+            return_value=(False, []),
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.boot_review_server",
+            new=boot_mock,
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.web_review",
+            new=review_mock,
+        ),
+    ):
+        await service.run_stage_1(
+            bundle=bundle,
+            version_label=None,
+        )
+
+    # 1. Verify boot_review_server was called early (once)
+    boot_mock.assert_called_once()
+
+    # 2. Verify web_review was called with active_context=fake_context
+    review_mock.assert_called_once()
+    _, kwargs = review_mock.call_args
+    assert kwargs.get("active_context") is fake_context

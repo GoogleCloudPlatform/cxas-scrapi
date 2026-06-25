@@ -29,6 +29,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 from cxas_scrapi.migration import grouping_web_review
 from cxas_scrapi.migration.analysis_reporter import MigrationAnalysisBuilder
@@ -204,7 +205,7 @@ def test_apply_grouping_confirms_and_writes_plan(tmp_path, monkeypatch):
     fixed_port = 18745
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
-    _, loop, thread, shared = _start_web_review(builder=b)
+    _, _loop, thread, shared = _start_web_review(builder=b)
     base = _wait_for_server("127.0.0.1", fixed_port)
 
     # Snapshot reflects the initial proposal + session id.
@@ -311,7 +312,7 @@ def test_get_review_serves_html_with_injected_endpoint(tmp_path, monkeypatch):
     fixed_port = 18749
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
-    _, _, thread, shared = _start_web_review(builder=b)
+    _, _, thread, _shared = _start_web_review(builder=b)
     base = _wait_for_server("127.0.0.1", fixed_port)
 
     status, body = _http_get(f"{base}/review")
@@ -367,7 +368,7 @@ def test_get_root_redirects_to_review(tmp_path, monkeypatch):
     fixed_port = 18751
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
-    _, _, thread, shared = _start_web_review(builder=b)
+    _, _, thread, _shared = _start_web_review(builder=b)
     base = _wait_for_server("127.0.0.1", fixed_port)
 
     req = urllib.request.Request(f"{base}/", method="GET")
@@ -443,3 +444,53 @@ def test_file_watch_ignores_invalid_json(tmp_path, monkeypatch):
     _http_post(f"{base}/api/abort", {})
     thread.join(timeout=5)
     assert shared["result"] is None
+
+
+def test_apply_grouping_noop_if_already_resolved(tmp_path, monkeypatch):
+    """If the gate is already resolved (event is set), apply_grouping should
+    exit immediately as a no-op without running validations or file I/O."""
+    ir = MagicMock()
+    groupings = {"Group": {"agents": ["FlowA"]}}
+    consolidator = MagicMock()
+    builder = MagicMock()
+    plan_path = tmp_path / "dummy_plan.json"
+    loop = MagicMock()
+    event = MagicMock()
+    result = {}
+    console = MagicMock()
+
+    ctx = grouping_web_review._ReviewContext(
+        ir=ir,
+        groupings=groupings,
+        consolidator=consolidator,
+        root_key="Root",
+        dep_summary={},
+        builder=builder,
+        plan_path=plan_path,
+        loop=loop,
+        event=event,
+        result=result,
+        console=console,
+    )
+
+    # Mock validate_groupings to raise an exception if it gets called
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("validate_groupings should not have been called!")
+
+    monkeypatch.setattr(
+        grouping_web_review.structural_consolidator,
+        "validate_groupings",
+        fail_if_called,
+    )
+
+    # Test Pathway 1: early exit via event.is_set() outside the lock
+    event.is_set.return_value = True
+    errors = ctx.apply_grouping(groupings)
+    assert errors == []
+
+    # Test Pathway 2: early exit via self.resolved inside the lock (even if
+    # event.is_set() is False)
+    event.is_set.return_value = False
+    ctx.resolved = True
+    errors2 = ctx.apply_grouping(groupings)
+    assert errors2 == []
