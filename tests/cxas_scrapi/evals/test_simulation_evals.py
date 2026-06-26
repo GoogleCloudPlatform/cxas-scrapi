@@ -67,7 +67,7 @@ def test_llm_user_conversation():
 
     llm_conv = LLMUserConversation(
         genai_client=mock_gemini_client,
-        genai_model="gemini-1.5-flash",
+        genai_model="gemini-3.1-flash-lite",
         test_case=test_case,
     )
 
@@ -125,7 +125,7 @@ def test_llm_user_conversation_max_turns():
 
     llm_conv = LLMUserConversation(
         genai_client=mock_gemini_client,
-        genai_model="gemini-1.5-flash",
+        genai_model="gemini-3.1-flash-lite",
         test_case=test_case,
         max_turns=1,
     )
@@ -755,7 +755,13 @@ def test_simulation_evals_aggregate_simulation_results_parallel():
     jobs = [({"name": "tc1"}, 0), ({"name": "tc1"}, 1)]
 
     results = evals._aggregate_simulation_results(
-        jobs, runs=2, parallel=2, model="m", modality="text", verbose=False
+        jobs,
+        runs=2,
+        parallel=2,
+        sim_user_model="m_sim",
+        eval_model="m_eval",
+        modality="text",
+        verbose=False,
     )
 
     assert len(results) == 2
@@ -1114,7 +1120,8 @@ def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
         test_cases=test_cases,
         runs=1,
         parallel=1,
-        model="gemini-1.5-flash",
+        sim_user_model="gemini-3.1-flash-lite",
+        eval_model="gemini-3.1-pro-preview",
         use_tool_fakes=True,
     )
 
@@ -1123,7 +1130,8 @@ def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
         test_cases[0],
         0,
         1,
-        "gemini-1.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-3.1-pro-preview",
         "text",
         False,
         1,
@@ -1149,7 +1157,8 @@ def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
         test_cases=test_cases,
         runs=1,
         parallel=2,
-        model="gemini-1.5-flash",
+        sim_user_model="gemini-3.1-flash-lite",
+        eval_model="gemini-3.1-pro-preview",
         use_tool_fakes=True,
     )
 
@@ -1159,7 +1168,8 @@ def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
         test_cases[0],
         0,
         1,
-        "gemini-1.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-3.1-pro-preview",
         "text",
         False,
         2,
