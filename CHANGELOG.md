@@ -1,7 +1,7 @@
 # Changelog
 
 
-## [2.0.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.4.1...v2.0.0) (2026-06-26)
+## [1.5.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.4.1...v1.5.0) (2026-06-26)
 
 
 ### ⚠ BREAKING CHANGES
