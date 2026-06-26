@@ -59,6 +59,8 @@ def test_combined_evals_report_cmd(tmp_path):
             self.modality = "text"
             self.runs = 1
             self.use_tool_fakes = False
+            self.sim_user_model = None
+            self.eval_model = None
 
     args = Args()
 
@@ -79,6 +81,8 @@ def test_combined_evals_report_cmd(tmp_path):
             simulation_dir=None,
             include=["sims", "goldens", "scenarios"],
             modality="text",
+            sim_user_model=None,
+            eval_model=None,
             runs=1,
             filter_files=[],
             filter_tags=[],
@@ -112,6 +116,8 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
             self.modality = "audio"
             self.runs = 5
             self.use_tool_fakes = False
+            self.sim_user_model = None
+            self.eval_model = None
 
     args = Args()
 
@@ -132,6 +138,8 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
             simulation_dir=None,
             include=["sims", "goldens", "scenarios"],
             modality="audio",
+            sim_user_model=None,
+            eval_model=None,
             runs=5,
             filter_files=[],
             filter_tags=[],
@@ -170,6 +178,8 @@ def test_combined_evals_report_cmd_timestamped(mock_datetime, tmp_path):
             self.runs = 1
             self.use_tool_fakes = False
             self.timestamped = True
+            self.sim_user_model = None
+            self.eval_model = None
 
     args = Args()
 
@@ -190,6 +200,8 @@ def test_combined_evals_report_cmd_timestamped(mock_datetime, tmp_path):
             simulation_dir=None,
             include=["sims", "goldens", "scenarios"],
             modality="text",
+            sim_user_model=None,
+            eval_model=None,
             runs=1,
             filter_files=[],
             filter_tags=[],
