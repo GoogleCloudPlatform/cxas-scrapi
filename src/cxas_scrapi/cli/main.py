@@ -506,6 +506,7 @@ def run_eval(args: argparse.Namespace) -> None:
             evaluations=evaluations_to_run,
             app_name=args.app_name,
             modality=args.modality,
+            golden_run_method=args.golden_run_method,
         )
         print("Evaluation triggered successfully based on CLI call.")
 
@@ -1960,6 +1961,15 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Filter out automated metrics (semantic similarity, "
             "hallucination) and only evaluate custom expectations."
+        ),
+    )
+    parser_run.add_argument(
+        "--golden-run-method",
+        choices=["STABLE", "NAIVE"],
+        default="STABLE",
+        help=(
+            "Method used to replay golden tests (STABLE or NAIVE). "
+            "Defaults to STABLE."
         ),
     )
 
