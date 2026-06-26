@@ -16,6 +16,8 @@ import asyncio
 import logging
 import random
 import threading
+import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -114,6 +116,51 @@ class GeminiGenerate:
             case _:
                 return False
 
+    def _execute_with_retry(
+        self,
+        func: Callable[[], Any],
+        error_wrapper_class: type[GeminiError],
+        max_retries: int = 5,
+        base_delay_seconds: float = 2.0,
+    ) -> Any:
+        """Executes a synchronous operation with exponential backoff retries.
+
+        Args:
+            func: The function to execute.
+            error_wrapper_class: The custom exception type to raise on failure.
+            max_retries: Maximum number of retries.
+            base_delay_seconds: Base delay for backoff.
+
+        Returns:
+            The return value of func().
+
+        Raises:
+            error_wrapper_class: If all retries fail or a permanent error
+              occurs.
+        """
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except Exception as e:
+                if not self._is_transient_error(e):
+                    raise error_wrapper_class(
+                        f"Permanent error: {e}", original_exception=e
+                    ) from e
+
+                logger.warning(f"Transient error on attempt {attempt + 1}: {e}")
+                if attempt == max_retries - 1:
+                    raise error_wrapper_class(
+                        f"All {max_retries} retry attempts failed.",
+                        original_exception=e,
+                    ) from e
+
+            # Jittered exponential backoff
+            sleep_time = (base_delay_seconds * (1.5**attempt)) + random.uniform(
+                0, 1
+            )
+            logger.info(f"Sleeping for {sleep_time:.1f}s before retry...")
+            time.sleep(sleep_time)
+
     def _build_generation_config(
         self,
         system_prompt: str | None = None,
@@ -150,23 +197,27 @@ class GeminiGenerate:
         response_schema: Any | None = None,
         temperature: float | None = 1.0,
         thinking_level: str | None = None,
-    ) -> Any | None:
+        max_retries: int = 5,
+        base_delay_seconds: float = 2.0,
+    ) -> Any:
         """Generates content using the Gemini model.
 
         Args:
             prompt: The user prompt.
             system_prompt: Optional system prompt/instruction.
             model_name: Optional override for the model name.
-            response_mime_type: Optional MIME type for the response (e.g.,
-              'application/json').
-            response_schema: Optional Pydantic model or schema for structured
-              output.
+            response_mime_type: Optional MIME type (e.g. 'application/json').
+            response_schema: Optional Pydantic model or schema.
             temperature: Optional temperature setting. Defaults to 1.0.
-            thinking_level: Optional Vertex `ThinkingConfig` budget; one of
-              "low" / "medium" / "high". `None` disables thinking entirely.
+            thinking_level: Optional budget: "low"/"medium"/"high".
+            max_retries: Maximum number of retries for transient errors.
+            base_delay_seconds: Base delay for backoff.
 
         Returns:
-            The generated text response or parsed object, or None on failure.
+            The generated text response or parsed object.
+
+        Raises:
+            GeminiGenerationError: If the generation fails.
         """
         target_model = model_name or self.model_name
 
@@ -178,17 +229,20 @@ class GeminiGenerate:
             thinking_level=thinking_level,
         )
 
-        try:
+        def _call():
             response = self.client.models.generate_content(
                 model=target_model, contents=prompt, config=config
             )
-
             if response_mime_type == "application/json" and response_schema:
                 return response.parsed
             return response.text
-        except Exception:
-            logger.exception("Gemini generation failed")
-            return None
+
+        return self._execute_with_retry(
+            _call,
+            GeminiGenerationError,
+            max_retries=max_retries,
+            base_delay_seconds=base_delay_seconds,
+        )
 
     def generate_with_parts(
         self,
@@ -199,24 +253,31 @@ class GeminiGenerate:
         response_schema: Any | None = None,
         temperature: float | None = 1.0,
         thinking_level: str | None = None,
-    ) -> Any | None:
+        max_retries: int = 5,
+        base_delay_seconds: float = 2.0,
+    ) -> Any:
         """Generates content from a list of multimodal Parts.
 
         Useful for audio analysis where one part is a `genai.types.Part`
-        constructed via `from_uri(gs://..., mime_type='audio/wav')` or
-        `from_bytes(data=..., mime_type=...)`, and another part is a text
+        constructed via `from_uri` or `from_bytes`, and another part is a text
         prompt.
 
         Args:
-            parts: List of `genai.types.Part` (or strings — converted to text
-              parts automatically).
+            parts: List of `genai.types.Part` or strings.
             system_prompt: Optional system instruction.
             model_name: Optional override for the model name.
             response_mime_type: Optional MIME type (e.g. 'application/json').
             response_schema: Optional schema for structured output.
             temperature: Sampling temperature.
-            thinking_level: Optional Vertex `ThinkingConfig` budget; one of
-              "low" / "medium" / "high". `None` disables thinking entirely.
+            thinking_level: Optional budget: "low"/"medium"/"high".
+            max_retries: Maximum number of retries for transient errors.
+            base_delay_seconds: Base delay for backoff.
+
+        Returns:
+            The generated text response or parsed object.
+
+        Raises:
+            GeminiGenerationError: If the generation fails.
         """
         target_model = model_name or self.model_name
 
@@ -235,16 +296,20 @@ class GeminiGenerate:
             thinking_level=thinking_level,
         )
 
-        try:
+        def _call():
             response = self.client.models.generate_content(
                 model=target_model, contents=contents, config=config
             )
             if response_mime_type == "application/json" and response_schema:
                 return response.parsed
             return response.text
-        except Exception:
-            logger.exception("Gemini multimodal generation failed")
-            return None
+
+        return self._execute_with_retry(
+            _call,
+            GeminiGenerationError,
+            max_retries=max_retries,
+            base_delay_seconds=base_delay_seconds,
+        )
 
     async def create_cache(
         self,
@@ -301,7 +366,7 @@ class GeminiGenerate:
         base_delay_seconds: int = 10,
         temperature: float | None = 1.0,
         cached_content_name: str | None = None,
-    ) -> Any | None:
+    ) -> Any:
         """Generates content asynchronously using the Gemini model.
 
         Args:
@@ -309,19 +374,19 @@ class GeminiGenerate:
             system_prompt: Optional system prompt/instruction. Ignored when
               cached_content_name is provided (system prompt lives in cache).
             model_name: Optional override for the model name.
-            response_mime_type: Optional MIME type for the response (e.g.,
-              'application/json').
-            response_schema: Optional Pydantic model or schema for structured
-              output.
+            response_mime_type: Optional MIME type (e.g. 'application/json').
+            response_schema: Optional Pydantic model or schema.
             max_retries: Maximum number of retries for transient errors.
             base_delay_seconds: Base delay for exponential backoff.
             temperature: Optional temperature setting. Defaults to 1.0.
             cached_content_name: Optional resource name returned by
-              create_cache(). When provided, system_prompt is ignored and the
-              generation config references the cache instead.
+              create_cache().
 
         Returns:
-            The generated text response or parsed object, or None on failure.
+            The generated text response or parsed object.
+
+        Raises:
+            GeminiGenerationError: If the generation fails.
         """
         target_model = model_name or self.model_name
 
@@ -351,20 +416,21 @@ class GeminiGenerate:
                 return response.text
 
             except Exception as e:
-                is_quota = "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)
-                err_msg = (
-                    "Quota/Rate Limit Exhausted"
-                    if is_quota
-                    else f"{type(e).__name__}: {e}"
+                if not self._is_transient_error(e):
+                    raise GeminiGenerationError(
+                        f"Permanent error: {e}", original_exception=e
+                    ) from e
+
+                logger.warning(
+                    f"  Attempt {attempt + 1} failed: {type(e).__name__}: {e}"
                 )
 
-                logger.warning(f"  Attempt {attempt + 1} failed: {err_msg}")
-
                 if attempt == max_retries - 1:
-                    logger.exception(
-                        "  ❌ All retry attempts failed. Check GCP quota."
-                    )
-                    return None
+                    logger.error("  ❌ All retry attempts failed.")
+                    raise GeminiGenerationError(
+                        f"All {max_retries} retry attempts failed.",
+                        original_exception=e,
+                    ) from e
 
             # EXPONENTIAL BACKOFF WITH JITTER
             sleep_time = (base_delay_seconds * (1.5**attempt)) + random.uniform(
@@ -375,29 +441,40 @@ class GeminiGenerate:
             )
             await asyncio.sleep(sleep_time)
 
-        return None
-
     def generate_embeddings(
-        self, contents: list[str], model_name: str = "gemini-embedding-001"
-    ) -> list[list[float] | None]:
+        self,
+        contents: list[str],
+        model_name: str = "gemini-embedding-001",
+        max_retries: int = 5,
+        base_delay_seconds: float = 2.0,
+    ) -> list[list[float]]:
         """Generates embeddings using the Gemini model.
 
         Args:
             contents: The list of texts to be embedded.
             model_name: Optional override for the model name.
+            max_retries: Maximum number of retries for transient errors.
+            base_delay_seconds: Base delay for backoff.
 
         Returns:
             List of the generated embeddings.
+
+        Raises:
+            GeminiEmbeddingError: If the embedding generation fails.
         """
         target_model = model_name
 
-        try:
+        def _call():
             response = self.client.models.embed_content(
                 model=target_model, contents=contents
             )
             if response.embeddings is not None:
                 return [embedding.values for embedding in response.embeddings]
             return []
-        except Exception:
-            logger.exception("Gemini embedding generation failed")
-            return []
+
+        return self._execute_with_retry(
+            _call,
+            GeminiEmbeddingError,
+            max_retries=max_retries,
+            base_delay_seconds=base_delay_seconds,
+        )

@@ -17,10 +17,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 import requests
 from google.genai.errors import ClientError, ServerError
 
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import (
+    GeminiEmbeddingError,
+    GeminiGenerate,
+    GeminiGenerationError,
+)
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
@@ -66,14 +71,16 @@ def test_generate_with_parts_returns_parsed_for_json_schema(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_with_parts_returns_none_on_failure(mock_genai):
+def test_generate_with_parts_raises_on_failure(mock_genai):
     mock_genai.types.Part.from_text = lambda text: text
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.models.generate_content.side_effect = RuntimeError("boom")
 
     gen = GeminiGenerate(project_id="p")
-    assert gen.generate_with_parts(parts=["x"]) is None
+    with pytest.raises(GeminiGenerationError) as exc_info:
+        gen.generate_with_parts(parts=["x"])
+    assert "Permanent error: boom" in str(exc_info.value)
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
@@ -120,12 +127,14 @@ def test_generate_returns_parsed_for_json_schema(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_returns_none_on_failure(mock_genai):
+def test_generate_raises_on_failure(mock_genai):
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.models.generate_content.side_effect = RuntimeError("boom")
     gen = GeminiGenerate(project_id="p")
-    assert gen.generate(prompt="p") is None
+    with pytest.raises(GeminiGenerationError) as exc_info:
+        gen.generate(prompt="p")
+    assert "Permanent error: boom" in str(exc_info.value)
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
@@ -217,7 +226,7 @@ def test_generate_async_returns_text(mock_genai):
 def test_generate_async_quota_then_success(mock_genai):
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
-    quota = RuntimeError("RESOURCE_EXHAUSTED 429")
+    quota = ClientError(429, {})
     fake_client.aio.models.generate_content = AsyncMock(
         side_effect=[quota, SimpleNamespace(text="ok")]
     )
@@ -234,13 +243,14 @@ def test_generate_async_all_retries_fail(mock_genai):
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.aio.models.generate_content = AsyncMock(
-        side_effect=RuntimeError("boom")
+        side_effect=ClientError(429, {})
     )
     gen = GeminiGenerate(project_id="p", max_concurrent_requests=1)
-    res = asyncio.run(
-        gen.generate_async(prompt="x", max_retries=2, base_delay_seconds=0)
-    )
-    assert res is None
+    with pytest.raises(GeminiGenerationError) as exc_info:
+        asyncio.run(
+            gen.generate_async(prompt="x", max_retries=2, base_delay_seconds=0)
+        )
+    assert "All 2 retry attempts failed." in str(exc_info.value)
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
@@ -277,3 +287,91 @@ def test_is_transient_error(mock_genai, subtests):
     for label, exc, expected in cases:
         with subtests.test(msg=label, exc=exc):
             assert gen._is_transient_error(exc) is expected
+
+
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_embeddings_success(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.1, 0.2]
+    fake_client.models.embed_content.return_value = SimpleNamespace(
+        embeddings=[mock_embedding]
+    )
+
+    gen = GeminiGenerate(project_id="p")
+    res = gen.generate_embeddings(contents=["hello"])
+    assert res == [[0.1, 0.2]]
+
+
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_embeddings_raises_on_failure(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    fake_client.models.embed_content.side_effect = RuntimeError("boom")
+
+    gen = GeminiGenerate(project_id="p")
+    with pytest.raises(GeminiEmbeddingError) as exc_info:
+        gen.generate_embeddings(contents=["hello"], max_retries=1)
+    assert "Permanent error: boom" in str(exc_info.value)
+
+
+@patch("cxas_scrapi.utils.gemini.time.sleep", new=MagicMock())
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_embeddings_retries_on_transient(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.1, 0.2]
+    success_response = SimpleNamespace(embeddings=[mock_embedding])
+
+    fake_client.models.embed_content.side_effect = [
+        ClientError(429, {}),
+        success_response,
+    ]
+
+    gen = GeminiGenerate(project_id="p")
+    res = gen.generate_embeddings(
+        contents=["hello"], max_retries=3, base_delay_seconds=0
+    )
+    assert res == [[0.1, 0.2]]
+    assert fake_client.models.embed_content.call_count == 2
+
+
+@patch("cxas_scrapi.utils.gemini.time.sleep", new=MagicMock())
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_retries_on_transient(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+
+    fake_client.models.generate_content.side_effect = [
+        ClientError(429, {}),
+        SimpleNamespace(text="ok"),
+    ]
+
+    gen = GeminiGenerate(project_id="p")
+    res = gen.generate(prompt="hello", max_retries=3, base_delay_seconds=0)
+    assert res == "ok"
+    assert fake_client.models.generate_content.call_count == 2
+
+
+@patch("cxas_scrapi.utils.gemini.time.sleep", new=MagicMock())
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_with_parts_retries_on_transient(mock_genai):
+    mock_genai.types.Part.from_text = lambda text: text
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+
+    fake_client.models.generate_content.side_effect = [
+        ServerError(503, {}),
+        SimpleNamespace(text="ok"),
+    ]
+
+    gen = GeminiGenerate(project_id="p")
+    res = gen.generate_with_parts(
+        parts=["x"], max_retries=3, base_delay_seconds=0
+    )
+    assert res == "ok"
+    assert fake_client.models.generate_content.call_count == 2
