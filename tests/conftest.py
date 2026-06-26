@@ -14,9 +14,12 @@
 
 import os
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import google.cloud.ces_v1beta as real_ces
+import google.cloud.dialogflowcx_v3beta1 as real_dfcx
+import google.cloud.dialogflowcx_v3beta1.services as real_dfcx_services
+import google.cloud.dialogflowcx_v3beta1.types as real_dfcx_types
 import pytest
 
 # Global Test Constants
@@ -30,36 +33,48 @@ os.environ["CXAS_OAUTH_TOKEN"] = "mock_token_for_tests"
 # Mocks setup: must run BEFORE importing any cxas_scrapi modules
 # ==============================================================================
 if "--run-online" not in sys.argv:
-    mock_ces = MagicMock()
+    mock_ces = create_autospec(real_ces)
 
-    def enforce_transport(*args, **kwargs):
-        if "transport" not in kwargs:
-            raise ValueError(
-                "Client must be initialized with a transport from "
-                "get_grpc_transport to ensure correct telemetry."
-            )
-        return MagicMock()
+    def enforce_transport(client_class):
+        def _enforce(*args, **kwargs):
+            if "transport" not in kwargs:
+                raise ValueError(
+                    "Client must be initialized with a transport from "
+                    "get_grpc_transport to ensure correct telemetry."
+                )
+            return create_autospec(client_class, instance=True)
 
-    mock_ces.AgentServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.AgentServiceClient.get_transport_class.return_value = MagicMock()
+        return _enforce
 
-    mock_ces.EvaluationServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.EvaluationServiceClient.get_transport_class.return_value = (
-        MagicMock()
+    mock_ces.AgentServiceClient.side_effect = enforce_transport(
+        real_ces.AgentServiceClient
     )
+    mock_ces.AgentServiceClient.get_transport_class = MagicMock()
 
-    mock_ces.SessionServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.SessionServiceClient.get_transport_class.return_value = MagicMock()
+    mock_ces.EvaluationServiceClient.side_effect = enforce_transport(
+        real_ces.EvaluationServiceClient
+    )
+    mock_ces.EvaluationServiceClient.get_transport_class = MagicMock()
 
-    mock_ces.ToolServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.ToolServiceClient.get_transport_class.return_value = MagicMock()
+    mock_ces.SessionServiceClient.side_effect = enforce_transport(
+        real_ces.SessionServiceClient
+    )
+    mock_ces.SessionServiceClient.get_transport_class = MagicMock()
+
+    mock_ces.ToolServiceClient.side_effect = enforce_transport(
+        real_ces.ToolServiceClient
+    )
+    mock_ces.ToolServiceClient.get_transport_class = MagicMock()
+
     mock_ces.types = real_ces.types
     sys.modules["google.cloud.ces_v1beta"] = mock_ces
 
     # Mock google.cloud.dialogflowcx_v3beta1 for dfcx_exporter offline tests
-    mock_dfcx = MagicMock()
-    mock_dfcx_services = MagicMock()
-    mock_dfcx_types = MagicMock()
+    # using autospec
+    mock_dfcx = create_autospec(real_dfcx)
+    mock_dfcx_services = create_autospec(real_dfcx_services)
+    mock_dfcx_types = create_autospec(real_dfcx_types)
+
     sys.modules["google.cloud.dialogflowcx_v3beta1"] = mock_dfcx
     sys.modules["google.cloud.dialogflowcx_v3beta1.services"] = (
         mock_dfcx_services
