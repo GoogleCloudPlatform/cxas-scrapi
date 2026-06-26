@@ -230,7 +230,7 @@ def test_reset_registry():
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    # 66 baseline + 11 cross-surface V100-V104 registrations
+    # 67 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
     assert len(registry_restored.all_rules()) == 78
 
@@ -522,7 +522,7 @@ def test_discovery_filtering(tmp_path):
 def test_build_registry_all_rules():
     registry = build_registry()
     all_rules = registry.all_rules()
-    # 66 baseline + 11 cross-surface V100-V104 registrations
+    # 67 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
     assert len(all_rules) == 78
 
@@ -536,6 +536,50 @@ def test_build_context(tmp_path):
     assert "root_agent" in context.all_agent_names
     assert "get_info" in context.all_tool_names
     assert "end_session" in context.platform_tools
+
+
+def test_build_context_agent_to_parents(tmp_path):
+    _make_app(
+        tmp_path,
+        agents=["parent_a", "parent_b", "shared_child", "sole_child"],
+    )
+
+    parent_a_dir = tmp_path / "agents" / "parent_a"
+    (parent_a_dir / "parent_a.json").write_text(
+        '{"displayName": "parent a", "childAgents": ["shared_child",'
+        ' "sole_child"]}'
+    )
+
+    parent_b_dir = tmp_path / "agents" / "parent_b"
+    (parent_b_dir / "parent_b.json").write_text(
+        '{"displayName": "parent b", "childAgents": ["shared_child"]}'
+    )
+
+    config = LintConfig()
+    discovery = Discovery(tmp_path, tmp_path / "evals")
+
+    context = build_context(tmp_path, config, discovery)
+
+    assert context.agent_to_parents["shared_child"] == {"parent_a", "parent_b"}
+    assert context.agent_to_parents["sole_child"] == {"parent_a"}
+    assert "parent_a" not in context.agent_to_parents
+    assert "parent_b" not in context.agent_to_parents
+
+
+def test_build_context_agent_to_parents_resolution(tmp_path):
+    _make_app(tmp_path, agents=["parent_a", "shared_child"])
+
+    parent_a_dir = tmp_path / "agents" / "parent_a"
+    (parent_a_dir / "parent_a.json").write_text(
+        '{"displayName": "parent a", "childAgents": ["shared child"]}'
+    )
+
+    config = LintConfig()
+    discovery = Discovery(tmp_path, tmp_path / "evals")
+
+    context = build_context(tmp_path, config, discovery)
+
+    assert context.agent_to_parents["shared_child"] == {"parent_a"}
 
 
 def test_run_rules_categories_filter(tmp_path):

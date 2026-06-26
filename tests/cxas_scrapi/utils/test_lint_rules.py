@@ -2130,6 +2130,35 @@ def test_s004_child_agent_by_display_name(tmp_path, context):
     assert len(results) == 0
 
 
+def test_s007_single_parent_ok(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import SubAgentSingleParent  # noqa: PLC0415,I001
+
+    rule = SubAgentSingleParent()
+    f = tmp_path / "billing_agent.json"
+    f.write_text("{}")
+
+    context.agent_to_parents = {"billing_agent": {"root_agent"}}
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_s007_multi_parent_error(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import SubAgentSingleParent  # noqa: PLC0415,I001
+
+    rule = SubAgentSingleParent()
+    f = tmp_path / "billing_agent.json"
+    f.write_text("{}")
+
+    context.agent_to_parents = {"billing_agent": {"parent_a", "parent_b"}}
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "multiple parents" in results[0].message
+    assert "parent_a" in results[0].message
+    assert "parent_b" in results[0].message
+
+
 # --- Rules A006, S005, S006 Tests ---
 
 
