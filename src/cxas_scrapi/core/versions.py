@@ -14,11 +14,12 @@
 
 """Core Versions class for CXAS Scrapi."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 from google.cloud.ces_v1beta import types
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.common import Common
 
 
 class Versions(Apps):
@@ -27,15 +28,21 @@ class Versions(Apps):
     def __init__(
         self,
         app_name: str,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         """Initializes the Versions client."""
-        project_id = app_name.split("/")[1]
-        location = app_name.split("/")[3]
+        project_id = Common._get_project_id(app_name)
+        location = Common._get_location(app_name)
+        if not project_id or not location:
+            raise ValueError(
+                f"Invalid app_name format: {app_name}. "
+                "Expected format: "
+                "projects/<project>/locations/<location>/apps/<app>"
+            )
 
         super().__init__(
             project_id=project_id,
@@ -49,20 +56,20 @@ class Versions(Apps):
         self.resource_type = "versions"
         self.app_name = app_name
 
-    def list_versions(self) -> List[types.AppVersion]:
+    def list_versions(self) -> list[types.AppVersion]:
         """Lists versions within the app."""
         request = types.ListAppVersionsRequest(parent=self.app_name)
         response = self.client.list_app_versions(request=request)
         return list(response)
 
-    def get_versions_map(self, reverse: bool = False) -> Dict[str, str]:
+    def get_versions_map(self, reverse: bool = False) -> dict[str, str]:
         """Returns a map of version display names to full resource names.
 
         Args:
             reverse: If True, map display_name -> name.
         """
         versions = self.list_versions()
-        versions_map: Dict[str, str] = {}
+        versions_map: dict[str, str] = {}
 
         for version in versions:
             display_name = version.display_name

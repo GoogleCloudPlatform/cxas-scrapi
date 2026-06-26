@@ -14,12 +14,13 @@
 
 """Core Guardrails class for CXAS Scrapi."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 from google.cloud.ces_v1beta import types
 from google.protobuf import field_mask_pb2
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.common import Common
 
 
 class Guardrails(Apps):
@@ -28,15 +29,21 @@ class Guardrails(Apps):
     def __init__(
         self,
         app_name: str,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         """Initializes the Guardrails client."""
-        project_id = app_name.split("/")[1]
-        location = app_name.split("/")[3]
+        project_id = Common._get_project_id(app_name)
+        location = Common._get_location(app_name)
+        if not project_id or not location:
+            raise ValueError(
+                f"Invalid app_name format: {app_name}. "
+                "Expected format: "
+                "projects/<project>/locations/<location>/apps/<app>"
+            )
 
         super().__init__(
             project_id=project_id,
@@ -50,20 +57,20 @@ class Guardrails(Apps):
         self.resource_type = "guardrails"
         self.app_name = app_name
 
-    def list_guardrails(self) -> List[types.Guardrail]:
+    def list_guardrails(self) -> list[types.Guardrail]:
         """Lists guardrails within a specific app."""
         request = types.ListGuardrailsRequest(parent=self.app_name)
         response = self.client.list_guardrails(request=request)
         return list(response)
 
-    def get_guardrails_map(self, reverse: bool = False) -> Dict[str, str]:
+    def get_guardrails_map(self, reverse: bool = False) -> dict[str, str]:
         """Creates a map of Guardrail full names to display names.
 
         Args:
             reverse: If True, map display_name -> name.
         """
         guardrails = self.list_guardrails()
-        guardrails_dict: Dict[str, str] = {}
+        guardrails_dict: dict[str, str] = {}
 
         for guardrail in guardrails:
             display_name = guardrail.display_name
@@ -86,7 +93,7 @@ class Guardrails(Apps):
         self,
         guardrail_id: str,
         display_name: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         action: str = "DENY",
         description: str = "",
         enabled: bool = True,

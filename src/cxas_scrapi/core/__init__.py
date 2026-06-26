@@ -14,6 +14,22 @@
 
 """Core module for CXAS Scrapi."""
 
-from .common import Common
+import importlib
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .common import Common
+else:
+    _LAZY_IMPORTS = {
+        "Common": "cxas_scrapi.core.common",
+    }
+
+    def __getattr__(name: str) -> Any:
+        if name in _LAZY_IMPORTS:
+            module_path = _LAZY_IMPORTS[name]
+            module = importlib.import_module(module_path)
+            return getattr(module, name)
+        raise AttributeError(f"module {__name__} has no attribute {name}")
+
 
 __all__ = ["Common"]

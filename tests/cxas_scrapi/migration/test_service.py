@@ -189,7 +189,7 @@ async def test_run_migration_success():
         "dfcx-123", use_export=True
     )
     mock_migrate.assert_called_once()
-    service._deploy_base_resources.assert_called_once()
+    assert service._deploy_base_resources.call_count == 2
     service._deploy_pending_agents.assert_called_once()
     service.topology_linker.link_and_finalize_topology.assert_called_once()
 
@@ -240,7 +240,7 @@ async def test_run_stage_1_requires_bundle():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_creates_double_versions_when_labels_set():
+async def test_run_stage_1_creates_single_version_when_labels_set():
     service = _make_service()
     fake_versions_client = MagicMock()
     bundle = _make_bundle()
@@ -304,13 +304,11 @@ async def test_run_stage_1_creates_double_versions_when_labels_set():
             dedup_version_label="0.0.2",
         )
 
-    # Double-versioning: create_version is called twice!
-    assert fake_versions_client.create_version.call_count == 2
+    # Single-versioning: create_version is called once for consolidation!
+    assert fake_versions_client.create_version.call_count == 1
     calls = fake_versions_client.create_version.call_args_list
-    assert calls[0].kwargs["display_name"] == "0.0.2"
-    assert "variable de-duplication" in calls[0].kwargs["description"]
-    assert calls[1].kwargs["display_name"] == "0.0.3"
-    assert "consolidation" in calls[1].kwargs["description"]
+    assert calls[0].kwargs["display_name"] == "0.0.3"
+    assert "consolidation" in calls[0].kwargs["description"]
 
 
 @pytest.mark.asyncio
@@ -588,7 +586,7 @@ async def test_run_stage_2_run_lint_invokes_post_deploy_lint():
 async def test_run_stage_3_requires_grouping_on_bundle():
     service = _make_service()
     bundle = _make_bundle()  # bundle.grouping is None
-    with pytest.raises(RuntimeError, match="bundle.grouping"):
+    with pytest.raises(RuntimeError, match=r"bundle\.grouping"):
         await service.run_stage_3(bundle=bundle)
 
 
@@ -875,6 +873,91 @@ async def test_run_stage_1_skips_web_review_when_auto_confirm():
 
 
 @pytest.mark.asyncio
+async def test_run_stage_1_boots_server_early_and_passes_to_web_review():
+    """Verify that the service boots the review server early and reuses
+    its context during consolidation.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    service = _make_service()
+    service._ensure_analysis_builder("test_agent")
+
+    bundle = _make_bundle()
+    bundle.config.web_confirm_grouping = True
+    bundle.config.auto_confirm_grouping = False
+    bundle.config.web_confirm_host = "127.0.0.1"
+    bundle.config.web_confirm_port = 0
+    bundle.config.web_confirm_timeout_s = 1800
+    bundle.config.target_name = "test_agent"
+
+    fake_consolidator = MagicMock()
+    fake_consolidator.propose_groupings = AsyncMock(
+        return_value={"GroupG": {"agents": ["Root Agent"], "is_root": True}}
+    )
+    fake_consolidator.synthesize_instructions = AsyncMock(return_value={})
+
+    fake_context = MagicMock()
+
+    boot_mock = AsyncMock(return_value=fake_context)
+    review_mock = AsyncMock(
+        return_value={"GroupG": {"agents": ["Root Agent"], "is_root": True}}
+    )
+
+    with (
+        patch(
+            "cxas_scrapi.migration.stage_runner.run_stage_1",
+            new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.StructuralConsolidator",
+            return_value=fake_consolidator,
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "detect_root_key",
+            return_value="RootAgent",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "validate_groupings",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "persist_grouping",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.integrity_checks."
+            "check_consolidation_integrity",
+            return_value=(False, []),
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.boot_review_server",
+            new=boot_mock,
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.web_review",
+            new=review_mock,
+        ),
+        patch(
+            "cxas_scrapi.migration.service._is_headless_context",
+            return_value=False,
+        ),
+    ):
+        await service.run_stage_1(
+            bundle=bundle,
+            version_label=None,
+        )
+
+    # 1. Verify boot_review_server was called early (once)
+    boot_mock.assert_called_once()
+
+    # 2. Verify web_review was called with active_context=fake_context
+    review_mock.assert_called_once()
+    _, kwargs = review_mock.call_args
+    assert kwargs.get("active_context") is fake_context
+
+
+@pytest.mark.asyncio
 async def test_run_stage_1_auto_confirms_in_headless_context():
     """When web_confirm_grouping is True but the runtime has no TTY
     (CI etc.), the install path must be skipped and Gemini's proposal
@@ -887,11 +970,11 @@ async def test_run_stage_1_auto_confirms_in_headless_context():
 
     fake_consolidator = MagicMock()
     fake_consolidator.propose_groupings = AsyncMock(
-        return_value={"G": {"agents": ["Root Agent"], "is_root": True}}
+        return_value={"GroupG": {"agents": ["Root Agent"], "is_root": True}}
     )
     fake_consolidator.consolidate = MagicMock(return_value=service.ir)
     fake_consolidator.synthesize_instructions = AsyncMock(
-        return_value={"G": "ok"}
+        return_value={"GroupG": "ok"}
     )
 
     called = {"n": 0}

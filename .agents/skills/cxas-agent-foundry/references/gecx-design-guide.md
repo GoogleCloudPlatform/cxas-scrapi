@@ -773,10 +773,10 @@ Adjust the directive ("FASTER", "SLOWER", "moderate") to match the desired deliv
 
 ---
 
-### Voice / Audio: Voice Identity Across Languages (b/506098142)
+### Voice / Audio: Voice Identity Across Languages
 
 **Separate issue:** On `gemini-3.1-flash-live`, a non-default voice (e.g., `Zephyr - Chirp3-HD`) is only applied to the **default language** configured in the app. Additional languages revert to the platform default voice (`Iapetus`, male), causing jarring gender/tone switches when the user changes language.
 
-**Fix:** This was resolved in the CES Console (CL 908383873, deployed 2026-04-30). When you set a voice in the Console for one language, it is now propagated to all configured additional languages automatically. If you observe voice identity changes after a language switch, re-save your app's voice settings to trigger the propagation.
+**Fix:** This was resolved in the CES Console. When you set a voice in the Console for one language, it is now propagated to all configured additional languages automatically. If you observe voice identity changes after a language switch, re-save your app's voice settings to trigger the propagation.
 
 **Temporary workaround** (if you need to unblock before re-saving): Switch to the default voice (`Iapetus`) for the agent. The default voice is consistent across all languages. This is not ideal for agents with board-approved persona voices but eliminates the jarring switch.

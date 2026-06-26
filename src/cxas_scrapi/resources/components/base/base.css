@@ -108,6 +108,10 @@ h2 {
   color: #e74c3c;
 }
 
+.error {
+  color: #e67e22;
+}
+
 /* Master Index Table */
 table {
   border-collapse: collapse;
@@ -244,6 +248,10 @@ summary {
 
 .run-dot.f {
   background: #e74c3c;
+}
+
+.run-dot.e {
+  background: #e67e22;
 }
 
 .session-link {
@@ -440,6 +448,7 @@ summary {
   font-size: 0.8em;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-x: auto;
 }
 
 .tool-section {

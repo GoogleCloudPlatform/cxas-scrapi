@@ -7,7 +7,7 @@ description: Run cxas lint (with optional scoping to a set of agents or tools), 
 
 **Role:** Lint mechanic for a GECX app. You apply known fix recipes from the rule table mechanically, verify each Edit by reading the file back, and re-lint until clean. You report only fixes you've verified — fabricated "clean" status is worse than honest "stuck".
 
-**Reasoning intensity: LOW** (mechanical for errors and deterministic warnings; MEDIUM for judgment-call warnings where two valid fixes exist). The fixes are recipe lookups from a table. The hard part is NOT thinking — it's (a) making sure your edits actually landed on disk and (b) recognizing which warnings need user judgment vs. which have a single mechanical fix. Per the Zero Warnings Policy in your workspace's mandates file (e.g., `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`), you fix BOTH errors and deterministic warnings; ambiguous warnings go in `unresolved` with the options for the user to decide.
+**Reasoning intensity: LOW** (mechanical for errors and deterministic warnings; MEDIUM for judgment-call warnings where two valid fixes exist). The fixes are recipe lookups from a table. The hard part is NOT thinking — it's (a) making sure your edits actually landed on disk and (b) recognizing which warnings need user judgment vs. which have a single mechanical fix. Per the Zero Warnings Policy in your workspace's mandates file (e.g., `AGENTS.md` / `CLAUDE.md`), you fix BOTH errors and deterministic warnings; ambiguous warnings go in `unresolved` with the options for the user to decide.
 
 Run `cxas lint` (scoped to specific agents/tools if provided), fix every violation using the rule recipes in `references/build.md`, and re-lint until the target scope is clean.
 
@@ -35,6 +35,7 @@ Optional:
 | **T009** (`**kwargs` in tool function) | Tools with `**kwargs` are silently dropped during import — no error, the tool disappears. Use explicit named parameters. |
 | **T011** (`None` default on tool parameter) | Same silent-drop behavior — platform requires type-matching defaults (e.g., `str = ""`, `int = 0`). |
 | **I012** (tool listed in agent config but not referenced in instruction) | Judgment call: either add `{@TOOL: tool_name}` to the instruction OR remove the tool from `tools`. Don't pick unilaterally — surface to user via `unresolved`. |
+| **I016** (instruction encodes a state machine in prose) | NOT a mechanical fix — never just delete the flagged lines. The instruction has counters / `STOP` GOTOs / `Loop back to step` / state writes / `agent_action`-verbatim dispatch that the LLM is executing every turn. The fix is to **relocate the control flow into deterministic code**: retry/attempt counters and failure limits → a `before_model`/`after_model` callback (slot-filling keeps retry state in Python, e.g. a `_retries` dict — see `docs/patterns/slot-filling.md` and the slot-filling DAG framework doc); named-step GOTOs and `IF`-on-`agent_action` dispatch → declarative slot-filling DAG transitions. This is an architecture change, so surface it to the user via `unresolved` with the target pattern rather than attempting an in-place edit. |
 | **A006** (`app.json` doesn't list a tool present in `tools/`) | `app.json`'s `tools` array is the canonical inventory; tools on disk not listed are ignored. |
 | **`childAgents` naming** (NOT a lint rule — lint may accept spaces, platform will not) | Strings in `childAgents` must use underscores matching the sub-agent's directory `name`, not spaces matching `displayName`. Spaces cause `cxas push` to silently drop the sub-agents and orphan their tools. See `gecx-design-guide.md` --> Multi-Agent --> Configuring childAgents. |
 
@@ -48,7 +49,7 @@ Run:
 cxas lint --app-dir <app_dir> [--agent <agents>] [--tool <tools>]
 ```
 
-Parse the output. **Per the Zero Warnings Policy in the workspace mandates file (e.g., `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`), you fix `[E]` errors AND `[W]` warnings — both are blocking.** `[I]` info lines are not blocking; log them in the summary but don't fix.
+Parse the output. **Per the Zero Warnings Policy in the workspace mandates file (e.g., `AGENTS.md` / `CLAUDE.md`), you fix `[E]` errors AND `[W]` warnings — both are blocking.** `[I]` info lines are not blocking; log them in the summary but don't fix.
 
 For warnings, treat by category:
 - **Deterministic warnings** (warnings with a single mechanical fix — e.g., I014 missing `current_date` reference, T008 unreferenced tool, S002 missing variable description): apply the fix the lint message describes.

@@ -1,12 +1,57 @@
-subintent_id: catering-reservation
-subintent_name: Catering Reservation
-parent_cuj: General Customer Support
+subintent_id: order-place-pickup
+subintent_name: Place Pickup Order
+parent_cuj: Digital Ordering
 turns:
-- speaker: User
-  text: Hi, I need to start a catering reservation for my client, Sarah Miller.
 - speaker: Agent
-  text: '"I can help with that. I''ve started the catering reservation for Sarah Miller. To proceed, could you please provide the menu selection or the date of the event?'
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I'd like to place an order for pickup, please.
+- speaker: Agent
+  text: Awesome! What items can I get started for you today?
+- speaker: User
+  text: Can I get the Spicy Chicken Pasta and a side of Garlic Bread?
+- speaker: Agent
+  text: Checking menu item prices and kitchen availability.
   tool_call:
-    name: StartCateringReservation
-    parameters:
-      client_name: Sarah Miller
+    name: get_menu_item
+    payload:
+      items:
+      - name: Spicy Chicken Pasta
+        quantity: 1
+      - name: Garlic Bread
+        quantity: 1
+    response:
+      status: success
+      available: true
+      subtotal: 24.98
+- speaker: Agent
+  text: Okay, both items are available! The total comes to twenty-four dollars and ninety-eight cents before tax. Would you like me to place this order for pickup?
+- speaker: User
+  text: Yes, please. And just charge it to my default card on file.
+- speaker: Agent
+  text: Submitting pickup order and processing card charge.
+  tool_call:
+    name: place_order
+    payload:
+      order_type: pickup
+      payment_method: card_on_file
+      total_amount: 24.98
+    response:
+      status: success
+      order_id: '9981'
+      pickup_time: 20 minutes
+- speaker: Agent
+  text: 'Perfect! Your order #9981 has been placed. It will be ready for pickup in about twenty minutes. You''ll get a receipt in your email shortly.'
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

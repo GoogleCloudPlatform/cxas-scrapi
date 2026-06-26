@@ -245,6 +245,7 @@ class MigrationCLI:
             profile = "standard"
             optimize_for_cxas = True
             persist_bundle = True
+            web_confirm_grouping = True
             gen_report = True
             architecture = "hub-and-spoke"
 
@@ -277,6 +278,7 @@ class MigrationCLI:
             profile = "direct"
             optimize_for_cxas = False
             persist_bundle = False
+            web_confirm_grouping = False
             gen_report = True
             architecture = "hub-and-spoke"
 
@@ -299,12 +301,17 @@ class MigrationCLI:
                     "Persist IR bundle for stage-resume?",
                     default=True,
                 )
+                web_confirm_grouping = Confirm.ask(
+                    "Review groupings in a web browser tab?",
+                    default=True,
+                )
             else:
                 architecture = "hub-and-spoke"
                 persist_bundle = Confirm.ask(
                     "Persist IR bundle for stage-resume?",
                     default=False,
                 )
+                web_confirm_grouping = False
 
             gen_report = Confirm.ask("Generate Migration Report?", default=True)
 
@@ -335,6 +342,7 @@ class MigrationCLI:
             interactive=True,
             optimize_for_cxas=optimize_for_cxas,
             persist_bundle=persist_bundle,
+            web_confirm_grouping=web_confirm_grouping,
         )
 
     def select_resources(self, agent_data: DFCXAgentIR) -> DFCXAgentIR:
@@ -520,6 +528,13 @@ class MigrationCLI:
 
     def run(self, default_agent_name: str, cx_api: Any):
         """Runs the full interactive CLI dashboard."""
+        if not sys.stdin.isatty():
+            self.console.print(
+                "[red]ERROR: Migration dashboard requires an interactive "
+                "terminal.[/]"
+            )
+            sys.exit(1)
+
         self.console.print(
             "[bold green]Welcome to the CXAS Migration Tool![/bold green]"
         )
@@ -647,7 +662,10 @@ class MigrationCLI:
                 close_tee_logging()
 
             # Display status after migration
-            if hasattr(migration_service, "ir") and migration_service.ir:
+            if (
+                hasattr(migration_service, "ir")
+                and migration_service.ir is not None
+            ):
                 self.display_status(migration_service.ir)
 
     async def _run_post_migration_opt_ins(
@@ -687,7 +705,7 @@ class MigrationCLI:
                     bundle, bundle_path, phase="migrate", status="ok"
                 )
                 self.console.print(f"[green]IR bundle saved → {bundle_path}[/]")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Bundle persist failed: %s", exc)
 
         # 2. Structural consolidation (Gemini-driven N→M grouping).
@@ -710,7 +728,9 @@ class MigrationCLI:
 
                 await migration_service.run_stage_1(
                     bundle=bundle,
-                    grouping_callback=_tui_callback,
+                    grouping_callback=(
+                        None if config.web_confirm_grouping else _tui_callback
+                    ),
                     version_label="0.0.3",
                     dedup_version_label="0.0.2",
                     persist_bundle_path=(
@@ -720,7 +740,7 @@ class MigrationCLI:
                 self.console.print(
                     "[green]Structural consolidation complete.[/]"
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Consolidation failed: %s", exc)
                 self.console.print(f"[yellow]Consolidation failed: {exc}[/]")
                 return
@@ -751,7 +771,7 @@ class MigrationCLI:
                     "[green]Instruction state machines & tool mocks "
                     "complete.[/]"
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Stage 2 optimization failed: %s", exc)
                 self.console.print(f"[yellow]Stage 2 failed: {exc}[/]")
 
@@ -777,7 +797,7 @@ class MigrationCLI:
                     f"[green]Stage 3 wiring: updated={updated} "
                     f"skipped={skipped} failed={failed}[/]"
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Stage 3 wiring failed: %s", exc)
                 self.console.print(f"[yellow]Stage 3 wiring failed: {exc}[/]")
 
@@ -918,9 +938,8 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         or getattr(args, "no_optimize", False)
         or profile == "direct"
     )
-    web_confirm_grouping = (
-        not no_consolidate_flag
-        and not getattr(args, "no_web_confirm", False)
+    web_confirm_grouping = not no_consolidate_flag and not getattr(
+        args, "no_web_confirm", False
     )
     auto_confirm_grouping = getattr(args, "auto_confirm_grouping", False)
 
@@ -975,6 +994,18 @@ def run_stage_1(args: argparse.Namespace) -> None:
     """
     service, bundle, bundle_path = _restore_service_and_bundle(args)
     persist_path = None if args.no_persist else bundle_path
+
+    # Apply CLI overrides to the restored configuration
+    if hasattr(args, "no_web_confirm"):
+        bundle.config.web_confirm_grouping = not args.no_web_confirm
+    if getattr(args, "web_confirm_host", None):
+        bundle.config.web_confirm_host = args.web_confirm_host
+    if getattr(args, "web_confirm_port", None) is not None:
+        bundle.config.web_confirm_port = args.web_confirm_port
+    if getattr(args, "web_confirm_timeout", None) is not None:
+        bundle.config.web_confirm_timeout_s = args.web_confirm_timeout
+    if hasattr(args, "auto_confirm_grouping"):
+        bundle.config.auto_confirm_grouping = args.auto_confirm_grouping
 
     async def _main():
         return await service.run_stage_1(
@@ -1067,6 +1098,15 @@ def run_resume(args: argparse.Namespace) -> None:
     bundle picker and stage menu. If ``--target-name`` or ``--ir-bundle``
     is given, skips the picker and goes straight to the stage menu.
     """
+    if (
+        not sys.stdin.isatty()
+        or getattr(args, "yes", False)
+        or getattr(args, "no_input", False)
+    ):
+        _sub_console.print(
+            "[red]ERROR: 'resume' requires an interactive terminal.[/]"
+        )
+        sys.exit(1)
     if args.target_name or args.ir_bundle:
         bundle_path = _resolve_bundle_path(args)
     else:

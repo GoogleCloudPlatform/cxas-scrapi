@@ -153,7 +153,7 @@ You are operating in SLOT FILLING mode. Follow these rules strictly:
 ```
 
 !!! warning "The concrete example is load-bearing"
-    The sentence *"if the user says 'table for 2 on June 20th under the name Johnson', call set_party_size, set_preferred_date, AND set_guest_name — all in one turn"* is what drives multi-slot batching. Removing it or making it abstract drops batching reliability significantly. See [Gotcha 3](../patterns/slot-filling.md#3-missing-concrete-example-in-the-batching-instruction) in the slot filling pattern.
+    The sentence *"if the user says 'table for 2 on June 20th under the name Johnson', call set_party_size, set_preferred_date, AND set_guest_name — all in one turn"* is what drives multi-slot batching. Removing it or making it abstract drops batching reliability significantly. See [Gotcha 3](../patterns/slot-filling.md#the-7-stabilization-gotchas) in the slot filling pattern.
 
 ---
 

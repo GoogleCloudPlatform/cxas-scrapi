@@ -35,9 +35,9 @@ from cxas_scrapi.migration.structural_consolidator import (
 )
 
 __all__ = [
-    "check_consolidation_integrity",
     "PROMPT_VAR_RE",
     "TOOL_REF_RE",
+    "check_consolidation_integrity",
 ]
 
 # Variable refs in PIF instructions: {var}, `var`, $var. Loose enough to

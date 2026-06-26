@@ -1,11 +1,56 @@
-subintent_id: manager-review-request
-subintent_name: Manager Review Request
-parent_cuj: General Customer Support
+subintent_id: order-place-delivery
+subintent_name: Place Delivery Order
+parent_cuj: Digital Ordering
 turns:
-- speaker: User
-  text: I want to talk to the manager about the service charge on my bill.
 - speaker: Agent
-  text: '"I can certainly help arrange that. I''ve initiated a request for a manager review. What is the best number for our manager to reach you?'
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: Hi, I'd like to order some food for delivery to my house.
+- speaker: Agent
+  text: Sure thing, I can help with that! To start, what is the delivery address?
+- speaker: User
+  text: It's one two three Main Street.
+- speaker: Agent
+  text: Checking if address is within delivery limits.
   tool_call:
-    name: scheduling_manager_review
-    parameters: {}
+    name: verify_delivery_zone
+    payload:
+      address: 123 Main St
+    response:
+      status: success
+      eligible: true
+      delivery_fee: 3.99
+- speaker: Agent
+  text: Great, you're in our delivery zone! The delivery fee will be three ninety-nine. What would you like to order?
+- speaker: User
+  text: Can I get a Large Pepperoni Pizza and a Caesar Salad?
+- speaker: Agent
+  text: Submitting delivery order.
+  tool_call:
+    name: place_order
+    payload:
+      order_type: delivery
+      address: 123 Main St
+      items:
+      - Large Pepperoni Pizza
+      - Caesar Salad
+      total_amount: 30.98
+    response:
+      status: success
+      order_id: '9982'
+      eta: 35 minutes
+- speaker: Agent
+  text: 'Alright, your order #9982 is locked in! The estimated delivery time is about thirty-five minutes. I''ve texted a confirmation to your phone.'
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

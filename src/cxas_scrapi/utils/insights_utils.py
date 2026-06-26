@@ -16,7 +16,7 @@
 
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -34,7 +34,7 @@ class InsightsUtils:
         self.scorecards_client = Scorecards(project_id, location, **kwargs)
 
     # --- Match logic ported from your scorecard_operations.py ---
-    def _match_questions(self, q1: Dict[str, Any], q2: Dict[str, Any]) -> bool:
+    def _match_questions(self, q1: dict[str, Any], q2: dict[str, Any]) -> bool:
         """Matches questions based on core content fields."""
         fields_to_match = (
             "questionBody",
@@ -49,7 +49,7 @@ class InsightsUtils:
     def _sync_questions(
         self,
         target_revision_name: str,
-        template_questions: List[Dict[str, Any]],
+        template_questions: list[dict[str, Any]],
     ) -> None:
         """Syncs questions to the target revision non-destructively."""
         existing_questions = self.scorecards_client.list_questions(
@@ -96,9 +96,9 @@ class InsightsUtils:
 
     def import_scorecard(
         self,
-        scorecard_dict: Dict[str, Any],
-        questions: List[Dict[str, Any]],
-        target_scorecard_id: Optional[str] = None,
+        scorecard_dict: dict[str, Any],
+        questions: list[dict[str, Any]],
+        target_scorecard_id: str | None = None,
     ) -> str:
         """High level abstraction to import or update a scorecard and its
         questions from dictionaries."""
@@ -138,7 +138,7 @@ class InsightsUtils:
 
     def analyze_conversations(
         self,
-        conversations: List[str],
+        conversations: list[str],
         scorecard_name: str,
         export_to_bq: bool = False,
     ) -> pd.DataFrame:

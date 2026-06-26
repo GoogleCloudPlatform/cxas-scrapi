@@ -20,8 +20,9 @@ import os
 import re
 import sys
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict
+from typing import TYPE_CHECKING, Any
 
 import google.protobuf.duration_pb2
 from google.cloud.ces_v1beta import types
@@ -158,7 +159,7 @@ class MigrationService:
             location=gemini_location,
             credentials=credentials,
             model_name="gemini-3.1-pro-preview",
-            max_concurrent_requests=3,
+            max_concurrent_requests=15,
         )
 
         self.exporter = ConversationalAgentsAPI()
@@ -182,12 +183,13 @@ class MigrationService:
             reporter=self.reporter,
         )
 
-        self.ir = {}
+        self.ir: MigrationIR | None = None
         self.source_agent_data = None
         # Migration analysis report — instantiated lazily once a target_name
         # is known. Reset for each migration so per-target state is clean.
         self._analysis_builder: MigrationAnalysisBuilder | None = None
-        self._analysis_bundle: "IRBundle | None" = None
+        self._analysis_bundle: IRBundle | None = None
+        self._review_context: Any = None
 
     # ------------------------------------------------------------------
     # Migration analysis report helpers
@@ -223,7 +225,7 @@ class MigrationService:
                 app_name=app_name,
                 output_dir=output_dir,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("could not init migration analysis report: %s", exc)
             self._analysis_builder = None
         return self._analysis_builder
@@ -238,7 +240,7 @@ class MigrationService:
             self._analysis_builder.record_phase(phase, what_changed, kind=kind)
             self._analysis_builder.update_from_service(self)
             self._analysis_builder.flush()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "migration analysis checkpoint %r failed: %s", phase, exc
             )
@@ -399,40 +401,33 @@ class MigrationService:
             bundle.config.target_name if bundle else None, bundle=bundle
         )
 
-        # --- Variable dedup (always runs) -----------------------------------
-        optimizer = await stage_runner.run_stage_with_redeploy(
-            self, stage=1, console=console
-        )
+        # Boot the review server early if enabled
+        if (
+            getattr(bundle.config, "web_confirm_grouping", False)
+            and not getattr(bundle.config, "auto_confirm_grouping", False)
+            and self._review_context is None
+        ):
+            from cxas_scrapi.migration import (  # noqa: PLC0415
+                grouping_web_review,
+            )
+
+            self._review_context = await grouping_web_review.boot_review_server(
+                ir=self.ir,
+                builder=self._analysis_builder,
+                bind_host=bundle.config.web_confirm_host,
+                bind_port=bundle.config.web_confirm_port,
+                timeout_s=bundle.config.web_confirm_timeout_s,
+                console=console,
+            )
+
+        # --- Variable dedup (in-memory; deploy happens in step 9) -----------
+        optimizer = await stage_runner.run_stage_1(self.ir, gemini, console)
         stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage_1")
         self._analysis_checkpoint(
             "stage_1_dedup",
             f"Stage 1 variable deduplication complete; "
             f"{len(self.ir.parameters)} variables remain.",
         )
-
-        # --- CXAS Version checkpoint: Post-Dedup ----------------------------
-        if dedup_version_label and self.ir.metadata.app_resource_name:
-            try:
-                Versions(self.ir.metadata.app_resource_name).create_version(
-                    display_name=dedup_version_label,
-                    description="Stage 1 Part A: variable de-duplication",
-                )
-                logger.info(
-                    "Created CXAS Version %s (dedup).", dedup_version_label
-                )
-                if bundle is not None:
-                    bundle.version_checkpoints.append(
-                        (
-                            dedup_version_label,
-                            "Stage 1 Part A: variable de-duplication",
-                        )
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Failed to create CXAS Version %s (dedup): %s",
-                    dedup_version_label,
-                    exc,
-                )
 
         # --- Gemini consolidation (always runs) ------------------------------
         accepted_groupings = await self._run_stage_1_consolidation(
@@ -467,7 +462,7 @@ class MigrationService:
                         bundle.version_checkpoints.append(
                             (version_label, description)
                         )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning(
                         "Failed to create CXAS Version %s (consolidation): %s",
                         version_label,
@@ -555,6 +550,7 @@ class MigrationService:
                     bind_port=bundle.config.web_confirm_port,
                     timeout_s=bundle.config.web_confirm_timeout_s,
                     console=console,
+                    active_context=self._review_context,
                 )
         if grouping_callback is not None:
             reviewed = await grouping_callback(
@@ -586,7 +582,7 @@ class MigrationService:
             grouping_path = f"{bundle.config.target_name}_grouping.json"
             structural_consolidator.persist_grouping(groupings, grouping_path)
             logger.info("Persisted grouping → %s", grouping_path)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Failed to persist grouping JSON: %s", exc)
 
         # 7. Synthesize per-group PIF instructions.
@@ -610,7 +606,7 @@ class MigrationService:
         # exists and the suffixed form doesn't — strictly safe
         # rewrites. Genuine hallucinations (refs with no near match)
         # are left for integrity_checks to surface.
-        rewrites, unhealed = structural_consolidator.heal_tool_refs(self.ir)
+        rewrites, _unhealed = structural_consolidator.heal_tool_refs(self.ir)
         if rewrites:
             logger.info(
                 "Healed %d tool-ref mismatches (e.g. %s)",
@@ -643,7 +639,7 @@ class MigrationService:
             self.topology_linker.link_and_finalize_topology(
                 self.ir, self.source_agent_data, groupings=groupings
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Topology linking failed: %s", exc)
 
         # Synchronize bundle.ir before calling finalizers!
@@ -706,7 +702,7 @@ class MigrationService:
                     ),
                 )
                 logger.info("Created CXAS Version %s.", version_label)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Failed to create CXAS Version %s: %s",
                     version_label,
@@ -735,7 +731,7 @@ class MigrationService:
                         len(test_counts),
                         unit_tests_path,
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Unit test regeneration failed: %s", exc)
             if test_counts:
                 self._analysis_checkpoint(
@@ -753,7 +749,7 @@ class MigrationService:
                     lint_passed,
                     lint_output,
                 ) = await post_deploy_lint.run_post_deploy_lint(self, console)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Lint did not run: %s", exc)
             if lint_passed is not None:
                 outcome = "passed" if lint_passed else "failed"
@@ -802,7 +798,7 @@ class MigrationService:
                     reporter.set_lint_result(lint_passed, lint_output)
                 reporter.export(write_report_to)
                 logger.info("Optimization report → %s", write_report_to)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Report generation failed: %s", exc)
 
         # --- Optional bundle persist ----------------------------------------
@@ -895,7 +891,7 @@ class MigrationService:
                     bundle.version_checkpoints.append(
                         (version_label, "Stage 3: parent-child topology wiring")
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Failed to create CXAS Version %s (topology): %s",
                     version_label,
@@ -942,7 +938,7 @@ class MigrationService:
         bundle.save(path)
         return path
 
-    def _inject_system_variables(self, dynamic_params: list = None):
+    def _inject_system_variables(self, dynamic_params: list | None = None):
         """Injects global system variables required by migration tooling and
         callbacks.
         """
@@ -1030,6 +1026,7 @@ class MigrationService:
         )
 
         logger.info(f"Starting Hybrid Migration for: {config.target_name}")
+        self.config = config
 
         # --- 1. Populate IR Metadata & Predictable IDs ---
         target_app_uuid = str(uuid.uuid4())
@@ -1046,6 +1043,26 @@ class MigrationService:
                 default_model=config.model or self.default_model,
             )
         )
+
+        # Boot the review server early if enabled
+        if (
+            getattr(config, "web_confirm_grouping", False)
+            and not getattr(config, "auto_confirm_grouping", False)
+            and self._review_context is None
+        ):
+            from cxas_scrapi.migration import (  # noqa: PLC0415
+                grouping_web_review,
+            )
+
+            self._review_context = await grouping_web_review.boot_review_server(
+                ir=self.ir,
+                builder=self._analysis_builder,
+                bind_host=config.web_confirm_host,
+                bind_port=config.web_confirm_port,
+                timeout_s=config.web_confirm_timeout_s,
+                console=Console(),
+            )
+
         self.deployment_state = {
             "app_created": False,
             "vars_deployed": False,
@@ -1363,13 +1380,15 @@ class MigrationService:
         )
 
         # --- 6. FAST DEPLOY (Phase 1) ---
+        # Only push base resources (app, variables, toolsets) now.
+        # Individual flow agents are kept local until post-consolidation deploy
+        # to avoid hitting the CXAS 100-agent cap on large agents.
         logger.info("FAST DEPLOY: Pushing Base Resources to CXAS...")
         await self._deploy_base_resources()
-        await self._deploy_pending_agents()
 
         self._analysis_checkpoint(
             "fast_deploy_complete",
-            "Pushed base resources (app, variables, tools, agents) to CXAS.",
+            "Pushed base resources (app, variables, tools) to CXAS.",
         )
 
         # --- 8. Background Processing for Flows (Phase 2) ---
@@ -1436,6 +1455,12 @@ class MigrationService:
                 "MIGRATION STAGE COMPLETE, ENTERING OPTIMIZATION PHASE..."
             )
         else:
+            logger.info(
+                "Pushing all resources to CXAS (no-consolidation path)..."
+            )
+            await self._deploy_base_resources(is_update_pass=True)
+            await self._deploy_pending_agents()
+
             logger.info("\n" + "=" * 50)
             logger.info("MIGRATION COMPLETE!")
             app_url = f"https://ces.cloud.google.com/projects/{self.project_id}/locations/{self.location}/apps/{self.ir.metadata.app_id}"
@@ -2439,9 +2464,9 @@ class MigrationService:
 
     async def _process_single_flow(
         self,
-        flow_wrapper: Dict[str, Any],
+        flow_wrapper: dict[str, Any],
         target_app_resource_name: str,
-        parameter_name_map: Dict[str, str],
+        parameter_name_map: dict[str, str],
     ):
         """Processes a single DFCX flow: resolves dependencies, visualizes,
         generates instructions and tools, and deploys them.
@@ -2540,7 +2565,8 @@ class MigrationService:
                 status=MigrationStatus.COMPILED,
             )
 
-            # 1. Store & IMMEDIATELY DEPLOY Generated Python Tools
+            # 1. Register Generated Python Tools in IR (deploy deferred to
+            # post-consolidation via _deploy_base_resources update pass)
             for tool in tools_callbacks_data.get("tools", []):
                 tool_name = tool.get("name")
                 safe_tool_id = self._sanitize_resource_id(tool_name)
@@ -2567,96 +2593,10 @@ class MigrationService:
                 )
 
                 self.ir.agents[flow_name].tools.append(full_tool_name)
-
-                # DEPLOY THE TOOL NOW
                 logger.info(
-                    f"[{flow_name}] Deploying generated Python tool: "
+                    f"[{flow_name}] Registered Python tool (local): "
                     f"{safe_tool_id}"
                 )
-                try:
-                    created_tool = self.ps_tools.create_tool(
-                        tool_id=safe_tool_id,
-                        display_name=tool_name,
-                        payload=tool_payload["pythonFunction"],
-                        tool_type="python_function",
-                    )
-                    if created_tool:
-                        self.ir.tools[
-                            safe_tool_id
-                        ].status = MigrationStatus.DEPLOYED
-                except Exception as e:
-                    if "409" in str(e) or "Already exists" in str(e):
-                        logger.info(
-                            f"[{flow_name}] Tool '{safe_tool_id}' already "
-                            "exists. Attempting safe update-or-recreate "
-                            "path..."
-                        )
-                        try:
-                            # Attempt standard update first
-                            created_tool = self.ps_tools.update_tool(
-                                tool_name=full_tool_name,
-                                display_name=tool_name,
-                                python_function=tool_payload["pythonFunction"],
-                            )
-                            if created_tool:
-                                self.ir.tools[
-                                    safe_tool_id
-                                ].status = MigrationStatus.DEPLOYED
-                                logger.info(
-                                    f"[{flow_name}] Successfully updated "
-                                    f"existing tool '{safe_tool_id}'!"
-                                )
-                        except Exception as update_e:
-                            logger.warning(
-                                f"[{flow_name}] Update failed: {update_e}. "
-                                "Attempting safe Delete-and-Recreate "
-                                "fallback pass..."
-                            )
-                            try:
-                                # Dynamically de-reference this tool from all
-                                # live console agents to clear foreign key
-                                # constraints
-                                self._safe_dereference_tool_from_console(
-                                    full_tool_name
-                                )
-
-                                # Delete the old conflicting tool
-                                # resource cleanly
-                                self.ps_tools.delete_tool(full_tool_name)
-                                logger.info(
-                                    f"[{flow_name}] Successfully deleted "
-                                    f"existing tool '{safe_tool_id}'. "
-                                    "Re-creating..."
-                                )
-
-                                # Re-create the tool fresh
-                                created_tool = self.ps_tools.create_tool(
-                                    tool_id=safe_tool_id,
-                                    display_name=tool_name,
-                                    payload=tool_payload["pythonFunction"],
-                                    tool_type="python_function",
-                                )
-                                if created_tool:
-                                    self.ir.tools[
-                                        safe_tool_id
-                                    ].status = MigrationStatus.DEPLOYED
-                                    logger.info(
-                                        f"[{flow_name}] Safe "
-                                        "Delete-and-Recreate "
-                                        "fallback successful for "
-                                        f"'{safe_tool_id}'!"
-                                    )
-                            except Exception as recreate_e:
-                                logger.error(
-                                    f"[{flow_name}] Exception during safe "
-                                    f"Delete-and-Recreate fallback for "
-                                    f"'{safe_tool_id}': {recreate_e}"
-                                )
-                    else:
-                        logger.error(
-                            f"[{flow_name}] Failed to deploy tool "
-                            f"{safe_tool_id}: {e}"
-                        )
 
             # 1.5 MISSING LOGIC RESTORATION
             valid_display_names = {
@@ -2735,7 +2675,7 @@ class MigrationService:
                 )
                 if matched_tool:
                     if (
-                        matched_tool.type == "TOOL"
+                        matched_tool.type in ("TOOL", "PYTHON")
                         and matched_tool.name
                         not in self.ir.agents[flow_name].tools
                     ):
@@ -2768,50 +2708,20 @@ class MigrationService:
                                     f"{tool.payload.get('displayName', op)}"
                                 )
 
-            # E. DEPLOY THE AGENT (Missing Logic Restoration)
-            logger.info(f"[{flow_name}] Deploying agent...")
-
-            # Format Callbacks if they exist
-            callback_payload = {}
-            for cb_type, cb_code in tools_callbacks_data.get(
-                "callbacks", {}
-            ).items():
-                if cb_code:
-                    key = cb_type + "s"
-                    callback_payload[key] = [{"python_code": cb_code}]
-
-            display_name = self.ir.agents[flow_name].display_name
-            agent_payload = {
-                "description": self.ir.agents[flow_name].description,
-                "instruction": self.ir.agents[flow_name].instruction,
-                "tools": self.ir.agents[flow_name].tools,
-                "toolsets": self.ir.agents[flow_name].toolsets,
-                "model_settings": {"model": self.ir.metadata.default_model},
-            }
-            agent_payload.update(callback_payload)
-
-            try:
-                new_agent = self.ps_agents.create_agent(
-                    display_name=display_name,
-                    model=self.ir.metadata.default_model,
-                    **agent_payload,
+            # E. Keep agent local if consolidating.
+            # Mark LOCAL (no resource_name) so _deploy_pending_agents
+            # skips this agent; only Stage 1 consolidated groups get pushed.
+            if getattr(self, "config", None) and self.config.consolidate:
+                self.ir.agents[flow_name].status = MigrationStatus.LOCAL
+                logger.info(
+                    f"[{flow_name}] ✅ Agent synthesized (local, deploys "
+                    "post-consolidation)."
                 )
-                if new_agent and hasattr(new_agent, "name"):
-                    logger.info(f"[{flow_name}] -> Success! Deployed Agent.")
-                    self.ir.agents[flow_name].status = MigrationStatus.DEPLOYED
-                    self.ir.agents[flow_name].resource_name = new_agent.name
-                    self.reporter.log_agent(
-                        flow_name,
-                        new_agent.name,
-                        agent_payload["description"],
-                        self.default_model,
-                    )
-                else:
-                    logger.error(f"[{flow_name}] ❌ Failed to deploy agent.")
-            except Exception as e:
-                logger.error(
-                    f"[{flow_name}] ❌ API Exception during agent "
-                    f"deployment: {e}"
+            else:
+                self.ir.agents[flow_name].status = MigrationStatus.COMPILED
+                logger.info(
+                    f"[{flow_name}] ✅ Agent synthesized (local, "
+                    "pending deployment)."
                 )
         else:
             logger.error(f"[{flow_name}] Failed to generate blueprint.")

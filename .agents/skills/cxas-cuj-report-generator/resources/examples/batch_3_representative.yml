@@ -1,18 +1,50 @@
-subintent_id: dual-rewards-disambiguation
-subintent_name: Dual Rewards Disambiguation
-parent_cuj: General Customer Support
+subintent_id: catering-cancel
+subintent_name: Cancel Catering Event
+parent_cuj: Event Catering
 turns:
-- speaker: User
-  text: Hi, I have two different loyalty programs and I'm not sure which one I should use for my upcoming order.
 - speaker: Agent
-  text: I see you have benefits through both your gold membership and a standard plan. To help you figure out which one is primary, could you tell me if the order is for yourself or a gift?
-  tool_call:
-    name: get_customer_status
-    parameters: {}
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
 - speaker: User
-  text: It's for me.
+  text: Hi, I need to cancel my catering order for next Friday. The booking ID is CAT-8899.
 - speaker: Agent
-  text: Based on your records, your gold membership is your primary account, and your other plan will act as secondary. I recommend providing both account numbers when placing the order.
+  text: Oh, I'm so sorry to hear that you need to cancel! Let me pull up your booking details right now.
+- speaker: Agent
+  text: Retrieving catering booking details from database.
   tool_call:
-    name: determine_rewards_priority
-    parameters: {}
+    name: get_catering_booking
+    payload:
+      booking_id: CAT-8899
+    response:
+      status: success
+      booking_id: CAT-8899
+      amount: 500.0
+      refundable: true
+- speaker: Agent
+  text: Okay, I've found the booking. Since you're cancelling more than forty-eight hours in advance, you're eligible for a full refund of the five hundred dollars. Shall I go ahead and process the cancellation?
+- speaker: User
+  text: Yes, please. That would be great.
+- speaker: Agent
+  text: Processing the cancellation and issuing the credit refund.
+  tool_call:
+    name: cancel_catering_slot
+    payload:
+      booking_id: CAT-8899
+    response:
+      status: success
+      cancelled: true
+      refund_reference: REF-CAT-11
+- speaker: Agent
+  text: Alright, your catering order CAT-8899 is officially cancelled. I've issued a full refund back to your card, and you should see that in a few business days.
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

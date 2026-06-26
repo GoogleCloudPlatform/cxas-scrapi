@@ -127,7 +127,9 @@ async def test_post_migration_opt_ins_persist_only_calls_persist_bundle():
 async def test_post_migration_opt_ins_optimized_path_calls_stage1_and_stage3():
     cli = MigrationCLI()
     service = _make_service_mock()
-    config = _make_config(optimize_for_cxas=True, persist_bundle=False)
+    config = _make_config(
+        optimize_for_cxas=True, web_confirm_grouping=False, persist_bundle=False
+    )
 
     await cli._run_post_migration_opt_ins(service, config, _make_source())
 

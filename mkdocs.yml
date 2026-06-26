@@ -154,6 +154,7 @@ nav:
     - Error Handling: design-guide/error-handling.md
     - Variables & State: design-guide/variables.md
     - Callbacks: design-guide/callbacks.md
+    - Guardrails: design-guide/guardrails.md
   - Patterns:
     - patterns/index.md
     - Slot Filling: patterns/slot-filling.md
@@ -161,6 +162,7 @@ nav:
     - Self-Healing Errors: patterns/self-healing.md
   - Tutorials:
     - tutorials/index.md
+    - Agentic Development Environment: tutorials/agentic-development-env.md
     - Restaurant Reservation: tutorials/restaurant-reservation.md
   - Guides:
     - guides/index.md
@@ -182,6 +184,7 @@ nav:
       - Callback Tests: guides/evaluation/callback-tests.md
       - Turn Evals: guides/evaluation/turn-evals.md
       - Running Evaluations: guides/evaluation/running-evals-cli.md
+      - Mock Tool Responses: guides/evaluation/mock-tool-responses.md
     - Linting:
       - guides/linting/index.md
       - Configuration: guides/linting/configuration.md
@@ -230,8 +233,10 @@ nav:
     - cxas local-test: cli/local-test.md
     - cxas init-github-action: cli/init-github-action.md
     - cxas lint: cli/lint.md
+    - cxas llm-lint: cli/llm-lint.md
     - cxas init: cli/init.md
     - cxas insights: cli/insights.md
+    - cxas trace: cli/trace.md
   - API Reference:
     - api/index.md
     - Core:

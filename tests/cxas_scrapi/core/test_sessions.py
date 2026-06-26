@@ -236,7 +236,7 @@ def test_run_session_audio_modality_text_inputs(
 
         # Verify inputs are transformed
         inputs = call_kwargs["inputs"]
-        assert len(inputs) == 2  # noqa: PLR2004
+        assert len(inputs) == 2
         assert inputs[0]["audio"]["audio"] == b"tts_Hello"
         assert inputs[1]["audio"]["audio"] == b"tts_World"
 
@@ -269,10 +269,10 @@ def test_run_session_text_multi_inputs_aggregation(mock_client_cls, mock_types):
     )
 
     # Verify run_session was called twice
-    assert mock_client.run_session.call_count == 2  # noqa: PLR2004
+    assert mock_client.run_session.call_count == 2
 
     # Verify the result contains outputs from both responses
-    assert len(res.outputs) == 2  # noqa: PLR2004
+    assert len(res.outputs) == 2
     assert res.outputs[0].text == "Response 1"
     assert res.outputs[1].text == "Response 2"
 
@@ -303,6 +303,9 @@ def test_agent_turn_manager_no_audio():
 @patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
 @patch("cxas_scrapi.core.sessions.threading.Thread")
 def test_bidi_session_handler_run(mock_thread, mock_ws_app):
+    # Configure mock thread so is_alive() returns False (no timeout)
+    mock_thread.return_value.is_alive.return_value = False
+
     config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
     inputs = [{"text": "Hello"}]
     handler = BidiSessionHandler(
@@ -441,7 +444,7 @@ def test_run_session_audio_modality_variables_all_turns(
         call_kwargs = mock_async_run.call_args[1]
 
         inputs = call_kwargs["inputs"]
-        assert len(inputs) == 2  # noqa: PLR2004
+        assert len(inputs) == 2
         assert inputs[0]["audio"]["variables"] == {"v": "1"}
         assert inputs[1]["audio"]["variables"] == {"v": "1"}
 
@@ -468,7 +471,7 @@ def test_run_session_audio_modality_variables_with_event(
     call_kwargs = mock_async_run.call_args[1]
 
     inputs = call_kwargs["inputs"]
-    assert len(inputs) == 2  # noqa: PLR2004
+    assert len(inputs) == 2
     assert inputs[0]["variables"] == {"disable_disclaimer": True}
     assert inputs[1]["event"]["event"] == "WELCOME"
 
@@ -576,7 +579,7 @@ def test_check_audio_requirements_success(mock_get):
     mock_get.return_value = mock_response
 
     sessions._check_audio_requirements()
-    assert mock_get.call_count == 2  # noqa: PLR2004
+    assert mock_get.call_count == 2
 
 
 @patch("cxas_scrapi.core.sessions.requests.get")
@@ -668,3 +671,21 @@ def test_sessions_rate_limiting_multi_turn(mock_client_cls):
 
     # Verify rate limiter was called twice
     assert mock_rate_limiter.wait_and_consume.call_count == 2
+
+
+def test_bidi_session_handler_pydub_missing_raises_error():
+    """Test BidiSessionHandler raises ImportError when pydub is missing."""
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+
+    with patch("cxas_scrapi.core.sessions.AudioSegment", None):
+        with pytest.raises(ImportError) as exc_info:
+            BidiSessionHandler(
+                location="us",
+                token="fake_token",
+                config=config,
+                inputs=[],
+                background_noise_file="mock_noise.wav",
+            )
+        assert "pydub is not installed or failed to import" in str(
+            exc_info.value
+        )

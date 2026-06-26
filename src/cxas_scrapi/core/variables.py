@@ -16,12 +16,13 @@
 
 import enum
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from google.cloud.ces_v1beta import types
 from proto.marshal.collections import maps, repeated
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.common import Common
 
 
 class VariableType(str, enum.Enum):
@@ -41,10 +42,10 @@ class Variables(Apps):
     def __init__(
         self,
         app_name: str,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         """Initializes the Variables client.
@@ -53,8 +54,14 @@ class Variables(Apps):
         resource. This class is a wrapper around the App class to make it
         easier to manage Variables.
         """
-        project_id = app_name.split("/")[1]
-        location = app_name.split("/")[3]
+        project_id = Common._get_project_id(app_name)
+        location = Common._get_location(app_name)
+        if not project_id or not location:
+            raise ValueError(
+                f"Invalid app_name format: {app_name}. "
+                "Expected format: "
+                "projects/<project>/locations/<location>/apps/<app>"
+            )
 
         super().__init__(
             project_id=project_id,
@@ -117,12 +124,12 @@ class Variables(Apps):
 
         return variable
 
-    def list_variables(self) -> List[Any]:
+    def list_variables(self) -> list[Any]:
         """Lists variables within a specific app."""
         app = self.get_app(self.app_name)
         return list(app.variable_declarations)
 
-    def get_variable(self, variable_name: str) -> Optional[Any]:
+    def get_variable(self, variable_name: str) -> Any | None:
         """Gets a specific variable by its name within a specified app."""
         vars_list = self.list_variables()
 
@@ -136,7 +143,7 @@ class Variables(Apps):
         self,
         variable_name: str,
         variable_type: str | VariableType,
-        variable_value: Optional[Any],
+        variable_value: Any | None,
     ) -> None:
         """Creates a new variable within a specified app."""
         self._check_schema_type(variable_type)
@@ -166,7 +173,7 @@ class Variables(Apps):
         self,
         variable_name: str,
         variable_type: str | VariableType,
-        variable_value: Optional[Any],
+        variable_value: Any | None,
     ) -> None:
         """Updates a variable within a specific app.
 

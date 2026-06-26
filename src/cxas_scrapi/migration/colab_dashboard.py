@@ -635,7 +635,7 @@ def render_migration_dashboard(cx_api, migration_service):
         if isinstance(uploaded_files, tuple):
             file_info = uploaded_files[0]
         elif isinstance(uploaded_files, dict):
-            key = list(uploaded_files.keys())[0]
+            key = next(iter(uploaded_files.keys()))
             file_info = uploaded_files[key]
         else:
             file_info = uploaded_files[0]

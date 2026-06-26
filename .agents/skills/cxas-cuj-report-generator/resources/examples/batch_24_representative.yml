@@ -1,0 +1,48 @@
+subintent_id: support-bill-dispute
+subintent_name: Dispute Service Charge
+parent_cuj: Customer Support
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: 'Hi, I see a fifteen dollar service charge on my receipt for order #9988, but we only had a party of four. Why was I charged?'
+- speaker: Agent
+  text: 'I''d be happy to check that for you! Let me retrieve the receipt details for order #9988.'
+- speaker: Agent
+  text: Retrieving receipt details.
+  tool_call:
+    name: retrieve_receipt_details
+    payload:
+      order_id: '9988'
+    response:
+      status: success
+      party_size: 4
+      service_charge: 15.0
+- speaker: Agent
+  text: Okay, I see the fifteen dollar Large Group Service Charge was applied. Our system automatically applies this for parties of six or more, so it was applied in error since your party was only four. Let me escalate this to our manager to override it and refund you.
+- speaker: User
+  text: Yes, please get it refunded.
+- speaker: Agent
+  text: Escalating charge override to manager callback.
+  tool_call:
+    name: schedule_manager_callback
+    payload:
+      order_id: '9988'
+      override_amount: 15.0
+      reason: Service charge applied in error
+    response:
+      status: success
+      escalation_id: ESC-9900
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

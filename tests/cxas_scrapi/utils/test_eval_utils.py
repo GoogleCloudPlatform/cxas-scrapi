@@ -30,14 +30,18 @@ from cxas_scrapi.utils.eval_utils import EvalUtils, Turn  # noqa: E402
 
 def test_evals_to_dataframe_empty():
     """Test evals_to_dataframe with empty list."""
-    utils = EvalUtils(app_name="p/l/a/a")
+    utils = EvalUtils(
+        app_name="projects/mock-project/locations/mock-location/apps/mock-app"
+    )
     df = utils.evals_to_dataframe([])
     assert df is not None
 
 
 def test_evals_to_dataframe_with_data():
     """Test evals_to_dataframe with valid metrics."""
-    utils = EvalUtils(app_name="p/l/a/a")
+    utils = EvalUtils(
+        app_name="projects/mock-project/locations/mock-location/apps/mock-app"
+    )
 
     class MockEvalResult:
         @classmethod
@@ -387,7 +391,9 @@ def test_load_golden_eval_from_direct_export_yaml():
         foc_mock = mock_eval_instance.find_or_create_evaluation_expectation
         foc_mock.return_value = "exp/1"
 
-        utils = EvalUtils(app_name="p/l/a/a")
+        utils = EvalUtils(
+            app_name="projects/mock-project/locations/mock-location/apps/mock-app"
+        )
         result = utils.load_golden_eval_from_yaml("dummy.yaml")
 
         assert result["displayName"] == "Direct_Export_Eval"
@@ -400,7 +406,9 @@ def test_load_golden_eval_from_direct_export_yaml():
 
 def test_process_conversation_expectations():
     """Test _process_conversation_expectations with various formats."""
-    utils = EvalUtils(app_name="p/l/a/a")
+    utils = EvalUtils(
+        app_name="projects/mock-project/locations/mock-location/apps/mock-app"
+    )
 
     with patch.object(
         utils.eval_client, "find_or_create_evaluation_expectation"
@@ -430,3 +438,33 @@ def test_process_conversation_expectations():
         mock_find.assert_any_call(
             llm_prompt="Dict prompt", display_name="My Name"
         )
+
+
+def test_eval_utils_credentials_propagation():
+    """Test that custom credentials and kwargs propagate down to all
+    sub-clients.
+    """
+    mock_creds = MagicMock()
+
+    # We mock out internal calls and dependencies during initialization to
+    # prevent actual side effects
+    with (
+        patch("cxas_scrapi.core.evaluations.EvaluationServiceClient"),
+        patch("cxas_scrapi.core.tools.Tools.get_tools_map") as mock_tools_map,
+        patch(
+            "cxas_scrapi.core.agents.Agents.get_agents_map"
+        ) as mock_agents_map,
+    ):
+        mock_tools_map.return_value = {}
+        mock_agents_map.return_value = {}
+
+        utils = EvalUtils(
+            app_name="projects/p/locations/l/apps/a", creds=mock_creds
+        )
+
+        assert utils.creds == mock_creds
+        assert utils.tools_client.creds == mock_creds
+        assert utils.var_client.creds == mock_creds
+        assert utils.agents_client.creds == mock_creds
+        assert utils.ch_client.creds == mock_creds
+        assert utils.eval_client.creds == mock_creds

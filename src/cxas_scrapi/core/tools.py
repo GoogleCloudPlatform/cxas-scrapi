@@ -14,7 +14,7 @@
 
 """Core Tools class for CXAS Scrapi."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 import yaml
@@ -27,7 +27,7 @@ from google.protobuf import field_mask_pb2
 from google.protobuf.json_format import MessageToDict
 
 from cxas_scrapi.core.apps import Apps
-from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT
+from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.variables import Variables
 
 
@@ -37,15 +37,21 @@ class Tools(Apps):
     def __init__(
         self,
         app_name: str,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         """Initializes the Tools client."""
-        project_id = app_name.split("/")[1]
-        location = app_name.split("/")[3]
+        project_id = Common._get_project_id(app_name)
+        location = Common._get_location(app_name)
+        if not project_id or not location:
+            raise ValueError(
+                f"Invalid app_name format: {app_name}. "
+                "Expected format: "
+                "projects/<project>/locations/<location>/apps/<app>"
+            )
 
         super().__init__(
             project_id=project_id,
@@ -74,7 +80,7 @@ class Tools(Apps):
             creds=creds,
             scope=scope,
         )
-        self.tools_map: Dict[str, str] = {}
+        self.tools_map: dict[str, str] = {}
 
     @staticmethod
     def _is_toolset(tool_name: str) -> bool:
@@ -84,9 +90,9 @@ class Tools(Apps):
     @staticmethod
     def _parse_openapi_schema(
         schema_str: str, display_name: str, tool_name: str, reverse: bool
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """Parses an OpenAPI schema to extract tool endpoints locally."""
-        parsed_tools: Dict[str, str] = {}
+        parsed_tools: dict[str, str] = {}
         try:
             schema = yaml.safe_load(schema_str)
             for _path, methods in schema.get("paths", {}).items():
@@ -115,9 +121,9 @@ class Tools(Apps):
 
     def _get_final_variables(
         self,
-        variables: Optional[Any],
-        context: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        variables: Any | None,
+        context: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         """Resolves the variables to pass to the tool payload."""
         # Variables logic, context takes precedence over variables
         final_variables = {}
@@ -162,14 +168,14 @@ class Tools(Apps):
                 final_variables = app_default_vars_cache
         return final_variables
 
-    def get_tools_map(self, reverse: bool = False) -> Dict[str, str]:
+    def get_tools_map(self, reverse: bool = False) -> dict[str, str]:
         """Creates a map of Tool and Toolset full names to display names.
 
         Args:
             reverse: If True, map display_name -> name.
         """
         tools = self.list_tools()
-        tools_dict: Dict[str, str] = {}
+        tools_dict: dict[str, str] = {}
 
         for tool in tools:
             if self._is_toolset(tool.name):
@@ -204,13 +210,13 @@ class Tools(Apps):
 
         return tools_dict
 
-    def _get_or_load_tools_map(self) -> Dict[str, str]:
+    def _get_or_load_tools_map(self) -> dict[str, str]:
         """Gets a reverse map of tools from cache or loads it if missing."""
         if not self.tools_map:
             self.tools_map = self.get_tools_map(reverse=True)
         return self.tools_map
 
-    def list_tools(self) -> List[Any]:
+    def list_tools(self) -> list[Any]:
         """Lists both tools and toolsets within a specific app."""
         tools_request = types.ListToolsRequest(parent=self.app_name)
         tools_response = self.client.list_tools(request=tools_request)
@@ -233,7 +239,7 @@ class Tools(Apps):
         self,
         tool_id: str,
         display_name: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         tool_type: str = "python_function",
         description: str = "",
     ) -> Any:
@@ -318,9 +324,9 @@ class Tools(Apps):
     def execute_tool(
         self,
         tool_display_name: str,
-        args: Optional[Dict[str, Any]] = None,
-        variables: Optional[Any] = None,  # Accepts Dict, List[str], or None
-        context: Optional[Dict[str, Any]] = None,
+        args: dict[str, Any] | None = None,
+        variables: Any | None = None,  # Accepts Dict, List[str], or None
+        context: dict[str, Any] | None = None,
     ) -> Any:
         """Executes a tool directly via the CES API.
 

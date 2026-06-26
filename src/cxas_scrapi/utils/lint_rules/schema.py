@@ -57,7 +57,7 @@ def _load_json_or_yaml(directory: Path, file_name: str) -> dict:
         )
 
 
-def _resolve_paths(data, extra_prefixes=(), base_path=None):  # noqa: C901
+def _resolve_paths(data, extra_prefixes=(), base_path=None):
     """Recursively replace file-path strings with their contents."""
     if isinstance(data, dict):
         return {
@@ -289,6 +289,29 @@ class SchemaValid(Rule):
         for key in list(data.keys()):
             if key.startswith("_comment_"):
                 data.pop(key)
+
+        if self.target == "evaluation_config":
+            lower_keys = {k.lower() for k in data.keys()}
+            if "turns" in lower_keys or "expectations" in lower_keys:
+                # TODO: Deprecate this block of logic if the backend no longer
+                # supports these legacy root-level keys (turns/expectations).
+                turns = data.pop("turns", None) or data.pop("Turns", None) or []
+                expectations = (
+                    data.pop("expectations", None)
+                    or data.pop("Expectations", None)
+                    or []
+                )
+                data["golden"] = {
+                    "turns": turns,
+                    "evaluationExpectations": expectations,
+                }
+                lower_keys.add("golden")
+
+            # Bypass scenario validation if it's a deterministic
+            # (golden) evaluation
+            if "golden" in lower_keys:
+                data.pop("scenario", None)
+                data.pop("Scenario", None)
 
         try:
             _validate_fields(data, self._proto_type, path=str(resource_dir))

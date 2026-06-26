@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from google.cloud.ces_v1beta import AgentServiceClient, types
 from google.protobuf import field_mask_pb2
@@ -30,10 +30,10 @@ class Apps(Common):
         self,
         project_id: str,
         location: str,
-        creds_path: str = None,
-        creds_dict: Dict[str, str] = None,
+        creds_path: str | None = None,
+        creds_dict: dict[str, str] | None = None,
         creds: Any = None,
-        scope: List[str] = None,
+        scope: list[str] | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -54,20 +54,20 @@ class Apps(Common):
             client_info=self.client_info,
         )
 
-    def list_apps(self) -> List[types.App]:
+    def list_apps(self) -> list[types.App]:
         """Lists apps in the configured project and location."""
         request = types.ListAppsRequest(parent=self.parent)
         response = self.client.list_apps(request=request)
         return list(response)
 
-    def get_apps_map(self, reverse: bool = False) -> Dict[str, str]:
+    def get_apps_map(self, reverse: bool = False) -> dict[str, str]:
         """Creates a map of App full names to display names.
 
         Args:
             reverse: If True, map display_name -> name.
         """
         apps = self.list_apps()
-        apps_dict: Dict[str, str] = {}
+        apps_dict: dict[str, str] = {}
 
         for app in apps:
             display_name = app.display_name
@@ -84,7 +84,7 @@ class Apps(Common):
         request = types.GetAppRequest(name=app_name)
         return self.client.get_app(request=request)
 
-    def get_app_by_display_name(self, display_name: str) -> Optional[types.App]:
+    def get_app_by_display_name(self, display_name: str) -> types.App | None:
         """Get CX Agent Studio App by its human readable display name.
 
         Args:
@@ -126,8 +126,8 @@ class Apps(Common):
         self,
         app_id: str,
         display_name: str,
-        description: str = None,
-        root_agent: str = None,
+        description: str | None = None,
+        root_agent: str | None = None,
         **kwargs,
     ) -> types.App:
         """Creates a new app."""
@@ -168,8 +168,8 @@ class Apps(Common):
     def export_app(
         self,
         app_name: str,
-        gcs_uri: str = None,
-        local_path: str = None,
+        gcs_uri: str | None = None,
+        local_path: str | None = None,
         export_format: str = "JSON",
     ) -> Any:
         # Wait for long-running operation to complete.
@@ -208,9 +208,9 @@ class Apps(Common):
     def import_as_new_app(
         self,
         display_name: str,
-        app_content: bytes = None,
-        gcs_uri: str = None,
-        local_path: str = None,
+        app_content: bytes | None = None,
+        gcs_uri: str | None = None,
+        local_path: str | None = None,
     ) -> Any:
         """Imports an app as a brand new app.
 
@@ -256,10 +256,10 @@ class Apps(Common):
     def import_app(
         self,
         app_name: str,
-        app_content: bytes = None,
-        gcs_uri: str = None,
-        local_path: str = None,
-        conflict_strategy: str = None,
+        app_content: bytes | None = None,
+        gcs_uri: str | None = None,
+        local_path: str | None = None,
+        conflict_strategy: str | None = None,
     ) -> Any:
         # Wait for long-running operation to complete.
         """Imports an app, overwriting an existing one.

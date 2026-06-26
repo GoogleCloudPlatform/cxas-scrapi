@@ -14,8 +14,6 @@
 
 """Core Changelogs class for CXAS Scrapi."""
 
-from typing import List
-
 from google.cloud.ces_v1beta import types
 
 from cxas_scrapi.core.agents import Agents
@@ -37,7 +35,7 @@ class Changelogs(Agents):
         self.app_name = app_name
         self.resource_type = "changelogs"
 
-    def list_changelogs(self) -> List[types.Changelog]:
+    def list_changelogs(self) -> list[types.Changelog]:
         """Lists changelogs within the app."""
 
         request = types.ListChangelogsRequest(parent=self.app_name)
