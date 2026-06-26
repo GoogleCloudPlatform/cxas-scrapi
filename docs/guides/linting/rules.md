@@ -28,6 +28,9 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | I011 | `wrong-tool-syntax` | Error | Wrong tool reference syntax (e.g., `{TOOL:...}` instead of `{@TOOL:...}`) |
     | I012 | `unused-tool-in-config` | Warning | Tool is in the agent's JSON config but never referenced in the instruction |
     | I013 | `tool-not-in-config` | Error | Instruction references a tool that's not in the agent's JSON config |
+    | I014 | `missing-current-date` | Warning | Instruction (or global instruction) should reference `${current_date}` |
+    | I015 | `banned-legacy-xml-tags` | Error | Instruction uses a banned legacy XML tag |
+    | I016 | `prose-state-machine` | Warning | Instruction encodes a state machine in prose (named-step GOTOs, retry counters, STOP tokens, state writes, orchestrator `agent_action` traversal) |
 
     ---
 
@@ -171,6 +174,18 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* `{@TOOL: Name}` where `Name` is not in `agent.json`'s `tools` array.
 
     *Fix:* Add the tool to the agent's `tools` array, or remove the reference from the instruction.
+
+    ---
+
+    **I016 — prose-state-machine**
+
+    The single most damaging instruction anti-pattern: hand-building a finite-state machine inside the prompt and asking the LLM to execute it every turn. The model is made to read a counter variable, compare it to a literal, branch to a named step, write state back, and follow `agent_action` codes verbatim — control flow that an LLM executes unreliably and that belongs in deterministic code. This rule is a deterministic, multi-signal composite: it scores eleven independent surface forms (retry/attempt counters, `STOP.` halt tokens, `->` transitions, conditional "go to step X" dispatch edges, back-edge loops, `{var} == value` tests, UPPER_SNAKE state writes, `lookup_flag: "INIT"` orchestrator traversal, `follow the returned agent_action verbatim`, a "state machine" named in a step, and `IF`-on-result-code) grouped into four categories, and fires only on co-occurrence (or a single high-confidence marker) so that a well-designed, declarative instruction stays silent.
+
+    *Triggers:* A high-confidence marker on its own (a retry-counter read/write, an UPPER_SNAKE state write, a `lookup_flag` enum, an `agent_action`-verbatim loop, or a "state machine" step name); **or** signals from ≥ 2 categories totalling ≥ 4 occurrences; **or** ≥ 3 strong control-flow edges (conditional jumps + loop back-edges). Plain forward navigation ("proceed to subtask conclusion") on its own never fires. Surface forms are kept disjoint from I003 and I005 so no line is double-reported. Content inside `<inline_example>` regions is ignored.
+
+    *Fix:* Move the control flow out of the prompt. Put retry/attempt counters and failure limits in a `before_model`/`after_model` callback — the [slot-filling pattern](../../patterns/slot-filling.md) keeps retry state in Python (a `_retries` dict), never in a `{counter}` the LLM has to read and increment. Replace `Proceed to subtask X` / `Loop back to step Y` / `STOP` GOTOs, state-variable writes, and `IF`-on-`agent_action` dispatch with declarative slot-filling DAG transitions so the framework owns routing. Then rewrite the instruction to state the *goal*, not a transition table.
+
+    *Configurable:* `options.I016.min_distinct_categories` (default 2), `options.I016.min_total` (default 4), `options.I016.min_strong_edges` (default 3).
 
 === "C — Callbacks"
 
@@ -440,6 +455,9 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S002 | `agent-tool-references` | Error | Instruction references tools not in the agent's tool list |
     | S003 | `callback-file-references` | Error | Agent JSON references callback files that don't exist |
     | S004 | `child-agent-references` | Error | Agent JSON references child agents that don't exist |
+    | S005 | `strict-agent-path-layout` | Error | Agent config paths must be app-relative and prefixed with `agents/{agent_name}/` |
+    | S006 | `strict-tool-path-layout` | Error | Tool config paths must be app-relative and prefixed with `tools/{tool_name}/` |
+    | S007 | `sub-agent-single-parent` | Error | Sub-agents must have at most one parent agent (tree constraint) |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 

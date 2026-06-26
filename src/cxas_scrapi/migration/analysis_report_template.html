@@ -1616,6 +1616,96 @@
       groupingState = JSON.parse(JSON.stringify(DATA.pending_grouping || {}));
       renderGroupingCards(groupingState);
     });
+
+
+    // Server-backed actions: Confirm, Abort, Re-propose. Only wire when
+    // the live server endpoint is set; otherwise leave disabled.
+    const endpoint = liveEndpoint();
+    if (!endpoint) return;
+
+    const confirmBtn = $('#gr-confirm');
+    if (confirmBtn) {
+      confirmBtn.title = '';
+      confirmBtn.addEventListener('click', async () => {
+        if (!groupingState) return;
+        const result = validateGrouping(groupingState);
+        if (result.errors.length) return;
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Confirming…';
+        try {
+          const resp = await fetch('/api/grouping', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({groupings: groupingState.groupings}),
+          });
+          const body = await resp.json();
+          if (resp.ok && body.ok) {
+            renderGroupingBanner({...groupingState, status: 'confirmed'});
+            const footer = $('#gr-validation');
+            if (footer) footer.innerHTML = '<span class="gr-validation-ok">✓ Confirmed — consolidation resuming. You can close this tab.</span>';
+            document.querySelectorAll('#grouping-toolbar button, .gr-pill, .gr-card-title, .gr-delete, input[name="gr-root"], #gr-abort, #gr-confirm').forEach(el => el.disabled = true);
+          } else {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Confirm';
+            alert('Server rejected: ' + ((body.errors||[]).join('; ') || body.error || resp.status));
+          }
+        } catch (err) {
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Confirm';
+          alert('Network error: ' + err.message);
+        }
+      });
+    }
+
+    const abortBtn = $('#gr-abort');
+    if (abortBtn) {
+      abortBtn.disabled = false;
+      abortBtn.title = '';
+      abortBtn.addEventListener('click', async () => {
+        if (!confirm('Abort grouping review? Consolidation will be skipped.')) return;
+        try {
+          await fetch('/api/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+          renderGroupingBanner({status: 'aborted'});
+          const footer = $('#gr-validation');
+          if (footer) footer.innerHTML = '<span class="gr-validation-error">✗ Aborted — consolidation skipped. You can close this tab.</span>';
+          document.querySelectorAll('#grouping-toolbar button, .gr-pill, .gr-card-title, .gr-delete, input[name="gr-root"], #gr-abort, #gr-confirm').forEach(el => el.disabled = true);
+        } catch (err) {
+          alert('Network error: ' + err.message);
+        }
+      });
+    }
+
+    const reproposeBtn = $('#gr-repropose');
+    if (reproposeBtn) {
+      reproposeBtn.disabled = false;
+      reproposeBtn.title = '';
+      reproposeBtn.addEventListener('click', async () => {
+        const feedback = prompt('Tell Gemini what to change (optional, e.g. "split authentication into its own group"):');
+        if (feedback === null) return;
+        reproposeBtn.disabled = true;
+        reproposeBtn.textContent = 'Re-proposing…';
+        try {
+          const resp = await fetch('/api/repropose', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({feedback: feedback || ''}),
+          });
+          const body = await resp.json();
+          if (resp.ok && body.ok && body.pending) {
+            groupingState = JSON.parse(JSON.stringify(body.pending));
+            renderGroupingBanner(groupingState);
+            renderGroupingCards(groupingState);
+          } else {
+            alert('Re-propose failed: ' + (body.error || resp.status));
+          }
+        } catch (err) {
+          alert('Network error: ' + err.message);
+        } finally {
+          reproposeBtn.disabled = false;
+          reproposeBtn.textContent = 'Re-propose…';
+        }
+      });
+    }
     // Confirm/Abort/Re-propose are wired by the server when liveEndpoint() is set
     // (Phase 4). Until then they stay disabled per the title tooltip.
   }

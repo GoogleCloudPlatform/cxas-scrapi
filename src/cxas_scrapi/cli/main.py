@@ -32,6 +32,7 @@ from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
+from cxas_scrapi.utils.eval_utils import COMBINED_REPORT_FILENAME
 
 DEFAULT_MODEL = "gemini-3.1-flash-live"
 
@@ -572,11 +573,12 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         generate_combined_report_from_dir,
     )
 
-    output_path = (
-        args.gcs_path
-        or args.output
-        or os.path.join(args.output_dir, "combined_report.html")
-    )
+    output_dir = args.output_dir
+    timestamp = None
+    if getattr(args, "timestamped", False):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    output_path = args.gcs_path or args.output
 
     include_list = args.include.split(",") if args.include else []
     filter_files_list = (
@@ -601,8 +603,8 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     sim_parallel = getattr(args, "sim_parallel", 5)
     golden_timeout = getattr(args, "golden_timeout", 600)
 
-    generate_combined_report_from_dir(
-        output_dir=args.output_dir,
+    actual_output_path = generate_combined_report_from_dir(
+        output_dir=output_dir,
         golden_run=args.golden_run,
         app_name=args.app_name,
         output_path=output_path,
@@ -613,6 +615,8 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         simulation_dir=args.simulation_dir,
         include=include_list,
         modality=args.modality,
+        sim_user_model=args.sim_user_model,
+        eval_model=args.eval_model,
         runs=args.runs,
         filter_files=filter_files_list,
         filter_tags=filter_tags_list,
@@ -623,8 +627,9 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         if getattr(args, "burst_noise_files", None)
         else None,
         use_tool_fakes=getattr(args, "use_tool_fakes", False),
+        timestamp=timestamp,
     )
-    print(f"Combined report generated at {output_path}")
+    print(f"Combined report generated at {actual_output_path}")
 
 
 def test_tools(args: argparse.Namespace) -> None:
@@ -1212,10 +1217,41 @@ def deployments_promote(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_help(args: argparse.Namespace) -> None:
+    """Handles the 'help' command."""
+    parser = get_parser()
+    if getattr(args, "help_command", None):
+        try:
+            parser.parse_args([args.help_command, "--help"])
+        except SystemExit:
+            pass
+    else:
+        parser.print_help()
+
+
 def get_parser() -> argparse.ArgumentParser:
     """Sets up the argument parser."""
+    description = (
+        "CXAS SCRAPI Command Line Interface — Full CI/CD Suite\n\n"
+        "The cxas CLI puts the full power of CX Agent Studio in your\n"
+        "terminal: pull/push apps, run evals, manage versions, analyze\n"
+        "conversation traces, and lint configurations or prompts.\n\n"
+        "--- Key Verification & Linting Tools — When to Run Which ---\n\n"
+        "• cxas lint     : Fast, deterministic structural linter.\n"
+        "                  Validates directory layout, YAML/JSON schemas,\n"
+        "                  app.yaml/app.json correctness, & basic structure.\n"
+        "                  When to run: Continuously during development,\n"
+        "                  in pre-commit hooks, and as a first CI gate.\n\n"
+        "• cxas llm-lint : AI semantic natural language prompt linter.\n"
+        "                  Analyzes instructions (instruction.txt,\n"
+        "                  global_instruction.txt, & dynamic callbacks)\n"
+        "                  for clarity, tone, persona, & contradictions.\n"
+        "                  When to run: When authoring prompt engineering,\n"
+        "                  before code reviews, or during qualitative QA."
+    )
+
     parser = argparse.ArgumentParser(
-        description="CXAS SCRAPI Evaluation Runner for CI/CD.",
+        description=description,
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
@@ -1363,7 +1399,17 @@ def get_parser() -> argparse.ArgumentParser:
         "--no-optimize",
         action="store_true",
         help=(
-            "Custom Mode: Skip Stage 1 + Stage 2 + Stage 3 optimization passes."
+            "DEPRECATED alias for --no-consolidate; kept for backward"
+            " compatibility. Skip Stage 1 + Stage 2 + Stage 3 entirely."
+        ),
+    )
+    e2e_group.add_argument(
+        "--no-consolidate",
+        action="store_true",
+        help=(
+            "Skip Stage 1/2/3 entirely. Produces a 1:1 transpile (every"
+            " source flow becomes its own CXAS agent). Use only when you"
+            " need the unoptimized form. Default: consolidate."
         ),
     )
     e2e_group.add_argument(
@@ -1379,6 +1425,50 @@ def get_parser() -> argparse.ArgumentParser:
         "-y",
         action="store_true",
         help="Non-interactive mode: auto-confirm stages and operations.",
+    )
+
+    # Grouping confirmation gate (Phase 4 — opt-in until Phase 5 default flip)
+    gate_group = parser_migrate_dfcx.add_argument_group(
+        "Grouping Confirmation Gate"
+    )
+    gate_group.add_argument(
+        "--no-web-confirm",
+        action="store_true",
+        help=(
+            "Skip the HTML grouping-confirmation gate and fall back to the"
+            " InquirerPy terminal TUI for grouping review."
+        ),
+    )
+    gate_group.add_argument(
+        "--auto-confirm-grouping",
+        action="store_true",
+        help=(
+            "Accept Gemini's proposed grouping without showing the review"
+            " gate. Intended for CI / scripted migrations."
+        ),
+    )
+    gate_group.add_argument(
+        "--web-confirm-host",
+        default="127.0.0.1",
+        help=(
+            "Bind host for the review server. Use 0.0.0.0 to allow access"
+            " from another machine. Default: 127.0.0.1"
+        ),
+    )
+    gate_group.add_argument(
+        "--web-confirm-port",
+        type=int,
+        default=0,
+        help="Bind port for the review server. 0 picks an ephemeral port.",
+    )
+    gate_group.add_argument(
+        "--web-confirm-timeout",
+        type=int,
+        default=1800,
+        help=(
+            "Seconds to wait for the user to confirm before aborting."
+            " Default: 1800 (30 min)."
+        ),
     )
 
     # Optimization/Checkpoint Arguments (active when --optimize is specified)
@@ -1548,7 +1638,7 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_report.add_argument(
         "--output",
-        help="Output path. Defaults to <evals-dir>/combined_report.html",
+        help=f"Output path. Defaults to <evals-dir>/{COMBINED_REPORT_FILENAME}",
     )
     parser_report.add_argument(
         "--golden-run",
@@ -1614,6 +1704,20 @@ def get_parser() -> argparse.ArgumentParser:
         help="Evaluation execution modality (text or audio). Defaults to text.",
     )
     parser_report.add_argument(
+        "--sim-user-model",
+        help=(
+            "Gemini model name to use for the simulated user "
+            "(default: gemini-3.1-flash-lite)."
+        ),
+    )
+    parser_report.add_argument(
+        "--eval-model",
+        help=(
+            "Gemini model name to use for evaluating expectations "
+            "(default: gemini-3.1-flash-lite)."
+        ),
+    )
+    parser_report.add_argument(
         "--include",
         default="sims,goldens,tools,callbacks",
         help=(
@@ -1650,6 +1754,11 @@ def get_parser() -> argparse.ArgumentParser:
         "--use-tool-fakes",
         action="store_true",
         help="Enable tool fakes (bypass real tool backends).",
+    )
+    parser_report.add_argument(
+        "--timestamped",
+        action="store_true",
+        help="If set, nests the output files in a timestamped subdirectory.",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
@@ -2132,6 +2241,17 @@ def get_parser() -> argparse.ArgumentParser:
         help="Optional path to write the markdown lint report.",
     )
     parser_llm_lint.set_defaults(func=llm_lint)
+
+    # Parser for 'help'
+    parser_help = subparsers.add_parser(
+        "help", help="Show help for the CLI or a specific command."
+    )
+    parser_help.add_argument(
+        "help_command",
+        nargs="?",
+        help="The command to show help for (e.g., lint, llm-lint, run).",
+    )
+    parser_help.set_defaults(func=cmd_help)
 
     # Parser for 'init'
     parser_init = subparsers.add_parser(

@@ -16,7 +16,9 @@ import asyncio
 import io
 import json
 import logging
+import os
 import re
+import sys
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -72,6 +74,46 @@ if TYPE_CHECKING:
     from cxas_scrapi.migration.data_models import IRBundle
 
 logger = logging.getLogger(__name__)
+
+
+# One-shot sentinel for the always-on default banner. Held in a list
+# so callers can flip the latch without needing `global`.
+# Suppress entirely with CXAS_QUIET_DEFAULT_NOTICE=1.
+_DEFAULT_NOTICE_PRINTED: list[bool] = [False]
+
+
+def _is_headless_context() -> bool:
+    """True when the grouping gate cannot reasonably show a browser UI.
+
+    Treats CI environments and non-TTY stdin as headless. Errors during
+    isatty() (e.g. detached descriptors) also count as headless.
+    """
+    if os.environ.get("CI"):
+        return True
+    try:
+        return not sys.stdin.isatty()
+    except (AttributeError, OSError, ValueError):
+        return True
+
+
+def _maybe_print_default_notice(console: Console) -> None:
+    """Print the always-on default banner once per process.
+
+    Suppressed entirely by CXAS_QUIET_DEFAULT_NOTICE=1.
+    """
+    if _DEFAULT_NOTICE_PRINTED[0]:
+        return
+    if os.environ.get("CXAS_QUIET_DEFAULT_NOTICE"):
+        _DEFAULT_NOTICE_PRINTED[0] = True
+        return
+    console.print(
+        "[bold cyan]NOTE:[/] cxas-scrapi now consolidates by default."
+        " Stage 1/2/3 run on every `cxas migrate` and the grouping gate"
+        " opens in your browser. Pass [bold]--no-consolidate[/] for the"
+        " legacy 1:1 export, [bold]--auto-confirm-grouping[/] for CI,"
+        " or [bold]--no-web-confirm[/] for terminal-only review."
+    )
+    _DEFAULT_NOTICE_PRINTED[0] = True
 
 
 class MigrationService:
@@ -147,6 +189,7 @@ class MigrationService:
         # is known. Reset for each migration so per-target state is clean.
         self._analysis_builder: MigrationAnalysisBuilder | None = None
         self._analysis_bundle: IRBundle | None = None
+        self._review_context: Any = None
 
     # ------------------------------------------------------------------
     # Migration analysis report helpers
@@ -335,9 +378,47 @@ class MigrationService:
         console = console or Console()
         gemini = gemini_client or self.gemini_client
 
+        # Resume guard: a bundle that already has stage history but no
+        # grouping was produced before consolidation became the default.
+        # Running consolidation on it will change the deployed shape.
+        # Surface this clearly rather than silently re-shaping the app.
+        if (
+            getattr(bundle, "stage_history", None)
+            and getattr(bundle, "grouping", None) is None
+            and getattr(bundle.config, "consolidate", True)
+            and not getattr(bundle.config, "auto_confirm_grouping", False)
+        ):
+            console.print(
+                "[yellow]Resume notice: this bundle was produced without"
+                " consolidation. Stage 1 will now run consolidation and"
+                " open the grouping gate. Pass [bold]--no-consolidate[/]"
+                " to preserve the 1:1 shape, or"
+                " [bold]--auto-confirm-grouping[/] to skip the gate."
+                "[/]"
+            )
+
         self._ensure_analysis_builder(
             bundle.config.target_name if bundle else None, bundle=bundle
         )
+
+        # Boot the review server early if enabled
+        if (
+            getattr(bundle.config, "web_confirm_grouping", False)
+            and not getattr(bundle.config, "auto_confirm_grouping", False)
+            and self._review_context is None
+        ):
+            from cxas_scrapi.migration import (  # noqa: PLC0415
+                grouping_web_review,
+            )
+
+            self._review_context = await grouping_web_review.boot_review_server(
+                ir=self.ir,
+                builder=self._analysis_builder,
+                bind_host=bundle.config.web_confirm_host,
+                bind_port=bundle.config.web_confirm_port,
+                timeout_s=bundle.config.web_confirm_timeout_s,
+                console=console,
+            )
 
         # --- Variable dedup (in-memory; deploy happens in step 9) -----------
         optimizer = await stage_runner.run_stage_1(self.ir, gemini, console)
@@ -439,6 +520,38 @@ class MigrationService:
         # 3. Optional interactive review. The callback receives everything
         # it needs to preview consolidation + re-propose, all via kwargs so
         # it can pick out whichever args it actually uses.
+        if (
+            grouping_callback is None
+            and getattr(bundle.config, "web_confirm_grouping", False)
+            and not getattr(bundle.config, "auto_confirm_grouping", False)
+        ):
+            if _is_headless_context():
+                # Headless contexts (CI, non-TTY shells) can't show a
+                # browser-based gate and would hang on the 30-min timeout.
+                # Auto-confirm Gemini's proposal and warn loudly so the
+                # user knows their proposal was applied without review.
+                console.print(
+                    "[yellow]Headless context detected (no TTY or CI env);"
+                    " auto-confirming Gemini's grouping proposal."
+                    " Pass --no-web-confirm or --auto-confirm-grouping"
+                    " explicitly to silence this warning.[/]"
+                )
+            else:
+                from functools import partial  # noqa: PLC0415
+
+                from cxas_scrapi.migration import (  # noqa: PLC0415
+                    grouping_web_review,
+                )
+
+                grouping_callback = partial(
+                    grouping_web_review.web_review,
+                    builder=self._analysis_builder,
+                    bind_host=bundle.config.web_confirm_host,
+                    bind_port=bundle.config.web_confirm_port,
+                    timeout_s=bundle.config.web_confirm_timeout_s,
+                    console=console,
+                    active_context=self._review_context,
+                )
         if grouping_callback is not None:
             reviewed = await grouping_callback(
                 ir=self.ir,
@@ -880,6 +993,9 @@ class MigrationService:
     ) -> None:
         """The comprehensive async executor for Hybrid Migration."""
 
+        if getattr(config, "consolidate", True):
+            _maybe_print_default_notice(Console())
+
         # --- 0. Data Loading & Preprocessing ---
         self.source_agent_data = (
             config.source_agent_data_override
@@ -927,6 +1043,26 @@ class MigrationService:
                 default_model=config.model or self.default_model,
             )
         )
+
+        # Boot the review server early if enabled
+        if (
+            getattr(config, "web_confirm_grouping", False)
+            and not getattr(config, "auto_confirm_grouping", False)
+            and self._review_context is None
+        ):
+            from cxas_scrapi.migration import (  # noqa: PLC0415
+                grouping_web_review,
+            )
+
+            self._review_context = await grouping_web_review.boot_review_server(
+                ir=self.ir,
+                builder=self._analysis_builder,
+                bind_host=config.web_confirm_host,
+                bind_port=config.web_confirm_port,
+                timeout_s=config.web_confirm_timeout_s,
+                console=Console(),
+            )
+
         self.deployment_state = {
             "app_created": False,
             "vars_deployed": False,

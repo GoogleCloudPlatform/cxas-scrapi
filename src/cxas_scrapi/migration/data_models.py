@@ -155,24 +155,32 @@ class MigrationConfig(BaseModel):
     gen_hillclimbing_evals: bool = False
     eval_runner_target: str = "Custom API Runner"
     migration_version: str = "2.0"
+    # Deprecated since Phase 5: consolidation is now the unconditional
+    # default. Field retained as a no-op accepted value so old callers /
+    # scripts don't break. Use ``no_consolidate=True`` to skip Stage 1/2/3.
     optimize_for_cxas: bool = False
+    no_consolidate: bool = False
     persist_bundle: bool = False
     interactive: bool = False
     source_agent_data_override: DFCXAgentIR | None = None
+    # Phase 5: HTML-driven grouping confirmation gate is the default.
+    # MigrationService installs the web_review callback for Stage 1
+    # consolidation unless --no-web-confirm or --auto-confirm-grouping.
+    web_confirm_grouping: bool = True
+    web_confirm_host: str = "127.0.0.1"
+    web_confirm_port: int = 0  # 0 = pick an ephemeral port
+    web_confirm_timeout_s: int = 1800
+    auto_confirm_grouping: bool = False  # CI escape hatch: skip gate
 
     @property
     def consolidate(self) -> bool:
-        """Backward-compatibility property hook: consolidation is active
-        whenever optimize is active.
-        """
-        return self.optimize_for_cxas
+        """Consolidation runs by default; ``no_consolidate=True`` opts out."""
+        return not self.no_consolidate
 
     @property
     def run_stage_3(self) -> bool:
-        """Backward-compatibility property hook: Stage 3 parent-child routing
-        is active whenever optimize is active.
-        """
-        return self.optimize_for_cxas
+        """Stage 3 topology wiring runs whenever consolidation runs."""
+        return not self.no_consolidate
 
 
 class StageHistoryEntry(BaseModel):

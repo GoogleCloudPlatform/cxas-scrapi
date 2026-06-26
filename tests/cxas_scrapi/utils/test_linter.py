@@ -187,7 +187,7 @@ def test_rule_decorator_deduplication():
     from cxas_scrapi.utils.linter import _REGISTERED_IDS  # noqa: PLC0415
 
     _RULE_REGISTRY["test_dedup"] = []
-    _REGISTERED_IDS.discard("XDUP001")
+    _REGISTERED_IDS.discard(("XDUP001", "test_dedup"))
 
 
 def test_reset_registry():
@@ -224,12 +224,15 @@ def test_reset_registry():
     import cxas_scrapi.utils.lint_rules.schema as mod_v  # noqa: PLC0415
     import cxas_scrapi.utils.lint_rules.structure as mod_s  # noqa: PLC0415
     import cxas_scrapi.utils.lint_rules.tools as mod_t  # noqa: PLC0415
+    import cxas_scrapi.utils.lint_rules.variables as mod_var  # noqa: PLC0415
 
-    for mod in [mod_i, mod_c, mod_t, mod_e, mod_a, mod_s, mod_v]:
+    for mod in [mod_i, mod_c, mod_t, mod_e, mod_a, mod_s, mod_v, mod_var]:
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    assert len(registry_restored.all_rules()) == 65
+    # 68 baseline + 11 cross-surface V100-V104 registrations
+    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
+    assert len(registry_restored.all_rules()) == 79
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -519,7 +522,9 @@ def test_discovery_filtering(tmp_path):
 def test_build_registry_all_rules():
     registry = build_registry()
     all_rules = registry.all_rules()
-    assert len(all_rules) == 65
+    # 68 baseline + 11 cross-surface V100-V104 registrations
+    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
+    assert len(all_rules) == 79
 
 
 def test_build_context(tmp_path):
@@ -531,6 +536,50 @@ def test_build_context(tmp_path):
     assert "root_agent" in context.all_agent_names
     assert "get_info" in context.all_tool_names
     assert "end_session" in context.platform_tools
+
+
+def test_build_context_agent_to_parents(tmp_path):
+    _make_app(
+        tmp_path,
+        agents=["parent_a", "parent_b", "shared_child", "sole_child"],
+    )
+
+    parent_a_dir = tmp_path / "agents" / "parent_a"
+    (parent_a_dir / "parent_a.json").write_text(
+        '{"displayName": "parent a", "childAgents": ["shared_child",'
+        ' "sole_child"]}'
+    )
+
+    parent_b_dir = tmp_path / "agents" / "parent_b"
+    (parent_b_dir / "parent_b.json").write_text(
+        '{"displayName": "parent b", "childAgents": ["shared_child"]}'
+    )
+
+    config = LintConfig()
+    discovery = Discovery(tmp_path, tmp_path / "evals")
+
+    context = build_context(tmp_path, config, discovery)
+
+    assert context.agent_to_parents["shared_child"] == {"parent_a", "parent_b"}
+    assert context.agent_to_parents["sole_child"] == {"parent_a"}
+    assert "parent_a" not in context.agent_to_parents
+    assert "parent_b" not in context.agent_to_parents
+
+
+def test_build_context_agent_to_parents_resolution(tmp_path):
+    _make_app(tmp_path, agents=["parent_a", "shared_child"])
+
+    parent_a_dir = tmp_path / "agents" / "parent_a"
+    (parent_a_dir / "parent_a.json").write_text(
+        '{"displayName": "parent a", "childAgents": ["shared child"]}'
+    )
+
+    config = LintConfig()
+    discovery = Discovery(tmp_path, tmp_path / "evals")
+
+    context = build_context(tmp_path, config, discovery)
+
+    assert context.agent_to_parents["shared_child"] == {"parent_a"}
 
 
 def test_run_rules_categories_filter(tmp_path):
@@ -677,4 +726,4 @@ def test_structure_rules_dispatched_by_target(tmp_path):
     _RULE_REGISTRY["structure"] = [
         r for r in _RULE_REGISTRY["structure"] if r.id != "S999"
     ]
-    _REGISTERED_IDS.discard("S999")
+    _REGISTERED_IDS.discard(("S999", "structure"))

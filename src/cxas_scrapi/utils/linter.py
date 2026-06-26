@@ -214,14 +214,19 @@ class Rule(ABC):
 # ── Decorator-Based Auto-Registration ───────────────────────────────────
 
 _RULE_REGISTRY: dict[str, list[Rule]] = defaultdict(list)
-_REGISTERED_IDS: set[str] = set()
+# Dedup key is (rule_id, category) so the same id may register under
+# multiple categories (e.g. V100 across callbacks/tools/evals) while
+# repeated imports of the same rule still no-op.
+_REGISTERED_IDS: set[tuple[str, str]] = set()
 
 
 def rule(category: str):
     """Class decorator that auto-registers a Rule into its category.
 
-    Duplicate rule IDs are silently ignored so that repeated imports
-    (or test-time ``@rule`` usage) never produce duplicates.
+    Duplicate ``(rule_id, category)`` pairs are silently ignored so
+    that repeated imports (or test-time ``@rule`` usage) never produce
+    duplicates. The same ``rule_id`` MAY register under different
+    categories — useful for cross-surface rules.
 
     Usage::
 
@@ -234,8 +239,9 @@ def rule(category: str):
     def decorator(cls):
         cls.category = category
         instance = cls()
-        if instance.id not in _REGISTERED_IDS:
-            _REGISTERED_IDS.add(instance.id)
+        key = (instance.id, category)
+        if key not in _REGISTERED_IDS:
+            _REGISTERED_IDS.add(key)
             _RULE_REGISTRY[category].append(instance)
         return cls
 
@@ -272,6 +278,10 @@ class LintContext:
     )
     options: dict = field(default_factory=dict)
     bypass_tool_prefixes: set = field(default_factory=set)
+    app_root: Path | None = None
+    agent_to_parents: dict[str, set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
 
     @property
     def all_known_tools(self) -> set:
@@ -282,23 +292,32 @@ class LintContext:
 
 
 class RuleRegistry:
-    """Holds all registered rules and applies config overrides."""
+    """Holds all registered rules and applies config overrides.
+
+    Internally keyed by ``(rule_id, category)`` so the same id may
+    appear under multiple categories. ``get(rule_id)`` returns the
+    first match by id for back-compat with callers that expect
+    unique ids (V001-V007 single-resource validation).
+    """
 
     def __init__(self):
-        self._rules: dict[str, Rule] = {}
+        self._rules: dict[tuple[str, str], Rule] = {}
 
     def register(self, rule_obj: Rule):
-        self._rules[rule_obj.id] = rule_obj
+        self._rules[(rule_obj.id, rule_obj.category)] = rule_obj
 
     def register_all(self, rules: list[Rule]):
         for r in rules:
             self.register(r)
 
     def get(self, rule_id: str) -> Rule | None:
-        return self._rules.get(rule_id)
+        for (rid, _cat), r in self._rules.items():
+            if rid == rule_id:
+                return r
+        return None
 
     def all_rules(self) -> list[Rule]:
-        return sorted(self._rules.values(), key=lambda r: r.id)
+        return sorted(self._rules.values(), key=lambda r: (r.id, r.category))
 
     def rules_for_category(self, category: str) -> list[Rule]:
         return [r for r in self.all_rules() if r.category == category]
@@ -689,6 +708,31 @@ def build_context(
             elif res.tools:
                 all_tool_names.update(res.tools)
 
+    # Discover agent configs to build parent-child map
+    agent_configs = discovery.discover_agent_configs()
+    display_to_agent = {
+        discovery.dir_name_to_display(name): name for name in agents
+    }
+    agent_to_parents = defaultdict(set)
+
+    for parent_name, config_path in agent_configs.items():
+        try:
+            content = config_path.read_text()
+            agent_config = json.loads(content)
+            child_agents = agent_config.get("childAgents", [])
+            for child_ref in child_agents:
+                # Resolve child_ref to agent_name
+                child_name = None
+                if child_ref in agents:
+                    child_name = child_ref
+                elif child_ref in display_to_agent:
+                    child_name = display_to_agent[child_ref]
+
+                if child_name:
+                    agent_to_parents[child_name].add(parent_name)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
     return LintContext(
         project_root=project_root,
         app_dir=discovery.app_dir,
@@ -701,6 +745,8 @@ def build_context(
         all_tool_dirs={name: path.parent for name, path in tools.items()},
         options=config.options,
         bypass_tool_prefixes=bypass_tool_prefixes,
+        app_root=app_root,
+        agent_to_parents=agent_to_parents,
     )
 
 

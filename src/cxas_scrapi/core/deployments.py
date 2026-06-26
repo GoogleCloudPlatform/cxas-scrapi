@@ -21,6 +21,7 @@ from google.cloud.ces_v1beta import types
 from google.protobuf import field_mask_pb2
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.versions import Versions
 
 
@@ -56,8 +57,14 @@ class Deployments(Apps):
         **kwargs,
     ):
         """Initializes the Deployments client."""
-        project_id = app_name.split("/")[1]
-        location = app_name.split("/")[3]
+        project_id = Common._get_project_id(app_name)
+        location = Common._get_location(app_name)
+        if not project_id or not location:
+            raise ValueError(
+                f"Invalid app_name format: {app_name}. "
+                "Expected format: "
+                "projects/<project>/locations/<location>/apps/<app>"
+            )
 
         super().__init__(
             project_id=project_id,

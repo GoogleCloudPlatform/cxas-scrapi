@@ -386,3 +386,58 @@ class StrictToolPathLayout(Rule):
                     )
 
         return results
+
+
+@rule("structure")
+class SubAgentSingleParent(Rule):
+    """Sub-agents have at most one parent agent (strict tree constraint).
+
+    The platform enforces a strict tree constraint where each sub-agent can have
+    at most one parent. If a sub-agent is declared in the childAgents list of
+    multiple parent agents, the deployment fails.
+
+    Attributes:
+        id: Unique identifier for the rule (S007).
+        name: Human-readable name of the rule.
+        description: Description of what the rule checks.
+        default_severity: Default severity if not overridden (ERROR).
+        target: Target file type (agent_config).
+    """
+
+    id = "S007"
+    name = "sub-agent-single-parent"
+    description = "Sub-agents have at most one parent agent"
+    default_severity = Severity.ERROR
+    target = "agent_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        """Check if the agent has multiple parents in the context.
+
+        Args:
+            file_path: Path to the agent config file.
+            content: Content of the agent config file (unused).
+            context: Shared lint context containing the agent_to_parents map.
+
+        Returns:
+            A list of LintResult objects if violations are found.
+        """
+        agent_name = file_path.stem
+        parents = context.agent_to_parents.get(agent_name, set())
+        if len(parents) > 1:
+            return [
+                self.make_result(
+                    str(file_path),
+                    (
+                        f"Agent '{agent_name}' is referenced as a child by "
+                        f"multiple parents: {sorted(parents)}. "
+                        "Each sub-agent must have at most one parent."
+                    ),
+                    fix=(
+                        "Remove the agent from the childAgents list of "
+                        "all but one parent."
+                    ),
+                )
+            ]
+        return []

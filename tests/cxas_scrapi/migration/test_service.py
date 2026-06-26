@@ -85,6 +85,9 @@ def _make_bundle(with_app: bool = True) -> IRBundle:
             project_id="test-project",
             target_name="test_target",
             model="gemini-2.5-flash-001",
+            # Tests that don't explicitly cover the web gate opt out so
+            # run_stage_1 doesn't spin up an HTTP server and block.
+            web_confirm_grouping=False,
         ),
         source_agent_data=_make_source_data(),
         ir=_make_ir(with_app=with_app),
@@ -739,3 +742,285 @@ async def test_run_migration_optimize_for_cxas_calls_new_stage_methods():
         version_label="0.0.5",
         persist_bundle_path=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: web-review callback auto-install
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_stage_1_installs_web_review_when_configured():
+    """When no callback is supplied and config.web_confirm_grouping is True,
+    the service auto-installs grouping_web_review.web_review."""
+    service = _make_service()
+    bundle = _make_bundle()
+    bundle.config.web_confirm_grouping = True
+    bundle.config.optimize_for_cxas = True
+
+    fake_consolidator = MagicMock()
+    fake_consolidator.propose_groupings = AsyncMock(
+        return_value={"G": {"agents": ["Root Agent"], "is_root": True}}
+    )
+
+    captured = {}
+
+    async def fake_web_review(**kwargs):
+        captured.update(kwargs)
+
+    with (
+        patch(
+            "cxas_scrapi.migration.stage_runner.run_stage_with_redeploy",
+            new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.StructuralConsolidator",
+            return_value=fake_consolidator,
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "detect_root_key",
+            return_value="RootAgent",
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.web_review",
+            new=fake_web_review,
+        ),
+        # Force the headless detector to return False so the install
+        # path runs even under pytest (which has no TTY).
+        patch(
+            "cxas_scrapi.migration.service._is_headless_context",
+            return_value=False,
+        ),
+    ):
+        result = await service.run_stage_1(
+            bundle=bundle,
+            version_label=None,
+        )
+
+    # Aborted → result None, consolidate not called.
+    assert result is None
+    fake_consolidator.consolidate.assert_not_called()
+    # And the auto-installed callback was actually invoked with the
+    # standard kwargs.
+    assert captured.get("ir") is service.ir
+    assert "RootAgent" not in captured  # this is in groupings, not top-level
+    assert captured.get("root_key") == "RootAgent"
+
+
+@pytest.mark.asyncio
+async def test_run_stage_1_skips_web_review_when_auto_confirm():
+    """auto_confirm_grouping=True → no callback installed; Gemini proposal
+    applied verbatim."""
+    service = _make_service()
+    bundle = _make_bundle()
+    bundle.config.web_confirm_grouping = True
+    bundle.config.auto_confirm_grouping = True
+    bundle.config.optimize_for_cxas = True
+
+    fake_consolidator = MagicMock()
+    fake_consolidator.propose_groupings = AsyncMock(
+        return_value={"G": {"agents": ["Root Agent"], "is_root": True}}
+    )
+    fake_consolidator.consolidate = MagicMock(return_value=service.ir)
+    fake_consolidator.synthesize_instructions = AsyncMock(
+        return_value={"G": "ok"}
+    )
+
+    called = {"n": 0}
+
+    async def fake_web_review(**kwargs):  # noqa: ARG001
+        called["n"] += 1
+
+    with (
+        patch(
+            "cxas_scrapi.migration.stage_runner.run_stage_with_redeploy",
+            new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.StructuralConsolidator",
+            return_value=fake_consolidator,
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "detect_root_key",
+            return_value="RootAgent",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "validate_groupings",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "persist_grouping",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.integrity_checks."
+            "check_consolidation_integrity",
+            return_value=(False, []),
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.web_review",
+            new=fake_web_review,
+        ),
+    ):
+        await service.run_stage_1(
+            bundle=bundle,
+            version_label=None,
+        )
+
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_stage_1_boots_server_early_and_passes_to_web_review():
+    """Verify that the service boots the review server early and reuses
+    its context during consolidation.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    service = _make_service()
+    service._ensure_analysis_builder("test_agent")
+
+    bundle = _make_bundle()
+    bundle.config.web_confirm_grouping = True
+    bundle.config.auto_confirm_grouping = False
+    bundle.config.web_confirm_host = "127.0.0.1"
+    bundle.config.web_confirm_port = 0
+    bundle.config.web_confirm_timeout_s = 1800
+    bundle.config.target_name = "test_agent"
+
+    fake_consolidator = MagicMock()
+    fake_consolidator.propose_groupings = AsyncMock(
+        return_value={"GroupG": {"agents": ["Root Agent"], "is_root": True}}
+    )
+    fake_consolidator.synthesize_instructions = AsyncMock(return_value={})
+
+    fake_context = MagicMock()
+
+    boot_mock = AsyncMock(return_value=fake_context)
+    review_mock = AsyncMock(
+        return_value={"GroupG": {"agents": ["Root Agent"], "is_root": True}}
+    )
+
+    with (
+        patch(
+            "cxas_scrapi.migration.stage_runner.run_stage_1",
+            new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.StructuralConsolidator",
+            return_value=fake_consolidator,
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "detect_root_key",
+            return_value="RootAgent",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "validate_groupings",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "persist_grouping",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.integrity_checks."
+            "check_consolidation_integrity",
+            return_value=(False, []),
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.boot_review_server",
+            new=boot_mock,
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.web_review",
+            new=review_mock,
+        ),
+        patch(
+            "cxas_scrapi.migration.service._is_headless_context",
+            return_value=False,
+        ),
+    ):
+        await service.run_stage_1(
+            bundle=bundle,
+            version_label=None,
+        )
+
+    # 1. Verify boot_review_server was called early (once)
+    boot_mock.assert_called_once()
+
+    # 2. Verify web_review was called with active_context=fake_context
+    review_mock.assert_called_once()
+    _, kwargs = review_mock.call_args
+    assert kwargs.get("active_context") is fake_context
+
+
+@pytest.mark.asyncio
+async def test_run_stage_1_auto_confirms_in_headless_context():
+    """When web_confirm_grouping is True but the runtime has no TTY
+    (CI etc.), the install path must be skipped and Gemini's proposal
+    auto-applied so the migration doesn't hang on the 30-min timeout."""
+    service = _make_service()
+    bundle = _make_bundle()
+    bundle.config.web_confirm_grouping = True
+    bundle.config.auto_confirm_grouping = False
+    bundle.config.optimize_for_cxas = True
+
+    fake_consolidator = MagicMock()
+    fake_consolidator.propose_groupings = AsyncMock(
+        return_value={"GroupG": {"agents": ["Root Agent"], "is_root": True}}
+    )
+    fake_consolidator.consolidate = MagicMock(return_value=service.ir)
+    fake_consolidator.synthesize_instructions = AsyncMock(
+        return_value={"GroupG": "ok"}
+    )
+
+    called = {"n": 0}
+
+    async def fake_web_review(**kwargs):  # noqa: ARG001
+        called["n"] += 1
+
+    with (
+        patch(
+            "cxas_scrapi.migration.stage_runner.run_stage_with_redeploy",
+            new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.StructuralConsolidator",
+            return_value=fake_consolidator,
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "detect_root_key",
+            return_value="RootAgent",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "validate_groupings",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "persist_grouping",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.integrity_checks."
+            "check_consolidation_integrity",
+            return_value=(False, []),
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.web_review",
+            new=fake_web_review,
+        ),
+        patch(
+            "cxas_scrapi.migration.service._is_headless_context",
+            return_value=True,
+        ),
+    ):
+        await service.run_stage_1(
+            bundle=bundle,
+            version_label=None,
+        )
+
+    assert called["n"] == 0

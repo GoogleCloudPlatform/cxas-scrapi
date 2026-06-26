@@ -174,8 +174,8 @@ class GeminiGenerate:
             if response_mime_type == "application/json" and response_schema:
                 return response.parsed
             return response.text
-        except Exception as e:
-            logger.error(f"Gemini generation failed: {e}")
+        except Exception:
+            logger.exception("Gemini generation failed")
             return None
 
     def generate_with_parts(
@@ -230,8 +230,8 @@ class GeminiGenerate:
             if response_mime_type == "application/json" and response_schema:
                 return response.parsed
             return response.text
-        except Exception as e:
-            logger.error(f"Gemini multimodal generation failed: {e}")
+        except Exception:
+            logger.exception("Gemini multimodal generation failed")
             return None
 
     async def create_cache(
@@ -355,7 +355,7 @@ class GeminiGenerate:
                 logger.warning(f"  Attempt {attempt + 1} failed: {err_msg}")
 
                 if attempt == max_retries - 1:
-                    logger.error(
+                    logger.exception(
                         "  ❌ All retry attempts failed. Check GCP quota."
                     )
                     return None
@@ -391,6 +391,7 @@ class GeminiGenerate:
             )
             if response.embeddings is not None:
                 return [embedding.values for embedding in response.embeddings]
-        except Exception as e:
-            logger.error(f"Gemini embedding generation failed: {e}")
-        return []
+            return []
+        except Exception:
+            logger.exception("Gemini embedding generation failed")
+            return []

@@ -62,7 +62,7 @@ def test_guardrail_execution_flow(
     # Mocking Apps.get_app response
     mock_app_obj = MagicMock()
     mock_app_obj.display_name = "Mocked Test App"
-    mock_app_obj.model_settings.model = "gemini-1.5-pro"
+    mock_app_obj.model_settings.model = "gemini-3.1-pro-preview"
     mock_apps.get_app.return_value = mock_app_obj
 
     # 1. First Response simulates a Guardrail Trigger (Profanity)

@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import io
 from unittest.mock import MagicMock, patch
 
 import pytest
+from urllib3.response import HTTPResponse
 
 from cxas_scrapi.core.insights import Insights
 
@@ -29,7 +31,7 @@ def mock_google_auth():
         yield mock_creds
 
 
-@patch("requests.request")
+@patch("requests.Session.request")
 def test_list_conversations(mock_request, mock_google_auth):
     """Test Insights.list_conversations."""
     # Setup mock response
@@ -60,7 +62,7 @@ def test_list_conversations(mock_request, mock_google_auth):
     assert called_args[1]["params"]["filter"] == "some_filter"
 
 
-@patch("requests.request")
+@patch("requests.Session.request")
 def test_list_conversations_with_view(mock_request, mock_google_auth):
     """Test Insights.list_conversations with view parameter."""
     mock_response = MagicMock()
@@ -81,7 +83,7 @@ def test_list_conversations_with_view(mock_request, mock_google_auth):
     assert called_args[1]["params"]["filter"] == "some_filter"
 
 
-@patch("requests.request")
+@patch("requests.Session.request")
 def test_get_conversation(mock_request, mock_google_auth):
     """Test Insights.get_conversation."""
     mock_response = MagicMock()
@@ -125,3 +127,36 @@ def test_get_conversation(mock_request, mock_google_auth):
         params=None,
         timeout=60.0,
     )
+
+
+@patch("time.sleep", return_value=None)
+@patch("urllib3.connectionpool.HTTPConnectionPool._make_request")
+def test_insights_request_retry_on_failure(
+    mock_make_request, mock_sleep, mock_google_auth
+):
+    """Test that Insights client retries on transient errors."""
+    mock_resp1 = HTTPResponse(
+        body=io.BytesIO(b"Service Unavailable"),
+        status=503,
+        preload_content=False,
+    )
+    mock_resp2 = HTTPResponse(
+        body=io.BytesIO(b"Too Many Requests"),
+        status=429,
+        preload_content=False,
+    )
+    body_data = b'{"name": "test-resource"}'
+    mock_resp3 = HTTPResponse(
+        body=io.BytesIO(body_data),
+        headers={"Content-Length": str(len(body_data))},
+        status=200,
+        preload_content=False,
+    )
+
+    mock_make_request.side_effect = [mock_resp1, mock_resp2, mock_resp3]
+
+    client = Insights(project_id="p", location="l")
+    res = client.get_conversation("c1")
+
+    assert res == {"name": "test-resource"}
+    assert mock_make_request.call_count == 3
