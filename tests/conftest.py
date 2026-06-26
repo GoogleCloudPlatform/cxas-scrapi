@@ -26,6 +26,49 @@ TEST_APP_NAME = "projects/mock-project/locations/mock-location/apps/mock-app-id"
 # invoke Application Default Credentials
 os.environ["CXAS_OAUTH_TOKEN"] = "mock_token_for_tests"
 
+# ==============================================================================
+# Mocks setup: must run BEFORE importing any cxas_scrapi modules
+# ==============================================================================
+if "--run-online" not in sys.argv:
+    mock_ces = MagicMock()
+
+    def enforce_transport(*args, **kwargs):
+        if "transport" not in kwargs:
+            raise ValueError(
+                "Client must be initialized with a transport from "
+                "get_grpc_transport to ensure correct telemetry."
+            )
+        return MagicMock()
+
+    mock_ces.AgentServiceClient = MagicMock(side_effect=enforce_transport)
+    mock_ces.AgentServiceClient.get_transport_class.return_value = MagicMock()
+
+    mock_ces.EvaluationServiceClient = MagicMock(side_effect=enforce_transport)
+    mock_ces.EvaluationServiceClient.get_transport_class.return_value = (
+        MagicMock()
+    )
+
+    mock_ces.SessionServiceClient = MagicMock(side_effect=enforce_transport)
+    mock_ces.SessionServiceClient.get_transport_class.return_value = MagicMock()
+
+    mock_ces.ToolServiceClient = MagicMock(side_effect=enforce_transport)
+    mock_ces.ToolServiceClient.get_transport_class.return_value = MagicMock()
+    mock_ces.types = real_ces.types
+    sys.modules["google.cloud.ces_v1beta"] = mock_ces
+
+    # Mock google.cloud.dialogflowcx_v3beta1 for dfcx_exporter offline tests
+    mock_dfcx = MagicMock()
+    mock_dfcx_services = MagicMock()
+    mock_dfcx_types = MagicMock()
+    sys.modules["google.cloud.dialogflowcx_v3beta1"] = mock_dfcx
+    sys.modules["google.cloud.dialogflowcx_v3beta1.services"] = (
+        mock_dfcx_services
+    )
+    sys.modules["google.cloud.dialogflowcx_v3beta1.types"] = mock_dfcx_types
+
+# Now safe to import GeminiGenerate (which triggers other cxas_scrapi imports)
+from cxas_scrapi.utils.gemini import GeminiGenerate  # noqa: E402
+
 
 def pytest_addoption(parser):
     parser.addoption(
@@ -75,41 +118,30 @@ def app_id():
     return TEST_APP_NAME
 
 
-# Create a mock module structure for google.cloud.ces_v1beta if not
-# running online
-if "--run-online" not in sys.argv:
-    mock_ces = MagicMock()
+@pytest.fixture(autouse=True)
+def mock_gemini_generate(request, monkeypatch):
+    """Centrally mock GeminiGenerate calls for all tests except test_gemini.py.
 
-    def enforce_transport(*args, **kwargs):
-        if "transport" not in kwargs:
-            raise ValueError(
-                "Client must be initialized with a transport from "
-                "get_grpc_transport to ensure correct telemetry."
-            )
-        return MagicMock()
+    This prevents unit tests from attempting real network calls to Gemini APIs,
+    which results in long timeouts.
+    """
+    # Skip mocking for test_gemini.py so we can test the wrapper itself
+    if "test_gemini" in request.module.__name__:
+        yield
+        return
 
-    mock_ces.AgentServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.AgentServiceClient.get_transport_class.return_value = MagicMock()
+    async def mock_generate_async(self, prompt, **kwargs):
+        response_mime_type = kwargs.get("response_mime_type")
+        if response_mime_type == "application/json":
+            return "{}"
+        return "mock_response"
 
-    mock_ces.EvaluationServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.EvaluationServiceClient.get_transport_class.return_value = (
-        MagicMock()
-    )
+    def mock_generate(self, prompt, **kwargs):
+        response_mime_type = kwargs.get("response_mime_type")
+        if response_mime_type == "application/json":
+            return "{}"
+        return "mock_response"
 
-    mock_ces.SessionServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.SessionServiceClient.get_transport_class.return_value = MagicMock()
-
-    mock_ces.ToolServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.ToolServiceClient.get_transport_class.return_value = MagicMock()
-    mock_ces.types = real_ces.types
-    sys.modules["google.cloud.ces_v1beta"] = mock_ces
-
-    # Mock google.cloud.dialogflowcx_v3beta1 for dfcx_exporter offline tests
-    mock_dfcx = MagicMock()
-    mock_dfcx_services = MagicMock()
-    mock_dfcx_types = MagicMock()
-    sys.modules["google.cloud.dialogflowcx_v3beta1"] = mock_dfcx
-    sys.modules["google.cloud.dialogflowcx_v3beta1.services"] = (
-        mock_dfcx_services
-    )
-    sys.modules["google.cloud.dialogflowcx_v3beta1.types"] = mock_dfcx_types
+    monkeypatch.setattr(GeminiGenerate, "generate_async", mock_generate_async)
+    monkeypatch.setattr(GeminiGenerate, "generate", mock_generate)
+    yield
