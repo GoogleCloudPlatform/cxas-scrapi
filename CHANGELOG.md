@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### ⚠ BREAKING CHANGES
+
+* **migration:** `cxas migrate` now consolidates by default. Stage 1/2/3
+  run on every invocation and the HTML grouping confirmation gate opens
+  in a browser before consolidation proceeds. Previously consolidation
+  required `--optimize-for-cxas`; that flag has been replaced by an
+  inverse opt-out, `--no-consolidate`. The deprecated `--no-optimize`
+  alias is accepted for one release with a warning.
+
+  **Migration path:**
+    * To get the old 1:1 export behavior: pass `--no-consolidate` (or
+      `--profile direct`, which now implies `--no-consolidate`).
+    * To run consolidation without a browser gate (CI, scripts): pass
+      `--auto-confirm-grouping` or set `CXAS_AUTO_CONFIRM_GROUPING=1`.
+      Headless contexts (no TTY, or `CI` env var present) auto-confirm
+      with a warning.
+    * To run consolidation with a terminal-only review: pass
+      `--no-web-confirm` (falls back to the existing InquirerPy TUI).
+    * Suppress the new pre-flight banner with
+      `CXAS_QUIET_DEFAULT_NOTICE=1`.
+
+  Bundles produced under the old default (which have no grouping) will
+  print a resume notice on `run_stage_1` rather than silently
+  re-shaping the deployed app.
+
 ## [1.4.1](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.4.0...v1.4.1) (2026-05-29)
 
 

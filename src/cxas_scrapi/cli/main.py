@@ -1397,7 +1397,17 @@ def get_parser() -> argparse.ArgumentParser:
         "--no-optimize",
         action="store_true",
         help=(
-            "Custom Mode: Skip Stage 1 + Stage 2 + Stage 3 optimization passes."
+            "DEPRECATED alias for --no-consolidate; kept for backward"
+            " compatibility. Skip Stage 1 + Stage 2 + Stage 3 entirely."
+        ),
+    )
+    e2e_group.add_argument(
+        "--no-consolidate",
+        action="store_true",
+        help=(
+            "Skip Stage 1/2/3 entirely. Produces a 1:1 transpile (every"
+            " source flow becomes its own CXAS agent). Use only when you"
+            " need the unoptimized form. Default: consolidate."
         ),
     )
     e2e_group.add_argument(
