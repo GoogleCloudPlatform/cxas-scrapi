@@ -381,6 +381,7 @@ def test_run_eval_modality(mock_eval_utils_cls, mock_eval_cls):
         tags=None,
         modality="audio",
         wait=False,
+        golden_run_method="STABLE",
     )
     mock_eval_inst = mock_eval_cls.return_value
     mock_eval_utils_inst = mock_eval_utils_cls.return_value
@@ -393,6 +394,7 @@ def test_run_eval_modality(mock_eval_utils_cls, mock_eval_cls):
         evaluations=["eval-123"],
         app_name=args.app_name,
         modality="audio",
+        golden_run_method="STABLE",
     )
 
 
