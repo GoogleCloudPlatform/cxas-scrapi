@@ -210,6 +210,11 @@ class LLMUserConversation(Conversation):
         self.expectations = test_case.get("expectations", [])
         audio_exps = test_case.get("audio_expectations", [])
         self.audio_expectations = []
+        # The 'requires_audio_paths' flag informs the evaluation engine
+        # (evaluate_expectations) that it must retrieve and attach the raw
+        # agent output WAV file for this specific expectation turn. This
+        # enables multimodal audio audits while avoiding the latency/cost of
+        # uploading audio files for standard text-only expectations.
         for exp in audio_exps:
             if isinstance(exp, dict):
                 exp_dict = dict(exp)
