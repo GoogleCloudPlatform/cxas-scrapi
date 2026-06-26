@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from cxas_scrapi.prompts import LLM_LINT_SYSTEM_PROMPT, LLM_LINT_USER_PROMPT
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import GeminiGenerate, GeminiGenerationError
 
 
 def discover_agent_callbacks(agent_dir: Path) -> list[tuple[str, Path]]:

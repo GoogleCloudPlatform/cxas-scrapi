@@ -2613,7 +2613,18 @@ def main() -> None:
     )
 
     if hasattr(args, "func"):
-        args.func(args)
+        try:
+            args.func(args)
+        except Exception as e:
+            try:
+                from cxas_scrapi.utils.gemini import GeminiError
+
+                if isinstance(e, GeminiError):
+                    print(f"Error: Gemini API failure: {e}", file=sys.stderr)
+                    sys.exit(1)
+            except ImportError:
+                pass
+            raise e
     else:
         parser.print_help()
 

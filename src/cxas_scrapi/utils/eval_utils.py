@@ -1433,19 +1433,13 @@ def evaluate_expectations(
         "{expectations}", json.dumps(expectations, indent=2)
     )
 
-    try:
-        output: ExpectationOutput = gemini_client.generate(
-            prompt=prompt,
-            model_name=model_name,
-            response_mime_type="application/json",
-            response_schema=ExpectationOutput,
-        )
-        if output:
-            return output.results
-        return []
-    except Exception as e:
-        logging.getLogger(__name__).error(f"Error evaluating expectations: {e}")
-        return []
+    output: ExpectationOutput = gemini_client.generate(
+        prompt=prompt,
+        model_name=model_name,
+        response_mime_type="application/json",
+        response_schema=ExpectationOutput,
+    )
+    return output.results
 
 
 def add_timestamp_suffix(filename: str, timestamp: str | None) -> str:

@@ -45,7 +45,7 @@ from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.sessions import Modality, Sessions
 from cxas_scrapi.utils.gcs_utils import GCSUtils
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import GeminiGenerate, GeminiGenerationError
 from cxas_scrapi.utils.tracing import trace_report
 from cxas_scrapi.utils.tracing.app_config import AppConfig
 from cxas_scrapi.utils.tracing.audio_analysis import (
@@ -523,14 +523,23 @@ class Traces(Common):
                 for f in analysis_files
             ]
             parts.append(prompt)
-            response = gem.generate_with_parts(
-                parts=parts,
-                thinking_level=self.trace_config.gemini.thinking_level,
-            )
-            results[str(analysis.name)] = {
-                **_parse_pass_fail(response),
-                "files_analyzed": analysis_files,
-            }
+            try:
+                response = gem.generate_with_parts(
+                    parts=parts,
+                    thinking_level=self.trace_config.gemini.thinking_level,
+                )
+                results[str(analysis.name)] = {
+                    **_parse_pass_fail(response),
+                    "files_analyzed": analysis_files,
+                }
+            except GeminiGenerationError as e:
+                logger.error(f"Audio analysis failed for {analysis.name}: {e}")
+                results[str(analysis.name)] = {
+                    "result": "ERROR",
+                    "justification": f"Gemini analysis failed: {e}",
+                    "files_analyzed": analysis_files,
+                }
+
         return results
 
     def triage(
@@ -559,10 +568,15 @@ class Traces(Common):
             prompt = (
                 f"{metric.prompt}\n\nConversation transcript:\n{transcript}\n"
             )
-            results[metric_name] = gem.generate(
-                prompt=prompt,
-                thinking_level=self.trace_config.gemini.thinking_level,
-            )
+            try:
+                results[metric_name] = gem.generate(
+                    prompt=prompt,
+                    thinking_level=self.trace_config.gemini.thinking_level,
+                )
+            except GeminiGenerationError as e:
+                logger.error(f"Triage failed for {metric_name}: {e}")
+                results[metric_name] = f"ERROR: Triage failed: {e}"
+
         return results
 
     # ------------------------------- replay ---------------------------------
