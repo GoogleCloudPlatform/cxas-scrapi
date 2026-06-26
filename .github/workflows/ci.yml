@@ -59,3 +59,24 @@ jobs:
       - name: Run tests with pytest
         run: |
           uv run pytest tests/ -n auto
+
+  changelog-check:
+    name: Prevent Manual CHANGELOG Edits
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check for CHANGELOG.md and manifest changes
+        run: |
+          if [[ "${{ github.head_ref }}" =~ ^release-please- ]]; then
+            echo "Skipping changelog check for release-please branch: ${{ github.head_ref }}"
+            exit 0
+          fi
+          if git diff --name-only origin/main...HEAD | grep -qE '^(CHANGELOG\.md|\.release-please-manifest\.json)$'; then
+            echo "::error::CHANGELOG.md and .release-please-manifest.json should not be edited manually. Changes to these files are managed automatically by release-please."
+            exit 1
+          fi
+
