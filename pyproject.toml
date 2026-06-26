@@ -41,6 +41,7 @@ dependencies = [
   "ipython",
   "PyYAML",
   "google-genai",
+  "httpx",
   "pandas-gbq",
   "google-cloud-bigquery",
   "pytest",

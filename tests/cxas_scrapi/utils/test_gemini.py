@@ -16,6 +16,10 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import requests
+from google.genai.errors import ClientError, ServerError
+
 from cxas_scrapi.utils.gemini import GeminiGenerate
 
 
@@ -247,3 +251,29 @@ def test_generate_async_zero_retries_returns_none(mock_genai):
     gen = GeminiGenerate(project_id="p", max_concurrent_requests=1)
     res = asyncio.run(gen.generate_async(prompt="x", max_retries=0))
     assert res is None
+
+
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_is_transient_error(mock_genai, subtests):
+    gen = GeminiGenerate(project_id="p")
+
+    cases = [
+        ("ServerError 500", ServerError(500, {}), True),
+        ("ServerError 503", ServerError(503, {}), True),
+        ("ClientError 429", ClientError(429, {}), True),
+        ("ClientError 408", ClientError(408, {}), True),
+        ("ClientError 400", ClientError(400, {}), False),
+        ("ClientError 403", ClientError(403, {}), False),
+        ("ClientError 404", ClientError(404, {}), False),
+        ("httpx.HTTPError timeout", httpx.HTTPError("timeout"), True),
+        (
+            "requests.RequestException connection",
+            requests.RequestException("connection error"),
+            True,
+        ),
+        ("ValueError permanent", ValueError("bad arg"), False),
+    ]
+
+    for label, exc, expected in cases:
+        with subtests.test(msg=label, exc=exc):
+            assert gen._is_transient_error(exc) is expected

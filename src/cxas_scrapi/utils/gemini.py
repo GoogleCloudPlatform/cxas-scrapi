@@ -18,9 +18,34 @@ import random
 import threading
 from typing import Any
 
+import httpx
+import requests
 from google import genai
+from google.genai import errors
 
 logger = logging.getLogger(__name__)
+
+
+class GeminiError(Exception):
+    """Base exception for all Gemini wrapper operations."""
+
+    def __init__(
+        self, message: str, original_exception: Exception | None = None
+    ):
+        super().__init__(message)
+        self.original_exception = original_exception
+
+
+class GeminiGenerationError(GeminiError):
+    """Raised when text or multimodal generation fails."""
+
+    pass
+
+
+class GeminiEmbeddingError(GeminiError):
+    """Raised when generating embeddings fails."""
+
+    pass
 
 
 class GeminiGenerate:
@@ -67,6 +92,27 @@ class GeminiGenerate:
                 credentials=self.credentials,
             )
         return self._thread_local.client
+
+    def _is_transient_error(self, e: Exception) -> bool:
+        """Determines if an API or network error is transient.
+
+        Args:
+            e: The exception to classify.
+
+        Returns:
+            True if transient and retriable, False otherwise.
+        """
+        match e:
+            case errors.ServerError():
+                return True
+            case errors.ClientError(code=429 | 408):
+                return True
+            case httpx.HTTPError() | requests.RequestException():
+                # Direct transport exceptions (timeouts, connection drops)
+                # are transient.
+                return True
+            case _:
+                return False
 
     def _build_generation_config(
         self,

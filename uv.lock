@@ -601,7 +601,7 @@ wheels = [
 
 [[package]]
 name = "cxas-scrapi"
-version = "1.4.1"
+version = "1.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "absl-py" },
@@ -619,6 +619,7 @@ dependencies = [
     { name = "graphviz" },
     { name = "gspread" },
     { name = "gspread-dataframe" },
+    { name = "httpx" },
     { name = "inquirerpy" },
     { name = "ipython", version = "8.39.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "ipython", version = "9.14.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -680,6 +681,7 @@ requires-dist = [
     { name = "graphviz" },
     { name = "gspread" },
     { name = "gspread-dataframe" },
+    { name = "httpx" },
     { name = "inquirerpy" },
     { name = "ipython" },
     { name = "jinja2" },
