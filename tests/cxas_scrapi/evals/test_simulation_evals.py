@@ -1313,7 +1313,8 @@ def test_simulation_evals_run_simulations_capture_agent_audio(mock_sessions):
         test_cases=test_cases,
         runs=1,
         parallel=1,
-        model="gemini-1.5-flash",
+        sim_user_model="gemini-1.5-flash",
+        eval_model="gemini-1.5-flash",
         modality="audio",
         capture_agent_audio=True,
     )
@@ -1323,6 +1324,7 @@ def test_simulation_evals_run_simulations_capture_agent_audio(mock_sessions):
         test_cases[0],
         0,
         1,
+        "gemini-1.5-flash",
         "gemini-1.5-flash",
         "audio",
         False,
