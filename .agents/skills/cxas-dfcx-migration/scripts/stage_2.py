@@ -85,7 +85,7 @@ def _resolve_bundle_path(args) -> str:
     return path
 
 
-async def _run(args) -> None:
+def _run(args) -> None:
     tracker = phase_tracker.PhaseTracker(console)
 
     if not _shared.auth_check(console):
@@ -116,7 +116,7 @@ async def _run(args) -> None:
         "Stage 2",
         "instruction state machines + tool mocks + redeploy",
     ):
-        await service.run_stage_2(
+        asyncio.run(service.run_stage_2(
             version_label="0.0.4",
             generate_unit_tests=not args.no_unit_tests,
             unit_tests_path=unit_tests_path,
@@ -125,7 +125,7 @@ async def _run(args) -> None:
             bundle=bundle,
             persist_bundle_path=bundle_path,
             console=console,
-        )
+        ))
 
     console.print()
     console.print(tracker.summary_table())
@@ -147,7 +147,7 @@ def main() -> None:
         handlers=[RichHandler(console=console, rich_tracebacks=True)],
     )
     args = _build_parser().parse_args()
-    asyncio.run(_run(args))
+    _run(args)
 
 
 if __name__ == "__main__":

@@ -86,7 +86,7 @@ def _resolve_bundle_path(args) -> str:
     return path
 
 
-async def _run(args) -> None:
+def _run(args) -> None:
     tracker = phase_tracker.PhaseTracker(console)
 
     if not _shared.auth_check(console):
@@ -122,12 +122,12 @@ async def _run(args) -> None:
     mode_label = f"Architecture style: {args.architecture}"
 
     with tracker.phase("Stage 3 — apply topology", mode_label):
-        updated, skipped, failed = await service.run_stage_3(
+        updated, skipped, failed = asyncio.run(service.run_stage_3(
             bundle=bundle,
             mode=mode,
             version_label="0.0.5",
             persist_bundle_path=bundle_path,
-        )
+        ))
 
     console.print()
     console.print(tracker.summary_table())
@@ -143,7 +143,7 @@ def main() -> None:
         handlers=[RichHandler(console=console, rich_tracebacks=True)],
     )
     args = _build_parser().parse_args()
-    asyncio.run(_run(args))
+    _run(args)
 
 
 if __name__ == "__main__":

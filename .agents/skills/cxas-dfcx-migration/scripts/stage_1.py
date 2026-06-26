@@ -109,7 +109,7 @@ def _make_grouping_callback(yes: bool):
     return cb
 
 
-async def _run(args) -> None:
+def _run(args) -> None:
     tracker = phase_tracker.PhaseTracker(console)
 
     if not _shared.auth_check(console):
@@ -133,7 +133,7 @@ async def _run(args) -> None:
         "Stage 1",
         "variable dedup + Gemini consolidation",
     ):
-        await service.run_stage_1(
+        asyncio.run(service.run_stage_1(
             bundle=bundle,
             grouping_callback=_make_grouping_callback(args.yes),
             grouping_json_path=args.grouping_json,
@@ -141,7 +141,7 @@ async def _run(args) -> None:
             dedup_version_label="0.0.2",
             persist_bundle_path=bundle_path,
             console=console,
-        )
+        ))
 
     console.print()
     console.print(tracker.summary_table())
@@ -165,7 +165,7 @@ def main() -> None:
         handlers=[RichHandler(console=console, rich_tracebacks=True)],
     )
     args = _build_parser().parse_args()
-    asyncio.run(_run(args))
+    _run(args)
 
 
 if __name__ == "__main__":

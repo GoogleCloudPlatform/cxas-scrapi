@@ -146,7 +146,7 @@ def _build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-async def _run(args) -> None:
+def _run(args) -> None:
     tracker = phase_tracker.PhaseTracker(console)
 
     # Phase 0: auth
@@ -253,7 +253,7 @@ async def _run(args) -> None:
     )
 
     with tracker.phase("Migration", "MigrationService.run_migration"):
-        await service.run_migration(source_cx_agent_id=agent_id, config=config)
+        asyncio.run(service.run_migration(source_cx_agent_id=agent_id, config=config))
 
     # Phase 6: persist IR bundle. service.persist_bundle handles the
     # IR snapshot + stage_history append + atomic file write.
@@ -327,7 +327,7 @@ def main() -> None:
         handlers=[RichHandler(console=console, rich_tracebacks=True)],
     )
     args = _build_parser().parse_args()
-    asyncio.run(_run(args))
+    _run(args)
 
 
 if __name__ == "__main__":
