@@ -66,7 +66,9 @@ def test_get_parser_llm_lint():
 
 
 def test_get_parser_evals_report():
-    """Test that the parser can parse the evals report command."""
+    """Test that the parser can parse the evals report command with new model
+    flags.
+    """
     parser = get_parser()
     args = parser.parse_args(
         [
@@ -74,12 +76,18 @@ def test_get_parser_evals_report():
             "report",
             "--output-dir",
             "/path/to/output",
+            "--sim-user-model",
+            "gemini-3.1-pro-preview",
+            "--eval-model",
+            "gemini-3.1-flash-lite",
             "--run",
         ]
     )
     assert args.command == "evals"
     assert args.evals_command == "report"
     assert args.output_dir == "/path/to/output"
+    assert args.sim_user_model == "gemini-3.1-pro-preview"
+    assert args.eval_model == "gemini-3.1-flash-lite"
     assert args.run is True
     assert args.timestamped is False
 

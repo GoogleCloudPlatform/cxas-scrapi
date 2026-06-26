@@ -615,6 +615,8 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         simulation_dir=args.simulation_dir,
         include=include_list,
         modality=args.modality,
+        sim_user_model=args.sim_user_model,
+        eval_model=args.eval_model,
         runs=args.runs,
         filter_files=filter_files_list,
         filter_tags=filter_tags_list,
@@ -1700,6 +1702,20 @@ def get_parser() -> argparse.ArgumentParser:
         choices=["text", "audio"],
         default="text",
         help="Evaluation execution modality (text or audio). Defaults to text.",
+    )
+    parser_report.add_argument(
+        "--sim-user-model",
+        help=(
+            "Gemini model name to use for the simulated user "
+            "(default: gemini-3.1-flash-lite)."
+        ),
+    )
+    parser_report.add_argument(
+        "--eval-model",
+        help=(
+            "Gemini model name to use for evaluating expectations "
+            "(default: gemini-3.1-flash-lite)."
+        ),
     )
     parser_report.add_argument(
         "--include",

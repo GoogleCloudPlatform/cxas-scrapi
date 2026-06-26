@@ -38,6 +38,8 @@ from cxas_scrapi.utils.rate_limiter import RateLimiter
 def run_all_evals(
     app_name: str,
     modality: str = "text",
+    sim_user_model: str | None = None,
+    eval_model: str | None = None,
     runs: int = 1,
     goldens_dir: str | None = None,
     tool_test_file: str | None = None,
@@ -256,6 +258,8 @@ def run_all_evals(
                         test_cases,
                         runs=runs,
                         parallel=parallel,
+                        sim_user_model=sim_user_model,
+                        eval_model=eval_model,
                         modality=modality,
                         background_noise_file=bg_noise_file,
                         burst_noise_files=burst_noise_files,

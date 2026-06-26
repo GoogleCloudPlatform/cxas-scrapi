@@ -484,7 +484,8 @@ class SimulationEvals(Apps):
     def simulate_conversation(
         self,
         test_case: dict[str, Any],
-        model: str = _DEFAULT_GEMINI_MODEL,
+        sim_user_model: str | None = _DEFAULT_GEMINI_MODEL,
+        eval_model: str | None = _DEFAULT_GEMINI_MODEL,
         session_id: str | None = None,
         console_logging: bool = True,
         modality: str = "text",
@@ -496,15 +497,18 @@ class SimulationEvals(Apps):
 
         Args:
             test_case: The test case dictionary defining evaluation steps.
-            model: The Gemini model used for evaluating turns.
+            sim_user_model: The Gemini model used for the simulated user.
+            eval_model: The Gemini model used for evaluating expectations.
             console_logging: Whether to print interaction transcript to
                 the console.
         """
+        sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
+        eval_model = eval_model or _DEFAULT_GEMINI_MODEL
         if session_id is None:
             session_id = str(uuid.uuid4())
         eval_conv = LLMUserConversation(
             genai_client=self.genai_client,
-            genai_model=model,
+            genai_model=sim_user_model,
             test_case=test_case,
         )
 
@@ -571,7 +575,7 @@ class SimulationEvals(Apps):
             self._print_completion_status(eval_conv)
 
         self._evaluate_expectations(
-            eval_conv, detailed_trace, model, console_logging
+            eval_conv, detailed_trace, eval_model, console_logging
         )
         eval_conv.detailed_trace = detailed_trace
         return eval_conv
@@ -591,7 +595,8 @@ class SimulationEvals(Apps):
         tc: dict[str, Any],
         run_idx: int,
         runs: int,
-        model: str,
+        sim_user_model: str,
+        eval_model: str,
         modality: str,
         verbose: bool,
         parallel: int,
@@ -608,7 +613,8 @@ class SimulationEvals(Apps):
 
             conv = self.simulate_conversation(
                 test_case=tc,
-                model=model,
+                sim_user_model=sim_user_model,
+                eval_model=eval_model,
                 session_id=session_id,
                 console_logging=verbose and parallel <= 1,
                 modality=modality,
@@ -692,7 +698,8 @@ class SimulationEvals(Apps):
         jobs: list[tuple[dict[str, Any], int]],
         runs: int,
         parallel: int,
-        model: str,
+        sim_user_model: str,
+        eval_model: str,
         modality: str,
         verbose: bool,
         background_noise_file: str | None = None,
@@ -711,7 +718,8 @@ class SimulationEvals(Apps):
                             tc,
                             run_idx,
                             runs,
-                            model,
+                            sim_user_model,
+                            eval_model,
                             modality,
                             verbose,
                             parallel,
@@ -730,7 +738,8 @@ class SimulationEvals(Apps):
                             tc,
                             run_idx,
                             runs,
-                            model,
+                            sim_user_model,
+                            eval_model,
                             modality,
                             verbose,
                             parallel,
@@ -751,7 +760,8 @@ class SimulationEvals(Apps):
         test_cases: list[dict[str, Any]],
         runs: int = 1,
         parallel: int = 1,
-        model: str = _DEFAULT_GEMINI_MODEL,
+        sim_user_model: str | None = _DEFAULT_GEMINI_MODEL,
+        eval_model: str | None = _DEFAULT_GEMINI_MODEL,
         modality: str = "text",
         verbose: bool = False,
         background_noise_file: str | None = None,
@@ -764,17 +774,21 @@ class SimulationEvals(Apps):
             test_cases: List of test case dictionaries.
             runs: Number of runs per test case.
             parallel: Number of parallel workers (capped at 25).
-            model: Gemini model to use.
+            sim_user_model: Gemini model to use for simulated user.
+            eval_model: Gemini model to use for evaluating expectations.
             modality: 'text' or 'audio'.
             verbose: Whether to log to console (only active if parallel=1).
             use_tool_fakes: Use fake tools for the session if available.
         """
+        sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
+        eval_model = eval_model or _DEFAULT_GEMINI_MODEL
         jobs = self._prepare_simulation_jobs(test_cases, runs)
         return self._aggregate_simulation_results(
             jobs,
             runs,
             parallel,
-            model,
+            sim_user_model,
+            eval_model,
             modality,
             verbose,
             background_noise_file,
