@@ -75,12 +75,14 @@ def test_generate_with_parts_raises_on_failure(mock_genai):
     mock_genai.types.Part.from_text = lambda text: text
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
-    fake_client.models.generate_content.side_effect = RuntimeError("boom")
+    original_exc = RuntimeError("boom")
+    fake_client.models.generate_content.side_effect = original_exc
 
     gen = GeminiGenerate(project_id="p")
     with pytest.raises(GeminiGenerationError) as exc_info:
         gen.generate_with_parts(parts=["x"])
     assert "Permanent error: boom" in str(exc_info.value)
+    assert exc_info.value.original_exception is original_exc
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
@@ -130,11 +132,13 @@ def test_generate_returns_parsed_for_json_schema(mock_genai):
 def test_generate_raises_on_failure(mock_genai):
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
-    fake_client.models.generate_content.side_effect = RuntimeError("boom")
+    original_exc = RuntimeError("boom")
+    fake_client.models.generate_content.side_effect = original_exc
     gen = GeminiGenerate(project_id="p")
     with pytest.raises(GeminiGenerationError) as exc_info:
         gen.generate(prompt="p")
     assert "Permanent error: boom" in str(exc_info.value)
+    assert exc_info.value.original_exception is original_exc
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
@@ -235,6 +239,7 @@ def test_generate_async_quota_then_success(mock_genai):
         gen.generate_async(prompt="x", max_retries=3, base_delay_seconds=0)
     )
     assert res == "ok"
+    assert fake_client.aio.models.generate_content.call_count == 2
 
 
 @patch("cxas_scrapi.utils.gemini.asyncio.sleep", new=AsyncMock())
@@ -242,15 +247,16 @@ def test_generate_async_quota_then_success(mock_genai):
 def test_generate_async_all_retries_fail(mock_genai):
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
-    fake_client.aio.models.generate_content = AsyncMock(
-        side_effect=ClientError(429, {})
-    )
+    quota = ClientError(429, {})
+    fake_client.aio.models.generate_content = AsyncMock(side_effect=quota)
     gen = GeminiGenerate(project_id="p", max_concurrent_requests=1)
     with pytest.raises(GeminiGenerationError) as exc_info:
         asyncio.run(
             gen.generate_async(prompt="x", max_retries=2, base_delay_seconds=0)
         )
     assert "All 2 retry attempts failed." in str(exc_info.value)
+    assert exc_info.value.original_exception is quota
+    assert fake_client.aio.models.generate_content.call_count == 2
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
@@ -309,12 +315,14 @@ def test_generate_embeddings_success(mock_genai):
 def test_generate_embeddings_raises_on_failure(mock_genai):
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
-    fake_client.models.embed_content.side_effect = RuntimeError("boom")
+    original_exc = RuntimeError("boom")
+    fake_client.models.embed_content.side_effect = original_exc
 
     gen = GeminiGenerate(project_id="p")
     with pytest.raises(GeminiEmbeddingError) as exc_info:
         gen.generate_embeddings(contents=["hello"], max_retries=1)
     assert "Permanent error: boom" in str(exc_info.value)
+    assert exc_info.value.original_exception is original_exc
 
 
 @patch("cxas_scrapi.utils.gemini.time.sleep", new=MagicMock())
@@ -375,3 +383,186 @@ def test_generate_with_parts_retries_on_transient(mock_genai):
     )
     assert res == "ok"
     assert fake_client.models.generate_content.call_count == 2
+
+
+@patch("cxas_scrapi.utils.gemini.time.sleep", new=MagicMock())
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_all_retries_fail_sync(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    quota = ClientError(429, {})
+    fake_client.models.generate_content.side_effect = quota
+
+    gen = GeminiGenerate(project_id="p")
+    with pytest.raises(GeminiGenerationError) as exc_info:
+        gen.generate(prompt="hello", max_retries=3, base_delay_seconds=0)
+    assert "All 3 retry attempts failed." in str(exc_info.value)
+    assert exc_info.value.original_exception is quota
+    assert fake_client.models.generate_content.call_count == 3
+
+
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_create_cache_success(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    mock_cache = MagicMock()
+    mock_cache.name = "cachedContents/12345"
+    fake_client.aio.caches.create = AsyncMock(return_value=mock_cache)
+
+    gen = GeminiGenerate(project_id="p")
+    res = asyncio.run(
+        gen.create_cache(
+            system_prompt="sys", shared_content="shared", ttl_seconds=100
+        )
+    )
+    assert res == "cachedContents/12345"
+    _, kwargs = fake_client.aio.caches.create.call_args
+    assert kwargs["model"] == gen.model_name
+    assert kwargs["config"]["system_instruction"] == "sys"
+    assert kwargs["config"]["ttl"] == "100s"
+    contents = kwargs["config"]["contents"]
+
+    assert contents == [mock_genai.types.Content.return_value]
+    mock_genai.types.Content.assert_called_once_with(
+        role="user", parts=[mock_genai.types.Part.from_text.return_value]
+    )
+    mock_genai.types.Part.from_text.assert_called_once_with(text="shared")
+
+
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_create_cache_failure(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    fake_client.aio.caches.create = AsyncMock(
+        side_effect=RuntimeError("cache error")
+    )
+
+    gen = GeminiGenerate(project_id="p")
+    res = asyncio.run(
+        gen.create_cache(system_prompt="sys", shared_content="shared")
+    )
+    assert res is None
+
+
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_delete_cache_success(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    fake_client.aio.caches.delete = AsyncMock()
+
+    gen = GeminiGenerate(project_id="p")
+    asyncio.run(gen.delete_cache(cache_name="cachedContents/12345"))
+    fake_client.aio.caches.delete.assert_called_once_with(
+        name="cachedContents/12345"
+    )
+
+
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_delete_cache_failure_does_not_propagate(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    fake_client.aio.caches.delete = AsyncMock(
+        side_effect=RuntimeError("delete error")
+    )
+
+    gen = GeminiGenerate(project_id="p")
+    # Should not raise exception
+    asyncio.run(gen.delete_cache(cache_name="cachedContents/12345"))
+    fake_client.aio.caches.delete.assert_called_once_with(
+        name="cachedContents/12345"
+    )
+
+
+@patch("cxas_scrapi.utils.gemini.asyncio.sleep", new=AsyncMock())
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_async_with_context_cache(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    fake_client.aio.models.generate_content = AsyncMock(
+        return_value=SimpleNamespace(text="templated response")
+    )
+
+    gen = GeminiGenerate(project_id="p")
+    res = asyncio.run(
+        gen.generate_async(
+            prompt="next question",
+            cached_content_name="cachedContents/12345",
+            temperature=0.7,
+        )
+    )
+    assert res == "templated response"
+    mock_genai.types.GenerateContentConfig.assert_called_once_with(
+        cached_content="cachedContents/12345", temperature=0.7
+    )
+    _, kwargs = fake_client.aio.models.generate_content.call_args
+    assert (
+        kwargs["config"] == mock_genai.types.GenerateContentConfig.return_value
+    )
+
+
+@patch("cxas_scrapi.utils.gemini.asyncio.sleep", new=AsyncMock())
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_async_immediate_failure_on_permanent_error(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    permanent_error = ClientError(403, {})
+    fake_client.aio.models.generate_content = AsyncMock(
+        side_effect=permanent_error
+    )
+
+    gen = GeminiGenerate(project_id="p")
+    with pytest.raises(GeminiGenerationError) as exc_info:
+        asyncio.run(gen.generate_async(prompt="x", max_retries=3))
+    assert "Permanent error:" in str(exc_info.value)
+    assert exc_info.value.original_exception is permanent_error
+    assert fake_client.aio.models.generate_content.call_count == 1
+
+
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_embeddings_fallback_when_none(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    fake_client.models.embed_content.return_value = SimpleNamespace(
+        embeddings=None
+    )
+
+    gen = GeminiGenerate(project_id="p")
+    res = gen.generate_embeddings(contents=["hello"])
+    assert res == []
+
+
+@patch("cxas_scrapi.utils.gemini.time.sleep", new=MagicMock())
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_embeddings_all_retries_fail_sync(mock_genai):
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    quota = ClientError(429, {})
+    fake_client.models.embed_content.side_effect = quota
+
+    gen = GeminiGenerate(project_id="p")
+    with pytest.raises(GeminiEmbeddingError) as exc_info:
+        gen.generate_embeddings(
+            contents=["hello"], max_retries=3, base_delay_seconds=0
+        )
+    assert "All 3 retry attempts failed." in str(exc_info.value)
+    assert exc_info.value.original_exception is quota
+    assert fake_client.models.embed_content.call_count == 3
+
+
+@patch("cxas_scrapi.utils.gemini.time.sleep", new=MagicMock())
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_generate_with_parts_all_retries_fail_sync(mock_genai):
+    mock_genai.types.Part.from_text = lambda text: text
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    quota = ClientError(429, {})
+    fake_client.models.generate_content.side_effect = quota
+
+    gen = GeminiGenerate(project_id="p")
+    with pytest.raises(GeminiGenerationError) as exc_info:
+        gen.generate_with_parts(
+            parts=["x"], max_retries=3, base_delay_seconds=0
+        )
+    assert "All 3 retry attempts failed." in str(exc_info.value)
+    assert exc_info.value.original_exception is quota
+    assert fake_client.models.generate_content.call_count == 3
