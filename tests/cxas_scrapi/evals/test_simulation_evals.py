@@ -203,6 +203,8 @@ def test_user_simulator(mock_llm_conv_class, mock_sessions_class):
         event="welcome",
         variables={},
         modality="text",
+        turn_num=0,
+        capture_agent_audio=False,
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=False,
@@ -212,6 +214,8 @@ def test_user_simulator(mock_llm_conv_class, mock_sessions_class):
         text="I want to book a flight",
         variables={},
         modality="text",
+        turn_num=1,
+        capture_agent_audio=False,
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=False,
@@ -280,6 +284,8 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
         event="welcome",
         variables={},
         modality="audio",
+        turn_num=0,
+        capture_agent_audio=False,
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=False,
@@ -289,6 +295,8 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
         text="I want to book a flight",
         variables={},
         modality="audio",
+        turn_num=1,
+        capture_agent_audio=False,
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=False,
@@ -299,6 +307,97 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
     mock_eval_conv.next_user_utterance.assert_any_call("Where to?")
     mock_eval_conv.next_user_utterance.assert_any_call("Flight booked.")
     assert mock_sessions.run.call_count == 2
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_user_simulator_audio_with_eval_enabled(
+    mock_llm_conv_class, mock_sessions_class
+):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("I want to book a flight", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    # Mock Response 1
+    mock_response_1 = MagicMock()
+    mock_output_1 = MagicMock()
+    mock_output_1.text = ""  # Empty high-level text
+
+    mock_msg_1 = MagicMock()
+    mock_msg_1.role = "model"
+    mock_chunk_1 = MagicMock()
+    mock_chunk_1._pb.WhichOneof.return_value = "text"
+    mock_chunk_1.text = "Where to?"
+    mock_msg_1.chunks = [mock_chunk_1]
+
+    mock_diag_1 = MagicMock()
+    mock_diag_1.messages = [mock_msg_1]
+    mock_output_1.diagnostic_info = mock_diag_1
+    mock_response_1.outputs = [mock_output_1]
+    mock_response_1.agent_audio_paths = {
+        0: "/tmp/scrapi_evals/123/turn_0_agent.wav"
+    }
+
+    # Mock Response 2
+    mock_response_2 = MagicMock()
+    mock_output_2 = MagicMock()
+    mock_output_2.text = "Flight booked."
+    mock_output_2.diagnostic_info = None
+    mock_response_2.outputs = [mock_output_2]
+    mock_response_2.agent_audio_paths = {
+        0: "/tmp/scrapi_evals/123/turn_1_agent.wav"
+    }
+
+    mock_sessions.run.side_effect = [mock_response_1, mock_response_2]
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {"steps": []}
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+        modality="audio",
+        capture_agent_audio=True,
+    )
+
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="audio",
+        turn_num=0,
+        capture_agent_audio=True,
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
+    )
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        text="I want to book a flight",
+        variables={},
+        modality="audio",
+        turn_num=1,
+        capture_agent_audio=True,
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
+    )
+
+    assert mock_sessions.run.call_count == 2
+    assert mock_eval_conv.agent_audio_paths == {
+        0: "/tmp/scrapi_evals/123/turn_0_agent.wav",
+        1: "/tmp/scrapi_evals/123/turn_1_agent.wav",
+    }
 
 
 def test_parse_agent_response_standard():
@@ -323,7 +422,7 @@ def test_parse_agent_response_standard():
         "cxas_scrapi.evals.simulation_evals.Sessions._expand_pb_struct",
         return_value={"arg": "val"},
     ):
-        agent_text, trace_chunks, session_ended = (
+        agent_text, trace_chunks, session_ended, _ = (
             simulator._parse_agent_response(mock_response)
         )
 
@@ -354,9 +453,12 @@ def test_parse_agent_response_agent_transfer():
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
-    _agent_text, trace_chunks, session_ended = simulator._parse_agent_response(
-        mock_response
-    )
+    (
+        _agent_text,
+        trace_chunks,
+        session_ended,
+        _,
+    ) = simulator._parse_agent_response(mock_response)
 
     assert any(
         "Agent Transfer: Transferred to Billing Agent" in c
@@ -391,7 +493,7 @@ def test_parse_agent_response_custom_payload():
         "cxas_scrapi.evals.simulation_evals.Sessions._expand_pb_struct",
         return_value={"key": "value"},
     ):
-        _agent_text, trace_chunks, session_ended = (
+        _agent_text, trace_chunks, session_ended, _ = (
             simulator._parse_agent_response(mock_response)
         )
 
@@ -421,9 +523,12 @@ def test_parse_agent_response_diagnostic():
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
-    agent_text, trace_chunks, session_ended = simulator._parse_agent_response(
-        mock_response
-    )
+    (
+        agent_text,
+        trace_chunks,
+        session_ended,
+        _,
+    ) = simulator._parse_agent_response(mock_response)
 
     assert agent_text == "Hello from diag"
     assert any("Agent Text (Diag): Hello from diag" in c for c in trace_chunks)
@@ -1100,6 +1205,8 @@ def test_simulation_evals_simulate_conversation_use_tool_fakes(
         event="welcome",
         variables={},
         modality="text",
+        turn_num=0,
+        capture_agent_audio=False,
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=True,
@@ -1135,8 +1242,9 @@ def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
         "text",
         False,
         1,
-        None,
-        None,
+        capture_agent_audio=False,
+        background_noise_file=None,
+        burst_noise_files=None,
         use_tool_fakes=True,
     )
 
@@ -1173,7 +1281,77 @@ def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
         "text",
         False,
         2,
-        None,
-        None,
+        capture_agent_audio=False,
+        background_noise_file=None,
+        burst_noise_files=None,
         use_tool_fakes=True,
     )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+def test_simulation_evals_run_simulations_capture_agent_audio(mock_sessions):
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name)
+
+    evals._run_single_simulation_job = MagicMock(return_value={"status": "ok"})
+    test_cases = [
+        {
+            "name": "tc1",
+            "expectations": [
+                {
+                    "title": "Audio Audit",
+                    "expectation": "Audio matches text",
+                    "requires_audio_paths": True,
+                }
+            ],
+        }
+    ]
+
+    results = evals.run_simulations(
+        test_cases=test_cases,
+        runs=1,
+        parallel=1,
+        sim_user_model="gemini-1.5-flash",
+        eval_model="gemini-1.5-flash",
+        modality="audio",
+        capture_agent_audio=True,
+    )
+
+    assert len(results) == 1
+    evals._run_single_simulation_job.assert_called_once_with(
+        test_cases[0],
+        0,
+        1,
+        "gemini-1.5-flash",
+        "gemini-1.5-flash",
+        "audio",
+        False,
+        1,
+        capture_agent_audio=True,
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
+    )
+
+
+def test_simulation_evals_with_audio_expectations():
+    test_case = {
+        "steps": [],
+        "expectations": ["text expectation"],
+        "audio_expectations": ["audio expectation"],
+    }
+
+    patch_path = "cxas_scrapi.evals.simulation_evals.GeminiGenerate"
+    with patch(patch_path) as mock_genai:
+        conv = LLMUserConversation(
+            genai_client=mock_genai,
+            genai_model="gemini-1.5-flash",
+            test_case=test_case,
+        )
+
+    assert conv.expectations == ["text expectation"]
+    assert conv.audio_expectations == [
+        {"expectation": "audio expectation", "requires_audio_paths": True}
+    ]
