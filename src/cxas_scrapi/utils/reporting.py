@@ -360,14 +360,25 @@ def _render_merged_items(merged):
             for key in _ORDER:
                 val = attrs.get(key)
                 if val not in (None, "", False):
-                    kv_rows += f"<dt>{_escape(key)}</dt><dd>{_escape(str(val))}</dd>"
+                    kv_rows += (
+                        f"<dt>{_escape(key)}</dt><dd>{_escape(str(val))}</dd>"
+                    )
             for key, val in attrs.items():
-                if key not in _SKIP and key not in _ORDER and val not in (None, "", False):
-                    kv_rows += f"<dt>{_escape(key)}</dt><dd>{_escape(str(val))}</dd>"
-            kv_html = f'<dl class="guardrail-kv">{kv_rows}</dl>' if kv_rows else ""
+                if (
+                    key not in _SKIP
+                    and key not in _ORDER
+                    and val not in (None, "", False)
+                ):
+                    kv_rows += (
+                        f"<dt>{_escape(key)}</dt><dd>{_escape(str(val))}</dd>"
+                    )
+            kv_html = (
+                f'<dl class="guardrail-kv">{kv_rows}</dl>' if kv_rows else ""
+            )
             html += (
                 '<details class="tool-details guardrail-details">'
-                '<summary class="tool-summary guardrail-summary">&#10071; <b>Guardrail Triggered:</b>'
+                '<summary class="tool-summary guardrail-summary">'
+                "&#10071; <b>Guardrail Triggered:</b>"
                 f" {_escape(lbl)}</summary>"
                 f"{kv_html}"
                 "</details>\n"
