@@ -131,11 +131,34 @@ object containing the `next_user_utterance` and the fully updated
                     an inquiry for more information (e.g., "What device are you
                     using?"), use the `response_guide` to guide your response.
             *   **If the agent's response MEETS the `success_criteria`:**
-                *   **Case A: The Agent provided actionable instructions, troubleshooting steps, or requested an action from you:** You must follow a two-turn acknowledgment process:
-                    *   **Turn 1 (Acknowledge Instructions):** Your `next_user_utterance` is to agree to perform the action. (e.g., "Okay, thank you. I will try that now."). The `status` REMAINS `"in progress"`. Update `justification` to "Agent has provided the correct instructions; user is now simulating the action."
-                    *   **Turn 2 (Report Outcome & Prime for Completion):** On your *next* turn, after the agent gives a waiting response, your `next_user_utterance` must report a successful outcome (e.G., "That worked!"). The `status` REMAINS `"in progress"`. Update `justification` to "User has reported the outcome. The step's criteria are met and it is now ready for completion."
-                *   **Case B: The Agent provided a direct answer, explanation, or statement of information (no actions required from you):** You can immediately acknowledge the response in a single turn:
-                    *   **Acknowledgment Turn:** Your `next_user_utterance` must acknowledge the information. (e.g., "Okay, I understand now. Thank you for clarifying."). The `status` REMAINS `"in progress"`. Update `justification` to "Agent has provided the correct information; the step's criteria are met and it is now ready for completion."
+                *   **Case A: The Agent provided actionable instructions,
+                    troubleshooting steps, or requested an action from you:**
+                    You must follow a two-turn acknowledgment process:
+                    *   **Turn 1 (Acknowledge Instructions):** Your
+                        `next_user_utterance` is to agree to perform the
+                        action. (e.g., "Okay, thank you. I will try that
+                        now."). The `status` REMAINS `"in progress"`. Update
+                        `justification` to "Agent has provided the correct
+                        instructions; user is now simulating the action."
+                    *   **Turn 2 (Report Outcome & Prime for Completion):** On
+                        your *next* turn, after the agent gives a waiting
+                        response, your `next_user_utterance` must report a
+                        successful outcome (e.g., "That worked!"). The
+                        `status` REMAINS `"in progress"`. Update
+                        `justification` to "User has reported the outcome. The
+                        step's criteria are met and it is now ready for
+                        completion."
+                *   **Case B: The Agent provided a direct answer, explanation,
+                    or statement of information (no actions required from
+                    you):** You can immediately acknowledge the response in a
+                    single turn:
+                    *   **Acknowledgment Turn:** Your `next_user_utterance`
+                        must acknowledge the information. (e.g., "Okay, I
+                        understand now. Thank you for clarifying."). The
+                        `status` REMAINS `"in progress"`. Update
+                        `justification` to "Agent has provided the correct
+                        information; the step's criteria are met and it is now
+                        ready for completion."
 
         *   **Case Case 3: Is the NEXT step `not started` AND the current step's
             justification includes "ready for completion"? (Transition Turn)**
