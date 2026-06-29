@@ -1462,11 +1462,22 @@ class MigrationService:
                     agent: [t.model_dump(mode="json") for t in cases]
                     for agent, cases in converted_tests.items()
                 }
+                # Write YAML files to evals/simulations/
+                sim_dir = os.path.join(
+                    f"{config.target_name}_evals", "simulations"
+                )
+                os.makedirs(sim_dir, exist_ok=True)
+                yamls = DFCXTestConverter.serialize_to_yaml(converted_tests)
+                for agent_name, yaml_str in yamls.items():
+                    yaml_path = os.path.join(sim_dir, f"{agent_name}.yaml")
+                    with open(yaml_path, "w") as f:
+                        f.write(yaml_str)
                 logger.info(
-                    "Converted %d/%d DFCX test cases (%d skipped)",
+                    "Converted %d/%d DFCX test cases (%d skipped) → %s",
                     tc_report["converted"],
                     tc_report["total_source_tests"],
                     tc_report["skipped"],
+                    sim_dir,
                 )
             except Exception as exc:
                 logger.warning("DFCX test case conversion failed: %s", exc)
