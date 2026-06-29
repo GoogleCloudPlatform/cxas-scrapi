@@ -291,8 +291,6 @@ class GeminiGenerate:
         audio_path: str | None = None,
         audio_bytes: bytes | None = None,
         cached_content_name: str | None = None,
-        audio_path: str | None = None,
-        audio_bytes: bytes | None = None,
     ) -> Any | None:
         """Generates content asynchronously using the Gemini model.
 
@@ -313,8 +311,6 @@ class GeminiGenerate:
             cached_content_name: Optional resource name returned by
               create_cache(). When provided, system_prompt is ignored and the
               generation config references the cache instead.
-            audio_path: Optional path to an audio file.
-            audio_bytes: Optional raw audio bytes.
 
         Returns:
             The generated text response or parsed object, or None on failure.

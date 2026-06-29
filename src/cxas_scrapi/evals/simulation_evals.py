@@ -581,6 +581,8 @@ class SimulationEvals(Apps):
         """
         sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
         eval_model = eval_model or _DEFAULT_GEMINI_MODEL
+        if session_id is None:
+            session_id = str(uuid.uuid4())
         eval_conv = LLMUserConversation(
             genai_client=self.genai_client,
             genai_model=sim_user_model,
