@@ -288,6 +288,8 @@ class GeminiGenerate:
         max_retries: int = 5,
         base_delay_seconds: int = 10,
         temperature: float | None = 1.0,
+        audio_path: str | None = None,
+        audio_bytes: bytes | None = None,
         cached_content_name: str | None = None,
         audio_path: str | None = None,
         audio_bytes: bytes | None = None,
@@ -306,6 +308,8 @@ class GeminiGenerate:
             max_retries: Maximum number of retries for transient errors.
             base_delay_seconds: Base delay for exponential backoff.
             temperature: Optional temperature setting. Defaults to 1.0.
+            audio_path: Optional path to an audio file.
+            audio_bytes: Optional raw audio bytes.
             cached_content_name: Optional resource name returned by
               create_cache(). When provided, system_prompt is ignored and the
               generation config references the cache instead.

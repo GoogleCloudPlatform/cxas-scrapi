@@ -570,12 +570,6 @@ def main():
         help="Capture real-time agent output audio as WAV files",
     )
     p_run.add_argument(
-        "--expectations-only",
-        action="store_true",
-        default=False,
-        help="Evaluate test results using only expectations (ignore goal success_criteria)",
-    )
-    p_run.add_argument(
         "--gcs-report-path",
         type=str,
         default=None,
