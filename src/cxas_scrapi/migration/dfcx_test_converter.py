@@ -63,6 +63,7 @@ class DFCXTestConverter:
         skipped: list[dict[str, str]] = []
         seen_names: dict[str, int] = {}
         dtmf_count = 0
+        empty_text_count = 0
         transfer_count = 0
         contains_count = 0
 
@@ -95,6 +96,7 @@ class DFCXTestConverter:
 
             tests_by_agent.setdefault(agent_name, []).append(test_case)
             dtmf_count += notes.get("dtmf_turns", 0)
+            empty_text_count += notes.get("empty_text_turns", 0)
             transfer_count += notes.get("transfer_assertions", 0)
             contains_count += notes.get("contains_assertions", 0)
 
@@ -105,6 +107,7 @@ class DFCXTestConverter:
             "skipped_details": skipped[:20],
             "tests_per_agent": {k: len(v) for k, v in tests_by_agent.items()},
             "dtmf_as_text_count": dtmf_count,
+            "empty_text_turns_collapsed": empty_text_count,
             "agent_transfer_assertions": transfer_count,
             "contains_assertions": contains_count,
         }
@@ -156,6 +159,15 @@ class DFCXTestConverter:
             user_input = turn.get("userInput", {})
             agent_output = turn.get("virtualAgentOutput", {})
 
+            if self._is_empty_text_turn(user_input):
+                notes["empty_text_turns"] = notes.get("empty_text_turns", 0) + 1
+                expectations = self._map_expectations(agent_output, prev_flow)
+                current_flow = agent_output.get("currentFlow", {}).get("name")
+                prev_flow = current_flow or prev_flow
+                if steps and expectations:
+                    steps[-1].expectations.extend(expectations)
+                continue
+
             user, event, variables = self._map_user_input(user_input, i)
             expectations = self._map_expectations(agent_output, prev_flow)
 
@@ -174,7 +186,7 @@ class DFCXTestConverter:
             prev_flow = current_flow or prev_flow
 
             step = TurnStep(
-                turn=f"Turn {i + 1}",
+                turn=f"Turn {len(steps) + 1}",
                 user=user,
                 event=event,
                 variables=variables,
@@ -194,6 +206,18 @@ class DFCXTestConverter:
             turns=steps,
         )
         return test, notes
+
+    @staticmethod
+    def _is_empty_text_turn(user_input: dict) -> bool:
+        """Detect DFCX auto-advance turns: {"text": {}, "languageCode": "en"}.
+        These have no user input and are used to advance flows in DFCX."""
+        inp = user_input.get("input", {})
+        if "event" in inp or "dtmf" in inp:
+            return False
+        text_obj = inp.get("text")
+        if not isinstance(text_obj, dict):
+            return False
+        return not text_obj.get("text")
 
     def _map_user_input(
         self, user_input: dict, turn_index: int
