@@ -279,12 +279,14 @@ class DFCXTestConverter:
     ) -> dict[str, str]:
         result: dict[str, str] = {}
         for agent_name, tests in tests_by_agent.items():
-            data = [
-                t.model_dump(
-                    mode="json", exclude_none=True, exclude_defaults=True
-                )
-                for t in tests
-            ]
+            data = {
+                "tests": [
+                    t.model_dump(
+                        mode="json", exclude_none=True, exclude_defaults=True
+                    )
+                    for t in tests
+                ]
+            }
             result[agent_name] = yaml.dump(
                 data, default_flow_style=False, sort_keys=False, allow_unicode=True
             )
