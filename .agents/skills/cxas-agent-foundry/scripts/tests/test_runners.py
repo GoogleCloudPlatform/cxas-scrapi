@@ -134,10 +134,11 @@ def test_sim_runner_cmd_run_delegation(sim_runner):
         sim_runner.cmd_run(mock_args)
 
         # Assert that EnhancedSimRunner was initialized with correct parameters
-        assert MockEnhancedRunner.call_count == 3
+        assert MockEnhancedRunner.call_count == 1
         MockEnhancedRunner.assert_any_call(
             app_name="projects/test-proj/locations/us/apps/test-app",
-            user_agent_extension=sim_runner.USER_AGENT_EXTENSION,
+            user_agent_extension="skill/cxas-agent-foundry/scrapi-sim-runner",
+            expectations_only=False,
         )
 
         # Assert simulate_conversation was called with correct parameters
@@ -153,6 +154,59 @@ def test_sim_runner_cmd_run_delegation(sim_runner):
             console_logging=True,
             modality="audio",
         )
+
+
+def test_enhanced_runner_expectations_only_passing(sim_runner):
+    """Verify that when expectations_only is True, all passing expectations yield a pass even with failing goals."""
+    with patch("cxas_scrapi.core.tools.Tools.get_tools_map", return_value={}):
+        sim = sim_runner.EnhancedSimRunner(
+            app_name="projects/test-proj/locations/us/apps/test-app",
+            user_agent_extension="test",
+            expectations_only=True
+        )
+
+        with patch.object(sim_runner.SimulationEvals, "_run_single_simulation_job", return_value={
+            "passed": False,
+            "goals": "0/3",
+            "expectations": "4/4"
+        }):
+            res = sim._run_single_simulation_job(tc={"name": "test"}, run_idx=0, runs=1, model="fake", modality="text", verbose=False, parallel=1)
+            assert res["passed"] is True
+            assert res["goals"] == "0/3"
+            assert res["expectations"] == "4/4"
+
+def test_enhanced_runner_expectations_only_failing(sim_runner):
+    """Verify that when expectations_only is True, any failing expectations yield a fail even with passing goals."""
+    with patch("cxas_scrapi.core.tools.Tools.get_tools_map", return_value={}):
+        sim = sim_runner.EnhancedSimRunner(
+            app_name="projects/test-proj/locations/us/apps/test-app",
+            user_agent_extension="test",
+            expectations_only=True
+        )
+
+        with patch.object(sim_runner.SimulationEvals, "_run_single_simulation_job", return_value={
+            "passed": True,
+            "goals": "3/3",
+            "expectations": "3/4"
+        }):
+            res = sim._run_single_simulation_job(tc={"name": "test"}, run_idx=0, runs=1, model="fake", modality="text", verbose=False, parallel=1)
+            assert res["passed"] is False
+
+def test_enhanced_runner_expectations_only_fallback(sim_runner):
+    """Verify that when expectations_only is True, if a scenario has no expectations, it falls back to goals."""
+    with patch("cxas_scrapi.core.tools.Tools.get_tools_map", return_value={}):
+        sim = sim_runner.EnhancedSimRunner(
+            app_name="projects/test-proj/locations/us/apps/test-app",
+            user_agent_extension="test",
+            expectations_only=True
+        )
+
+        with patch.object(sim_runner.SimulationEvals, "_run_single_simulation_job", return_value={
+            "passed": True,
+            "goals": "3/3"
+        }):
+            res = sim._run_single_simulation_job(tc={"name": "test"}, run_idx=0, runs=1, model="fake", modality="text", verbose=False, parallel=1)
+            assert res["passed"] is True
 
 
 # ---------------------------------------------------------------------------

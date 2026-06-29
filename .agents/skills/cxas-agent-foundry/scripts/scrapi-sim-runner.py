@@ -45,6 +45,7 @@ from cxas_scrapi.evals.simulation_evals import (
     SimulationEvals,
     StepStatus,
 )
+from cxas_scrapi.utils.eval_utils import ExpectationStatus
 from cxas_scrapi.prompts import llm_user_prompts
 from cxas_scrapi.utils.reporting import generate_html_report
 
@@ -108,6 +109,21 @@ def build_test_case(ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 class EnhancedSimRunner(SimulationEvals):
     """Extended SimulationEvals that injects session variables."""
+
+    def __init__(self, *args: Any, expectations_only: bool = False, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.expectations_only = expectations_only
+
+    def _run_single_simulation_job(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        res = super()._run_single_simulation_job(*args, **kwargs)
+        if self.expectations_only and "expectations" in res:
+            try:
+                met, total = map(int, res["expectations"].split("/"))
+                if total > 0:
+                    res["passed"] = (met == total)
+            except Exception:
+                pass
+        return res
 
     def simulate_conversation(
         self,
@@ -360,6 +376,7 @@ def cmd_run(args):
     sim = EnhancedSimRunner(
         app_name=app_name,
         user_agent_extension=USER_AGENT_EXTENSION,
+        expectations_only=args.expectations_only,
     )
     all_results = sim.run_simulations(
         test_cases=test_cases,
@@ -461,6 +478,12 @@ def main():
         action="store_true",
         default=False,
         help="Use fake tools if available",
+    )
+    p_run.add_argument(
+        "--expectations-only",
+        action="store_true",
+        default=False,
+        help="Evaluate test results using only expectations (ignore goal success_criteria)",
     )
     p_run.add_argument(
         "--gcs-report-path",
