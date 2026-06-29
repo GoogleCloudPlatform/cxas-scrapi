@@ -603,7 +603,10 @@ def test_run_all_evals_include_filtering(
 
     # Assert SimulationEvals was instantiated and run
     mock_sim_evals.assert_called_once_with(
-        app_name="projects/p", rate_limiter=None, expectations_only=False
+        app_name="projects/p",
+        rate_limiter=None,
+        expectations_only=False,
+        deployment_id=None,
     )
     mock_sim_evals.return_value.run_simulations.assert_called_once()
 
@@ -737,7 +740,10 @@ def test_run_all_evals_dict_based_simulations(
 
     # Verify SimulationEvals was instantiated and run
     mock_sim_evals.assert_called_once_with(
-        app_name="projects/p", rate_limiter=None, expectations_only=False
+        app_name="projects/p",
+        rate_limiter=None,
+        expectations_only=False,
+        deployment_id=None,
     )
     mock_sim_evals.return_value.run_simulations.assert_called_once_with(
         [
@@ -757,6 +763,50 @@ def test_run_all_evals_dict_based_simulations(
         burst_noise_files=None,
         use_tool_fakes=False,
         progress_callback=ANY,
+    )
+
+
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
+@patch("glob.glob")
+@patch("os.path.exists")
+@patch("os.path.isdir")
+@patch("yaml.safe_load")
+@patch("builtins.open", new_callable=mock_open)
+def test_run_all_evals_with_deployment_id(
+    mock_open_file,
+    mock_yaml_load,
+    mock_isdir,
+    mock_exists,
+    mock_glob,
+    mock_eval_utils,
+    mock_callback_evals,
+    mock_sim_evals,
+    mock_tool_evals,
+    mock_evaluations,
+):
+    mock_exists.return_value = True
+    mock_isdir.return_value = True
+    mock_glob.side_effect = [
+        ["evals/simulations/sim1.yaml"],
+    ]
+    mock_yaml_load.return_value = [{"name": "sim1"}]
+
+    run_all_evals(
+        app_name="projects/p",
+        include=["sims"],
+        simulation_dir="evals/simulations/",
+        deployment_id="dep123",
+    )
+
+    mock_sim_evals.assert_called_once_with(
+        app_name="projects/p",
+        rate_limiter=None,
+        expectations_only=False,
+        deployment_id="dep123",
     )
 
 
@@ -952,6 +1002,7 @@ def test_run_all_evals_expectations_only(mock_run_all_evals):
         use_tool_fakes=False,
         timestamp=None,
         expectations_only=True,
+        deployment_id=None,
     )
 
 

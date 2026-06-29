@@ -91,6 +91,11 @@ def main():
         default=5,
         help="Number of parallel worker sessions for simulations. Defaults to 5.",
     )
+    parser.add_argument(
+        "--deployment-id",
+        default=None,
+        help="Target a specific deployment ID for simulations.",
+    )
     args = parser.parse_args()
 
     # Load config
@@ -149,6 +154,7 @@ def main():
             runs=args.runs,
             filter_tags=filter_tags,
             parallel=args.sim_parallel,
+            deployment_id=args.deployment_id,
         )
     except Exception as e:
         print(f"\n  ERROR: Evaluation run failed: {e}")
