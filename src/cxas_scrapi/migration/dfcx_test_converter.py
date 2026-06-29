@@ -161,11 +161,8 @@ class DFCXTestConverter:
 
             if self._is_empty_text_turn(user_input):
                 notes["empty_text_turns"] = notes.get("empty_text_turns", 0) + 1
-                expectations = self._map_expectations(agent_output, prev_flow)
                 current_flow = agent_output.get("currentFlow", {}).get("name")
                 prev_flow = current_flow or prev_flow
-                if steps and expectations:
-                    steps[-1].expectations.extend(expectations)
                 continue
 
             user, event, variables = self._map_user_input(user_input, i)
