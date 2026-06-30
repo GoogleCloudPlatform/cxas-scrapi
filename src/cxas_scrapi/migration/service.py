@@ -41,6 +41,7 @@ from cxas_scrapi.migration.ai_augment import AIAugment
 from cxas_scrapi.migration.analysis_reporter import MigrationAnalysisBuilder
 from cxas_scrapi.migration.artifacts_builder import CXASAsyncArtifactBuilder
 from cxas_scrapi.migration.code_block_migrator import CodeBlockMigrator
+from cxas_scrapi.migration.cuj_generator import CUJGenerator
 from cxas_scrapi.migration.cxas_topology_linker import CXASTopologyLinker
 from cxas_scrapi.migration.data_models import (
     IRAgent,
@@ -67,6 +68,7 @@ from cxas_scrapi.migration.flow_visualizer import (
 )
 from cxas_scrapi.migration.optimization_reporter import OptimizationReporter
 from cxas_scrapi.migration.structural_consolidator import StructuralConsolidator
+from cxas_scrapi.migration.utterance_collector import UtteranceCollector
 from cxas_scrapi.utils.gemini import GeminiGenerate
 from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
 
@@ -182,6 +184,10 @@ class MigrationService:
             ps_apps_client=self.ps_apps,
             reporter=self.reporter,
         )
+        self.utterance_collector = UtteranceCollector(
+            gemini_client=self.gemini_client
+        )
+        self.cuj_generator = CUJGenerator(gemini_client=self.gemini_client)
 
         self.ir: MigrationIR | None = None
         self.source_agent_data = None
@@ -1019,6 +1025,7 @@ class MigrationService:
         )
 
         logger.info("\nPre-processing text fields (Playbook -> agent)...")
+
         self._preprocess_text_fields(self.source_agent_data)
         self.reporter.log_action(
             "Pre-processing",
@@ -1043,7 +1050,6 @@ class MigrationService:
                 default_model=config.model or self.default_model,
             )
         )
-
         # Boot the review server early if enabled
         if (
             getattr(config, "web_confirm_grouping", False)
@@ -1061,6 +1067,59 @@ class MigrationService:
                 bind_port=config.web_confirm_port,
                 timeout_s=config.web_confirm_timeout_s,
                 console=Console(),
+            )
+
+        # --- 1b. Early Utterance Harvesting for Agent Xprs (Feature Gated) ---
+        if config.experimental_agent_xprs:
+            logger.info(
+                "\nStarting early utterance harvesting for Agent xprs..."
+            )
+            try:
+                raw_uts = self.utterance_collector.harvest_all(
+                    self.source_agent_data
+                )
+                fast_vocab = self.utterance_collector._rule_based_fallback(
+                    raw_uts
+                )
+                classify_task = (
+                    self.utterance_collector.classify_and_deduplicate(raw_uts)
+                )
+                predict_task = self.cuj_generator.predict_cujs(
+                    agent_name=config.target_name,
+                    source_agent_data=self.source_agent_data,
+                    categorized_utterances=fast_vocab.get(
+                        "categorized_utterances", {}
+                    ),
+                )
+                classified, scenarios = await asyncio.gather(
+                    classify_task, predict_task
+                )
+
+                self.ir.xprs_designer_data = {
+                    "raw": raw_uts,
+                    "raw_metadata": self.utterance_collector.raw_metadata,
+                    "categorized": classified.get("categorized_utterances", {}),
+                    "rationales": classified.get("rationales", {}),
+                    "scenarios": scenarios,
+                }
+                logger.info(
+                    f"   -> Early harvested {len(raw_uts)} utterances, "
+                    f"predicted {len(scenarios)} CUJs, categorized ok."
+                )
+                self._analysis_checkpoint(
+                    "xprs_harvested",
+                    f"Early harvested {len(raw_uts)} utterances and predicted "
+                    f"{len(scenarios)} CUJs for Agent xprs.",
+                )
+            except Exception as e:
+                logger.warning(
+                    "⚠️ Early utterance harvesting or CUJ prediction "
+                    f"failed: {e}"
+                )
+        else:
+            logger.debug(
+                "Skipping experimental Agent xprs harvesting "
+                "(--experimental-agent-xprs disabled)."
             )
 
         self.deployment_state = {

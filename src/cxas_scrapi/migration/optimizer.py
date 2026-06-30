@@ -431,6 +431,11 @@ class CXASOptimizer:
             )
             return
 
+        xprs_config = getattr(self.ir, "xprs_designer_data", None) or {}
+        designed_transcript = xprs_config.get(
+            "compiled_yaml", "No designed transcript provided."
+        )
+
         async def optimize_single_agent(agent):
             logger.info(
                 f"  Optimizing instructions for sub-agent: "
@@ -463,6 +468,7 @@ class CXASOptimizer:
                 agent_name=agent.display_name,
                 instruction=agent.instruction,
                 tools=", ".join(all_tools),
+                designed_transcript=designed_transcript,
             )
             system_prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION["system"]
 

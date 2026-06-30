@@ -39,16 +39,15 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from jinja2 import Template
 
-if TYPE_CHECKING:
-    from cxas_scrapi.migration.data_models import (
-        DFCXAgentIR,
-        IRBundle,
-        MigrationIR,
-    )
+from cxas_scrapi.migration.data_models import (
+    DFCXAgentIR,
+    IRBundle,
+    MigrationIR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +97,7 @@ class MigrationAnalysisSnapshot:
     #   "session_id": str,
     # }
     pending_grouping: dict[str, Any] | None = None
+    xprs_designer_data: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -160,8 +160,11 @@ class MigrationAnalysisBuilder:
         """
         try:
             ir = getattr(service, "ir", None)
+            if ir is not None and not isinstance(ir, MigrationIR):
+                ir = None
             source = getattr(service, "source_agent_data", None)
             bundle = getattr(service, "_analysis_bundle", None)
+
             grouping = (
                 getattr(bundle, "grouping", None)
                 if bundle is not None
@@ -169,7 +172,7 @@ class MigrationAnalysisBuilder:
             )
 
             self.snapshot.generated_at = datetime.now().isoformat(
-                timespec="seconds"
+                timespec="milliseconds"
             )
             self.snapshot.kpis = self._derive_kpis(ir, source, bundle)
             self.snapshot.tools, self.snapshot.toolsets = self._derive_tools(ir)
@@ -177,7 +180,13 @@ class MigrationAnalysisBuilder:
             self.snapshot.variables = self._derive_variables(ir)
             self.snapshot.flows = self._derive_flows(source, grouping)
             self.snapshot.grouping = self._derive_grouping(grouping)
+            if (
+                ir is not None
+                and getattr(ir, "xprs_designer_data", None) is not None
+            ):
+                self.snapshot.xprs_designer_data = ir.xprs_designer_data
             self._wire_callers()
+
             self.snapshot.references = self._derive_references(ir, bundle)
         except Exception as exc:
             logger.warning("analysis snapshot refresh failed: %s", exc)
@@ -205,7 +214,28 @@ class MigrationAnalysisBuilder:
         source: DFCXAgentIR | None,
         bundle: IRBundle | None,
     ) -> dict[str, Any]:
-        kpis: dict[str, Any] = {}
+        kpis: dict[str, Any] = {
+            "dfcx_flows": 0,
+            "dfcx_pages_total": 0,
+            "dfcx_intents": 0,
+            "dfcx_entity_types": 0,
+            "dfcx_webhooks": 0,
+            "dfcx_testcases": 0,
+            "dfcx_playbooks": 0,
+            "cxas_agents": 0,
+            "cxas_tools": 0,
+            "cxas_toolsets": 0,
+            "cxas_variables": 0,
+            "app_resource": "",
+            "stage_1_variables_before": "—",
+            "stage_1_variables_after": "—",
+            "stage_1_orphans_deleted": 0,
+            "tools_wired_post_consolidation": 0,
+            "stage_2_lint_baseline": "—",
+            "stage_2_lint_final": "—",
+            "fix_lint_baseline": "—",
+            "fix_lint_final": "—",
+        }
         if source is not None:
             kpis["dfcx_flows"] = len(getattr(source, "flows", []) or [])
             kpis["dfcx_pages_total"] = sum(
@@ -247,6 +277,8 @@ class MigrationAnalysisBuilder:
             if isinstance(stage_2, dict):
                 kpis["stage_2_lint_baseline"] = stage_2.get("lint_baseline")
                 kpis["stage_2_lint_final"] = stage_2.get("lint_final")
+                kpis["fix_lint_baseline"] = stage_2.get("lint_baseline")
+                kpis["fix_lint_final"] = stage_2.get("lint_final")
         return kpis
 
     def _derive_tools(
@@ -534,9 +566,11 @@ class MigrationAnalysisBuilder:
 
     def _render_html(self, data: dict[str, Any]) -> str:
         if self._template is None:
-            self._template = Template(
-                _TEMPLATE_PATH.read_text(encoding="utf-8")
-            )
+            from jinja2 import Environment, FileSystemLoader  # noqa: PLC0415
+
+            env = Environment(loader=FileSystemLoader(_TEMPLATE_PATH.parent))
+            self._template = env.get_template("analysis_report_template.html")
+
         data_json = json.dumps(data, default=str, separators=(",", ":"))
         return self._template.render(
             app_name=self.app_name,

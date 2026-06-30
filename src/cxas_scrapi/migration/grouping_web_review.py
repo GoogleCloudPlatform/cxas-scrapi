@@ -319,6 +319,18 @@ def _make_handler(
                 if self.path == "/api/status":
                     self._respond_json({"status": ctx.snapshot()["status"]})
                     return
+                if self.path == "/api/report_data":
+                    if ctx.builder.json_path.exists():
+                        self._respond_json(
+                            json.loads(
+                                ctx.builder.json_path.read_text(
+                                    encoding="utf-8"
+                                )
+                            )
+                        )
+                    else:
+                        self._respond_json(ctx.builder.snapshot.to_dict())
+                    return
                 self._respond_json({"error": "not found"}, status=404)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("GET %s failed", self.path)
@@ -359,11 +371,57 @@ def _make_handler(
                         return
                     self._respond_json({"ok": True, "pending": new_pending})
                     return
+                if self.path == "/api/xprs/save":
+                    payload = self._read_json()
+                    yaml_content = payload.get("yaml")
+                    bubbles_list = payload.get("bubbles")
+                    if not yaml_content or not isinstance(bubbles_list, list):
+                        self._respond_json(
+                            {
+                                "ok": False,
+                                "error": (
+                                    "body must contain yaml and bubbles list"
+                                ),
+                            },
+                            status=400,
+                        )
+                        return
+
+                    current_data = (
+                        getattr(ctx.ir, "xprs_designer_data", {}) or {}
+                    )
+                    ctx.ir.xprs_designer_data = {
+                        "raw": current_data.get("raw", []),
+                        "categorized": current_data.get("categorized", {}),
+                        "rationales": current_data.get("rationales", {}),
+                        "canvas_bubbles": bubbles_list,
+                        "compiled_yaml": yaml_content,
+                    }
+
+                    ctx.builder.snapshot.xprs_designer_data = (
+                        ctx.ir.xprs_designer_data
+                    )
+
+                    from pathlib import Path  # noqa: PLC0415
+
+                    xprs_yaml_path = (
+                        Path(ctx.builder.output_dir)
+                        / f"{ctx.builder.target_name}_xprs_config.yaml"
+                    )
+                    xprs_yaml_path.write_text(yaml_content, encoding="utf-8")
+                    logger.info(
+                        "Persisted compiled xprs config to: %s", xprs_yaml_path
+                    )
+
+                    ctx._sync_snapshot()
+                    self._respond_json({"ok": True})
+                    return
                 if self.path == "/api/abort":
                     ctx.abort()
                     self._respond_json({"ok": True})
                     return
                 self._respond_json({"error": "not found"}, status=404)
+
             except Exception as exc:  # noqa: BLE001
                 logger.exception("POST %s failed", self.path)
                 self._respond_json({"error": str(exc)}, status=500)

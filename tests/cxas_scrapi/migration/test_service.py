@@ -194,7 +194,122 @@ async def test_run_migration_success():
     service.topology_linker.link_and_finalize_topology.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_run_migration_early_utterance_harvesting():
+    mock_ps_apps = MagicMock()
+    mock_ps_agents = MagicMock()
+    mock_ps_tools = MagicMock()
+    mock_ps_toolsets = MagicMock()
+    mock_secret_manager = MagicMock()
+    mock_cx_api = MagicMock()
+
+    service = MigrationService(
+        project_id="test-project",
+        ps_apps_client=mock_ps_apps,
+        ps_agents_client=mock_ps_agents,
+        ps_tools_client=mock_ps_tools,
+        ps_toolsets_client=mock_ps_toolsets,
+        secret_manager_client=mock_secret_manager,
+        cx_api_client=mock_cx_api,
+    )
+
+    service.exporter = MagicMock()
+    service.exporter.fetch_full_agent_details.return_value = DFCXAgentIR(
+        name="projects/p/locations/l/agents/a",
+        display_name="Test Agent",
+        default_language_code="en",
+        playbooks=[],
+        flows=[],
+    )
+
+    service.ai_augment = MagicMock()
+    service.ai_augment.generate_agent_description = AsyncMock(
+        return_value="Desc"
+    )
+
+    service._deploy_base_resources = AsyncMock()
+    service._deploy_pending_agents = AsyncMock()
+    service._process_single_flow = AsyncMock()
+    service.topology_linker = MagicMock()
+    service.reporter = MagicMock()
+
+    service.utterance_collector = MagicMock()
+    service.utterance_collector.harvest_all.return_value = ["hello"]
+    service.utterance_collector.classify_and_deduplicate = AsyncMock(
+        return_value={
+            "categorized_utterances": {"greeting_onboarding": ["hello"]},
+            "rationales": {"hello": "Matched hello"},
+        }
+    )
+    service.cuj_generator = MagicMock()
+    service.cuj_generator.predict_cujs = AsyncMock(
+        return_value=[
+            {
+                "graph_id": "core_sample_flow",
+                "category": "Core CUJ",
+                "description": "Sample path description",
+                "nodes": [
+                    {
+                        "node_id": "node_001",
+                        "type": "AGENT",
+                        "speaker": "agent",
+                        "mode": "VERBATIM",
+                        "utterance": "hello",
+                        "transitions": [],
+                    }
+                ],
+            }
+        ]
+    )
+
+    with patch(
+        "cxas_scrapi.migration.service.DFCXParameterExtractor.migrate_parameters"
+    ) as mock_migrate:
+        mock_migrate.return_value = ([], {})
+        config = MigrationConfig(
+            project_id="dummy-project",
+            target_name="cxas-app",
+            model="gemini-2.5-flash-001",
+            experimental_agent_xprs=True,
+        )
+        await service.run_migration(
+            source_cx_agent_id="dfcx-123", config=config
+        )
+
+    service.utterance_collector.harvest_all.assert_called_once_with(
+        service.source_agent_data
+    )
+    service.utterance_collector.classify_and_deduplicate.assert_awaited_once_with(
+        ["hello"]
+    )
+    service.cuj_generator.predict_cujs.assert_awaited_once()
+    assert service.ir.xprs_designer_data == {
+        "raw": ["hello"],
+        "raw_metadata": service.utterance_collector.raw_metadata,
+        "categorized": {"greeting_onboarding": ["hello"]},
+        "rationales": {"hello": "Matched hello"},
+        "scenarios": [
+            {
+                "graph_id": "core_sample_flow",
+                "category": "Core CUJ",
+                "description": "Sample path description",
+                "nodes": [
+                    {
+                        "node_id": "node_001",
+                        "type": "AGENT",
+                        "speaker": "agent",
+                        "mode": "VERBATIM",
+                        "utterance": "hello",
+                        "transitions": [],
+                    }
+                ],
+            }
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
+
 # persist_bundle
 # ---------------------------------------------------------------------------
 
