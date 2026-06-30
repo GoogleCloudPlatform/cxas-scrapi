@@ -3,20 +3,29 @@ prompt: |
   You are an expert virtual agent developer. Your task is to implement a multi-locale CXAS application named 'Global Readiness'.
   A skeleton structure is provided in the `global_readiness/` folder.
 
-  1. Configure `app.json` to support both 'en' and 'es' languages using `languageSettings` (e.g., `supportedLanguageCodes: ["en", "es"]`).
-  2. The root agent must be `agent_root`. It should have `flow_es` as a child agent.
-  3. In `agents/agent_root/instruction.txt`, add this CRITICAL instruction: "If the user greets or communicates in Spanish, switch locale to 'es' and route to Spanish flow."
+  1. CRITICAL STEP: Configure `global_readiness/app.json` to support both 'en' and 'es' languages using `languageSettings` (e.g., `supportedLanguageCodes: ["en", "es"]`). Do not skip editing `app.json`.
+  2. The root agent must be `agent_root`. It should have `flow_es` as a child agent. Ensure `agent_root.json` includes `set_active_flow` and `end_session` in its tools list.
+  3. In `agents/agent_root/instruction.txt`, provide the instructions in the exact CXAS XML format required by the linter, referencing `set_active_flow` and `end_session`:
+      <role>You are a multi-locale root agent.</role>
+      <persona>Helpful and adaptive.</persona>
+      <taskflow>
+        <subtask name="Handle_Spanish">
+          <step>If the user greets or communicates in Spanish, switch locale to 'es' and use set_active_flow tool to route to flow_es.</step>
+        </subtask>
+        <subtask name="End_Session">
+          <step>Use end_session tool when the conversation is finished.</step>
+        </subtask>
+      </taskflow>
   4. The Spanish subagent must be named `flow_es`.
-  5. Deploy the application to the CXAS platform using `cxas push --project-id {project_id} --location us`.
-  6. Verify the following interaction:
+  5. Deploy the application to the CXAS platform using `python3 -c "import subprocess; subprocess.run(['cxas', 'push', '--project-id', '{project_id}', '--location', 'us'], cwd='global_readiness', input='y\n', text=True)"`.
+  6. Verify the following interaction using a Python script with `cxas_scrapi` or `cxas run-session` via Python subprocess to avoid TTY errors:
      - User: "Hola, buenas tardes, me gustaría cambiar mi reserva."
      - Expectations:
        - The session language code is updated to `es`.
        - The conversation transitions to the `flow_es` subagent.
        - The agent responds helpfully in Spanish.
 
-  TIP: If `cxas push` or `cxas run-session` hangs due to interactive prompts, use a Python `subprocess` script to pipe 'y\n' to the command. Be sure to run it from the app directory:
-  `python3 -c "import subprocess; subprocess.run(['cxas', 'push', '--project-id', '{project_id}', '--location', 'us'], cwd='global_readiness', input='y\n', text=True)"`
+  TIP: If `cxas push` or `cxas run-session` hangs due to interactive prompts, use the Python `subprocess` script to pipe 'y\n' to the command.
   For `cxas run-session`, ensure you use non-interactive mode: `cxas run-session text "your text here" projects/{project_id}/locations/us/apps/<app_resource_name>`
 
 rubric:

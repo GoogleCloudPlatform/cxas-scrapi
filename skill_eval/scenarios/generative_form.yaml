@@ -5,10 +5,17 @@ prompt: |
 
   1. The root agent `root_agent` must collect both an email and an order ID from the user.
   2. Use the `Toolset_CRM` toolset with operation `retrieve_account`.
-  3. Bind `Toolset_CRM` to the playbook.
-  4. In instructions, specify: "Collect both the email and order ID from the user. Once both are captured, call retrieve_account."
-  5. Deploy your local changes to the CXAS platform.
-  6. Verify the following interaction:
+  3. Bind `Toolset_CRM` to the playbook (ensure `Toolset_CRM` is listed in `root_agent.json` under `toolsets`).
+  4. In `agents/root_agent/instruction.txt`, provide the instructions in the exact CXAS XML format required by the linter:
+      <role>You are a customer service assistant.</role>
+      <persona>Helpful and concise.</persona>
+      <taskflow>
+        <subtask name="Check_Order_Status">
+          <step>Collect both the email and order ID from the user. Once both are captured, call retrieve_account from Toolset_CRM.</step>
+        </subtask>
+      </taskflow>
+  5. Deploy your local changes to the CXAS platform using `cxas push --project-id {project_id} --location us`. (If prompted for confirmation or hanging, use `python3 -c "import subprocess; subprocess.run(['cxas', 'push', '--project-id', '{project_id}', '--location', 'us'], cwd='generative_form', input='y\n', text=True)"`).
+  6. Verify the following interaction using a Python script with `cxas_scrapi` or `cxas run-session` to avoid TTY errors:
      - User: "I want to check my order status."
      - Agent asks for email.
      - User: "customer@google.com"
