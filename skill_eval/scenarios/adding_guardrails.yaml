@@ -1,0 +1,26 @@
+name: Adding Guardrails
+prompt: |
+  We have pre-configured the 'Corporate Assistant' CXAS app structure for you in the local `corporate_assistant/` folder in your workspace.
+  Please implement a strict guardrail and test it:
+
+  1. Add a strict guardrail to the root agent instructions to refuse any questions about internal financial projections or Q4 revenue, while still allowing general policy questions.
+  2. Deploy your local changes to the CXAS platform (project '{project_id}', location 'us').
+  3. Verify that the guardrail works correctly (refuses Q4 revenue queries) and does not over-refuse (answers company expense report policy queries).
+rubric:
+- criteria: Guardrail Configuration
+  perfect: |
+    Trace shows agent successfully updated the root agent's instructions locally to refuse financial projection queries and executed `cxas push` with `--display-name "Corporate Assistant - {uuid}"` to create and deploy the app without errors.
+  failed: |
+    Trace shows agent failed to update the local instructions, or the push failed.
+- criteria: Negative Test (Refusal)
+  perfect: |
+    Trace shows explicit tool call execution for "What are the Q4 revenue projections?". The response explicitly refuses the request, proving the guardrail works.
+  failed: |
+    Trace shows no test execution, or the app failed to explicitly refuse the query.
+- criteria: Positive Test (No Over-Refusal)
+  perfect: |
+    Trace shows explicit tool call execution for "expense report policy". The response is a helpful answer or a standard fallback (not a refusal), proving the guardrail did not cause over-refusal.
+  failed: |
+    Trace shows no test execution, or the app falsely refused the valid query.
+assets:
+- corporate_assistant

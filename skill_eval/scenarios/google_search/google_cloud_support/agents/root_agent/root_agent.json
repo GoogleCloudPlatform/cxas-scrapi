@@ -1,0 +1,8 @@
+{
+  "name": "root_agent",
+  "displayName": "root_agent",
+  "tools": [
+    "end_session"
+  ],
+  "instruction": "agents/root_agent/instruction.txt"
+}

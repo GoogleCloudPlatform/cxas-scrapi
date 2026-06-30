@@ -2693,3 +2693,47 @@ def test_state_visitor_update_with_literals(tmp_path, var_context):
     accesses = _collect_state_accesses(src)
     assert ("write", "a", 2, "bool") in accesses
     assert ("write", "b", 2, "int") in accesses
+
+
+# ── Rule T013 (ToolConfigInvalid) Tests ───────────────────────────────
+
+
+def test_t013_invalid_json_syntax(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import ToolConfigInvalid  # noqa: PLC0415,I001
+
+    rule = ToolConfigInvalid()
+    tool_dir = tmp_path / "tools" / "my_tool"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    f = tool_dir / "my_tool.json"
+    f.write_text("{invalid json")
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "invalid syntax" in results[0].message
+
+
+def test_t013_non_dict_json(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import ToolConfigInvalid  # noqa: PLC0415,I001
+
+    rule = ToolConfigInvalid()
+    tool_dir = tmp_path / "tools" / "my_tool"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    f = tool_dir / "my_tool.json"
+    f.write_text('["not", "a", "dict"]')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "must be a JSON dictionary/object" in results[0].message
+
+
+def test_t013_valid_dict_json(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import ToolConfigInvalid  # noqa: PLC0415,I001
+
+    rule = ToolConfigInvalid()
+    tool_dir = tmp_path / "tools" / "my_tool"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    f = tool_dir / "my_tool.json"
+    f.write_text('{"displayName": "my_tool", "pythonFunction": {}}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
