@@ -99,7 +99,7 @@ async def test_generate_markdown(mock_gemini):
 
     markdown = reporter.generate_markdown()
 
-    assert "# Polysynth Migration Audit Report" in markdown
+    assert "# CXAS Migration Audit Report" in markdown
     assert "dfcx-123" in markdown
     assert "cxas-app" in markdown
     assert "Mocked detailed description." in markdown

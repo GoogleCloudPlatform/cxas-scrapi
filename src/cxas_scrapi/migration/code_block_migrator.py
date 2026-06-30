@@ -414,7 +414,7 @@ class GlobalStateTransformer(ast.NodeTransformer):
 
 
 class CodeBlockMigrator:
-    """Handles the migration of DFCX Code Blocks to Polysynth components."""
+    """Handles the migration of DFCX Code Blocks to CXAS components."""
 
     TYPING_MAP = {
         "Dict": "from typing import Dict",
@@ -532,7 +532,7 @@ class CodeBlockMigrator:
     def _sanitize_resource_id(
         self, name: str, min_len: int = 5, max_len: int = 36
     ) -> str:
-        """Sanitizes a string to be a valid Polysynth resource ID."""
+        """Sanitizes a string to be a valid CXAS resource ID."""
         # Replace spaces and other invalid characters with underscores
         sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "_", name)
 

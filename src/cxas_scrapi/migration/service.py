@@ -1549,7 +1549,7 @@ class MigrationService:
         # 2. Deploy Consolidated App Configurations (Timeout, Variables)
         app_updates = {}
 
-        # A. Speech Silence / Inactivity Timeout (WAI for CXAS/Polysynth)
+        # A. Speech Silence / Inactivity Timeout (WAI for CXAS)
         if (
             not self.deployment_state.get("app_timeout_configured")
             or is_update_pass
