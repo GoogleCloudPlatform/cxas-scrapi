@@ -174,8 +174,8 @@ class AntigravityAgentHeadTest(unittest.TestCase):
 
         # Mock _get_uv_index_env_vars to return mock index variables
         mock_get_uv_env_vars.return_value = {
-            "UV_INDEX_CORP_AIRLOCK_DEFAULT_USERNAME": "oauth2accesstoken",
-            "UV_INDEX_CORP_AIRLOCK_DEFAULT_PASSWORD": "mock-gcp-token",
+            "UV_INDEX_PRIVATE_DEFAULT_USERNAME": "oauth2accesstoken",
+            "UV_INDEX_PRIVATE_DEFAULT_PASSWORD": "mock-gcp-token",
         }
 
         # Set up original env variables to verify restore
@@ -184,10 +184,10 @@ class AntigravityAgentHeadTest(unittest.TestCase):
         os.environ["GCLOUD_PROJECT"] = "original-project"
         os.environ["GOOGLE_CLOUD_PROJECT"] = "original-project"
         os.environ["UV_KEYRING_PROVIDER"] = "original-provider"
-        os.environ["UV_INDEX_CORP_AIRLOCK_DEFAULT_USERNAME"] = (
+        os.environ["UV_INDEX_PRIVATE_DEFAULT_USERNAME"] = (
             "original-username"
         )
-        os.environ["UV_INDEX_CORP_AIRLOCK_DEFAULT_PASSWORD"] = (
+        os.environ["UV_INDEX_PRIVATE_DEFAULT_PASSWORD"] = (
             "original-password"
         )
 
@@ -218,11 +218,11 @@ class AntigravityAgentHeadTest(unittest.TestCase):
                 os.environ.get("UV_KEYRING_PROVIDER"), "subprocess"
             )
             self.assertEqual(
-                os.environ.get("UV_INDEX_CORP_AIRLOCK_DEFAULT_USERNAME"),
+                os.environ.get("UV_INDEX_PRIVATE_DEFAULT_USERNAME"),
                 "oauth2accesstoken",
             )
             self.assertEqual(
-                os.environ.get("UV_INDEX_CORP_AIRLOCK_DEFAULT_PASSWORD"),
+                os.environ.get("UV_INDEX_PRIVATE_DEFAULT_PASSWORD"),
                 "mock-gcp-token",
             )
             return mock_agent_instance
@@ -243,11 +243,11 @@ class AntigravityAgentHeadTest(unittest.TestCase):
             os.environ.get("UV_KEYRING_PROVIDER"), "original-provider"
         )
         self.assertEqual(
-            os.environ.get("UV_INDEX_CORP_AIRLOCK_DEFAULT_USERNAME"),
+            os.environ.get("UV_INDEX_PRIVATE_DEFAULT_USERNAME"),
             "original-username",
         )
         self.assertEqual(
-            os.environ.get("UV_INDEX_CORP_AIRLOCK_DEFAULT_PASSWORD"),
+            os.environ.get("UV_INDEX_PRIVATE_DEFAULT_PASSWORD"),
             "original-password",
         )
 

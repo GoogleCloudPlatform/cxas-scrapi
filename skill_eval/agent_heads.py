@@ -237,10 +237,10 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
                         "[%s] Failed to parse %s: %s", self.name, path, e
                     )
         if not env_vars:
-            env_vars["UV_INDEX_CORP_AIRLOCK_DEFAULT_USERNAME"] = (
+            env_vars["UV_INDEX_PRIVATE_DEFAULT_USERNAME"] = (
                 "oauth2accesstoken"
             )
-            env_vars["UV_INDEX_CORP_AIRLOCK_DEFAULT_PASSWORD"] = token
+            env_vars["UV_INDEX_PRIVATE_DEFAULT_PASSWORD"] = token
         return env_vars
 
     async def initialize(self) -> None:
