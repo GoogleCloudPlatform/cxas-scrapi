@@ -184,12 +184,8 @@ class AntigravityAgentHeadTest(unittest.TestCase):
         os.environ["GCLOUD_PROJECT"] = "original-project"
         os.environ["GOOGLE_CLOUD_PROJECT"] = "original-project"
         os.environ["UV_KEYRING_PROVIDER"] = "original-provider"
-        os.environ["UV_INDEX_PRIVATE_DEFAULT_USERNAME"] = (
-            "original-username"
-        )
-        os.environ["UV_INDEX_PRIVATE_DEFAULT_PASSWORD"] = (
-            "original-password"
-        )
+        os.environ["UV_INDEX_PRIVATE_DEFAULT_USERNAME"] = "original-username"
+        os.environ["UV_INDEX_PRIVATE_DEFAULT_PASSWORD"] = "original-password"
 
         mock_project = "mock-project-id"
         head = agent_heads.AntigravityAgentHead(
