@@ -324,7 +324,7 @@ class DFCXToolConverter:
     def convert_webhook_to_openapi_toolset(
         self, cx_webhook: dict[str, Any]
     ) -> dict[str, Any] | None:
-        """Converts a DFCX Webhook into a generalized Polysynth OpenAPI
+        """Converts a DFCX Webhook into a generalized CXAS OpenAPI
         Toolset payload.
         """
         display_name = cx_webhook.get("displayName", "unnamed_webhook")

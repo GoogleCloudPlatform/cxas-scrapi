@@ -90,10 +90,10 @@ class DFCXAgentIR(BaseModel):
 class IRMetadata(BaseModel):
     """Metadata for the migration target."""
 
-    app_name: str  # The display name of the target Polysynth app
-    app_id: str | None = None  # The UUID generated for the new Polysynth app
+    app_name: str  # The display name of the target CXAS app
+    app_id: str | None = None  # The UUID generated for the new CXAS app
     app_resource_name: str | None = (
-        None  # The full resource name of the Polysynth app
+        None  # The full resource name of the CXAS app
     )
     default_model: str = "gemini-2.5-flash-001"
 

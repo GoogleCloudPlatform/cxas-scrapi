@@ -37,7 +37,7 @@ class AIAugment:
     async def generate_agent_description(
         self, playbook_data: dict[str, Any]
     ) -> str | None:
-        """Generates a concise, one-sentence description for a Polysynth agent
+        """Generates a concise, one-sentence description for a CXAS agent
 
         based on its source DFCX Playbook's goal and instructions.
 

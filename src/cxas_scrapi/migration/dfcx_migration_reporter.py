@@ -180,11 +180,11 @@ migration process,
     def generate_markdown(self) -> str:
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         md = [
-            "# Polysynth Migration Audit Report",
+            "# CXAS Migration Audit Report",
             f"**Generated:** `{timestamp}`\n",
             "## 📦 App Details",
             f"- **Source DFCX Agent:** `{self.app_info.get('source', 'N/A')}`",
-            f"- **Target Polysynth App:** "
+            f"- **Target CXAS App:** "
             f"`{self.app_info.get('target_name', 'N/A')}`",
             f"- **Target App ID:** `{self.app_info.get('target_id', 'N/A')}`\n",
         ]
@@ -217,7 +217,7 @@ migration process,
         md.extend(
             [
                 "## 🔠 App Variables Migrated",
-                "| Original Name | Polysynth Name | Type |",
+                "| Original Name | CXAS Name | Type |",
                 "|---|---|---|",
             ]
         )
@@ -231,7 +231,7 @@ migration process,
         md.extend(
             [
                 "\n## 🛠️ Tools & Toolsets Migrated",
-                "| Type | Original Name | Polysynth ID | Operations / Notes |",
+                "| Type | Original Name | CXAS ID | Operations / Notes |",
                 "|---|---|---|---|",
             ]
         )
@@ -247,7 +247,7 @@ migration process,
         md.extend(
             [
                 "\n## 🤖 Agents Migrated",
-                "| Original Playbook/Flow | Polysynth Agent ID | "
+                "| Original Playbook/Flow | CXAS Agent ID | "
                 "Model | Generated Description |",
                 "|---|---|---|---|",
             ]
@@ -305,7 +305,7 @@ migration process,
                 "The following items are not covered by this tool and must "
                 "be migrated manually:",
                 "1. **Examples:** If the source app has any examples, they "
-                "need to be recreated in Polysynth.",
+                "need to be recreated in CXAS.",
                 "2. **Flows:** If the source app has any flows, they need "
                 "to be manually transitioned or implemented.",
             ]

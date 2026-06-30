@@ -305,7 +305,7 @@ Expected_Behavior
         "system": """You are the Principal Conversational AI Systems \
 Architect.
     Your role is to analyze a legacy Dialogflow CX (DFCX) Flow and design a
-    modern Polysynth/CXAS Agent Architecture Blueprint.
+    modern CXAS Agent Architecture Blueprint.
 
     ### ENTERPRISE ARCHITECTURE STANDARDS
     1. **Hub-and-Spoke / Specialization**: Every agent must have a specific,
@@ -415,7 +415,7 @@ returns 500'",
 
     STEP_2B_INSTRUCTIONS_EXPERT = {
         "system": """You are a Principal Conversational AI Prompt Engineer \
-and CXAS/Polysynth Architect.
+and CXAS Architect.
     Your task: translate a deterministic DFCX Flow into a CANONICAL CXAS
     instruction file (lowercase taskflow XML) for a generative AI agent.
 
@@ -781,7 +781,7 @@ here using the patterns provided\n    return None"
         "system": """You are the Principal Conversational AI Systems \
 Architect.
     Your role is to analyze a legacy Dialogflow CX (DFCX) Flow and design a
-    modern Polysynth/CXAS Agent Architecture Blueprint.
+    modern CXAS Agent Architecture Blueprint.
 
     ### ENTERPRISE ARCHITECTURE STANDARDS
     1. **Hub-and-Spoke / Specialization**: Every agent must have a specific,
@@ -975,7 +975,7 @@ returns 500'",
 
     STEP_3B_CONSOLIDATION_INSTRUCTIONS = {
         "system": """You are a Principal Conversational AI Prompt Engineer \
-and CXAS/Polysynth Architect.
+and CXAS Architect.
     Your task: translate a deterministic DFCX Flow into a CANONICAL CXAS
     instruction file (lowercase taskflow XML) for a generative AI agent.
 
@@ -1225,7 +1225,7 @@ and CXAS/Polysynth Architect.
 
     AGENT_DESCRIPTION = {
         "system": """You are an expert AI agent architect.
-        Your task is to create a concise, one-sentence description for a Polysynth agent based on its detailed instructions and goal.
+        Your task is to create a concise, one-sentence description for a CXAS agent based on its detailed instructions and goal.
         The generated description will be used by either a parent 'router' agent to decide when to transfer a user to this specialist agent, or by other LLM agents to determine if they should route a task to this agent. The description must be clear, accurate, and focus on the agent's primary capability.
         Do not use conversational language. Output only the single sentence description.""",
         "template": """
@@ -1319,14 +1319,14 @@ and CXAS/Polysynth Architect.
 
         The input JSON contains two top-level keys:
         1.  `golden_set`: The ground-truth test script, detailing scenarios and the expected agent actions (text or tool calls) for each turn.
-        2.  `conversation_results`: The actual turn-by-turn logs from running the `golden_set` against two agents: a source 'DFCX' agent and a target 'Polysynth' agent.
+        2.  `conversation_results`: The actual turn-by-turn logs from running the `golden_set` against two agents: a source 'DFCX' agent and a target 'CXAS' agent.
 
         Your report MUST have two sections:
 
         **1. Per-Scenario Analysis:**
         Iterate through each conversation scenario. For each one:
         - Announce the scenario's goal (e.g., `### Scenario 1: Full happy path...`).
-        - For EACH agent (DFCX and Polysynth), provide a sub-section with the following evaluations based on the metrics library:
+        - For EACH agent (DFCX and CXAS), provide a sub-section with the following evaluations based on the metrics library:
             - **Conversation Correctness (Score 1-5):** Did the agent follow the expected conversational flow and achieve the scenario's goal? (1=Completely failed, 5=Perfectly achieved).
             - **Agent Response Agreement (Score 1-5):** How semantically similar were the agent's text responses to the golden responses? (1=Totally different, 5=Identical meaning).
             - **Conversation Fluency (Score 1-5):** Was the conversation natural, coherent, and not repetitive? (1=Confusing/robotic, 5=Very natural).
@@ -1334,8 +1334,8 @@ and CXAS/Polysynth Architect.
 
         **2. Overall Summary & Recommendations:**
         - **High-Level Summary:** Write a paragraph comparing the two agents' overall performance based on the qualitative metrics you just scored.
-        - **Key Findings:** Provide a bulleted list of the most important observations (e.g., "Polysynth struggled with multi-turn context," or "DFCX was less fluent").
-        - **Final Recommendation:** Conclude with a clear recommendation. Is the Polysynth agent ready, ready with conditions, or does it need significant work?
+        - **Key Findings:** Provide a bulleted list of the most important observations (e.g., "CXAS struggled with multi-turn context," or "DFCX was less fluent").
+        - **Final Recommendation:** Conclude with a clear recommendation. Is the CXAS agent ready, ready with conditions, or does it need significant work?
 
         Generate ONLY the Markdown report. Do not include any other text or conversational filler.
         """,
