@@ -83,7 +83,7 @@ class EvalUtils(Evaluations):
             app_name: CXAS App ID
                 (projects/{project}/locations/{location}/apps/{app}).
             env: Environment override (default: PROD).
-            **kwargs: Additional arguments passed to the parent class
+            **kwargs (Any): Additional arguments passed to the parent class
                 (Evaluations).
         """
         super().__init__(app_name=app_name, env=env, **kwargs)
