@@ -18,6 +18,7 @@ from typing import Any
 
 import requests
 import yaml
+from google.api_core import exceptions as google_exceptions
 from google.cloud.ces_v1beta import (
     AgentServiceClient,
     ToolServiceClient,
@@ -191,18 +192,24 @@ class Tools(Apps):
                         )
                         tools_dict.update(openapi_tools)
                 else:
-                    toolset_tools = self.retrieve_tools(
-                        tool.name.split("/")[-1]
-                    )
-                    for toolset_tool in toolset_tools.tools:
-                        if reverse:
-                            tools_dict[toolset_tool.display_name] = (
-                                toolset_tool.name
-                            )
-                        else:
-                            tools_dict[toolset_tool.name] = (
-                                toolset_tool.display_name
-                            )
+                    try:
+                        toolset_tools = self.retrieve_tools(
+                            tool.name.split("/")[-1]
+                        )
+                        for toolset_tool in toolset_tools.tools:
+                            if reverse:
+                                tools_dict[toolset_tool.display_name] = (
+                                    toolset_tool.name
+                                )
+                            else:
+                                tools_dict[toolset_tool.name] = (
+                                    toolset_tool.display_name
+                                )
+                    except google_exceptions.GoogleAPICallError as e:
+                        print(
+                            f"[WARNING] Failed to retrieve tools for toolset"
+                            f" {tool.display_name}: {e}"
+                        )
             elif reverse:
                 tools_dict[tool.display_name] = tool.name
             else:

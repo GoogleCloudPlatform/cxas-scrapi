@@ -15,6 +15,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from google.api_core import exceptions as google_exceptions
 
 from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT
 from cxas_scrapi.core.tools import Tools
@@ -39,28 +40,66 @@ def test_list_tools(mock_client_cls):
     assert res[1].name == "projects/p/locations/l/apps/A/toolsets/ts1"
 
 
-# @patch("cxas_scrapi.core.tools.AgentServiceClient")
-# def test_get_tools_map(mock_client_cls):
-#     mock_client = mock_client_cls.return_value
+@patch("cxas_scrapi.core.tools.AgentServiceClient")
+def test_get_tools_map_toolset_success(mock_client_cls):
+    mock_client = mock_client_cls.return_value
 
-#     mock_t1 = MagicMock()
-#     mock_t1.name = "projects/p/locations/l/apps/A/tools/t1"
-#     mock_t1.display_name = "n1"
-#     mock_client.list_tools.return_value = [mock_t1]
+    mock_tool = MagicMock()
+    mock_tool.name = "projects/p/locations/l/apps/A/tools/t1"
+    mock_tool.display_name = "n1"
+    mock_client.list_tools.return_value = [mock_tool]
 
-#     mock_ts1 = MagicMock()
-#     mock_ts1.name = "projects/p/locations/l/apps/A/toolsets/ts1"
-#     mock_ts1.display_name = "ns1"
-#     mock_client.list_toolsets.return_value = [mock_ts1]
+    mock_ts = MagicMock(spec=["name", "display_name"])
+    mock_ts.name = "projects/p/locations/l/apps/A/toolsets/ts1"
+    mock_ts.display_name = "ns1"
+    mock_client.list_toolsets.return_value = [mock_ts]
 
-#     t = Tools("projects/p/locations/l/apps/A")
-#     res = t.get_tools_map()
-#     assert res["projects/p/locations/l/apps/A/tools/t1"] == "n1"
-#     assert res["projects/p/locations/l/apps/A/toolsets/ts1"] == "ns1"
+    mock_ts_tool = MagicMock()
+    mock_ts_tool.name = "projects/p/locations/l/apps/A/toolsets/ts1/tools/tt1"
+    mock_ts_tool.display_name = "ntt1"
+    mock_retrieved = MagicMock()
+    mock_retrieved.tools = [mock_ts_tool]
 
-#     res_rev = t.get_tools_map(reverse=True)
-#     assert res_rev["n1"] == "projects/p/locations/l/apps/A/tools/t1"
-#     assert res_rev["ns1"] == "projects/p/locations/l/apps/A/toolsets/ts1"
+    t = Tools("projects/p/locations/l/apps/A")
+    with patch.object(t, "retrieve_tools", return_value=mock_retrieved):
+        res = t.get_tools_map()
+        assert res["projects/p/locations/l/apps/A/tools/t1"] == "n1"
+        assert (
+            res["projects/p/locations/l/apps/A/toolsets/ts1/tools/tt1"]
+            == "ntt1"
+        )
+
+        res_rev = t.get_tools_map(reverse=True)
+        assert res_rev["n1"] == "projects/p/locations/l/apps/A/tools/t1"
+        assert (
+            res_rev["ntt1"]
+            == "projects/p/locations/l/apps/A/toolsets/ts1/tools/tt1"
+        )
+
+
+@patch("cxas_scrapi.core.tools.AgentServiceClient")
+def test_get_tools_map_fault_tolerance(mock_client_cls):
+    mock_client = mock_client_cls.return_value
+
+    mock_tool = MagicMock()
+    mock_tool.name = "projects/p/locations/l/apps/A/tools/t1"
+    mock_tool.display_name = "n1"
+    mock_client.list_tools.return_value = [mock_tool]
+
+    mock_ts = MagicMock(spec=["name", "display_name"])
+    mock_ts.name = "projects/p/locations/l/apps/A/toolsets/ts1"
+    mock_ts.display_name = "ns1"
+    mock_client.list_toolsets.return_value = [mock_ts]
+
+    t = Tools("projects/p/locations/l/apps/A")
+    with patch.object(
+        t,
+        "retrieve_tools",
+        side_effect=google_exceptions.GoogleAPICallError("503 Outage"),
+    ):
+        res = t.get_tools_map()
+        assert res["projects/p/locations/l/apps/A/tools/t1"] == "n1"
+        assert "projects/p/locations/l/apps/A/toolsets/ts1" not in res
 
 
 @patch("cxas_scrapi.core.tools.types.GetToolRequest")
