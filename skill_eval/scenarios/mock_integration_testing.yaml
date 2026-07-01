@@ -30,6 +30,7 @@ prompt: |
   2.  **Configure the Toolset**:
       - Create `toolsets/Toolset_Payment/Toolset_Payment.json` and its OpenAPI schema at `toolsets/Toolset_Payment/open_api_toolset/open_api_schema.yaml`.
       - Define `process_payment` operation with `amount` and `currency` inputs, and `status`, `tx_id` outputs.
+      - Ensure `root_agent.json` specifies `toolIds: ["process_payment"]` inside the `toolsets` array (e.g. `{"toolset": "Toolset_Payment", "toolIds": ["process_payment"]}`).
   3.  **Define Golden Mock**:
       - Create `evals/goldens/payment_test.yaml`.
       - Define a conversation where user says "I'd like to pay 100 dollars", and the agent calls `process_payment`.
