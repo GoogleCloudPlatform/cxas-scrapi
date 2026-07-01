@@ -97,7 +97,6 @@ def test_get_tools_map_fault_tolerance(mock_client_cls):
         assert "projects/p/locations/l/apps/A/toolsets/ts1" not in res
 
 
-
 @patch("cxas_scrapi.core.tools.types.GetToolRequest")
 @patch("cxas_scrapi.core.tools.types.GetToolsetRequest")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
