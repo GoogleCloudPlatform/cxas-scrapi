@@ -18,8 +18,7 @@ from typing import Any
 
 import requests
 import yaml
-from google.api_core import exceptions as api_core_exceptions
-from google.auth import exceptions as auth_exceptions
+from google.api_core import exceptions as google_exceptions
 from google.cloud.ces_v1beta import (
     AgentServiceClient,
     ToolServiceClient,
@@ -206,7 +205,7 @@ class Tools(Apps):
                                 tools_dict[toolset_tool.name] = (
                                     toolset_tool.display_name
                                 )
-                    except Exception as e:  # pylint: disable=broad-exception-caught
+                    except google_exceptions.GoogleAPICallError as e:
                         print(
                             f"[WARNING] Failed to retrieve tools for toolset"
                             f" {tool.display_name}: {e}"
