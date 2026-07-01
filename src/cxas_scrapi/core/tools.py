@@ -191,18 +191,24 @@ class Tools(Apps):
                         )
                         tools_dict.update(openapi_tools)
                 else:
-                    toolset_tools = self.retrieve_tools(
-                        tool.name.split("/")[-1]
-                    )
-                    for toolset_tool in toolset_tools.tools:
-                        if reverse:
-                            tools_dict[toolset_tool.display_name] = (
-                                toolset_tool.name
-                            )
-                        else:
-                            tools_dict[toolset_tool.name] = (
-                                toolset_tool.display_name
-                            )
+                    try:
+                        toolset_tools = self.retrieve_tools(
+                            tool.name.split("/")[-1]
+                        )
+                        for toolset_tool in toolset_tools.tools:
+                            if reverse:
+                                tools_dict[toolset_tool.display_name] = (
+                                    toolset_tool.name
+                                )
+                            else:
+                                tools_dict[toolset_tool.name] = (
+                                    toolset_tool.display_name
+                                )
+                    except Exception as e:  # pylint: disable=broad-exception-caught
+                        print(
+                            f"[WARNING] Failed to retrieve tools for toolset"
+                            f" {tool.display_name}: {e}"
+                        )
             elif reverse:
                 tools_dict[tool.display_name] = tool.name
             else:
