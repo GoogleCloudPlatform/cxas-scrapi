@@ -100,6 +100,7 @@ def test_sim_runner_cmd_run_delegation(sim_runner):
     mock_args.parallel = 1
     mock_args.verbose = True
     mock_args.gcs_report_path = None
+    mock_args.expectations_only = False
 
     mock_templates = {
         "test_case_1": {

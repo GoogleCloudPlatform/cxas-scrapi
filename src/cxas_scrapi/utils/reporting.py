@@ -1437,6 +1437,7 @@ def generate_combined_report_from_dir(
     burst_noise_files: list[str] | None = None,
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
+    expectations_only: bool = False,
 ) -> str:
     """Load results from directory and generate combined HTML report.
 
@@ -1501,6 +1502,7 @@ def generate_combined_report_from_dir(
             burst_noise_files=burst_noise_files,
             use_tool_fakes=use_tool_fakes,
             timestamp=timestamp,
+            expectations_only=expectations_only,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed

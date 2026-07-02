@@ -62,6 +62,7 @@ def run_all_evals(
     burst_noise_files: list[str] | None = None,
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
+    expectations_only: bool = False,
 ):
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -214,7 +215,9 @@ def run_all_evals(
 
             if sim_files:
                 sim_evals = SimulationEvals(
-                    app_name=app_name, rate_limiter=rate_limiter
+                    app_name=app_name,
+                    rate_limiter=rate_limiter,
+                    expectations_only=expectations_only,
                 )
                 test_cases = []
                 for sf in sim_files:
