@@ -917,3 +917,34 @@ def test_run_all_evals_writes_timestamped_files(
         assert len(data) == 1
         assert data[0]["name"] == "sim1"
         assert data[0]["passed"] is True
+
+
+@patch("cxas_scrapi.utils.reporting.evals_runner.run_all_evals")
+def test_run_all_evals_expectations_only(mock_run_all_evals):
+    run_all_evals(
+        app_name="projects/p",
+        expectations_only=True,
+    )
+    mock_run_all_evals.assert_called_once_with(
+        app_name="projects/p",
+        modality="text",
+        sim_user_model=None,
+        eval_model=None,
+        runs=1,
+        goldens_dir=None,
+        tool_test_file=None,
+        simulation_dir=None,
+        app_dir=None,
+        output_dir=None,
+        filter_files=None,
+        filter_tags=None,
+        parallel=1,
+        golden_parallel=1,
+        golden_timeout=600,
+        include=None,
+        bg_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
+        timestamp=None,
+        expectations_only=True,
+    )

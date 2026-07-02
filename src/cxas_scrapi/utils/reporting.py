@@ -1688,6 +1688,7 @@ def run_all_evals(
     burst_noise_files: list[str] | None = None,
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
+    expectations_only: bool = False,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -1714,6 +1715,7 @@ def run_all_evals(
         during replay.
       use_tool_fakes: Use fake tools for the session if available.
       timestamp: Optional timestamp to append to result filenames.
+      expectations_only: Run simulations checking expectations only.
 
     Returns:
       A dict containing lists of results for 'simulation', 'golden', 'tool', and
@@ -1740,4 +1742,5 @@ def run_all_evals(
         burst_noise_files=burst_noise_files,
         use_tool_fakes=use_tool_fakes,
         timestamp=timestamp,
+        expectations_only=expectations_only,
     )
