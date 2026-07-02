@@ -400,9 +400,11 @@ class SimulationEvals(Apps):
         self,
         app_name: str,
         rate_limiter: RateLimiter | None = None,
+        expectations_only: bool = False,
         **kwargs,
     ):
         self.app_name = app_name
+        self.expectations_only = expectations_only
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
@@ -741,7 +743,9 @@ class SimulationEvals(Apps):
             total_exp = len(conv.expectation_results)
 
             passed = goals_completed == total_goals
-            if total_exp > 0:
+            if getattr(self, "expectations_only", False) and total_exp > 0:
+                passed = expectations_met == total_exp
+            elif total_exp > 0:
                 passed = passed and (expectations_met == total_exp)
 
             status = "PASS" if passed else "FAIL"
@@ -874,7 +878,10 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        expectations_only: bool | None = None,
     ) -> list[dict[str, Any]]:
+        if expectations_only is not None:
+            self.expectations_only = expectations_only
         """Runs multiple simulations, optionally in parallel.
 
         Args:

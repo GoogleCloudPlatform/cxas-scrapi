@@ -1355,3 +1355,102 @@ def test_simulation_evals_with_audio_expectations():
     assert conv.audio_expectations == [
         {"expectation": "audio expectation", "requires_audio_paths": True}
     ]
+
+
+def test_simulation_evals_expectations_only_passing():
+    app_name = "projects/p/locations/l/apps/a"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name, expectations_only=True)
+
+    mock_conv = MagicMock()
+    # 0/2 goals completed
+    mock_conv.steps_progress = [
+        MagicMock(status=StepStatus.IN_PROGRESS),
+        MagicMock(status=StepStatus.IN_PROGRESS),
+    ]
+    # 2/2 expectations met
+    mock_conv.expectation_results = [
+        MagicMock(status=ExpectationStatus.MET),
+        MagicMock(status=ExpectationStatus.MET),
+    ]
+    mock_conv.current_turn = 1
+    mock_conv.get_transcript.return_value = "transcript"
+
+    with patch.object(evals, "simulate_conversation", return_value=mock_conv):
+        res = evals._run_single_simulation_job(
+            tc={"name": "test"},
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+        assert res["passed"] is True
+
+
+def test_simulation_evals_expectations_only_failing():
+    app_name = "projects/p/locations/l/apps/a"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name, expectations_only=True)
+
+    mock_conv = MagicMock()
+    # 2/2 goals completed
+    mock_conv.steps_progress = [
+        MagicMock(status=StepStatus.COMPLETED),
+        MagicMock(status=StepStatus.COMPLETED),
+    ]
+    # 1/2 expectations met
+    mock_conv.expectation_results = [
+        MagicMock(status=ExpectationStatus.MET),
+        MagicMock(status=ExpectationStatus.NOT_MET),
+    ]
+    mock_conv.current_turn = 1
+    mock_conv.get_transcript.return_value = "transcript"
+
+    with patch.object(evals, "simulate_conversation", return_value=mock_conv):
+        res = evals._run_single_simulation_job(
+            tc={"name": "test"},
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+        assert res["passed"] is False
+
+
+def test_simulation_evals_expectations_only_fallback():
+    app_name = "projects/p/locations/l/apps/a"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name, expectations_only=True)
+
+    mock_conv = MagicMock()
+    # 2/2 goals completed
+    mock_conv.steps_progress = [
+        MagicMock(status=StepStatus.COMPLETED),
+        MagicMock(status=StepStatus.COMPLETED),
+    ]
+    # 0 expectations
+    mock_conv.expectation_results = []
+    mock_conv.current_turn = 1
+    mock_conv.get_transcript.return_value = "transcript"
+
+    with patch.object(evals, "simulate_conversation", return_value=mock_conv):
+        res = evals._run_single_simulation_job(
+            tc={"name": "test"},
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+        assert res["passed"] is True

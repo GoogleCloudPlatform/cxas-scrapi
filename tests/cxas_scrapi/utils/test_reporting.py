@@ -600,7 +600,7 @@ def test_run_all_evals_include_filtering(
 
     # Assert SimulationEvals was instantiated and run
     mock_sim_evals.assert_called_once_with(
-        app_name="projects/p", rate_limiter=None
+        app_name="projects/p", rate_limiter=None, expectations_only=False
     )
     mock_sim_evals.return_value.run_simulations.assert_called_once()
 
@@ -734,7 +734,7 @@ def test_run_all_evals_dict_based_simulations(
 
     # Verify SimulationEvals was instantiated and run
     mock_sim_evals.assert_called_once_with(
-        app_name="projects/p", rate_limiter=None
+        app_name="projects/p", rate_limiter=None, expectations_only=False
     )
     mock_sim_evals.return_value.run_simulations.assert_called_once_with(
         [

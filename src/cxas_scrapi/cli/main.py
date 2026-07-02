@@ -629,6 +629,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         else None,
         use_tool_fakes=getattr(args, "use_tool_fakes", False),
         timestamp=timestamp,
+        expectations_only=getattr(args, "expectations_only", False),
     )
     print(f"Combined report generated at {actual_output_path}")
 
@@ -1760,6 +1761,15 @@ def get_parser() -> argparse.ArgumentParser:
         "--timestamped",
         action="store_true",
         help="If set, nests the output files in a timestamped subdirectory.",
+    )
+    parser_report.add_argument(
+        "--expectations-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Evaluate test results using only expectations "
+            "(ignore goal success_criteria)"
+        ),
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
