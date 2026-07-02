@@ -1766,7 +1766,10 @@ def get_parser() -> argparse.ArgumentParser:
         "--expectations-only",
         action="store_true",
         default=False,
-        help="Evaluate test results using only expectations (ignore goal success_criteria)",
+        help=(
+            "Evaluate test results using only expectations "
+            "(ignore goal success_criteria)"
+        ),
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
