@@ -28,6 +28,7 @@ Usage:
 import argparse
 import json
 import os
+import random
 import sys
 import time
 import uuid
@@ -183,9 +184,6 @@ class EnhancedSimRunner(SimulationEvals):
                     # Inject variables on first turn only
                     if first_turn and session_params:
                         run_kwargs["variables"] = session_params
-                        first_turn = False
-                    else:
-                        first_turn = False
 
                     response = self.sessions_client.run(**run_kwargs)
                     break
@@ -193,11 +191,17 @@ class EnhancedSimRunner(SimulationEvals):
                     if attempt == self.max_retries - 1:
                         raise e
                     if console_logging:
-                        print(f"  Retry {attempt + 1}: {e}")
-                    time.sleep(self.retry_delay_base**attempt)
+                      print(
+                          f"  [Retry] Session {session_id[:8]} | Turn retry {attempt + 1}/{self.max_retries} "
+                          f"due to: {e}\n"
+                      )
+                    sleep_time = (self.retry_delay_base**attempt) + random.uniform(0.5, 2.0)
+                    time.sleep(sleep_time)
 
             if not response:
                 break
+
+            first_turn = False
 
             if response and getattr(response, "agent_audio_paths", None):
                 audio_path = response.agent_audio_paths.get(0)
