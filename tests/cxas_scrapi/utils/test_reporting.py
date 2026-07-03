@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib.util
 import json
 import os
+import sys
 from unittest.mock import mock_open, patch
 
 import pandas as pd
+import pytest
 
 from cxas_scrapi.utils.eval_utils import (
     COMBINED_REPORT_FILENAME,
@@ -948,3 +951,101 @@ def test_run_all_evals_expectations_only(mock_run_all_evals):
         timestamp=None,
         expectations_only=True,
     )
+
+
+@pytest.fixture
+def sim_runner():
+    scripts_dir = os.path.abspath(
+        ".agents/skills/cxas-agent-foundry/scripts"
+    )
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+
+    resolve_patch = patch(
+        "config.resolve_project_dir", return_value="/dummy/project"
+    )
+    path_patch = patch(
+        "config.get_project_path",
+        side_effect=lambda *parts: os.path.join("/dummy/project", *parts),
+    )
+    with resolve_patch, path_patch:
+        spec = importlib.util.spec_from_file_location(
+            "scrapi_sim_runner",
+            os.path.join(scripts_dir, "scrapi-sim-runner.py"),
+        )
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules["scrapi_sim_runner"] = runner
+        spec.loader.exec_module(runner)
+    return runner
+
+
+def test_sim_runner_load_sim_templates_merges_common_expectations(sim_runner):
+    yaml_data = """
+common_expectations:
+  - "Common expectation 1"
+  - "Common expectation 2"
+evals:
+  - name: sim1
+    expectations:
+      - "Specific expectation 1"
+  - name: sim2
+"""
+    with patch("os.path.exists", return_value=True):
+        with patch("builtins.open", mock_open(read_data=yaml_data)):
+            templates = sim_runner.load_sim_templates()
+
+            assert len(templates) == 2
+            assert templates["sim1"]["expectations"] == [
+                "Specific expectation 1",
+                "Common expectation 1",
+                "Common expectation 2",
+            ]
+            assert templates["sim2"]["expectations"] == [
+                "Common expectation 1",
+                "Common expectation 2",
+            ]
+
+
+def test_sim_runner_load_sim_templates_handles_missing_common_expectations(
+    sim_runner,
+):
+    yaml_data = """
+evals:
+  - name: sim1
+    expectations:
+      - "Specific expectation 1"
+"""
+    with patch("os.path.exists", return_value=True):
+        with patch("builtins.open", mock_open(read_data=yaml_data)):
+            templates = sim_runner.load_sim_templates()
+
+            assert len(templates) == 1
+            assert templates["sim1"]["expectations"] == [
+                "Specific expectation 1"
+            ]
+
+
+def test_sim_runner_load_sim_templates_backward_compatibility_with_list(
+    sim_runner,
+):
+    yaml_data = """
+- name: sim1
+  expectations:
+    - "Specific expectation 1"
+- name: sim2
+  expectations:
+    - "Specific expectation 2"
+"""
+    with patch("os.path.exists", return_value=True):
+        with patch("builtins.open", mock_open(read_data=yaml_data)):
+            templates = sim_runner.load_sim_templates()
+
+            assert len(templates) == 2
+            assert templates["sim1"]["expectations"] == [
+                "Specific expectation 1"
+            ]
+            assert templates["sim2"]["expectations"] == [
+                "Specific expectation 2"
+            ]
+
+
