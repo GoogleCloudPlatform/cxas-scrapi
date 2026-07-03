@@ -73,7 +73,13 @@ def load_sim_templates():
         data = yaml.safe_load(f)
     if isinstance(data, list):
         return {ev["name"]: ev for ev in data}
-    return {ev["name"]: ev for ev in (data or {}).get("evals", [])}
+    
+    evals = (data or {}).get("evals", [])
+    common_expectations = (data or {}).get("common_expectations", [])
+    if common_expectations:
+        for ev in evals:
+            ev.setdefault("expectations", []).extend(common_expectations)
+    return {ev["name"]: ev for ev in evals}
 
 
 def get_app_name():
@@ -442,7 +448,8 @@ def cmd_run(args):
         test_cases=test_cases,
         runs=runs,
         parallel=parallel,
-        model=model,
+        sim_user_model=model,
+        eval_model=model,
         modality=modality,
         verbose=args.verbose,
         use_tool_fakes=args.use_tool_fakes,
