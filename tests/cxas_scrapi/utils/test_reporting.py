@@ -955,9 +955,7 @@ def test_run_all_evals_expectations_only(mock_run_all_evals):
 
 @pytest.fixture
 def sim_runner():
-    scripts_dir = os.path.abspath(
-        ".agents/skills/cxas-agent-foundry/scripts"
-    )
+    scripts_dir = os.path.abspath(".agents/skills/cxas-agent-foundry/scripts")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
 
@@ -1047,5 +1045,3 @@ def test_sim_runner_load_sim_templates_backward_compatibility_with_list(
             assert templates["sim2"]["expectations"] == [
                 "Specific expectation 2"
             ]
-
-
