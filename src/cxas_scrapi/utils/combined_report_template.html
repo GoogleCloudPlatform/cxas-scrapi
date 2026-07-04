@@ -363,6 +363,27 @@
                             <pre class="tool-data">{{ result | escape }}</pre>
                           {% endif %}
                         </details>
+                      {% elif kind == "guardrail_trigger" %}
+                        {% set lbl, _, raw_json = item[1].partition(" | JSON: ") %}
+                        {% set _gattrs = json.loads(raw_json) if raw_json else {} %}
+                        {% set _gorder = ["type", "stage", "agent", "reason"] %}
+                        {% set _gskip = ["name"] %}
+                        <details class="tool-details guardrail-details">
+                          <summary class="tool-summary guardrail-summary">&#10071; <b>Guardrail Triggered:</b> {{ lbl | escape }}</summary>
+                          <dl class="guardrail-kv">
+                            {% for key in _gorder %}
+                              {% set val = _gattrs.get(key) %}
+                              {% if val is not none and val != "" and val != false %}
+                                <dt>{{ key }}</dt><dd>{{ val | string | escape }}</dd>
+                              {% endif %}
+                            {% endfor %}
+                            {% for key, val in _gattrs.items() %}
+                              {% if key not in _gskip and key not in _gorder and val is not none and val != "" and val != false %}
+                                <dt>{{ key }}</dt><dd>{{ val | string | escape }}</dd>
+                              {% endif %}
+                            {% endfor %}
+                          </dl>
+                        </details>
                       {% else %}
                         <div class="system">{{ item[1] | escape }}</div>
                       {% endif %}

@@ -37,7 +37,9 @@ from typing import Any
 
 import yaml
 from config import get_project_path, load_app_name
+from google.protobuf.json_format import MessageToDict
 
+from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.evals.simulation_evals import (
     LLMUserConversation,
     SimulationEvals,
@@ -108,7 +110,53 @@ def build_test_case(ev: dict[str, Any]) -> dict[str, Any] | None:
 
 
 class EnhancedSimRunner(SimulationEvals):
-    """Extended SimulationEvals that injects session variables."""
+    """Extended SimulationEvals that injects session variables and extracts triggered guardrails."""
+
+    def _search_guardrail_spans(self, span_dict: dict[str, Any]) -> list[dict[str, Any]]:
+        """Recursively searches a trace span dictionary for all guardrail evaluation spans."""
+        if not isinstance(span_dict, dict):
+            return []
+        spans = []
+        attrs = span_dict.get("attributes", {})
+        if span_dict.get("name") == "Guardrail" and any(k in attrs for k in ("type", "guardrailType", "guardrail_type")):
+            spans.append(span_dict)
+        child_spans = span_dict.get("childSpans", span_dict.get("child_spans", []))
+        for child in child_spans:
+            spans.extend(self._search_guardrail_spans(child))
+        return spans
+
+    def _parse_agent_response(self, response: Any) -> tuple:
+        parsed = ParsedSessionResponse(response, tools_map=self.tools_map)
+        agent_text = parsed.consolidated_agent_text
+        trace_chunks = parsed.detailed_trace
+        session_ended = parsed.session_ended
+        triggered_guardrails = []
+
+        for output in response.outputs:
+            diagnostic_info = getattr(output, "diagnostic_info", None)
+            if diagnostic_info and hasattr(diagnostic_info, "root_span"):
+                root_span = diagnostic_info.root_span
+                try:
+                    span_dict = MessageToDict(root_span._pb) if hasattr(root_span, "_pb") else MessageToDict(root_span)
+                except Exception:
+                    span_dict = {}
+
+                for g_span in self._search_guardrail_spans(span_dict):
+                    attrs = g_span.get("attributes", {})
+                    if attrs.get("triggered"):
+                        g_name = attrs.get("name", "Unknown Guardrail")
+                        g_type = attrs.get("type", attrs.get("guardrailType", attrs.get("guardrail_type", "Unknown")))
+                        minimal_span = {
+                            "name": g_name,
+                            "type": g_type,
+                            "stage": attrs.get("stage"),
+                            "agent": attrs.get("agent"),
+                            "reason": attrs.get("reason"),
+                        }
+                        triggered_guardrails.append(minimal_span)
+                        trace_chunks.append(f"Guardrail Trigger: {g_name} ({g_type}) | JSON: {json.dumps(minimal_span)}")
+
+        return agent_text, trace_chunks, session_ended, parsed.tool_calls, triggered_guardrails
 
     @cleanup_session_dir
     def __init__(self, *args: Any, expectations_only: bool = False, **kwargs: Any):
@@ -151,6 +199,7 @@ class EnhancedSimRunner(SimulationEvals):
         )
 
         eval_conv.agent_audio_paths = {}
+        eval_conv.guardrail_details = []
         current_sim_turn = 0
 
         session_params = test_case.get("session_parameters", {})
@@ -211,9 +260,10 @@ class EnhancedSimRunner(SimulationEvals):
             if console_logging:
                 self.sessions_client.parse_result(response)
 
-            agent_text, trace_chunks, session_ended, tool_calls = (
+            agent_text, trace_chunks, session_ended, tool_calls, triggered_guardrails = (
                 self._parse_agent_response(response)
             )
+            eval_conv.guardrail_details.extend(triggered_guardrails)
             detailed_trace.append("\n".join(trace_chunks))
 
             if session_ended:
@@ -442,7 +492,8 @@ def cmd_run(args):
         test_cases=test_cases,
         runs=runs,
         parallel=parallel,
-        model=model,
+        sim_user_model=model,
+        eval_model=model,
         modality=modality,
         verbose=args.verbose,
         use_tool_fakes=args.use_tool_fakes,

@@ -256,11 +256,20 @@ def _parse_trace(trace, tools_map):
                         formatted_line[len("Agent Transfer:") :].strip(),
                     )
                 )
+            elif formatted_line.startswith("Custom Payload (Output):"):
+                continue
             elif formatted_line.startswith("Custom Payload:"):
                 parsed_lines.append(
                     (
                         "custom_payload",
                         formatted_line[len("Custom Payload:") :].strip(),
+                    )
+                )
+            elif formatted_line.startswith("Guardrail Trigger:"):
+                parsed_lines.append(
+                    (
+                        "guardrail_trigger",
+                        formatted_line[len("Guardrail Trigger:") :].strip(),
                     )
                 )
             else:
@@ -339,6 +348,41 @@ def _render_merged_items(merged):
                 f'<pre class="tool-data">{_escape(item[1])}</pre>'
                 "</details>\n"
             )
+        elif kind == "guardrail_trigger":
+            lbl, _, raw_json = item[1].partition(" | JSON: ")
+            try:
+                attrs = json.loads(raw_json)
+            except Exception:
+                attrs = {}
+            _SKIP = {"name"}
+            _ORDER = ["type", "stage", "agent", "reason"]
+            kv_rows = ""
+            for key in _ORDER:
+                val = attrs.get(key)
+                if val not in (None, "", False):
+                    kv_rows += (
+                        f"<dt>{_escape(key)}</dt><dd>{_escape(str(val))}</dd>"
+                    )
+            for key, val in attrs.items():
+                if (
+                    key not in _SKIP
+                    and key not in _ORDER
+                    and val not in (None, "", False)
+                ):
+                    kv_rows += (
+                        f"<dt>{_escape(key)}</dt><dd>{_escape(str(val))}</dd>"
+                    )
+            kv_html = (
+                f'<dl class="guardrail-kv">{kv_rows}</dl>' if kv_rows else ""
+            )
+            html += (
+                '<details class="tool-details guardrail-details">'
+                '<summary class="tool-summary guardrail-summary">'
+                "&#10071; <b>Guardrail Triggered:</b>"
+                f" {_escape(lbl)}</summary>"
+                f"{kv_html}"
+                "</details>\n"
+            )
         else:
             html += f'<div class="system">{_escape(item[1])}</div>\n'
     return html
@@ -370,6 +414,7 @@ def _get_run_detail(r, ces_base, tools_map):
     run_cls = "pass" if r.get("passed") else "fail"
     session_id = r.get("session_id", "")
     html += '<details class="run-detail">\n'
+    g_count = len(r.get("guardrail_details", []))
     html += (
         f"<summary>Run {r['run']} — "
         f'<span class="{run_cls}">'
@@ -378,7 +423,8 @@ def _get_run_detail(r, ces_base, tools_map):
     html += (
         f" | goals: {r.get('goals', '?')} | "
         f"expectations: {r.get('expectations', '?')} | "
-        f"turns: {r.get('turns', '?')}</summary>\n"
+        f"turns: {r.get('turns', '?')} | "
+        f"guardrails: {g_count}</summary>\n"
     )
 
     html += _render_session_link(session_id, ces_base)
@@ -819,6 +865,13 @@ def generate_combined_html_report(
                             parsed.append(("tool_call", line))
                         elif line.startswith("Tool Response"):
                             parsed.append(("tool_resp", line))
+                        elif line.startswith("Guardrail Trigger:"):
+                            parsed.append(
+                                (
+                                    "guardrail_trigger",
+                                    line[len("Guardrail Trigger:") :].strip(),
+                                )
+                            )
                         else:
                             parsed.append(("system", line))
 
