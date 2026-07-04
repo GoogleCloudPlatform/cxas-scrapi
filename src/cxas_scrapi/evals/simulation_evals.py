@@ -490,6 +490,7 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        historical_contexts: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
         """Sends a request to the CES Agent with exponential backoff for
         transient errors.
@@ -508,6 +509,7 @@ class SimulationEvals(Apps):
                         background_noise_file=background_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
+                        historical_contexts=historical_contexts,
                     )
                 elif user_utterance.startswith("dtmf:"):
                     response = self.sessions_client.run(
@@ -520,6 +522,7 @@ class SimulationEvals(Apps):
                         background_noise_file=background_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
+                        historical_contexts=historical_contexts,
                     )
                 else:
                     response = self.sessions_client.run(
@@ -532,6 +535,7 @@ class SimulationEvals(Apps):
                         background_noise_file=background_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
+                        historical_contexts=historical_contexts,
                     )
                 break
             except Exception as e:
@@ -609,6 +613,9 @@ class SimulationEvals(Apps):
         detailed_trace = []
         detailed_trace.append(f"User: {user_utterance}")
 
+        historical_contexts = test_case.get("historical_contexts", None)
+        is_first_turn = True
+
         while user_utterance:
             response = self._send_request_with_retry(
                 session_id,
@@ -621,7 +628,9 @@ class SimulationEvals(Apps):
                 background_noise_file=background_noise_file,
                 burst_noise_files=burst_noise_files,
                 use_tool_fakes=use_tool_fakes,
+                historical_contexts=historical_contexts if is_first_turn else None,
             )
+            is_first_turn = False
             if not response:
                 break
 
