@@ -51,6 +51,21 @@ SUMMARIZE_RESPONSE_PROMPT = (
     "does in this turn."
 )
 
+BATCH_SUMMARIZE_PROMPT = (
+    "For each numbered interaction below, summarize what the agent "
+    "response accomplishes in one short sentence. Focus on the "
+    "BEHAVIOR or ACTION, not exact wording. Each summary will be "
+    "used to verify that a different version of this agent behaves "
+    "equivalently.\n\n"
+    "{interactions}\n\n"
+    "Return exactly one summary per interaction, numbered to match. "
+    'Each summary must start with "Agent ". Example format:\n'
+    "1. Agent greets the user and offers help.\n"
+    "2. Agent transfers the call to billing.\n"
+)
+
+BATCH_SIZE = 20
+
 
 class DFCXTestConverter:
     """Converts DFCX test cases into CXAS TurnTestCase objects.
@@ -78,6 +93,9 @@ class DFCXTestConverter:
         self, source: DFCXAgentIR
     ) -> tuple[dict[str, list[TurnTestCase]], dict[str, Any]]:
         """Convert all DFCX test cases and return (tests_by_agent, report)."""
+        if self._gemini is not None:
+            self._batch_summarize(source.test_cases)
+
         tests_by_agent: dict[str, list[TurnTestCase]] = {}
         skipped: list[dict[str, str]] = []
         seen_names: dict[str, int] = {}
@@ -349,6 +367,100 @@ class DFCXTestConverter:
         )
         self._summarize_cache[cache_key] = summary
         return summary
+
+    def _collect_summarization_pairs(
+        self, test_cases: list[dict]
+    ) -> list[tuple[str, str]]:
+        """Extract unique (user_text, response_text) pairs from all
+        test case turns that would need Gemini summarization."""
+        seen: set[str] = set()
+        pairs: list[tuple[str, str]] = []
+        for tc in test_cases:
+            turns = tc.get("testCaseConversationTurns", [])
+            for turn in turns:
+                user_input = turn.get("userInput", {})
+                if self._is_empty_text_turn(user_input):
+                    continue
+                output = turn.get("virtualAgentOutput", {})
+                response_text = self._extract_response_text(output)
+                if not response_text:
+                    continue
+                inp = user_input.get("input", {})
+                user_text = ""
+                if "text" in inp:
+                    text_obj = inp["text"]
+                    user_text = (
+                        text_obj.get("text", "")
+                        if isinstance(text_obj, dict)
+                        else ""
+                    )
+                elif "dtmf" in inp:
+                    dtmf = inp["dtmf"]
+                    user_text = (
+                        dtmf.get("digits", "") if isinstance(dtmf, dict) else ""
+                    )
+                cache_key = f"{user_text}|||{response_text}"
+                if cache_key not in seen:
+                    seen.add(cache_key)
+                    pairs.append((user_text, response_text))
+        return pairs
+
+    def _batch_summarize(self, test_cases: list[dict]) -> None:
+        """Pre-fill the summarization cache using batched Gemini
+        calls. Each call summarizes up to BATCH_SIZE interactions."""
+        pairs = self._collect_summarization_pairs(test_cases)
+        if not pairs:
+            return
+
+        total_batches = (len(pairs) + BATCH_SIZE - 1) // BATCH_SIZE
+        logger.info(
+            "[TestConverter] Batch-summarizing %d unique responses "
+            "in %d calls (batch_size=%d)",
+            len(pairs),
+            total_batches,
+            BATCH_SIZE,
+        )
+
+        for batch_idx in range(0, len(pairs), BATCH_SIZE):
+            batch = pairs[batch_idx : batch_idx + BATCH_SIZE]
+            interactions = "\n".join(
+                f'{i + 1}. User: "{u or "(conversation start)"}"\n'
+                f'   Agent: "{r}"'
+                for i, (u, r) in enumerate(batch)
+            )
+            prompt = BATCH_SUMMARIZE_PROMPT.format(interactions=interactions)
+            result = self._gemini.generate(prompt, temperature=0.0)
+            summaries = self._parse_batch_response(result, len(batch))
+            for (user_text, response_text), summary in zip(
+                batch, summaries, strict=True
+            ):
+                cache_key = f"{user_text}|||{response_text}"
+                self._summarize_cache[cache_key] = summary
+
+        logger.info(
+            "[TestConverter] Cache pre-filled with %d summaries",
+            len(self._summarize_cache),
+        )
+
+    @staticmethod
+    def _parse_batch_response(
+        response: str | None, expected_count: int
+    ) -> list[str]:
+        """Parse numbered lines from a batch summarization response.
+        Falls back to generic summaries for unparseable lines."""
+        if not response:
+            return ["Agent responds appropriately to the user"] * expected_count
+
+        lines = response.strip().splitlines()
+        summaries: list[str] = []
+        for line in lines:
+            cleaned = re.sub(r"^\d+[\.\)]\s*", "", line.strip())
+            if cleaned:
+                summaries.append(cleaned)
+
+        while len(summaries) < expected_count:
+            summaries.append("Agent responds appropriately to the user")
+        return summaries[:expected_count]
 
     def _flow_to_agent(self, flow_name: str) -> str | None:
         if flow_name in self._flow_map:

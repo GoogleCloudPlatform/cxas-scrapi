@@ -102,7 +102,7 @@ def _empty_text_turn(flow=None):
 
 def _mock_gemini(summary="Agent greets the user"):
     mock = MagicMock()
-    mock.generate.return_value = summary
+    mock.generate.return_value = f"1. {summary}"
     return mock
 
 
@@ -269,6 +269,57 @@ def test_behavioral_fallback_on_gemini_failure():
     exp = tc.turns[0].expectations[0]
     assert isinstance(exp, str)
     assert "Agent responds appropriately" in exp
+
+
+def test_batch_summarize_multiple_unique():
+    ir = _make_ir("RootAgent")
+    source = _make_source(
+        {
+            "displayName": "test1",
+            "testConfig": {"flow": "RootAgent"},
+            "testCaseConversationTurns": [
+                _text_turn(
+                    "hello",
+                    responses=["Welcome! How can I help?"],
+                    flow="RootAgent",
+                ),
+            ],
+        },
+        {
+            "displayName": "test2",
+            "testConfig": {"flow": "RootAgent"},
+            "testCaseConversationTurns": [
+                _text_turn(
+                    "check balance",
+                    responses=["Your balance is $100."],
+                    flow="RootAgent",
+                ),
+            ],
+        },
+    )
+    gemini = MagicMock()
+    gemini.generate.return_value = (
+        "1. Agent greets the user and offers help.\n"
+        "2. Agent reports the account balance."
+    )
+    converter = DFCXTestConverter(ir, gemini_client=gemini)
+    tests_by_agent, _ = converter.convert_all(source)
+
+    assert gemini.generate.call_count == 1
+    tc1 = tests_by_agent["RootAgent"][0]
+    tc2 = tests_by_agent["RootAgent"][1]
+    assert tc1.turns[0].expectations[0] == (
+        "Agent greets the user and offers help."
+    )
+    assert tc2.turns[0].expectations[0] == (
+        "Agent reports the account balance."
+    )
+
+
+def test_parse_batch_response_fallback():
+    result = DFCXTestConverter._parse_batch_response(None, 3)
+    assert len(result) == 3
+    assert all("Agent responds" in s for s in result)
 
 
 # --- Event input ---
