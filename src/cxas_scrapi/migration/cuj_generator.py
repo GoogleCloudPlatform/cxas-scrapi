@@ -3,6 +3,7 @@
 # Adapts the dialogue synthesis rules and transcript schemas defined in the
 # cxas-cuj-report-generator skill (.agents/skills/cxas-cuj-report-generator)
 # to predict representative multi-turn conversations for canvas pre-population.
+import asyncio
 import io
 import json
 import logging
@@ -174,14 +175,16 @@ class CUJGenerator:
             f"{len(batches)} batch(es) for processing."
         )
 
-        # 3. Predict scenarios for each batch
+        # 3. Predict scenarios across all batches concurrently
         batch_scenarios = []
-        for idx, batch_tree in enumerate(batches):
+
+        async def _predict_batch(
+            idx: int, batch_tree: str
+        ) -> list[dict[str, Any]]:
             logger.info(
                 f"   [Batch {idx + 1}/{len(batches)}] Querying Gemini for predicted CUJ graphs "
                 "(this may take a few moments)..."
             )
-
             prompt = TEMPLATE.format(
                 agent_name=agent_name,
                 categorized_json=json.dumps(categorized_utterances, indent=2),
@@ -203,12 +206,18 @@ class CUJGenerator:
                     json_start = json_str.find("[")
                     if json_start != -1:
                         json_str = json_str[json_start:]
-                    scenarios = json.loads(json_str)
-                    batch_scenarios.extend(scenarios)
+                    return json.loads(json_str)
             except Exception as e:
                 logger.warning(
                     f"⚠️ Batch {idx + 1} scenario prediction failed: {e}"
                 )
+            return []
+
+        results = await asyncio.gather(
+            *(_predict_batch(i, bt) for i, bt in enumerate(batches))
+        )
+        for res in results:
+            batch_scenarios.extend(res)
 
         # 4. Consolidate results if we have multiple batches
         if len(batches) <= 1:

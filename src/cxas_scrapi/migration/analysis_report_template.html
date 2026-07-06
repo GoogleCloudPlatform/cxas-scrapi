@@ -366,7 +366,9 @@
   </div>
   <nav class="tabs" id="tabs">
     <div class="tab active" data-tab="overview">Overview</div>
+    {% if experimental_agent_xprs %}
     <div class="tab" data-tab="xprs" id="tab-xprs" style="display:none;">Agent xprs <span class="tab-badge" id="xprs-count"></span></div>
+    {% endif %}
     <div class="tab" data-tab="agents">CXAS Agents <span class="tab-badge" id="agents-count"></span></div>
     <div class="tab" data-tab="tools">Tools &amp; Variables <span class="tab-badge" id="tv-count"></span></div>
     <div class="tab" data-tab="evals">Evals <span class="tab-badge" id="evals-count"></span></div>
@@ -379,13 +381,15 @@
 </header>
 
 <main>
+  {% if experimental_agent_xprs %}
   <div id="migration-update-banner" style="display:none; background: #eff6ff; border-bottom: 1px solid #93c5fd; color: #1e40af; padding: 12px 24px; font-weight: 500; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 200; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);">
     <span style="display: flex; align-items: center; gap: 8px;">
-      <span style="font-size: 18px;">✨</span>
-      <span><strong>Agent xprs Ready:</strong> Early harvested utterances and predicted CUJs are now available!</span>
+      <span style="font-size: 18px;" id="xprs-placeholder-icon">✨</span>
+      <span><strong id="xprs-placeholder-title">Agent xprs Ready:</strong> <span id="xprs-placeholder-desc">Early harvested utterances and predicted CUJs are now available!</span></span>
     </span>
     <button onclick="window.location.reload()" style="background: #2563eb; color: #fff; border: none; padding: 6px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">🔄 Reload Page to View</button>
   </div>
+  {% endif %}
   <div id="grouping-update-banner" style="display:none; background: #f0fdf4; border-bottom: 1px solid #86efac; color: #166534; padding: 12px 24px; font-weight: 500; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 200; box-shadow: 0 4px 12px rgba(22, 101, 52, 0.15);">
     <span style="display: flex; align-items: center; gap: 8px;">
       <span style="font-size: 18px;">📋</span>
@@ -506,9 +510,11 @@
   </section>
 
   <!-- ===================== AGENT XPRS DESIGNER ===================== -->
+  {% if experimental_agent_xprs %}
   <section class="panel" id="panel-xprs">
     {% include 'xprs_designer_template.html' %}
   </section>
+  {% endif %}
 
   <!-- ===================== DFCX SOURCE ===================== -->
 
@@ -1750,6 +1756,10 @@
     if (typeof window.renderXprsTab === "function") {
       window.renderXprsTab();
     }
+    const tabXprs = document.getElementById('tab-xprs');
+    if (tabXprs && DATA.xprs_designer_data) tabXprs.style.display = '';
+    const tabGrp = document.getElementById('tab-grouping');
+    if (tabGrp && DATA.pending_grouping?.groupings && Object.keys(DATA.pending_grouping.groupings).length > 0) tabGrp.style.display = '';
   }
 
   renderAll();
@@ -1769,16 +1779,16 @@
         const response = await fetch(jsonUrl, { cache: 'no-store' });
         if (response.ok) {
           const freshData = await response.json();
-          const xprsLenFresh = freshData.xprs_designer_data?.raw?.length || 0;
-          const xprsLenCurr = DATA.xprs_designer_data?.raw?.length || 0;
-          const scLenFresh = freshData.xprs_designer_data?.scenarios?.length || 0;
-          const scLenCurr = DATA.xprs_designer_data?.scenarios?.length || 0;
-          const grpLenFresh = freshData.pending_grouping?.groupings ? Object.keys(freshData.pending_grouping.groupings).length : 0;
-          const grpLenCurr = DATA.pending_grouping?.groupings ? Object.keys(DATA.pending_grouping.groupings).length : 0;
-          if (freshData.generated_at !== lastGeneratedAt || xprsLenFresh !== xprsLenCurr || scLenFresh !== scLenCurr || grpLenFresh !== grpLenCurr) {
+          const freshUtteranceCount = freshData.xprs_designer_data?.raw?.length || 0;
+          const currentUtteranceCount = DATA.xprs_designer_data?.raw?.length || 0;
+          const freshScenarioCount = freshData.xprs_designer_data?.scenarios?.length || 0;
+          const currentScenarioCount = DATA.xprs_designer_data?.scenarios?.length || 0;
+          const freshGroupingCount = freshData.pending_grouping?.groupings ? Object.keys(freshData.pending_grouping.groupings).length : 0;
+          const currentGroupingCount = DATA.pending_grouping?.groupings ? Object.keys(DATA.pending_grouping.groupings).length : 0;
+          if (freshData.generated_at !== lastGeneratedAt || freshUtteranceCount !== currentUtteranceCount || freshScenarioCount !== currentScenarioCount || freshGroupingCount !== currentGroupingCount) {
             console.log("Found fresh migration update: " + freshData.generated_at);
-            const xprsJustReady = (xprsLenFresh > 0 && xprsLenCurr === 0) || (scLenFresh > 0 && scLenCurr === 0);
-            const groupingJustReady = (grpLenFresh > 0 && grpLenCurr === 0);
+            const xprsJustReady = (freshUtteranceCount > 0 && currentUtteranceCount === 0) || (freshScenarioCount > 0 && currentScenarioCount === 0);
+            const groupingJustReady = (freshGroupingCount > 0 && currentGroupingCount === 0);
             lastGeneratedAt = freshData.generated_at;
             Object.assign(DATA, freshData);
             renderAll();

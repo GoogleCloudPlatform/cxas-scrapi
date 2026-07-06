@@ -16,6 +16,7 @@
 """Early harvester and semantic categorizer of legacy conversational utterances."""
 
 import ast
+import asyncio
 import json
 import logging
 import re
@@ -409,46 +410,64 @@ class UtteranceCollector:
             f"Sending {len(raw_utterances)} utterances to Gemini for semantic bucketing..."
         )
 
-        prompt = CLASSIFY_TEMPLATE.format(
-            raw_utterances_json=json.dumps(raw_utterances, indent=2)
+        chunk_size = 150
+        chunks = [
+            raw_utterances[i : i + chunk_size]
+            for i in range(0, len(raw_utterances), chunk_size)
+        ]
+
+        async def _classify_chunk(chunk_list: list[str]) -> dict[str, Any]:
+            prompt = CLASSIFY_TEMPLATE.format(
+                raw_utterances_json=json.dumps(chunk_list, indent=2)
+            )
+            response_raw = await self.gemini.generate_async(
+                prompt=prompt,
+                system_prompt=CLASSIFY_SYSTEM_PROMPT,
+                model_name="gemini-3.5-flash",
+            )
+            if response_raw:
+                try:
+                    json_str = (
+                        response_raw.replace("```json", "")
+                        .replace("```", "")
+                        .strip()
+                    )
+                    json_start = json_str.find("{")
+                    if json_start != -1:
+                        json_str = json_str[json_start:]
+                    return json.loads(json_str)
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ Error parsing Gemini classification JSON: {e}. Fallbacking to rule-based classification."
+                    )
+                    return self.rule_based_fallback(chunk_list)
+            return self.rule_based_fallback(chunk_list)
+
+        chunk_results = await asyncio.gather(
+            *(_classify_chunk(chunk) for chunk in chunks)
         )
 
-        response_raw = await self.gemini.generate_async(
-            prompt=prompt,
-            system_prompt=CLASSIFY_SYSTEM_PROMPT,
-            model_name="gemini-3.5-flash",
-        )
+        merged_categorized: dict[str, list[str]] = {}
+        merged_rationales: dict[str, str] = {}
+        for res in chunk_results:
+            cat_map = res.get("categorized_utterances", {})
+            rat_map = res.get("rationales", {})
+            for cat, items in cat_map.items():
+                merged_categorized.setdefault(cat, []).extend(items)
+            merged_rationales.update(rat_map)
 
-        classified_data = {}
-        if response_raw:
-            try:
-                json_str = (
-                    response_raw.replace("```json", "")
-                    .replace("```", "")
-                    .strip()
-                )
-                json_start = json_str.find("{")
-                if json_start != -1:
-                    json_str = json_str[json_start:]
-                classified_data = json.loads(json_str)
-                logger.info(
-                    "✅ Gemini classification and deduplication complete."
-                )
-            except Exception as e:
-                logger.warning(
-                    f"⚠️ Error parsing Gemini classification JSON: {e}. Fallbacking to rule-based classification."
-                )
-                classified_data = self._rule_based_fallback(raw_utterances)
-
-        if (
-            not classified_data
-            or "categorized_utterances" not in classified_data
-        ):
-            classified_data = self._rule_based_fallback(raw_utterances)
+        classified_data = {
+            "categorized_utterances": merged_categorized,
+            "rationales": merged_rationales,
+        }
+        if not merged_categorized:
+            classified_data = self.rule_based_fallback(raw_utterances)
+        else:
+            logger.info("✅ Gemini classification and deduplication complete.")
 
         return classified_data
 
-    def _rule_based_fallback(self, raw_utterances: list[str]) -> dict[str, Any]:
+    def rule_based_fallback(self, raw_utterances: list[str]) -> dict[str, Any]:
         """Rule-based classification fallback if Gemini analysis fails."""
         logger.info("Executing rule-based classification fallback...")
         buckets: dict[str, list[str]] = {

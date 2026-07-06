@@ -215,7 +215,16 @@ class MigrationService:
         """
         if bundle is not None:
             self._analysis_bundle = bundle
+            if (
+                getattr(self, "config", None) is None
+                and getattr(bundle, "config", None) is not None
+            ):
+                self.config = bundle.config
         if self._analysis_builder is not None:
+            if getattr(self, "config", None) is not None:
+                self._analysis_builder.snapshot.experimental_agent_xprs = (
+                    getattr(self.config, "experimental_agent_xprs", False)
+                )
             return self._analysis_builder
         if not target_name:
             return None
@@ -231,6 +240,10 @@ class MigrationService:
                 app_name=app_name,
                 output_dir=output_dir,
             )
+            if getattr(self, "config", None) is not None:
+                self._analysis_builder.snapshot.experimental_agent_xprs = (
+                    getattr(self.config, "experimental_agent_xprs", False)
+                )
         except Exception as exc:
             logger.warning("could not init migration analysis report: %s", exc)
             self._analysis_builder = None
@@ -294,6 +307,7 @@ class MigrationService:
             location=loc,
             default_model=bundle.config.model,
         )
+        service.config = bundle.config
         service.ir = bundle.ir
         service.source_agent_data = bundle.source_agent_data
         service.deployment_state = {
@@ -403,6 +417,8 @@ class MigrationService:
                 "[/]"
             )
 
+        if getattr(self, "config", None) is None and bundle is not None:
+            self.config = bundle.config
         self._ensure_analysis_builder(
             bundle.config.target_name if bundle else None, bundle=bundle
         )
@@ -999,6 +1015,7 @@ class MigrationService:
     ) -> None:
         """The comprehensive async executor for Hybrid Migration."""
 
+        self.config = config
         if getattr(config, "consolidate", True):
             _maybe_print_default_notice(Console())
 
@@ -1033,7 +1050,6 @@ class MigrationService:
         )
 
         logger.info(f"Starting Hybrid Migration for: {config.target_name}")
-        self.config = config
 
         # --- 1. Populate IR Metadata & Predictable IDs ---
         target_app_uuid = str(uuid.uuid4())
@@ -1075,19 +1091,23 @@ class MigrationService:
                 "\nStarting early utterance harvesting for Agent xprs..."
             )
             try:
-                raw_uts = self.utterance_collector.harvest_all(
+                harvested_utterances = self.utterance_collector.harvest_all(
                     self.source_agent_data
                 )
-                fast_vocab = self.utterance_collector._rule_based_fallback(
-                    raw_uts
+                initial_categorized_vocab = (
+                    self.utterance_collector.rule_based_fallback(
+                        harvested_utterances
+                    )
                 )
                 classify_task = (
-                    self.utterance_collector.classify_and_deduplicate(raw_uts)
+                    self.utterance_collector.classify_and_deduplicate(
+                        harvested_utterances
+                    )
                 )
                 predict_task = self.cuj_generator.predict_cujs(
                     agent_name=config.target_name,
                     source_agent_data=self.source_agent_data,
-                    categorized_utterances=fast_vocab.get(
+                    categorized_utterances=initial_categorized_vocab.get(
                         "categorized_utterances", {}
                     ),
                 )
@@ -1096,20 +1116,21 @@ class MigrationService:
                 )
 
                 self.ir.xprs_designer_data = {
-                    "raw": raw_uts,
+                    "raw": harvested_utterances,
                     "raw_metadata": self.utterance_collector.raw_metadata,
                     "categorized": classified.get("categorized_utterances", {}),
                     "rationales": classified.get("rationales", {}),
                     "scenarios": scenarios,
                 }
                 logger.info(
-                    f"   -> Early harvested {len(raw_uts)} utterances, "
+                    f"   -> Early harvested {len(harvested_utterances)} "
+                    "utterances, "
                     f"predicted {len(scenarios)} CUJs, categorized ok."
                 )
                 self._analysis_checkpoint(
                     "xprs_harvested",
-                    f"Early harvested {len(raw_uts)} utterances and predicted "
-                    f"{len(scenarios)} CUJs for Agent xprs.",
+                    f"Early harvested {len(harvested_utterances)} utterances "
+                    f"and predicted {len(scenarios)} CUJs for Agent xprs.",
                 )
             except Exception as e:
                 logger.warning(

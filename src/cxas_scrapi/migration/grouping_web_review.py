@@ -405,9 +405,10 @@ def _make_handler(
                     from pathlib import Path  # noqa: PLC0415
 
                     xprs_yaml_path = (
-                        Path(ctx.builder.output_dir)
+                        Path(ctx.builder.output_dir).resolve()
                         / f"{ctx.builder.target_name}_xprs_config.yaml"
                     )
+                    xprs_yaml_path.parent.mkdir(parents=True, exist_ok=True)
                     xprs_yaml_path.write_text(yaml_content, encoding="utf-8")
                     logger.info(
                         "Persisted compiled xprs config to: %s", xprs_yaml_path

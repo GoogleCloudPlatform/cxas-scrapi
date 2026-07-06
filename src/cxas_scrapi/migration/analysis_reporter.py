@@ -98,6 +98,7 @@ class MigrationAnalysisSnapshot:
     # }
     pending_grouping: dict[str, Any] | None = None
     xprs_designer_data: dict[str, Any] | None = None
+    experimental_agent_xprs: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -117,7 +118,9 @@ class MigrationAnalysisBuilder:
     ) -> None:
         self.target_name = target_name
         self.app_name = app_name
-        self.output_dir = Path(output_dir) if output_dir else Path.cwd()
+        self.output_dir = (
+            Path(output_dir).resolve() if output_dir else Path.cwd().resolve()
+        )
         self.snapshot = MigrationAnalysisSnapshot(
             app_name=app_name, target_name=target_name
         )
@@ -180,11 +183,16 @@ class MigrationAnalysisBuilder:
             self.snapshot.variables = self._derive_variables(ir)
             self.snapshot.flows = self._derive_flows(source, grouping)
             self.snapshot.grouping = self._derive_grouping(grouping)
+            if getattr(service, "config", None) is not None:
+                self.snapshot.experimental_agent_xprs = getattr(
+                    service.config, "experimental_agent_xprs", False
+                )
             if (
                 ir is not None
                 and getattr(ir, "xprs_designer_data", None) is not None
             ):
                 self.snapshot.xprs_designer_data = ir.xprs_designer_data
+                self.snapshot.experimental_agent_xprs = True
             self._wire_callers()
 
             self.snapshot.references = self._derive_references(ir, bundle)
@@ -578,6 +586,7 @@ class MigrationAnalysisBuilder:
             generated_at=self.snapshot.generated_at,
             data_json=data_json,
             mermaid_chart=self._build_mermaid_chart(),
+            experimental_agent_xprs=self.snapshot.experimental_agent_xprs,
         )
 
     def _build_mermaid_chart(self) -> str:
@@ -622,6 +631,7 @@ class MigrationAnalysisBuilder:
 
     @staticmethod
     def _atomic_write(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(content, encoding="utf-8")
         os.replace(tmp, path)
