@@ -139,6 +139,7 @@ class MigrationIR(BaseModel):
     test_cases: dict[str, Any] = Field(default_factory=dict)
     test_runs: dict[str, Any] = Field(default_factory=dict)
     optimization_logs: dict[str, Any] = Field(default_factory=dict)
+    xprs_designer_data: dict[str, Any] | None = None
 
 
 class MigrationConfig(BaseModel):
@@ -171,6 +172,9 @@ class MigrationConfig(BaseModel):
     web_confirm_port: int = 0  # 0 = pick an ephemeral port
     web_confirm_timeout_s: int = 1800
     auto_confirm_grouping: bool = False  # CI escape hatch: skip gate
+    experimental_agent_xprs: bool = (
+        False  # Phase 1: Experimental Agent xprs Designer UI & harvesting gate
+    )
 
     @property
     def consolidate(self) -> bool:

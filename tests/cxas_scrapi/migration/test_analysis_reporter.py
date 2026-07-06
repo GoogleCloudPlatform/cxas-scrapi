@@ -165,7 +165,7 @@ def _make_service(*, with_grouping: bool = False) -> SimpleNamespace:
         }
 
     service = SimpleNamespace(
-        ir=ir, source_agent_data=source, _analysis_bundle=bundle
+        ir=ir, source_agent_data=source, _analysis_bundle=bundle, config=config
     )
     return service
 
@@ -450,3 +450,30 @@ def test_migration_config_no_consolidate_disables_pipeline():
     )
     assert cfg.consolidate is False
     assert cfg.run_stage_3 is False
+
+
+def test_html_renders_agent_xprs_tab_and_banner_when_experimental(tmp_path):
+    svc = _make_service()
+    svc.config.experimental_agent_xprs = True
+    b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
+    b.update_from_service(svc)
+    b.flush()
+    html = b.html_path.read_text(encoding="utf-8")
+    assert 'id="tab-xprs"' in html
+    assert 'id="panel-xprs"' in html
+    assert 'id="migration-update-banner"' in html
+    assert 'id="xprs-placeholder-icon"' in html
+    assert 'id="xprs-placeholder-title"' in html
+    assert 'id="xprs-placeholder-desc"' in html
+
+
+def test_html_omits_agent_xprs_when_not_experimental(tmp_path):
+    svc = _make_service()
+    svc.config.experimental_agent_xprs = False
+    b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
+    b.update_from_service(svc)
+    b.flush()
+    html = b.html_path.read_text(encoding="utf-8")
+    assert 'id="tab-xprs"' not in html
+    assert 'id="panel-xprs"' not in html
+    assert 'id="migration-update-banner"' not in html

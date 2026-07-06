@@ -364,8 +364,34 @@ def test_timeout_returns_none_when_no_user_action(tmp_path, monkeypatch):
     assert b.snapshot.pending_grouping["status"] == "aborted"
 
 
+def test_save_xprs_config_writes_yaml_file(tmp_path, monkeypatch):
+    fixed_port = 18753
+
+    monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
+    b = _make_builder(tmp_path)
+    _, _, thread, _shared = _start_web_review(builder=b)
+    base = _wait_for_server("127.0.0.1", fixed_port)
+
+    yaml_payload = "xprs_version: 1.0\nconversation_graph: []"
+    bubbles = [{"id": "b1", "text": "hello", "speaker": "user", "active": True}]
+
+    status, body = _http_post(
+        f"{base}/api/xprs/save", {"yaml": yaml_payload, "bubbles": bubbles}
+    )
+    assert status == 200
+    assert body == {"ok": True}
+
+    yaml_path = tmp_path / "demo_xprs_config.yaml"
+    assert yaml_path.exists()
+    assert yaml_path.read_text(encoding="utf-8") == yaml_payload
+
+    _http_post(f"{base}/api/abort", {})
+    thread.join(timeout=5)
+
+
 def test_get_root_redirects_to_review(tmp_path, monkeypatch):
     fixed_port = 18751
+
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
     _, _, thread, _shared = _start_web_review(builder=b)
@@ -422,10 +448,10 @@ def test_file_watch_applies_valid_edits(tmp_path, monkeypatch):
 
 def test_file_watch_ignores_invalid_json(tmp_path, monkeypatch):
     """Invalid JSON written to the plan file does NOT resolve the gate."""
-    fixed_port = 18753
+    fixed_port = 18765
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
-    _, _, thread, shared = _start_web_review(builder=b)
+    _, _, thread, _shared = _start_web_review(builder=b)
     base = _wait_for_server("127.0.0.1", fixed_port)
 
     plan_path = tmp_path / "demo_grouping_plan.json"
@@ -443,7 +469,7 @@ def test_file_watch_ignores_invalid_json(tmp_path, monkeypatch):
     # Tidy up via abort.
     _http_post(f"{base}/api/abort", {})
     thread.join(timeout=5)
-    assert shared["result"] is None
+    assert _shared["result"] is None
 
 
 def test_apply_grouping_noop_if_already_resolved(tmp_path, monkeypatch):

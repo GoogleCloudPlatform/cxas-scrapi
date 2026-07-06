@@ -366,16 +366,37 @@
   </div>
   <nav class="tabs" id="tabs">
     <div class="tab active" data-tab="overview">Overview</div>
+    {% if experimental_agent_xprs %}
+    <div class="tab" data-tab="xprs" id="tab-xprs" style="display:none;">Agent xprs <span class="tab-badge" id="xprs-count"></span></div>
+    {% endif %}
     <div class="tab" data-tab="agents">CXAS Agents <span class="tab-badge" id="agents-count"></span></div>
     <div class="tab" data-tab="tools">Tools &amp; Variables <span class="tab-badge" id="tv-count"></span></div>
     <div class="tab" data-tab="evals">Evals <span class="tab-badge" id="evals-count"></span></div>
     <div class="tab" data-tab="dfcx">DFCX Source <span class="tab-badge" id="dfcx-count"></span></div>
+
+
     <div class="tab" data-tab="pipeline">Pipeline <span class="tab-badge" id="pipe-count"></span></div>
     <div class="tab" data-tab="grouping" id="tab-grouping" style="display:none;">Grouping Review <span class="tab-badge" id="grouping-status-pill"></span></div>
   </nav>
 </header>
 
 <main>
+  {% if experimental_agent_xprs %}
+  <div id="migration-update-banner" style="display:none; background: #eff6ff; border-bottom: 1px solid #93c5fd; color: #1e40af; padding: 12px 24px; font-weight: 500; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 200; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);">
+    <span style="display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 18px;" id="xprs-placeholder-icon">✨</span>
+      <span><strong id="xprs-placeholder-title">Agent xprs Ready:</strong> <span id="xprs-placeholder-desc">Early harvested utterances and predicted CUJs are now available!</span></span>
+    </span>
+    <button onclick="window.location.reload()" style="background: #2563eb; color: #fff; border: none; padding: 6px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">🔄 Reload Page to View</button>
+  </div>
+  {% endif %}
+  <div id="grouping-update-banner" style="display:none; background: #f0fdf4; border-bottom: 1px solid #86efac; color: #166534; padding: 12px 24px; font-weight: 500; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 200; box-shadow: 0 4px 12px rgba(22, 101, 52, 0.15);">
+    <span style="display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 18px;">📋</span>
+      <span><strong>Grouping Review Ready:</strong> Proposed multi-agent groupings are ready for your review and confirmation!</span>
+    </span>
+    <button onclick="window.location.reload()" style="background: #16a34a; color: #fff; border: none; padding: 6px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">🔄 Reload Page to Review</button>
+  </div>
 
   <!-- ===================== OVERVIEW ===================== -->
   <section class="panel active" id="panel-overview">
@@ -488,7 +509,15 @@
     </div>
   </section>
 
+  <!-- ===================== AGENT XPRS DESIGNER ===================== -->
+  {% if experimental_agent_xprs %}
+  <section class="panel" id="panel-xprs">
+    {% include 'xprs_designer_template.html' %}
+  </section>
+  {% endif %}
+
   <!-- ===================== DFCX SOURCE ===================== -->
+
   <section class="panel" id="panel-dfcx">
     <h1>DFCX Source Flows <div class="sub">sorted by page count · click to see absorption mapping</div></h1>
     <div class="filter-row">
@@ -980,6 +1009,7 @@
     $('#tv-count').textContent = (Object.keys(DATA.tools).length + Object.keys(DATA.toolsets).length + DATA.variables.length);
     $('#dfcx-count').textContent = DATA.flows.length;
     $('#pipe-count').textContent = DATA.pipeline.length;
+    $('#xprs-count').textContent = DATA.xprs_designer_data?.raw?.length || 0;
     $('#sub-tools-count').textContent = Object.keys(DATA.tools).length;
     $('#sub-toolsets-count').textContent = Object.keys(DATA.toolsets).length;
     $('#sub-vars-count').textContent = DATA.variables.length;
@@ -1711,22 +1741,82 @@
   }
 
   // ----------- BOOT
-  renderKpis();
-  renderRefs();
-  renderSankey();
-  renderAgentGrid();
-  renderToolsGrid('');
-  renderToolsetsGrid('');
-  renderVarsGrid('');
-  renderFlowsGrid('');
-  renderPipeline();
-  renderEvalKpis();
-  renderEvalsGrid('', '', '');
+  function renderAll() {
+    renderKpis();
+    renderRefs();
+    renderSankey();
+    renderAgentGrid();
+    renderToolsGrid('');
+    renderToolsetsGrid('');
+    renderVarsGrid('');
+    renderFlowsGrid('');
+    renderPipeline();
+    renderEvalKpis();
+    renderEvalsGrid('', '', '');
+    if (typeof window.renderXprsTab === "function") {
+      window.renderXprsTab();
+    }
+    const tabXprs = document.getElementById('tab-xprs');
+    if (tabXprs && DATA.xprs_designer_data) tabXprs.style.display = '';
+    const tabGrp = document.getElementById('tab-grouping');
+    if (tabGrp && DATA.pending_grouping?.groupings && Object.keys(DATA.pending_grouping.groupings).length > 0) tabGrp.style.display = '';
+  }
+
+  renderAll();
   wireGroupingToolbar();
   renderGroupingReview();
 
   // If mermaid is already loaded (cached) just kick it
   if (window.__mermaid__) setActiveTab('overview');
+
+  // Live polling for updates when running in a local server environment
+  if (window.location.protocol.startsWith('http')) {
+    const jsonUrl = window.__REVIEW_ENDPOINT__ ? '/api/report_data' : window.location.pathname.replace(/\.html$/, '.json');
+    let lastGeneratedAt = DATA.generated_at;
+
+    async function checkForUpdates() {
+      try {
+        const response = await fetch(jsonUrl, { cache: 'no-store' });
+        if (response.ok) {
+          const freshData = await response.json();
+          const freshUtteranceCount = freshData.xprs_designer_data?.raw?.length || 0;
+          const currentUtteranceCount = DATA.xprs_designer_data?.raw?.length || 0;
+          const freshScenarioCount = freshData.xprs_designer_data?.scenarios?.length || 0;
+          const currentScenarioCount = DATA.xprs_designer_data?.scenarios?.length || 0;
+          const freshGroupingCount = freshData.pending_grouping?.groupings ? Object.keys(freshData.pending_grouping.groupings).length : 0;
+          const currentGroupingCount = DATA.pending_grouping?.groupings ? Object.keys(DATA.pending_grouping.groupings).length : 0;
+          if (freshData.generated_at !== lastGeneratedAt || freshUtteranceCount !== currentUtteranceCount || freshScenarioCount !== currentScenarioCount || freshGroupingCount !== currentGroupingCount) {
+            console.log("Found fresh migration update: " + freshData.generated_at);
+            const xprsJustReady = (freshUtteranceCount > 0 && currentUtteranceCount === 0) || (freshScenarioCount > 0 && currentScenarioCount === 0);
+            const groupingJustReady = (freshGroupingCount > 0 && currentGroupingCount === 0);
+            lastGeneratedAt = freshData.generated_at;
+            Object.assign(DATA, freshData);
+            renderAll();
+            const tabXprs = document.getElementById('tab-xprs');
+            if (tabXprs && freshData.xprs_designer_data) tabXprs.style.display = '';
+            if (xprsJustReady) {
+              const banner = document.getElementById('migration-update-banner');
+              if (banner) banner.style.display = 'flex';
+              const iconEl = document.getElementById('xprs-placeholder-icon');
+              const titleEl = document.getElementById('xprs-placeholder-title');
+              const descEl = document.getElementById('xprs-placeholder-desc');
+              if (iconEl) iconEl.textContent = '✨';
+              if (titleEl) titleEl.textContent = 'Agent xprs Harvesting Complete!';
+              if (descEl) descEl.innerHTML = '<span style="color:#2563eb; font-weight:600;">Early harvested utterances and predicted CUJs are now ready.</span><br><button onclick="window.location.reload()" class="btn" style="margin-top:12px; background:#2563eb; color:#fff; border:none; padding:6px 16px; border-radius:6px; font-weight:600; cursor:pointer;">🔄 Reload Page to Open Designer</button>';
+            }
+            if (groupingJustReady) {
+              const grpBanner = document.getElementById('grouping-update-banner');
+              if (grpBanner) grpBanner.style.display = 'flex';
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Could not poll for updates: ", e);
+      }
+    }
+    // Poll every 3 seconds
+    setInterval(checkForUpdates, 3000);
+  }
 })();
 </script>
 </body>

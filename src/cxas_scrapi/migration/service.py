@@ -41,6 +41,7 @@ from cxas_scrapi.migration.ai_augment import AIAugment
 from cxas_scrapi.migration.analysis_reporter import MigrationAnalysisBuilder
 from cxas_scrapi.migration.artifacts_builder import CXASAsyncArtifactBuilder
 from cxas_scrapi.migration.code_block_migrator import CodeBlockMigrator
+from cxas_scrapi.migration.cuj_generator import CUJGenerator
 from cxas_scrapi.migration.cxas_topology_linker import CXASTopologyLinker
 from cxas_scrapi.migration.data_models import (
     IRAgent,
@@ -67,6 +68,7 @@ from cxas_scrapi.migration.flow_visualizer import (
 )
 from cxas_scrapi.migration.optimization_reporter import OptimizationReporter
 from cxas_scrapi.migration.structural_consolidator import StructuralConsolidator
+from cxas_scrapi.migration.utterance_collector import UtteranceCollector
 from cxas_scrapi.utils.gemini import GeminiGenerate
 from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
 
@@ -182,6 +184,10 @@ class MigrationService:
             ps_apps_client=self.ps_apps,
             reporter=self.reporter,
         )
+        self.utterance_collector = UtteranceCollector(
+            gemini_client=self.gemini_client
+        )
+        self.cuj_generator = CUJGenerator(gemini_client=self.gemini_client)
 
         self.ir: MigrationIR | None = None
         self.source_agent_data = None
@@ -209,7 +215,16 @@ class MigrationService:
         """
         if bundle is not None:
             self._analysis_bundle = bundle
+            if (
+                getattr(self, "config", None) is None
+                and getattr(bundle, "config", None) is not None
+            ):
+                self.config = bundle.config
         if self._analysis_builder is not None:
+            if getattr(self, "config", None) is not None:
+                self._analysis_builder.snapshot.experimental_agent_xprs = (
+                    getattr(self.config, "experimental_agent_xprs", False)
+                )
             return self._analysis_builder
         if not target_name:
             return None
@@ -225,6 +240,10 @@ class MigrationService:
                 app_name=app_name,
                 output_dir=output_dir,
             )
+            if getattr(self, "config", None) is not None:
+                self._analysis_builder.snapshot.experimental_agent_xprs = (
+                    getattr(self.config, "experimental_agent_xprs", False)
+                )
         except Exception as exc:
             logger.warning("could not init migration analysis report: %s", exc)
             self._analysis_builder = None
@@ -288,6 +307,7 @@ class MigrationService:
             location=loc,
             default_model=bundle.config.model,
         )
+        service.config = bundle.config
         service.ir = bundle.ir
         service.source_agent_data = bundle.source_agent_data
         service.deployment_state = {
@@ -397,6 +417,8 @@ class MigrationService:
                 "[/]"
             )
 
+        if getattr(self, "config", None) is None and bundle is not None:
+            self.config = bundle.config
         self._ensure_analysis_builder(
             bundle.config.target_name if bundle else None, bundle=bundle
         )
@@ -993,6 +1015,7 @@ class MigrationService:
     ) -> None:
         """The comprehensive async executor for Hybrid Migration."""
 
+        self.config = config
         if getattr(config, "consolidate", True):
             _maybe_print_default_notice(Console())
 
@@ -1019,6 +1042,7 @@ class MigrationService:
         )
 
         logger.info("\nPre-processing text fields (Playbook -> agent)...")
+
         self._preprocess_text_fields(self.source_agent_data)
         self.reporter.log_action(
             "Pre-processing",
@@ -1026,7 +1050,6 @@ class MigrationService:
         )
 
         logger.info(f"Starting Hybrid Migration for: {config.target_name}")
-        self.config = config
 
         # --- 1. Populate IR Metadata & Predictable IDs ---
         target_app_uuid = str(uuid.uuid4())
@@ -1043,7 +1066,6 @@ class MigrationService:
                 default_model=config.model or self.default_model,
             )
         )
-
         # Boot the review server early if enabled
         if (
             getattr(config, "web_confirm_grouping", False)
@@ -1061,6 +1083,64 @@ class MigrationService:
                 bind_port=config.web_confirm_port,
                 timeout_s=config.web_confirm_timeout_s,
                 console=Console(),
+            )
+
+        # --- 1b. Early Utterance Harvesting for Agent Xprs (Feature Gated) ---
+        if config.experimental_agent_xprs:
+            logger.info(
+                "\nStarting early utterance harvesting for Agent xprs..."
+            )
+            try:
+                harvested_utterances = self.utterance_collector.harvest_all(
+                    self.source_agent_data
+                )
+                initial_categorized_vocab = (
+                    self.utterance_collector.rule_based_fallback(
+                        harvested_utterances
+                    )
+                )
+                classify_task = (
+                    self.utterance_collector.classify_and_deduplicate(
+                        harvested_utterances
+                    )
+                )
+                predict_task = self.cuj_generator.predict_cujs(
+                    agent_name=config.target_name,
+                    source_agent_data=self.source_agent_data,
+                    categorized_utterances=initial_categorized_vocab.get(
+                        "categorized_utterances", {}
+                    ),
+                )
+                classified, scenarios = await asyncio.gather(
+                    classify_task, predict_task
+                )
+
+                self.ir.xprs_designer_data = {
+                    "raw": harvested_utterances,
+                    "raw_metadata": self.utterance_collector.raw_metadata,
+                    "categorized": classified.get("categorized_utterances", {}),
+                    "rationales": classified.get("rationales", {}),
+                    "scenarios": scenarios,
+                }
+                logger.info(
+                    f"   -> Early harvested {len(harvested_utterances)} "
+                    "utterances, "
+                    f"predicted {len(scenarios)} CUJs, categorized ok."
+                )
+                self._analysis_checkpoint(
+                    "xprs_harvested",
+                    f"Early harvested {len(harvested_utterances)} utterances "
+                    f"and predicted {len(scenarios)} CUJs for Agent xprs.",
+                )
+            except Exception as e:
+                logger.warning(
+                    "⚠️ Early utterance harvesting or CUJ prediction "
+                    f"failed: {e}"
+                )
+        else:
+            logger.debug(
+                "Skipping experimental Agent xprs harvesting "
+                "(--experimental-agent-xprs disabled)."
             )
 
         self.deployment_state = {

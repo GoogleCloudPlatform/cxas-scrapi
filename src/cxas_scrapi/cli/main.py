@@ -1473,6 +1473,18 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    xprs_group = parser_migrate_dfcx.add_argument_group(
+        "Agent xprs Designer (Experimental Feature Gate)"
+    )
+    xprs_group.add_argument(
+        "--experimental-agent-xprs",
+        action="store_true",
+        help=(
+            "Enable experimental Agent xprs interactive designer and background"
+            " utterance harvesting (in progress, not fully connected)."
+        ),
+    )
+
     # Optimization/Checkpoint Arguments (active when --optimize is specified)
     opt_group = parser_migrate_dfcx.add_argument_group(
         "Optimization / Checkpoint Stage Options (--optimize)"

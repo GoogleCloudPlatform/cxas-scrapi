@@ -54,6 +54,16 @@ from cxas_scrapi.migration.service import MigrationService
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_input(text: str) -> str:
+    if not text:
+        return text
+    # Strip ANSI escape sequences (like \x1b[A, \x1b[B, etc.)
+    text = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", text)
+    # Strip any other raw control characters
+    text = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", text)
+    return text.strip()
+
+
 class Tee:
     """Duplicates stdout/stderr to a file, preserving all raw formatting
     and ANSI escape colors.
@@ -191,10 +201,12 @@ class MigrationCLI:
         """Prompt user for configuration and return a MigrationConfig object."""
         self.console.print("\n[bold blue]=== Migration Configuration ===[/]\n")
 
-        project_id = Prompt.ask("Enter Google Cloud Project ID")
+        project_id = _sanitize_input(
+            Prompt.ask("Enter Google Cloud Project ID")
+        )
 
-        target_name = Prompt.ask(
-            "Enter Target Agent Name", default=default_agent_name
+        target_name = _sanitize_input(
+            Prompt.ask("Enter Target Agent Name", default=default_agent_name)
         )
 
         raw_env_choice = (
@@ -252,6 +264,11 @@ class MigrationCLI:
             # Ask subsequent conditional options (defaulting to standard
             # best practices)
             gen_unit_tests = Confirm.ask("Generate Unit Tests?", default=True)
+            experimental_agent_xprs = Confirm.ask(
+                "Enable Experimental Agent xprs Designer? "
+                "[yellow]*in progress, not fully connected*[/]",
+                default=False,
+            )
             gen_hillclimbing_evals = Confirm.ask(
                 "Generate Hillclimbing Evals? [yellow]*feature coming*[/]",
                 default=False,
@@ -284,6 +301,7 @@ class MigrationCLI:
 
             # Skip subsequent questions and use safe direct defaults
             gen_unit_tests = False
+            experimental_agent_xprs = False
             gen_hillclimbing_evals = False
             eval_runner_target = "Custom API Runner"
 
@@ -317,6 +335,11 @@ class MigrationCLI:
 
             # Subsequent questions are shown for Custom too
             gen_unit_tests = Confirm.ask("Generate Unit Tests?", default=True)
+            experimental_agent_xprs = Confirm.ask(
+                "Enable Experimental Agent xprs Designer? "
+                "[yellow]*in progress, not fully connected*[/]",
+                default=False,
+            )
             gen_hillclimbing_evals = Confirm.ask(
                 "Generate Hillclimbing Evals? [yellow]*feature coming*[/]",
                 default=False,
@@ -343,6 +366,7 @@ class MigrationCLI:
             optimize_for_cxas=optimize_for_cxas,
             persist_bundle=persist_bundle,
             web_confirm_grouping=web_confirm_grouping,
+            experimental_agent_xprs=experimental_agent_xprs,
         )
 
     def select_resources(self, agent_data: DFCXAgentIR) -> DFCXAgentIR:
@@ -571,16 +595,18 @@ class MigrationCLI:
                 "projects/my-project-123/locations/global/agents/"
                 "a4371f49-5982-4293-801b-551cf940ab65\n"
             )
-            raw_input = Prompt.ask("Enter Source Agent ID")
+            raw_input = _sanitize_input(Prompt.ask("Enter Source Agent ID"))
             agent_id = self._parse_agent_id(raw_input)
             self.console.print(f"Loading Agent ID: {agent_id} ...")
             agent_data = cx_api.fetch_full_agent_details(
                 agent_id, use_export=True
             )
         else:
-            zip_path = Prompt.ask(
-                "Enter path to local agent export (.zip)",
-                default="~/Desktop/agent-examples/exported_agent_name.zip",
+            zip_path = _sanitize_input(
+                Prompt.ask(
+                    "Enter path to local agent export (.zip)",
+                    default="~/Desktop/agent-examples/exported_agent_name.zip",
+                )
             )
             zip_path = os.path.expanduser(zip_path)
             self.console.print(f"Loading agent from {zip_path}...")
@@ -963,6 +989,9 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         web_confirm_port=getattr(args, "web_confirm_port", 0),
         web_confirm_timeout_s=getattr(args, "web_confirm_timeout", 1800),
         auto_confirm_grouping=auto_confirm_grouping,
+        experimental_agent_xprs=getattr(args, "experimental_agent_xprs", False)
+        or os.environ.get("CXAS_EXPERIMENTAL_XPRS", "").lower()
+        in ("1", "true", "yes"),
     )
 
     service = MigrationService(
