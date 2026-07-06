@@ -490,48 +490,41 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        voice_config: dict[str, Any] | None = None,
     ) -> Any:
         """Sends a request to the CES Agent with exponential backoff for
         transient errors.
         """
+        run_kwargs = {
+            "session_id": session_id,
+            "variables": variables,
+            "modality": modality,
+            "turn_num": turn_num,
+            "capture_agent_audio": capture_agent_audio,
+            "background_noise_file": background_noise_file,
+            "burst_noise_files": burst_noise_files,
+            "use_tool_fakes": use_tool_fakes,
+        }
+        if voice_config is not None:
+            run_kwargs["voice_config"] = voice_config
+
         response = None
         for attempt in range(self.max_retries):
             try:
                 if user_utterance.startswith("event:"):
                     response = self.sessions_client.run(
-                        session_id=session_id,
                         event=user_utterance.removeprefix("event:").strip(),
-                        variables=variables,
-                        modality=modality,
-                        turn_num=turn_num,
-                        capture_agent_audio=capture_agent_audio,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
-                        use_tool_fakes=use_tool_fakes,
+                        **run_kwargs,
                     )
                 elif user_utterance.startswith("dtmf:"):
                     response = self.sessions_client.run(
-                        session_id=session_id,
                         dtmf=user_utterance.removeprefix("dtmf:").strip(),
-                        variables=variables,
-                        modality=modality,
-                        turn_num=turn_num,
-                        capture_agent_audio=capture_agent_audio,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
-                        use_tool_fakes=use_tool_fakes,
+                        **run_kwargs,
                     )
                 else:
                     response = self.sessions_client.run(
-                        session_id=session_id,
                         text=user_utterance,
-                        variables=variables,
-                        modality=modality,
-                        turn_num=turn_num,
-                        capture_agent_audio=capture_agent_audio,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
-                        use_tool_fakes=use_tool_fakes,
+                        **run_kwargs,
                     )
                 break
             except Exception as e:
@@ -571,6 +564,7 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        voice_config: dict[str, Any] | None = None,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
 
@@ -611,16 +605,17 @@ class SimulationEvals(Apps):
 
         while user_utterance:
             response = self._send_request_with_retry(
-                session_id,
-                user_utterance,
-                accumulated_variables,
-                modality,
-                console_logging,
+                session_id=session_id,
+                user_utterance=user_utterance,
+                variables=accumulated_variables,
+                modality=modality,
+                console_logging=console_logging,
                 turn_num=current_sim_turn,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
                 burst_noise_files=burst_noise_files,
                 use_tool_fakes=use_tool_fakes,
+                voice_config=voice_config,
             )
             if not response:
                 break

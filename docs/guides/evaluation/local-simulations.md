@@ -170,6 +170,11 @@ sim_evals = SimulationEvals(app_name="projects/my-project/locations/us/apps/my-a
 eval_conv = sim_evals.simulate_conversation(
     test_case=test_case,
     modality="audio",  # default is "text"
+    # voice_config is optional (defaults to US English voice)
+    voice_config={
+        "language_code": "en-US",
+        "voice_name": "en-US-Standard-A"
+    }
 )
 ```
 
