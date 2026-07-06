@@ -1265,7 +1265,6 @@ def test_simulation_evals_voice_config(
     )
 
 
-
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
     app_name = "projects/test/locations/us/apps/123-abc"
@@ -1507,4 +1506,3 @@ def test_simulation_evals_expectations_only_fallback():
             parallel=1,
         )
         assert res["passed"] is True
-

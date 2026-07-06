@@ -71,7 +71,6 @@ class AudioTransformer:
         language_code = voice_config.get("language_code", "en-US")
         voice_name = voice_config.get("voice_name", "en-US-Standard-A")
 
-
         voice = texttospeech.VoiceSelectionParams(
             language_code=language_code, name=voice_name
         )

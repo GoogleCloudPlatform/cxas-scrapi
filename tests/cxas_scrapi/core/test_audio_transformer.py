@@ -242,4 +242,3 @@ class TestAudioTransformer:
         # Verify graceful fallback to clean audio
         assert result["text"] == "hello"
         assert result["audio_bytes"] == b"clean_audio_"
-
