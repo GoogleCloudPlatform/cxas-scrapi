@@ -22,6 +22,7 @@ import re
 import shutil
 import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -186,11 +187,13 @@ class LLMUserConversation(Conversation):
         genai_model: str,
         test_case: dict[str, Any],
         max_turns: int = _MAX_TURNS,
+        initial_utterance: str = _FIRST_UTTERANCE,
     ):
         super().__init__()
         self.genai_client = genai_client
         self.genai_model = genai_model
         self.test_case = test_case
+        self.initial_utterance = initial_utterance
         self.max_turns = max_turns
         self.steps_progress = []
         for step in test_case["steps"]:
@@ -306,7 +309,7 @@ class LLMUserConversation(Conversation):
 
         if self.current_turn == 0:
             session_params = self.test_case.get("session_parameters", {})
-            return _FIRST_UTTERANCE, session_params
+            return self.initial_utterance, session_params
 
         prompt = self._prepare_llm_prompt()
 
@@ -565,6 +568,8 @@ class SimulationEvals(Apps):
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
+        initial_utterance: str = _FIRST_UTTERANCE,
+        **kwargs: Any,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
 
@@ -583,6 +588,7 @@ class SimulationEvals(Apps):
             genai_client=self.genai_client,
             genai_model=sim_user_model,
             test_case=test_case,
+            initial_utterance=initial_utterance,
         )
 
         # Initialize audio paths tracking
@@ -647,6 +653,20 @@ class SimulationEvals(Apps):
                         "\nSession has been closed by the Agent via "
                         "end_session tool."
                     )
+                # Mark current step as completed if the session ending
+                # is a valid success (escalation evals)
+                for prog in eval_conv.steps_progress:
+                    criteria = prog.step.success_criteria.lower()
+                    if prog.status != StepStatus.COMPLETED and (
+                        "escalat" in criteria
+                        or "transfer" in criteria
+                        or "being transferred" in criteria
+                    ):
+                        prog.status = StepStatus.COMPLETED
+                        prog.justification = (
+                            "Agent ended session via escalation/transfer — "
+                            "matches success criteria."
+                        )
                 break
 
             # Get the next simulated user utterance based on the agent's
@@ -808,6 +828,7 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[dict[str, Any]]:
         """Aggregates results from multiple simulation jobs."""
         results = []
@@ -833,6 +854,8 @@ class SimulationEvals(Apps):
                         )
                     )
                     progress.update(task_id, advance=1)
+                    if progress_callback:
+                        progress_callback(len(results), len(jobs))
             else:
                 max_workers = min(parallel, 25)
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -857,6 +880,8 @@ class SimulationEvals(Apps):
                     for future in as_completed(futures):
                         results.append(future.result())
                         progress.update(task_id, advance=1)
+                        if progress_callback:
+                            progress_callback(len(results), len(jobs))
 
         return results
 
@@ -874,6 +899,7 @@ class SimulationEvals(Apps):
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
         expectations_only: bool | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[dict[str, Any]]:
         if expectations_only is not None:
             self.expectations_only = expectations_only
@@ -905,6 +931,7 @@ class SimulationEvals(Apps):
             background_noise_file=background_noise_file,
             burst_noise_files=burst_noise_files,
             use_tool_fakes=use_tool_fakes,
+            progress_callback=progress_callback,
         )
 
     def _add_agent_text(self, turn: Turn, text: str) -> None:

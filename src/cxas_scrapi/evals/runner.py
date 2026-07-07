@@ -18,6 +18,7 @@ import glob
 import json
 import os
 import time
+from collections.abc import Callable
 
 from google.cloud.ces_v1beta.types import RunEvaluationOperationMetadata
 
@@ -53,6 +54,7 @@ def run_all_evals(
     output_dir: str | None = None,
     filter_files: list[str] | None = None,
     filter_tags: list[str] | None = None,
+    filter_names: list[str] | None = None,
     parallel: int = 1,
     golden_parallel: int = 1,
     golden_timeout: int = 600,
@@ -63,6 +65,7 @@ def run_all_evals(
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
     expectations_only: bool = False,
+    progress_callback: Callable[[str, int, int], None] | None = None,
 ):
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -112,6 +115,9 @@ def run_all_evals(
                         tags = eval_dict.get("tags", [])
                         if not any(t in filter_tags for t in tags):
                             continue
+                    if filter_names:
+                        if eval_dict.get("displayName") not in filter_names:
+                            continue
                     res = eval_client.update_evaluation(
                         evaluation=eval_dict, app_name=app_name
                     )
@@ -123,9 +129,13 @@ def run_all_evals(
             app_dir = f"cxas_app/{app_name.rsplit('/', 1)[-1]}"
         if app_dir and os.path.exists(app_dir):
             print(f"Running callback tests in {app_dir}")
+            if progress_callback:
+                progress_callback("callbacks", 0, 1)
             callback_evals = CallbackEvals()
             df = callback_evals.test_all_callbacks_in_app_dir(app_dir=app_dir)
             results["callback"] = df.to_dict(orient="records")
+            if progress_callback:
+                progress_callback("callbacks", 1, 1)
             if output_dir:
                 df.to_csv(
                     os.path.join(
@@ -184,8 +194,12 @@ def run_all_evals(
 
             if test_cases:
                 print(f"Running {len(test_cases)} tool tests")
+                if progress_callback:
+                    progress_callback("tools", 0, 1)
                 df = tool_evals.run_tool_tests(test_cases)
                 results["tool"] = df.to_dict(orient="records")
+                if progress_callback:
+                    progress_callback("tools", 1, 1)
                 if output_dir:
                     df.to_csv(
                         os.path.join(
@@ -231,6 +245,12 @@ def run_all_evals(
                                     t in filter_tags for t in c.get("tags", [])
                                 )
                             ]
+                        if filter_names:
+                            cases = [
+                                c
+                                for c in cases
+                                if c.get("name") in filter_names
+                            ]
                         test_cases.extend(cases)
                 if test_cases:
                     print(
@@ -247,6 +267,11 @@ def run_all_evals(
                         background_noise_file=bg_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
+                        progress_callback=lambda c, t: (
+                            progress_callback("simulations", c, t)
+                            if progress_callback
+                            else None
+                        ),
                     )
                     results["simulation"] = sim_results
                     if output_dir:
@@ -268,6 +293,8 @@ def run_all_evals(
         utils = EvalUtils(app_name=app_name)
 
         batches = list(_chunked(evaluations_to_run, golden_parallel))
+        if progress_callback:
+            progress_callback("goldens", 0, len(batches))
         for idx, batch in enumerate(batches):
             print(
                 f"\n  [Batch {idx + 1}/{len(batches)}] "
@@ -305,6 +332,8 @@ def run_all_evals(
 
                 batch_results = load_golden_results(batch_run_name, app_name)
                 results["golden"].extend(batch_results)
+                if progress_callback:
+                    progress_callback("goldens", idx + 1, len(batches))
             else:
                 print(
                     f"    ERROR: Failed to resolve run name for batch "

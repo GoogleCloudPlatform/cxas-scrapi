@@ -15,7 +15,8 @@
 """Tests for scrapi-sim-runner.py and run-evals.py wrappers.
 
 Run from the project root:
-    python -m pytest .agents/skills/cxas-agent-foundry/scripts/tests/test_runners.py
+    python -m pytest \
+        .agents/skills/cxas-agent-foundry/scripts/tests/test_runners.py
 """
 
 import importlib.util
@@ -44,7 +45,10 @@ def config_mock():
 
 @pytest.fixture(autouse=True)
 def setup_stubs(config_mock):
-    """Setup fake config module so script imports do not trigger project lookups."""
+    """Setup fake config module.
+
+    Prevents script imports from triggering project lookups.
+    """
     fake = types.ModuleType("config")
     fake.load_app_name = lambda: "projects/test-proj/locations/us/apps/test-app"
     fake.load_config = lambda: config_mock
@@ -62,10 +66,10 @@ def setup_stubs(config_mock):
 
 
 @pytest.fixture
-def sim_runner():
-    """Import the scrapi-sim-runner module."""
+def evals_runner():
+    """Import the run-evals module."""
     spec = importlib.util.spec_from_file_location(
-        "scrapi_sim_runner", os.path.join(_SCRIPTS_DIR, "scrapi-sim-runner.py")
+        "run_evals", os.path.join(_SCRIPTS_DIR, "run-evals.py")
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -73,10 +77,10 @@ def sim_runner():
 
 
 @pytest.fixture
-def evals_runner():
-    """Import the run-evals module."""
+def sim_runner():
+    """Import the scrapi-sim-runner module."""
     spec = importlib.util.spec_from_file_location(
-        "run_evals", os.path.join(_SCRIPTS_DIR, "run-evals.py")
+        "scrapi_sim_runner", os.path.join(_SCRIPTS_DIR, "scrapi-sim-runner.py")
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -89,7 +93,7 @@ def evals_runner():
 
 
 def test_sim_runner_cmd_run_delegation(sim_runner):
-    """Verify scrapi-sim-runner.py run command delegates directly to SimulationEvals."""
+    """Verify scrapi-sim-runner.py run command delegates to SimulationEvals."""
     mock_args = MagicMock()
     mock_args.eval = ["test_case_1"]
     mock_args.priority = "P0"
@@ -101,6 +105,8 @@ def test_sim_runner_cmd_run_delegation(sim_runner):
     mock_args.verbose = True
     mock_args.gcs_report_path = None
     mock_args.expectations_only = False
+    mock_args.use_tool_fakes = False
+    mock_args.capture_agent_audio = False
 
     mock_templates = {
         "test_case_1": {
@@ -125,12 +131,10 @@ def test_sim_runner_cmd_run_delegation(sim_runner):
             sim_runner, "load_sim_templates", return_value=mock_templates
         ),
         patch.object(sim_runner, "EnhancedSimRunner") as MockEnhancedRunner,
-        patch(
-            "cxas_scrapi.utils.reporting.generate_combined_html_report"
-        ) as mock_gen_report,
+        patch("cxas_scrapi.utils.reporting.generate_html_report"),
     ):
         mock_sim_inst = MockEnhancedRunner.return_value
-        mock_sim_inst.simulate_conversation.return_value = mock_conv
+        mock_sim_inst.run_simulations.return_value = []
 
         sim_runner.cmd_run(mock_args)
 
@@ -142,72 +146,27 @@ def test_sim_runner_cmd_run_delegation(sim_runner):
             expectations_only=False,
         )
 
-        # Assert simulate_conversation was called with correct parameters
-        mock_sim_inst.simulate_conversation.assert_any_call(
-            test_case={
-                "name": "test_case_1",
-                "steps": [],
-                "expectations": [],
-                "session_parameters": {},
-                "metadata": {},
-            },
-            model="gemini-pro",
-            console_logging=True,
+        # Assert run_simulations was called with correct parameters
+        mock_sim_inst.run_simulations.assert_any_call(
+            test_cases=[
+                {
+                    "name": "test_case_1",
+                    "steps": [],
+                    "expectations": [],
+                    "audio_expectations": [],
+                    "session_parameters": {},
+                    "metadata": {},
+                }
+            ],
+            runs=3,
+            parallel=1,
+            sim_user_model="gemini-pro",
+            eval_model="gemini-pro",
             modality="audio",
+            verbose=True,
+            use_tool_fakes=False,
+            capture_agent_audio=False,
         )
-
-
-def test_enhanced_runner_expectations_only_passing(sim_runner):
-    """Verify that when expectations_only is True, all passing expectations yield a pass even with failing goals."""
-    with patch("cxas_scrapi.core.tools.Tools.get_tools_map", return_value={}):
-        sim = sim_runner.EnhancedSimRunner(
-            app_name="projects/test-proj/locations/us/apps/test-app",
-            user_agent_extension="test",
-            expectations_only=True
-        )
-
-        with patch.object(sim_runner.SimulationEvals, "_run_single_simulation_job", return_value={
-            "passed": False,
-            "goals": "0/3",
-            "expectations": "4/4"
-        }):
-            res = sim._run_single_simulation_job(tc={"name": "test"}, run_idx=0, runs=1, model="fake", modality="text", verbose=False, parallel=1)
-            assert res["passed"] is True
-            assert res["goals"] == "0/3"
-            assert res["expectations"] == "4/4"
-
-def test_enhanced_runner_expectations_only_failing(sim_runner):
-    """Verify that when expectations_only is True, any failing expectations yield a fail even with passing goals."""
-    with patch("cxas_scrapi.core.tools.Tools.get_tools_map", return_value={}):
-        sim = sim_runner.EnhancedSimRunner(
-            app_name="projects/test-proj/locations/us/apps/test-app",
-            user_agent_extension="test",
-            expectations_only=True
-        )
-
-        with patch.object(sim_runner.SimulationEvals, "_run_single_simulation_job", return_value={
-            "passed": True,
-            "goals": "3/3",
-            "expectations": "3/4"
-        }):
-            res = sim._run_single_simulation_job(tc={"name": "test"}, run_idx=0, runs=1, model="fake", modality="text", verbose=False, parallel=1)
-            assert res["passed"] is False
-
-def test_enhanced_runner_expectations_only_fallback(sim_runner):
-    """Verify that when expectations_only is True, if a scenario has no expectations, it falls back to goals."""
-    with patch("cxas_scrapi.core.tools.Tools.get_tools_map", return_value={}):
-        sim = sim_runner.EnhancedSimRunner(
-            app_name="projects/test-proj/locations/us/apps/test-app",
-            user_agent_extension="test",
-            expectations_only=True
-        )
-
-        with patch.object(sim_runner.SimulationEvals, "_run_single_simulation_job", return_value={
-            "passed": True,
-            "goals": "3/3"
-        }):
-            res = sim._run_single_simulation_job(tc={"name": "test"}, run_idx=0, runs=1, model="fake", modality="text", verbose=False, parallel=1)
-            assert res["passed"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +175,10 @@ def test_enhanced_runner_expectations_only_fallback(sim_runner):
 
 
 def test_run_evals_includes_all_by_default(evals_runner):
-    """Verify run-evals.py invokes combined report with goldens, sims, and scenarios by default."""
+    """Verify run-evals.py invokes combined report.
+
+    It should include goldens, sims, and scenarios by default.
+    """
     mock_args = MagicMock()
     mock_args.channel = "text"
     mock_args.runs = 5
@@ -233,7 +195,8 @@ def test_run_evals_includes_all_by_default(evals_runner):
     ):
         evals_runner.main()
 
-        # Assert generate_combined_report_from_dir was called with goldens + sims + tools + callbacks
+        # Assert generate_combined_report_from_dir was called with
+        # goldens + sims + tools + callbacks
         mock_gen_report.assert_called_once()
         call_kwargs = mock_gen_report.call_args[1]
 
@@ -248,7 +211,10 @@ def test_run_evals_includes_all_by_default(evals_runner):
 
 
 def test_run_evals_excludes_goldens_and_sims(evals_runner, config_mock):
-    """Verify run-evals.py skips goldens and sims correctly based on CLI flags."""
+    """Verify run-evals.py skips goldens and sims correctly.
+
+    Based on CLI flags.
+    """
     # Set dynamic config mock modality to audio
     config_mock["modality"] = "audio"
     config_mock["default_channel"] = "audio"

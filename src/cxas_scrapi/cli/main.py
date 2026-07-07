@@ -592,6 +592,11 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         if getattr(args, "filter_tags", None)
         else []
     )
+    filter_names_list = (
+        args.filter_names.split(",")
+        if getattr(args, "filter_names", None)
+        else []
+    )
 
     if getattr(args, "input_dir", None):
         if args.tool_test_file == "evals/tool_tests/":
@@ -603,6 +608,27 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
 
     sim_parallel = getattr(args, "sim_parallel", 5)
     golden_timeout = getattr(args, "golden_timeout", 600)
+
+    progress_callback = None
+    if getattr(args, "json_progress", False):
+
+        def progress_callback(stage: str, current: int, total: int):
+            import json
+            import sys
+
+            sys.stderr.write(
+                json.dumps(
+                    {
+                        "progress": {
+                            "stage": stage,
+                            "current": current,
+                            "total": total,
+                        }
+                    }
+                )
+                + "\n"
+            )
+            sys.stderr.flush()
 
     actual_output_path = generate_combined_report_from_dir(
         output_dir=output_dir,
@@ -621,6 +647,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         runs=args.runs,
         filter_files=filter_files_list,
         filter_tags=filter_tags_list,
+        filter_names=filter_names_list,
         parallel=sim_parallel,
         golden_timeout=golden_timeout,
         bg_noise_file=getattr(args, "bg_noise_file", None),
@@ -630,6 +657,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         use_tool_fakes=getattr(args, "use_tool_fakes", False),
         timestamp=timestamp,
         expectations_only=getattr(args, "expectations_only", False),
+        progress_callback=progress_callback,
     )
     print(f"Combined report generated at {actual_output_path}")
 
@@ -1782,6 +1810,15 @@ def get_parser() -> argparse.ArgumentParser:
             "Evaluate test results using only expectations "
             "(ignore goal success_criteria)"
         ),
+    )
+    parser_report.add_argument(
+        "--filter-names",
+        help="Optional: Comma-separated list of evaluation names to include.",
+    )
+    parser_report.add_argument(
+        "--json-progress",
+        action="store_true",
+        help="Output progress updates as JSON lines to stderr.",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 

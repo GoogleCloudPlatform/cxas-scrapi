@@ -1506,3 +1506,87 @@ def test_simulation_evals_expectations_only_fallback():
             parallel=1,
         )
         assert res["passed"] is True
+
+
+def test_llm_user_conversation_custom_initial_utterance():
+    mock_gemini_client = MagicMock()
+    test_case = {
+        "steps": [{"goal": "greet"}],
+    }
+    llm_conv = LLMUserConversation(
+        genai_client=mock_gemini_client,
+        genai_model="gemini-3.1-flash-lite",
+        test_case=test_case,
+        initial_utterance="Hello Agent",
+    )
+    got_user_utterance_0, _ = llm_conv.next_user_utterance("")
+    assert got_user_utterance_0 == "Hello Agent"
+
+
+def test_simulation_evals_run_simulations_progress_callback():
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name)
+
+    evals._run_single_simulation_job = MagicMock(return_value={"status": "ok"})
+    test_cases = [{"name": "tc1"}, {"name": "tc2"}]
+
+    progress_calls = []
+
+    def callback(current, total):
+        progress_calls.append((current, total))
+
+    evals.run_simulations(
+        test_cases=test_cases,
+        runs=2,
+        parallel=1,
+        progress_callback=callback,
+    )
+
+    assert len(progress_calls) == 4
+    assert progress_calls == [(1, 4), (2, 4), (3, 4), (4, 4)]
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulation_evals_escalation_transfer_handling(
+    mock_llm_conv_class, mock_sessions_class
+):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("", {}),
+    ]
+    step = Step(goal="escalate to human", success_criteria="escalate to agent")
+    step_prog = StepProgress(step=step, status=StepStatus.NOT_STARTED)
+    mock_eval_conv.steps_progress = [step_prog]
+    mock_eval_conv.expectations = []
+
+    mock_response = MagicMock()
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    with patch.object(
+        simulator,
+        "_parse_agent_response",
+        return_value=("Transferring you.", [], True, []),
+    ):
+        mock_sessions.run.return_value = mock_response
+
+        test_case = {"steps": [step.model_dump()]}
+        simulator.simulate_conversation(
+            test_case=test_case,
+            session_id="123",
+            console_logging=False,
+        )
+
+    assert step_prog.status == StepStatus.COMPLETED
+    assert (
+        "Agent ended session via escalation/transfer" in step_prog.justification
+    )
