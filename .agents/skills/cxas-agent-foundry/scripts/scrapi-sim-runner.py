@@ -28,10 +28,8 @@ Usage:
 import argparse
 import json
 import os
-import random
 import sys
 import time
-import uuid
 from datetime import datetime
 from typing import Any
 
@@ -41,10 +39,7 @@ from config import get_project_path, load_app_name
 from cxas_scrapi.evals.simulation_evals import (
     LLMUserConversation,
     SimulationEvals,
-    StepStatus,
-    cleanup_session_dir,
 )
-from cxas_scrapi.utils.eval_utils import ExpectationStatus
 from cxas_scrapi.utils.reporting import generate_html_report
 
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/scrapi-sim-runner"
@@ -73,7 +68,7 @@ def load_sim_templates():
         data = yaml.safe_load(f)
     if isinstance(data, list):
         return {ev["name"]: ev for ev in data}
-    
+
     evals = (data or {}).get("evals", [])
     common_expectations = (data or {}).get("common_expectations", [])
     if common_expectations:
@@ -114,173 +109,39 @@ def build_test_case(ev: dict[str, Any]) -> dict[str, Any] | None:
 
 
 class EnhancedSimRunner(SimulationEvals):
-    """Extended SimulationEvals that injects session variables."""
-
-    @cleanup_session_dir
-    def __init__(self, *args: Any, expectations_only: bool = False, **kwargs: Any):
-        super().__init__(*args, **kwargs)
-        self.expectations_only = expectations_only
-
-    def _run_single_simulation_job(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        res = super()._run_single_simulation_job(*args, **kwargs)
-        if self.expectations_only and "expectations" in res:
-            try:
-                met, total = map(int, res["expectations"].split("/"))
-                if total > 0:
-                    res["passed"] = (met == total)
-            except Exception:
-                pass
-        return res
+    """Extended SimulationEvals that defaults initial utterance to 'Hi'."""
 
     def simulate_conversation(
         self,
         test_case: dict[str, Any],
-        initial_utterance: str = "Hi",
-        model: str = _DEFAULT_MODEL,
+        sim_user_model: str | None = _DEFAULT_MODEL,
+        eval_model: str | None = _DEFAULT_MODEL,
         session_id: str | None = None,
         console_logging: bool = True,
         modality: str = "text",
-        use_tool_fakes: bool = False,
-        background_noise_file: str | None = None,
         capture_agent_audio: bool = False,
+        background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
+        use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
+        initial_utterance: str = "Hi",
         **kwargs: Any,
     ) -> LLMUserConversation:
-        """Run a simulated conversation with variable injection."""
-        if session_id is None:
-            session_id = str(uuid.uuid4())
-
-        eval_conv = LLMUserConversation(
-            genai_client=self.genai_client,
-            genai_model=model,
+        return super().simulate_conversation(
             test_case=test_case,
-        )
-
-        eval_conv.agent_audio_paths = {}
-        current_sim_turn = 0
-
-        session_params = test_case.get("session_parameters", {})
-        if console_logging:
-            print("Starting simulated conversation...")
-            if session_params:
-                print(f"  Variables: {list(session_params.keys())}")
-
-        # First turn: inject variables alongside the initial utterance
-        user_utterance = initial_utterance
-        eval_conv._add_user_utterance(user_utterance)
-        eval_conv.current_turn += 1
-
-        detailed_trace = [f"User: {user_utterance}"]
-
-        first_turn = True
-        while user_utterance:
-            for attempt in range(self.max_retries):
-                try:
-                    run_kwargs = {
-                        "session_id": session_id,
-                        "text": user_utterance,
-                        "modality": modality,
-                        "use_tool_fakes": use_tool_fakes,
-                        "turn_num": current_sim_turn,
-                        "capture_agent_audio": capture_agent_audio,
-                        "background_noise_file": background_noise_file,
-                        "burst_noise_files": burst_noise_files,
-                        "voice_config": voice_config,
-                    }
-                    # Inject variables on first turn only
-                    if first_turn and session_params:
-                        run_kwargs["variables"] = session_params
-
-                    response = self.sessions_client.run(**run_kwargs)
-                    break
-                except Exception as e:
-                    if attempt == self.max_retries - 1:
-                        raise e
-                    if console_logging:
-                      print(
-                          f"  [Retry] Session {session_id[:8]} | Turn retry {attempt + 1}/{self.max_retries} "
-                          f"due to: {e}\n"
-                      )
-                    sleep_time = (self.retry_delay_base**attempt) + random.uniform(0.5, 2.0)
-                    time.sleep(sleep_time)
-
-            if not response:
-                break
-
-            first_turn = False
-
-            if response and getattr(response, "agent_audio_paths", None):
-                audio_path = response.agent_audio_paths.get(0)
-                if audio_path:
-                    eval_conv.agent_audio_paths[current_sim_turn] = audio_path
-
-            if console_logging:
-                self.sessions_client.parse_result(response)
-
-            agent_text, trace_chunks, session_ended, tool_calls = (
-                self._parse_agent_response(response)
-            )
-            detailed_trace.append("\n".join(trace_chunks))
-
-            if session_ended:
-                if agent_text:
-                    eval_conv._add_agent_response(agent_text)
-                eval_conv._add_agent_tool_calls(tool_calls)
-                eval_conv._next_user_utterance()
-                if console_logging:
-                    print("\nSession ended by agent (end_session).")
-                # Mark current step as completed if the session ending
-                # is a valid success (escalation evals)
-                for prog in eval_conv.steps_progress:
-                    criteria = prog.step.success_criteria.lower()
-                    if prog.status != StepStatus.COMPLETED and (
-                        "escalat" in criteria
-                        or "transfer" in criteria
-                        or "being transferred" in criteria
-                    ):
-                        prog.status = StepStatus.COMPLETED
-                        prog.justification = (
-                            "Agent ended session via escalation/transfer — "
-                            "matches success criteria."
-                        )
-                break
-
-            eval_conv._add_agent_tool_calls(tool_calls)
-            result = eval_conv.next_user_utterance(agent_text)
-            if isinstance(result, tuple):
-                user_utterance, _ = result
-            else:
-                user_utterance = result
-            if user_utterance:
-                detailed_trace.append(f"User: {user_utterance}")
-
-            current_sim_turn += 1
-
-        if console_logging:
-            print("\n--- Conversation Complete ---")
-            for step_prog in eval_conv.steps_progress:
-                status_icon = (
-                    "✓" if step_prog.status == StepStatus.COMPLETED else "✗"
-                )
-                goal_summary = step_prog.step.goal[:60]
-                status_val = step_prog.status.value
-                print(f"  {status_icon} {goal_summary} → {status_val}")
-
-        # Evaluate expectations
-        self._evaluate_expectations(
-            eval_conv,
-            detailed_trace,
-            model,
-            console_logging,
+            sim_user_model=sim_user_model,
+            eval_model=eval_model,
+            session_id=session_id,
+            console_logging=console_logging,
+            modality=modality,
             capture_agent_audio=capture_agent_audio,
+            background_noise_file=background_noise_file,
+            burst_noise_files=burst_noise_files,
+            use_tool_fakes=use_tool_fakes,
+            voice_config=voice_config,
+            initial_utterance=initial_utterance,
+            **kwargs,
         )
-
-        # Attach extra data for reporting
-        eval_conv._session_id = session_id
-        eval_conv._detailed_trace = detailed_trace
-
-        return eval_conv
 
 
 def _parse_priorities(priority):
@@ -573,7 +434,10 @@ def main():
         "--expectations-only",
         action="store_true",
         default=False,
-        help="Evaluate test results using only expectations (ignore goal success_criteria)",
+        help=(
+            "Evaluate test results using only expectations "
+            "(ignore goal success_criteria)"
+        ),
     )
     p_run.add_argument(
         "--capture-agent-audio",

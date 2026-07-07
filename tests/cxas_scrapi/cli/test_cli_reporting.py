@@ -86,6 +86,7 @@ def test_combined_evals_report_cmd(tmp_path):
             runs=1,
             filter_files=[],
             filter_tags=[],
+            filter_names=[],
             parallel=5,
             golden_timeout=600,
             bg_noise_file=None,
@@ -93,6 +94,7 @@ def test_combined_evals_report_cmd(tmp_path):
             use_tool_fakes=False,
             timestamp=None,
             expectations_only=False,
+            progress_callback=None,
         )
 
 
@@ -144,6 +146,7 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
             runs=5,
             filter_files=[],
             filter_tags=[],
+            filter_names=[],
             parallel=5,
             golden_timeout=600,
             bg_noise_file=None,
@@ -151,6 +154,7 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
             use_tool_fakes=False,
             timestamp=None,
             expectations_only=False,
+            progress_callback=None,
         )
 
 
@@ -207,6 +211,7 @@ def test_combined_evals_report_cmd_timestamped(mock_datetime, tmp_path):
             runs=1,
             filter_files=[],
             filter_tags=[],
+            filter_names=[],
             parallel=5,
             golden_timeout=600,
             bg_noise_file=None,
@@ -214,4 +219,49 @@ def test_combined_evals_report_cmd_timestamped(mock_datetime, tmp_path):
             use_tool_fakes=False,
             timestamp="20260622_171403",
             expectations_only=False,
+            progress_callback=None,
         )
+
+
+def test_combined_evals_report_cmd_with_filters_and_progress(tmp_path):
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    class Args:
+        def __init__(self):
+            self.output_dir = str(evals_dir)
+            self.output = None
+            self.gcs_path = None
+            self.golden_run = None
+            self.app_name = None
+            self.run = False
+            self.app_dir = None
+            self.tool_test_file = None
+            self.goldens_dir = None
+            self.simulation_dir = None
+            self.include = "sims"
+            self.input_dir = None
+            self.modality = "text"
+            self.runs = 1
+            self.use_tool_fakes = False
+            self.filter_files = "sim1.yaml,sim2.yaml"
+            self.filter_tags = "P0,P1"
+            self.filter_names = "test_name_1,test_name_2"
+            self.json_progress = True
+            self.sim_user_model = None
+            self.eval_model = None
+
+    args = Args()
+
+    with patch(
+        "cxas_scrapi.utils.reporting.generate_combined_report_from_dir"
+    ) as mock_report:
+        combined_evals_report_cmd(args)
+
+        mock_report.assert_called_once()
+        # Verify call arguments
+        call_kwargs = mock_report.call_args[1]
+        assert call_kwargs["filter_files"] == ["sim1.yaml", "sim2.yaml"]
+        assert call_kwargs["filter_tags"] == ["P0", "P1"]
+        assert call_kwargs["filter_names"] == ["test_name_1", "test_name_2"]
+        assert call_kwargs["progress_callback"] is not None

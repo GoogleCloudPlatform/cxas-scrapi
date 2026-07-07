@@ -16,7 +16,7 @@ import importlib.util
 import json
 import os
 import sys
-from unittest.mock import mock_open, patch
+from unittest.mock import ANY, mock_open, patch
 
 import pandas as pd
 import pytest
@@ -756,6 +756,7 @@ def test_run_all_evals_dict_based_simulations(
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=False,
+        progress_callback=ANY,
     )
 
 
@@ -941,6 +942,7 @@ def test_run_all_evals_expectations_only(mock_run_all_evals):
         output_dir=None,
         filter_files=None,
         filter_tags=None,
+        filter_names=None,
         parallel=1,
         golden_parallel=1,
         golden_timeout=600,
