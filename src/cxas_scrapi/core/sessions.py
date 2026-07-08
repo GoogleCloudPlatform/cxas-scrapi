@@ -785,7 +785,7 @@ class BidiInteractiveSession:
 
         # Block wait for the response with timeout
         try:
-            response = self.response_queue.get(timeout=30)
+            response = self.response_queue.get(timeout=90)
             return response
         except queue.Empty:
             logging.error("Timeout waiting for agent turn response in BidiInteractiveSession")
