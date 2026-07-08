@@ -14,9 +14,9 @@
 
 import json
 import logging
-import queue
 import mimetypes
 import os
+import queue
 import re
 import sys
 import threading
@@ -574,9 +574,10 @@ class BidiSessionHandler:
                             outputs=list(self.current_turn_outputs)
                         )
                         turn_audio_path = {}
-                        if self.current_agent_turn_idx in self.turn_audio_paths:
-                            turn_audio_path[0] = self.turn_audio_paths[self.current_agent_turn_idx]
-                        
+                        idx = self.current_agent_turn_idx
+                        if idx in self.turn_audio_paths:
+                            turn_audio_path[0] = self.turn_audio_paths[idx]
+
                         turn_response = ScrapiRunSessionResponse(
                             original_response=original_response,
                             agent_audio_paths=turn_audio_path,
@@ -708,7 +709,10 @@ class BidiSessionHandler:
 
 
 class BidiInteractiveSession:
-    """Manages an active Bidi WebSocket session with GECX, supporting dynamic turns."""
+    """Manages an active Bidi WebSocket session with GECX.
+
+    Supports dynamic multi-turn interactions.
+    """
 
     def __init__(
         self,
@@ -749,13 +753,15 @@ class BidiInteractiveSession:
     def start(self):
         """Connects to the WebSocket gateway in the background."""
         self.wst = self.handler.run()
-        # Wait a short moment to ensure thread has started and websocket is opened
+        # Wait a short moment to ensure thread has started and
+        # websocket is opened.
         time.sleep(0.5)
 
-    def send_turn(self, text: str, variables: dict[str, Any] | None = None) -> Any:
+    def send_turn(
+        self, text: str, variables: dict[str, Any] | None = None
+    ) -> Any:
         """Sends a user query and returns the agent's turn response."""
         # Convert text to TTS audio bytes
-        from cxas_scrapi.core.audio_transformer import AudioTransformer
         audio_transformer = AudioTransformer()
         lang_code = "en-US"
         if variables and "locale" in variables:
@@ -787,9 +793,14 @@ class BidiInteractiveSession:
         try:
             response = self.response_queue.get(timeout=90)
             return response
-        except queue.Empty:
-            logging.error("Timeout waiting for agent turn response in BidiInteractiveSession")
-            raise TimeoutError("Timeout waiting for agent response via WebSocket")
+        except queue.Empty as err:
+            logging.error(
+                "Timeout waiting for agent turn response in "
+                "BidiInteractiveSession"
+            )
+            raise TimeoutError(
+                "Timeout waiting for agent response via WebSocket"
+            ) from err
 
     def close(self):
         """Closes the WebSocket connection cleanly."""
