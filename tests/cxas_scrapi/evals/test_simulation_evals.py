@@ -308,6 +308,72 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_user_simulator_audio_with_tool_fakes(mock_llm_conv_class, mock_sessions_class):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("I want to book a flight", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    # Mock Response 1
+    mock_response_1 = MagicMock()
+    mock_output_1 = MagicMock()
+    mock_output_1.text = ""
+
+    mock_msg_1 = MagicMock()
+    mock_msg_1.role = "model"
+    mock_chunk_1 = MagicMock()
+    mock_chunk_1._pb.WhichOneof.return_value = "text"
+    mock_chunk_1.text = "Where to?"
+    mock_msg_1.chunks = [mock_chunk_1]
+
+    mock_diag_1 = MagicMock()
+    mock_diag_1.messages = [mock_msg_1]
+    mock_output_1.diagnostic_info = mock_diag_1
+    mock_response_1.outputs = [mock_output_1]
+
+    # Mock Response 2
+    mock_response_2 = MagicMock()
+    mock_output_2 = MagicMock()
+    mock_output_2.text = "Flight booked."
+    mock_output_2.diagnostic_info = None
+    mock_response_2.outputs = [mock_output_2]
+
+    mock_interactive_session = MagicMock()
+    mock_sessions.create_interactive_session.return_value = mock_interactive_session
+    mock_interactive_session.send_turn.side_effect = [mock_response_1, mock_response_2]
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {"steps": []}
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+        modality="audio",
+        use_tool_fakes=True,
+    )
+
+    mock_sessions.create_interactive_session.assert_called_once_with(
+        session_id="123",
+        capture_agent_audio=False,
+        background_noise_file=None,
+        use_tool_fakes=True,
+        voice_config=None,
+    )
+    mock_interactive_session.start.assert_called_once()
+    mock_interactive_session.close.assert_called_once()
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
 def test_user_simulator_audio_with_eval_enabled(
     mock_llm_conv_class, mock_sessions_class
 ):
