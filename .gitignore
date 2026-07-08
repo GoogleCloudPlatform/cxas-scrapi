@@ -172,3 +172,4 @@ bin/
 # `cxas migrate`; never checked in)
 *_migration_analysis.html
 *_migration_analysis.json
+*_insights_dashboard.html

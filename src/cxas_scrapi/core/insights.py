@@ -160,8 +160,217 @@ class Insights(Common):
                 break
         return results
 
-    def get_conversation(self, name: str) -> dict[str, Any]:
+    def get_conversation(
+        self, name: str, view: str | None = None
+    ) -> dict[str, Any]:
         """Gets a single conversation by name or ID."""
         if not name.startswith("projects/"):
             name = f"{self.parent}/conversations/{name}"
+        params = {"view": view} if view else None
+        return self._request("GET", name, params=params)
+
+    def create_conversation(
+        self,
+        conversation: dict[str, Any],
+        conversation_id: str | None = None,
+        parent: str | None = None,
+    ) -> dict[str, Any]:
+        """Creates or ingests a new conversation."""
+        parent = parent or self.parent
+        params = (
+            {"conversationId": conversation_id} if conversation_id else None
+        )
+        return self._request(
+            "POST", f"{parent}/conversations", data=conversation, params=params
+        )
+
+    def delete_conversation(self, name: str, force: bool = True) -> None:
+        """Deletes a conversation by resource name or ID."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/conversations/{name}"
+        params = {"force": "true" if force else "false"}
+        self._request("DELETE", name, params=params)
+
+    def analyze_conversation(
+        self,
+        name: str,
+        annotator_selector: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Triggers single-conversation analysis (e.g. for scorecard
+        dry runs)."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/conversations/{name}"
+        payload = {}
+        if annotator_selector:
+            payload["annotatorSelector"] = annotator_selector
+        return self._request("POST", f"{name}:analyze", data=payload)
+
+    def bulk_analyze_conversations(
+        self,
+        parent: str | None = None,
+        filter_str: str | None = None,
+        annotator_selector: dict[str, Any] | None = None,
+        analysis_percentage: float = 100.0,
+    ) -> dict[str, Any]:
+        """Triggers batch analysis over matching conversations."""
+        parent = parent or self.parent
+        payload = {
+            "filter": filter_str or "",
+            "analysisPercentage": analysis_percentage,
+        }
+        if annotator_selector:
+            payload["annotatorSelector"] = annotator_selector
+        return self._request(
+            "POST", f"{parent}/conversations:bulkAnalyze", data=payload
+        )
+
+    # --- Topic Modelling (IssueModels) Operations ---
+
+    def list_issue_models(
+        self, parent: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Lists issue models (topic models) under the specified parent."""
+        parent = parent or self.parent
+        return self._list_paginated(f"{parent}/issueModels", "issueModels")
+
+    def get_issue_model(self, name: str) -> dict[str, Any]:
+        """Gets details of an issue model by name or ID."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/issueModels/{name}"
         return self._request("GET", name)
+
+    def create_issue_model(
+        self,
+        display_name: str,
+        input_data_config: dict[str, Any] | None = None,
+        parent: str | None = None,
+        issue_model_id: str | None = None,
+        model_type: str = "TYPE_V2",
+    ) -> dict[str, Any]:
+        """Creates a new issue model for topic modelling."""
+        parent = parent or self.parent
+        payload = {
+            "displayName": display_name,
+            "modelType": model_type,
+            "inputDataConfig": input_data_config or {"medium": "CHAT"},
+        }
+        params = {"issueModelId": issue_model_id} if issue_model_id else None
+        return self._request(
+            "POST", f"{parent}/issueModels", data=payload, params=params
+        )
+
+    def update_issue_model(
+        self,
+        name: str,
+        issue_model: dict[str, Any],
+        update_mask: str = "*",
+    ) -> dict[str, Any]:
+        """Updates an issue model."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/issueModels/{name}"
+        params = {"updateMask": update_mask}
+        return self._request("PATCH", name, data=issue_model, params=params)
+
+    def delete_issue_model(self, name: str) -> None:
+        """Deletes an issue model."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/issueModels/{name}"
+        self._request("DELETE", name)
+
+    def deploy_issue_model(self, name: str) -> dict[str, Any]:
+        """Deploys an issue model so it actively tags incoming conversations."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/issueModels/{name}"
+        return self._request("POST", f"{name}:deploy", data={})
+
+    def undeploy_issue_model(self, name: str) -> dict[str, Any]:
+        """Undeploys an active issue model."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/issueModels/{name}"
+        return self._request("POST", f"{name}:undeploy", data={})
+
+    def calculate_issue_model_stats(self, name: str) -> dict[str, Any]:
+        """Calculates and returns issue model statistics."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/issueModels/{name}"
+        return self._request("GET", f"{name}:calculateIssueModelStats")
+
+    def list_issues(self, parent_issue_model: str) -> list[dict[str, Any]]:
+        """Lists issues (topics) belonging to an issue model."""
+        if not parent_issue_model.startswith("projects/"):
+            parent_issue_model = (
+                f"{self.parent}/issueModels/{parent_issue_model}"
+            )
+        return self._list_paginated(f"{parent_issue_model}/issues", "issues")
+
+    def get_issue(self, name: str) -> dict[str, Any]:
+        """Gets a single issue (topic) by name."""
+        return self._request("GET", name)
+
+    # --- Analysis Rules Operations ---
+
+    def list_analysis_rules(
+        self, parent: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Lists analysis rules in the specified parent."""
+        parent = parent or self.parent
+        return self._list_paginated(f"{parent}/analysisRules", "analysisRules")
+
+    def get_analysis_rule(self, name: str) -> dict[str, Any]:
+        """Gets an analysis rule by name or ID."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/analysisRules/{name}"
+        return self._request("GET", name)
+
+    def create_analysis_rule(
+        self,
+        display_name: str,
+        conversation_filter: str,
+        annotator_selector: dict[str, Any],
+        active: bool = True,
+        parent: str | None = None,
+        analysis_rule_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Creates a new analysis rule for automated evaluations."""
+        parent = parent or self.parent
+        payload = {
+            "displayName": display_name,
+            "conversationFilter": conversation_filter,
+            "annotatorSelector": annotator_selector,
+            "active": active,
+        }
+        params = (
+            {"analysisRuleId": analysis_rule_id} if analysis_rule_id else None
+        )
+        return self._request(
+            "POST", f"{parent}/analysisRules", data=payload, params=params
+        )
+
+    def update_analysis_rule(
+        self,
+        name: str,
+        analysis_rule: dict[str, Any],
+        update_mask: str = "*",
+    ) -> dict[str, Any]:
+        """Updates an analysis rule."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/analysisRules/{name}"
+        params = {"updateMask": update_mask}
+        return self._request("PATCH", name, data=analysis_rule, params=params)
+
+    def activate_analysis_rule(
+        self, name: str, active: bool = True
+    ) -> dict[str, Any]:
+        """Convenience method to activate or deactivate an analysis rule."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/analysisRules/{name}"
+        params = {"updateMask": "active"}
+        return self._request(
+            "PATCH", name, data={"active": active}, params=params
+        )
+
+    def delete_analysis_rule(self, name: str) -> None:
+        """Deletes an analysis rule."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/analysisRules/{name}"
+        self._request("DELETE", name)

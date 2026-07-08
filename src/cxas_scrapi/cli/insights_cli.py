@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import argparse
+import logging
 import sys
 import tempfile
 
@@ -163,15 +164,539 @@ def handle_copy(args: argparse.Namespace) -> None:
     print("Successfully completed copy operation.")
 
 
+# --- New Scorecard Handlers ---
+
+
+def handle_create_scorecard(args: argparse.Namespace) -> None:
+    """Handles the 'insights create-scorecard' command."""
+    print(f"Creating scorecard {args.scorecard_id} under {args.parent}...")
+    import cxas_scrapi.utils.scorecard_template_manager as template_manager
+    from cxas_scrapi.core.scorecards import Scorecards
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    scorecards_client = Scorecards(project_id=project_id, location=location)
+
+    questions = []
+    if getattr(args, "template", None):
+        _, questions = template_manager.load_scorecard_template(args.template)
+
+    try:
+        revision, created_q = scorecards_client.create_scorecard_with_questions(
+            scorecard_id=args.scorecard_id,
+            display_name=args.display_name,
+            description=getattr(args, "description", "") or "",
+            questions=questions,
+            parent=args.parent,
+        )
+        print(f"Successfully created scorecard revision: {revision['name']}")
+        print(f"Added {len(created_q)} questions.")
+    except Exception as e:
+        print(f"Failed to create scorecard: {e}")
+        sys.exit(1)
+
+
+def handle_add_question(args: argparse.Namespace) -> None:
+    """Handles the 'insights add-question' command."""
+    print(f"Adding question to revision {args.revision_name}...")
+    from cxas_scrapi.core.scorecards import Scorecards
+
+    project_id, location = _get_project_and_location_from_parent(
+        args.revision_name
+    )
+    scorecards_client = Scorecards(project_id=project_id, location=location)
+
+    # Parse choices (format: "Yes=1.0,No=0.0" or JSON)
+    choices_list = []
+    if getattr(args, "answer_choices", None):
+        for part in args.answer_choices.split(","):
+            if "=" in part:
+                key, val_str = part.split("=", 1)
+                try:
+                    val = float(val_str)
+                except ValueError:
+                    val = 0.0
+                choices_list.append({"strValue": key.strip(), "score": val})
+
+    question_dict = {
+        "questionBody": args.question_body,
+        "answerChoices": choices_list,
+        "answerInstructions": getattr(args, "answer_instructions", "") or "",
+    }
+    if getattr(args, "abbreviation", None):
+        question_dict["abbreviation"] = args.abbreviation
+
+    try:
+        res = scorecards_client.create_question(
+            args.revision_name, question_dict
+        )
+        print(f"Successfully added question: {res['name']}")
+    except Exception as e:
+        print(f"Failed to add question: {e}")
+        sys.exit(1)
+
+
+# --- Topic Models (IssueModels) Handlers ---
+
+
+def handle_list_topic_models(args: argparse.Namespace) -> None:
+    """Handles the 'insights list-topic-models' command."""
+    print(f"Listing topic models in: {args.parent}")
+    from cxas_scrapi.core.issue_models import IssueModels
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    im_client = IssueModels(project_id=project_id, location=location)
+
+    try:
+        models = im_client.list_topic_models(parent=args.parent)
+        for m in models:
+            state = m.get("state", "UNKNOWN")
+            print(
+                f"Topic Model: {m['name']} ({m.get('displayName', 'N/A')}) - State: {state}"
+            )
+    except Exception as e:
+        print(f"Failed to list topic models: {e}")
+        sys.exit(1)
+
+
+def handle_create_topic_model(args: argparse.Namespace) -> None:
+    """Handles the 'insights create-topic-model' command."""
+    print(f"Creating topic model '{args.display_name}' under {args.parent}...")
+    from cxas_scrapi.core.issue_models import IssueModels
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    im_client = IssueModels(project_id=project_id, location=location)
+
+    try:
+        model = im_client.create_topic_model_for_app(
+            display_name=args.display_name,
+            app_name=getattr(args, "app_name", None),
+            filter_str=getattr(args, "filter", None),
+            parent=args.parent,
+            deploy=getattr(args, "deploy", True),
+        )
+        print(
+            f"Successfully created topic model: {model.get('name', 'UNKNOWN')}"
+        )
+    except Exception as e:
+        print(f"Failed to create topic model: {e}")
+        sys.exit(1)
+
+
+def handle_deploy_topic_model(args: argparse.Namespace) -> None:
+    """Handles the 'insights deploy-topic-model' command."""
+    print(f"Deploying topic model {args.issue_model_name}...")
+    from cxas_scrapi.core.issue_models import IssueModels
+
+    project_id, location = _get_project_and_location_from_parent(
+        args.issue_model_name
+    )
+    im_client = IssueModels(project_id=project_id, location=location)
+    try:
+        im_client.deploy_issue_model(args.issue_model_name)
+        print("Successfully initiated deploy operation.")
+    except Exception as e:
+        print(f"Failed to deploy topic model: {e}")
+        sys.exit(1)
+
+
+def handle_undeploy_topic_model(args: argparse.Namespace) -> None:
+    """Handles the 'insights undeploy-topic-model' command."""
+    print(f"Undeploying topic model {args.issue_model_name}...")
+    from cxas_scrapi.core.issue_models import IssueModels
+
+    project_id, location = _get_project_and_location_from_parent(
+        args.issue_model_name
+    )
+    im_client = IssueModels(project_id=project_id, location=location)
+    try:
+        im_client.undeploy_issue_model(args.issue_model_name)
+        print("Successfully initiated undeploy operation.")
+    except Exception as e:
+        print(f"Failed to undeploy topic model: {e}")
+        sys.exit(1)
+
+
+def handle_get_topic_model(args: argparse.Namespace) -> None:
+    """Handles the 'insights get-topic-model' command."""
+    from cxas_scrapi.core.issue_models import IssueModels
+
+    project_id, location = _get_project_and_location_from_parent(
+        args.issue_model_name
+    )
+    im_client = IssueModels(project_id=project_id, location=location)
+    try:
+        model = im_client.get_topic_model(args.issue_model_name)
+        print(f"Topic Model: {model['name']}")
+        print(f"Display Name: {model.get('displayName')}")
+        print(f"State: {model.get('state')}")
+        if getattr(args, "include_stats", False):
+            stats = im_client.calculate_issue_model_stats(args.issue_model_name)
+            print(f"Stats: {stats}")
+    except Exception as e:
+        print(f"Failed to get topic model: {e}")
+        sys.exit(1)
+
+
+def handle_list_topics(args: argparse.Namespace) -> None:
+    """Handles the 'insights list-topics' command."""
+    from cxas_scrapi.core.issue_models import IssueModels
+
+    project_id, location = _get_project_and_location_from_parent(
+        args.issue_model_name
+    )
+    im_client = IssueModels(project_id=project_id, location=location)
+    try:
+        issues = im_client.list_issues(args.issue_model_name)
+        print(f"Found {len(issues)} topics for model {args.issue_model_name}:")
+        for i in issues:
+            print(f" - {i['name']}: {i.get('displayName', 'N/A')}")
+    except Exception as e:
+        print(f"Failed to list topics: {e}")
+        sys.exit(1)
+
+
+# --- Analysis Rules Handlers ---
+
+
+def handle_list_analysis_rules(args: argparse.Namespace) -> None:
+    """Handles the 'insights list-analysis-rules' command."""
+    print(f"Listing analysis rules in: {args.parent}")
+    from cxas_scrapi.core.analysis_rules import AnalysisRules
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    ar_client = AnalysisRules(project_id=project_id, location=location)
+    try:
+        rules = ar_client.list_analysis_rules(parent=args.parent)
+        for r in rules:
+            print(
+                f"Rule: {r['name']} ({r.get('displayName', 'N/A')}) - Active: {r.get('active', False)}"
+            )
+    except Exception as e:
+        print(f"Failed to list analysis rules: {e}")
+        sys.exit(1)
+
+
+def handle_activate_scorecard(args: argparse.Namespace) -> None:
+    """Handles the 'insights activate-scorecard' (and deploy-scorecard) command."""
+    from cxas_scrapi.core.scorecards import Scorecards
+
+    rev_name = getattr(args, "revision_name", None) or getattr(
+        args, "scorecard_name", None
+    )
+    if not rev_name:
+        print("Error: Must specify --revision-name.")
+        sys.exit(1)
+
+    project_id, location = _get_project_and_location_from_parent(rev_name)
+    sc_client = Scorecards(project_id=project_id, location=location)
+
+    print(f"Activating scorecard revision {rev_name}...")
+    try:
+        wait_ready = getattr(args, "wait", True)
+        res = sc_client.activate_revision(
+            rev_name,
+            wait_for_ready=wait_ready,
+            timeout_seconds=getattr(args, "timeout", 120) or 120,
+        )
+        state = res.get("state", "UNKNOWN")
+        print(f"Scorecard revision state: {state}")
+        if state == "READY":
+            print(
+                f"Successfully tuned and activated scorecard revision '{rev_name}'. It is now READY for live evaluation."
+            )
+        elif state == "TRAINING":
+            print(
+                f"Scorecard revision '{rev_name}' has started TRAINING/TUNING. It will become READY shortly."
+            )
+        else:
+            print(f"Scorecard revision '{rev_name}' is in state '{state}'.")
+    except Exception as e:
+        print(f"Failed to activate scorecard revision: {e}")
+        sys.exit(1)
+
+
+def handle_validate_scorecard(args: argparse.Namespace) -> None:
+    """Handles the 'insights validate-scorecard' command."""
+    from cxas_scrapi.core.scorecards import Scorecards
+
+    rev_name = getattr(args, "revision_name", None) or getattr(
+        args, "scorecard_name", None
+    )
+    if not rev_name:
+        print("Error: Must specify --revision-name.")
+        sys.exit(1)
+
+    project_id, location = _get_project_and_location_from_parent(rev_name)
+    sc_client = Scorecards(project_id=project_id, location=location)
+
+    try:
+        rev = sc_client.get_revision(rev_name)
+        state = rev.get("state", "UNKNOWN")
+        print(f"Scorecard revision : {rev_name}")
+        print(f"Current State      : {state}")
+        if state == "EDITABLE":
+            msg = f"[WARNING] Scorecard revision '{rev_name}' is currently in state 'EDITABLE' (Draft/Inactive). Run 'cxas insights activate-scorecard --revision-name {rev_name}' to tune and deploy it before use!"
+            print(msg)
+            if getattr(args, "strict", False):
+                sys.exit(1)
+        elif state != "READY":
+            print(
+                f"[WARNING] Scorecard revision '{rev_name}' is in state '{state}' (not yet READY)."
+            )
+            if getattr(args, "strict", False):
+                sys.exit(1)
+        else:
+            print("Scorecard revision is valid and READY for use.")
+    except Exception as e:
+        print(f"Failed to validate scorecard revision: {e}")
+        sys.exit(1)
+
+
+def handle_create_analysis_rule(args: argparse.Namespace) -> None:
+    """Handles the 'insights create-analysis-rule' command."""
+    print(
+        f"Creating analysis rule '{args.display_name}' under {args.parent}..."
+    )
+    from cxas_scrapi.core.analysis_rules import AnalysisRules
+    from cxas_scrapi.core.scorecards import Scorecards
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    ar_client = AnalysisRules(project_id=project_id, location=location)
+    sc_client = Scorecards(project_id=project_id, location=location)
+
+    sc_list = (
+        args.scorecard_revisions.split(",")
+        if getattr(args, "scorecard_revisions", None)
+        else None
+    )
+    im_list = (
+        args.issue_models.split(",")
+        if getattr(args, "issue_models", None)
+        else None
+    )
+
+    if sc_list:
+        for rev in sc_list:
+            try:
+                r_obj = sc_client.get_revision(rev)
+                state = r_obj.get("state")
+                if state == "EDITABLE":
+                    print(
+                        f"[WARNING] Scorecard revision '{rev}' is in state 'EDITABLE' "
+                        f"(Draft/Inactive). Triggering automatic tuning/activation so it "
+                        f"can be evaluated by CCAI Insights..."
+                    )
+                    sc_client.tune_revision(rev)
+                elif state != "READY":
+                    print(
+                        f"[WARNING] Scorecard revision '{rev}' is in state '{state}' (not READY)."
+                    )
+            except Exception as e:
+                logging.debug(
+                    "CLI scorecard revision state check failed for %s: %s",
+                    rev,
+                    e,
+                )
+
+    try:
+        rule = ar_client.create_rule_for_app(
+            display_name=args.display_name,
+            app_name=getattr(args, "app_name", None),
+            filter_str=getattr(args, "filter", None),
+            scorecard_revisions=sc_list,
+            issue_models=im_list,
+            run_summarization=getattr(args, "run_summarization", True),
+            run_sentiment=getattr(args, "run_sentiment", True),
+            active=getattr(args, "active", True),
+            parent=args.parent,
+            rule_id=getattr(args, "rule_id", None),
+        )
+        print(f"Successfully created analysis rule: {rule['name']}")
+    except Exception as e:
+        print(f"Failed to create analysis rule: {e}")
+        sys.exit(1)
+
+
+def handle_activate_analysis_rule(args: argparse.Namespace) -> None:
+    """Handles the 'insights activate-analysis-rule' command."""
+    print(f"Setting active={args.active} on rule {args.rule_name}...")
+    from cxas_scrapi.core.analysis_rules import AnalysisRules
+
+    project_id, location = _get_project_and_location_from_parent(args.rule_name)
+    ar_client = AnalysisRules(project_id=project_id, location=location)
+    try:
+        ar_client.activate_analysis_rule(args.rule_name, active=args.active)
+        print("Successfully updated rule status.")
+    except Exception as e:
+        print(f"Failed to activate analysis rule: {e}")
+        sys.exit(1)
+
+
+def handle_get_analysis_rule(args: argparse.Namespace) -> None:
+    """Handles the 'insights get-analysis-rule' command."""
+    from cxas_scrapi.core.analysis_rules import AnalysisRules
+
+    project_id, location = _get_project_and_location_from_parent(args.rule_name)
+    ar_client = AnalysisRules(project_id=project_id, location=location)
+    try:
+        rule = ar_client.get_analysis_rule(args.rule_name)
+        print(f"Rule: {rule['name']}")
+        print(f"Display Name: {rule.get('displayName')}")
+        print(f"Active: {rule.get('active')}")
+        print(f"Filter: {rule.get('conversationFilter')}")
+        print(f"Annotator Selector: {rule.get('annotatorSelector')}")
+    except Exception as e:
+        print(f"Failed to get analysis rule: {e}")
+        sys.exit(1)
+
+
+def handle_delete_analysis_rule(args: argparse.Namespace) -> None:
+    """Handles the 'insights delete-analysis-rule' command."""
+    print(f"Deleting analysis rule {args.rule_name}...")
+    from cxas_scrapi.core.analysis_rules import AnalysisRules
+
+    project_id, location = _get_project_and_location_from_parent(args.rule_name)
+    ar_client = AnalysisRules(project_id=project_id, location=location)
+    try:
+        ar_client.delete_analysis_rule(args.rule_name)
+        print("Successfully deleted analysis rule.")
+    except Exception as e:
+        print(f"Failed to delete analysis rule: {e}")
+        sys.exit(1)
+
+
+# --- Smoke Test & Metrics Handlers ---
+
+
+def handle_smoke_test_scorecard(args: argparse.Namespace) -> None:
+    """Handles the 'insights smoke-test-scorecard' command."""
+    print(f"Running smoke test for scorecard {args.scorecard_name}...")
+    import json
+
+    from cxas_scrapi.utils.insights_utils import InsightsUtils
+
+    target_parent = getattr(args, "parent", None)
+    if not target_parent and args.scorecard_name.startswith("projects/"):
+        target_parent = "/".join(args.scorecard_name.split("/")[:4])
+
+    if not target_parent:
+        print(
+            "Error: Must provide --parent if --scorecard-name is not full resource path."
+        )
+        sys.exit(1)
+
+    project_id, location = _get_project_and_location_from_parent(target_parent)
+    utils = InsightsUtils(project_id=project_id, location=location)
+
+    conv_list = []
+    if getattr(args, "conversations", None):
+        conv_list.extend(
+            [c.strip() for c in args.conversations.split(",") if c.strip()]
+        )
+    if getattr(args, "simulate_file", None):
+        try:
+            with open(args.simulate_file, encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    conv_list.extend(data)
+                elif isinstance(data, dict):
+                    conv_list.append(data)
+        except Exception as e:
+            print(f"Failed to load simulate file: {e}")
+            sys.exit(1)
+
+    if not conv_list:
+        print("Error: Must specify --conversations or --simulate-file.")
+        sys.exit(1)
+
+    try:
+        results = utils.smoke_test_scorecard(
+            args.scorecard_name, conv_list, parent=target_parent
+        )
+        print("\n--- Smoke Test Results ---")
+        for r in results:
+            conv_label = (
+                r.get("conversation_name")
+                or f"index #{r.get('conversation_index', 'unknown')}"
+            )
+            print(f"Conversation: {conv_label} | Status: {r.get('status')}")
+            if r.get("error"):
+                print(f"  Error: {r['error']}")
+            elif r.get("qa_answer"):
+                ans = r["qa_answer"]
+                print(f"  Scorecard: {ans.get('qaScorecardRevision')}")
+                for qa in ans.get("qaQuestions", []):
+                    val = qa.get("answerValue", {}).get("strValue") or qa.get(
+                        "answerValue", {}
+                    ).get("numValue")
+                    q_id = qa.get("qaQuestion", "").split("/")[-1]
+                    print(
+                        f"    Q: {q_id} => Answer: {val} (Score: {qa.get('score', 0)})"
+                    )
+    except Exception as e:
+        print(f"Failed during smoke test: {e}")
+        sys.exit(1)
+
+
+def handle_analyze_metrics(args: argparse.Namespace) -> None:
+    """Handles the 'insights analyze-metrics' command."""
+    print(
+        f"Aggregating insights metrics under {args.parent} (time_window={args.time_window})..."
+    )
+    import json
+
+    from cxas_scrapi.utils.insights_analytics import InsightsAnalytics
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    analytics = InsightsAnalytics(project_id=project_id, location=location)
+
+    try:
+        report = analytics.aggregate_metrics(
+            time_window=getattr(args, "time_window", "24h") or "24h",
+            app_name=getattr(args, "app_name", None),
+            custom_filter=getattr(args, "filter", None),
+            parent=args.parent,
+        )
+
+        kpis = report.get("kpis", {})
+        print("\n--- Insights Metrics Summary ---")
+        print(f"Total Conversations : {kpis.get('total_conversations', 0)}")
+        print(f"Average Turns       : {kpis.get('average_turns', 0)}")
+        print(
+            f"Average Duration    : {kpis.get('average_duration_seconds', 0)}s"
+        )
+        print(f"User Sentiment Avg  : {kpis.get('average_user_sentiment', 0)}")
+        print(
+            f"Scorecard Pass Rate : {kpis.get('overall_scorecard_pass_percentage', 0)}%\n"
+        )
+
+        if getattr(args, "json_output", None):
+            with open(args.json_output, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2)
+            print(f"Saved JSON report to {args.json_output}")
+
+        html_path = (
+            getattr(args, "html_output", "insights_dashboard.html")
+            or "insights_dashboard.html"
+        )
+        html_content = analytics.generate_html_dashboard(report)
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        print(f"Generated interactive HTML dashboard at: {html_path}")
+
+    except Exception as e:
+        print(f"Failed to analyze metrics: {e}")
+        sys.exit(1)
+
+
 def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
     """Populates the provided insights parser with its subcommands."""
 
-    # Require an operation (list, export, import, copy)
     insights_subparsers = parser_insights.add_subparsers(
         title="Insights Operations", dest="insights_command", required=True
     )
 
-    # 2. 'list-scorecards' subcommand
+    # 1. 'list-scorecards' subcommand
     parser_list = insights_subparsers.add_parser(
         "list-scorecards", help="List all QA Scorecards under a parent."
     )
@@ -182,7 +707,7 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
     )
     parser_list.set_defaults(func=handle_list)
 
-    # 3. 'export-scorecard-from-insights' subcommand
+    # 2. 'export-scorecard-from-insights' subcommand
     parser_export = insights_subparsers.add_parser(
         "export-scorecard-from-insights",
         help="Export a Scorecard and its questions to a JSON/YAML template.",
@@ -190,8 +715,7 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
     parser_export.add_argument(
         "--scorecard_name",
         required=True,
-        help="Full resource name of the scorecard (e.g. "
-        "projects/*/locations/*/qaScorecards/*).",
+        help="Full resource name of the scorecard (e.g. projects/*/locations/*/qaScorecards/*).",
     )
     parser_export.add_argument(
         "--template",
@@ -200,11 +724,10 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
     )
     parser_export.set_defaults(func=handle_export)
 
-    # 4. 'import-scorecard-to-insights' subcommand
+    # 3. 'import-scorecard-to-insights' subcommand
     parser_import = insights_subparsers.add_parser(
         "import-scorecard-to-insights",
-        help="Import a JSON/YAML template as an editable SDK Scorecard "
-        "revision.",
+        help="Import a JSON/YAML template as an editable SDK Scorecard revision.",
     )
     parser_import.add_argument(
         "--template",
@@ -213,18 +736,15 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
     )
     parser_import.add_argument(
         "--scorecard_name",
-        help="Optional: Full resource name of an existing scorecard to "
-        "overwrite. If omitted, --parent must be provided.",
+        help="Optional: Full resource name of an existing scorecard to overwrite. If omitted, --parent must be provided.",
     )
     parser_import.add_argument(
         "--parent",
-        help="Optional: Parent resource name (projects/*/locations/*) to "
-        "create a brand new scorecard under. If omitted, --scorecard_name "
-        "must be provided.",
+        help="Optional: Parent resource name (projects/*/locations/*) to create a brand new scorecard under. If omitted, --scorecard_name must be provided.",
     )
     parser_import.set_defaults(func=handle_import)
 
-    # 5. 'copy-scorecard' subcommand
+    # 4. 'copy-scorecard' subcommand
     parser_copy = insights_subparsers.add_parser(
         "copy-scorecard",
         help="Copy a Scorecard's questions into a new destination Scorecard.",
@@ -236,13 +756,299 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
     )
     parser_copy.add_argument(
         "--dst_scorecard_name",
-        help="Optional: Full resource name of the DESTINATION scorecard to "
-        "overwrite. If omitted, --parent must be provided.",
+        help="Optional: Full resource name of the DESTINATION scorecard to overwrite. If omitted, --parent must be provided.",
     )
     parser_copy.add_argument(
         "--parent",
-        help="Optional: Parent resource name to create a brand new copied "
-        "scorecard under. If omitted, --dst_scorecard_name must be "
-        "provided.",
+        help="Optional: Parent resource name to create a brand new copied scorecard under. If omitted, --dst_scorecard_name must be provided.",
     )
     parser_copy.set_defaults(func=handle_copy)
+
+    # 5. 'create-scorecard' subcommand
+    parser_create_sc = insights_subparsers.add_parser(
+        "create-scorecard",
+        help="Create a brand new Scorecard and optionally load questions from a template.",
+    )
+    parser_create_sc.add_argument(
+        "--parent", required=True, help="Parent resource name."
+    )
+    parser_create_sc.add_argument(
+        "--scorecard-id", required=True, help="Unique ID for the scorecard."
+    )
+    parser_create_sc.add_argument(
+        "--display-name", required=True, help="Human readable display name."
+    )
+    parser_create_sc.add_argument(
+        "--description", help="Scorecard description."
+    )
+    parser_create_sc.add_argument(
+        "--template", help="Optional JSON/YAML template with initial questions."
+    )
+    parser_create_sc.set_defaults(func=handle_create_scorecard)
+
+    # 6. 'add-question' subcommand
+    parser_add_q = insights_subparsers.add_parser(
+        "add-question",
+        help="Add a question to a scorecard revision.",
+    )
+    parser_add_q.add_argument(
+        "--revision-name",
+        required=True,
+        help="Full resource name of scorecard revision.",
+    )
+    parser_add_q.add_argument(
+        "--question-body", required=True, help="Question text."
+    )
+    parser_add_q.add_argument(
+        "--answer-choices",
+        help="Comma-separated choices and scores, e.g. 'Yes=1.0,No=0.0'.",
+    )
+    parser_add_q.add_argument(
+        "--answer-instructions", help="Instructions/rubric for evaluators."
+    )
+    parser_add_q.add_argument(
+        "--abbreviation", help="Short abbreviation label."
+    )
+    parser_add_q.set_defaults(func=handle_add_question)
+
+    # 6a. 'activate-scorecard' and 'deploy-scorecard' subcommands
+    for sc_cmd in ["activate-scorecard", "deploy-scorecard"]:
+        parser_act_sc = insights_subparsers.add_parser(
+            sc_cmd,
+            help="Tune/activate and deploy a scorecard revision out of draft/EDITABLE state.",
+        )
+        parser_act_sc.add_argument(
+            "--revision-name",
+            required=True,
+            help="Full resource name of scorecard revision.",
+        )
+        parser_act_sc.add_argument(
+            "--timeout",
+            type=int,
+            default=120,
+            help="Timeout in seconds to wait for READY state before deploying.",
+        )
+        parser_act_sc.add_argument(
+            "--no-wait",
+            dest="wait",
+            action="store_false",
+            help="Do not wait for READY state after tuning.",
+        )
+        parser_act_sc.set_defaults(func=handle_activate_scorecard)
+
+    # 6b. 'validate-scorecard' subcommand
+    parser_val_sc = insights_subparsers.add_parser(
+        "validate-scorecard",
+        help="Validate that a scorecard revision is READY and not in draft/EDITABLE state.",
+    )
+    parser_val_sc.add_argument(
+        "--revision-name",
+        required=True,
+        help="Full resource name of scorecard revision.",
+    )
+    parser_val_sc.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit with non-zero code if not in READY state.",
+    )
+    parser_val_sc.set_defaults(func=handle_validate_scorecard)
+
+    # 7. 'list-topic-models' subcommand
+    parser_list_tm = insights_subparsers.add_parser(
+        "list-topic-models", help="List all topic models under a parent."
+    )
+    parser_list_tm.add_argument(
+        "--parent", required=True, help="Parent resource name."
+    )
+    parser_list_tm.set_defaults(func=handle_list_topic_models)
+
+    # 8. 'create-topic-model' subcommand
+    parser_create_tm = insights_subparsers.add_parser(
+        "create-topic-model", help="Create a topic model on a CXAS app."
+    )
+    parser_create_tm.add_argument(
+        "--parent", required=True, help="Parent resource name."
+    )
+    parser_create_tm.add_argument(
+        "--display-name", required=True, help="Topic model display name."
+    )
+    parser_create_tm.add_argument(
+        "--app-name", help="CXAS app name to filter conversations on."
+    )
+    parser_create_tm.add_argument(
+        "--filter", help="Custom conversation filter string."
+    )
+    parser_create_tm.add_argument(
+        "--deploy",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Immediately deploy model after creation.",
+    )
+    parser_create_tm.set_defaults(func=handle_create_topic_model)
+
+    # 9. 'deploy-topic-model' & 'undeploy-topic-model' & 'get-topic-model' & 'list-topics'
+    parser_deploy_tm = insights_subparsers.add_parser(
+        "deploy-topic-model", help="Deploy a topic model."
+    )
+    parser_deploy_tm.add_argument(
+        "--issue-model-name", required=True, help="Full issue model name."
+    )
+    parser_deploy_tm.set_defaults(func=handle_deploy_topic_model)
+
+    parser_undeploy_tm = insights_subparsers.add_parser(
+        "undeploy-topic-model", help="Undeploy a topic model."
+    )
+    parser_undeploy_tm.add_argument(
+        "--issue-model-name", required=True, help="Full issue model name."
+    )
+    parser_undeploy_tm.set_defaults(func=handle_undeploy_topic_model)
+
+    parser_get_tm = insights_subparsers.add_parser(
+        "get-topic-model", help="Get topic model details."
+    )
+    parser_get_tm.add_argument(
+        "--issue-model-name", required=True, help="Full issue model name."
+    )
+    parser_get_tm.add_argument(
+        "--include-stats",
+        action="store_true",
+        help="Calculate and include model stats.",
+    )
+    parser_get_tm.set_defaults(func=handle_get_topic_model)
+
+    parser_list_topics = insights_subparsers.add_parser(
+        "list-topics", help="List detected topics in a model."
+    )
+    parser_list_topics.add_argument(
+        "--issue-model-name", required=True, help="Full issue model name."
+    )
+    parser_list_topics.set_defaults(func=handle_list_topics)
+
+    # 10. 'list-analysis-rules' & 'create-analysis-rule' & 'activate-analysis-rule' & 'get-analysis-rule' & 'delete-analysis-rule'
+    parser_list_ar = insights_subparsers.add_parser(
+        "list-analysis-rules", help="List analysis rules under a parent."
+    )
+    parser_list_ar.add_argument(
+        "--parent", required=True, help="Parent resource name."
+    )
+    parser_list_ar.set_defaults(func=handle_list_analysis_rules)
+
+    parser_create_ar = insights_subparsers.add_parser(
+        "create-analysis-rule", help="Create an automated analysis rule."
+    )
+    parser_create_ar.add_argument(
+        "--parent", required=True, help="Parent resource name."
+    )
+    parser_create_ar.add_argument(
+        "--display-name", required=True, help="Rule display name."
+    )
+    parser_create_ar.add_argument("--app-name", help="Target CXAS app name.")
+    parser_create_ar.add_argument("--filter", help="Conversation filter query.")
+    parser_create_ar.add_argument(
+        "--scorecard-revisions",
+        help="Comma-separated scorecard revisions to evaluate automatically.",
+    )
+    parser_create_ar.add_argument(
+        "--issue-models",
+        help="Comma-separated issue models to run automatically.",
+    )
+    parser_create_ar.add_argument(
+        "--run-summarization",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run automatic summarization.",
+    )
+    parser_create_ar.add_argument(
+        "--run-sentiment",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run sentiment analysis.",
+    )
+    parser_create_ar.add_argument(
+        "--active",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Activate rule immediately.",
+    )
+    parser_create_ar.add_argument("--rule-id", help="Optional rule ID.")
+    parser_create_ar.set_defaults(func=handle_create_analysis_rule)
+
+    parser_activate_ar = insights_subparsers.add_parser(
+        "activate-analysis-rule", help="Activate or deactivate a rule."
+    )
+    parser_activate_ar.add_argument(
+        "--rule-name", required=True, help="Full analysis rule name."
+    )
+    parser_activate_ar.add_argument(
+        "--active",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        required=True,
+        help="true or false.",
+    )
+    parser_activate_ar.set_defaults(func=handle_activate_analysis_rule)
+
+    parser_get_ar = insights_subparsers.add_parser(
+        "get-analysis-rule", help="Get analysis rule details."
+    )
+    parser_get_ar.add_argument(
+        "--rule-name", required=True, help="Full analysis rule name."
+    )
+    parser_get_ar.set_defaults(func=handle_get_analysis_rule)
+
+    parser_del_ar = insights_subparsers.add_parser(
+        "delete-analysis-rule", help="Delete an analysis rule."
+    )
+    parser_del_ar.add_argument(
+        "--rule-name", required=True, help="Full analysis rule name."
+    )
+    parser_del_ar.set_defaults(func=handle_delete_analysis_rule)
+
+    # 11. 'smoke-test-scorecard' subcommand
+    parser_smoke = insights_subparsers.add_parser(
+        "smoke-test-scorecard",
+        help="Dry-run and smoke test a scorecard revision on conversations.",
+    )
+    parser_smoke.add_argument(
+        "--scorecard-name",
+        required=True,
+        help="Full resource name of scorecard revision.",
+    )
+    parser_smoke.add_argument(
+        "--conversations",
+        help="Comma-separated conversation names or IDs to evaluate.",
+    )
+    parser_smoke.add_argument(
+        "--simulate-file",
+        help="Path to JSON file containing simulated conversation turns or transcripts.",
+    )
+    parser_smoke.add_argument("--parent", help="Parent resource name.")
+    parser_smoke.set_defaults(func=handle_smoke_test_scorecard)
+
+    # 12. 'analyze-metrics' subcommand
+    parser_metrics = insights_subparsers.add_parser(
+        "analyze-metrics",
+        help="Aggregate metrics across time window and generate HTML dashboard.",
+    )
+    parser_metrics.add_argument(
+        "--parent", required=True, help="Parent resource name."
+    )
+    parser_metrics.add_argument(
+        "--time-window",
+        default="24h",
+        help="Time window filter (e.g. 1h, 24h, 7d, 30d, all).",
+    )
+    parser_metrics.add_argument(
+        "--app-name", help="Filter by specific CXAS app name."
+    )
+    parser_metrics.add_argument(
+        "--filter", help="Additional custom conversation filter string."
+    )
+    parser_metrics.add_argument(
+        "--html-output",
+        default="insights_dashboard.html",
+        help="Output path for interactive HTML dashboard (default: insights_dashboard.html).",
+    )
+    parser_metrics.add_argument(
+        "--json-output", help="Optional output path for JSON metrics report."
+    )
+    parser_metrics.set_defaults(func=handle_analyze_metrics)
