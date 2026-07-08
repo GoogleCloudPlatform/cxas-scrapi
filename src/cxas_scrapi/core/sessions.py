@@ -14,6 +14,7 @@
 
 import json
 import logging
+import queue
 import mimetypes
 import os
 import re
@@ -145,11 +146,15 @@ class AgentTurnManager:
     """Manages the agent's turn by simulating audio playback time."""
 
     def __init__(
-        self, sample_rate: int = SAMPLE_RATE, sample_width: int = SAMPLE_WIDTH
+        self,
+        sample_rate: int = SAMPLE_RATE,
+        sample_width: int = SAMPLE_WIDTH,
+        skip_playback_wait: bool = False,
     ):
         self.sample_rate = sample_rate
         self.sample_width = sample_width
         self.bytes_per_second = sample_rate * sample_width
+        self.skip_playback_wait = skip_playback_wait
 
         self.len_audio_bytes_received = 0
         self.turn_completed_flag = False
@@ -177,6 +182,9 @@ class AgentTurnManager:
             if not self.turn_completed_flag:
                 return False
 
+            if self.skip_playback_wait:
+                return True
+
             if self.first_audio_received_time is None:
                 return True  # Agent didn't send any audio
 
@@ -196,23 +204,31 @@ class BidiSessionHandler:
         location: str,
         token: str,
         config: dict[str, Any],
-        inputs: list[dict[str, Any]],
+        inputs: list[dict[str, Any]] | None = None,
+        input_queue: queue.Queue | None = None,
+        response_queue: queue.Queue | None = None,
         user_agent: str | None = None,
         turn_num: int | None = None,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
+        skip_playback_wait: bool = True,
     ):
         self.uri = BIDI_SESSION_URI + location
         self.token = token
         self.config = config
         self.inputs = inputs
+        self.input_queue = input_queue
+        self.response_queue = response_queue
         self.user_agent = user_agent
         self.turn_num = turn_num
         self.capture_agent_audio = capture_agent_audio
-        self.agent_turn_manager = AgentTurnManager()
+        self.agent_turn_manager = AgentTurnManager(
+            skip_playback_wait=skip_playback_wait,
+        )
         self.ws_app: websocket.WebSocketApp | None = None
         self.outputs = []
+        self.current_turn_outputs = []
         self.current_agent_turn_idx = 0
         self.turn_audio_buffers = {}
         self.turn_audio_paths = {}
@@ -398,57 +414,22 @@ class BidiSessionHandler:
             logging.debug("Sending config: %s", config_json)
             self.ws_app.send(config_json)
 
-            if not self.inputs:
-                logging.debug("No inputs provided.")
+            if self.inputs is not None:
+                for idx, input_item in enumerate(self.inputs):
+                    self._send_single_input(input_item, idx)
+            elif self.input_queue is not None:
+                idx = 0
+                while True:
+                    input_item = self.input_queue.get()
+                    if input_item is None:
+                        logging.debug("Received exit sentinel in input queue.")
+                        break
+                    self._send_single_input(input_item, idx)
+                    idx += 1
+            else:
+                logging.debug("No inputs or input_queue provided.")
                 self.ws_app.close()
                 return
-
-            for idx, input_item in enumerate(self.inputs):
-                if "audio" in input_item:
-                    self._send_audio_message(input_item["audio"], idx)
-                    continue
-
-                # Handle non-audio structured inputs (event, text, variables)
-                try:
-                    session_input_pb = types.SessionInput()._pb
-                    json_format.ParseDict(
-                        input_item,
-                        session_input_pb,
-                        ignore_unknown_fields=False,
-                    )
-                    session_input = types.SessionInput(session_input_pb)
-
-                    query_message = types.BidiSessionClientMessage(
-                        realtime_input=session_input
-                    )
-                    query_json = json_format.MessageToJson(
-                        query_message._pb,
-                        preserving_proto_field_name=False,
-                        indent=None,
-                    )
-                    logging.debug("Sending non-audio input: %s", query_json)
-                    self.ws_app.send(query_json)
-
-                    if "text" in input_item or "event" in input_item:
-                        logging.debug(
-                            "Waiting for agent to finish processing turn %d...",
-                            idx,
-                        )
-                        while (
-                            not self.agent_turn_manager.is_agent_done_talking()
-                        ):
-                            time.sleep(1)
-
-                        self.agent_turn_manager.reset()
-                        time.sleep(1)
-                    elif "variables" in input_item:
-                        logging.debug(
-                            "Sent variables, pausing to allow state update..."
-                        )
-                        time.sleep(0.5)
-
-                except Exception as e:
-                    logging.debug("Failed to send generic input: %s", e)
 
             logging.debug("All inputs sent and turns completed.")
             time.sleep(1)  # arbitrary short wait before disconnecting
@@ -458,6 +439,53 @@ class BidiSessionHandler:
             logging.debug("Error during send_inputs: %s", e)
             if self.ws_app:
                 self.ws_app.close()
+
+    def _send_single_input(self, input_item: dict[str, Any], idx: int):
+        if "audio" in input_item:
+            self._send_audio_message(input_item["audio"], idx)
+            return
+
+        # Handle non-audio structured inputs (event, text, variables)
+        try:
+            session_input_pb = types.SessionInput()._pb
+            json_format.ParseDict(
+                input_item,
+                session_input_pb,
+                ignore_unknown_fields=False,
+            )
+            session_input = types.SessionInput(session_input_pb)
+
+            query_message = types.BidiSessionClientMessage(
+                realtime_input=session_input
+            )
+            query_json = json_format.MessageToJson(
+                query_message._pb,
+                preserving_proto_field_name=False,
+                indent=None,
+            )
+            logging.debug("Sending non-audio input: %s", query_json)
+            self.ws_app.send(query_json)
+
+            if "text" in input_item or "event" in input_item:
+                logging.debug(
+                    "Waiting for agent to finish processing turn %d...",
+                    idx,
+                )
+                while (
+                    not self.agent_turn_manager.is_agent_done_talking()
+                ):
+                    time.sleep(1)
+
+                self.agent_turn_manager.reset()
+                time.sleep(1)
+            elif "variables" in input_item:
+                logging.debug(
+                    "Sent variables, pausing to allow state update..."
+                )
+                time.sleep(0.5)
+
+        except Exception as e:
+            logging.debug("Failed to send generic input: %s", e)
 
     def _on_open(self, ws):
         logging.debug("WebSocket connection opened")
@@ -477,6 +505,7 @@ class BidiSessionHandler:
 
             if response.session_output:
                 self.outputs.append(response.session_output)
+                self.current_turn_outputs.append(response.session_output)
 
                 if response.session_output.audio:
                     self.agent_turn_manager.add_audio(
@@ -540,7 +569,29 @@ class BidiSessionHandler:
                                 f" {audio_err}"
                             )
 
+                    if self.response_queue is not None:
+                        original_response = types.RunSessionResponse(
+                            outputs=list(self.current_turn_outputs)
+                        )
+                        turn_audio_path = {}
+                        if self.current_agent_turn_idx in self.turn_audio_paths:
+                            turn_audio_path[0] = self.turn_audio_paths[self.current_agent_turn_idx]
+                        
+                        turn_response = ScrapiRunSessionResponse(
+                            original_response=original_response,
+                            agent_audio_paths=turn_audio_path,
+                        )
+                        self.response_queue.put(turn_response)
+                        self.current_turn_outputs = []
+
                     self.current_agent_turn_idx += 1
+
+            if response.end_session:
+                if self.response_queue is not None:
+                    self.response_queue.put({
+                        "session_ended": True,
+                        "end_session": response.end_session,
+                    })
 
         except Exception as e:
             logging.debug("Failed to parse message: %s", e)
@@ -549,6 +600,11 @@ class BidiSessionHandler:
         logging.debug("WebSocket error: %s", error)
         # Stash connection-level errors
         self._connection_error = error
+        if self.response_queue is not None:
+            self.response_queue.put({
+                "session_ended": True,
+                "connection_error": error,
+            })
 
     def _on_close(self, ws, close_status_code, close_msg):
         logging.debug(
@@ -559,6 +615,13 @@ class BidiSessionHandler:
         # Stash close status to verify clean closure
         self._close_status_code = close_status_code
         self._close_msg = close_msg
+        if self.response_queue is not None:
+            self.response_queue.put({
+                "session_ended": True,
+                "connection_closed": True,
+                "close_status_code": close_status_code,
+                "close_msg": close_msg,
+            })
 
     def run(self):
         logging.debug("Connecting to WebSocket: %s", self.uri)
@@ -580,6 +643,10 @@ class BidiSessionHandler:
         )
         wst.daemon = True
         wst.start()
+
+        if self.input_queue is not None:
+            logging.debug("BidiSessionHandler started in non-blocking mode.")
+            return wst
 
         logging.debug("Waiting for session to complete...")
         wst.join(timeout=_BIDI_RUN_TIMEOUT_S)
@@ -638,6 +705,97 @@ class BidiSessionHandler:
             original_response=original_response,
             agent_audio_paths=self.turn_audio_paths,
         )
+
+
+class BidiInteractiveSession:
+    """Manages an active Bidi WebSocket session with GECX, supporting dynamic turns."""
+
+    def __init__(
+        self,
+        sessions_client: "Sessions",
+        session_id: str,
+        config: dict[str, Any],
+        capture_agent_audio: bool = False,
+        background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
+        skip_playback_wait: bool = True,
+        voice_config: dict[str, Any] | None = None,
+    ):
+        self.sessions_client = sessions_client
+        self.session_id = session_id
+        self.config = config
+        self.capture_agent_audio = capture_agent_audio
+        self.background_noise_file = background_noise_file
+        self.bg_noise_snr = bg_noise_snr
+        self.voice_config = voice_config
+
+        self.input_queue = queue.Queue()
+        self.response_queue = queue.Queue()
+
+        self.handler = BidiSessionHandler(
+            location=sessions_client.location,
+            token=sessions_client.token,
+            config=config,
+            inputs=None,
+            input_queue=self.input_queue,
+            response_queue=self.response_queue,
+            capture_agent_audio=capture_agent_audio,
+            background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
+            skip_playback_wait=skip_playback_wait,
+        )
+        self.wst = None
+
+    def start(self):
+        """Connects to the WebSocket gateway in the background."""
+        self.wst = self.handler.run()
+        # Wait a short moment to ensure thread has started and websocket is opened
+        time.sleep(0.5)
+
+    def send_turn(self, text: str, variables: dict[str, Any] | None = None) -> Any:
+        """Sends a user query and returns the agent's turn response."""
+        # Convert text to TTS audio bytes
+        from cxas_scrapi.core.audio_transformer import AudioTransformer
+        audio_transformer = AudioTransformer()
+        lang_code = "en-US"
+        if variables and "locale" in variables:
+            lang_code = variables["locale"]
+
+        current_voice_config = (self.voice_config or {}).copy()
+        if "language_code" not in current_voice_config:
+            current_voice_config["language_code"] = lang_code
+
+        input_data = audio_transformer.text_to_speech_bytes(
+            text=text,
+            credentials=self.sessions_client.creds,
+            project_id=self.sessions_client.project_id,
+            background_noise_file=self.background_noise_file,
+            voice_config=current_voice_config,
+        )
+
+        audio_payload = {
+            "audio": input_data["audio_bytes"],
+            "text": input_data["text"],
+        }
+        if variables:
+            audio_payload["variables"] = variables
+
+        # Put in queue
+        self.input_queue.put({"audio": audio_payload})
+
+        # Block wait for the response with timeout
+        try:
+            response = self.response_queue.get(timeout=30)
+            return response
+        except queue.Empty:
+            logging.error("Timeout waiting for agent turn response in BidiInteractiveSession")
+            raise TimeoutError("Timeout waiting for agent response via WebSocket")
+
+    def close(self):
+        """Closes the WebSocket connection cleanly."""
+        self.input_queue.put(None)  # Sentinel to close sending loop
+        if self.wst is not None:
+            self.wst.join(timeout=10)
 
 
 class Sessions(Common):
@@ -987,6 +1145,43 @@ class Sessions(Common):
             bg_noise_snr=bg_noise_snr,
         )
         return handler.run()
+
+    def create_interactive_session(
+        self,
+        session_id: str,
+        capture_agent_audio: bool = False,
+        background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
+        use_tool_fakes: bool = True,
+        skip_playback_wait: bool = True,
+        voice_config: dict[str, Any] | None = None,
+    ) -> BidiInteractiveSession:
+        """Creates and returns a new BidiInteractiveSession instance."""
+        self._check_audio_requirements()
+
+        config = {
+            "session": f"{self.app_name}/sessions/{session_id}",
+            "use_tool_fakes": use_tool_fakes,
+            "input_audio_config": types.InputAudioConfig(
+                audio_encoding=types.AudioEncoding.LINEAR16,
+                sample_rate_hertz=SAMPLE_RATE,
+            ),
+            "output_audio_config": types.OutputAudioConfig(
+                audio_encoding=types.AudioEncoding.LINEAR16,
+                sample_rate_hertz=SAMPLE_RATE,
+            ),
+        }
+
+        return BidiInteractiveSession(
+            sessions_client=self,
+            session_id=session_id,
+            config=config,
+            capture_agent_audio=capture_agent_audio,
+            background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
+            skip_playback_wait=skip_playback_wait,
+            voice_config=voice_config,
+        )
 
     def make_text_request(self, config: dict, inputs: list[dict[str, Any]]):
         if self.rate_limiter:
