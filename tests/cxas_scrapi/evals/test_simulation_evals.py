@@ -1154,17 +1154,23 @@ def test_simulation_evals_adds_final_agent_response_on_session_ended(
 
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
-def test_simulation_evals_init_with_rate_limiter(mock_sessions):
+def test_simulation_evals_init_with_rate_limiter_and_deployment_id(
+    mock_sessions,
+):
     mock_rate_limiter = MagicMock()
     app_name = "projects/test/locations/us/apps/123-abc"
+    deployment_id = "xyz"
     with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             _ = SimulationEvals(
-                app_name=app_name, rate_limiter=mock_rate_limiter
+                app_name=app_name,
+                deployment_id=deployment_id,
+                rate_limiter=mock_rate_limiter,
             )
 
     mock_sessions.assert_called_once_with(
         app_name,
+        deployment_id=deployment_id,
         rate_limiter=mock_rate_limiter,
     )
 

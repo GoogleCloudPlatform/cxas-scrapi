@@ -404,6 +404,7 @@ class SimulationEvals(Apps):
         app_name: str,
         rate_limiter: RateLimiter | None = None,
         expectations_only: bool = False,
+        deployment_id: str | None = None,
         **kwargs,
     ):
         self.app_name = app_name
@@ -412,7 +413,10 @@ class SimulationEvals(Apps):
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
         self.sessions_client = Sessions(
-            app_name, rate_limiter=rate_limiter, **kwargs
+            app_name,
+            deployment_id=deployment_id,
+            rate_limiter=rate_limiter,
+            **kwargs,
         )
         self.tools_map = Tools(app_name=app_name, **kwargs).get_tools_map()
 

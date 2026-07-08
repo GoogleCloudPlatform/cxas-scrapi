@@ -1439,6 +1439,7 @@ def generate_combined_report_from_dir(
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
     expectations_only: bool = False,
+    deployment_id: str | None = None,
 ) -> str:
     """Load results from directory and generate combined HTML report.
 
@@ -1464,6 +1465,7 @@ def generate_combined_report_from_dir(
       burst_noise_files: List of paths to burst noise audio files injected
         during replay.
       use_tool_fakes: Use fake tools for the session if available.
+      deployment_id: Optional deployment ID to target for simulations.
 
     Returns:
       The resolved output path or URL where the report was saved.
@@ -1505,6 +1507,7 @@ def generate_combined_report_from_dir(
             use_tool_fakes=use_tool_fakes,
             timestamp=timestamp,
             expectations_only=expectations_only,
+            deployment_id=deployment_id,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed
@@ -1692,6 +1695,7 @@ def run_all_evals(
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
     expectations_only: bool = False,
+    deployment_id: str | None = None,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -1747,4 +1751,5 @@ def run_all_evals(
         use_tool_fakes=use_tool_fakes,
         timestamp=timestamp,
         expectations_only=expectations_only,
+        deployment_id=deployment_id,
     )

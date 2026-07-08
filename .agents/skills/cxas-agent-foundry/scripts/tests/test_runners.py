@@ -107,6 +107,7 @@ def test_sim_runner_cmd_run_delegation(sim_runner):
     mock_args.expectations_only = False
     mock_args.use_tool_fakes = False
     mock_args.capture_agent_audio = False
+    mock_args.deployment_id = None
 
     mock_templates = {
         "test_case_1": {
@@ -144,6 +145,7 @@ def test_sim_runner_cmd_run_delegation(sim_runner):
             app_name="projects/test-proj/locations/us/apps/test-app",
             user_agent_extension="skill/cxas-agent-foundry/scrapi-sim-runner",
             expectations_only=False,
+            deployment_id=None,
         )
 
         # Assert run_simulations was called with correct parameters

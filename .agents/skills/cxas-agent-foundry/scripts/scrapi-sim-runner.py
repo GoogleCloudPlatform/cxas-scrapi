@@ -305,6 +305,7 @@ def cmd_run(args):
         app_name=app_name,
         user_agent_extension=USER_AGENT_EXTENSION,
         expectations_only=args.expectations_only,
+        deployment_id=args.deployment_id,
     )
     all_results = sim.run_simulations(
         test_cases=test_cases,
@@ -450,6 +451,12 @@ def main():
         type=str,
         default=None,
         help="GCS URI to upload report to (e.g. gs://bucket/report.html)",
+    )
+    p_run.add_argument(
+        "--deployment-id",
+        type=str,
+        default=None,
+        help="Target a specific deployment ID",
     )
 
     args = parser.parse_args()

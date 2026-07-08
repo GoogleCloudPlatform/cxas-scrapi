@@ -65,6 +65,7 @@ def run_all_evals(
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
     expectations_only: bool = False,
+    deployment_id: str | None = None,
     progress_callback: Callable[[str, int, int], None] | None = None,
 ):
     """Runs all 4 types of evaluations and returns aggregated results.
@@ -232,6 +233,7 @@ def run_all_evals(
                     app_name=app_name,
                     rate_limiter=rate_limiter,
                     expectations_only=expectations_only,
+                    deployment_id=deployment_id,
                 )
                 test_cases = []
                 for sf in sim_files:
