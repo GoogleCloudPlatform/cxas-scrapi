@@ -265,8 +265,13 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
     mock_response_2.outputs = [mock_output_2]
 
     mock_interactive_session = MagicMock()
-    mock_sessions.create_interactive_session.return_value = mock_interactive_session
-    mock_interactive_session.send_turn.side_effect = [mock_response_1, mock_response_2]
+    mock_sessions.create_interactive_session.return_value = (
+        mock_interactive_session
+    )
+    mock_interactive_session.send_turn.side_effect = [
+        mock_response_1,
+        mock_response_2,
+    ]
 
     app_name = "projects/test/locations/us/apps/123-abc"
     with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
@@ -308,7 +313,9 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
-def test_user_simulator_audio_with_tool_fakes(mock_llm_conv_class, mock_sessions_class):
+def test_user_simulator_audio_with_tool_fakes(
+    mock_llm_conv_class, mock_sessions_class
+):
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -344,8 +351,13 @@ def test_user_simulator_audio_with_tool_fakes(mock_llm_conv_class, mock_sessions
     mock_response_2.outputs = [mock_output_2]
 
     mock_interactive_session = MagicMock()
-    mock_sessions.create_interactive_session.return_value = mock_interactive_session
-    mock_interactive_session.send_turn.side_effect = [mock_response_1, mock_response_2]
+    mock_sessions.create_interactive_session.return_value = (
+        mock_interactive_session
+    )
+    mock_interactive_session.send_turn.side_effect = [
+        mock_response_1,
+        mock_response_2,
+    ]
 
     app_name = "projects/test/locations/us/apps/123-abc"
     with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
@@ -418,8 +430,13 @@ def test_user_simulator_audio_with_eval_enabled(
     }
 
     mock_interactive_session = MagicMock()
-    mock_sessions.create_interactive_session.return_value = mock_interactive_session
-    mock_interactive_session.send_turn.side_effect = [mock_response_1, mock_response_2]
+    mock_sessions.create_interactive_session.return_value = (
+        mock_interactive_session
+    )
+    mock_interactive_session.send_turn.side_effect = [
+        mock_response_1,
+        mock_response_2,
+    ]
 
     app_name = "projects/test/locations/us/apps/123-abc"
     with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
