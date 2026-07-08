@@ -264,7 +264,9 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
     mock_output_2.diagnostic_info = None
     mock_response_2.outputs = [mock_output_2]
 
-    mock_sessions.run.side_effect = [mock_response_1, mock_response_2]
+    mock_interactive_session = MagicMock()
+    mock_sessions.create_interactive_session.return_value = mock_interactive_session
+    mock_interactive_session.send_turn.side_effect = [mock_response_1, mock_response_2]
 
     app_name = "projects/test/locations/us/apps/123-abc"
     with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
@@ -279,34 +281,29 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
         modality="audio",
     )
 
-    mock_sessions.run.assert_any_call(
+    mock_sessions.create_interactive_session.assert_called_once_with(
         session_id="123",
-        event="welcome",
-        variables={},
-        modality="audio",
-        turn_num=0,
         capture_agent_audio=False,
         background_noise_file=None,
-        burst_noise_files=None,
         use_tool_fakes=False,
+        voice_config=None,
     )
-    mock_sessions.run.assert_any_call(
-        session_id="123",
-        text="I want to book a flight",
-        variables={},
-        modality="audio",
-        turn_num=1,
-        capture_agent_audio=False,
-        background_noise_file=None,
-        burst_noise_files=None,
-        use_tool_fakes=False,
+    mock_interactive_session.start.assert_called_once()
+    mock_interactive_session.send_turn.assert_any_call(
+        "event: welcome",
+        {},
     )
+    mock_interactive_session.send_turn.assert_any_call(
+        "I want to book a flight",
+        {},
+    )
+    mock_interactive_session.close.assert_called_once()
 
     # Verify text was extracted from Diagnostic Info
     # Note: text += chunk.text + " " so it should assert "Where to? "
     mock_eval_conv.next_user_utterance.assert_any_call("Where to?")
     mock_eval_conv.next_user_utterance.assert_any_call("Flight booked.")
-    assert mock_sessions.run.call_count == 2
+    assert mock_interactive_session.send_turn.call_count == 2
 
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
@@ -354,7 +351,9 @@ def test_user_simulator_audio_with_eval_enabled(
         0: "/tmp/scrapi_evals/123/turn_1_agent.wav"
     }
 
-    mock_sessions.run.side_effect = [mock_response_1, mock_response_2]
+    mock_interactive_session = MagicMock()
+    mock_sessions.create_interactive_session.return_value = mock_interactive_session
+    mock_interactive_session.send_turn.side_effect = [mock_response_1, mock_response_2]
 
     app_name = "projects/test/locations/us/apps/123-abc"
     with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
@@ -370,30 +369,25 @@ def test_user_simulator_audio_with_eval_enabled(
         capture_agent_audio=True,
     )
 
-    mock_sessions.run.assert_any_call(
+    mock_sessions.create_interactive_session.assert_called_once_with(
         session_id="123",
-        event="welcome",
-        variables={},
-        modality="audio",
-        turn_num=0,
         capture_agent_audio=True,
         background_noise_file=None,
-        burst_noise_files=None,
         use_tool_fakes=False,
+        voice_config=None,
     )
-    mock_sessions.run.assert_any_call(
-        session_id="123",
-        text="I want to book a flight",
-        variables={},
-        modality="audio",
-        turn_num=1,
-        capture_agent_audio=True,
-        background_noise_file=None,
-        burst_noise_files=None,
-        use_tool_fakes=False,
+    mock_interactive_session.start.assert_called_once()
+    mock_interactive_session.send_turn.assert_any_call(
+        "event: welcome",
+        {},
     )
+    mock_interactive_session.send_turn.assert_any_call(
+        "I want to book a flight",
+        {},
+    )
+    mock_interactive_session.close.assert_called_once()
 
-    assert mock_sessions.run.call_count == 2
+    assert mock_interactive_session.send_turn.call_count == 2
     assert mock_eval_conv.agent_audio_paths == {
         0: "/tmp/scrapi_evals/123/turn_0_agent.wav",
         1: "/tmp/scrapi_evals/123/turn_1_agent.wav",
