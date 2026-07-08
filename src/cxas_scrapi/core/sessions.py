@@ -471,9 +471,7 @@ class BidiSessionHandler:
                     "Waiting for agent to finish processing turn %d...",
                     idx,
                 )
-                while (
-                    not self.agent_turn_manager.is_agent_done_talking()
-                ):
+                while not self.agent_turn_manager.is_agent_done_talking():
                     time.sleep(1)
 
                 self.agent_turn_manager.reset()
@@ -589,10 +587,12 @@ class BidiSessionHandler:
 
             if response.end_session:
                 if self.response_queue is not None:
-                    self.response_queue.put({
-                        "session_ended": True,
-                        "end_session": response.end_session,
-                    })
+                    self.response_queue.put(
+                        {
+                            "session_ended": True,
+                            "end_session": response.end_session,
+                        }
+                    )
 
         except Exception as e:
             logging.debug("Failed to parse message: %s", e)
@@ -602,10 +602,12 @@ class BidiSessionHandler:
         # Stash connection-level errors
         self._connection_error = error
         if self.response_queue is not None:
-            self.response_queue.put({
-                "session_ended": True,
-                "connection_error": error,
-            })
+            self.response_queue.put(
+                {
+                    "session_ended": True,
+                    "connection_error": error,
+                }
+            )
 
     def _on_close(self, ws, close_status_code, close_msg):
         logging.debug(
@@ -617,12 +619,14 @@ class BidiSessionHandler:
         self._close_status_code = close_status_code
         self._close_msg = close_msg
         if self.response_queue is not None:
-            self.response_queue.put({
-                "session_ended": True,
-                "connection_closed": True,
-                "close_status_code": close_status_code,
-                "close_msg": close_msg,
-            })
+            self.response_queue.put(
+                {
+                    "session_ended": True,
+                    "connection_closed": True,
+                    "close_status_code": close_status_code,
+                    "close_msg": close_msg,
+                }
+            )
 
     def run(self):
         logging.debug("Connecting to WebSocket: %s", self.uri)
