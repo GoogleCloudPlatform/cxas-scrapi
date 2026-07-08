@@ -34,7 +34,7 @@ from rich.progress import Progress
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
-from cxas_scrapi.core.sessions import Sessions
+from cxas_scrapi.core.sessions import BidiSessionError, Sessions
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.prompts import llm_user_prompts
 from cxas_scrapi.utils.eval_utils import (
@@ -601,7 +601,8 @@ class SimulationEvals(Apps):
 
         interactive_session = None
         if modality == "audio":
-            interactive_session = self.sessions_client.create_interactive_session(
+            client = self.sessions_client
+            interactive_session = client.create_interactive_session(
                 session_id=session_id,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
@@ -613,7 +614,8 @@ class SimulationEvals(Apps):
         try:
             if console_logging:
                 print(
-                    f"Starting simulated conversation with session ID: {session_id}"
+                    f"Starting simulated conversation with session ID: "
+                    f"{session_id}"
                 )
 
             # Initialize the first turn manually
@@ -632,11 +634,15 @@ class SimulationEvals(Apps):
                         accumulated_variables,
                     )
                     # Check if session ended via WebSocket endSession
-                    if isinstance(response, dict) and response.get("session_ended"):
+                    if isinstance(response, dict) and response.get(
+                        "session_ended"
+                    ):
                         if response.get("connection_error"):
-                            raise BidiSessionError(
-                                f"Interactive session WebSocket error: {response['connection_error']}"
+                            err_msg = (
+                                f"Interactive session WebSocket error: "
+                                f"{response['connection_error']}"
                             )
+                            raise BidiSessionError(err_msg)
                         break
                 else:
                     response = self._send_request_with_retry(
@@ -660,7 +666,8 @@ class SimulationEvals(Apps):
                 if response and getattr(response, "agent_audio_paths", None):
                     audio_path = response.agent_audio_paths.get(0)
                     if audio_path:
-                        eval_conv.agent_audio_paths[current_sim_turn] = audio_path
+                        paths = eval_conv.agent_audio_paths
+                        paths[current_sim_turn] = audio_path
 
                 if console_logging:
                     self.sessions_client.parse_result(response)
