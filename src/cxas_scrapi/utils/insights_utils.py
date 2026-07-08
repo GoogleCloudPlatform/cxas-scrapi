@@ -20,6 +20,8 @@ from typing import Any
 
 import pandas as pd
 
+from cxas_scrapi.core.analysis_rules import AnalysisRules
+from cxas_scrapi.core.issue_models import IssueModels
 from cxas_scrapi.core.scorecards import Scorecards
 
 
@@ -32,6 +34,10 @@ class InsightsUtils:
         self.project_id = project_id
         self.location = location
         self.scorecards_client = Scorecards(project_id, location, **kwargs)
+        self.issue_models_client = IssueModels(project_id, location, **kwargs)
+        self.analysis_rules_client = AnalysisRules(
+            project_id, location, **kwargs
+        )
 
     # --- Match logic ported from your scorecard_operations.py ---
     def _match_questions(self, q1: dict[str, Any], q2: dict[str, Any]) -> bool:
@@ -134,6 +140,14 @@ class InsightsUtils:
             )["name"]
 
         self._sync_questions(target_revision_name, questions)
+        try:
+            self.scorecards_client.tune_revision(target_revision_name)
+            logging.info(
+                "Triggered tuning on %s to move out of EDITABLE (draft) state.",
+                target_revision_name,
+            )
+        except Exception as e:
+            logging.debug("Could not trigger tuning after sync: %s", e)
         return target_revision_name
 
     def analyze_conversations(
@@ -142,19 +156,294 @@ class InsightsUtils:
         scorecard_name: str,
         export_to_bq: bool = False,
     ) -> pd.DataFrame:
-        """Abstracts away setting up the analysis rules and triggering
-        batch evaluation.
-        (Conceptual placeholder for full workflow returning DataFrames).
-        """
+        """Triggers batch evaluation on conversations using a scorecard
+        and extracts results into a DataFrame."""
         logging.info(
             "Triggering analysis on %d conversations using scorecard %s.",
             len(conversations),
             scorecard_name,
         )
+        annotator_selector = {
+            "qaConfig": {
+                "scorecardList": {"qaScorecardRevisions": [scorecard_name]}
+            }
+        }
+        if conversations:
+            name_filters = [f'name="{c}"' for c in conversations]
+            filter_str = " OR ".join(name_filters)
+        else:
+            filter_str = ""
 
-        raise NotImplementedError(
-            "Batch evaluation using Scorecards via the Insights API has not "
-            "been implemented yet. "
-            "Need to wire up analysis rule creation and job polling in "
-            "core/insights.py."
+        try:
+            self.scorecards_client.bulk_analyze_conversations(
+                filter_str=filter_str, annotator_selector=annotator_selector
+            )
+        except Exception as e:
+            logging.warning(
+                "bulk_analyze_conversations returned or failed: %s", e
+            )
+
+        rows = []
+        for conv_name in conversations:
+            try:
+                full_conv = self.scorecards_client.get_conversation(
+                    conv_name, view="FULL"
+                )
+                qa_answers = list(full_conv.get("qaAnswers", []))
+                if "latestAnalysis" in full_conv:
+                    qa_scorecard_results = (
+                        full_conv.get("latestAnalysis", {})
+                        .get("analysisResult", {})
+                        .get("callAnalysisMetadata", {})
+                        .get("qaScorecardResults", [])
+                    )
+                    if isinstance(qa_scorecard_results, list):
+                        qa_answers.extend(qa_scorecard_results)
+
+                if isinstance(qa_answers, list):
+                    for ans in qa_answers:
+                        for q_ans in ans.get("qaQuestions", []) or ans.get(
+                            "qaAnswers", []
+                        ):
+                            val_dict = q_ans.get("answerValue", {})
+                            raw_score = (
+                                val_dict.get("score")
+                                if isinstance(val_dict, dict)
+                                and val_dict.get("score") is not None
+                                else q_ans.get("score")
+                            )
+                            raw_pot = (
+                                val_dict.get("potentialScore")
+                                if isinstance(val_dict, dict)
+                                and val_dict.get("potentialScore") is not None
+                                else q_ans.get("potentialScore")
+                            )
+                            rows.append(
+                                {
+                                    "conversation_name": conv_name,
+                                    "scorecard_revision": ans.get(
+                                        "qaScorecardRevision"
+                                    ),
+                                    "question_name": q_ans.get("qaQuestion"),
+                                    "score": raw_score,
+                                    "potential_score": raw_pot,
+                                    "answer_value": q_ans.get(
+                                        "answerValue", {}
+                                    ).get("strValue"),
+                                }
+                            )
+                elif isinstance(qa_answers, dict):
+                    for rev, ans in qa_answers.items():
+                        for q_ans in ans.get("qaQuestions", []) or ans.get(
+                            "qaAnswers", []
+                        ):
+                            val_dict = q_ans.get("answerValue", {})
+                            raw_score = (
+                                val_dict.get("score")
+                                if isinstance(val_dict, dict)
+                                and val_dict.get("score") is not None
+                                else q_ans.get("score")
+                            )
+                            raw_pot = (
+                                val_dict.get("potentialScore")
+                                if isinstance(val_dict, dict)
+                                and val_dict.get("potentialScore") is not None
+                                else q_ans.get("potentialScore")
+                            )
+                            rows.append(
+                                {
+                                    "conversation_name": conv_name,
+                                    "scorecard_revision": rev,
+                                    "question_name": q_ans.get("qaQuestion"),
+                                    "score": raw_score,
+                                    "potential_score": raw_pot,
+                                    "answer_value": q_ans.get(
+                                        "answerValue", {}
+                                    ).get("strValue"),
+                                }
+                            )
+            except Exception as e:
+                logging.debug(
+                    "Could not retrieve qaAnswers for %s: %s", conv_name, e
+                )
+
+        return pd.DataFrame(rows)
+
+    def perform_topic_modelling(
+        self,
+        display_name: str,
+        app_name: str | None = None,
+        filter_str: str | None = None,
+        deploy: bool = True,
+        issue_model_id: str | None = None,
+        parent: str | None = None,
+    ) -> dict[str, Any]:
+        """Performs topic modelling for a CXAS app by creating and optionally
+        deploying an issue model."""
+        return self.issue_models_client.create_topic_model_for_app(
+            display_name=display_name,
+            app_name=app_name,
+            filter_str=filter_str,
+            parent=parent,
+            issue_model_id=issue_model_id,
+            deploy=deploy,
         )
+
+    def create_or_update_scorecard(
+        self,
+        scorecard_id: str,
+        display_name: str,
+        description: str,
+        questions: list[dict[str, Any]],
+        parent: str | None = None,
+    ) -> str:
+        """Helper to create or update a scorecard and its questions."""
+        scorecard_dict = {
+            "displayName": display_name,
+            "description": description,
+        }
+        return self.import_scorecard(
+            scorecard_dict=scorecard_dict,
+            questions=questions,
+            target_scorecard_id=scorecard_id,
+        )
+
+    def setup_analysis_rule_for_app(
+        self,
+        display_name: str,
+        app_name: str | None = None,
+        filter_str: str | None = None,
+        scorecard_revisions: list[str] | None = None,
+        issue_models: list[str] | None = None,
+        run_summarization: bool = True,
+        run_sentiment: bool = True,
+        active: bool = True,
+        parent: str | None = None,
+        rule_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Creates and activates an analysis rule targeting a CXAS app."""
+        if scorecard_revisions:
+            for rev in scorecard_revisions:
+                try:
+                    r_obj = self.scorecards_client.get_revision(rev)
+                    state = r_obj.get("state")
+                    if state == "EDITABLE":
+                        logging.warning(
+                            "Scorecard revision %s is currently in state "
+                            "'EDITABLE' (Draft/Not Ready). Automatically "
+                            "triggering tuning/activation before applying rule...",
+                            rev,
+                        )
+                        self.scorecards_client.tune_revision(rev)
+                    elif state != "READY":
+                        logging.warning(
+                            "Scorecard revision %s is in state '%s'. Ensure "
+                            "it reaches 'READY' before relying on automated analysis.",
+                            rev,
+                            state,
+                        )
+                except Exception as e:
+                    logging.debug(
+                        "Validation check for revision %s failed: %s", rev, e
+                    )
+
+        return self.analysis_rules_client.create_rule_for_app(
+            display_name=display_name,
+            app_name=app_name,
+            filter_str=filter_str,
+            scorecard_revisions=scorecard_revisions,
+            issue_models=issue_models,
+            run_summarization=run_summarization,
+            run_sentiment=run_sentiment,
+            active=active,
+            parent=parent,
+            rule_id=rule_id,
+        )
+
+    def smoke_test_scorecard(
+        self,
+        scorecard_revision: str,
+        conversations: list[Any],
+        parent: str | None = None,
+        simulate_if_dict: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Dry-runs and smoke tests a scorecard revision against real or
+        simulated conversations."""
+        parent = parent or self.scorecards_client.parent
+        results = []
+        annotator_selector = {
+            "qaConfig": {
+                "scorecardList": {"qaScorecardRevisions": [scorecard_revision]}
+            }
+        }
+        for idx, conv in enumerate(conversations):
+            conv_name = None
+            if isinstance(conv, dict):
+                if not simulate_if_dict:
+                    continue
+                logging.info(
+                    "Simulating conversation #%d for smoke test...", idx + 1
+                )
+                try:
+                    created = self.scorecards_client.create_conversation(
+                        conv, parent=parent
+                    )
+                    conv_name = created.get("name")
+                except Exception as e:
+                    results.append(
+                        {
+                            "conversation_index": idx,
+                            "status": "ERROR",
+                            "error": f"Failed to simulate conversation: {e}",
+                        }
+                    )
+                    continue
+            elif isinstance(conv, str):
+                conv_name = conv
+            else:
+                continue
+
+            if not conv_name:
+                continue
+
+            logging.info(
+                "Analyzing %s with scorecard %s...",
+                conv_name,
+                scorecard_revision,
+            )
+            try:
+                self.scorecards_client.analyze_conversation(
+                    conv_name, annotator_selector=annotator_selector
+                )
+                full_conv = self.scorecards_client.get_conversation(
+                    conv_name, view="FULL"
+                )
+                qa_answers = full_conv.get("qaAnswers", [])
+                matched_answer = None
+                if isinstance(qa_answers, list):
+                    for ans in qa_answers:
+                        if ans.get("qaScorecardRevision") == scorecard_revision:
+                            matched_answer = ans
+                            break
+                elif isinstance(qa_answers, dict):
+                    matched_answer = qa_answers.get(scorecard_revision) or next(
+                        iter(qa_answers.values()), None
+                    )
+
+                results.append(
+                    {
+                        "conversation_name": conv_name,
+                        "status": "PASSED" if matched_answer else "ANALYZED",
+                        "qa_answer": matched_answer or {},
+                        "turn_count": full_conv.get("turnCount"),
+                    }
+                )
+            except Exception as e:
+                results.append(
+                    {
+                        "conversation_name": conv_name,
+                        "status": "ERROR",
+                        "error": str(e),
+                    }
+                )
+        return results
