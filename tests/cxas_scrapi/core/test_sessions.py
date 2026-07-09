@@ -282,7 +282,7 @@ def test_agent_turn_manager_basic():
     assert not manager.is_agent_done_talking()
 
     # 1 second of audio (16000 * 2 = 32000 bytes)
-    manager.add_audio(b"\x00" * 32000)
+    manager.add_audio(b"\x01" * 32000)
     manager.mark_turn_completed()
 
     # Just completed, current time is roughly 0 seconds since start

@@ -291,6 +291,7 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
         capture_agent_audio=False,
         background_noise_file=None,
         use_tool_fakes=False,
+        skip_playback_wait=False,
         voice_config=None,
     )
     mock_interactive_session.start.assert_called_once()
@@ -378,6 +379,7 @@ def test_user_simulator_audio_with_tool_fakes(
         capture_agent_audio=False,
         background_noise_file=None,
         use_tool_fakes=True,
+        skip_playback_wait=False,
         voice_config=None,
     )
     mock_interactive_session.start.assert_called_once()
@@ -457,6 +459,7 @@ def test_user_simulator_audio_with_eval_enabled(
         capture_agent_audio=True,
         background_noise_file=None,
         use_tool_fakes=False,
+        skip_playback_wait=False,
         voice_config=None,
     )
     mock_interactive_session.start.assert_called_once()
@@ -1381,6 +1384,7 @@ def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=True,
+        skip_playback_wait=False,
     )
 
 
@@ -1420,6 +1424,7 @@ def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=True,
+        skip_playback_wait=False,
     )
 
 
@@ -1468,6 +1473,7 @@ def test_simulation_evals_run_simulations_capture_agent_audio(mock_sessions):
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=False,
+        skip_playback_wait=False,
     )
 
 

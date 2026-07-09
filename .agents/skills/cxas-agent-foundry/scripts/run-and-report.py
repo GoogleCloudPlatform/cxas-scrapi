@@ -133,6 +133,10 @@ def main():
         "--dry-run", action="store_true", default=False,
         help="Print what would be done without running anything"
     )
+    parser.add_argument(
+        "--skip-playback-wait", action="store_true", default=False,
+        help="Skip waiting for agent audio playback to finish before sending the next turn (speeds up audio simulations but may cause barge-in/cut-offs)."
+    )
 
     args = parser.parse_args()
     python = sys.executable
@@ -178,6 +182,8 @@ def main():
         eval_cmd.extend(["--runs", str(args.runs)])
     if args.priority is not None:
         eval_cmd.extend(["--priority", args.priority])
+    if args.skip_playback_wait:
+        eval_cmd.append("--skip-playback-wait")
     result = _run(eval_cmd, "Step 3/5: Run all evals", dry_run=args.dry_run)
     if result.returncode != 0:
         print("\nEval run failed. Continuing to triage and report with available results...")

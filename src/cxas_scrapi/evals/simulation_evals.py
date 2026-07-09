@@ -573,6 +573,7 @@ class SimulationEvals(Apps):
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
         initial_utterance: str = _FIRST_UTTERANCE,
+        skip_playback_wait: bool = False,
         **kwargs: Any,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
@@ -608,6 +609,7 @@ class SimulationEvals(Apps):
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
                 use_tool_fakes=use_tool_fakes,
+                skip_playback_wait=skip_playback_wait,
                 voice_config=voice_config,
             )
             interactive_session.start()
@@ -762,6 +764,7 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        skip_playback_wait: bool = False,
     ) -> dict[str, Any]:
         """Runs a single simulation job and returns the results."""
         name = tc["name"]
@@ -781,6 +784,7 @@ class SimulationEvals(Apps):
                 background_noise_file=background_noise_file,
                 burst_noise_files=burst_noise_files,
                 use_tool_fakes=use_tool_fakes,
+                skip_playback_wait=skip_playback_wait,
             )
             duration_s = round(time.time() - _start, 1)
 
@@ -868,6 +872,7 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        skip_playback_wait: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[dict[str, Any]]:
         """Aggregates results from multiple simulation jobs."""
@@ -891,6 +896,7 @@ class SimulationEvals(Apps):
                             background_noise_file=background_noise_file,
                             burst_noise_files=burst_noise_files,
                             use_tool_fakes=use_tool_fakes,
+                            skip_playback_wait=skip_playback_wait,
                         )
                     )
                     progress.update(task_id, advance=1)
@@ -914,6 +920,7 @@ class SimulationEvals(Apps):
                             background_noise_file=background_noise_file,
                             burst_noise_files=burst_noise_files,
                             use_tool_fakes=use_tool_fakes,
+                            skip_playback_wait=skip_playback_wait,
                         ): (tc["name"], run_idx)
                         for tc, run_idx in jobs
                     }
@@ -939,6 +946,7 @@ class SimulationEvals(Apps):
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
         expectations_only: bool | None = None,
+        skip_playback_wait: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[dict[str, Any]]:
         if expectations_only is not None:
@@ -971,6 +979,7 @@ class SimulationEvals(Apps):
             background_noise_file=background_noise_file,
             burst_noise_files=burst_noise_files,
             use_tool_fakes=use_tool_fakes,
+            skip_playback_wait=skip_playback_wait,
             progress_callback=progress_callback,
         )
 

@@ -101,6 +101,11 @@ def main():
         action="store_true",
         help="Use tool fakes/mocks for evaluations instead of calling real backends.",
     )
+    parser.add_argument(
+        "--skip-playback-wait",
+        action="store_true",
+        help="Skip waiting for agent audio playback to finish before sending the next turn (speeds up audio simulations but may cause barge-in/cut-offs).",
+    )
     args = parser.parse_args()
 
     # Load config
@@ -161,6 +166,7 @@ def main():
             parallel=args.sim_parallel,
             deployment_id=args.deployment_id,
             use_tool_fakes=args.use_tool_fakes,
+            skip_playback_wait=args.skip_playback_wait,
         )
     except Exception as e:
         print(f"\n  ERROR: Evaluation run failed: {e}")
