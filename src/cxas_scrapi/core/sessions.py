@@ -159,10 +159,28 @@ class AgentTurnManager:
         self.len_audio_bytes_received = 0
         self.turn_completed_flag = False
         self.first_audio_received_time = None
+        self.expected_duration_seconds = None
+        self.is_welcome_turn = False
+        self.current_turn_index = None
         self.lock = threading.Lock()
+
+    def _calculate_rms(self, audio_bytes: bytes) -> float:
+        import struct
+        import math
+        count = len(audio_bytes) // 2
+        if count == 0:
+            return 0.0
+        shorts = struct.unpack(f"<{count}h", audio_bytes[: count * 2])
+        sum_squares = sum(s * s for s in shorts)
+        return math.sqrt(sum_squares / count)
 
     def add_audio(self, audio_bytes: bytes):
         with self.lock:
+            if self.turn_completed_flag:
+                return
+            rms = self._calculate_rms(audio_bytes)
+            if rms < 200.0:
+                return
             if self.first_audio_received_time is None:
                 self.first_audio_received_time = time.time()
             self.len_audio_bytes_received += len(audio_bytes)
@@ -176,24 +194,67 @@ class AgentTurnManager:
             self.len_audio_bytes_received = 0
             self.turn_completed_flag = False
             self.first_audio_received_time = None
+            self.expected_duration_seconds = None
+            self.is_welcome_turn = False
+            self.current_turn_index = None
+
+    def prepare_for_turn(self, expected_turn_index: int):
+        with self.lock:
+            logging.debug(
+                "Preparing manager for turn index %d. Resetting state.",
+                expected_turn_index,
+            )
+            self.len_audio_bytes_received = 0
+            self.turn_completed_flag = False
+            self.first_audio_received_time = None
+            self.expected_duration_seconds = None
+            self.is_welcome_turn = (expected_turn_index <= 1)
+            self.current_turn_index = expected_turn_index
+
+    def update_turn_index(self, turn_idx: int) -> bool:
+        with self.lock:
+            if self.current_turn_index is None:
+                self.current_turn_index = turn_idx
+                return True
+            if turn_idx != self.current_turn_index:
+                return False
+            return True
 
     def is_agent_done_talking(self) -> bool:
         with self.lock:
-            if not self.turn_completed_flag:
-                return False
-
             if self.skip_playback_wait:
                 return True
 
             if self.first_audio_received_time is None:
-                return True  # Agent didn't send any audio
+                if self.turn_completed_flag:
+                    return True  # Agent didn't send any audio
+                return False
 
+            # If the network transfer is not completed, we cannot use exact byte-based timing,
+            # so we use the text-based estimate if available.
+            if not self.turn_completed_flag:
+                if self.expected_duration_seconds is not None:
+                    current_playback_time = time.time() - self.first_audio_received_time
+                    return current_playback_time >= self.expected_duration_seconds
+                return False
+
+            # Once the network transfer is completed, we have all audio bytes.
+            # We calculate the exact duration of the received audio.
             audio_duration_seconds = (
                 self.len_audio_bytes_received / self.bytes_per_second
             )
-            current_playback_time = time.time() - self.first_audio_received_time
+            # Add a small buffer padding to allow local playback buffer to finish
+            audio_duration_seconds += 0.5
 
-            return current_playback_time >= audio_duration_seconds
+            current_playback_time = time.time() - self.first_audio_received_time
+            res = current_playback_time >= audio_duration_seconds
+            logging.debug(
+                "is_agent_done_talking (exact byte-based): duration=%.2f, elapsed=%.2f -> %s",
+                audio_duration_seconds,
+                current_playback_time,
+                res
+            )
+            return res
 
 
 class BidiSessionHandler:
@@ -231,6 +292,7 @@ class BidiSessionHandler:
         self.current_turn_outputs = []
         self.current_agent_turn_idx = 0
         self.turn_audio_buffers = {}
+        self.max_server_turn_idx = 0
         self.turn_audio_paths = {}
 
         self._close_status_code: int | None = None
@@ -315,6 +377,10 @@ class BidiSessionHandler:
     def _send_audio_message(
         self, audio_payload: dict[str, Any], turn_index: int
     ):
+        expected_idx = self.max_server_turn_idx + 1
+        self.agent_turn_manager.prepare_for_turn(
+            expected_turn_index=expected_idx
+        )
         audio_bytes = audio_payload["audio"]
         variables = audio_payload.get("variables")
 
@@ -391,7 +457,6 @@ class BidiSessionHandler:
         while not self.agent_turn_manager.is_agent_done_talking():
             self._send_silence(1)
 
-        self.agent_turn_manager.reset()
         time.sleep(1)  # Small pause between turns
 
     def _send_inputs(self):
@@ -467,6 +532,10 @@ class BidiSessionHandler:
             self.ws_app.send(query_json)
 
             if "text" in input_item or "event" in input_item:
+                expected_idx = self.max_server_turn_idx + 1
+                self.agent_turn_manager.prepare_for_turn(
+                    expected_turn_index=expected_idx
+                )
                 logging.debug(
                     "Waiting for agent to finish processing turn %d...",
                     idx,
@@ -474,7 +543,6 @@ class BidiSessionHandler:
                 while not self.agent_turn_manager.is_agent_done_talking():
                     time.sleep(1)
 
-                self.agent_turn_manager.reset()
                 time.sleep(1)
             elif "variables" in input_item:
                 logging.debug(
@@ -483,7 +551,7 @@ class BidiSessionHandler:
                 time.sleep(0.5)
 
         except Exception as e:
-            logging.debug("Failed to send generic input: %s", e)
+            logging.debug("Failed to send generic input %s: %s", input_item, e)
 
     def _on_open(self, ws):
         logging.debug("WebSocket connection opened")
@@ -502,8 +570,18 @@ class BidiSessionHandler:
             response = types.BidiSessionServerMessage(response_pb)
 
             if response.session_output:
+                turn_idx = response.session_output.turn_index
+                self.max_server_turn_idx = max(
+                    self.max_server_turn_idx, turn_idx
+                )
+                if not self.agent_turn_manager.update_turn_index(turn_idx):
+                    return
+
                 self.outputs.append(response.session_output)
                 self.current_turn_outputs.append(response.session_output)
+                self.agent_turn_manager.is_welcome_turn = (
+                    response.session_output.turn_index <= 1
+                )
 
                 if response.session_output.audio:
                     self.agent_turn_manager.add_audio(
@@ -519,6 +597,20 @@ class BidiSessionHandler:
                     self.turn_audio_buffers[self.current_agent_turn_idx].extend(
                         response.session_output.audio
                     )
+
+                # Dynamically update estimated speech duration based on text received so far
+                parsed = ParsedSessionResponse(self.current_turn_outputs)
+                agent_text = parsed.consolidated_agent_text
+                if agent_text:
+                    word_count = len(agent_text.split())
+                    # Heuristic: 140 WPM (2.33 words/sec) + 1.5s padding
+                    estimated_duration = (word_count / 2.33) + 1.5
+                    logging.debug(
+                        "Calculated text speech duration: %d words -> %.2f seconds",
+                        word_count,
+                        estimated_duration,
+                    )
+                    self.agent_turn_manager.expected_duration_seconds = estimated_duration
 
                 if response.session_output.turn_completed:
                     logging.debug(
@@ -771,27 +863,33 @@ class BidiInteractiveSession:
         if variables and "locale" in variables:
             lang_code = variables["locale"]
 
-        current_voice_config = (self.voice_config or {}).copy()
-        if "language_code" not in current_voice_config:
-            current_voice_config["language_code"] = lang_code
+        if text.startswith("event:"):
+            event_name = text[len("event:") :].strip()
+            if variables:
+                self.input_queue.put({"variables": variables})
+            self.input_queue.put({"event": {"event": event_name}})
+        else:
+            current_voice_config = (self.voice_config or {}).copy()
+            if "language_code" not in current_voice_config:
+                current_voice_config["language_code"] = lang_code
 
-        input_data = audio_transformer.text_to_speech_bytes(
-            text=text,
-            credentials=self.sessions_client.creds,
-            project_id=self.sessions_client.project_id,
-            background_noise_file=self.background_noise_file,
-            voice_config=current_voice_config,
-        )
+            input_data = audio_transformer.text_to_speech_bytes(
+                text=text,
+                credentials=self.sessions_client.creds,
+                project_id=self.sessions_client.project_id,
+                background_noise_file=self.background_noise_file,
+                voice_config=current_voice_config,
+            )
 
-        audio_payload = {
-            "audio": input_data["audio_bytes"],
-            "text": input_data["text"],
-        }
-        if variables:
-            audio_payload["variables"] = variables
+            audio_payload = {
+                "audio": input_data["audio_bytes"],
+                "text": input_data["text"],
+            }
+            if variables:
+                audio_payload["variables"] = variables
 
-        # Put in queue
-        self.input_queue.put({"audio": audio_payload})
+            # Put in queue
+            self.input_queue.put({"audio": audio_payload})
 
         # Block wait for the response with timeout
         try:

@@ -192,6 +192,7 @@ class ParsedSessionResponse:
                 )
 
     def _parse(self):
+        top_level_agent_text_found = False
         for output in self.outputs:
             if output is None:
                 continue
@@ -201,6 +202,7 @@ class ParsedSessionResponse:
             if text_val and isinstance(text_val, str):
                 self.agent_texts.append(text_val)
                 self.detailed_trace.append(f"Agent Text: {text_val}")
+                top_level_agent_text_found = True
 
             # Top-level session ended flag
             end_sess = getattr(output, "end_session", None)
@@ -302,10 +304,11 @@ class ParsedSessionResponse:
                                         f"User Query: {text_val}"
                                     )
                                 else:
-                                    self.agent_texts.append(text_val)
-                                    self.detailed_trace.append(
-                                        f"Agent Text (Diag): {text_val}"
-                                    )
+                                    if not top_level_agent_text_found:
+                                        self.agent_texts.append(text_val)
+                                        self.detailed_trace.append(
+                                            f"Agent Text (Diag): {text_val}"
+                                        )
 
                         elif chunk_type in ("tool_call", "function_call"):
                             tc = getattr(chunk, "tool_call", None) or getattr(

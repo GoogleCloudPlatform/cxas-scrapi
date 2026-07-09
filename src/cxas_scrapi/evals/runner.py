@@ -66,6 +66,7 @@ def run_all_evals(
     timestamp: str | None = None,
     expectations_only: bool = False,
     deployment_id: str | None = None,
+    skip_playback_wait: bool = False,
     progress_callback: Callable[[str, int, int], None] | None = None,
 ):
     """Runs all 4 types of evaluations and returns aggregated results.
@@ -269,6 +270,7 @@ def run_all_evals(
                         background_noise_file=bg_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
+                        skip_playback_wait=skip_playback_wait,
                         progress_callback=lambda c, t: (
                             progress_callback("simulations", c, t)
                             if progress_callback

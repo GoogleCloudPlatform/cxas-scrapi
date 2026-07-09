@@ -1440,6 +1440,7 @@ def generate_combined_report_from_dir(
     timestamp: str | None = None,
     expectations_only: bool = False,
     deployment_id: str | None = None,
+    skip_playback_wait: bool = False,
 ) -> str:
     """Load results from directory and generate combined HTML report.
 
@@ -1508,6 +1509,7 @@ def generate_combined_report_from_dir(
             timestamp=timestamp,
             expectations_only=expectations_only,
             deployment_id=deployment_id,
+            skip_playback_wait=skip_playback_wait,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed
@@ -1696,6 +1698,7 @@ def run_all_evals(
     timestamp: str | None = None,
     expectations_only: bool = False,
     deployment_id: str | None = None,
+    skip_playback_wait: bool = False,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -1752,4 +1755,5 @@ def run_all_evals(
         timestamp=timestamp,
         expectations_only=expectations_only,
         deployment_id=deployment_id,
+        skip_playback_wait=skip_playback_wait,
     )
