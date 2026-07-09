@@ -96,6 +96,22 @@ def main():
         default=None,
         help="Target a specific deployment ID for simulations.",
     )
+    parser.add_argument(
+        "--use-tool-fakes",
+        action="store_true",
+        default=False,
+        help="Use fake tools if available for simulations.",
+    )
+    parser.add_argument(
+        "--sim-user-model",
+        default=None,
+        help="Gemini model to use for simulation user (default: gemini-3.1-flash-lite).",
+    )
+    parser.add_argument(
+        "--eval-model",
+        default=None,
+        help="Gemini model to use for evaluation (default: gemini-3.1-flash-lite).",
+    )
     args = parser.parse_args()
 
     # Load config
@@ -154,6 +170,9 @@ def main():
             runs=args.runs,
             filter_tags=filter_tags,
             parallel=args.sim_parallel,
+            use_tool_fakes=args.use_tool_fakes,
+            sim_user_model=args.sim_user_model,
+            eval_model=args.eval_model,
             deployment_id=args.deployment_id,
         )
     except Exception as e:
