@@ -208,7 +208,7 @@ class AgentTurnManager:
             self.turn_completed_flag = False
             self.first_audio_received_time = None
             self.expected_duration_seconds = None
-            self.is_welcome_turn = (expected_turn_index <= 1)
+            self.is_welcome_turn = expected_turn_index <= 1
             self.current_turn_index = expected_turn_index
 
     def update_turn_index(self, turn_idx: int) -> bool:
