@@ -14,10 +14,12 @@
 
 import json
 import logging
+import math
 import mimetypes
 import os
 import queue
 import re
+import struct
 import sys
 import threading
 import time
@@ -165,8 +167,6 @@ class AgentTurnManager:
         self.lock = threading.Lock()
 
     def _calculate_rms(self, audio_bytes: bytes) -> float:
-        import struct
-        import math
         count = len(audio_bytes) // 2
         if count == 0:
             return 0.0
@@ -230,12 +230,16 @@ class AgentTurnManager:
                     return True  # Agent didn't send any audio
                 return False
 
-            # If the network transfer is not completed, we cannot use exact byte-based timing,
-            # so we use the text-based estimate if available.
+            # If the network transfer is not completed, we cannot use exact
+            # byte-based timing, so we use the text-based estimate if available.
             if not self.turn_completed_flag:
                 if self.expected_duration_seconds is not None:
-                    current_playback_time = time.time() - self.first_audio_received_time
-                    return current_playback_time >= self.expected_duration_seconds
+                    current_playback_time = (
+                        time.time() - self.first_audio_received_time
+                    )
+                    return (
+                        current_playback_time >= self.expected_duration_seconds
+                    )
                 return False
 
             # Once the network transfer is completed, we have all audio bytes.
@@ -243,16 +247,18 @@ class AgentTurnManager:
             audio_duration_seconds = (
                 self.len_audio_bytes_received / self.bytes_per_second
             )
-            # Add a small buffer padding to allow local playback buffer to finish
+            # Add a small buffer padding to allow local playback buffer to
+            # finish
             audio_duration_seconds += 0.5
 
             current_playback_time = time.time() - self.first_audio_received_time
             res = current_playback_time >= audio_duration_seconds
             logging.debug(
-                "is_agent_done_talking (exact byte-based): duration=%.2f, elapsed=%.2f -> %s",
+                "is_agent_done_talking (exact byte-based): "
+                "duration=%.2f, elapsed=%.2f -> %s",
                 audio_duration_seconds,
                 current_playback_time,
-                res
+                res,
             )
             return res
 
@@ -294,6 +300,8 @@ class BidiSessionHandler:
         self.turn_audio_buffers = {}
         self.max_server_turn_idx = 0
         self.turn_audio_paths = {}
+        self.is_sending_audio = False
+        self.lock = threading.Lock()
 
         self._close_status_code: int | None = None
         self._close_msg: str | None = None
@@ -377,87 +385,93 @@ class BidiSessionHandler:
     def _send_audio_message(
         self, audio_payload: dict[str, Any], turn_index: int
     ):
-        expected_idx = self.max_server_turn_idx + 1
-        self.agent_turn_manager.prepare_for_turn(
-            expected_turn_index=expected_idx
-        )
-        audio_bytes = audio_payload["audio"]
-        variables = audio_payload.get("variables")
+        with self.lock:
+            self.is_sending_audio = True
+        try:
+            expected_idx = self.max_server_turn_idx + 1
+            self.agent_turn_manager.prepare_for_turn(
+                expected_turn_index=expected_idx
+            )
+            audio_bytes = audio_payload["audio"]
+            variables = audio_payload.get("variables")
 
-        if variables:
+            if variables:
+                logging.debug(
+                    "Sending variables before audio chunks: %s", variables
+                )
+                var_message = types.BidiSessionClientMessage(
+                    realtime_input=types.SessionInput(variables=variables)
+                )
+                var_json = json_format.MessageToJson(
+                    var_message._pb,
+                    preserving_proto_field_name=False,
+                    indent=None,
+                )
+                self.ws_app.send(var_json)
+                time.sleep(0.5)
+
+            logging.debug("Sending leading silence before turn %d...", turn_index)
+            self._send_silence(
+                SILENCE_PADDING_CHUNKS
+            )  # 0.3 seconds of leading silence
+
+            logging.debug("Sending audio chunks for turn %d...", turn_index)
+
+            for i in range(0, len(audio_bytes), AUDIO_CHUNK_SIZE):
+                chunk = audio_bytes[i : i + AUDIO_CHUNK_SIZE]
+
+                # Dynamically mix continuous background noise chunk-by-chunk
+                # in real-time
+                if self.bg_noise_segment is not None:
+                    try:
+                        speech_seg = AudioSegment(
+                            chunk,
+                            frame_rate=SAMPLE_RATE,
+                            sample_width=SAMPLE_WIDTH,
+                            channels=AUDIO_CHANNELS,
+                        )
+                        noise_seg = self.bg_noise_segment[
+                            self.bg_noise_cursor : self.bg_noise_cursor + 100
+                        ]
+                        self.bg_noise_cursor += 100
+                        if self.bg_noise_cursor >= len(self.bg_noise_segment):
+                            self.bg_noise_cursor = 0
+
+                        mixed_seg = speech_seg.overlay(noise_seg)
+                        chunk = mixed_seg.raw_data[: len(chunk)]
+                    except Exception as ex:
+                        logging.warning(
+                            "Failed to overlay continuous noise chunk in "
+                            f"real-time: {ex}"
+                        )
+
+                query_message = types.BidiSessionClientMessage(
+                    realtime_input=types.SessionInput(audio=chunk)
+                )
+                query_json = json_format.MessageToJson(
+                    query_message._pb,
+                    preserving_proto_field_name=False,
+                    indent=None,
+                )
+                self.ws_app.send(query_json)
+                time.sleep(CHUNK_DELAY)
+
             logging.debug(
-                "Sending variables before audio chunks: %s", variables
+                "Sending trailing silence for turn %d to trigger endpointing...",
+                turn_index,
             )
-            var_message = types.BidiSessionClientMessage(
-                realtime_input=types.SessionInput(variables=variables)
-            )
-            var_json = json_format.MessageToJson(
-                var_message._pb,
-                preserving_proto_field_name=False,
-                indent=None,
-            )
-            self.ws_app.send(var_json)
-            time.sleep(0.5)
+            self._send_silence(
+                SILENCE_PADDING_CHUNKS
+            )  # 0.3 seconds of trailing silence
 
-        logging.debug("Sending leading silence before turn %d...", turn_index)
-        self._send_silence(
-            SILENCE_PADDING_CHUNKS
-        )  # 0.3 seconds of leading silence
+            logging.debug("Waiting for agent to finish turn %d...", turn_index)
+            while not self.agent_turn_manager.is_agent_done_talking():
+                self._send_silence(1)
 
-        logging.debug("Sending audio chunks for turn %d...", turn_index)
-
-        for i in range(0, len(audio_bytes), AUDIO_CHUNK_SIZE):
-            chunk = audio_bytes[i : i + AUDIO_CHUNK_SIZE]
-
-            # Dynamically mix continuous background noise chunk-by-chunk
-            # in real-time
-            if self.bg_noise_segment is not None:
-                try:
-                    speech_seg = AudioSegment(
-                        chunk,
-                        frame_rate=SAMPLE_RATE,
-                        sample_width=SAMPLE_WIDTH,
-                        channels=AUDIO_CHANNELS,
-                    )
-                    noise_seg = self.bg_noise_segment[
-                        self.bg_noise_cursor : self.bg_noise_cursor + 100
-                    ]
-                    self.bg_noise_cursor += 100
-                    if self.bg_noise_cursor >= len(self.bg_noise_segment):
-                        self.bg_noise_cursor = 0
-
-                    mixed_seg = speech_seg.overlay(noise_seg)
-                    chunk = mixed_seg.raw_data[: len(chunk)]
-                except Exception as ex:
-                    logging.warning(
-                        "Failed to overlay continuous noise chunk in "
-                        f"real-time: {ex}"
-                    )
-
-            query_message = types.BidiSessionClientMessage(
-                realtime_input=types.SessionInput(audio=chunk)
-            )
-            query_json = json_format.MessageToJson(
-                query_message._pb,
-                preserving_proto_field_name=False,
-                indent=None,
-            )
-            self.ws_app.send(query_json)
-            time.sleep(CHUNK_DELAY)
-
-        logging.debug(
-            "Sending trailing silence for turn %d to trigger endpointing...",
-            turn_index,
-        )
-        self._send_silence(
-            SILENCE_PADDING_CHUNKS
-        )  # 0.3 seconds of trailing silence
-
-        logging.debug("Waiting for agent to finish turn %d...", turn_index)
-        while not self.agent_turn_manager.is_agent_done_talking():
-            self._send_silence(1)
-
-        time.sleep(1)  # Small pause between turns
+            time.sleep(1)  # Small pause between turns
+        finally:
+            with self.lock:
+                self.is_sending_audio = False
 
     def _send_inputs(self):
         try:
@@ -556,20 +570,80 @@ class BidiSessionHandler:
     def _on_open(self, ws):
         logging.debug("WebSocket connection opened")
         threading.Thread(target=self._send_inputs, daemon=True).start()
+        threading.Thread(target=self._silence_loop, daemon=True).start()
+
+    def _silence_loop(self):
+        while True:
+            if not self.ws_app or not self.ws_app.sock or not self.ws_app.sock.connected:
+                break
+
+            with self.lock:
+                should_send = not self.is_sending_audio
+
+            if should_send:
+                try:
+                    self._send_silence(1)
+                except Exception as ex:
+                    logging.debug("Silence loop error: %s", ex)
+                    break
+            else:
+                time.sleep(0.1)
 
     def _on_message(self, ws, message):
         logging.debug("===============")
         logging.debug("Received message: %s...", message[:100])
         try:
             response_pb = types.BidiSessionServerMessage()._pb
-            json_format.Parse(
-                message,
+            message_dict = json.loads(message)
+            output = message_dict.get("sessionOutput") or message_dict.get("session_output")
+            if isinstance(output, dict):
+                diag = output.get("diagnosticInfo") or output.get("diagnostic_info")
+                if isinstance(diag, dict):
+                    logging.debug("DIAG DUMP: %s", json.dumps(diag))
+                    root_span = diag.get("rootSpan") or diag.get("root_span")
+                    if isinstance(root_span, dict):
+                        root_span.pop("execution_steps", None)
+                        root_span.pop("executionSteps", None)
+
+            json_format.ParseDict(
+                message_dict,
                 response_pb,
                 ignore_unknown_fields=True,
             )
             response = types.BidiSessionServerMessage(response_pb)
 
             if response.session_output:
+                # Check if this is an empty comfort noise or variables ack packet
+                has_text = bool(response.session_output.text)
+                has_diag_messages = False
+                diag = response.session_output.diagnostic_info
+                if diag and diag.messages:
+                    has_diag_messages = True
+
+                has_execution = False
+                if diag and diag.root_span and diag.root_span.child_spans:
+                    has_execution = True
+
+                has_audio_energy = False
+                if response.session_output.audio:
+                    rms = self.agent_turn_manager._calculate_rms(
+                        response.session_output.audio
+                    )
+                    if rms >= 200.0:
+                        has_audio_energy = True
+
+                is_empty_response = (
+                    not response.session_output.turn_completed
+                    and not has_text
+                    and not has_diag_messages
+                    and not has_execution
+                    and not has_audio_energy
+                )
+
+                if is_empty_response:
+                    logging.debug("Ignoring empty/silent server response packet.")
+                    return
+
                 turn_idx = response.session_output.turn_index
                 self.max_server_turn_idx = max(
                     self.max_server_turn_idx, turn_idx
@@ -598,7 +672,8 @@ class BidiSessionHandler:
                         response.session_output.audio
                     )
 
-                # Dynamically update estimated speech duration based on text received so far
+                # Dynamically update estimated speech duration based on text
+                # received so far
                 parsed = ParsedSessionResponse(self.current_turn_outputs)
                 agent_text = parsed.consolidated_agent_text
                 if agent_text:
@@ -606,11 +681,14 @@ class BidiSessionHandler:
                     # Heuristic: 140 WPM (2.33 words/sec) + 1.5s padding
                     estimated_duration = (word_count / 2.33) + 1.5
                     logging.debug(
-                        "Calculated text speech duration: %d words -> %.2f seconds",
+                        "Calculated text speech duration: %d words -> "
+                        "%.2f seconds",
                         word_count,
                         estimated_duration,
                     )
-                    self.agent_turn_manager.expected_duration_seconds = estimated_duration
+                    self.agent_turn_manager.expected_duration_seconds = (
+                        estimated_duration
+                    )
 
                 if response.session_output.turn_completed:
                     logging.debug(
