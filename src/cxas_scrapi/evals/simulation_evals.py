@@ -719,6 +719,7 @@ class SimulationEvals(Apps):
                     detailed_trace.append(f"User: {user_utterance}")
 
                 current_sim_turn += 1
+                first_turn = False
 
             if console_logging:
                 self._print_completion_status(eval_conv)

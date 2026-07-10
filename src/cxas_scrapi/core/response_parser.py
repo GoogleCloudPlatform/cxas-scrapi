@@ -303,12 +303,11 @@ class ParsedSessionResponse:
                                     self.detailed_trace.append(
                                         f"User Query: {text_val}"
                                     )
-                                else:
-                                    if not top_level_agent_text_found:
-                                        self.agent_texts.append(text_val)
-                                        self.detailed_trace.append(
-                                            f"Agent Text (Diag): {text_val}"
-                                        )
+                                elif not top_level_agent_text_found:
+                                    self.agent_texts.append(text_val)
+                                    self.detailed_trace.append(
+                                        f"Agent Text (Diag): {text_val}"
+                                    )
 
                         elif chunk_type in ("tool_call", "function_call"):
                             tc = getattr(chunk, "tool_call", None) or getattr(
