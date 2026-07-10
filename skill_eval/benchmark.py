@@ -41,12 +41,11 @@ class Timer:
         if self._start_time is not None:
             elapsed = time.perf_counter() - self._start_time
             self.duration = datetime.timedelta(seconds=elapsed)
+            self._start_time = None
 
     @property
     def elapsed(self) -> datetime.timedelta:
         if self._start_time is None:
-            return datetime.timedelta()
-        if self.duration.total_seconds() > 0:
             return self.duration
         return datetime.timedelta(
             seconds=time.perf_counter() - self._start_time
