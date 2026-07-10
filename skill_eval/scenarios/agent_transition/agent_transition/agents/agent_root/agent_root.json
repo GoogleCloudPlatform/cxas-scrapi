@@ -1,0 +1,7 @@
+{
+  "name": "agent_root",
+  "displayName": "agent_root",
+  "instruction": "agents/agent_root/instruction.txt",
+  "childAgents": ["agent_billing"],
+  "tools": ["end_session"]
+}

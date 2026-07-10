@@ -1,0 +1,5 @@
+{
+  "name": "rich-ui-app-{uuid}",
+  "displayName": "Rich UI App-{uuid}",
+  "rootAgent": "root_agent"
+}

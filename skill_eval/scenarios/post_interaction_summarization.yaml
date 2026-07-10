@@ -1,0 +1,35 @@
+name: Post-Interaction Summarization
+prompt: |
+  A basic 'Summarizer Agent' CXAS app structure is pre-configured in the local `post_interaction_summarization/` folder.
+  Your goal is to implement a post-interaction summarization feature that triggers when the user says goodbye.
+
+  Please perform the following:
+  1. Define a Python function tool named `gen_summary`. It should return a non-empty, coherent conversation summary string. **Note: Do NOT use Dialogflow CX Generators; use a Python Function Tool instead.**
+  2. Define an OpenAPI toolset named `Toolset_Email` that includes a `send_email` operation (accepting a `summary` string).
+  3. Bind both the `gen_summary` tool and the `Toolset_Email` toolset to the `summarizer_agent`.
+  4. Update the `summarizer_agent`'s instructions: "When the user indicates they want to end the conversation (e.g., says goodbye), you MUST FIRST execute 'gen_summary' and then 'Toolset_Email_send_email' BEFORE calling 'end_session'. This sequence is mandatory."
+  5. Deploy the app to the CXAS platform using `cxas push --project-id {project_id} --location us`.
+  6. Verify the flow by running a non-interactive test session using `cxas run-session text "I'm all done. Goodbye!" [APP_NAME]`.
+  7. Assert that `gen_summary` is executed, and the `send_email` tool receives a non-empty summary payload.
+
+  **CRITICAL RUN RULE**: Always execute all `run_command` tools with `WaitMsBeforeAsync` set to at least `30000` (30 seconds). This ensures that commands like `cxas push` and `cxas run-session` execute completely and synchronously. Do NOT run commands with `WaitMsBeforeAsync: 0` or use background tasks. Ignore any background TaskId notifications.
+  **TIP**: If `cxas push` or `cxas run-session` hangs due to interactive prompts, use a Python `subprocess` script to pipe "y\n" to the command: `python3 -c "import subprocess; subprocess.run(['cxas', 'push', ...], input='y\n', text=True)"`.
+
+rubric:
+- criteria: Summarizer Tool Setup
+  perfect: |
+    The trace shows the agent correctly defined the `gen_summary` Python tool (not using CX Generators) and linked it to the agent.
+  failed: |
+    The Python tool was not defined or linked correctly.
+- criteria: Post-Interaction Logic
+  perfect: |
+    The agent updated the instructions to trigger `gen_summary` and `send_email` specifically when the user says goodbye, and the sequence of tool calls is correct.
+  failed: |
+    The instructions do not trigger the tools at the correct time or in the correct order.
+- criteria: Verification and Payload
+  perfect: |
+    The agent successfully ran a test session with "I'm all done. Goodbye!", and the session trace shows `gen_summary` was called and its output (a non-empty, coherent conversation summary string) was passed to the `summary` argument of `Toolset_Email_send_email`.
+  failed: |
+    No test session was run, or the tool calls did not occur with the expected non-empty summary payload.
+assets:
+- post_interaction_summarization

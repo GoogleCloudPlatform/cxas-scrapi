@@ -1,0 +1,5 @@
+{
+  "name": "broken-app-{uuid}",
+  "displayName": "Broken App",
+  "rootAgent": "broken_agent"
+}

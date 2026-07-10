@@ -16,6 +16,7 @@
 
 import asyncio
 import dataclasses
+import datetime
 import enum
 import logging
 import time
@@ -23,6 +24,32 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from skill_eval import exceptions, scenario, scorer
+
+
+class Timer:
+    """A context manager for timing blocks of code."""
+
+    def __init__(self):
+        self.duration = datetime.timedelta()
+        self._start_time = None
+
+    def __enter__(self):
+        self._start_time = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._start_time is not None:
+            elapsed = time.perf_counter() - self._start_time
+            self.duration = datetime.timedelta(seconds=elapsed)
+            self._start_time = None
+
+    @property
+    def elapsed(self) -> datetime.timedelta:
+        if self._start_time is None:
+            return self.duration
+        return datetime.timedelta(
+            seconds=time.perf_counter() - self._start_time
+        )
 
 
 class ExecutionStatus(enum.Enum):
@@ -144,6 +171,13 @@ class ConversationResult:
     log_files: list[str] = dataclasses.field(default_factory=list)
     trajectory_id: str | None = None
 
+    # New Orchestration Metrics:
+    init_queued_latency: datetime.timedelta = datetime.timedelta()
+    init_active_latency: datetime.timedelta = datetime.timedelta()
+    conversing_latency: datetime.timedelta = datetime.timedelta()
+    scoring_latency: datetime.timedelta = datetime.timedelta()
+    cleanup_latency: datetime.timedelta = datetime.timedelta()
+
 
 class BaseAgentHead:
     """Base class for an Agent Head (MetaAgent, Antigravity, or Fake)."""
@@ -224,6 +258,11 @@ class BenchmarkRunner:
         scoring_latency_sec: float = 0.0,
         start_time: float = 0.0,
         end_time: float = 0.0,
+        init_queued_latency: datetime.timedelta = datetime.timedelta(),
+        init_active_latency: datetime.timedelta = datetime.timedelta(),
+        conversing_latency: datetime.timedelta = datetime.timedelta(),
+        scoring_latency: datetime.timedelta = datetime.timedelta(),
+        cleanup_latency: datetime.timedelta = datetime.timedelta(),
     ) -> ConversationResult:
         """Helper to create a ConversationResult with current head state."""
         return ConversationResult(
@@ -243,6 +282,11 @@ class BenchmarkRunner:
             end_time=end_time,
             log_files=list(head.get_log_files()),
             trajectory_id=head.get_trajectory_id(),
+            init_queued_latency=init_queued_latency,
+            init_active_latency=init_active_latency,
+            conversing_latency=conversing_latency,
+            scoring_latency=scoring_latency,
+            cleanup_latency=cleanup_latency,
         )
 
     async def run(
@@ -252,6 +296,11 @@ class BenchmarkRunner:
         init_semaphore: asyncio.Semaphore | None = None,
     ) -> ConversationResult:
         """Runs the benchmark and returns the final results."""
+
+        init_queued_timer = Timer()
+        init_active_timer = Timer()
+        conversing_timer = Timer()
+        scoring_timer = Timer()
 
         async def _notify_state(status: ExecutionStatus):
             if on_turn_completed:
@@ -268,17 +317,23 @@ class BenchmarkRunner:
                 )
 
         if init_semaphore:
-            async with init_semaphore:
-                await _notify_state(ExecutionStatus.INITIALIZING)
+            await _notify_state(ExecutionStatus.INITIALIZING)
+            with init_queued_timer:
+                await init_semaphore.acquire()
+            try:
                 logging.info(
                     "[%s] [%s] Initializing head...",
                     self.scenario_name,
                     agent_head.name,
                 )
-                await agent_head.initialize()
+                with init_active_timer:
+                    await agent_head.initialize()
+            finally:
+                init_semaphore.release()
         else:
             await _notify_state(ExecutionStatus.INITIALIZING)
-            await agent_head.initialize()
+            with init_active_timer:
+                await agent_head.initialize()
 
         await _notify_state(ExecutionStatus.CONVERSING)
 
@@ -290,13 +345,14 @@ class BenchmarkRunner:
         messages.append({"role": "user", "content": user_message})
 
         try:
-            turn_start_time = time.time()
-            current_agent_response = await agent_head.send_message(user_message)
-            turn_elapsed = time.time() - turn_start_time
+            with conversing_timer:
+                current_agent_response = await agent_head.send_message(
+                    user_message
+                )
 
             turn_metrics_list.append(
                 TurnMetrics(
-                    latency_sec=turn_elapsed,
+                    latency_sec=conversing_timer.duration.total_seconds(),
                     simulator_latency_sec=0.0,
                     tool_calls=agent_head.get_tool_calls_count_last_turn(),
                     tool_interactions=list(
@@ -321,6 +377,9 @@ class BenchmarkRunner:
                         turn_metrics_list,
                         status=ExecutionStatus.CONVERSING,
                         start_time=total_start_time,
+                        init_queued_latency=init_queued_timer.duration,
+                        init_active_latency=init_active_timer.duration,
+                        conversing_latency=conversing_timer.duration,
                     ),
                 )
 
@@ -340,6 +399,9 @@ class BenchmarkRunner:
                     scoring_latency_sec=0.0,
                     start_time=total_start_time,
                     end_time=total_end_time,
+                    init_queued_latency=init_queued_timer.duration,
+                    init_active_latency=init_active_timer.duration,
+                    conversing_latency=conversing_timer.duration,
                 )
 
             # Notify grading state but keep history
@@ -354,11 +416,13 @@ class BenchmarkRunner:
                         turn_metrics_list,
                         status=ExecutionStatus.GRADING,
                         start_time=total_start_time,
+                        init_queued_latency=init_queued_timer.duration,
+                        init_active_latency=init_active_timer.duration,
+                        conversing_latency=conversing_timer.duration,
                     ),
                 )
 
             logging.info("[%s] Grading with rubric...", agent_head.name)
-            scoring_start_time = time.time()
             structured_turns = [
                 scorer.ScorerTurn(
                     user_message=user_message,
@@ -367,9 +431,10 @@ class BenchmarkRunner:
                     events=turn_metrics_list[0].events,
                 )
             ]
-            rubric_results = await self.scorer.grade_conversation(
-                self.scenario, structured_turns
-            )
+            with scoring_timer:
+                rubric_results = await self.scorer.grade_conversation(
+                    self.scenario, structured_turns
+                )
             # Success logic: Must be 100%
             if rubric_results.max_score > 0:
                 success = rubric_results.total_score >= rubric_results.max_score
@@ -387,9 +452,13 @@ class BenchmarkRunner:
                 status=ExecutionStatus.FINISHED,
                 failure_reason=None,
                 rubric_results=rubric_results,
-                scoring_latency_sec=time.time() - scoring_start_time,
+                scoring_latency_sec=scoring_timer.duration.total_seconds(),
                 start_time=total_start_time,
                 end_time=total_end_time,
+                init_queued_latency=init_queued_timer.duration,
+                init_active_latency=init_active_timer.duration,
+                conversing_latency=conversing_timer.duration,
+                scoring_latency=scoring_timer.duration,
             )
 
         except exceptions.ScorerError as e:
@@ -405,6 +474,10 @@ class BenchmarkRunner:
                 failure_reason=f"[Scorer] {e!r}",
                 start_time=total_start_time,
                 end_time=time.time(),
+                init_queued_latency=init_queued_timer.duration,
+                init_active_latency=init_active_timer.duration,
+                conversing_latency=conversing_timer.duration,
+                scoring_latency=scoring_timer.duration,
             )
         except Exception as e:
             logging.exception("[%s] Error during benchmark", agent_head.name)
@@ -419,4 +492,8 @@ class BenchmarkRunner:
                 failure_reason=repr(e),
                 start_time=total_start_time,
                 end_time=time.time(),
+                init_queued_latency=init_queued_timer.duration,
+                init_active_latency=init_active_timer.duration,
+                conversing_latency=conversing_timer.duration,
+                scoring_latency=scoring_timer.duration,
             )

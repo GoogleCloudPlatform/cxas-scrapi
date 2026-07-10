@@ -1,0 +1,17 @@
+common_session_parameters:
+  account_id: "9820598207"
+
+conversations:
+- conversation: Payment_Test
+  tags: [p0, payment]
+  turns:
+  - user: I'd like to pay 100 dollars
+    agent: # silent
+    tool_calls:
+    - action: process_payment
+      args: {amount: 100, currency: USD}
+      output: {"status": "SUCCESS", "tx_id": "TX-100"}
+    agent: Your payment was successful. Transaction ID is TX-100.
+  expectations:
+  - The agent must call process_payment with amount 100.
+  - The agent must mention the transaction ID TX-100.

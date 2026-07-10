@@ -45,10 +45,6 @@ class ScaffoldingTestAgentTest(unittest.TestCase):
 class AntigravityAgentHeadTest(unittest.TestCase):
     def setUp(self):
         super().setUp()
-        self.head = agent_heads.AntigravityAgentHead(
-            scenario_name="test_session.yaml",
-            scenario_path="/tmp/cxas_skill_eval/scenarios/test_session.yaml",
-        )
 
     @mock.patch.dict(os.environ, {}, clear=True)
     @mock.patch.object(
@@ -59,10 +55,7 @@ class AntigravityAgentHeadTest(unittest.TestCase):
     @mock.patch.object(shutil, "copy")
     @mock.patch.object(os, "makedirs")
     @mock.patch.object(agent_heads.AntigravityAgentHead, "_run_subprocess_cmd")
-    @mock.patch.object(agent_heads.glob, "glob")
-    @mock.patch("builtins.open", new_callable=mock.mock_open)
     @mock.patch.object(os, "chmod")
-    @mock.patch.object(os, "symlink")
     @mock.patch("skill_eval.agent_heads.Agent")
     @mock.patch.object(os.path, "exists", return_value=True)
     @mock.patch.object(shutil, "copytree")
@@ -73,10 +66,7 @@ class AntigravityAgentHeadTest(unittest.TestCase):
         mock_copytree,
         mock_os_exists,
         mock_agent_cls,
-        mock_symlink,
         mock_chmod,
-        mock_open,
-        mock_glob,
         mock_run_subprocess,
         mock_makedirs,
         mock_copy,
@@ -91,11 +81,6 @@ class AntigravityAgentHeadTest(unittest.TestCase):
 
         # Mock _run_subprocess_cmd as a coroutine mock
         mock_run_subprocess.return_value = None
-
-        # Mock glob to dynamically resolve Python site-packages version patterns
-        mock_glob.side_effect = lambda pattern: [
-            pattern.replace("python*", "python3.14")
-        ]
 
         head = agent_heads.AntigravityAgentHead(
             scenario_name="test_scen",
@@ -116,51 +101,26 @@ class AntigravityAgentHeadTest(unittest.TestCase):
         mock_agent_cls.assert_called_once()
         mock_agent_instance.__aenter__.assert_called_once()
 
-        # Dynamically resolve expected file paths pointing to workspace virtualenv
-        expected_pth = os.path.join(
-            head._workspace_dir,
-            ".venv",
-            "lib",
-            "python3.14",
-            "site-packages",
-            "cxas-scrapi.pth",
+        # Assert LocalAgentConfig was called with correct skills_paths
+        config_passed = mock_agent_cls.call_args[0][0]
+        expected_skills_path = os.path.join(
+            os.path.dirname(
+                os.path.dirname(os.path.abspath(agent_heads.__file__))
+            ),
+            ".agents",
+            "skills",
         )
-        expected_cxas = os.path.join(
-            head._workspace_dir, ".venv", "bin", "cxas"
-        )
+        self.assertEqual(config_passed.skills_paths, [expected_skills_path])
 
-        # Assert programmatic local editable linkage and CLI script wrapper writes
-        mock_glob.assert_called_once()
-        mock_open.assert_has_calls(
-            [
-                mock.call(expected_pth, "w"),
-                mock.call(expected_cxas, "w"),
-            ],
-            any_order=True,
-        )
-        mock_chmod.assert_has_calls(
-            [
-                mock.call(head._workspace_dir, 0o755),
-                mock.call(expected_cxas, 0o755),
-            ],
-            any_order=True,
-        )
-
-        # Assert dynamic shared skills symlink setup
-        expected_parent_skills = os.path.join(
-            agent_heads.sys.prefix, "share", "cxas-scrapi"
-        )
-        expected_local_skills = os.path.join(
-            head._workspace_dir, ".venv", "share", "cxas-scrapi"
-        )
-        mock_symlink.assert_called_once_with(
-            expected_parent_skills, expected_local_skills
-        )
-
+        # Assert clean uv venv and pip install are executed
         mock_run_subprocess.assert_has_calls(
             [
                 mock.call(
-                    ["uv", "venv", "--system-site-packages"],
+                    ["uv", "venv", "--python", agent_heads.sys.executable],
+                    head._workspace_dir,
+                ),
+                mock.call(
+                    ["uv", "pip", "install", mock.ANY],
                     head._workspace_dir,
                 ),
             ]
@@ -175,24 +135,24 @@ class AntigravityAgentHeadTest(unittest.TestCase):
     @mock.patch.object(shutil, "copy")
     @mock.patch.object(os, "makedirs")
     @mock.patch.object(agent_heads.AntigravityAgentHead, "_run_subprocess_cmd")
-    @mock.patch.object(agent_heads.glob, "glob")
-    @mock.patch("builtins.open", new_callable=mock.mock_open)
     @mock.patch.object(os, "chmod")
-    @mock.patch.object(os, "symlink")
     @mock.patch("skill_eval.agent_heads.Agent")
     @mock.patch.object(os.path, "exists", return_value=True)
     @mock.patch.object(shutil, "copytree")
     @mock.patch("pathlib.Path.exists", return_value=True)
+    @mock.patch("google.auth.default")
+    @mock.patch.object(
+        agent_heads.AntigravityAgentHead, "_get_uv_index_env_vars"
+    )
     def test_initialize_propagates_project_env_variables(
         self,
+        mock_get_uv_env_vars,
+        mock_auth_default,
         mock_path_exists,
         mock_copytree,
         mock_os_exists,
         mock_agent_cls,
-        mock_symlink,
         mock_chmod,
-        mock_open,
-        mock_glob,
         mock_run_subprocess,
         mock_makedirs,
         mock_copy,
@@ -205,15 +165,27 @@ class AntigravityAgentHeadTest(unittest.TestCase):
         )
         mock_agent_instance.__aexit__ = mock.AsyncMock()
         mock_run_subprocess.return_value = None
-        mock_glob.side_effect = lambda pattern: [
-            pattern.replace("python*", "python3.14")
-        ]
+
+        # Mock google.auth.default to return valid credentials with mock token
+        mock_creds = mock.Mock()
+        mock_creds.valid = False
+        mock_creds.token = "mock-gcp-token"
+        mock_auth_default.return_value = (mock_creds, "mock-project")
+
+        # Mock _get_uv_index_env_vars to return mock index variables
+        mock_get_uv_env_vars.return_value = {
+            "UV_INDEX_PRIVATE_DEFAULT_USERNAME": "oauth2accesstoken",
+            "UV_INDEX_PRIVATE_DEFAULT_PASSWORD": "mock-gcp-token",
+        }
 
         # Set up original env variables to verify restore
         os.environ["PATH"] = "/usr/bin"
         os.environ["VIRTUAL_ENV"] = "/parent/venv"
         os.environ["GCLOUD_PROJECT"] = "original-project"
         os.environ["GOOGLE_CLOUD_PROJECT"] = "original-project"
+        os.environ["UV_KEYRING_PROVIDER"] = "original-provider"
+        os.environ["UV_INDEX_PRIVATE_DEFAULT_USERNAME"] = "original-username"
+        os.environ["UV_INDEX_PRIVATE_DEFAULT_PASSWORD"] = "original-password"
 
         mock_project = "mock-project-id"
         head = agent_heads.AntigravityAgentHead(
@@ -229,6 +201,26 @@ class AntigravityAgentHeadTest(unittest.TestCase):
                 os.environ.get("GOOGLE_CLOUD_PROJECT"), mock_project
             )
             self.assertNotIn("CLOUDSDK_CONFIG", os.environ)
+
+            # Verify active child virtual environment in os.environ
+            expected_venv = os.path.join(head._workspace_dir, ".venv")
+            self.assertEqual(os.environ.get("VIRTUAL_ENV"), expected_venv)
+            self.assertTrue(
+                os.environ.get("PATH").startswith(
+                    os.path.join(expected_venv, "bin")
+                )
+            )
+            self.assertEqual(
+                os.environ.get("UV_KEYRING_PROVIDER"), "subprocess"
+            )
+            self.assertEqual(
+                os.environ.get("UV_INDEX_PRIVATE_DEFAULT_USERNAME"),
+                "oauth2accesstoken",
+            )
+            self.assertEqual(
+                os.environ.get("UV_INDEX_PRIVATE_DEFAULT_PASSWORD"),
+                "mock-gcp-token",
+            )
             return mock_agent_instance
 
         mock_agent_instance.__aenter__.side_effect = assert_env_variables
@@ -243,8 +235,46 @@ class AntigravityAgentHeadTest(unittest.TestCase):
         self.assertEqual(
             os.environ.get("GOOGLE_CLOUD_PROJECT"), "original-project"
         )
+        self.assertEqual(
+            os.environ.get("UV_KEYRING_PROVIDER"), "original-provider"
+        )
+        self.assertEqual(
+            os.environ.get("UV_INDEX_PRIVATE_DEFAULT_USERNAME"),
+            "original-username",
+        )
+        self.assertEqual(
+            os.environ.get("UV_INDEX_PRIVATE_DEFAULT_PASSWORD"),
+            "original-password",
+        )
 
     # Deleting obsolete workspace cleanup tests because directory cleanup was completely reverted.
+
+    @mock.patch("pathlib.Path.exists")
+    @mock.patch(
+        "builtins.open",
+        new_callable=mock.mock_open,
+        read_data=b"""
+[[index]]
+name = "custom-index-name"
+url = "https://example.com/simple"
+""",
+    )
+    def test_get_uv_index_env_vars_parses_toml(self, mock_file, mock_exists):
+        mock_exists.return_value = True
+        head = agent_heads.AntigravityAgentHead(
+            scenario_name="test-scenario",
+            scenario_path="/tmp/scenarios/test.yaml",
+            project="test-project",
+            location="test-location",
+        )
+        env_vars = head._get_uv_index_env_vars("test-token")
+        self.assertEqual(
+            env_vars,
+            {
+                "UV_INDEX_CUSTOM_INDEX_NAME_USERNAME": "oauth2accesstoken",
+                "UV_INDEX_CUSTOM_INDEX_NAME_PASSWORD": "test-token",
+            },
+        )
 
 
 if __name__ == "__main__":

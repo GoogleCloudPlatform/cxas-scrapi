@@ -1,0 +1,39 @@
+name: Context Personalization
+prompt: |
+  A basic CXAS app shell is provided in the local `context_personalization/` folder in your workspace.
+  Your goal is to implement session variables propagation and personalization.
+  
+  **Arrange (Setup)**:
+  1. Define an app-level variable: `user_tier` (STRING).
+  2. Define a Playbook Agent with instructions: "If user_tier is GOLD, greet with 'Welcome back VIP customer' and offer gold discounts. If standard, offer generic options."
+  3. Deploy the app to CXAS.
+
+  **Act (Inputs Sequence)**:
+  - You must verify the personalization by sending the variable `user_tier` set to "GOLD" in the session.
+  - User: "What offers do you have for me?"
+  - Use the provided `verify_personalization.py` script to run this session with the correct variables.
+
+  **Assert (Expectations)**:
+  - The agent response MUST contain "Welcome back VIP customer" and mention "gold discounts".
+
+  The app structure should be implemented in the `context_personalization/` folder.
+rubric:
+- criteria: App Variable Definition
+  perfect: |
+    The `app.json` correctly defines the `user_tier` variable in `variableDeclarations`.
+  failed: |
+    The variable definition is missing or has incorrect type/name.
+- criteria: Personalized Instructions
+  perfect: |
+    The agent instructions correctly handle the `user_tier` logic as specified.
+  failed: |
+    The instructions are missing the conditional logic or use the wrong greeting.
+- criteria: Session Variable Propagation
+  perfect: |
+    The execution trace shows that `user_tier` was set to "GOLD" in the session (via `verify_personalization.py`) and the agent responded with the VIP greeting and gold discounts.
+  failed: |
+    The session variable was not propagated, or the agent ignored it.
+assets:
+- app.json
+- agents
+- verify_personalization.py

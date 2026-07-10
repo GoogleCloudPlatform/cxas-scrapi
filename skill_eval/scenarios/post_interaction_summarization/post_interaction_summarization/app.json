@@ -1,0 +1,5 @@
+{
+  "name": "post_interaction_summarization",
+  "displayName": "Post-Interaction Summarization Agent",
+  "rootAgent": "summarizer_agent"
+}

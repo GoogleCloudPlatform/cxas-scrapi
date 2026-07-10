@@ -66,6 +66,7 @@ prompt: |
   6. Push your local changes to the CXAS platform using the `cxas push` CLI command inside the app folder. Be sure to specify the correct `--app-name` targeting the display name of the pulled application (which can be found as the value of the `"displayName"` property in `app.json`), and always pass `--project-id {project_id}` and `--location us` flags.
   7. Verify your implementation by running two separate, interactive test sessions using the `cxas run-session` CLI command inside the app folder. Target the full App resource name of the application (which can be found in the output logs of your push command on step 6, starting with `"projects/"`). Test both the happy path (a verified user successfully receives their plan details) and the failure path (an unverified user is refused access and offered escalation, and their plan is NOT disclosed).
      (For all cxas CLI commands, make sure `WaitMsBeforeAsync` is set to a large value like `60000` or `120000` so they run synchronously!)
+  8. Once you have successfully verified both test paths, explicitly conclude your work. Provide a final summary of the successful tests and stop. Do not perform any further reviews.
 rubric:
 - criteria: Agent and State Machine Design
   perfect: |

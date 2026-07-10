@@ -1,0 +1,10 @@
+{
+  "name": "global-readiness-{uuid}",
+  "displayName": "Global Readiness",
+  "languageSettings": {
+    "defaultLanguageCode": "en",
+    "supportedLanguageCodes": ["en", "es"],
+    "enableMultilingualSupport": true
+  },
+  "rootAgent": "agent_root"
+}

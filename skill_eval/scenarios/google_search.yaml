@@ -1,7 +1,7 @@
 name: Google Search Tool Integration
 prompt: |
-  We have pre-configured the 'Google Cloud Support' CXAS app in the local `google_cloud_support/` folder. It is currently purely generative.
-  Your task is to transition it to a search-backed agent by integrating the Google Search tool (restricted to `docs.cloud.google.com`).
+  A basic 'Google Cloud Support' CXAS app structure is pre-configured in the local `google_cloud_support/` folder. It is currently purely generative.
+  Your goal is to transition it to a search-backed agent by integrating the Google Search tool (restricted to `docs.cloud.google.com`).
   Refer to `search_tool_doc.md` in your workspace root for the official configuration guide.
 
   **CRITICAL RUN RULE**: Always execute all `run_command` tools with `WaitMsBeforeAsync` set to at least `30000` (30 seconds) or `60000` (60 seconds). This ensures that commands like `cxas push` and `cxas run-session` execute completely and synchronously, returning the full stdout/stderr in the same turn. Do NOT run commands with `WaitMsBeforeAsync: 0` or use background tasks/timers/schedule tools. Everything must be done synchronously.
