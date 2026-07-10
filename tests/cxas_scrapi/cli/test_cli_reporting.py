@@ -96,6 +96,7 @@ def test_combined_evals_report_cmd(tmp_path):
             expectations_only=False,
             deployment_id=None,
             progress_callback=None,
+            capture_agent_audio=False,
         )
 
 
@@ -157,6 +158,7 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
             expectations_only=False,
             deployment_id=None,
             progress_callback=None,
+            capture_agent_audio=False,
         )
 
 
@@ -223,6 +225,7 @@ def test_combined_evals_report_cmd_timestamped(mock_datetime, tmp_path):
             expectations_only=False,
             deployment_id=None,
             progress_callback=None,
+            capture_agent_audio=False,
         )
 
 
