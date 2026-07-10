@@ -67,6 +67,7 @@ def run_all_evals(
     expectations_only: bool = False,
     deployment_id: str | None = None,
     progress_callback: Callable[[str, int, int], None] | None = None,
+    capture_agent_audio: bool = False,
 ):
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -274,6 +275,7 @@ def run_all_evals(
                             if progress_callback
                             else None
                         ),
+                        capture_agent_audio=capture_agent_audio,
                     )
                     results["simulation"] = sim_results
                     if output_dir:

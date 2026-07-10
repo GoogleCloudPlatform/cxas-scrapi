@@ -659,6 +659,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         expectations_only=getattr(args, "expectations_only", False),
         deployment_id=getattr(args, "deployment_id", None),
         progress_callback=progress_callback,
+        capture_agent_audio=getattr(args, "capture_agent_audio", False),
     )
     print(f"Combined report generated at {actual_output_path}")
 
@@ -1825,6 +1826,11 @@ def get_parser() -> argparse.ArgumentParser:
         "--deployment-id",
         default=None,
         help="Optional: Target a specific deployment ID for simulations.",
+    )
+    parser_report.add_argument(
+        "--capture-agent-audio",
+        action="store_true",
+        help="Capture real-time agent output audio as WAV files",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
