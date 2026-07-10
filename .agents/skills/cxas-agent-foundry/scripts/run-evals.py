@@ -96,6 +96,12 @@ def main():
         default=None,
         help="Target a specific deployment ID for simulations.",
     )
+    parser.add_argument(
+        "--use-tool-fakes",
+        action="store_true",
+        default=False,
+        help="Use fake tools if available for simulations.",
+    )
     args = parser.parse_args()
 
     # Load config
@@ -154,6 +160,7 @@ def main():
             runs=args.runs,
             filter_tags=filter_tags,
             parallel=args.sim_parallel,
+            use_tool_fakes=args.use_tool_fakes,
             deployment_id=args.deployment_id,
         )
     except Exception as e:
