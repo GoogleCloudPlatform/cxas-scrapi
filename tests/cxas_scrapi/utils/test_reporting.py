@@ -1003,6 +1003,7 @@ def test_run_all_evals_expectations_only(mock_run_all_evals):
         timestamp=None,
         expectations_only=True,
         deployment_id=None,
+        progress_callback=None,
     )
 
 
