@@ -410,7 +410,9 @@ class BidiSessionHandler:
                 self.ws_app.send(var_json)
                 time.sleep(0.5)
 
-            logging.debug("Sending leading silence before turn %d...", turn_index)
+            logging.debug(
+                "Sending leading silence before turn %d...", turn_index
+            )
             self._send_silence(
                 SILENCE_PADDING_CHUNKS
             )  # 0.3 seconds of leading silence
@@ -457,7 +459,8 @@ class BidiSessionHandler:
                 time.sleep(CHUNK_DELAY)
 
             logging.debug(
-                "Sending trailing silence for turn %d to trigger endpointing...",
+                "Sending trailing silence for turn %d to "
+                "trigger endpointing...",
                 turn_index,
             )
             self._send_silence(
@@ -574,7 +577,11 @@ class BidiSessionHandler:
 
     def _silence_loop(self):
         while True:
-            if not self.ws_app or not self.ws_app.sock or not self.ws_app.sock.connected:
+            if (
+                not self.ws_app
+                or not self.ws_app.sock
+                or not self.ws_app.sock.connected
+            ):
                 break
 
             with self.lock:
@@ -595,9 +602,13 @@ class BidiSessionHandler:
         try:
             response_pb = types.BidiSessionServerMessage()._pb
             message_dict = json.loads(message)
-            output = message_dict.get("sessionOutput") or message_dict.get("session_output")
+            output = message_dict.get("sessionOutput") or message_dict.get(
+                "session_output"
+            )
             if isinstance(output, dict):
-                diag = output.get("diagnosticInfo") or output.get("diagnostic_info")
+                diag = output.get("diagnosticInfo") or output.get(
+                    "diagnostic_info"
+                )
                 if isinstance(diag, dict):
                     logging.debug("DIAG DUMP: %s", json.dumps(diag))
                     root_span = diag.get("rootSpan") or diag.get("root_span")
@@ -613,7 +624,8 @@ class BidiSessionHandler:
             response = types.BidiSessionServerMessage(response_pb)
 
             if response.session_output:
-                # Check if this is an empty comfort noise or variables ack packet
+                # Check if this is an empty comfort noise or variables ack
+                # packet
                 has_text = bool(response.session_output.text)
                 has_diag_messages = False
                 diag = response.session_output.diagnostic_info
@@ -641,7 +653,9 @@ class BidiSessionHandler:
                 )
 
                 if is_empty_response:
-                    logging.debug("Ignoring empty/silent server response packet.")
+                    logging.debug(
+                        "Ignoring empty/silent server response packet."
+                    )
                     return
 
                 turn_idx = response.session_output.turn_index
