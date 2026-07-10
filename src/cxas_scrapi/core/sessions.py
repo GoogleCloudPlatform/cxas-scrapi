@@ -301,6 +301,7 @@ class BidiSessionHandler:
         self.max_server_turn_idx = 0
         self.turn_audio_paths = {}
         self.is_sending_audio = False
+        self.config_sent = False
         self.lock = threading.Lock()
 
         self._close_status_code: int | None = None
@@ -495,6 +496,8 @@ class BidiSessionHandler:
             )
             logging.debug("Sending config: %s", config_json)
             self.ws_app.send(config_json)
+            with self.lock:
+                self.config_sent = True
 
             if self.inputs is not None:
                 for idx, input_item in enumerate(self.inputs):
@@ -585,7 +588,7 @@ class BidiSessionHandler:
                 break
 
             with self.lock:
-                should_send = not self.is_sending_audio
+                should_send = self.config_sent and not self.is_sending_audio
 
             if should_send:
                 try:
@@ -949,6 +952,8 @@ class BidiInteractiveSession:
         self, text: str, variables: dict[str, Any] | None = None
     ) -> Any:
         """Sends a user query and returns the agent's turn response."""
+        if self.sessions_client.rate_limiter:
+            self.sessions_client.rate_limiter.wait_and_consume()
         # Convert text to TTS audio bytes
         audio_transformer = AudioTransformer()
         lang_code = "en-US"
@@ -1023,6 +1028,7 @@ class Sessions(Common):
         self.app_name = app_name
         self.deployment_id = deployment_id
         self.rate_limiter = rate_limiter
+        self._creds_lock = threading.Lock()
 
     def _check_audio_requirements(self):
         """Checks if the necessary APIs are enabled and user has permissions."""
@@ -1035,10 +1041,11 @@ class Sessions(Common):
 
         services = ["ces.googleapis.com", "texttospeech.googleapis.com"]
 
-        try:
-            self.creds.refresh(Request())
-        except Exception as e:
-            logger.debug(f"Failed to refresh credentials: {e}")
+        with self._creds_lock:
+            try:
+                self.creds.refresh(Request())
+            except Exception as e:
+                logger.debug(f"Failed to refresh credentials: {e}")
 
         headers = {"Authorization": f"Bearer {self.creds.token}"}
 
@@ -1330,13 +1337,14 @@ class Sessions(Common):
     ):
         if self.rate_limiter:
             self.rate_limiter.wait_and_consume()
-        try:
-            if hasattr(self.creds, "refresh"):
-                self.creds.refresh(Request())
-        except Exception as e:
-            logger.debug(
-                f"Failed to refresh credentials before Bidi session: {e}"
-            )
+        with self._creds_lock:
+            try:
+                if hasattr(self.creds, "refresh"):
+                    self.creds.refresh(Request())
+            except Exception as e:
+                logger.debug(
+                    f"Failed to refresh credentials before Bidi session: {e}"
+                )
 
         handler = BidiSessionHandler(
             self.location,
@@ -1362,6 +1370,16 @@ class Sessions(Common):
         voice_config: dict[str, Any] | None = None,
     ) -> BidiInteractiveSession:
         """Creates and returns a new BidiInteractiveSession instance."""
+        if self.rate_limiter:
+            self.rate_limiter.wait_and_consume()
+        with self._creds_lock:
+            try:
+                if hasattr(self.creds, "refresh"):
+                    self.creds.refresh(Request())
+            except Exception as e:
+                logger.debug(
+                    f"Failed to refresh credentials before interactive session: {e}"
+                )
         self._check_audio_requirements()
 
         config = {
