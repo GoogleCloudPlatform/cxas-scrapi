@@ -318,7 +318,6 @@ def test_agent_turn_manager_silence_filtering():
     assert manager.len_audio_bytes_received == 32000
 
 
-
 @patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
 @patch("cxas_scrapi.core.sessions.threading.Thread")
 def test_bidi_session_handler_run(mock_thread, mock_ws_app):
