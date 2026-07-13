@@ -77,6 +77,7 @@ _INDEX_HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
   <footer>
     Evaluation Period: <strong>{eval_start}</strong> &mdash; <strong>{eval_end}</strong>
+    {suite_duration_html}
   </footer>
 </body>
 </html>
@@ -129,6 +130,7 @@ _DETAIL_HTML_TEMPLATE = """
 <h3>Conversation History</h3>
 {history}
 {log_links}
+{latency_table}
 
   <footer>
     <div class="time-stats">
@@ -149,6 +151,8 @@ class _ReportEncoder(json.JSONEncoder):
     def default(self, o: Any) -> Any:
         if isinstance(o, benchmark.ExecutionStatus):
             return o.value
+        if isinstance(o, datetime.timedelta):
+            return o.total_seconds()
         return super().default(o)
 
 
@@ -180,6 +184,7 @@ def _format_ts(ts: float) -> str:
 
 def generate_index_html(
     results: Sequence[benchmark.ConversationResult],
+    suite_duration: datetime.timedelta = datetime.timedelta(),
 ) -> str:
     """Generates the main index.html summary page."""
     by_scenario = _group_by_scenario(results)
@@ -256,11 +261,19 @@ def generate_index_html(
       """
         rows_html += "</tr>"
 
+    suite_duration_html = ""
+    if suite_duration.total_seconds() > 0:
+        suite_duration_html = (
+            " &mdash; Suite Duration:"
+            f" <strong>{suite_duration.total_seconds():.1f}s</strong>"
+        )
+
     return _INDEX_HTML_TEMPLATE.format(
         head_headers=head_headers,
         rows=rows_html,
         eval_start=eval_start,
         eval_end=eval_end,
+        suite_duration_html=suite_duration_html,
     )
 
 
@@ -516,13 +529,55 @@ def generate_detail_html(
         )
 
     scoring_latency_html = ""
-    if result.scoring_latency_sec > 0:
+    if result.scoring_latency.total_seconds() > 0:
         scoring_latency_html = (
             "<span>Scoring Duration:"
-            f" <strong>{result.scoring_latency_sec:.1f}s</strong></span>"
+            f" <strong>{result.scoring_latency.total_seconds():.1f}s</strong></span>"
         )
 
+    # Latency Profile Table HTML
+    latency_table_html = f"""
+  <div class="summary-card">
+    <h3 style="margin-top: 0; color: #1a73e8;">Orchestration Latency Profile</h3>
+    <table style="width: auto; min-width: 450px; border: 1px solid #dadce0; border-radius: 6px; border-collapse: collapse;">
+      <thead>
+        <tr style="background: #f1f3f4;">
+          <th style="padding: 8px 16px; text-align: left; border-bottom: 1px solid #dee2e6;">Phase</th>
+          <th style="padding: 8px 16px; text-align: right; border-bottom: 1px solid #dee2e6;">Duration</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom: 1px solid #eee;">
+          <td style="padding: 8px 16px;"><strong>Initialization Queue</strong> (waiting for slot)</td>
+          <td style="padding: 8px 16px; text-align: right;">{result.init_queued_latency.total_seconds():.2f}s</td>
+        </tr>
+        <tr style="border-bottom: 1px solid #eee;">
+          <td style="padding: 8px 16px;"><strong>Active Initialization</strong> (asset copy, pip/uv setup, LS bootstrap)</td>
+          <td style="padding: 8px 16px; text-align: right;">{result.init_active_latency.total_seconds():.2f}s</td>
+        </tr>
+        <tr style="border-bottom: 1px solid #eee;">
+          <td style="padding: 8px 16px;"><strong>Agent Execution</strong> (turns and tools)</td>
+          <td style="padding: 8px 16px; text-align: right;">{result.conversing_latency.total_seconds():.2f}s</td>
+        </tr>
+        <tr style="border-bottom: 1px solid #eee;">
+          <td style="padding: 8px 16px;"><strong>Rubric Grading</strong> (Gemini evaluation)</td>
+          <td style="padding: 8px 16px; text-align: right;">{result.scoring_latency.total_seconds():.2f}s</td>
+        </tr>
+        <tr style="border-bottom: 1px solid #eee;">
+          <td style="padding: 8px 16px;"><strong>Teardown &amp; Cleanup</strong> (sandbox application deletion)</td>
+          <td style="padding: 8px 16px; text-align: right;">{result.cleanup_latency.total_seconds():.2f}s</td>
+        </tr>
+        <tr style="font-weight: bold; background: #e8f0fe; border-top: 2px solid #1a73e8;">
+          <td style="padding: 8px 16px;">Total Orchestrated Duration</td>
+          <td style="padding: 8px 16px; text-align: right; color: #1a73e8;">{result.total_time_sec:.2f}s</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  """
+
     return _DETAIL_HTML_TEMPLATE.format(
+        latency_table=latency_table_html,
         scenario=_escape_html(result.scenario_name),
         head=_escape_html(result.head_name),
         banners=banners,
@@ -553,6 +608,16 @@ def save_report(content: str, path: str) -> None:
     with open(path, "w") as f:
         f.write(content)
     os.chmod(path, 0o644)
+
+
+def _parse_timedelta(val: Any) -> datetime.timedelta:
+    """Helper to parse serialized float seconds back to datetime.timedelta."""
+    if val is None:
+        return datetime.timedelta()
+    try:
+        return datetime.timedelta(seconds=float(val))
+    except (ValueError, TypeError):
+        return datetime.timedelta()
 
 
 def load_json_report(file_path: str) -> benchmark.ConversationResult:
@@ -667,4 +732,11 @@ def load_json_report(file_path: str) -> benchmark.ConversationResult:
         end_time=data.get("end_time", 0.0),
         log_files=data.get("log_files", []),
         trajectory_id=data.get("trajectory_id"),
+        init_queued_latency=_parse_timedelta(data.get("init_queued_latency")),
+        init_active_latency=_parse_timedelta(data.get("init_active_latency")),
+        conversing_latency=_parse_timedelta(data.get("conversing_latency")),
+        scoring_latency=_parse_timedelta(
+            data.get("scoring_latency") or data.get("scoring_latency_sec")
+        ),
+        cleanup_latency=_parse_timedelta(data.get("cleanup_latency")),
     )

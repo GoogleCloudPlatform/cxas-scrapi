@@ -1,7 +1,7 @@
 name: Adding Guardrails
 prompt: |
-  We have pre-configured the 'Corporate Assistant' CXAS app structure for you in the local `corporate_assistant/` folder in your workspace.
-  Please implement a strict guardrail and test it:
+  A basic 'Corporate Assistant' CXAS app structure is pre-configured in the local `corporate_assistant/` folder in your workspace.
+  Your goal is to implement a strict guardrail and verify it:
 
   1. Add a strict guardrail to the root agent instructions to refuse any questions about internal financial projections or Q4 revenue, while still allowing general policy questions.
   2. Deploy your local changes to the CXAS platform (project '{project_id}', location 'us').

@@ -99,7 +99,8 @@ def main():
     parser.add_argument(
         "--use-tool-fakes",
         action="store_true",
-        help="Use tool fakes/mocks for evaluations instead of calling real backends.",
+        default=False,
+        help="Use fake tools if available for simulations.",
     )
     parser.add_argument(
         "--skip-playback-wait",
@@ -164,6 +165,7 @@ def main():
             runs=args.runs,
             filter_tags=filter_tags,
             parallel=args.sim_parallel,
+            use_tool_fakes=args.use_tool_fakes,
             deployment_id=args.deployment_id,
             use_tool_fakes=args.use_tool_fakes,
             skip_playback_wait=args.skip_playback_wait,

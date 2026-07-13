@@ -764,6 +764,7 @@ def test_run_all_evals_dict_based_simulations(
         use_tool_fakes=False,
         skip_playback_wait=False,
         progress_callback=ANY,
+        capture_agent_audio=False,
     )
 
 
@@ -1006,6 +1007,7 @@ def test_run_all_evals_expectations_only(mock_run_all_evals):
         deployment_id=None,
         skip_playback_wait=False,
         progress_callback=None,
+        capture_agent_audio=False,
     )
 
 

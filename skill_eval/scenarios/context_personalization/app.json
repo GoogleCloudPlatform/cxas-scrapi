@@ -1,0 +1,15 @@
+{
+  "name": "context-personalization-{uuid}",
+  "displayName": "Context Personalization - {uuid}",
+  "rootAgent": "root_agent",
+  "variableDeclarations": [
+    {
+      "name": "user_tier",
+      "description": "The customer loyalty tier",
+      "schema": {
+        "type": "STRING",
+        "default": "standard"
+      }
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+name: Agent Workflow Transition
+prompt: |
+  A basic multi-agent CXAS app structure is pre-configured in the local `agent_transition/` folder. It includes a root agent (`agent_root`) and a billing assistant (`agent_billing`).
+  
+  Your goal is to:
+  1. Verify the multi-agent structure in `agent_transition/app.json` and the agent instructions in `agent_transition/agents/`.
+  2. Deploy the app to the CXAS platform using `cxas push --project-id {project_id} --location us`. Run this from the `agent_transition` directory.
+  3. Verify the transition by running a test session with the query: "I need to update my credit card" using `cxas run-session text <app_resource_name>`.
+  4. Ensure the session trace shows the transition from the root agent to the billing assistant.
+
+  **CRITICAL RUN RULE**: Always execute all `run_command` tools with `WaitMsBeforeAsync` set to at least `30000` (30 seconds) or `60000` (60 seconds). This ensures that commands like `cxas push` and `cxas run-session` execute completely and synchronously, returning the full stdout/stderr in the same turn. Do NOT run commands with `WaitMsBeforeAsync: 0` or use background tasks/timers/schedule tools. Everything must be done synchronously.
+  *   **IMPORTANT**: Due to IDE timing, you may receive an intermediate background TaskId notification (e.g., task-40) while these commands are executing. **Ignore this notification completely.** Do NOT call `manage_task` or `schedule` to wait for it. Trust that the command will complete synchronously within your 60-second window, wait for the final output to appear, and proceed immediately to the next step in the same turn. Everything must be done synchronously without yielding the turn.
+
+rubric:
+- criteria: Multi-Agent App Setup
+  perfect: |
+    The app was correctly configured with `agent_root` as root and `agent_billing` as a child agent.
+  failed: |
+    The multi-agent structure was incorrect or missing.
+- criteria: Root Agent Instructions
+  perfect: |
+    The `agent_root` has instructions to transfer billing-related queries to `agent_billing`.
+  failed: |
+    The instructions for `agent_root` do not mention transferring to `agent_billing`.
+- criteria: Session Transition Verification
+  perfect: |
+    A test session was run with a billing query, and the trace confirms the transition to the `agent_billing` sub-agent.
+  failed: |
+    No session was run, or the transition did not happen.
+assets:
+- agent_transition

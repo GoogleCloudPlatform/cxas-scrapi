@@ -20,6 +20,7 @@ import datetime
 import json
 import os
 import pathlib
+import shutil
 import sys
 import tempfile
 import traceback
@@ -37,7 +38,7 @@ _SCENARIO_PATH = flags.DEFINE_string(
     "Path to the scenario .yaml/.yml file or a directory containing them.",
 )
 _TIMEOUT = flags.DEFINE_integer(
-    "timeout", 1200, "Global timeout in seconds for each agent head run."
+    "timeout", 2400, "Global timeout in seconds for each agent head run."
 )
 _PROJECT = flags.DEFINE_string(
     "project",
@@ -182,8 +183,8 @@ class BenchmarkOrchestrator:
             1
         )  # Strict sequential initialization
         self._run_semaphore = asyncio.Semaphore(
-            2
-        )  # Limit concurrent active evaluations to respect Vertex AI burst limits
+            1
+        )  # Sequential runs to eliminate process-global os.environ race conditions
         self._scorer = scorer.Scorer(
             project=project,
             location=model_location,
@@ -292,6 +293,24 @@ class BenchmarkOrchestrator:
                 )
             finally:
                 await head.close()
+                # Clean up SUT virtual environment to prevent tmpfs inode exhaustion
+                # while preserving text log files for HTML reporting.
+                if hasattr(head, "_workspace_dir"):
+                    venv_path = os.path.join(head._workspace_dir, ".venv")
+                    if os.path.exists(venv_path):
+                        logging.info(
+                            "[%s] Cleaning up SUT virtualenv at %s to reclaim inodes...",
+                            head.name,
+                            venv_path,
+                        )
+                        try:
+                            shutil.rmtree(venv_path)
+                        except Exception as ex:
+                            logging.warning(
+                                "Failed to clean up SUT virtualenv at %s: %s",
+                                venv_path,
+                                ex,
+                            )
 
     async def update_reports(
         self, partial_res: benchmark.ConversationResult | None = None

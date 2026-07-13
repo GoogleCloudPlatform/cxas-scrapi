@@ -1442,6 +1442,7 @@ def generate_combined_report_from_dir(
     deployment_id: str | None = None,
     skip_playback_wait: bool = False,
     progress_callback: Callable[[str, int, int], None] | None = None,
+    capture_agent_audio: bool = False,
 ) -> str:
     """Load results from directory and generate combined HTML report.
 
@@ -1512,6 +1513,7 @@ def generate_combined_report_from_dir(
             deployment_id=deployment_id,
             skip_playback_wait=skip_playback_wait,
             progress_callback=progress_callback,
+            capture_agent_audio=capture_agent_audio,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed
@@ -1702,6 +1704,7 @@ def run_all_evals(
     deployment_id: str | None = None,
     skip_playback_wait: bool = False,
     progress_callback: Callable[[str, int, int], None] | None = None,
+    capture_agent_audio: bool = False,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -1760,4 +1763,5 @@ def run_all_evals(
         deployment_id=deployment_id,
         skip_playback_wait=skip_playback_wait,
         progress_callback=progress_callback,
+        capture_agent_audio=capture_agent_audio,
     )

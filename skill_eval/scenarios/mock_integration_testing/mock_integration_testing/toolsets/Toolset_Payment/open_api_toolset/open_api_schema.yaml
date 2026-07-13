@@ -1,0 +1,33 @@
+openapi: 3.0.0
+info:
+  title: Payment API
+  version: 1.0.0
+paths:
+  /process:
+    post:
+      operationId: process_payment
+      summary: Process a credit card payment
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: number
+                currency:
+                  type: string
+              required:
+                - amount
+      responses:
+        '200':
+          description: Successful payment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tx_id:
+                    type: string
+                  status:
+                    type: string

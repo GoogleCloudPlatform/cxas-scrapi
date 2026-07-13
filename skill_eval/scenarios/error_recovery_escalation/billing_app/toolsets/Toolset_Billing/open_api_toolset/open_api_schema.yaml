@@ -1,0 +1,39 @@
+openapi: 3.0.0
+info:
+  title: Billing API
+  version: 1.0.0
+servers:
+  - url: https://httpstat.us/400
+    description: Mock Billing Server that always fails.
+paths:
+  /charge:
+    post:
+      operationId: charge_card
+      summary: Charges a credit card.
+      parameters:
+        - name: card_number
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful transaction.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  transaction_id:
+                    type: string
+        '400':
+          description: Payment failed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string

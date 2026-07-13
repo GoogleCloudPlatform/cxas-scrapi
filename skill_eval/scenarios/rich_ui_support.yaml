@@ -1,0 +1,36 @@
+name: Rich UI Support
+prompt: |
+  A basic CXAS app structure is provided in the local `rich_ui_support/` folder.
+  Your goal is to configure the agent to return a structured custom payload JSON for catalog queries.
+  
+  Your task:
+  1. Navigate to the `rich_ui_support` directory.
+  2. Configure the OpenAPI toolset and Agent:
+     - Ensure `Toolset_Catalog` is correctly declared in `root_agent.json` under `toolsets` with `search_products` in `toolIds`.
+     - For the OpenAPI schema backend url, use a reliable public mock endpoint such as `https://dummyjson.com` (e.g. `/products/search`) to avoid 403 or mock server failures.
+     - Ensure `agents/root_agent/instruction.txt` is in valid CXAS XML format (`<role>`, `<persona>`, `<taskflow>`, `<subtask>`, `<step>`) and explicitly instructs the agent: "When a user asks for products, call search_products from Toolset_Catalog and return the results formatted in a structured custom payload JSON block."
+  3. Deploy the application to the CXAS platform.
+     Use this exact command:
+     python3 -c "import subprocess, os; subprocess.run(['cxas', 'push', '--project-id', os.environ['CXAS_PROJECT_ID'], '--location', os.environ['CXAS_LOCATION']], input='y\n', text=True)"
+  4. Verify the behavior by running a test session with the query: "Show me your latest products".
+     Identify the app name from `app.json`.
+     python3 -c "import subprocess, os; subprocess.run(['cxas', 'run-session', 'text', f'projects/{os.environ[\"CXAS_PROJECT_ID\"]}/locations/{os.environ[\"CXAS_LOCATION\"]}/apps/rich-ui-app-YOUR_UUID'], input='Show me your latest products\n', text=True)"
+  5. Ensure the output contains the `payload` block with the structured JSON.
+
+  **CRITICAL RUN RULE**: Always use the `python3 -c "import subprocess, os; subprocess.run(...)"` pattern for `cxas push` and `cxas run-session` to avoid hanging on interactive prompts.
+  Always set `WaitMsBeforeAsync` to `60000` for these commands.
+
+rubric:
+- criteria: Structured Payload Response
+  perfect: |
+    The agent returned a structured `payload` JSON containing product catalog data (e.g., name, price, description) instead of plain text.
+  failed: |
+    The agent returned plain text or a malformed payload.
+- criteria: Non-Interactive Deployment
+  perfect: |
+    The agent used the non-interactive subprocess pattern to deploy and run the session, avoiding any hangs.
+  failed: |
+    The agent hit an interactive prompt and the task timed out.
+
+assets:
+- rich_ui_support

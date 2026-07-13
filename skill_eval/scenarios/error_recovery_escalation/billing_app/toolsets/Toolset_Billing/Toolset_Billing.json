@@ -1,0 +1,7 @@
+{
+  "displayName": "Toolset_Billing",
+  "description": "A toolset for billing operations, including charging cards.",
+  "openApiToolset": {
+    "openApiSchema": "toolsets/Toolset_Billing/open_api_toolset/open_api_schema.yaml"
+  }
+}

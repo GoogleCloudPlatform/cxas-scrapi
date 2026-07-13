@@ -1,0 +1,8 @@
+{
+  "name": "Toolset_Payment",
+  "displayName": "Toolset_Payment",
+  "description": "Payment processing toolset",
+  "openApiToolset": {
+    "openApiSchema": "toolsets/Toolset_Payment/open_api_toolset/open_api_schema.yaml"
+  }
+}

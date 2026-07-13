@@ -1,6 +1,72 @@
 # Changelog
 
 
+## [1.6.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.5.0...v1.6.0) (2026-07-10)
+
+
+### Features
+
+* **core:** add dynamic voice_config configuration for client-side TTS ([244d629](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/244d62977eec28d52a553ffd278234661a0a5525))
+* **cuj-report:** add ADK framework ingestor skill ([0e62b1f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/0e62b1fb77bbd2885d8289f94539e3323fbd8999))
+* **cuj-report:** add ADK framework ingestor skill ([5d29f05](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5d29f05c6fc41a0d8228cf1b260c6921657b00f6))
+* **cuj-report:** add DFCX framework ingestor skill ([1131552](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/11315520f2582e1699eb150e526dded5bde4d8cd))
+* **cuj-report:** add DFCX framework ingestor skill ([b625cac](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b625cacda69be9e93d1e6a84600b993b33150769))
+* **evals:** add --capture-agent-audio flag to cxas evals report CLI ([8dd9901](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8dd9901dab6e3a723a47f5a9dd5210fde851dd6b))
+* **evals:** add --capture-agent-audio flag to cxas evals report CLI ([22db38c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/22db38c314d5e494008eb4e8b409891ef0dc4274))
+* **evals:** propagate voice_config parameter through simulate_conversation ([08aaa27](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/08aaa278a10cc484dd42848ebd02ba7eac7ec521))
+* **evals:** Support Multilingual TTS for Simulations ([75d9f85](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/75d9f858f3d2a6b994523f142ddfbaa3d81f5f3a))
+* Expectations can be judged based on audio token (`inline_data`) ([882e1a0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/882e1a05728a8cd8a1e29387fe8039112e23c86e))
+* **insights:** add CCAI Insights topic modeling, scorecard activation & deployment, analysis rules, and interactive HTML dashboard report ([78a53ba](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/78a53bab0cfd51202882ec7942db261e30926b92))
+* **migration:** add interactive Agent xprs designer and utterance harvesting gated behind --experimental-agent-xprs ([#325](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/325)) ([c875c40](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c875c406183c9d2de6c4576fcb380d0429d49c76))
+* **runner:** support voice_config parameter in EnhancedSimRunner ([d69fed6](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d69fed6f7884909a119c15db489a80f365aac646))
+* **skill_eval:** add 10 new evaluation scenarios, multi-phase latency profiling, and SUT environment isolation ([999befb](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/999befb5ac34bb0ad56243124839bf137670ccad))
+* **skill_eval:** add generative scenarios and timeout/interactive fixes ([3164fad](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3164fad67e24ff9c070af3716775ff02cad7beef))
+* **skill_eval:** add multi-phase latency profiling and timer telemetry ([52f0034](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/52f00349516af9d0416fa9422b13ab9eaeedae21))
+* **skill_eval:** enforce strict SUT environment isolation with dynamic uv index credentials ([2d8899e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2d8899e3f2fca084e7a11399d604d1171230fc27))
+* **skill_eval:** introduce automated Antigravity CES skill benchmark suite and scenarios ([f0d4f6b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f0d4f6bd168b7a3d26242efac1b488b21b880743))
+* **skill_eval:** introduce automated CES skill benchmark suite and scenarios ([c911b18](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c911b18916fd3e0a8a5bc81b0225897bd57afb95))
+* support deployments in scrapi-sim-runner ([cb3916c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/cb3916c0c481e8310107f8532c03e4fb2529a202))
+* support specifying the deployment in scrapi-sim-runner ([c74feb6](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c74feb6c8f444a7cb135508bea52c8e37e37281a))
+
+
+### Bug Fixes
+
+* Add fake tools flag ([e2582fd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e2582fd2fc5095184d64b7c2d249ce31b7eda7ac))
+* add optional flags to use tool fakes ([1503fbe](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1503fbe870bb8d6bf1816a6ea873700a2b8365c3))
+* created expectations only flag to ignore goals and updated goal … ([#322](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/322)) ([c58efa9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c58efa9795407422c2f647846f46d980c452e6de))
+* **deps:** update junit-framework monorepo to v6.1.1 ([5eae2a1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5eae2a1eb79a9c3eb76f99412b085593326b88f1))
+* **deps:** update junit-framework monorepo to v6.1.1 ([75aba00](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/75aba0013fc9831939e3019c309840cafb5d6625))
+* **evals:** accept and forward progress_callback in reporting.py ([a9513a6](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a9513a685c931c0decc6968de0f8baeb12158f62))
+* **evals:** accept and forward progress_callback in reporting.py ([c735944](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c7359442643fbebde30bad62da720fe58ac0cba3))
+* **evals:** resolve linter errors and update test assertions for dynamic voice_config ([260f8b2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/260f8b2dfcc93dfa65e2301728f17c72095871a2))
+* extract voice_config from test case in simulate_conversation ([c3523ca](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c3523cacf6b4a346e3fca73a5bb20f0830defd8c))
+* extract voice_config from test case in simulate_conversation ([33a0fc0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/33a0fc01e1d182b1b2f9ce9e90bb0d77cef75ddf))
+* improve simulation retry logic ([0ed7785](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/0ed778538885b08e74396ed6b1329d21decb30f4))
+* improve simulation retry logic ([fbac7c7](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/fbac7c74a67222b676ab8a6b464391343aa61923))
+* **linter:** resolve generic search description linter false positives and add type-safe JSON checks ([ab98f17](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ab98f17be19176cfddb6132a087d1659d7d7a47c))
+* load common expectations ([5b4eece](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5b4eece90a4e87ece02ccdbda3197500ba0b8ffe))
+* load common expectations ([c33b838](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c33b838ce77978c4fcee247bcd5ade01c13b4eb3))
+* persist bidi websocket for whole session ([f2a63d4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f2a63d48fc0e4bb32065ffe5ebd3914c8a289cb0))
+* remove files not related to change ([8d598f5](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8d598f595bbaf0d4763a3fcdc07ccfa62720cdfb))
+* **reporting:** add expectations_only to legacy run_all_evals wrapper ([6d8dfe4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6d8dfe48bdbf0bc5f5b783d645cde67bbb0ade3b))
+* **reporting:** add expectations_only to legacy run_all_evals wrapper ([b399281](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b3992816f0226e2c51495f2ace36f21e1c815a6e))
+* revert goal prompt for simulations ([8a99cac](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8a99caca8e69b420d44eb895b0f271555748049b))
+* revert goal prompt for simulations ([1deb629](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1deb6297b7078f0912914e5ad6d2027f3a12d4b5))
+* **skill_eval:** address PR [#328](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/328) review feedback on Timer and add unit tests ([41380de](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/41380de9fa58336d355b05b90c4bc469e05b2ec0))
+* **skill_eval:** clean up SUT virtualenv on head close to prevent tmpfs inode exhaustion ([9059a20](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/9059a208ddaac78cca0acefecc8b06b996fd92ce))
+* **tools:** add fault tolerance around retrieve_tools in Tools.get_tools_map ([81e6482](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/81e6482939eb44390d5e447cf4157a5b8650cbb8))
+* **tools:** add fault tolerance around retrieve_tools in Tools.get_tools_map ([272ef98](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/272ef98bf968a7b903d22cee6138cbf98dfbc86c))
+* **tools:** catch specific Google and requests exceptions instead of generic Exception ([1e8ddcd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1e8ddcdd04073ec52e2e7a27aa88c35e8e027d00))
+
+
+### Documentation
+
+* add IAM permissions guide and update navigation ([5697ab5](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5697ab58ecba392af322e8458b9e06647d2cd585))
+* add user guide for A/B testing and traffic splitting with SCRAPI ([2a55ad5](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2a55ad56614b9c4e1e746a3523f3ef18c4f82c5b))
+* document voice_config parameter for local audio simulations ([25063e8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/25063e865fcf6f7294df21f88774e1fe29b6f1f7))
+* Update linter rules documentation ([e524788](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e52478823a33ec3f75cf4fc370e2629fd3f718fb))
+* Update linter rules documentation ([35bdd9d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/35bdd9da01977594f04659ae3894a57a908e073e))
+
 ## [1.5.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.4.1...v1.5.0) (2026-06-26)
 
 

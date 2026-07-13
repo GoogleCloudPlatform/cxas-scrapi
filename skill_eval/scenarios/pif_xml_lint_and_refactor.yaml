@@ -1,0 +1,30 @@
+name: "Agent Instruction Semantic Linting and Refactoring"
+prompt: |
+  A basic GECX application folder structure is pre-configured in the local `pif_xml_lint_and_refactor/` folder inside your workspace.
+  Your goal is to analyze, refactor, and improve the quality of the agent instructions inside `pif_xml_lint_and_refactor/agents/legacy_agent` using the `cxas llm-lint` tool.
+  Specifically:
+  1. Evaluate the baseline agent using `cxas llm-lint` and write the report to `pif_xml_lint_and_refactor/agents/legacy_agent/report_initial.md`.
+  2. Refactor `pif_xml_lint_and_refactor/agents/legacy_agent/instruction.txt` to resolve all grammatical errors, logic contradictions, security/PII leaks, format inconsistencies, and missing out-of-scope fallbacks reported by the linter.
+  3. Verify the quality improvement by re-running `cxas llm-lint` on the updated agent, writing the final report to `pif_xml_lint_and_refactor/agents/legacy_agent/report_final.md`.
+
+rubric:
+  - criteria: "Execution of Initial Instruction Linting"
+    perfect: |
+      The trace shows that the SUT successfully executed the CLI command `cxas llm-lint` on the target directory, generating a valid markdown report at the path `pif_xml_lint_and_refactor/agents/legacy_agent/report_initial.md` containing the baseline evaluation score and detailed findings.
+    failed: |
+      The SUT failed to execute the linter, or did not write the baseline report to the correct path.
+
+  - criteria: "Semantic Prompt Refactoring & Safety Engineering"
+    perfect: |
+      The SUT successfully rewrote `pif_xml_lint_and_refactor/agents/legacy_agent/instruction.txt` locally. The modified file contains no typos ("policies" is used), utilizes structured XML sections, organizes rules into a nested numbered format, completely eliminates the VIP corporate PIN leakage, and securely resolves the Q4 projections contradiction (restricting access and redirecting queries).
+    failed: |
+      The SUT did not modify the instruction file, or failed to fix the typos, nested list structures, contradictions, or credential disclosures in accordance with the guidelines.
+
+  - criteria: "Final Refactored Linting Verification"
+    perfect: |
+      The SUT successfully executed `cxas llm-lint` a second time on the updated agent directory, writing the report `pif_xml_lint_and_refactor/agents/legacy_agent/report_final.md` showing a significantly higher score (e.g., >= 80) and confirming that no basic errors were discovered.
+    failed: |
+      The SUT did not re-run the linter, or the final generated report still indicates grammatical typos, contradictory rules, or PII leaks.
+
+assets:
+  - "pif_xml_lint_and_refactor"
