@@ -479,8 +479,7 @@ class BidiSessionHandler:
             current_turn = (self.turn_num or 0) + turn_index
             os.makedirs(f"/tmp/scrapi_evals/{session_id}", exist_ok=True)
             wav_filename = (
-                f"/tmp/scrapi_evals/{session_id}/"
-                f"turn_{current_turn}_agent.wav"
+                f"/tmp/scrapi_evals/{session_id}/turn_{current_turn}_agent.wav"
             )
             try:
                 with wave.open(wav_filename, "wb") as wav_file:
@@ -519,14 +518,10 @@ class BidiSessionHandler:
                         response.session_output.audio
                     )
                     with self.audio_lock:
-                        if (
-                            self.current_agent_turn_idx
-                            not in self.turn_audio_buffers
-                        ):
-                            self.turn_audio_buffers[self.current_agent_turn_idx] = (
-                                bytearray()
-                            )
-                        self.turn_audio_buffers[self.current_agent_turn_idx].extend(
+                        idx = self.current_agent_turn_idx
+                        if idx not in self.turn_audio_buffers:
+                            self.turn_audio_buffers[idx] = bytearray()
+                        self.turn_audio_buffers[idx].extend(
                             response.session_output.audio
                         )
 
