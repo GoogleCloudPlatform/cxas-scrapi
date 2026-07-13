@@ -213,6 +213,7 @@ class BidiSessionHandler:
         self.agent_turn_manager = AgentTurnManager()
         self.ws_app: websocket.WebSocketApp | None = None
         self.outputs = []
+        self.audio_lock = threading.Lock()
         self.current_agent_turn_idx = 0
         self.turn_audio_buffers = {}
         self.turn_audio_paths = {}
@@ -375,6 +376,7 @@ class BidiSessionHandler:
         while not self.agent_turn_manager.is_agent_done_talking():
             self._send_silence(1)
 
+        self._save_and_increment_agent_audio()
         self.agent_turn_manager.reset()
         time.sleep(1)  # Small pause between turns
 
@@ -439,6 +441,7 @@ class BidiSessionHandler:
                         ):
                             time.sleep(1)
 
+                        self._save_and_increment_agent_audio()
                         self.agent_turn_manager.reset()
                         time.sleep(1)
                     elif "variables" in input_item:
@@ -458,6 +461,39 @@ class BidiSessionHandler:
             logging.debug("Error during send_inputs: %s", e)
             if self.ws_app:
                 self.ws_app.close()
+
+    def _save_and_increment_agent_audio(self):
+        with self.audio_lock:
+            turn_index = self.current_agent_turn_idx
+            buffer = self.turn_audio_buffers.get(turn_index, b"")
+            buffer_copy = bytes(buffer)
+            self.current_agent_turn_idx += 1
+
+        if buffer_copy and self.capture_agent_audio:
+            session_name = self.config.get("session", "")
+            session_id = (
+                session_name.split("/sessions/")[-1]
+                if "/sessions/" in session_name
+                else str(uuid.uuid4())
+            )
+            current_turn = (self.turn_num or 0) + turn_index
+            os.makedirs(f"/tmp/scrapi_evals/{session_id}", exist_ok=True)
+            wav_filename = (
+                f"/tmp/scrapi_evals/{session_id}/"
+                f"turn_{current_turn}_agent.wav"
+            )
+            try:
+                with wave.open(wav_filename, "wb") as wav_file:
+                    wav_file.setnchannels(1)
+                    wav_file.setsampwidth(2)
+                    wav_file.setframerate(16000)
+                    wav_file.writeframes(buffer_copy)
+                self.turn_audio_paths[turn_index] = wav_filename
+                logging.info(f"Wrote agent turn audio to {wav_filename}")
+            except Exception as audio_err:
+                logging.error(
+                    f"Failed to write WAV file {wav_filename}: {audio_err}"
+                )
 
     def _on_open(self, ws):
         logging.debug("WebSocket connection opened")
@@ -482,16 +518,17 @@ class BidiSessionHandler:
                     self.agent_turn_manager.add_audio(
                         response.session_output.audio
                     )
-                    if (
-                        self.current_agent_turn_idx
-                        not in self.turn_audio_buffers
-                    ):
-                        self.turn_audio_buffers[self.current_agent_turn_idx] = (
-                            bytearray()
+                    with self.audio_lock:
+                        if (
+                            self.current_agent_turn_idx
+                            not in self.turn_audio_buffers
+                        ):
+                            self.turn_audio_buffers[self.current_agent_turn_idx] = (
+                                bytearray()
+                            )
+                        self.turn_audio_buffers[self.current_agent_turn_idx].extend(
+                            response.session_output.audio
                         )
-                    self.turn_audio_buffers[self.current_agent_turn_idx].extend(
-                        response.session_output.audio
-                    )
 
                 if response.session_output.turn_completed:
                     logging.debug(
@@ -499,48 +536,6 @@ class BidiSessionHandler:
                         "Waiting for audio playback."
                     )
                     self.agent_turn_manager.mark_turn_completed()
-
-                    # Get the active buffer
-                    buffer = self.turn_audio_buffers.get(
-                        self.current_agent_turn_idx, b""
-                    )
-                    if buffer and self.capture_agent_audio:
-                        session_name = self.config.get("session", "")
-                        session_id = (
-                            session_name.split("/sessions/")[-1]
-                            if "/sessions/" in session_name
-                            else str(uuid.uuid4())
-                        )
-                        current_turn = (
-                            self.turn_num or 0
-                        ) + self.current_agent_turn_idx
-                        os.makedirs(
-                            f"/tmp/scrapi_evals/{session_id}", exist_ok=True
-                        )
-                        wav_filename = (
-                            f"/tmp/scrapi_evals/{session_id}/"
-                            f"turn_{current_turn}_agent.wav"
-                        )
-
-                        try:
-                            with wave.open(wav_filename, "wb") as wav_file:
-                                wav_file.setnchannels(1)
-                                wav_file.setsampwidth(2)
-                                wav_file.setframerate(16000)
-                                wav_file.writeframes(buffer)
-                            self.turn_audio_paths[
-                                self.current_agent_turn_idx
-                            ] = wav_filename
-                            logging.info(
-                                f"Wrote agent turn audio to {wav_filename}"
-                            )
-                        except Exception as audio_err:
-                            logging.error(
-                                f"Failed to write WAV file {wav_filename}:"
-                                f" {audio_err}"
-                            )
-
-                    self.current_agent_turn_idx += 1
 
         except Exception as e:
             logging.debug("Failed to parse message: %s", e)

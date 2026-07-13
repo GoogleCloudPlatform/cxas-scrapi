@@ -719,6 +719,7 @@ def test_bidi_session_handler_audio_writing_enabled(
     )
 
     handler._on_message(MagicMock(), json_complete)
+    handler._save_and_increment_agent_audio()
 
     # Verify audio file was written
     mock_makedirs.assert_called_once_with("/tmp/scrapi_evals/s1", exist_ok=True)
