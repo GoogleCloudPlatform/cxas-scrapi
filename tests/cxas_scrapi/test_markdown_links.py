@@ -1,7 +1,8 @@
 import pathlib
 import re
-import requests
+
 import pytest
+import requests
 
 ROOT_DIR = pathlib.Path(__file__).parent.parent.parent
 DOCS_DIR = ROOT_DIR / "docs"
@@ -76,5 +77,8 @@ def test_markdown_links(md_path):
                     f"Internal: {link} (Path not found: {target_path})"
                 )
 
-    msg = f"Found broken links in {md_path.relative_to(ROOT_DIR)}:\n" + "\n".join(broken_links)
+    msg = (
+        f"Found broken links in {md_path.relative_to(ROOT_DIR)}:\n"
+        + "\n".join(broken_links)
+    )
     assert not broken_links, msg
