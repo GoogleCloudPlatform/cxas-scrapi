@@ -719,6 +719,7 @@ def test_bidi_session_handler_audio_writing_enabled(
     )
 
     handler._on_message(MagicMock(), json_complete)
+    handler._save_and_increment_agent_audio()
 
     # Verify audio file was written
     mock_makedirs.assert_called_once_with("/tmp/scrapi_evals/s1", exist_ok=True)
@@ -730,6 +731,58 @@ def test_bidi_session_handler_audio_writing_enabled(
     assert handler.turn_audio_paths == {
         0: "/tmp/scrapi_evals/s1/turn_0_agent.wav"
     }
+
+
+@patch("cxas_scrapi.core.sessions.wave.open")
+@patch("cxas_scrapi.core.sessions.os.makedirs")
+def test_bidi_session_handler_multipart_turn_writes_single_wav(
+    mock_makedirs, mock_wave_open
+):
+    """Test that a multi-part agent turn produces a single WAV file.
+
+    Intermediate turn_completed signals (e.g. around a mid-turn tool
+    call) must not split the turn's audio across multiple files.
+    """
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config=config,
+        inputs=[],
+        capture_agent_audio=True,
+    )
+
+    def receive(session_output):
+        msg = types.BidiSessionServerMessage(session_output=session_output)
+        handler._on_message(
+            MagicMock(),
+            json_format.MessageToJson(
+                msg._pb, preserving_proto_field_name=False
+            ),
+        )
+
+    # Part 1 audio, then a premature turn_completed (mid-turn tool call)
+    receive(types.SessionOutput(audio=b"part_one"))
+    receive(types.SessionOutput(turn_completed=True))
+    # Part 2 audio, then the final turn_completed
+    receive(types.SessionOutput(audio=b"part_two"))
+    receive(types.SessionOutput(turn_completed=True))
+
+    # No file is written until the sender thread saves the finished turn
+    mock_wave_open.assert_not_called()
+
+    handler._save_and_increment_agent_audio()
+
+    # Exactly one WAV containing the full turn audio
+    mock_wave_open.assert_called_once_with(
+        "/tmp/scrapi_evals/s1/turn_0_agent.wav", "wb"
+    )
+    wav_file = mock_wave_open.return_value.__enter__.return_value
+    wav_file.writeframes.assert_called_once_with(b"part_onepart_two")
+    assert handler.turn_audio_paths == {
+        0: "/tmp/scrapi_evals/s1/turn_0_agent.wav"
+    }
+    assert handler.current_agent_turn_idx == 1
 
 
 @patch("cxas_scrapi.core.sessions.wave.open")
