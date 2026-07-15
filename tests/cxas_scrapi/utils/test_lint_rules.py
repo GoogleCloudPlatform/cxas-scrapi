@@ -2159,6 +2159,119 @@ def test_s007_multi_parent_error(tmp_path, context):
     assert "parent_b" in results[0].message
 
 
+# --- Rule S008 Tests ---
+
+
+def _write_guardrail(tmp_path, name, body, fmt="json"):
+    """Create ``guardrails/<name>/<name>.<fmt>`` and return the directory."""
+    import json  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
+
+    guardrail_dir = tmp_path / "guardrails" / name
+    guardrail_dir.mkdir(parents=True)
+    content = json.dumps(body) if fmt == "json" else yaml.safe_dump(body)
+    (guardrail_dir / f"{name}.{fmt}").write_text(content)
+    return guardrail_dir
+
+
+def test_s008_single_prompt_security_ok(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import SingletonGuardrailTypes  # noqa: PLC0415,I001
+
+    rule = SingletonGuardrailTypes()
+    d = _write_guardrail(
+        tmp_path, "prompt_shield", {"llmPromptSecurity": {"enabled": True}}
+    )
+    _write_guardrail(
+        tmp_path, "safety", {"contentFilter": {"bannedPhrases": []}}
+    )
+
+    results = rule.check(d, "", context)
+    assert len(results) == 0
+
+
+def test_s008_duplicate_prompt_security_error(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import SingletonGuardrailTypes  # noqa: PLC0415,I001
+
+    rule = SingletonGuardrailTypes()
+    d1 = _write_guardrail(
+        tmp_path, "prompt_shield", {"llmPromptSecurity": {"enabled": True}}
+    )
+    _write_guardrail(
+        tmp_path, "prompt_shield_2", {"llmPromptSecurity": {"enabled": True}}
+    )
+
+    results = rule.check(d1, "", context)
+    assert len(results) == 1
+    assert "llmPromptSecurity" in results[0].message
+    assert "prompt_shield_2" in results[0].message
+    assert "at most one" in results[0].message
+
+
+def test_s008_snake_case_key_detected(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import SingletonGuardrailTypes  # noqa: PLC0415,I001
+
+    rule = SingletonGuardrailTypes()
+    d1 = _write_guardrail(
+        tmp_path, "prompt_shield", {"llm_prompt_security": {"enabled": True}}
+    )
+    _write_guardrail(
+        tmp_path, "prompt_shield_2", {"llmPromptSecurity": {"enabled": True}}
+    )
+
+    results = rule.check(d1, "", context)
+    assert len(results) == 1
+    assert "prompt_shield_2" in results[0].message
+
+
+def test_s008_yaml_guardrails_detected(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import SingletonGuardrailTypes  # noqa: PLC0415,I001
+
+    rule = SingletonGuardrailTypes()
+    d1 = _write_guardrail(
+        tmp_path,
+        "prompt_shield",
+        {"llmPromptSecurity": {"enabled": True}},
+        fmt="yaml",
+    )
+    _write_guardrail(
+        tmp_path,
+        "prompt_shield_2",
+        {"llmPromptSecurity": {"enabled": True}},
+        fmt="yaml",
+    )
+
+    results = rule.check(d1, "", context)
+    assert len(results) == 1
+
+
+def test_s008_non_singleton_duplicates_ok(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import SingletonGuardrailTypes  # noqa: PLC0415,I001
+
+    rule = SingletonGuardrailTypes()
+    d1 = _write_guardrail(
+        tmp_path, "filter_a", {"contentFilter": {"bannedPhrases": []}}
+    )
+    _write_guardrail(
+        tmp_path, "filter_b", {"contentFilter": {"bannedPhrases": []}}
+    )
+
+    results = rule.check(d1, "", context)
+    assert len(results) == 0
+
+
+def test_s008_missing_or_invalid_config_ignored(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import SingletonGuardrailTypes  # noqa: PLC0415,I001
+
+    rule = SingletonGuardrailTypes()
+    guardrail_dir = tmp_path / "guardrails" / "broken"
+    guardrail_dir.mkdir(parents=True)
+    (guardrail_dir / "broken.json").write_text("{not json")
+
+    results = rule.check(guardrail_dir, "", context)
+    assert len(results) == 0
+
+
 # --- Rules A006, S005, S006 Tests ---
 
 
