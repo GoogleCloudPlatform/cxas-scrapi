@@ -34,7 +34,7 @@ from rich.progress import Progress
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
-from cxas_scrapi.core.sessions import Sessions
+from cxas_scrapi.core.sessions import BidiSessionError, Sessions
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.prompts import llm_user_prompts
 from cxas_scrapi.utils.eval_utils import (
@@ -573,6 +573,8 @@ class SimulationEvals(Apps):
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
         initial_utterance: str = _FIRST_UTTERANCE,
+        skip_playback_wait: bool = False,
+        single_bidi_stream: bool = False,
         **kwargs: Any,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
@@ -583,6 +585,9 @@ class SimulationEvals(Apps):
             eval_model: The Gemini model used for evaluating expectations.
             console_logging: Whether to print interaction transcript to
                 the console.
+            single_bidi_stream: For audio modality, keep one persistent
+                bidi WebSocket open for the whole conversation instead of
+                opening a new connection per turn (the default).
         """
         sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
         eval_model = eval_model or _DEFAULT_GEMINI_MODEL
@@ -600,108 +605,144 @@ class SimulationEvals(Apps):
         eval_conv.agent_audio_paths = {}
         current_sim_turn = 0
 
-        if console_logging:
-            print(
-                f"Starting simulated conversation with session ID: {session_id}"
-            )
-
-        # Initialize the first turn manually
-        user_utterance, variables = eval_conv.next_user_utterance()
-        accumulated_variables = {}
-        if variables:
-            accumulated_variables.update(variables)
-
-        detailed_trace = []
-        detailed_trace.append(f"User: {user_utterance}")
-
-        while user_utterance:
-            response = self._send_request_with_retry(
+        interactive_session = None
+        if modality == "audio" and single_bidi_stream:
+            client = self.sessions_client
+            interactive_session = client.create_interactive_session(
                 session_id=session_id,
-                user_utterance=user_utterance,
-                variables=accumulated_variables,
-                modality=modality,
-                console_logging=console_logging,
-                turn_num=current_sim_turn,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
-                burst_noise_files=burst_noise_files,
                 use_tool_fakes=use_tool_fakes,
+                skip_playback_wait=skip_playback_wait,
                 voice_config=voice_config,
             )
-            if not response:
-                break
+            interactive_session.start()
 
-            # Extract and save the agent turn audio WAV if present
-            # in response.
-            if response and getattr(response, "agent_audio_paths", None):
-                audio_path = response.agent_audio_paths.get(0)
-                if audio_path:
-                    eval_conv.agent_audio_paths[current_sim_turn] = audio_path
-
+        try:
             if console_logging:
-                self.sessions_client.parse_result(response)
+                print(
+                    f"Starting simulated conversation with session ID: "
+                    f"{session_id}"
+                )
 
-            agent_text, trace_chunks, session_ended, tool_calls = (
-                self._parse_agent_response(response)
-            )
-            detailed_trace.append("\n".join(trace_chunks))
-
-            if session_ended:
-                if agent_text:
-                    eval_conv._add_agent_response(agent_text)
-                eval_conv._add_agent_tool_calls(tool_calls)
-                # Ensure the final agent response is evaluated
-                # so that steps_progress is updated on session end.
-                eval_conv._next_user_utterance()
-                if console_logging:
-                    print(
-                        "\nSession has been closed by the Agent via "
-                        "end_session tool."
-                    )
-                # Mark current step as completed if the session ending
-                # is a valid success (escalation evals)
-                for prog in eval_conv.steps_progress:
-                    criteria = prog.step.success_criteria.lower()
-                    if prog.status != StepStatus.COMPLETED and (
-                        "escalat" in criteria
-                        or "transfer" in criteria
-                        or "being transferred" in criteria
-                    ):
-                        prog.status = StepStatus.COMPLETED
-                        prog.justification = (
-                            "Agent ended session via escalation/transfer — "
-                            "matches success criteria."
-                        )
-                break
-
-            # Get the next simulated user utterance based on the agent's
-            # response
-            eval_conv._add_agent_tool_calls(tool_calls)
-            user_utterance, variables = eval_conv.next_user_utterance(
-                agent_text
-            )
+            # Initialize the first turn manually
+            user_utterance, variables = eval_conv.next_user_utterance()
+            accumulated_variables = {}
             if variables:
                 accumulated_variables.update(variables)
-            if user_utterance:
-                detailed_trace.append(f"User: {user_utterance}")
 
-            current_sim_turn += 1
+            detailed_trace = []
+            detailed_trace.append(f"User: {user_utterance}")
 
-        if console_logging:
-            self._print_completion_status(eval_conv)
+            while user_utterance:
+                if modality == "audio" and interactive_session:
+                    response = interactive_session.send_turn(
+                        user_utterance,
+                        accumulated_variables,
+                    )
+                    # Check if session ended via WebSocket endSession
+                    if isinstance(response, dict) and response.get(
+                        "session_ended"
+                    ):
+                        if response.get("connection_error"):
+                            err_msg = (
+                                f"Interactive session WebSocket error: "
+                                f"{response['connection_error']}"
+                            )
+                            raise BidiSessionError(err_msg)
+                        break
+                else:
+                    response = self._send_request_with_retry(
+                        session_id=session_id,
+                        user_utterance=user_utterance,
+                        variables=accumulated_variables,
+                        modality=modality,
+                        console_logging=console_logging,
+                        turn_num=current_sim_turn,
+                        capture_agent_audio=capture_agent_audio,
+                        background_noise_file=background_noise_file,
+                        burst_noise_files=burst_noise_files,
+                        use_tool_fakes=use_tool_fakes,
+                        voice_config=voice_config,
+                    )
+                if not response:
+                    break
 
-        self._evaluate_expectations(
-            eval_conv,
-            detailed_trace,
-            eval_model,
-            console_logging,
-            capture_agent_audio=capture_agent_audio,
-        )
-        eval_conv._session_id = session_id
-        eval_conv.session_id = session_id
-        eval_conv._detailed_trace = detailed_trace
-        eval_conv.detailed_trace = detailed_trace
-        return eval_conv
+                # Extract and save the agent turn audio WAV if present
+                # in response.
+                if response and getattr(response, "agent_audio_paths", None):
+                    audio_path = response.agent_audio_paths.get(0)
+                    if audio_path:
+                        paths = eval_conv.agent_audio_paths
+                        paths[current_sim_turn] = audio_path
+
+                if console_logging:
+                    self.sessions_client.parse_result(response)
+
+                agent_text, trace_chunks, session_ended, tool_calls = (
+                    self._parse_agent_response(response)
+                )
+                detailed_trace.append("\n".join(trace_chunks))
+
+                if session_ended:
+                    if agent_text:
+                        eval_conv._add_agent_response(agent_text)
+                    eval_conv._add_agent_tool_calls(tool_calls)
+                    # Ensure the final agent response is evaluated
+                    # so that steps_progress is updated on session end.
+                    eval_conv._next_user_utterance()
+                    if console_logging:
+                        print(
+                            "\nSession has been closed by the Agent via "
+                            "end_session tool."
+                        )
+                    # Mark current step as completed if the session ending
+                    # is a valid success (escalation evals)
+                    for prog in eval_conv.steps_progress:
+                        criteria = prog.step.success_criteria.lower()
+                        if prog.status != StepStatus.COMPLETED and (
+                            "escalat" in criteria
+                            or "transfer" in criteria
+                            or "being transferred" in criteria
+                        ):
+                            prog.status = StepStatus.COMPLETED
+                            prog.justification = (
+                                "Agent ended session via escalation/transfer — "
+                                "matches success criteria."
+                            )
+                    break
+
+                # Get the next simulated user utterance based on the agent's
+                # response
+                eval_conv._add_agent_tool_calls(tool_calls)
+                user_utterance, variables = eval_conv.next_user_utterance(
+                    agent_text
+                )
+                if variables:
+                    accumulated_variables.update(variables)
+                if user_utterance:
+                    detailed_trace.append(f"User: {user_utterance}")
+
+                current_sim_turn += 1
+
+            if console_logging:
+                self._print_completion_status(eval_conv)
+
+            self._evaluate_expectations(
+                eval_conv,
+                detailed_trace,
+                eval_model,
+                console_logging,
+                capture_agent_audio=capture_agent_audio,
+            )
+            eval_conv._session_id = session_id
+            eval_conv.session_id = session_id
+            eval_conv._detailed_trace = detailed_trace
+            eval_conv.detailed_trace = detailed_trace
+            return eval_conv
+        finally:
+            if interactive_session:
+                interactive_session.close()
 
     def _prepare_simulation_jobs(
         self, test_cases: list[dict[str, Any]], runs: int
@@ -727,6 +768,8 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        skip_playback_wait: bool = False,
+        single_bidi_stream: bool = False,
     ) -> dict[str, Any]:
         """Runs a single simulation job and returns the results."""
         name = tc["name"]
@@ -746,6 +789,8 @@ class SimulationEvals(Apps):
                 background_noise_file=background_noise_file,
                 burst_noise_files=burst_noise_files,
                 use_tool_fakes=use_tool_fakes,
+                skip_playback_wait=skip_playback_wait,
+                single_bidi_stream=single_bidi_stream,
             )
             duration_s = round(time.time() - _start, 1)
 
@@ -833,6 +878,8 @@ class SimulationEvals(Apps):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        skip_playback_wait: bool = False,
+        single_bidi_stream: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[dict[str, Any]]:
         """Aggregates results from multiple simulation jobs."""
@@ -856,6 +903,8 @@ class SimulationEvals(Apps):
                             background_noise_file=background_noise_file,
                             burst_noise_files=burst_noise_files,
                             use_tool_fakes=use_tool_fakes,
+                            skip_playback_wait=skip_playback_wait,
+                            single_bidi_stream=single_bidi_stream,
                         )
                     )
                     progress.update(task_id, advance=1)
@@ -879,6 +928,8 @@ class SimulationEvals(Apps):
                             background_noise_file=background_noise_file,
                             burst_noise_files=burst_noise_files,
                             use_tool_fakes=use_tool_fakes,
+                            skip_playback_wait=skip_playback_wait,
+                            single_bidi_stream=single_bidi_stream,
                         ): (tc["name"], run_idx)
                         for tc, run_idx in jobs
                     }
@@ -904,6 +955,8 @@ class SimulationEvals(Apps):
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
         expectations_only: bool | None = None,
+        skip_playback_wait: bool = False,
+        single_bidi_stream: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[dict[str, Any]]:
         if expectations_only is not None:
@@ -936,6 +989,8 @@ class SimulationEvals(Apps):
             background_noise_file=background_noise_file,
             burst_noise_files=burst_noise_files,
             use_tool_fakes=use_tool_fakes,
+            skip_playback_wait=skip_playback_wait,
+            single_bidi_stream=single_bidi_stream,
             progress_callback=progress_callback,
         )
 

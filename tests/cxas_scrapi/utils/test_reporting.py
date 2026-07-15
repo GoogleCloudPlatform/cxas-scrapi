@@ -762,6 +762,8 @@ def test_run_all_evals_dict_based_simulations(
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=False,
+        skip_playback_wait=False,
+        single_bidi_stream=False,
         progress_callback=ANY,
         capture_agent_audio=False,
     )
@@ -1004,6 +1006,8 @@ def test_run_all_evals_expectations_only(mock_run_all_evals):
         timestamp=None,
         expectations_only=True,
         deployment_id=None,
+        skip_playback_wait=False,
+        single_bidi_stream=False,
         progress_callback=None,
         capture_agent_audio=False,
     )
