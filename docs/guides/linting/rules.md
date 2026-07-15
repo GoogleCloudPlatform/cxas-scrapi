@@ -500,8 +500,19 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S005 | `strict-agent-path-layout` | Error | Agent config paths must be app-relative and prefixed with `agents/{agent_name}/` |
     | S006 | `strict-tool-path-layout` | Error | Tool config paths must be app-relative and prefixed with `tools/{tool_name}/` |
     | S007 | `sub-agent-single-parent` | Error | Sub-agents must have at most one parent agent (tree constraint) |
+    | S008 | `singleton-guardrail-types` | Error | At most one guardrail of each singleton type (`llmPromptSecurity`) per app |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
+
+    ---
+
+    **S008 — singleton-guardrail-types**
+
+    The platform allows only one guardrail of certain types per app — currently `llmPromptSecurity`. The console UI enforces the limit, but the App Import API used by `cxas push` does not, so pushing duplicates leaves the app un-editable in the console ("Too many llm prompt security guardrails, the limit is 1").
+
+    *Triggers:* More than one directory under `guardrails/` declares the same singleton guardrail type (`llmPromptSecurity` or `llm_prompt_security`).
+
+    *Fix:* Keep a single guardrail of that type and remove the others.
 
 === "V — Schema"
 
