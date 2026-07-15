@@ -102,6 +102,16 @@ def main():
         default=False,
         help="Use fake tools if available for simulations.",
     )
+    parser.add_argument(
+        "--skip-playback-wait",
+        action="store_true",
+        help="Skip waiting for agent audio playback to finish before sending the next turn (speeds up audio simulations but may cause barge-in/cut-offs).",
+    )
+    parser.add_argument(
+        "--persist-bidi-websocket",
+        action="store_true",
+        help="Use a single persistent WebSocket connection across all user turns in audio simulations (default is false, which opens/closes connection per turn).",
+    )
     args = parser.parse_args()
 
     # Load config
@@ -162,6 +172,8 @@ def main():
             parallel=args.sim_parallel,
             use_tool_fakes=args.use_tool_fakes,
             deployment_id=args.deployment_id,
+            skip_playback_wait=args.skip_playback_wait,
+            persist_bidi_websocket=args.persist_bidi_websocket,
         )
     except Exception as e:
         print(f"\n  ERROR: Evaluation run failed: {e}")

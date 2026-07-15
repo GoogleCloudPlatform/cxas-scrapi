@@ -282,7 +282,7 @@ def test_agent_turn_manager_basic():
     assert not manager.is_agent_done_talking()
 
     # 1 second of audio (16000 * 2 = 32000 bytes)
-    manager.add_audio(b"\x00" * 32000)
+    manager.add_audio(b"\x01" * 32000)
     manager.mark_turn_completed()
 
     # Just completed, current time is roughly 0 seconds since start
@@ -298,6 +298,24 @@ def test_agent_turn_manager_no_audio():
     manager.mark_turn_completed()
     # If no audio was ever received, it should be done immediately
     assert manager.is_agent_done_talking()
+
+
+def test_agent_turn_manager_silence_filtering():
+    manager = AgentTurnManager(sample_rate=16000, sample_width=2)
+
+    # Add low energy silence / comfort noise (all zeroes)
+    manager.add_audio(b"\x00" * 32000)
+    assert manager.len_audio_bytes_received == 0  # Discarded due to low RMS
+
+    # Add high energy speech (value 4095)
+    manager.add_audio(b"\xff\x0f" * 16000)
+    assert manager.len_audio_bytes_received == 32000  # Kept
+
+    # Mark turn completed and try to add more speech
+    manager.mark_turn_completed()
+    manager.add_audio(b"\xff\x0f" * 16000)
+    # Ignored because turn completed
+    assert manager.len_audio_bytes_received == 32000
 
 
 @patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
