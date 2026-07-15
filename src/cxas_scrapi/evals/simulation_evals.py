@@ -632,7 +632,11 @@ class SimulationEvals(Apps):
             detailed_trace.append(f"User: {user_utterance}")
 
             while user_utterance:
-                if modality == "audio" and persist_bidi_websocket and interactive_session:
+                if (
+                    modality == "audio"
+                    and persist_bidi_websocket
+                    and interactive_session
+                ):
                     response = interactive_session.send_turn(
                         user_utterance,
                         accumulated_variables,

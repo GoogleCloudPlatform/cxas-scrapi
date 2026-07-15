@@ -95,6 +95,7 @@ def test_combined_evals_report_cmd(tmp_path):
             timestamp=None,
             expectations_only=False,
             deployment_id=None,
+            persist_bidi_websocket=False,
             progress_callback=None,
             capture_agent_audio=False,
         )
@@ -157,6 +158,7 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
             timestamp=None,
             expectations_only=False,
             deployment_id=None,
+            persist_bidi_websocket=False,
             progress_callback=None,
             capture_agent_audio=False,
         )
@@ -224,6 +226,7 @@ def test_combined_evals_report_cmd_timestamped(mock_datetime, tmp_path):
             timestamp="20260622_171403",
             expectations_only=False,
             deployment_id=None,
+            persist_bidi_websocket=False,
             progress_callback=None,
             capture_agent_audio=False,
         )

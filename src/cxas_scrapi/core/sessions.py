@@ -1414,7 +1414,8 @@ class Sessions(Common):
                     self.creds.refresh(Request())
             except Exception as e:
                 logger.debug(
-                    f"Failed to refresh credentials before interactive session: {e}"
+                    "Failed to refresh credentials before interactive session: "
+                    f"{e}"
                 )
         self._check_audio_requirements()
 
