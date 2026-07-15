@@ -31,7 +31,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Find cxas-scrapi: walk up from SKILL_ROOT looking for setup.py with cxas-scrapi
+# Find cxas-scrapi: walk up from SKILL_ROOT looking for pyproject.toml with cxas-scrapi
 SCRAPI_DIR=""
 candidate="$SKILL_ROOT"
 for _ in 1 2 3 4 5; do
