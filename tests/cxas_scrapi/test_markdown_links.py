@@ -36,9 +36,7 @@ def get_markdown_files():
 
 
 @pytest.mark.parametrize(
-    "md_path",
-    get_markdown_files(),
-    ids=lambda p: str(p.relative_to(ROOT_DIR))
+    "md_path", get_markdown_files(), ids=lambda p: str(p.relative_to(ROOT_DIR))
 )
 def test_markdown_links(md_path):
     with open(md_path, encoding="utf-8") as f:
