@@ -127,7 +127,7 @@ if [ "$CONFIGURE_ONLY" = false ]; then
     source "${VENV_DIR}/bin/activate"
 
     # --- Step 2: Install cxas-scrapi from local source ---
-    if [ -z "$SCRAPI_DIR" ] || [ ! -f "$SCRAPI_DIR/setup.py" ]; then
+    if [ -z "$SCRAPI_DIR" ] || [ ! -f "$SCRAPI_DIR/pyproject.toml" ]; then
       echo "[2/3] Error: Could not find cxas-scrapi source."
       echo "      Looked relative to skill at: $SKILL_ROOT"
       exit 1
