@@ -14,6 +14,7 @@
 
 import os
 import sys
+import webbrowser
 from unittest.mock import MagicMock, create_autospec
 
 import google.cloud.ces_v1beta as real_ces
@@ -160,3 +161,12 @@ def mock_gemini_generate(request, monkeypatch):
     monkeypatch.setattr(GeminiGenerate, "generate_async", mock_generate_async)
     monkeypatch.setattr(GeminiGenerate, "generate", mock_generate)
     yield
+
+
+@pytest.fixture(autouse=True)
+def mock_webbrowser(monkeypatch):
+    """Globally mock webbrowser to prevent opening browsers during tests."""
+    monkeypatch.setattr(webbrowser, "open", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        webbrowser, "open_new_tab", lambda *args, **kwargs: True
+    )

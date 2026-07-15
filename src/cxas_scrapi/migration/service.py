@@ -427,6 +427,7 @@ class MigrationService:
         if (
             getattr(bundle.config, "web_confirm_grouping", False)
             and not getattr(bundle.config, "auto_confirm_grouping", False)
+            and not _is_headless_context()
             and self._review_context is None
         ):
             from cxas_scrapi.migration import (  # noqa: PLC0415
@@ -1070,6 +1071,7 @@ class MigrationService:
         if (
             getattr(config, "web_confirm_grouping", False)
             and not getattr(config, "auto_confirm_grouping", False)
+            and not _is_headless_context()
             and self._review_context is None
         ):
             from cxas_scrapi.migration import (  # noqa: PLC0415
