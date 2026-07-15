@@ -520,7 +520,6 @@ class BidiSessionHandler:
                 self.ws_app.close()
                 return
 
-
             logging.debug("All inputs sent and turns completed.")
             time.sleep(1)  # arbitrary short wait before disconnecting
             self.ws_app.close()
