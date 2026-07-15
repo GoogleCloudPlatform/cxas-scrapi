@@ -658,6 +658,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         timestamp=timestamp,
         expectations_only=getattr(args, "expectations_only", False),
         deployment_id=getattr(args, "deployment_id", None),
+        persist_bidi_websocket=getattr(args, "persist_bidi_websocket", False),
         progress_callback=progress_callback,
         capture_agent_audio=getattr(args, "capture_agent_audio", False),
     )
@@ -1831,6 +1832,11 @@ def get_parser() -> argparse.ArgumentParser:
         "--capture-agent-audio",
         action="store_true",
         help="Capture real-time agent output audio as WAV files",
+    )
+    parser_report.add_argument(
+        "--persist-bidi-websocket",
+        action="store_true",
+        help="Use a single persistent WebSocket connection across all user turns in audio simulations (default is false, which opens/closes connection per turn).",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
