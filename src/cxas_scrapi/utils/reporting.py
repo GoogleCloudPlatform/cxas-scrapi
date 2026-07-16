@@ -404,11 +404,17 @@ def _get_run_detail(r, ces_base, tools_map):
     return html
 
 
-def _upload_to_gcs(output_path: str, html_content: str) -> str | None:
+def _upload_to_gcs(
+    output_path: str,
+    content: str,
+    content_type: str = "text/html; charset=utf-8",
+) -> str | None:
     """Uploads the report to GCS and returns the mTLS URL or None on failure."""
     try:
         gcs = gcs_utils.GCSUtils()
-        mtls_url = gcs.upload_string(output_path, html_content)
+        mtls_url = gcs.upload_string(
+            output_path, content, content_type=content_type
+        )
         print(f"Report uploaded to GCS: {output_path}")
         print(f"Authenticated URL: {mtls_url}")
         return mtls_url
@@ -974,6 +980,112 @@ def generate_combined_html_report(
     return output_path
 
 
+def _sanitize_for_json(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strip internal keys (prefixed with '_') from result dicts."""
+    return [
+        {k: v for k, v in r.items() if not str(k).startswith("_")}
+        for r in results
+    ]
+
+
+def generate_combined_json_report(
+    golden_results: list[dict[str, Any]] | None = None,
+    sim_results: list[dict[str, Any]] | None = None,
+    tool_results: list[dict[str, Any]] | None = None,
+    callback_results: list[dict[str, Any]] | None = None,
+    output_path: str = "",
+    app_name: str = "",
+    golden_modality: str = "text",
+    sim_modality: str = "text",
+    sim_wall_clock_s: float | None = None,
+) -> str:
+    """Generate a combined JSON report based on results from multiple sources.
+
+    Emits the same underlying evaluation data as the combined HTML report,
+    but as a single machine-readable JSON document so downstream consumers
+    do not need to scrape the HTML.
+
+    Args:
+      golden_results: The list of golden evaluation results.
+      sim_results: The list of simulation evaluation results.
+      tool_results: The list of tool evaluation results.
+      callback_results: The list of callback evaluation results.
+      output_path: The path to save the JSON report (local or GCS).
+      app_name: CX Agent Studio (CXAS) agent resource name.
+      golden_modality: The modality used for the golden evaluations.
+      sim_modality: The modality used for the simulation evaluations.
+      sim_wall_clock_s: Total elapsed execution time for simulations in
+        seconds.
+
+    Returns:
+      The resolved output path or URL where the report was saved.
+    """
+    golden_results = golden_results or []
+    sim_results = sim_results or []
+    tool_results = tool_results or []
+    callback_results = callback_results or []
+
+    def _counts(results):
+        return {
+            "total": len(results),
+            "passed": sum(1 for r in results if r.get("passed")),
+        }
+
+    per_type = {
+        "golden": _counts(golden_results),
+        "simulation": _counts(sim_results),
+        "tool": _counts(tool_results),
+        "callback": _counts(callback_results),
+    }
+    total = sum(c["total"] for c in per_type.values())
+    passed = sum(c["passed"] for c in per_type.values())
+
+    report = {
+        "schema_version": 1,
+        "generated_at": datetime.datetime.now().isoformat(),
+        "app_name": app_name,
+        "modality": {
+            "golden": golden_modality,
+            "simulation": sim_modality,
+        },
+        "sim_wall_clock_s": sim_wall_clock_s,
+        "summary": {
+            "total": total,
+            "passed": passed,
+            "pass_rate_pct": round(100 * passed / total, 2) if total else 0,
+            **per_type,
+        },
+        "results": {
+            "golden": _sanitize_for_json(golden_results),
+            "simulation": _sanitize_for_json(sim_results),
+            "tool": _sanitize_for_json(tool_results),
+            "callback": _sanitize_for_json(callback_results),
+        },
+    }
+    json_out = json.dumps(report, indent=2, default=str)
+
+    if output_path:
+        if output_path.startswith("gs://"):
+            mtls_url = _upload_to_gcs(
+                output_path, json_out, content_type="application/json"
+            )
+            if not mtls_url:
+                # Fallback to local file if upload failed
+                filename = output_path.rsplit("/", maxsplit=1)[-1]
+                if not filename.endswith(".json"):
+                    filename = "report_fallback.json"
+                output_path = filename
+                with open(output_path, "w") as f:
+                    f.write(json_out)
+            else:
+                output_path = mtls_url
+        else:
+            with open(output_path, "w") as f:
+                f.write(json_out)
+
+    return output_path
+
+
 def _outcome_str(val):
     if isinstance(val, int):
         return {0: "UNSPECIFIED", 1: "PASS", 2: "FAIL"}.get(val, f"?{val}")
@@ -1442,14 +1554,15 @@ def generate_combined_report_from_dir(
     deployment_id: str | None = None,
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
+    report_format: str = "html",
 ) -> str:
-    """Load results from directory and generate combined HTML report.
+    """Load results from directory and generate a combined report.
 
     Args:
       output_dir: Directory containing the evaluation results.
       golden_run: The golden evaluation run ID.
       app_name: CX Agent Studio (CXAS) agent resource name.
-      output_path: Optional GCS or local path to write the HTML report to.
+      output_path: Optional GCS or local path to write the report to.
       run: If True, triggers execution of evals before compiling report.
       app_dir: Directory containing CX Agent Studio (CXAS) agent code.
       tool_test_file: Path to tool tests definition file.
@@ -1468,12 +1581,20 @@ def generate_combined_report_from_dir(
         during replay.
       use_tool_fakes: Use fake tools for the session if available.
       deployment_id: Optional deployment ID to target for simulations.
+      report_format: Output format for the combined report, 'html'
+        (default) or 'json'.
 
     Returns:
       The resolved output path or URL where the report was saved.
     """
     if not os.path.isdir(output_dir):
         raise ValueError(f"{output_dir} is not a directory.")
+
+    if report_format not in ("html", "json"):
+        raise ValueError(
+            f"Unsupported report format: {report_format!r}. "
+            "Expected 'html' or 'json'."
+        )
 
     if include is None or "all" in include:
         include = ["sims", "goldens", "tools", "callbacks"]
@@ -1656,10 +1777,27 @@ def generate_combined_report_from_dir(
             )
 
     if not output_path:
+        default_filename = (
+            eval_utils.COMBINED_REPORT_JSON_FILENAME
+            if report_format == "json"
+            else eval_utils.COMBINED_REPORT_FILENAME
+        )
         report_name = eval_utils.add_timestamp_suffix(
-            eval_utils.COMBINED_REPORT_FILENAME, resolved_timestamp
+            default_filename, resolved_timestamp
         )
         output_path = os.path.join(output_dir, report_name)
+
+    if report_format == "json":
+        return generate_combined_json_report(
+            golden_results=golden_results,
+            sim_results=sim_results,
+            tool_results=tool_results,
+            callback_results=callback_results,
+            output_path=output_path,
+            app_name=app_name or "",
+            golden_modality=modality,
+            sim_modality=modality,
+        )
 
     actual_path = generate_combined_html_report(
         golden_results=golden_results,

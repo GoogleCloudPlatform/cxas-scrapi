@@ -32,7 +32,10 @@ from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
-from cxas_scrapi.utils.eval_utils import COMBINED_REPORT_FILENAME
+from cxas_scrapi.utils.eval_utils import (
+    COMBINED_REPORT_FILENAME,
+    COMBINED_REPORT_JSON_FILENAME,
+)
 
 DEFAULT_MODEL = "gemini-3.1-flash-live"
 
@@ -660,6 +663,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         deployment_id=getattr(args, "deployment_id", None),
         progress_callback=progress_callback,
         capture_agent_audio=getattr(args, "capture_agent_audio", False),
+        report_format=getattr(args, "format", "html") or "html",
     )
     print(f"Combined report generated at {actual_output_path}")
 
@@ -1682,7 +1686,19 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_report.add_argument(
         "--output",
-        help=f"Output path. Defaults to <evals-dir>/{COMBINED_REPORT_FILENAME}",
+        help=(
+            f"Output path. Defaults to <evals-dir>/{COMBINED_REPORT_FILENAME} "
+            f"(or {COMBINED_REPORT_JSON_FILENAME} with --format json)."
+        ),
+    )
+    parser_report.add_argument(
+        "--format",
+        choices=["html", "json"],
+        default="html",
+        help=(
+            "Output format for the combined report: 'html' (default) or "
+            "'json' for a machine-readable report with the same data."
+        ),
     )
     parser_report.add_argument(
         "--golden-run",

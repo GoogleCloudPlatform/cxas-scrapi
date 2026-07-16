@@ -97,6 +97,7 @@ def test_combined_evals_report_cmd(tmp_path):
             deployment_id=None,
             progress_callback=None,
             capture_agent_audio=False,
+            report_format="html",
         )
 
 
@@ -159,6 +160,7 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
             deployment_id=None,
             progress_callback=None,
             capture_agent_audio=False,
+            report_format="html",
         )
 
 
@@ -226,6 +228,7 @@ def test_combined_evals_report_cmd_timestamped(mock_datetime, tmp_path):
             deployment_id=None,
             progress_callback=None,
             capture_agent_audio=False,
+            report_format="html",
         )
 
 
@@ -271,6 +274,43 @@ def test_combined_evals_report_cmd_with_filters_and_progress(tmp_path):
         assert call_kwargs["filter_tags"] == ["P0", "P1"]
         assert call_kwargs["filter_names"] == ["test_name_1", "test_name_2"]
         assert call_kwargs["progress_callback"] is not None
+
+
+def test_combined_evals_report_cmd_format_json(tmp_path):
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    class Args:
+        def __init__(self):
+            self.output_dir = str(evals_dir)
+            self.output = None
+            self.gcs_path = None
+            self.golden_run = None
+            self.app_name = None
+            self.run = False
+            self.app_dir = None
+            self.tool_test_file = None
+            self.goldens_dir = None
+            self.simulation_dir = None
+            self.include = "sims"
+            self.input_dir = None
+            self.modality = "text"
+            self.runs = 1
+            self.use_tool_fakes = False
+            self.sim_user_model = None
+            self.eval_model = None
+            self.format = "json"
+
+    args = Args()
+
+    with patch(
+        "cxas_scrapi.utils.reporting.generate_combined_report_from_dir"
+    ) as mock_report:
+        combined_evals_report_cmd(args)
+
+        mock_report.assert_called_once()
+        call_kwargs = mock_report.call_args[1]
+        assert call_kwargs["report_format"] == "json"
 
 
 def test_combined_evals_report_cmd_with_deployment_id(tmp_path):

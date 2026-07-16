@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import importlib.util
 import json
 import os
@@ -23,6 +24,7 @@ import pytest
 
 from cxas_scrapi.utils.eval_utils import (
     COMBINED_REPORT_FILENAME,
+    COMBINED_REPORT_JSON_FILENAME,
     add_timestamp_suffix,
 )
 from cxas_scrapi.utils.reporting import (
@@ -33,6 +35,7 @@ from cxas_scrapi.utils.reporting import (
     _resolve_tool_name,
     _upload_to_gcs,
     generate_combined_html_report,
+    generate_combined_json_report,
     generate_combined_report_from_dir,
     generate_html_report,
     run_all_evals,
@@ -414,6 +417,251 @@ def test_generate_combined_report_from_dir_include_all(tmp_path):
         content = f.read()
         assert "test_sim" in content
         assert "test_tool" in content
+
+
+def test_generate_combined_json_report_local(tmp_path):
+    output_path = tmp_path / COMBINED_REPORT_JSON_FILENAME
+
+    sim_results = [
+        {
+            "name": "test_sim",
+            "passed": True,
+            "detailed_trace": ["User: hi\nAgent Text: hello"],
+            "_processed_trace": [("user", "hi")],
+        },
+        {"name": "test_sim", "passed": False},
+    ]
+    golden_results = [
+        {
+            "name": "test_golden",
+            "passed": True,
+            "turns": [{"semantic_score": 3.5}],
+        }
+    ]
+    tool_results = [
+        {
+            "name": "test_tool",
+            "tool": "my_tool",
+            "passed": True,
+            "status": "PASSED",
+            "latency_ms": 50,
+            "errors": "",
+        }
+    ]
+    callback_results = [
+        {
+            "name": "test_callback",
+            "agent": "my_agent",
+            "callback_type": "my_callback",
+            "passed": False,
+            "status": "FAILED",
+            "error": "boom",
+        }
+    ]
+
+    resolved_path = generate_combined_json_report(
+        golden_results=golden_results,
+        sim_results=sim_results,
+        tool_results=tool_results,
+        callback_results=callback_results,
+        output_path=str(output_path),
+        app_name="projects/p/locations/l/apps/a",
+        sim_wall_clock_s=12.5,
+    )
+
+    assert resolved_path == str(output_path)
+    with open(output_path) as f:
+        report = json.load(f)
+
+    assert report["schema_version"] == 1
+    assert report["app_name"] == "projects/p/locations/l/apps/a"
+    assert report["sim_wall_clock_s"] == 12.5
+
+    summary = report["summary"]
+    assert summary["total"] == 5
+    assert summary["passed"] == 3
+    assert summary["pass_rate_pct"] == 60.0
+    assert summary["simulation"] == {"total": 2, "passed": 1}
+    assert summary["golden"] == {"total": 1, "passed": 1}
+    assert summary["tool"] == {"total": 1, "passed": 1}
+    assert summary["callback"] == {"total": 1, "passed": 0}
+
+    results = report["results"]
+    assert results["simulation"][0]["name"] == "test_sim"
+    assert results["simulation"][0]["detailed_trace"] == [
+        "User: hi\nAgent Text: hello"
+    ]
+    # Internal keys are stripped from the JSON output.
+    assert "_processed_trace" not in results["simulation"][0]
+    assert results["golden"][0]["turns"] == [{"semantic_score": 3.5}]
+    assert results["tool"][0]["latency_ms"] == 50
+    assert results["callback"][0]["error"] == "boom"
+
+
+def test_generate_combined_json_report_serializes_non_json_values(tmp_path):
+    output_path = tmp_path / "report.json"
+
+    generate_combined_json_report(
+        sim_results=[
+            {
+                "name": "test_sim",
+                "passed": True,
+                "started_at": datetime.datetime(2026, 7, 16, 12, 0, 0),
+            }
+        ],
+        output_path=str(output_path),
+    )
+
+    with open(output_path) as f:
+        report = json.load(f)
+    assert "2026-07-16" in report["results"]["simulation"][0]["started_at"]
+
+
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_combined_json_report_gcs_success(mock_file, mock_upload):
+    mock_upload.return_value = "https://url"
+
+    resolved_path = generate_combined_json_report(
+        sim_results=[{"name": "test_sim", "passed": True}],
+        output_path="gs://bucket/report.json",
+    )
+
+    assert resolved_path == "https://url"
+    mock_upload.assert_called_once_with(
+        "gs://bucket/report.json", ANY, content_type="application/json"
+    )
+    mock_file.assert_not_called()
+
+
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_combined_json_report_gcs_fallback(mock_file, mock_upload):
+    mock_upload.return_value = None
+
+    resolved_path = generate_combined_json_report(
+        sim_results=[{"name": "test_sim", "passed": True}],
+        output_path="gs://bucket/report.json",
+    )
+
+    assert resolved_path == "report.json"
+    mock_file.assert_any_call("report.json", "w")
+
+
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_combined_json_report_gcs_fallback_no_extension(
+    mock_file, mock_upload
+):
+    mock_upload.return_value = None
+
+    resolved_path = generate_combined_json_report(
+        sim_results=[{"name": "test_sim", "passed": True}],
+        output_path="gs://bucket/no_ext",
+    )
+
+    assert resolved_path == "report_fallback.json"
+    mock_file.assert_any_call("report_fallback.json", "w")
+
+
+def test_generate_combined_report_from_dir_json(tmp_path):
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    sim_file = evals_dir / "sim_results.json"
+    sim_file.write_text(json.dumps([{"name": "test_sim", "passed": True}]))
+
+    tool_file = evals_dir / "tool_results.csv"
+    df_tool = pd.DataFrame(
+        [
+            {
+                "test_name": "test_tool",
+                "tool": "my_tool",
+                "status": "PASSED",
+                "latency (ms)": 50,
+                "errors": "",
+            }
+        ]
+    )
+    df_tool.to_csv(tool_file, index=False)
+
+    callback_file = evals_dir / "callback_results.csv"
+    df_callback = pd.DataFrame(
+        [
+            {
+                "test_name": "test_callback",
+                "agent_name": "my_agent",
+                "callback_type": "my_callback",
+                "status": "FAILED",
+                "error_message": "boom",
+            }
+        ]
+    )
+    df_callback.to_csv(callback_file, index=False)
+
+    resolved_path = generate_combined_report_from_dir(
+        output_dir=str(evals_dir), report_format="json"
+    )
+
+    # Defaults to combined_report.json in the output directory.
+    assert resolved_path == str(evals_dir / COMBINED_REPORT_JSON_FILENAME)
+    assert os.path.exists(resolved_path)
+
+    with open(resolved_path) as f:
+        report = json.load(f)
+
+    assert report["summary"]["total"] == 3
+    assert report["summary"]["passed"] == 2
+    assert report["results"]["simulation"][0]["name"] == "test_sim"
+    assert report["results"]["tool"][0]["name"] == "test_tool"
+    assert report["results"]["tool"][0]["passed"] is True
+    assert report["results"]["callback"][0]["name"] == "test_callback"
+    assert report["results"]["callback"][0]["passed"] is False
+
+
+def test_generate_combined_report_from_dir_json_explicit_output(tmp_path):
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    sim_file = evals_dir / "sim_results.json"
+    sim_file.write_text(json.dumps([{"name": "test_sim", "passed": True}]))
+
+    output_path = tmp_path / "custom_report.json"
+
+    resolved_path = generate_combined_report_from_dir(
+        output_dir=str(evals_dir),
+        output_path=str(output_path),
+        report_format="json",
+    )
+
+    assert resolved_path == str(output_path)
+    with open(output_path) as f:
+        report = json.load(f)
+    assert report["summary"]["total"] == 1
+
+
+def test_generate_combined_report_from_dir_invalid_format(tmp_path):
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    with pytest.raises(ValueError, match="Unsupported report format"):
+        generate_combined_report_from_dir(
+            output_dir=str(evals_dir), report_format="xml"
+        )
+
+
+def test_generate_combined_report_from_dir_html_default_unchanged(tmp_path):
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    sim_file = evals_dir / "sim_results.json"
+    sim_file.write_text(json.dumps([{"name": "test_sim", "passed": True}]))
+
+    resolved_path = generate_combined_report_from_dir(output_dir=str(evals_dir))
+
+    assert resolved_path == str(evals_dir / COMBINED_REPORT_FILENAME)
+    with open(resolved_path) as f:
+        assert "Combined Eval Report" in f.read()
 
 
 @patch("cxas_scrapi.evals.runner.Evaluations")
