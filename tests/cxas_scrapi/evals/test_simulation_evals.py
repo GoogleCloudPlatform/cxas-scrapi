@@ -29,6 +29,7 @@ from cxas_scrapi.evals.simulation_evals import (
     StepStatus,
     ToolCall,
     Turn,
+    evaluate_tool_calls,
 )
 from cxas_scrapi.utils.eval_utils import (
     ExpectationResult,
@@ -1773,3 +1774,50 @@ def test_simulation_evals_escalation_transfer_handling(
     assert (
         "Agent ended session via escalation/transfer" in step_prog.justification
     )
+
+
+def test_evaluate_tool_calls():
+    # All expected tools were actually called -> pass.
+    r = evaluate_tool_calls(
+        ["verify_caller", "get_billing_summary"],
+        ["verify_caller", "get_billing_summary"],
+        [],
+    )
+    assert r["ran"] is True
+    assert r["passed"] is True
+    assert r["missing"] == []
+
+    # An expected tool was never called -> fail (the fabrication-catch case:
+    # the agent may have *said* it did X without calling the tool).
+    r = evaluate_tool_calls(
+        ["verify_caller"],
+        ["verify_caller", "submit_late_fee_waiver_request"],
+        [],
+    )
+    assert r["passed"] is False
+    assert r["missing"] == ["submit_late_fee_waiver_request"]
+
+    # No tools called at all -> every expected tool is missing.
+    r = evaluate_tool_calls([], ["verify_caller"], [])
+    assert r["passed"] is False
+    assert r["missing"] == ["verify_caller"]
+
+    # A forbidden tool was called -> fail.
+    r = evaluate_tool_calls(
+        ["verify_caller", "record_transfer_reason"],
+        [],
+        ["record_transfer_reason"],
+    )
+    assert r["passed"] is False
+    assert r["forbidden_hit"] == ["record_transfer_reason"]
+
+    # Matching is on the basename, case-insensitively (full resource path).
+    r = evaluate_tool_calls(
+        ["projects/p/apps/a/tools/Verify_Caller"], ["verify_caller"], []
+    )
+    assert r["passed"] is True
+    assert r["missing"] == []
+
+    # No assertion declared -> ran is False (no effect on scoring).
+    r = evaluate_tool_calls(["verify_caller"], [], [])
+    assert r["ran"] is False

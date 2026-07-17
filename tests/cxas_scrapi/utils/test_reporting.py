@@ -30,6 +30,7 @@ from cxas_scrapi.utils.reporting import (
     _fmt_duration,
     _format_trace_line,
     _load_sim_test_cases,
+    _render_tool_check,
     _resolve_tool_name,
     _upload_to_gcs,
     generate_combined_html_report,
@@ -1105,3 +1106,38 @@ def test_sim_runner_load_sim_templates_backward_compatibility_with_list(
             assert templates["sim2"]["expectations"] == [
                 "Specific expectation 2"
             ]
+
+
+def test_render_tool_check_pass():
+    html = _render_tool_check(
+        {
+            "tool_check": "PASS",
+            "expected_tool_calls": ["verify_caller", "get_billing_summary"],
+            "actual_tool_calls": ["verify_caller", "get_billing_summary"],
+            "missing_tool_calls": [],
+            "forbidden_tool_calls_hit": [],
+        }
+    )
+    assert "tools: PASS" in html
+    assert "expected:" in html and "verify_caller" in html
+    assert "MISSING" not in html
+
+
+def test_render_tool_check_missing_and_forbidden():
+    html = _render_tool_check(
+        {
+            "tool_check": "FAIL",
+            "expected_tool_calls": ["verify_caller"],
+            "actual_tool_calls": ["record_transfer_reason"],
+            "missing_tool_calls": ["verify_caller"],
+            "forbidden_tool_calls_hit": ["record_transfer_reason"],
+        }
+    )
+    assert "tools: FAIL" in html
+    assert "MISSING (declared but never called): verify_caller" in html
+    assert "FORBIDDEN (called but must not): record_transfer_reason" in html
+
+
+def test_render_tool_check_empty_when_no_assertion():
+    # No tool assertion declared -> renders nothing.
+    assert _render_tool_check({"tool_check": "n/a"}) == ""
