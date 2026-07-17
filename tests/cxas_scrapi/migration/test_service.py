@@ -1139,3 +1139,178 @@ async def test_run_stage_1_auto_confirms_in_headless_context():
         )
 
     assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_stage_1_skips_early_server_boot_in_headless_context():
+    """The early review-server boot in run_stage_1 must never run in a
+    headless context (CI, non-TTY), or pytest runs spawn real HTTP
+    servers and browser tabs."""
+    service = _make_service()
+    bundle = _make_bundle()
+    bundle.config.web_confirm_grouping = True
+    bundle.config.auto_confirm_grouping = False
+    bundle.config.optimize_for_cxas = True
+
+    fake_consolidator = MagicMock()
+    fake_consolidator.propose_groupings = AsyncMock(
+        return_value={"GroupG": {"agents": ["Root Agent"], "is_root": True}}
+    )
+    fake_consolidator.consolidate = MagicMock(return_value=service.ir)
+    fake_consolidator.synthesize_instructions = AsyncMock(
+        return_value={"GroupG": "ok"}
+    )
+
+    boot_mock = AsyncMock()
+
+    with (
+        patch(
+            "cxas_scrapi.migration.stage_runner.run_stage_with_redeploy",
+            new=AsyncMock(return_value=MagicMock(optimization_logs=[])),
+        ),
+        patch(
+            "cxas_scrapi.migration.service.StructuralConsolidator",
+            return_value=fake_consolidator,
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "detect_root_key",
+            return_value="RootAgent",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "validate_groupings",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.structural_consolidator."
+            "persist_grouping",
+        ),
+        patch(
+            "cxas_scrapi.migration.service.integrity_checks."
+            "check_consolidation_integrity",
+            return_value=(False, []),
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.boot_review_server",
+            new=boot_mock,
+        ),
+        patch(
+            "cxas_scrapi.migration.service._is_headless_context",
+            return_value=True,
+        ),
+    ):
+        await service.run_stage_1(
+            bundle=bundle,
+            version_label=None,
+        )
+
+    boot_mock.assert_not_called()
+
+
+def _make_run_migration_service() -> MigrationService:
+    """Build a MigrationService with everything run_migration touches
+    mocked out, mirroring test_run_migration_success."""
+    service = MigrationService(
+        project_id="test-project",
+        ps_apps_client=MagicMock(),
+        ps_agents_client=MagicMock(),
+        ps_tools_client=MagicMock(),
+        ps_toolsets_client=MagicMock(),
+        secret_manager_client=MagicMock(),
+        cx_api_client=MagicMock(),
+    )
+    service.exporter = MagicMock()
+    service.exporter.fetch_full_agent_details.return_value = DFCXAgentIR(
+        name="projects/p/locations/l/agents/a",
+        display_name="Test Agent",
+        default_language_code="en",
+        playbooks=[],
+        flows=[],
+    )
+    service.ai_augment = MagicMock()
+    service.ai_augment.generate_agent_description = AsyncMock(
+        return_value="Desc"
+    )
+    service._deploy_base_resources = AsyncMock()
+    service._deploy_pending_agents = AsyncMock()
+    service._process_single_flow = AsyncMock()
+    service.topology_linker = MagicMock()
+    service.reporter = MagicMock()
+    return service
+
+
+@pytest.mark.asyncio
+async def test_run_migration_skips_early_server_boot_in_headless_context():
+    """run_migration with the default config (web_confirm_grouping=True)
+    must skip the early review-server boot in headless contexts, so
+    plain `pytest` runs never spawn servers or browser windows."""
+    service = _make_run_migration_service()
+
+    boot_mock = AsyncMock()
+
+    with (
+        patch(
+            "cxas_scrapi.migration.service.DFCXParameterExtractor."
+            "migrate_parameters",
+            return_value=([], {}),
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.boot_review_server",
+            new=boot_mock,
+        ),
+        patch(
+            "cxas_scrapi.migration.service._is_headless_context",
+            return_value=True,
+        ),
+    ):
+        # Rely on the config defaults, which leave the web gate enabled.
+        config = MigrationConfig(
+            project_id="dummy-project",
+            target_name="cxas-app",
+            model="gemini-2.5-flash-001",
+        )
+        await service.run_migration(
+            source_cx_agent_id="dfcx-123", config=config
+        )
+
+    boot_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_migration_boots_server_early_when_interactive():
+    """Complement to the headless regression test: with a TTY available
+    and the web gate enabled, run_migration still boots the review
+    server early (once)."""
+    service = _make_run_migration_service()
+
+    boot_mock = AsyncMock(return_value=MagicMock())
+
+    with (
+        patch(
+            "cxas_scrapi.migration.service.DFCXParameterExtractor."
+            "migrate_parameters",
+            return_value=([], {}),
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.boot_review_server",
+            new=boot_mock,
+        ),
+        patch(
+            "cxas_scrapi.migration.grouping_web_review.web_review",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "cxas_scrapi.migration.service._is_headless_context",
+            return_value=False,
+        ),
+    ):
+        config = MigrationConfig(
+            project_id="dummy-project",
+            target_name="cxas-app",
+            model="gemini-2.5-flash-001",
+        )
+        await service.run_migration(
+            source_cx_agent_id="dfcx-123", config=config
+        )
+
+    boot_mock.assert_called_once()
