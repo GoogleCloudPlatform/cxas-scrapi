@@ -1,6 +1,33 @@
 # Changelog
 
 
+## [1.7.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.6.0...v1.7.0) (2026-07-17)
+
+
+### Features
+
+* **linter:** add S008 rule enforcing single llmPromptSecurity guardrail per app ([ca377ae](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ca377ae361ad7a98624f9ea89bb0b153217319ed))
+* **migration:** convert DFCX test cases to CXAS TurnTestCase simulations ([667e8cf](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/667e8cf7a18eef02173c82b7d08d5e55b77b0b01))
+
+
+### Bug Fixes
+
+* **deps:** update junit-framework monorepo to v6.1.2 ([bccb88e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bccb88ec22f1fd370f5738f5940f870bb85fa010))
+* **deps:** update junit-framework monorepo to v6.1.2 ([7d36d4b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7d36d4bf8b0cf6094d49519661fad28cdf4edba4))
+* **evals:** prevent agent audio output file chopping in audio files ([5e6a4c8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5e6a4c89d47ade5553510ae8f5c47e806a6f03bd))
+* **evals:** prevent agent audio output file chopping in audio simulations ([ac6f18f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ac6f18fec872262d974bc036b45d949a2fb78fac))
+* **migration:** prevent browser launch in headless context during tests ([4da8715](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4da87152bf33c388582a13604387ce1800e737ca))
+* **migration:** prevent browser launch in headless context during tests ([d2b6fb9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d2b6fb9a5c3dad16b2a8e9ae97013d0bb7a6090d))
+* persist bidi websocket for audio simulations behind opt-in flag ([6682a83](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6682a837ad9e69a09cdbb758a5867aabbbba3258))
+* persist bidi websocket for audio simulations behind opt-in flag ([6fa0399](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6fa0399399e1691411b48884630311fef8a03988))
+* **setup:** Fix skill setup issue ([ed79706](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ed797063a33404d9bd000958dd73c394d9d6c1c9))
+
+
+### Documentation
+
+* **agent-foundry:** fix setup.sh comment to reference pyproject.toml ([5c03cc7](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5c03cc7b1f0e9609ddbaa02f00296b7dd2941fb0))
+* **agent-foundry:** fix setup.sh comment to reference pyproject.toml ([f4f5caa](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f4f5caa01dda9ee6532530b78d28d157b974b601))
+
 ## [1.6.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.5.0...v1.6.0) (2026-07-10)
 
 
