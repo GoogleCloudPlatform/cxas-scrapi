@@ -60,6 +60,7 @@ from cxas_scrapi.migration.dfcx_parameter_extractor import (
     DFCXParameterExtractor,
 )
 from cxas_scrapi.migration.dfcx_playbook_converter import DFCXPlaybookConverter
+from cxas_scrapi.migration.dfcx_test_converter import DFCXTestConverter
 from cxas_scrapi.migration.dfcx_tool_converter import DFCXToolConverter
 from cxas_scrapi.migration.eval_generator import DeterministicEvalGenerator
 from cxas_scrapi.migration.flow_visualizer import (
@@ -467,6 +468,21 @@ class MigrationService:
                 f"Consolidated to {len(accepted_groupings)} CXAS group(s); "
                 f"{len(self.ir.agents)} agents in final IR.",
             )
+
+            # Re-route converted DFCX tests to consolidated agent names
+            if self.ir.test_cases:
+                try:
+                    self.ir.test_cases = (
+                        DFCXTestConverter.reroute_after_consolidation(
+                            self.ir.test_cases, accepted_groupings
+                        )
+                    )
+                    logger.info(
+                        "Re-routed test cases to %d consolidated agents",
+                        len(self.ir.test_cases),
+                    )
+                except Exception as exc:
+                    logger.warning("Test re-routing failed: %s", exc)
 
         # --- CXAS Version checkpoint: Post-Consolidation --------------------
         if accepted_groupings:
@@ -1516,6 +1532,37 @@ class MigrationService:
             f"Wired parent-child topology; "
             f"{len(self.ir.routing_edges or [])} routing edges in graph.",
         )
+
+        # --- 10.5. Convert DFCX Test Cases → CXAS TurnTestCases ---
+        if self.source_agent_data.test_cases:
+            try:
+                tc_converter = DFCXTestConverter(self.ir)
+                converted_tests, tc_report = tc_converter.convert_all(
+                    self.source_agent_data
+                )
+                self.ir.test_cases = {
+                    agent: [t.model_dump(mode="json") for t in cases]
+                    for agent, cases in converted_tests.items()
+                }
+                # Write YAML files to evals/simulations/
+                sim_dir = os.path.join(
+                    f"{config.target_name}_evals", "simulations"
+                )
+                os.makedirs(sim_dir, exist_ok=True)
+                yamls = DFCXTestConverter.serialize_to_yaml(converted_tests)
+                for agent_name, yaml_str in yamls.items():
+                    yaml_path = os.path.join(sim_dir, f"{agent_name}.yaml")
+                    with open(yaml_path, "w") as f:
+                        f.write(yaml_str)
+                logger.info(
+                    "Converted %d/%d DFCX test cases (%d skipped) → %s",
+                    tc_report["converted"],
+                    tc_report["total_source_tests"],
+                    tc_report["skipped"],
+                    sim_dir,
+                )
+            except Exception as exc:
+                logger.warning("DFCX test case conversion failed: %s", exc)
 
         # Create initial 1:1 transpile version snapshot unconditionally!
         logger.info("\n--- Creating Initial Migrated Version 0.0.1 ---")
