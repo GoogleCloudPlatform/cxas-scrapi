@@ -1,0 +1,35 @@
+# Allowed top-level files and directories in this repository.
+#
+# The "Repo Root Hygiene" CI job fails any PR that adds a root-level entry
+# not listed here. Everything else must live inside the existing directory
+# structure (src/, tests/, docs/, scripts/, examples/, ...).
+#
+# Adding a line to this file requires code-owner approval (see CODEOWNERS).
+
+.agents
+.claude
+.gemini
+.github
+.gitignore
+.pre-commit-config.yaml
+.release-please-manifest.json
+AGENTS.md
+CHANGELOG.md
+CONTRIBUTING.md
+LICENSE.txt
+MANIFEST.in
+README.md
+assets
+diagrams
+docs
+examples
+mkdocs.yml
+pyproject.toml
+pytest.ini
+renovate.json
+scripts
+setup.cfg
+skill_eval
+src
+tests
+uv.lock
