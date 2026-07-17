@@ -228,7 +228,98 @@ def test_user_simulator(mock_llm_conv_class, mock_sessions_class):
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_user_simulator_audio_single_stream(
+    mock_llm_conv_class, mock_sessions_class
+):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("I want to book a flight", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    # Mock Response 1 (Diagnostic Info only, simulating audio response
+    # text capture)
+    mock_response_1 = MagicMock()
+    mock_output_1 = MagicMock()
+    mock_output_1.text = ""  # Empty high-level text
+
+    mock_msg_1 = MagicMock()
+    mock_msg_1.role = "model"
+    mock_chunk_1 = MagicMock()
+    mock_chunk_1._pb.WhichOneof.return_value = "text"
+    mock_chunk_1.text = "Where to?"
+    mock_msg_1.chunks = [mock_chunk_1]
+
+    mock_diag_1 = MagicMock()
+    mock_diag_1.messages = [mock_msg_1]
+    mock_output_1.diagnostic_info = mock_diag_1
+    mock_response_1.outputs = [mock_output_1]
+
+    # Mock Response 2 (High-level text)
+    mock_response_2 = MagicMock()
+    mock_output_2 = MagicMock()
+    mock_output_2.text = "Flight booked."
+    mock_output_2.diagnostic_info = None
+    mock_response_2.outputs = [mock_output_2]
+
+    mock_interactive_session = MagicMock()
+    mock_sessions.create_interactive_session.return_value = (
+        mock_interactive_session
+    )
+    mock_interactive_session.send_turn.side_effect = [
+        mock_response_1,
+        mock_response_2,
+    ]
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {"steps": []}
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+        modality="audio",
+        single_bidi_stream=True,
+    )
+
+    mock_sessions.run.assert_not_called()
+    mock_sessions.create_interactive_session.assert_called_once_with(
+        session_id="123",
+        capture_agent_audio=False,
+        background_noise_file=None,
+        use_tool_fakes=False,
+        skip_playback_wait=False,
+        voice_config=None,
+    )
+    mock_interactive_session.start.assert_called_once()
+    mock_interactive_session.send_turn.assert_any_call(
+        "event: welcome",
+        {},
+    )
+    mock_interactive_session.send_turn.assert_any_call(
+        "I want to book a flight",
+        {},
+    )
+    mock_interactive_session.close.assert_called_once()
+
+    # Verify text was extracted from Diagnostic Info
+    # Note: text += chunk.text + " " so it should assert "Where to? "
+    mock_eval_conv.next_user_utterance.assert_any_call("Where to?")
+    mock_eval_conv.next_user_utterance.assert_any_call("Flight booked.")
+    assert mock_interactive_session.send_turn.call_count == 2
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
 def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
+    """Default audio simulations use one bidi connection per turn."""
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -279,6 +370,7 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
         modality="audio",
     )
 
+    mock_sessions.create_interactive_session.assert_not_called()
     mock_sessions.run.assert_any_call(
         session_id="123",
         event="welcome",
@@ -307,6 +399,81 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
     mock_eval_conv.next_user_utterance.assert_any_call("Where to?")
     mock_eval_conv.next_user_utterance.assert_any_call("Flight booked.")
     assert mock_sessions.run.call_count == 2
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_user_simulator_audio_with_tool_fakes(
+    mock_llm_conv_class, mock_sessions_class
+):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("I want to book a flight", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    # Mock Response 1
+    mock_response_1 = MagicMock()
+    mock_output_1 = MagicMock()
+    mock_output_1.text = ""
+
+    mock_msg_1 = MagicMock()
+    mock_msg_1.role = "model"
+    mock_chunk_1 = MagicMock()
+    mock_chunk_1._pb.WhichOneof.return_value = "text"
+    mock_chunk_1.text = "Where to?"
+    mock_msg_1.chunks = [mock_chunk_1]
+
+    mock_diag_1 = MagicMock()
+    mock_diag_1.messages = [mock_msg_1]
+    mock_output_1.diagnostic_info = mock_diag_1
+    mock_response_1.outputs = [mock_output_1]
+
+    # Mock Response 2
+    mock_response_2 = MagicMock()
+    mock_output_2 = MagicMock()
+    mock_output_2.text = "Flight booked."
+    mock_output_2.diagnostic_info = None
+    mock_response_2.outputs = [mock_output_2]
+
+    mock_interactive_session = MagicMock()
+    mock_sessions.create_interactive_session.return_value = (
+        mock_interactive_session
+    )
+    mock_interactive_session.send_turn.side_effect = [
+        mock_response_1,
+        mock_response_2,
+    ]
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {"steps": []}
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+        modality="audio",
+        use_tool_fakes=True,
+        single_bidi_stream=True,
+    )
+
+    mock_sessions.create_interactive_session.assert_called_once_with(
+        session_id="123",
+        capture_agent_audio=False,
+        background_noise_file=None,
+        use_tool_fakes=True,
+        skip_playback_wait=False,
+        voice_config=None,
+    )
+    mock_interactive_session.start.assert_called_once()
+    mock_interactive_session.close.assert_called_once()
 
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
@@ -354,7 +521,14 @@ def test_user_simulator_audio_with_eval_enabled(
         0: "/tmp/scrapi_evals/123/turn_1_agent.wav"
     }
 
-    mock_sessions.run.side_effect = [mock_response_1, mock_response_2]
+    mock_interactive_session = MagicMock()
+    mock_sessions.create_interactive_session.return_value = (
+        mock_interactive_session
+    )
+    mock_interactive_session.send_turn.side_effect = [
+        mock_response_1,
+        mock_response_2,
+    ]
 
     app_name = "projects/test/locations/us/apps/123-abc"
     with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
@@ -368,32 +542,29 @@ def test_user_simulator_audio_with_eval_enabled(
         console_logging=False,
         modality="audio",
         capture_agent_audio=True,
+        single_bidi_stream=True,
     )
 
-    mock_sessions.run.assert_any_call(
+    mock_sessions.create_interactive_session.assert_called_once_with(
         session_id="123",
-        event="welcome",
-        variables={},
-        modality="audio",
-        turn_num=0,
         capture_agent_audio=True,
         background_noise_file=None,
-        burst_noise_files=None,
         use_tool_fakes=False,
+        skip_playback_wait=False,
+        voice_config=None,
     )
-    mock_sessions.run.assert_any_call(
-        session_id="123",
-        text="I want to book a flight",
-        variables={},
-        modality="audio",
-        turn_num=1,
-        capture_agent_audio=True,
-        background_noise_file=None,
-        burst_noise_files=None,
-        use_tool_fakes=False,
+    mock_interactive_session.start.assert_called_once()
+    mock_interactive_session.send_turn.assert_any_call(
+        "event: welcome",
+        {},
     )
+    mock_interactive_session.send_turn.assert_any_call(
+        "I want to book a flight",
+        {},
+    )
+    mock_interactive_session.close.assert_called_once()
 
-    assert mock_sessions.run.call_count == 2
+    assert mock_interactive_session.send_turn.call_count == 2
     assert mock_eval_conv.agent_audio_paths == {
         0: "/tmp/scrapi_evals/123/turn_0_agent.wav",
         1: "/tmp/scrapi_evals/123/turn_1_agent.wav",
@@ -1304,6 +1475,8 @@ def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=True,
+        skip_playback_wait=False,
+        single_bidi_stream=False,
     )
 
 
@@ -1343,6 +1516,8 @@ def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=True,
+        skip_playback_wait=False,
+        single_bidi_stream=False,
     )
 
 
@@ -1391,6 +1566,8 @@ def test_simulation_evals_run_simulations_capture_agent_audio(mock_sessions):
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=False,
+        skip_playback_wait=False,
+        single_bidi_stream=False,
     )
 
 

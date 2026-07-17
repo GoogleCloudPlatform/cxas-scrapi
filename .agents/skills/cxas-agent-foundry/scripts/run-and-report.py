@@ -133,6 +133,14 @@ def main():
         "--dry-run", action="store_true", default=False,
         help="Print what would be done without running anything"
     )
+    parser.add_argument(
+        "--skip-playback-wait", action="store_true", default=False,
+        help="Skip waiting for agent audio playback to finish before sending the next turn (speeds up audio simulations but may cause barge-in/cut-offs)."
+    )
+    parser.add_argument(
+        "--single-bidi-stream", action="store_true", default=False,
+        help="Keep one persistent bidi WebSocket open per audio simulation instead of one connection per turn (the default)."
+    )
 
     args = parser.parse_args()
     python = sys.executable
@@ -178,6 +186,10 @@ def main():
         eval_cmd.extend(["--runs", str(args.runs)])
     if args.priority is not None:
         eval_cmd.extend(["--priority", args.priority])
+    if args.skip_playback_wait:
+        eval_cmd.append("--skip-playback-wait")
+    if args.single_bidi_stream:
+        eval_cmd.append("--single-bidi-stream")
     result = _run(eval_cmd, "Step 3/5: Run all evals", dry_run=args.dry_run)
     if result.returncode != 0:
         print("\nEval run failed. Continuing to triage and report with available results...")

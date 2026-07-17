@@ -1440,6 +1440,8 @@ def generate_combined_report_from_dir(
     timestamp: str | None = None,
     expectations_only: bool = False,
     deployment_id: str | None = None,
+    skip_playback_wait: bool = False,
+    single_bidi_stream: bool = False,
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
 ) -> str:
@@ -1510,6 +1512,8 @@ def generate_combined_report_from_dir(
             timestamp=timestamp,
             expectations_only=expectations_only,
             deployment_id=deployment_id,
+            skip_playback_wait=skip_playback_wait,
+            single_bidi_stream=single_bidi_stream,
             progress_callback=progress_callback,
             capture_agent_audio=capture_agent_audio,
         )
@@ -1700,6 +1704,8 @@ def run_all_evals(
     timestamp: str | None = None,
     expectations_only: bool = False,
     deployment_id: str | None = None,
+    skip_playback_wait: bool = False,
+    single_bidi_stream: bool = False,
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
 ) -> dict[str, Any]:
@@ -1758,6 +1764,8 @@ def run_all_evals(
         timestamp=timestamp,
         expectations_only=expectations_only,
         deployment_id=deployment_id,
+        skip_playback_wait=skip_playback_wait,
+        single_bidi_stream=single_bidi_stream,
         progress_callback=progress_callback,
         capture_agent_audio=capture_agent_audio,
     )
