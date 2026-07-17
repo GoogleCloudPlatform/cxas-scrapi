@@ -16,6 +16,7 @@ import asyncio
 import logging
 import random
 import threading
+import time
 from typing import Any
 
 from google import genai
@@ -166,17 +167,45 @@ class GeminiGenerate:
 
         contents = self._build_contents(prompt, audio_path, audio_bytes)
 
-        try:
-            response = self.client.models.generate_content(
-                model=target_model, contents=contents, config=config
-            )
+        # Retry transient failures (esp. 429 / RESOURCE_EXHAUSTED) with
+        # exponential backoff instead of returning None on the first error.
+        # Mirrors generate_async: without this, a single transient rate-limit
+        # silently drops the call, which callers cannot distinguish from a
+        # legitimate empty result.
+        max_retries = 5
+        base_delay_seconds = 10
+        for attempt in range(max_retries):
+            try:
+                response = self.client.models.generate_content(
+                    model=target_model, contents=contents, config=config
+                )
 
-            if response_mime_type == "application/json" and response_schema:
-                return response.parsed
-            return response.text
-        except Exception:
-            logger.exception("Gemini generation failed")
-            return None
+                if response_mime_type == "application/json" and response_schema:
+                    return response.parsed
+                return response.text
+
+            except Exception as e:
+                is_quota = "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)
+                err_msg = (
+                    "Quota/Rate Limit Exhausted"
+                    if is_quota
+                    else f"{type(e).__name__}: {e}"
+                )
+                logger.warning(f"  Attempt {attempt + 1} failed: {err_msg}")
+
+                if attempt == max_retries - 1:
+                    logger.exception(
+                        "  Gemini generation failed after all retries."
+                    )
+                    return None
+
+            sleep_time = (base_delay_seconds * (1.5**attempt)) + random.uniform(
+                0, 3
+            )
+            logger.info(f"    Sleeping for {sleep_time:.1f}s before retry...")
+            time.sleep(sleep_time)
+
+        return None
 
     def generate_with_parts(
         self,
