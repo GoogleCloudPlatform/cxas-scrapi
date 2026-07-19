@@ -181,6 +181,35 @@ def resolve_gcp_credentials(
 
 def llm_lint(args: argparse.Namespace) -> None:
     """Executes the main linter flow."""
+    agent_dir = getattr(args, "agent_dir", None)
+    if not agent_dir:
+        try:
+            import cxas_scrapi.core.workspace as ws
+            config = ws.load_workspace_config()
+            app_dir = Path(ws.resolve_project_dir()) / config.get("app_dir", "app")
+            agents_dir = app_dir / "agents"
+            if agents_dir.exists():
+                agent_dirs = [d for d in agents_dir.iterdir() if d.is_dir() and (d / "instruction.txt").exists()]
+                if len(agent_dirs) == 1:
+                    agent_dir = str(agent_dirs[0])
+                elif len(agent_dirs) > 1:
+                    print(
+                        f"Error: Multiple agent directories found under '{agents_dir}'. "
+                        "Please specify --agent-dir explicitly.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+        except Exception:
+            pass
+
+    if not agent_dir:
+        print(
+            "Error: --agent-dir was not provided and no single agent directory could be automatically detected.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    args.agent_dir = agent_dir
     agent_path = Path(args.agent_dir)
 
     if not agent_path.exists():

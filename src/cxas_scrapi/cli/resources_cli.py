@@ -26,17 +26,27 @@ from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.core.variables import Variables
 
 
+def _resolve_resource_app_name(arg_app_name: str | None) -> str | None:
+    if arg_app_name:
+        return Common._get_app_name(arg_app_name)
+    try:
+        import cxas_scrapi.core.workspace as ws
+        return ws.app_name()
+    except Exception:
+        return None
+
+
 def tools_list(args: argparse.Namespace) -> None:
     """Lists both tools and toolsets within a specific app."""
-    print(f"Listing tools and toolsets for App: {args.app_name}")
-
-    app_name = Common._get_app_name(args.app_name)
+    app_name = _resolve_resource_app_name(getattr(args, "app_name", None))
     if not app_name:
         print(
             "Error: Invalid App Name format. Please use the full resource "
             "name in the format 'projects/.../locations/.../apps/...'"
         )
         sys.exit(1)
+
+    print(f"Listing tools and toolsets for App: {app_name}")
 
     try:
         tools_client = Tools(app_name=app_name)
@@ -74,7 +84,7 @@ def tools_list(args: argparse.Namespace) -> None:
 
 def tools_delete(args: argparse.Namespace) -> None:
     """Deletes a specific tool or toolset."""
-    app_name = Common._get_app_name(args.app_name)
+    app_name = _resolve_resource_app_name(getattr(args, "app_name", None))
     if not app_name:
         print(
             "Error: Invalid App Name format. Please use the full resource "
@@ -117,7 +127,7 @@ def tools_delete(args: argparse.Namespace) -> None:
 
 def callbacks_list(args: argparse.Namespace) -> None:
     """Lists callbacks attached to agents."""
-    app_name = Common._get_app_name(args.app_name)
+    app_name = _resolve_resource_app_name(getattr(args, "app_name", None))
     if not app_name:
         print(
             "Error: Invalid App Name format. Please use the full resource "
@@ -186,7 +196,7 @@ def callbacks_list(args: argparse.Namespace) -> None:
 
 def callbacks_delete(args: argparse.Namespace) -> None:
     """Deletes a callback from an agent by index."""
-    app_name = Common._get_app_name(args.app_name)
+    app_name = _resolve_resource_app_name(getattr(args, "app_name", None))
     if not app_name:
         print(
             "Error: Invalid App Name format. Please use the full resource "
@@ -236,7 +246,7 @@ def callbacks_delete(args: argparse.Namespace) -> None:
 
 def variables_list(args: argparse.Namespace) -> None:
     """Lists variable declarations in an app."""
-    app_name = Common._get_app_name(args.app_name)
+    app_name = _resolve_resource_app_name(getattr(args, "app_name", None))
     if not app_name:
         print(
             "Error: Invalid App Name format. Please use the full resource "
@@ -301,7 +311,7 @@ def variables_list(args: argparse.Namespace) -> None:
 
 def variables_delete(args: argparse.Namespace) -> None:
     """Deletes a variable declaration from the app."""
-    app_name = Common._get_app_name(args.app_name)
+    app_name = _resolve_resource_app_name(getattr(args, "app_name", None))
     if not app_name:
         print(
             "Error: Invalid App Name format. Please use the full resource "
@@ -335,8 +345,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     parser_tools_list.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_tools_list.set_defaults(func=tools_list)
 
@@ -345,8 +356,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     parser_tools_delete.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_tools_delete.add_argument(
         "--name",
@@ -371,8 +383,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     parser_callbacks_list.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_callbacks_list.add_argument(
         "--agent-name",
@@ -386,8 +399,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     parser_callbacks_delete.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_callbacks_delete.add_argument(
         "--agent-name",
@@ -430,8 +444,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     parser_variables_list.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_variables_list.set_defaults(func=variables_list)
 
@@ -440,8 +455,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     parser_variables_delete.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_variables_delete.add_argument(
         "--name",

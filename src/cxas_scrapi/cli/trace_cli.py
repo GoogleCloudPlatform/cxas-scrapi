@@ -43,15 +43,16 @@ def add_trace_args(subparser: argparse.ArgumentParser) -> None:
     """Adds the common trace flags shared by every subcommand."""
     subparser.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     subparser.add_argument(
         "--app-dir",
         default=".",
         help=(
             "Path to the pulled app directory (used to read app.json and "
-            "environment.json). Defaults to current directory."
+            "environment.json). Defaults to active profile app_dir or current directory."
         ),
     )
     subparser.add_argument(
@@ -74,9 +75,31 @@ def add_trace_args(subparser: argparse.ArgumentParser) -> None:
 
 
 def _build_traces(args: argparse.Namespace) -> Traces:
+    app_name = getattr(args, "app_name", None)
+    app_dir = getattr(args, "app_dir", None)
+    if not app_name or not app_dir or app_dir == ".":
+        try:
+            import cxas_scrapi.core.workspace as ws
+            if not app_name:
+                app_name = ws.app_name()
+            if not app_dir or app_dir == ".":
+                config = ws.load_workspace_config()
+                app_dir = config.get("app_dir", app_dir or ".")
+        except Exception:
+            pass
+
+    if not app_name:
+        raise ValueError(
+            "App name was not provided on the CLI and could not be loaded from active workspace profile (gecx-config.toml). "
+            "Run 'cxas workspace set --gcp-project-id <project> --deployed-app-id <app_id>' or pass --app-name."
+        )
+
+    args.app_name = app_name
+    args.app_dir = app_dir or "."
+
     return Traces(
         app_name=args.app_name,
-        app_dir=getattr(args, "app_dir", "."),
+        app_dir=args.app_dir,
         env_file=getattr(args, "env_file", None),
         environment=getattr(args, "environment", None),
         trace_config_path=getattr(args, "config", None),

@@ -1665,8 +1665,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_test_tools.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_test_tools.add_argument(
         "--test-file",
@@ -1688,8 +1689,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_test_callbacks.add_argument(
         "--app-dir",
-        required=True,
-        help="The path to the app directory.",
+        required=False,
+        default=None,
+        help="The path to the app directory. (Optional, loaded from active profile if omitted)",
     )
     parser_test_callbacks.add_argument(
         "--agent-name",
@@ -1726,8 +1728,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_test_single_callback.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_test_single_callback.add_argument(
         "--agent-name",
@@ -1763,8 +1766,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_export.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_export.add_argument(
         "--evaluation-id",
@@ -1796,8 +1800,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_push_eval.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_push_eval.add_argument(
         "--file",
@@ -1812,8 +1817,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_run.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_run.add_argument(
         "--evaluation-id",
@@ -2030,8 +2036,8 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_lint.add_argument(
         "--app-dir",
-        default=".",
-        help="Path to the app directory to lint (default: current directory).",
+        default=None,
+        help="Path to the app directory to lint (default: loaded from active profile or current directory).",
     )
     parser_lint.add_argument(
         "--fix",
@@ -2116,8 +2122,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_llm_lint.add_argument(
         "--agent-dir",
-        required=True,
-        help="Path to the sub-agent directory containing instruction.txt.",
+        required=False,
+        default=None,
+        help="Path to the sub-agent directory containing instruction.txt. (Optional, discovered from active profile if omitted)",
     )
     parser_llm_lint.add_argument(
         "--project-id",
@@ -2421,6 +2428,139 @@ def get_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_args_and_print_banner(args: argparse.Namespace) -> None:
+    """Dynamically resolves missing CLI arguments from active workspace profile and prints context banner."""
+    if not hasattr(args, "func"):
+        return
+    func_name = getattr(args.func, "__name__", "")
+    # Skip for workspace/app init/create commands and help prints
+    if func_name in (
+        "workspace_show",
+        "workspace_set",
+        "workspace_create",
+        "workspace_unset",
+        "app_init",
+        "app_create",
+        "run_migration_dashboard",
+        "init_github_action",
+        "<lambda>",
+    ):
+        return
+
+    try:
+        config = ws.load_workspace_config()
+    except Exception:
+        config = {}
+
+    if config:
+        if hasattr(args, "app_name") and getattr(args, "app_name", None) is None:
+            try:
+                args.app_name = ws.app_name()
+            except Exception:
+                pass
+        if hasattr(args, "app_resource_name") and getattr(args, "app_resource_name", None) is None:
+            try:
+                args.app_resource_name = ws.app_name()
+            except Exception:
+                pass
+        if hasattr(args, "app_dir") and getattr(args, "app_dir", None) in (None, "."):
+            args.app_dir = config.get("app_dir", getattr(args, "app_dir", "."))
+        if hasattr(args, "agent_dir") and getattr(args, "agent_dir", None) is None:
+            app_dir_val = config.get("app_dir", "app")
+            try:
+                app_dir_path = Path(ws.resolve_project_dir()) / app_dir_val
+                agents_dir = app_dir_path / "agents"
+                if agents_dir.exists():
+                    agent_subdirs = [
+                        d for d in agents_dir.iterdir()
+                        if d.is_dir() and (d / "instruction.txt").exists()
+                    ]
+                    if len(agent_subdirs) == 1:
+                        args.agent_dir = str(agent_subdirs[0])
+                    elif not agent_subdirs and (app_dir_path / "instruction.txt").exists():
+                        args.agent_dir = str(app_dir_path)
+            except Exception:
+                pass
+        if hasattr(args, "input_dir") and getattr(args, "input_dir", None) is None:
+            args.input_dir = config.get("evals_dir", "evals")
+        if hasattr(args, "output_dir") and getattr(args, "output_dir", None) is None:
+            args.output_dir = config.get("output_dir", ".scrapi-out")
+        if hasattr(args, "model") and getattr(args, "model", None) is None:
+            args.model = config.get("model", "gemini-2.5-flash")
+        if hasattr(args, "modality") and getattr(args, "modality", None) is None:
+            args.modality = config.get("modality", "AUDIO")
+
+    # If JSON output is requested or quiet, skip printing the visual banner
+    if getattr(args, "json_output", False) or getattr(args, "format", "") in ("json", "csv"):
+        return
+
+    if not config:
+        return
+
+    profile = "default"
+    try:
+        workspace_root = ws.find_workspace_root()
+        if workspace_root:
+            active_project_file = Path(workspace_root) / ".scrapi" / "active-project"
+            if active_project_file.is_file():
+                import toml
+                with active_project_file.open("r", encoding="utf-8") as f:
+                    profile = toml.load(f).get("active-profile") or "default"
+    except Exception:
+        pass
+
+    app_name_str = getattr(args, "app_name", None) or getattr(args, "app_resource_name", None)
+    if not app_name_str:
+        try:
+            app_name_str = ws.app_name()
+        except Exception:
+            app_name_str = "N/A"
+
+    project_dir_str = config.get("_project_dir", "")
+    app_dir_str = getattr(args, "app_dir", None) or config.get("app_dir", "app")
+    evals_dir_str = getattr(args, "input_dir", None) or config.get("evals_dir", "evals")
+
+    from rich.console import Console
+    console = Console(file=sys.stderr)
+    console.print(
+        f"[bold cyan][CXAS Workspace][/bold cyan] Profile: [yellow]{profile}[/yellow] | App: [green]{app_name_str}[/green]"
+    )
+    console.print(
+        f"[bold cyan][CXAS Workspace][/bold cyan] Project Dir: [dim]{project_dir_str}[/dim] | App Dir: [dim]{app_dir_str}[/dim] | Evals: [dim]{evals_dir_str}[/dim]"
+    )
+
+    skip_keys = {
+        "func",
+        "parser",
+        "app_name",
+        "app_resource_name",
+        "app_dir",
+        "agent_dir",
+        "input_dir",
+        "output_dir",
+        "project_dir",
+        "json_output",
+        "format",
+        "oauth_token",
+        "target_dir",
+    }
+    cmd_args = {}
+    for k, v in vars(args).items():
+        if k in skip_keys or k.endswith("_command") or k.endswith("_subcommand") or k.startswith("_"):
+            continue
+        if v is not None and v != [] and v != {}:
+            cmd_args[k] = v
+
+    if cmd_args:
+        formatted_args = " | ".join(
+            f"[bold]{k}[/bold]=[cyan]{repr(v)}[/cyan]" if isinstance(v, str) else f"[bold]{k}[/bold]=[magenta]{v}[/magenta]"
+            for k, v in cmd_args.items()
+        )
+        console.print(f"[bold cyan][CXAS Profile][/bold cyan] Args passed: {formatted_args}")
+
+    console.print("-" * 80)
+
+
 def main() -> None:
     parser = get_parser()
     args = parser.parse_args()
@@ -2439,6 +2579,7 @@ def main() -> None:
     )
 
     if hasattr(args, "func"):
+        _resolve_args_and_print_banner(args)
         args.func(args)
     else:
         parser.print_help()
