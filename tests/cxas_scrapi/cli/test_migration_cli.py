@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,7 +46,6 @@ from cxas_scrapi.migration.data_models import (
 def mock_tee_logging(mocker: Any) -> None:
     mocker.patch("cxas_scrapi.cli.migration_cli.start_tee_logging", create=True)
     mocker.patch("cxas_scrapi.cli.migration_cli.close_tee_logging", create=True)
-
 
 
 def _make_config(**overrides) -> MigrationConfig:
@@ -483,6 +483,7 @@ def test_run_end_to_end_builds_config_and_calls_service():
         patch.object(
             migration_cli, "MigrationService", return_value=fake_service
         ),
+        patch("google.auth.default", return_value=(MagicMock(), "p")),
     ):
         migration_cli.run_end_to_end(args)
 
@@ -511,7 +512,10 @@ def test_parse_agent_id_formats(subtests: Any) -> None:
     cli_inst = MigrationCLI()
 
     cases = [
-        ("a4371f49-5982-4293-801b-551cf940ab65", "a4371f49-5982-4293-801b-551cf940ab65"),
+        (
+            "a4371f49-5982-4293-801b-551cf940ab65",
+            "a4371f49-5982-4293-801b-551cf940ab65",
+        ),
         (
             "projects/p/locations/l/agents/a4371f49-5982-4293-801b-551cf940ab65",
             "projects/p/locations/l/agents/a4371f49-5982-4293-801b-551cf940ab65",
@@ -559,7 +563,9 @@ def test_run_migration_dashboard_non_interactive_validation(
     mocker.patch.object(sys, "stdin", MagicMock(isatty=lambda: True))
 
     with subtests.test("Missing source agent ID and zip"):
-        args = argparse.Namespace(run=True, source_agent_id=None, source_zip=None)
+        args = argparse.Namespace(
+            run=True, source_agent_id=None, source_zip=None
+        )
         with pytest.raises(SystemExit) as excinfo:
             migration_cli.run_migration_dashboard(args)
         assert excinfo.value.code == 1
@@ -585,7 +591,9 @@ def test_run_migration_dashboard_non_interactive_validation(
             migration_cli.run_migration_dashboard(args)
         assert excinfo.value.code == 1
 
-    with subtests.test("Valid non-interactive --run delegates to run_end_to_end"):
+    with subtests.test(
+        "Valid non-interactive --run delegates to run_end_to_end"
+    ):
         args_valid = argparse.Namespace(
             run=True,
             source_agent_id="projects/p/locations/l/agents/a",
@@ -596,10 +604,10 @@ def test_run_migration_dashboard_non_interactive_validation(
         mock_e2e.assert_called_once_with(args_valid)
 
 
-
 def test_tee_stream_and_logging(tmp_path: Any, monkeypatch: Any) -> None:
     """Test Tee class object functionality."""
     import cxas_scrapi.cli.migration_cli as mcli
+
     log_p = tmp_path / "tee.log"
     orig_stdout = sys.stdout
     ts = mcli.Tee(str(log_p))
@@ -613,57 +621,113 @@ def test_tee_stream_and_logging(tmp_path: Any, monkeypatch: Any) -> None:
 @patch("cxas_scrapi.cli.migration_cli.Confirm.ask", return_value=True)
 @patch("cxas_scrapi.cli.migration_cli.Prompt.ask")
 @patch("subprocess.run")
-def test_migration_cli_methods(mock_run: MagicMock, mock_ask: MagicMock, mock_confirm: MagicMock, tmp_path: Any) -> None:
+def test_migration_cli_methods(
+    mock_run: MagicMock,
+    mock_ask: MagicMock,
+    mock_confirm: MagicMock,
+    tmp_path: Any,
+) -> None:
     """Test MigrationCLI check_auth, compose_config, and dependency analysis."""
     from cxas_scrapi.cli.migration_cli import MigrationCLI
-    from cxas_scrapi.migration.data_models import DFCXAgentIR, IRMetadata, MigrationIR
+    from cxas_scrapi.migration.data_models import (
+        DFCXAgentIR,
+        IRMetadata,
+        MigrationIR,
+    )
 
     cli_obj = MigrationCLI()
     mock_run.return_value = MagicMock(returncode=0)
     assert cli_obj.check_auth() is True
 
-    mock_ask.side_effect = ["test_proj", "Default Agent", "P", "1", "1", "hub-and-spoke", "Custom API Runner"]
+    mock_ask.side_effect = [
+        "test_proj",
+        "Default Agent",
+        "P",
+        "1",
+        "1",
+        "hub-and-spoke",
+        "Custom API Runner",
+    ]
     cfg = cli_obj.compose_config("Default Agent")
     assert cfg.project_id == "test_proj"
     assert cfg.target_name == "Default Agent"
 
-    ir = DFCXAgentIR(source_agent_id="ag_id", display_name="DFCX Agent", name="projects/p/locations/l/agents/ag_id", default_language_code="en")
+    ir = DFCXAgentIR(
+        source_agent_id="ag_id",
+        display_name="DFCX Agent",
+        name="projects/p/locations/l/agents/ag_id",
+        default_language_code="en",
+    )
     cli_obj.run_dependency_analysis(ir, ir)
-    mig_ir = MigrationIR(metadata=IRMetadata(app_name="Test App", app_id="app_id"))
+    mig_ir = MigrationIR(
+        metadata=IRMetadata(app_name="Test App", app_id="app_id")
+    )
     cli_obj.display_status(mig_ir)
-
 
 
 @patch("cxas_scrapi.cli.migration_cli.run_stage_1")
 @patch("cxas_scrapi.cli.migration_cli.run_stage_2")
 @patch("cxas_scrapi.cli.migration_cli.run_stage_3")
 @patch("cxas_scrapi.cli.migration_cli.run_resume")
-def test_run_migration_stage_router(mock_res: MagicMock, mock_s3: MagicMock, mock_s2: MagicMock, mock_s1: MagicMock) -> None:
+def test_run_migration_stage_router(
+    mock_res: MagicMock,
+    mock_s3: MagicMock,
+    mock_s2: MagicMock,
+    mock_s1: MagicMock,
+) -> None:
     """Test run_migration_dashboard routing across explicit stages 1, 2, 3, and resume."""
     from cxas_scrapi.cli.migration_cli import run_migration_dashboard
-    run_migration_dashboard(argparse.Namespace(optimize=True, stage="1", version_label=None, run=False))
+
+    run_migration_dashboard(
+        argparse.Namespace(
+            optimize=True, stage="1", version_label=None, run=False
+        )
+    )
     mock_s1.assert_called_once()
 
-    run_migration_dashboard(argparse.Namespace(optimize=True, stage="2", version_label=None, run=False))
+    run_migration_dashboard(
+        argparse.Namespace(
+            optimize=True, stage="2", version_label=None, run=False
+        )
+    )
     mock_s2.assert_called_once()
 
-    run_migration_dashboard(argparse.Namespace(optimize=True, stage="3", version_label=None, run=False))
+    run_migration_dashboard(
+        argparse.Namespace(
+            optimize=True, stage="3", version_label=None, run=False
+        )
+    )
     mock_s3.assert_called_once()
 
-    run_migration_dashboard(argparse.Namespace(optimize=True, stage="resume", version_label=None, yes=True, run=False))
+    run_migration_dashboard(
+        argparse.Namespace(
+            optimize=True,
+            stage="resume",
+            version_label=None,
+            yes=True,
+            run=False,
+        )
+    )
     mock_res.assert_called_once()
 
 
 @patch("cxas_scrapi.cli.migration_cli.run_end_to_end")
-def test_run_migration_dashboard_run_and_default(mock_e2e: MagicMock, mocker: Any) -> None:
+def test_run_migration_dashboard_run_and_default(
+    mock_e2e: MagicMock, mocker: Any
+) -> None:
     """Test run_migration_dashboard run=True flow and default dashboard launch."""
     from cxas_scrapi.cli.migration_cli import run_migration_dashboard
+
     # 1. run=True validation errors
     with pytest.raises(SystemExit) as exc:
-        run_migration_dashboard(argparse.Namespace(run=True, source_agent_id=None, source_zip=None))
+        run_migration_dashboard(
+            argparse.Namespace(run=True, source_agent_id=None, source_zip=None)
+        )
     assert exc.value.code == 1
 
-    args_run = argparse.Namespace(run=True, source_agent_id="ag_id", project_id="p", target_name="Target")
+    args_run = argparse.Namespace(
+        run=True, source_agent_id="ag_id", project_id="p", target_name="Target"
+    )
     mock_e2e.return_value = None
     run_migration_dashboard(args_run)
     mock_e2e.assert_called_once_with(args_run)
@@ -671,7 +735,9 @@ def test_run_migration_dashboard_run_and_default(mock_e2e: MagicMock, mocker: An
     # 2. Default dashboard mode
     mock_tui = mocker.patch("cxas_scrapi.cli.migration_cli.MigrationCLI.run")
     mocker.patch("cxas_scrapi.cli.migration_cli.ConversationalAgentsAPI")
-    run_migration_dashboard(argparse.Namespace(run=False, optimize=False, default_agent_name="ag"))
+    run_migration_dashboard(
+        argparse.Namespace(run=False, optimize=False, default_agent_name="ag")
+    )
     mock_tui.assert_called_once()
 
 
@@ -679,28 +745,56 @@ def test_run_migration_dashboard_run_and_default(mock_e2e: MagicMock, mocker: An
 def test_run_post_migration_opt_ins_method(mock_svc_cls: MagicMock) -> None:
     """Test MigrationCLI._run_post_migration_opt_ins async execution."""
     import asyncio
+
     from cxas_scrapi.cli.migration_cli import MigrationCLI
-    from cxas_scrapi.migration.data_models import MigrationConfig, DFCXAgentIR, MigrationIR, IRMetadata
+    from cxas_scrapi.migration.data_models import (
+        DFCXAgentIR,
+        IRMetadata,
+        MigrationConfig,
+        MigrationIR,
+    )
 
     cli_obj = MigrationCLI()
     mock_svc = mock_svc_cls.return_value
-    mock_svc.ir = MigrationIR(metadata=IRMetadata(app_name="Test App", app_id="app_id"))
+    mock_svc.ir = MigrationIR(
+        metadata=IRMetadata(app_name="Test App", app_id="app_id")
+    )
     mock_svc.location = "us"
     mock_svc.run_stage_1.return_value = MagicMock(agents={"a": MagicMock()})
     mock_svc.run_stage_2.return_value = MagicMock(agents={"a": MagicMock()})
     mock_svc.run_stage_3.return_value = (1, 0, 0)
 
-    cfg = MigrationConfig(project_id="p", target_name="Target", persist_bundle=True, optimize_for_cxas=True, gen_unit_tests=True, gen_report=True, model="gemini-3-flash")
-    ir = DFCXAgentIR(source_agent_id="src", display_name="src", name="projects/p/locations/l/agents/src", default_language_code="en")
+    cfg = MigrationConfig(
+        project_id="p",
+        target_name="Target",
+        persist_bundle=True,
+        optimize_for_cxas=True,
+        gen_unit_tests=True,
+        gen_report=True,
+        model="gemini-3-flash",
+    )
+    ir = DFCXAgentIR(
+        source_agent_id="src",
+        display_name="src",
+        name="projects/p/locations/l/agents/src",
+        default_language_code="en",
+    )
     asyncio.run(cli_obj._run_post_migration_opt_ins(mock_svc, cfg, ir))
     mock_svc.persist_bundle.assert_called_once()
 
 
 @patch("cxas_scrapi.cli.migration_cli.asyncio.run")
 @patch("cxas_scrapi.cli.migration_cli._restore_service_and_bundle")
-def test_run_stage_execution_handlers(mock_restore: MagicMock, mock_run: MagicMock) -> None:
+def test_run_stage_execution_handlers(
+    mock_restore: MagicMock, mock_run: MagicMock
+) -> None:
     """Test full execution of run_stage_1, run_stage_2, and run_stage_3."""
-    from cxas_scrapi.cli.migration_cli import run_stage_1, run_stage_2, run_stage_3
+    from cxas_scrapi.cli.migration_cli import (
+        run_stage_1,
+        run_stage_2,
+        run_stage_3,
+    )
+
     mock_svc = MagicMock()
     mock_bundle = MagicMock()
     mock_bundle.config.target_name = "TestAgent"
@@ -708,17 +802,31 @@ def test_run_stage_execution_handlers(mock_restore: MagicMock, mock_run: MagicMo
     mock_run.return_value = (1, 0, 0)  # for stage 3 return tuple
 
     # Stage 1
-    args_s1 = argparse.Namespace(grouping_json=None, version_label="v1", no_persist=False, no_web_confirm=True, auto_confirm_grouping=True)
+    args_s1 = argparse.Namespace(
+        grouping_json=None,
+        version_label="v1",
+        no_persist=False,
+        no_web_confirm=True,
+        auto_confirm_grouping=True,
+    )
     run_stage_1(args_s1)
     assert mock_run.call_count >= 1
 
     # Stage 2
-    args_s2 = argparse.Namespace(version_label="v2", no_persist=True, no_unit_tests=True, no_lint=True, no_report=True)
+    args_s2 = argparse.Namespace(
+        version_label="v2",
+        no_persist=True,
+        no_unit_tests=True,
+        no_lint=True,
+        no_report=True,
+    )
     run_stage_2(args_s2)
     assert mock_run.call_count >= 2
 
     # Stage 3
-    args_s3 = argparse.Namespace(version_label="v3", no_persist=False, architecture="original-hierarchy")
+    args_s3 = argparse.Namespace(
+        version_label="v3", no_persist=False, architecture="original-hierarchy"
+    )
     run_stage_3(args_s3)
     assert mock_run.call_count >= 3
 
@@ -726,34 +834,63 @@ def test_run_stage_execution_handlers(mock_restore: MagicMock, mock_run: MagicMo
 @patch("cxas_scrapi.cli.migration_cli.run_stage_1")
 @patch("cxas_scrapi.cli.migration_cli.Prompt.ask")
 @patch("cxas_scrapi.cli.migration_cli.glob.glob", return_value=["test_ir.json"])
-def test_run_resume_execution(mock_glob: MagicMock, mock_ask: MagicMock, mock_s1: MagicMock, monkeypatch: Any) -> None:
+def test_run_resume_execution(
+    mock_glob: MagicMock,
+    mock_ask: MagicMock,
+    mock_s1: MagicMock,
+    monkeypatch: Any,
+) -> None:
     """Test run_resume bundle picking and stage routing."""
     from cxas_scrapi.cli.migration_cli import run_resume
+
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     mock_ask.side_effect = ["1", "stage_1"]
-    args = argparse.Namespace(target_name=None, ir_bundle=None, project_id="p", location="l", yes=False, no_input=False)
+    args = argparse.Namespace(
+        target_name=None,
+        ir_bundle=None,
+        project_id="p",
+        location="l",
+        yes=False,
+        no_input=False,
+    )
     run_resume(args)
     mock_s1.assert_called_once()
 
 
+@patch("google.auth.default", return_value=(MagicMock(), "p"))
 @patch("cxas_scrapi.cli.migration_cli.asyncio.run")
 @patch("cxas_scrapi.cli.migration_cli.ConversationalAgentsAPI")
-def test_run_end_to_end_execution(mock_api_cls: MagicMock, mock_run: MagicMock) -> None:
+def test_run_end_to_end_execution(
+    mock_api_cls: MagicMock, mock_run: MagicMock, mock_auth: MagicMock
+) -> None:
     """Test run_end_to_end profile parsing and async execution flow."""
     from cxas_scrapi.cli.migration_cli import run_end_to_end
     from cxas_scrapi.migration.data_models import DFCXAgentIR
+
     mock_api = mock_api_cls.return_value
-    mock_api.fetch_full_agent_details.return_value = DFCXAgentIR(source_agent_id="ag_id", display_name="DFCX Agent", name="projects/p/locations/l/agents/ag_id", default_language_code="en")
+    mock_api.fetch_full_agent_details.return_value = DFCXAgentIR(
+        source_agent_id="ag_id",
+        display_name="DFCX Agent",
+        name="projects/p/locations/l/agents/ag_id",
+        default_language_code="en",
+    )
 
     # 1. Standard profile
-    args_std = argparse.Namespace(source_agent_id="ag_id", source_zip=None, profile="standard", project_id="p", location="l", target_name="Target", env="PROD", model="gemini-3-flash", persist_bundle=True, no_optimize=False, no_consolidate=False, yes=True, no_web_confirm=True, auto_confirm_grouping=True)
+    args_std = argparse.Namespace(
+        source_agent_id="ag_id",
+        source_zip=None,
+        profile="standard",
+        project_id="p",
+        location="l",
+        target_name="Target",
+        env="PROD",
+        model="gemini-3-flash",
+        persist_bundle=True,
+        no_optimize=False,
+        no_consolidate=False,
+        yes=True,
+        no_web_confirm=True,
+        auto_confirm_grouping=True,
+    )
     run_end_to_end(args_std)
     assert mock_run.call_count >= 1
-
-
-
-
-
-
-
-

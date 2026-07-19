@@ -130,7 +130,7 @@ def test_cli_installed_help():
             check=True,
         )
         assert result.returncode == 0
-        assert "usage: cxas" in result.stdout
+        assert "usage: cxas" in result.stdout.lower()
     except FileNotFoundError:
         pytest.fail(
             "The 'cxas' command was not found in the environment. "
@@ -144,7 +144,9 @@ def test_cli_installed_help():
 
 
 @mock.patch("cxas_scrapi.core.apps.Apps", autospec=True)
-@mock.patch("cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True)
+@mock.patch(
+    "cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True
+)
 def test_conversations_list(mock_ch_cls, mock_apps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app"
@@ -177,7 +179,9 @@ def test_conversations_list_invalid_app_name(capsys):
 
 
 @mock.patch("cxas_scrapi.core.apps.Apps", autospec=True)
-@mock.patch("cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True)
+@mock.patch(
+    "cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True
+)
 def test_conversations_get(mock_ch_cls, mock_apps_cls):
     args = argparse.Namespace(
         conversation_resource_name="projects/test-project/locations/global/apps/test-app/conversations/test-conv"

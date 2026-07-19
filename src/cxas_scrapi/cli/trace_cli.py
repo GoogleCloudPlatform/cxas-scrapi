@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any
+
 """Argparse subcommand handlers for `cxas trace`.
 
 The handlers are intentionally thin: they only build a `Traces` instance and
@@ -24,7 +28,10 @@ import argparse
 import csv
 import io
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from cxas_scrapi.cli.utils import to_dataclass
 
 if TYPE_CHECKING:
     from cxas_scrapi.core.traces import Traces
@@ -72,7 +79,151 @@ def add_trace_args(subparser: argparse.ArgumentParser) -> None:
     )
 
 
-def _build_traces(args: argparse.Namespace) -> "Traces":
+@dataclass(frozen=False)
+class TraceBaseConfig:
+    """Shared base configuration for trace subcommands.
+
+    Args:
+        app_name: Target app resource name.
+        app_dir: App directory path.
+        env_file: Optional env file path.
+        environment: Target environment.
+        config: Optional trace config YAML path.
+    """
+
+    app_name: str | None = None
+    app_dir: str = "."
+    env_file: str | None = None
+    environment: str | None = None
+    config: str | None = None
+
+
+@dataclass(frozen=False)
+class TraceSearchConfig(TraceBaseConfig):
+    """Configuration for trace search queries."""
+
+    query: str = ""
+    match: str = "phrase"
+    time_filter: str | None = None
+    source: str | None = None
+    sources: list[str] | None = None
+    channel: str | None = None
+    limit: int | None = None
+    page_size: int | None = None
+    id_match: bool = True
+    snippets: bool = False
+    format: str = "table"
+
+
+@dataclass(frozen=False)
+class TraceListConfig(TraceBaseConfig):
+    """Configuration for trace list."""
+
+    time_filter: str | None = None
+    source: str | None = None
+    channel: str | None = None
+    limit: int = 20
+    format: str = "table"
+
+
+@dataclass(frozen=False)
+class TraceGetConfig(TraceBaseConfig):
+    """Configuration for trace get."""
+
+    conversation_id: str = ""
+    format: str = "table"
+    with_logs: bool = False
+    log_level: str | None = None
+    with_audio: bool = False
+    with_analysis: bool = False
+    with_triage: bool = False
+    out: str | None = None
+
+
+@dataclass(frozen=False)
+class TraceLogsConfig(TraceBaseConfig):
+    """Configuration for trace logs."""
+
+    conversation_id: str = ""
+    level: str | None = None
+    format: str = "text"
+
+
+@dataclass(frozen=False)
+class TraceAudioDownloadConfig(TraceBaseConfig):
+    """Configuration for trace audio download."""
+
+    conversation_id: str = ""
+    out: str | None = None
+    output_dir: str = "."
+
+
+@dataclass(frozen=False)
+class TraceAudioAnalyzeConfig(TraceBaseConfig):
+    """Configuration for trace audio analysis."""
+
+    conversation_id: str = ""
+    metric: str | None = None
+
+
+@dataclass(frozen=False)
+class TraceTriageConfig(TraceBaseConfig):
+    """Configuration for trace triage."""
+
+    conversation_id: str = ""
+    metric: str | None = None
+
+
+@dataclass(frozen=False)
+class TraceReplayConfig(TraceBaseConfig):
+    """Configuration for trace replay."""
+
+    conversation_id: str = ""
+    diff: bool = False
+    format: str = "text"
+
+
+@dataclass(frozen=False)
+class TraceStatsConfig(TraceBaseConfig):
+    """Configuration for trace stats."""
+
+    time_filter: str | None = None
+    source: str | None = None
+    channel: str | None = None
+    limit: int | None = None
+    format: str = "table"
+    out: str | None = None
+
+
+@dataclass(frozen=False)
+class TraceBundleConfig(TraceBaseConfig):
+    """Configuration for trace bundle."""
+
+    conversation_id: str = ""
+    out: str | None = None
+    no_logs: bool = False
+    no_audio: bool = False
+    with_analysis: bool = False
+    with_triage: bool = False
+
+
+@dataclass(frozen=False)
+class TraceBugReportConfig(TraceBaseConfig):
+    """Configuration for trace bug reporting."""
+
+    conversation_id: str = ""
+    reason: str | None = None
+    severity: str | None = None
+
+
+@dataclass(frozen=False)
+class TraceOpenConfig(TraceBaseConfig):
+    """Configuration for trace open."""
+
+    conversation_id: str = ""
+
+
+def _build_traces(args: TraceBaseConfig | Any) -> Traces:
     from cxas_scrapi.core.traces import Traces
 
     return Traces(
@@ -87,7 +238,13 @@ def _build_traces(args: argparse.Namespace) -> "Traces":
 # --------------------------------- list -------------------------------------
 
 
-def trace_list(args: argparse.Namespace) -> None:
+def trace_list(config: TraceListConfig | Any) -> None:
+    """Lists conversation traces.
+
+    Args:
+        config: Trace list configuration object or arguments namespace.
+    """
+    args = to_dataclass(TraceListConfig, config)
     try:
         traces = _build_traces(args)
         rows = traces.list(
@@ -146,7 +303,13 @@ def trace_list(args: argparse.Namespace) -> None:
 # --------------------------------- search -----------------------------------
 
 
-def trace_search(args: argparse.Namespace) -> None:
+def trace_search(config: TraceSearchConfig | Any) -> None:
+    """Searches conversation traces.
+
+    Args:
+        config: Trace search configuration object or arguments namespace.
+    """
+    args = to_dataclass(TraceSearchConfig, config)
     try:
         traces = _build_traces(args)
         rows = traces.search(
@@ -795,3 +958,28 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     add_trace_args(p_open)
     p_open.add_argument("conversation_id")
     p_open.set_defaults(func=trace_open)
+
+
+import click
+
+
+@click.group(name="trace")
+def trace_group() -> None:
+    """Conversational transcript trace and debugging tools."""
+
+
+@trace_group.command(name="search")
+@click.argument("query", required=True)
+@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.option(
+    "--match",
+    type=click.Choice(["phrase", "all", "any"]),
+    default="phrase",
+    help="Match mode.",
+)
+@click.option("--snippets", is_flag=True, help="Show transcript snippets.")
+@click.pass_context
+def trace_search_cmd(ctx: click.Context, query: str, **kwargs: Any) -> None:
+    """Search conversation transcripts for query text."""
+    cfg = to_dataclass(TraceSearchConfig, ctx, query=query, **kwargs)
+    trace_search(cfg)

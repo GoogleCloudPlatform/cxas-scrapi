@@ -14,13 +14,14 @@
 
 """Unit tests for :mod:`cxas_scrapi.cli.utils`."""
 
-import argparse
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
+from click.testing import CliRunner
 
-from cxas_scrapi.cli.utils import LazyCallable, cmd_help
+from cxas_scrapi.cli.main import cli
+from cxas_scrapi.cli.utils import LazyCallable, to_dataclass
 
 
 def test_lazy_callable_invokes_target(mocker: Any) -> None:
@@ -31,7 +32,7 @@ def test_lazy_callable_invokes_target(mocker: Any) -> None:
     """
     mock_func = MagicMock(return_value="success")
     mock_module = MagicMock()
-    setattr(mock_module, "my_func", mock_func)
+    mock_module.my_func = mock_func
 
     mocker.patch("importlib.import_module", return_value=mock_module)
 
@@ -40,30 +41,59 @@ def test_lazy_callable_invokes_target(mocker: Any) -> None:
 
     assert res == "success"
     mock_func.assert_called_once_with("arg1", key="val")
-    # Subsequent calls reuse cached function
     lazy("arg2")
     assert mock_func.call_count == 2
 
 
-def test_cmd_help_with_subcommand(capsys: Any) -> None:
-    """Verifies cmd_help handles specific subcommand help requests.
+def test_lazy_callable_getattr_and_dir(mocker: Any) -> None:
+    """Verifies LazyCallable handles staticmethods, class attributes, and __dir__.
 
     Args:
-        capsys: Pytest stdout capture fixture.
+        mocker: Pytest mock fixture.
     """
-    args = argparse.Namespace(help_command="lint")
-    cmd_help(args)
-    captured = capsys.readouterr()
-    assert "Usage: cxas" in captured.out or "lint" in captured.out
+
+    class DummyClass:
+        attr = "val"
+
+        @staticmethod
+        def static_method() -> str:
+            return "static"
+
+    mock_module = MagicMock()
+    mock_module.DummyClass = DummyClass
+
+    mocker.patch("importlib.import_module", return_value=mock_module)
+
+    lazy = LazyCallable("cxas_scrapi.cli.dummy", "DummyClass")
+    assert lazy.attr == "val"
+    assert lazy.static_method() == "static"
+    assert "static_method" in dir(lazy)
 
 
-def test_cmd_help_default(capsys: Any) -> None:
-    """Verifies cmd_help prints general root help when no subcommand is specified.
+def test_help_cmd_with_subcommand() -> None:
+    """Verifies help_cmd handles specific subcommand help requests."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["help", "lint"])
+    assert result.exit_code == 0
+    assert "usage:" in result.output.lower()
 
-    Args:
-        capsys: Pytest stdout capture fixture.
-    """
-    args = argparse.Namespace(help_command=None)
-    cmd_help(args)
-    captured = capsys.readouterr()
-    assert "Usage:" in captured.out or "cxas" in captured.out
+
+def test_help_cmd_default() -> None:
+    """Verifies help_cmd prints general root help when no subcommand is specified."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["help"])
+    assert result.exit_code == 0
+    assert "usage:" in result.output.lower()
+
+
+@dataclass(frozen=False)
+class DummyConfig:
+    foo: str = ""
+    items: list[str] | None = None
+
+
+def test_to_dataclass() -> None:
+    """Verifies to_dataclass converts dictionaries or namespaces into dataclasses cleanly."""
+    obj = to_dataclass(DummyConfig, None, foo="bar", items=("a", "b"))
+    assert obj.foo == "bar"
+    assert obj.items == ["a", "b"]

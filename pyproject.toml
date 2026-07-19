@@ -75,6 +75,8 @@ dev = [
   "pytest-xdist",
   "pytest-cov",
   "pytest-mock",
+  "pytest-timeout",
+  "pytest-subtests",
   "ruff",
   "twine",
   "pre-commit",
@@ -139,7 +141,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/cxas_scrapi/cli/**" = ["PLC0415", "E501"]
+"src/cxas_scrapi/cli/**" = ["PLC0415", "E501", "E402"]
+"tests/cxas_scrapi/cli/**" = ["PLC0415", "E501", "E402"]
+"tests/benchmarks/**" = ["PLC0415", "E501", "E402"]
+"src/cxas_scrapi/utils/lint_rules/schema.py" = ["PLC0415", "E501", "E402"]
+"src/cxas_scrapi/migration/__init__.py" = ["PLC0415", "E501", "E402"]
+"src/cxas_scrapi/utils/__init__.py" = ["PLC0415", "E501", "E402"]
 "src/cxas_scrapi/migration/prompts.py" = ["E501"]
 "src/cxas_scrapi/prompts/llm_lint_prompts.py" = ["E501"]
 # html_preview is dominated by HTML/CSS template strings; wrapping them would

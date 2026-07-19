@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any
+
 """CLI module for handling Insights Operations."""
 
 # Copyright 2026 Google LLC
@@ -18,6 +22,11 @@ import argparse
 import logging
 import sys
 import tempfile
+from dataclasses import dataclass
+
+from cxas_scrapi.cli.utils import LazyCallable, to_dataclass
+
+Scorecards = LazyCallable("cxas_scrapi.core.scorecards", "Scorecards")
 
 
 def _get_project_and_location_from_parent(parent: str) -> tuple[str, str]:
@@ -32,10 +41,228 @@ def _get_project_and_location_from_parent(parent: str) -> tuple[str, str]:
     return parts[1], parts[3]
 
 
-def handle_list(args: argparse.Namespace) -> None:
-    """Handles the 'insights list' command."""
+@dataclass(frozen=False)
+class InsightsListConfig:
+    """Configuration for insights list."""
+
+    parent: str
+    app_name: str | None = None
+
+
+@dataclass(frozen=False)
+class InsightsExportConfig:
+    """Configuration for insights export."""
+
+    scorecard_name: str
+    template: str
+    app_name: str | None = None
+    output_file: str | None = None
+
+
+@dataclass(frozen=False)
+class InsightsImportConfig:
+    """Configuration for insights import."""
+
+    template: str
+    parent: str
+    app_name: str | None = None
+    scorecard_name: str | None = None
+    input_file: str | None = None
+
+
+@dataclass(frozen=False)
+class InsightsCopyConfig:
+    """Configuration for insights copy."""
+
+    scorecard_name: str
+    dst_scorecard_name: str
+    parent: str
+    source_app: str | None = None
+    target_app: str | None = None
+
+
+@dataclass(frozen=False)
+class CreateScorecardConfig:
+    """Configuration for scorecard creation."""
+
+    parent: str
+    scorecard_id: str
+    display_name: str | None = None
+    description: str | None = None
+    template: str | None = None
+    app_name: str | None = None
+    scorecard_name: str | None = None
+
+
+@dataclass(frozen=False)
+class AddQuestionConfig:
+    """Configuration for adding scorecard questions."""
+
+    revision_name: str
+    question_body: str
+    answer_choices: str | None = None
+    answer_instructions: str | None = None
+    abbreviation: str | None = None
+    app_name: str | None = None
+    scorecard_name: str | None = None
+    question_text: str | None = None
+
+
+@dataclass(frozen=False)
+class ListTopicModelsConfig:
+    """Configuration for listing topic models."""
+
+    parent: str
+    app_name: str | None = None
+
+
+@dataclass(frozen=False)
+class CreateTopicModelConfig:
+    """Configuration for creating topic models."""
+
+    parent: str
+    display_name: str
+    filter: str | None = None
+    deploy: bool = False
+    app_name: str | None = None
+    topic_model_name: str | None = None
+
+
+@dataclass(frozen=False)
+class DeployTopicModelConfig:
+    """Configuration for deploying topic models."""
+
+    issue_model_name: str
+    app_name: str | None = None
+    topic_model_name: str | None = None
+
+
+@dataclass(frozen=False)
+class UndeployTopicModelConfig:
+    """Configuration for undeploying topic models."""
+
+    issue_model_name: str
+    app_name: str | None = None
+    topic_model_name: str | None = None
+
+
+@dataclass(frozen=False)
+class GetTopicModelConfig:
+    """Configuration for getting topic models."""
+
+    issue_model_name: str
+    include_stats: bool = False
+    app_name: str | None = None
+    topic_model_name: str | None = None
+
+
+@dataclass(frozen=False)
+class ListTopicsConfig:
+    """Configuration for listing topics."""
+
+    issue_model_name: str
+    app_name: str | None = None
+    topic_model_name: str | None = None
+
+
+@dataclass(frozen=False)
+class ListAnalysisRulesConfig:
+    """Configuration for listing analysis rules."""
+
+    parent: str
+    app_name: str | None = None
+
+
+@dataclass(frozen=False)
+class ActivateScorecardConfig:
+    """Configuration for activating scorecards."""
+
+    revision_name: str
+    wait: bool = False
+    timeout: float | int = 300.0
+    app_name: str | None = None
+    scorecard_name: str | None = None
+
+
+@dataclass(frozen=False)
+class ValidateScorecardConfig:
+    """Configuration for validating scorecards."""
+
+    revision_name: str
+    strict: bool = False
+    app_name: str | None = None
+    scorecard_name: str | None = None
+
+
+@dataclass(frozen=False)
+class CreateAnalysisRuleConfig:
+    """Configuration for creating analysis rules."""
+
+    display_name: str
+    parent: str
+    filter: str | None = None
+    scorecard_revisions: list[str] | str | tuple[str, ...] | None = None
+    issue_models: list[str] | str | tuple[str, ...] | None = None
+    run_summarization: bool = False
+    run_sentiment: bool = False
+    active: bool = True
+    rule_id: str | None = None
+    app_name: str | None = None
+    rule_name: str | None = None
+
+
+@dataclass(frozen=False)
+class ActivateAnalysisRuleConfig:
+    """Configuration for activating analysis rules."""
+
+    rule_name: str
+    active: bool = True
+
+
+@dataclass(frozen=False)
+class GetAnalysisRuleConfig:
+    """Configuration for getting analysis rules."""
+
+    rule_name: str
+
+
+@dataclass(frozen=False)
+class DeleteAnalysisRuleConfig:
+    """Configuration for deleting analysis rules."""
+
+    rule_name: str
+
+
+@dataclass(frozen=False)
+class SmokeTestScorecardConfig:
+    """Configuration for smoke testing scorecards."""
+
+    scorecard_name: str
+    parent: str
+    conversations: list[str] | str | tuple[str, ...] | None = None
+    simulate_file: str | None = None
+
+
+@dataclass(frozen=False)
+class AnalyzeMetricsConfig:
+    """Configuration for analyzing metrics."""
+
+    parent: str
+    time_window: str = "7d"
+    app_name: str | None = None
+    filter: str | None = None
+    json_output: bool = False
+    html_output: str | None = None
+
+
+def handle_list(config: InsightsListConfig | Any) -> None:
+    """Handles the 'insights list' command.
+
+    Args:
+        config: Insights list configuration object or arguments namespace.
+    """
+    args = to_dataclass(InsightsListConfig, config)
     print(f"Listing scorecards in: {args.parent}")
-    from cxas_scrapi.core.scorecards import Scorecards
 
     project_id, location = _get_project_and_location_from_parent(args.parent)
     scorecards_client = Scorecards(project_id=project_id, location=location)
@@ -49,11 +276,15 @@ def handle_list(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_export(args: argparse.Namespace) -> None:
-    """Handles the 'insights export' command."""
+def handle_export(config: InsightsExportConfig | Any) -> None:
+    """Handles the 'insights export' command.
+
+    Args:
+        config: Insights export configuration object or arguments namespace.
+    """
+    args = to_dataclass(InsightsExportConfig, config)
     print(f"Exporting scorecard {args.scorecard_name} to {args.template}")
     import cxas_scrapi.utils.scorecard_template_manager as template_manager
-    from cxas_scrapi.core.scorecards import Scorecards
 
     # Extract project/location from the full scorecard name.
     # Format: projects/PROJ/locations/LOC/qaScorecards/ID
@@ -91,8 +322,13 @@ def handle_export(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_import(args: argparse.Namespace) -> None:
-    """Handles the 'insights import' command."""
+def handle_import(config: InsightsImportConfig | Any) -> None:
+    """Handles the 'insights import' command.
+
+    Args:
+        config: Insights import configuration object or arguments namespace.
+    """
+    args = to_dataclass(InsightsImportConfig, config)
     if not args.scorecard_name and not args.parent:
         print(
             "Error: Must provide either --scorecard_name or --parent for "
@@ -134,8 +370,13 @@ def handle_import(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_copy(args: argparse.Namespace) -> None:
-    """Handles the 'insights copy' command."""
+def handle_copy(config: InsightsCopyConfig | Any) -> None:
+    """Handles the 'insights copy' command.
+
+    Args:
+        config: Insights copy configuration object or arguments namespace.
+    """
+    args = to_dataclass(InsightsCopyConfig, config)
     if not args.dst_scorecard_name and not args.parent:
         print(
             "Error: Must provide either --dst_scorecard_name or --parent "
@@ -148,17 +389,17 @@ def handle_copy(args: argparse.Namespace) -> None:
     with tempfile.NamedTemporaryFile(suffix=".json", mode="w") as tmp_file:
         template_path = tmp_file.name
 
-        # Shim the args for the export internal call
-        export_args = argparse.Namespace()
-        export_args.scorecard_name = args.scorecard_name
-        export_args.template = template_path
+        export_args = InsightsExportConfig(
+            scorecard_name=args.scorecard_name,
+            template=template_path,
+        )
         handle_export(export_args)
 
-        # Shim the args for the import internal call
-        import_args = argparse.Namespace()
-        import_args.scorecard_name = args.dst_scorecard_name
-        import_args.parent = args.parent
-        import_args.template = template_path
+        import_args = InsightsImportConfig(
+            scorecard_name=args.dst_scorecard_name,
+            parent=args.parent,
+            template=template_path,
+        )
         handle_import(import_args)
 
     print("Successfully completed copy operation.")
@@ -167,11 +408,15 @@ def handle_copy(args: argparse.Namespace) -> None:
 # --- New Scorecard Handlers ---
 
 
-def handle_create_scorecard(args: argparse.Namespace) -> None:
-    """Handles the 'insights create-scorecard' command."""
+def handle_create_scorecard(config: CreateScorecardConfig | Any) -> None:
+    """Handles the 'insights create-scorecard' command.
+
+    Args:
+        config: Create scorecard configuration object or arguments namespace.
+    """
+    args = to_dataclass(CreateScorecardConfig, config)
     print(f"Creating scorecard {args.scorecard_id} under {args.parent}...")
     import cxas_scrapi.utils.scorecard_template_manager as template_manager
-    from cxas_scrapi.core.scorecards import Scorecards
 
     project_id, location = _get_project_and_location_from_parent(args.parent)
     scorecards_client = Scorecards(project_id=project_id, location=location)
@@ -195,10 +440,14 @@ def handle_create_scorecard(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_add_question(args: argparse.Namespace) -> None:
-    """Handles the 'insights add-question' command."""
+def handle_add_question(config: AddQuestionConfig | Any) -> None:
+    """Handles the 'insights add-question' command.
+
+    Args:
+        config: Add question configuration object or arguments namespace.
+    """
+    args = to_dataclass(AddQuestionConfig, config)
     print(f"Adding question to revision {args.revision_name}...")
-    from cxas_scrapi.core.scorecards import Scorecards
 
     project_id, location = _get_project_and_location_from_parent(
         args.revision_name
@@ -238,16 +487,22 @@ def handle_add_question(args: argparse.Namespace) -> None:
 # --- Topic Models (IssueModels) Handlers ---
 
 
-def handle_list_topic_models(args: argparse.Namespace) -> None:
-    """Handles the 'insights list-topic-models' command."""
-    print(f"Listing topic models in: {args.parent}")
+def handle_list_topic_models(config: ListTopicModelsConfig | Any) -> None:
+    """Handles the 'insights list-topic-models' command.
+
+    Args:
+        config: List topic models configuration object or arguments namespace.
+    """
+    args = to_dataclass(ListTopicModelsConfig, config)
+    target_parent = args.parent or args.app_name
+    print(f"Listing topic models in: {target_parent}")
     from cxas_scrapi.core.issue_models import IssueModels
 
-    project_id, location = _get_project_and_location_from_parent(args.parent)
+    project_id, location = _get_project_and_location_from_parent(target_parent)
     im_client = IssueModels(project_id=project_id, location=location)
 
     try:
-        models = im_client.list_topic_models(parent=args.parent)
+        models = im_client.list_topic_models(parent=target_parent)
         for m in models:
             state = m.get("state", "UNKNOWN")
             print(
@@ -258,12 +513,20 @@ def handle_list_topic_models(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_create_topic_model(args: argparse.Namespace) -> None:
-    """Handles the 'insights create-topic-model' command."""
-    print(f"Creating topic model '{args.display_name}' under {args.parent}...")
+def handle_create_topic_model(config: CreateTopicModelConfig | Any) -> None:
+    """Handles the 'insights create-topic-model' command.
+
+    Args:
+        config: Create topic model configuration object or arguments namespace.
+    """
+    args = to_dataclass(CreateTopicModelConfig, config)
+    target_parent = args.parent or args.app_name
+    print(
+        f"Creating topic model '{args.display_name}' under {target_parent}..."
+    )
     from cxas_scrapi.core.issue_models import IssueModels
 
-    project_id, location = _get_project_and_location_from_parent(args.parent)
+    project_id, location = _get_project_and_location_from_parent(target_parent)
     im_client = IssueModels(project_id=project_id, location=location)
 
     try:
@@ -271,7 +534,7 @@ def handle_create_topic_model(args: argparse.Namespace) -> None:
             display_name=args.display_name,
             app_name=getattr(args, "app_name", None),
             filter_str=getattr(args, "filter", None),
-            parent=args.parent,
+            parent=target_parent,
             deploy=getattr(args, "deploy", True),
         )
         print(
@@ -282,72 +545,88 @@ def handle_create_topic_model(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_deploy_topic_model(args: argparse.Namespace) -> None:
-    """Handles the 'insights deploy-topic-model' command."""
-    print(f"Deploying topic model {args.issue_model_name}...")
+def handle_deploy_topic_model(config: DeployTopicModelConfig | Any) -> None:
+    """Handles the 'insights deploy-topic-model' command.
+
+    Args:
+        config: Deploy topic model configuration object or arguments namespace.
+    """
+    args = to_dataclass(DeployTopicModelConfig, config)
+    target_model = args.issue_model_name or args.topic_model_name
+    print(f"Deploying topic model {target_model}...")
     from cxas_scrapi.core.issue_models import IssueModels
 
-    project_id, location = _get_project_and_location_from_parent(
-        args.issue_model_name
-    )
+    project_id, location = _get_project_and_location_from_parent(target_model)
     im_client = IssueModels(project_id=project_id, location=location)
     try:
-        im_client.deploy_issue_model(args.issue_model_name)
+        im_client.deploy_issue_model(target_model)
         print("Successfully initiated deploy operation.")
     except Exception as e:
         print(f"Failed to deploy topic model: {e}")
         sys.exit(1)
 
 
-def handle_undeploy_topic_model(args: argparse.Namespace) -> None:
-    """Handles the 'insights undeploy-topic-model' command."""
-    print(f"Undeploying topic model {args.issue_model_name}...")
+def handle_undeploy_topic_model(config: UndeployTopicModelConfig | Any) -> None:
+    """Handles the 'insights undeploy-topic-model' command.
+
+    Args:
+        config: Undeploy topic model configuration object or arguments namespace.
+    """
+    args = to_dataclass(UndeployTopicModelConfig, config)
+    target_model = args.issue_model_name or args.topic_model_name
+    print(f"Undeploying topic model {target_model}...")
     from cxas_scrapi.core.issue_models import IssueModels
 
-    project_id, location = _get_project_and_location_from_parent(
-        args.issue_model_name
-    )
+    project_id, location = _get_project_and_location_from_parent(target_model)
     im_client = IssueModels(project_id=project_id, location=location)
     try:
-        im_client.undeploy_issue_model(args.issue_model_name)
+        im_client.undeploy_issue_model(target_model)
         print("Successfully initiated undeploy operation.")
     except Exception as e:
         print(f"Failed to undeploy topic model: {e}")
         sys.exit(1)
 
 
-def handle_get_topic_model(args: argparse.Namespace) -> None:
-    """Handles the 'insights get-topic-model' command."""
+def handle_get_topic_model(config: GetTopicModelConfig | Any) -> None:
+    """Handles the 'insights get-topic-model' command.
+
+    Args:
+        config: Get topic model configuration object or arguments namespace.
+    """
+    args = to_dataclass(GetTopicModelConfig, config)
+    target_model = args.issue_model_name or args.topic_model_name
     from cxas_scrapi.core.issue_models import IssueModels
 
-    project_id, location = _get_project_and_location_from_parent(
-        args.issue_model_name
-    )
+    project_id, location = _get_project_and_location_from_parent(target_model)
     im_client = IssueModels(project_id=project_id, location=location)
     try:
-        model = im_client.get_topic_model(args.issue_model_name)
+        model = im_client.get_topic_model(target_model)
         print(f"Topic Model: {model['name']}")
         print(f"Display Name: {model.get('displayName')}")
         print(f"State: {model.get('state')}")
         if getattr(args, "include_stats", False):
-            stats = im_client.calculate_issue_model_stats(args.issue_model_name)
+            stats = im_client.calculate_issue_model_stats(target_model)
             print(f"Stats: {stats}")
     except Exception as e:
         print(f"Failed to get topic model: {e}")
         sys.exit(1)
 
 
-def handle_list_topics(args: argparse.Namespace) -> None:
-    """Handles the 'insights list-topics' command."""
+def handle_list_topics(config: ListTopicsConfig | Any) -> None:
+    """Handles the 'insights list-topics' command.
+
+    Args:
+        config: List topics configuration object or arguments namespace.
+    """
+    args = to_dataclass(ListTopicsConfig, config)
+    target_model = args.issue_model_name or args.topic_model_name
     from cxas_scrapi.core.issue_models import IssueModels
 
-    project_id, location = _get_project_and_location_from_parent(
-        args.issue_model_name
-    )
+    project_id, location = _get_project_and_location_from_parent(target_model)
     im_client = IssueModels(project_id=project_id, location=location)
     try:
-        issues = im_client.list_issues(args.issue_model_name)
-        print(f"Found {len(issues)} topics for model {args.issue_model_name}:")
+        issues = im_client.list_issues(target_model)
+        print(f"Found {len(issues)} topics for model {target_model}:")
         for i in issues:
             print(f" - {i['name']}: {i.get('displayName', 'N/A')}")
     except Exception as e:
@@ -358,15 +637,21 @@ def handle_list_topics(args: argparse.Namespace) -> None:
 # --- Analysis Rules Handlers ---
 
 
-def handle_list_analysis_rules(args: argparse.Namespace) -> None:
-    """Handles the 'insights list-analysis-rules' command."""
-    print(f"Listing analysis rules in: {args.parent}")
+def handle_list_analysis_rules(config: ListAnalysisRulesConfig | Any) -> None:
+    """Handles the 'insights list-analysis-rules' command.
+
+    Args:
+        config: List analysis rules configuration object or arguments namespace.
+    """
+    args = to_dataclass(ListAnalysisRulesConfig, config)
+    target_parent = args.parent or args.app_name
+    print(f"Listing analysis rules in: {target_parent}")
     from cxas_scrapi.core.analysis_rules import AnalysisRules
 
-    project_id, location = _get_project_and_location_from_parent(args.parent)
+    project_id, location = _get_project_and_location_from_parent(target_parent)
     ar_client = AnalysisRules(project_id=project_id, location=location)
     try:
-        rules = ar_client.list_analysis_rules(parent=args.parent)
+        rules = ar_client.list_analysis_rules(parent=target_parent)
         for r in rules:
             print(
                 f"Rule: {r['name']} ({r.get('displayName', 'N/A')}) - Active: {r.get('active', False)}"
@@ -376,13 +661,14 @@ def handle_list_analysis_rules(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_activate_scorecard(args: argparse.Namespace) -> None:
-    """Handles the 'insights activate-scorecard' (and deploy-scorecard) command."""
-    from cxas_scrapi.core.scorecards import Scorecards
+def handle_activate_scorecard(config: ActivateScorecardConfig | Any) -> None:
+    """Handles the 'insights activate-scorecard' (and deploy-scorecard) command.
 
-    rev_name = getattr(args, "revision_name", None) or getattr(
-        args, "scorecard_name", None
-    )
+    Args:
+        config: Activate scorecard configuration object or arguments namespace.
+    """
+    args = to_dataclass(ActivateScorecardConfig, config)
+    rev_name = args.revision_name or args.scorecard_name
     if not rev_name:
         print("Error: Must specify --revision-name.")
         sys.exit(1)
@@ -415,13 +701,14 @@ def handle_activate_scorecard(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_validate_scorecard(args: argparse.Namespace) -> None:
-    """Handles the 'insights validate-scorecard' command."""
-    from cxas_scrapi.core.scorecards import Scorecards
+def handle_validate_scorecard(config: ValidateScorecardConfig | Any) -> None:
+    """Handles the 'insights validate-scorecard' command.
 
-    rev_name = getattr(args, "revision_name", None) or getattr(
-        args, "scorecard_name", None
-    )
+    Args:
+        config: Validate scorecard configuration object or arguments namespace.
+    """
+    args = to_dataclass(ValidateScorecardConfig, config)
+    rev_name = args.revision_name or args.scorecard_name
     if not rev_name:
         print("Error: Must specify --revision-name.")
         sys.exit(1)
@@ -452,26 +739,35 @@ def handle_validate_scorecard(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_create_analysis_rule(args: argparse.Namespace) -> None:
-    """Handles the 'insights create-analysis-rule' command."""
+def handle_create_analysis_rule(config: CreateAnalysisRuleConfig | Any) -> None:
+    """Handles the 'insights create-analysis-rule' command.
+
+    Args:
+        config: Create analysis rule configuration object or arguments namespace.
+    """
+    args = to_dataclass(CreateAnalysisRuleConfig, config)
+    target_parent = args.parent or args.app_name
     print(
-        f"Creating analysis rule '{args.display_name}' under {args.parent}..."
+        f"Creating analysis rule '{args.display_name}' under {target_parent}..."
     )
     from cxas_scrapi.core.analysis_rules import AnalysisRules
-    from cxas_scrapi.core.scorecards import Scorecards
 
-    project_id, location = _get_project_and_location_from_parent(args.parent)
+    project_id, location = _get_project_and_location_from_parent(target_parent)
     ar_client = AnalysisRules(project_id=project_id, location=location)
     sc_client = Scorecards(project_id=project_id, location=location)
 
     sc_list = (
         args.scorecard_revisions.split(",")
-        if getattr(args, "scorecard_revisions", None)
+        if isinstance(args.scorecard_revisions, str)
+        else list(args.scorecard_revisions)
+        if args.scorecard_revisions
         else None
     )
     im_list = (
         args.issue_models.split(",")
-        if getattr(args, "issue_models", None)
+        if isinstance(args.issue_models, str)
+        else list(args.issue_models)
+        if args.issue_models
         else None
     )
 
@@ -508,7 +804,7 @@ def handle_create_analysis_rule(args: argparse.Namespace) -> None:
             run_summarization=getattr(args, "run_summarization", True),
             run_sentiment=getattr(args, "run_sentiment", True),
             active=getattr(args, "active", True),
-            parent=args.parent,
+            parent=target_parent,
             rule_id=getattr(args, "rule_id", None),
         )
         print(f"Successfully created analysis rule: {rule['name']}")
@@ -517,8 +813,15 @@ def handle_create_analysis_rule(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_activate_analysis_rule(args: argparse.Namespace) -> None:
-    """Handles the 'insights activate-analysis-rule' command."""
+def handle_activate_analysis_rule(
+    config: ActivateAnalysisRuleConfig | Any,
+) -> None:
+    """Handles the 'insights activate-analysis-rule' command.
+
+    Args:
+        config: Activate analysis rule configuration object or arguments namespace.
+    """
+    args = to_dataclass(ActivateAnalysisRuleConfig, config)
     print(f"Setting active={args.active} on rule {args.rule_name}...")
     from cxas_scrapi.core.analysis_rules import AnalysisRules
 
@@ -532,8 +835,13 @@ def handle_activate_analysis_rule(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_get_analysis_rule(args: argparse.Namespace) -> None:
-    """Handles the 'insights get-analysis-rule' command."""
+def handle_get_analysis_rule(config: GetAnalysisRuleConfig | Any) -> None:
+    """Handles the 'insights get-analysis-rule' command.
+
+    Args:
+        config: Get analysis rule configuration object or arguments namespace.
+    """
+    args = to_dataclass(GetAnalysisRuleConfig, config)
     from cxas_scrapi.core.analysis_rules import AnalysisRules
 
     project_id, location = _get_project_and_location_from_parent(args.rule_name)
@@ -550,8 +858,13 @@ def handle_get_analysis_rule(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_delete_analysis_rule(args: argparse.Namespace) -> None:
-    """Handles the 'insights delete-analysis-rule' command."""
+def handle_delete_analysis_rule(config: DeleteAnalysisRuleConfig | Any) -> None:
+    """Handles the 'insights delete-analysis-rule' command.
+
+    Args:
+        config: Delete analysis rule configuration object or arguments namespace.
+    """
+    args = to_dataclass(DeleteAnalysisRuleConfig, config)
     print(f"Deleting analysis rule {args.rule_name}...")
     from cxas_scrapi.core.analysis_rules import AnalysisRules
 
@@ -568,8 +881,13 @@ def handle_delete_analysis_rule(args: argparse.Namespace) -> None:
 # --- Smoke Test & Metrics Handlers ---
 
 
-def handle_smoke_test_scorecard(args: argparse.Namespace) -> None:
-    """Handles the 'insights smoke-test-scorecard' command."""
+def handle_smoke_test_scorecard(config: SmokeTestScorecardConfig | Any) -> None:
+    """Handles the 'insights smoke-test-scorecard' command.
+
+    Args:
+        config: Smoke test scorecard configuration object or arguments namespace.
+    """
+    args = to_dataclass(SmokeTestScorecardConfig, config)
     print(f"Running smoke test for scorecard {args.scorecard_name}...")
     import json
 
@@ -592,6 +910,8 @@ def handle_smoke_test_scorecard(args: argparse.Namespace) -> None:
     if getattr(args, "conversations", None):
         conv_list.extend(
             [c.strip() for c in args.conversations.split(",") if c.strip()]
+            if isinstance(args.conversations, str)
+            else list(args.conversations)
         )
     if getattr(args, "simulate_file", None):
         try:
@@ -638,16 +958,22 @@ def handle_smoke_test_scorecard(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def handle_analyze_metrics(args: argparse.Namespace) -> None:
-    """Handles the 'insights analyze-metrics' command."""
+def handle_analyze_metrics(config: AnalyzeMetricsConfig | Any) -> None:
+    """Handles the 'insights analyze-metrics' command.
+
+    Args:
+        config: Analyze metrics configuration object or arguments namespace.
+    """
+    args = to_dataclass(AnalyzeMetricsConfig, config)
+    target_parent = args.parent or args.app_name
     print(
-        f"Aggregating insights metrics under {args.parent} (time_window={args.time_window})..."
+        f"Aggregating insights metrics under {target_parent} (time_window={args.time_window})..."
     )
     import json
 
     from cxas_scrapi.utils.insights_analytics import InsightsAnalytics
 
-    project_id, location = _get_project_and_location_from_parent(args.parent)
+    project_id, location = _get_project_and_location_from_parent(target_parent)
     analytics = InsightsAnalytics(project_id=project_id, location=location)
 
     try:
@@ -1052,3 +1378,21 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
         "--json-output", help="Optional output path for JSON metrics report."
     )
     parser_metrics.set_defaults(func=handle_analyze_metrics)
+
+
+import click
+
+
+@click.group(name="insights")
+def insights_group() -> None:
+    """Quality AI & CCAI Insights management."""
+
+
+@insights_group.command(name="list-scorecards")
+@click.option("--project-id", help="GCP Project ID.")
+@click.option("--location", help="GCP Location.")
+@click.pass_context
+def insights_list_scorecards_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """List quality scorecards."""
+    cfg = to_dataclass(InsightsListConfig, ctx, **kwargs)
+    handle_list(cfg)

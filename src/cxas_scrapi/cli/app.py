@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """CLI subcommands for managing CXAS Apps."""
 
 # Copyright 2026 Google LLC
@@ -14,7 +16,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
 import io
 import logging
 import os
@@ -23,19 +24,146 @@ import sys
 import tempfile
 import time
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from cxas_scrapi.core.apps import Apps
-from cxas_scrapi.core.common import Common
-from cxas_scrapi.core.versions import Versions
+from cxas_scrapi.cli.utils import LazyCallable, to_dataclass
+
+Apps = LazyCallable("cxas_scrapi.core.apps", "Apps")
+Common = LazyCallable("cxas_scrapi.core.common", "Common")
+Versions = LazyCallable("cxas_scrapi.core.versions", "Versions")
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_app_args(
-    app_identifier: str, args: argparse.Namespace
-) -> tuple[Apps, str, str]:
+@dataclass(frozen=False)
+class AppPushConfig:
+    """Configuration for app push operations."""
+
+    app_dir: str = "."
+    to: str | None = None
+    app_name: str | None = None
+    display_name: str | None = None
+    project_id: str | None = None
+    location: str | None = None
+    env_file: str | None = None
+    create_version: bool = False
+    version_description: str | None = None
+    overwrite: bool = False
+    wait: bool = False
+    force: bool = False
+
+
+@dataclass(frozen=False)
+class PushResult:
+    """Result returned by app_push operation."""
+
+    app_name: str | None = None
+    created_version_name: str | None = None
+
+
+@dataclass(frozen=False)
+class AppPullConfig:
+    """Configuration for app pull operations."""
+
+    app_name: str | None = None
+    app: str | None = None
+    target_dir: str = "."
+    output_dir: str = "."
+    overwrite: bool = False
+    force: bool = False
+
+
+@dataclass(frozen=False)
+class AppLintConfig:
+    """Configuration for app linting operations."""
+
+    app_dir: str = "."
+    list_rules: bool = False
+    output_format: str = "text"
+    json_output: bool = False
+    fix: bool = False
+    agents: list[str] | str | tuple[str, ...] | None = None
+    agent: list[str] | str | tuple[str, ...] | None = None
+    tools: list[str] | str | tuple[str, ...] | None = None
+    tool: list[str] | str | tuple[str, ...] | None = None
+    toolset: list[str] | str | tuple[str, ...] | None = None
+    guardrail: list[str] | str | tuple[str, ...] | None = None
+    evaluation: list[str] | str | tuple[str, ...] | None = None
+    evaluation_expectations: list[str] | str | tuple[str, ...] | None = None
+    validate_only: bool = False
+    only: list[str] | str | tuple[str, ...] | None = None
+    rule: list[str] | str | tuple[str, ...] | None = None
+
+
+@dataclass(frozen=False)
+class AppInitConfig:
+    """Configuration for app initialization."""
+
+    target_dir: str = "."
+    app_dir: str = "."
+    display_name: str | None = None
+    force: bool = False
+    no_input: bool = False
+
+
+@dataclass(frozen=False)
+class AppCreateConfig:
+    """Configuration for app creation."""
+
+    display_name: str | None = None
+    name: str | None = None
+    app_id: str | None = None
+    description: str | None = None
+    project_id: str | None = None
+    location: str | None = None
+
+
+@dataclass(frozen=False)
+class AppDeleteConfig:
+    """Configuration for app deletion."""
+
+    app_name: str | None = None
+    app: str | None = None
+    display_name: str | None = None
+    project_id: str | None = None
+    location: str | None = None
+    force: bool = False
+
+
+@dataclass(frozen=False)
+class AppBranchConfig:
+    """Configuration for app branch creation."""
+
+    source: str = ""
+    new_name: str = ""
+    app_name: str | None = None
+    branch_name: str | None = None
+    env_file: str | None = None
+    project_id: str | None = None
+    location: str | None = None
+
+
+@dataclass(frozen=False)
+class AppsListConfig:
+    """Configuration for listing apps."""
+
+    project_id: str | None = None
+    location: str | None = None
+
+
+@dataclass(frozen=False)
+class AppsGetConfig:
+    """Configuration for getting app details."""
+
+    app_name: str | None = None
+    app: str | None = None
+    project_id: str | None = None
+    location: str | None = None
+
+
+def _resolve_app_args(app_identifier: str, args: Any) -> tuple[Apps, str, str]:
     """Resolves project, location, Apps client, app_name, and display_name."""
     project_id = (
         Common._get_project_id(app_identifier)
@@ -87,17 +215,23 @@ def _handle_import_result(result: Any, success_verb: str) -> str | None:
     return app_name
 
 
-def app_pull(args: argparse.Namespace) -> None:
-    """Handles the 'pull' command."""
-    print(f"Pulling app: {args.app}")
+def app_pull(config: AppPullConfig | Any) -> None:
+    """Handles the 'pull' command.
 
-    apps_client, app_name, _ = _resolve_app_args(args.app, args)
+    Args:
+        config: App pull configuration object or arguments namespace.
+    """
+    args = to_dataclass(AppPullConfig, config)
+    target_app = args.app or args.app_name
+    print(f"Pulling app: {target_app}")
+
+    apps_client, app_name, _ = _resolve_app_args(target_app, args)
 
     _app_pull(
         apps_client,
         app_name,
-        args.target_dir,
-        getattr(args, "overwrite", False),
+        args.target_dir or args.output_dir,
+        getattr(args, "overwrite", False) or getattr(args, "force", False),
     )
 
 
@@ -203,9 +337,16 @@ def _app_pull(
         sys.exit(1)
 
 
-def app_push(args: argparse.Namespace) -> str | None:
-    """Handles the 'push' command."""
-    # We will reuse the deploy_agent logic from main.py, slightly adjusted.
+def app_push(config: AppPushConfig | Any) -> PushResult | str | None:
+    """Handles the 'push' command.
+
+    Args:
+        config: App push configuration object or arguments namespace.
+
+    Returns:
+        PushResult containing app_name and created_version_name.
+    """
+    args = to_dataclass(AppPushConfig, config)
     app_dir = args.app_dir if args.app_dir else "."
     print(f"Pushing app from {app_dir}...")
 
@@ -224,7 +365,7 @@ def app_push(args: argparse.Namespace) -> str | None:
         print("No target specified, using existing name if needed.")
         display_name = getattr(args, "display_name", None) or "Pushed Agent"
 
-    return _app_push(
+    res_app_name = _app_push(
         app_dir=app_dir,
         apps_client=apps_client,
         target_app_name=getattr(args, "app_name", None) or app_name,
@@ -232,6 +373,16 @@ def app_push(args: argparse.Namespace) -> str | None:
         display_name=getattr(args, "display_name", None) or display_name,
         env_file=getattr(args, "env_file", None),
         args=args,
+    )
+    created_ver = getattr(args, "created_version_name", None)
+    if created_ver and hasattr(config, "__dict__"):
+        try:
+            config.created_version_name = created_ver
+        except Exception:
+            pass
+    return PushResult(
+        app_name=res_app_name,
+        created_version_name=created_ver,
     )
 
 
@@ -242,7 +393,7 @@ def _app_push(
     identifier: str | None = None,
     display_name: str | None = None,
     env_file: str | None = None,
-    args: argparse.Namespace | None = None,
+    args: Any | None = None,
 ) -> str | None:
     """Helper to push an app to CXAS."""
     temp_dir = tempfile.mkdtemp()
@@ -363,14 +514,20 @@ def _app_push(
             os.remove(temp_zip)
 
 
-def app_create(args: argparse.Namespace) -> None:
-    """Handles the 'create' command."""
-    print(f"Creating app: {args.name}")
+def app_create(config: AppCreateConfig | Any) -> None:
+    """Handles the 'create' command.
+
+    Args:
+        config: App create configuration object or arguments namespace.
+    """
+    args = to_dataclass(AppCreateConfig, config)
+    display_name = args.name or args.display_name
+    print(f"Creating app: {display_name}")
     apps_client = Apps(project_id=args.project_id, location=args.location)
     try:
         app = apps_client.create_app(
             app_id=args.app_id,
-            display_name=args.name,
+            display_name=display_name,
             description=args.description,
         )
         print(f"App created successfully: {app.name}")
@@ -379,10 +536,14 @@ def app_create(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def app_delete(args: argparse.Namespace) -> None:
-    """Handles the 'delete' command."""
+def app_delete(config: AppDeleteConfig | Any) -> None:
+    """Handles the 'delete' command.
 
-    app_name_arg = getattr(args, "app_name", None)
+    Args:
+        config: App delete configuration object or arguments namespace.
+    """
+    args = to_dataclass(AppDeleteConfig, config)
+    app_name_arg = args.app_name or args.app
 
     if app_name_arg:
         print(f"Deleting App: {app_name_arg}")
@@ -428,9 +589,15 @@ def app_delete(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def app_branch(args: argparse.Namespace) -> None:
-    """Handles the 'branch' command."""
-    print(f"Branching from {args.source} to {args.new_name}")
+def app_branch(config: AppBranchConfig | Any) -> None:
+    """Handles the 'branch' command.
+
+    Args:
+        config: App branch configuration object or arguments namespace.
+    """
+    args = to_dataclass(AppBranchConfig, config)
+    display_name = args.new_name or args.branch_name
+    print(f"Branching from {args.source} to {display_name}")
     # Composite operation: pull existing, create new, push content.
 
     apps_client, app_name, _ = _resolve_app_args(args.source, args)
@@ -456,7 +623,7 @@ def app_branch(args: argparse.Namespace) -> None:
             _app_push(
                 app_dir=app_dir,
                 apps_client=apps_client,
-                display_name=args.new_name,
+                display_name=display_name,
                 env_file=env_file,
             )
         except Exception as e:
@@ -464,8 +631,13 @@ def app_branch(args: argparse.Namespace) -> None:
             sys.exit(1)
 
 
-def apps_list(args: argparse.Namespace) -> None:
-    """Handles the 'apps list' command."""
+def apps_list(config: AppsListConfig | Any) -> None:
+    """Handles the 'apps list' command.
+
+    Args:
+        config: Apps list configuration object or arguments namespace.
+    """
+    args = to_dataclass(AppsListConfig, config)
     print(f"Listing apps for project {args.project_id} in {args.location}...")
     apps_client = Apps(project_id=args.project_id, location=args.location)
     try:
@@ -494,11 +666,17 @@ def apps_list(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def apps_get(args: argparse.Namespace) -> None:
-    """Handles the 'apps get' command."""
-    print(f"Getting app: {args.app}")
+def apps_get(config: AppsGetConfig | Any) -> None:
+    """Handles the 'apps get' command.
 
-    apps_client, app_name, _ = _resolve_app_args(args.app, args)
+    Args:
+        config: Apps get configuration object or arguments namespace.
+    """
+    args = to_dataclass(AppsGetConfig, config)
+    target_app = args.app or args.app_name
+    print(f"Getting app: {target_app}")
+
+    apps_client, app_name, _ = _resolve_app_args(target_app, args)
 
     try:
         app = apps_client.get_app(app_name=app_name)
@@ -514,8 +692,13 @@ def apps_get(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def app_lint(args: argparse.Namespace) -> None:
-    """Handles the 'lint' command."""
+def app_lint(config: AppLintConfig | Any) -> None:
+    """Handles the 'lint' command.
+
+    Args:
+        config: App lint configuration object or arguments namespace.
+    """
+    args = to_dataclass(AppLintConfig, config)
     from cxas_scrapi.utils.linter import (  # noqa: PLC0415
         SINGLE_RESOURCE_RULES,
         Discovery,
@@ -649,9 +832,13 @@ def app_lint(args: argparse.Namespace) -> None:
     report.print_and_exit(json_output, show_fixes)
 
 
-def app_init(args: argparse.Namespace) -> None:
-    """Handles the 'init' command -- copies skill files."""
+def app_init(config: AppInitConfig | Any) -> None:
+    """Handles the 'init' command -- copies skill files.
 
+    Args:
+        config: App init configuration object or arguments namespace.
+    """
+    args = to_dataclass(AppInitConfig, config)
     target_dir = Path(getattr(args, "target_dir", ".")).resolve()
     force = getattr(args, "force", False)
     skills_root = Path(sys.prefix) / "share" / "cxas-scrapi" / "skills"
@@ -723,3 +910,54 @@ def _prompt_overwrite(name: str, no_input: bool = False) -> str:
             return "skip"
         if choice in ("q", "quit"):
             return "abort"
+
+
+import click
+
+
+@click.group(name="app")
+def app_group() -> None:
+    """Manage GECX applications."""
+
+
+@app_group.command(name="push")
+@click.option("--app-dir", default=".", help="Path to app directory.")
+@click.option("--display-name", help="Display name for app.")
+@click.option("--project-id", help="GCP Project ID.")
+@click.option("--location", help="GCP Location.")
+@click.pass_context
+def app_push_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """Push local app directory to remote GECX service."""
+    cfg = to_dataclass(AppPushConfig, ctx, **kwargs)
+    app_push(cfg)
+
+
+@app_group.command(name="pull")
+@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.option("--target-dir", default=".", help="Target directory for pull.")
+@click.option("--overwrite", is_flag=True, help="Overwrite local files.")
+@click.pass_context
+def app_pull_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """Pull remote app definition into local directory."""
+    cfg = to_dataclass(AppPullConfig, ctx, **kwargs)
+    app_pull(cfg)
+
+
+@app_group.command(name="list")
+@click.option("--project-id", help="GCP Project ID.")
+@click.option("--location", help="GCP Location.")
+@click.pass_context
+def apps_list_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """List remote apps in project and location."""
+    cfg = to_dataclass(AppsListConfig, ctx, **kwargs)
+    apps_list(cfg)
+
+
+@click.command(name="lint")
+@click.option("--app-dir", default=".", help="Path to app directory.")
+@click.option("--list-rules", is_flag=True, help="List available lint rules.")
+@click.pass_context
+def app_lint_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """Run static structural linter on local agent directory."""
+    cfg = to_dataclass(AppLintConfig, ctx, **kwargs)
+    app_lint(cfg)

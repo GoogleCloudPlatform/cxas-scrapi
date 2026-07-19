@@ -18,8 +18,8 @@ import argparse
 from typing import Any
 from unittest.mock import MagicMock
 
-from google.api_core.exceptions import NotFound
 import pytest
+from google.api_core.exceptions import NotFound
 
 from cxas_scrapi.cli.main import (
     deployments_create,
@@ -32,12 +32,15 @@ from cxas_scrapi.cli.main import (
 def mock_deployments_sdk(mocker: Any) -> MagicMock:
     """Fixture to mock Deployments SDK client across both module references."""
     mock_client = MagicMock()
-    mocker.patch("cxas_scrapi.core.deployments.Deployments", return_value=mock_client)
+    mocker.patch(
+        "cxas_scrapi.core.deployments.Deployments", return_value=mock_client
+    )
     return mock_client
 
 
-
-def test_deployments_list_success(mock_deployments_sdk: MagicMock, mocker: Any, capsys: Any) -> None:
+def test_deployments_list_success(
+    mock_deployments_sdk: MagicMock, mocker: Any, capsys: Any
+) -> None:
     """Verifies listing deployments outputs JSON array formatted results.
 
     Args:
@@ -46,27 +49,38 @@ def test_deployments_list_success(mock_deployments_sdk: MagicMock, mocker: Any, 
         capsys: Pytest stdout capture fixture.
     """
     mock_deployments_sdk.list_deployments.return_value = [
-        {"name": "projects/p/locations/l/apps/a/deployments/d1", "displayName": "Dep 1"}
+        {
+            "name": "projects/p/locations/l/apps/a/deployments/d1",
+            "displayName": "Dep 1",
+        }
     ]
-    mocker.patch("google.protobuf.json_format.MessageToDict", side_effect=lambda x: x)
-
+    mocker.patch(
+        "google.protobuf.json_format.MessageToDict", side_effect=lambda x: x
+    )
 
     args = argparse.Namespace(app_name="projects/p/locations/l/apps/a")
     deployments_list(args)
 
     captured = capsys.readouterr()
-    assert "Listing deployments for App: projects/p/locations/l/apps/a" in captured.out
+    assert (
+        "Listing deployments for App: projects/p/locations/l/apps/a"
+        in captured.out
+    )
     assert "Dep 1" in captured.out
 
 
-def test_deployments_create_traffic_split_parsing(mock_deployments_sdk: MagicMock, capsys: Any) -> None:
+def test_deployments_create_traffic_split_parsing(
+    mock_deployments_sdk: MagicMock, capsys: Any
+) -> None:
     """Verifies valid traffic-split parsing options.
 
     Args:
         mock_deployments_sdk: Mocked Deployments SDK client fixture.
         capsys: Pytest stdout capture fixture.
     """
-    mock_deployments_sdk.create_deployment.return_value = MagicMock(name="dep-1")
+    mock_deployments_sdk.create_deployment.return_value = MagicMock(
+        name="dep-1"
+    )
 
     args = argparse.Namespace(
         app_name="projects/p/locations/l/apps/a",
@@ -121,14 +135,18 @@ def test_deployments_create_missing_version_and_split(capsys: Any) -> None:
     assert "Error: You must provide either `--version`" in captured.out
 
 
-def test_deployments_promote_not_found_error(mock_deployments_sdk: MagicMock, capsys: Any) -> None:
+def test_deployments_promote_not_found_error(
+    mock_deployments_sdk: MagicMock, capsys: Any
+) -> None:
     """Verifies error handling when promoting a non-existent deployment ID.
 
     Args:
         mock_deployments_sdk: Mocked Deployments SDK client fixture.
         capsys: Pytest stdout capture fixture.
     """
-    mock_deployments_sdk.update_deployment.side_effect = NotFound("Deployment d1 not found")
+    mock_deployments_sdk.update_deployment.side_effect = NotFound(
+        "Deployment d1 not found"
+    )
 
     args = argparse.Namespace(
         deployment_id="d1",
@@ -144,7 +162,9 @@ def test_deployments_promote_not_found_error(mock_deployments_sdk: MagicMock, ca
     assert "Error updating deployment" in captured.out
 
 
-def test_deployments_promote_traffic_split_update(mock_deployments_sdk: MagicMock, capsys: Any) -> None:
+def test_deployments_promote_traffic_split_update(
+    mock_deployments_sdk: MagicMock, capsys: Any
+) -> None:
     """Verifies updating traffic split on an existing deployment ID.
 
     Args:

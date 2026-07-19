@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,19 +14,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Utility modules for CXAS SCRAPI."""
 
-from cxas_scrapi.utils.changelog_utils import ChangelogUtils
-from cxas_scrapi.utils.eval_utils import EvalUtils
-from cxas_scrapi.utils.gcs_utils import GCSUtils
-from cxas_scrapi.utils.google_sheets_utils import GoogleSheetsUtils
-from cxas_scrapi.utils.rate_limiter import RateLimiter
-from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
+import importlib
+from typing import Any
 
-__all__ = [
-    "ChangelogUtils",
-    "EvalUtils",
-    "GCSUtils",
-    "GoogleSheetsUtils",
-    "RateLimiter",
-    "SecretManagerUtils",
-]
+_LAZY_EXPORTS = {
+    "ChangelogUtils": "cxas_scrapi.utils.changelog_utils",
+    "EvalUtils": "cxas_scrapi.utils.eval_utils",
+    "GCSUtils": "cxas_scrapi.utils.gcs_utils",
+    "GoogleSheetsUtils": "cxas_scrapi.utils.google_sheets_utils",
+    "RateLimiter": "cxas_scrapi.utils.rate_limiter",
+    "SecretManagerUtils": "cxas_scrapi.utils.secret_manager_utils",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_EXPORTS:
+        mod = importlib.import_module(_LAZY_EXPORTS[name])
+        return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = list(_LAZY_EXPORTS.keys())

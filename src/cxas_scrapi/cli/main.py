@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +16,6 @@
 
 """CLI script for running CXAS SCRAPI evaluations."""
 
-from __future__ import annotations
 
 import argparse
 import datetime
@@ -25,14 +26,13 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
-from cxas_scrapi.cli.insights_cli import populate_insights_parser
-from cxas_scrapi.cli.resources_cli import (
-    register as register_resources_subparsers,
-)
-from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
-from cxas_scrapi.utils.eval_utils import COMBINED_REPORT_FILENAME
+from cxas_scrapi.cli.utils import to_dataclass
+
+COMBINED_REPORT_FILENAME = "combined_evals_report.md"
+
 
 DEFAULT_MODEL = "gemini-3.1-flash-live"
 
@@ -1249,8 +1249,20 @@ def deployments_promote(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def cmd_help(args: argparse.Namespace) -> None:
-    """Handles the 'help' command."""
+@dataclass(frozen=False)
+class HelpConfig:
+    """Configuration for CLI help command."""
+
+    help_command: tuple[str, ...] | list[str] | None = None
+
+
+def cmd_help(config: HelpConfig | Any) -> None:
+    """Handles the 'help' command.
+
+    Args:
+        config: Help configuration object or arguments namespace.
+    """
+    args = to_dataclass(HelpConfig, config)
     parser = get_parser()
     if getattr(args, "help_command", None):
         try:
@@ -1263,6 +1275,12 @@ def cmd_help(args: argparse.Namespace) -> None:
 
 def get_parser() -> argparse.ArgumentParser:
     """Sets up the argument parser."""
+    from cxas_scrapi.cli.insights_cli import populate_insights_parser
+    from cxas_scrapi.cli.resources_cli import (
+        register as register_resources_subparsers,
+    )
+    from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
+
     description = (
         "CXAS SCRAPI Command Line Interface — Full CI/CD Suite\n\n"
         "The cxas CLI puts the full power of CX Agent Studio in your\n"
@@ -2679,24 +2697,88 @@ def get_parser() -> argparse.ArgumentParser:
     return parser
 
 
+import importlib
+
+import click
+
+
+class LazyRootGroup(click.Group):
+    """Lazy multi-command root group for sub-150ms startup latency."""
+
+    COMMAND_MAP = {
+        "app": "cxas_scrapi.cli.app:app_group",
+        "apps": "cxas_scrapi.cli.app:app_group",
+        "conversations": "cxas_scrapi.cli.conversations:conversations_group",
+        "create-local": "cxas_scrapi.cli.create_local:create_local_cmd",
+        "deployments": "cxas_scrapi.cli.deployments:deployments_group",
+        "evals": "cxas_scrapi.cli.evals:evals_group",
+        "insights": "cxas_scrapi.cli.insights_cli:insights_group",
+        "lint": "cxas_scrapi.cli.app:app_lint_cmd",
+        "llm-lint": "cxas_scrapi.cli.llm_lint:llm_lint_cmd",
+        "migrate": "cxas_scrapi.cli.migration_cli:migration_group",
+        "migration": "cxas_scrapi.cli.migration_cli:migration_group",
+        "resources": "cxas_scrapi.cli.resources_cli:resources_group",
+        "run-session": "cxas_scrapi.cli.sessions:run_session_cmd",
+        "trace": "cxas_scrapi.cli.trace_cli:trace_group",
+        "versions": "cxas_scrapi.cli.versions_cli:versions_group",
+        "help": "cxas_scrapi.cli.utils:help_cmd",
+    }
+
+    COMMAND_SHORT_HELP = {
+        "app": "Manage GECX applications.",
+        "apps": "Manage GECX applications.",
+        "conversations": "Manage conversation history.",
+        "create-local": "Create local GECX agent workspace.",
+        "deployments": "Manage remote app deployments.",
+        "evals": "Manage and report on evaluations.",
+        "help": "Inspect help documentation for any command or sub-command.",
+        "insights": "Quality AI & CCAI Insights management.",
+        "lint": "Run static structural linter on local agent workspace.",
+        "llm-lint": "Run AI-driven semantic prompt linter on agent instructions.",
+        "migrate": "Migrate Dialogflow CX agents to CXAS.",
+        "migration": "Migrate Dialogflow CX agents to CXAS.",
+        "resources": "Manage GECX tools, callbacks, and variables.",
+        "run-session": "Launch interactive terminal session.",
+        "trace": "Conversational transcript trace and observability.",
+        "versions": "Manage app version snapshots.",
+    }
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return sorted(self.COMMAND_MAP.keys())
+
+    def get_command(
+        self, ctx: click.Context, cmd_name: str
+    ) -> click.Command | None:
+        if cmd_name not in self.COMMAND_MAP:
+            return None
+        mod_path, target = self.COMMAND_MAP[cmd_name].split(":")
+        mod = importlib.import_module(mod_path)
+        return getattr(mod, target)
+
+    def format_commands(
+        self, ctx: click.Context, formatter: click.HelpFormatter
+    ) -> None:
+        commands = []
+        for subcommand in self.list_commands(ctx):
+            help_str = self.COMMAND_SHORT_HELP.get(subcommand, "")
+            commands.append((subcommand, help_str))
+
+        if commands:
+            with formatter.section("Commands"):
+                formatter.write_dl(commands)
+
+
+@click.group(cls=LazyRootGroup)
+@click.option("--oauth-token", help="OAuth token for authentication.")
+@click.pass_context
+def cli(ctx: click.Context, oauth_token: str | None) -> None:
+    """Google Customer Engagement Suite (GECX / CXAS) CLI."""
+    if oauth_token:
+        os.environ["CXAS_OAUTH_TOKEN"] = oauth_token
+
+
 def main() -> None:
-    parser = get_parser()
-    args = parser.parse_args()
-
-    if getattr(args, "oauth_token", None):
-        os.environ["CXAS_OAUTH_TOKEN"] = args.oauth_token
-
-    # Configure logging
-    log_level = logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-
-    if hasattr(args, "func"):
-        args.func(args)
-    else:
-        parser.print_help()
+    cli(prog_name="cxas")
 
 
 if __name__ == "__main__":
