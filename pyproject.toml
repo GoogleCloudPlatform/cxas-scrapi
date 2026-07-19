@@ -28,6 +28,7 @@ keywords = ["ces", "google", "bot", "chatbot", "agent", "scrapi"]
 requires-python = ">=3.10, <4"
 dependencies = [
   "absl-py",
+  "click>=8.1.0",
   "google-cloud-ces",
   "google-auth",
   "requests",
@@ -73,6 +74,7 @@ dev = [
   "pytest-asyncio",
   "pytest-xdist",
   "pytest-cov",
+  "pytest-mock",
   "ruff",
   "twine",
   "pre-commit",

@@ -30,3 +30,19 @@ class LazyCallable:
             module = importlib.import_module(self.module_path)
             self._func = getattr(module, self.func_name)
         return self._func(*args, **kwargs)
+
+
+def cmd_help(args) -> None:
+    """Handles the 'help' command."""
+    from cxas_scrapi.cli.main import get_parser  # noqa: PLC0415
+
+    parser = get_parser()
+    if getattr(args, "help_command", None):
+        try:
+            parser.parse_args([args.help_command, "--help"])
+        except SystemExit:
+            pass
+    else:
+        parser.print_help()
+
+

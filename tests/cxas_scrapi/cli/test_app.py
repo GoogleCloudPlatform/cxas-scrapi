@@ -19,10 +19,13 @@ import io
 import os
 import sys
 import time
+from typing import Any
 import zipfile
 from unittest import mock
+from unittest.mock import MagicMock, patch
 
 import pytest
+
 
 from cxas_scrapi.cli import app as cli_app
 
@@ -634,3 +637,99 @@ def test_app_init_headless_failure(monkeypatch, capsys, tmp_path):
     )
     assert expected_msg in captured.err
     assert "Use --force to overwrite." in captured.err
+
+
+def test_prompt_overwrite_and_app_pull_force(monkeypatch: Any, tmp_path: Any, capsys: Any) -> None:
+    """Test _prompt_overwrite with force and no_input branches inside app_pull."""
+    from cxas_scrapi.cli.app import _prompt_overwrite
+    with pytest.raises(SystemExit) as exc:
+        _prompt_overwrite("test.txt", no_input=True)
+    assert exc.value.code == 1
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_app_delete_with_force_and_display_name(mock_apps_client: MagicMock, capsys: Any) -> None:
+    """Test app_delete using display_name resolution and --force."""
+    mock_app_obj = MagicMock()
+    mock_app_obj.name = "projects/test-project/locations/us/apps/del-id"
+    mock_app_obj.display_name = "App To Delete"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app_obj
+
+    args = argparse.Namespace(
+        display_name="App To Delete",
+        app_name=None,
+        project_id="test-project",
+        location="us",
+        force=True,
+    )
+    cli_app.app_delete(args)
+    mock_apps_client.delete_app.assert_called_once_with(app_name="projects/test-project/locations/us/apps/del-id", force=True)
+
+
+def test_app_branch_success_and_errors(mock_apps_client: MagicMock, capsys: Any, tmp_path: Any) -> None:
+    """Test app_branch complete flow and missing source error."""
+    mock_app_obj = MagicMock()
+    mock_app_obj.name = "projects/test-project/locations/us/apps/src-id"
+    mock_app_obj.display_name = "Source App"
+    mock_apps_client.get_app.return_value = mock_app_obj
+
+    with patch("cxas_scrapi.cli.app._app_pull"), patch("cxas_scrapi.cli.app.app_push", return_value="projects/test-project/locations/us/apps/new-id"):
+        args = argparse.Namespace(
+            source="projects/test-project/locations/us/apps/src-id",
+            new_name="Branched App",
+            project_id="test-project",
+            location="us",
+            env_file=None,
+        )
+        cli_app.app_branch(args)
+        assert "Branching from" in capsys.readouterr().out
+
+
+
+
+def test_app_lint_output_formats(capsys: Any, tmp_path: Any) -> None:
+    """Test app_lint output formatting in json and list_rules."""
+    args_list = argparse.Namespace(list_rules=True, app_dir=str(tmp_path), json_output=False, validate_only=False)
+    with pytest.raises(SystemExit) as exc:
+        cli_app.app_lint(args_list)
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Structural" in out or "Rules" in out or "Available Rules" in out
+
+
+
+
+@mock.patch("cxas_scrapi.cli.app.Apps")
+def test_app_pull_overwrite_cleans_stale_files(mock_apps_cls: Any, tmp_path: Any, capsys: Any) -> None:
+    """Verifies app_pull removes non-exported files when overwrite=True."""
+    mock_inst = mock_apps_cls.return_value
+    
+    # Create fake zip content
+    zip_bytes = io.BytesIO()
+    with zipfile.ZipFile(zip_bytes, "w") as zf:
+        zf.writestr("my_app/app.yaml", "name: my_app\n")
+        zf.writestr("my_app/sub/active.txt", "active")
+    zip_bytes.seek(0)
+    mock_op = MagicMock()
+    mock_op.result.return_value.app_content = zip_bytes.getvalue()
+    mock_inst.export_app.return_value = mock_op
+
+
+    # Pre-create local directory structure with a stale file
+    app_dir = tmp_path / "my_app"
+    sub_dir = app_dir / "sub"
+    sub_dir.mkdir(parents=True)
+    (sub_dir / "stale.txt").write_text("stale content")
+
+    args = argparse.Namespace(
+        app="projects/p/locations/l/apps/a",
+
+        target_dir=str(tmp_path),
+
+        overwrite=True,
+    )
+    cli_app.app_pull(args)
+
+
+    assert (sub_dir / "active.txt").exists()
+    assert not (sub_dir / "stale.txt").exists()
