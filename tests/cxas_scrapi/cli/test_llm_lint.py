@@ -16,7 +16,10 @@
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 from unittest import mock
+
+import pytest
 
 from cxas_scrapi.cli.llm_lint import llm_lint, resolve_gcp_credentials
 from cxas_scrapi.prompts import LLM_LINT_SYSTEM_PROMPT, LLM_LINT_USER_PROMPT
@@ -494,3 +497,95 @@ def test_llm_lint_does_not_falsely_trigger_on_unrelated_instructions(
     content = report_file.read_text(encoding="utf-8")
     expected_str = "the agent itself cannot update the value of a variable"
     assert expected_str not in content
+
+
+def test_llm_lint_missing_agent_dir(capsys: Any) -> None:
+    """Verifies llm_lint exits when agent_dir does not exist."""
+    args = argparse.Namespace(
+        agent_dir="/non/existent/dir",
+        project_id="test-proj",
+        location="global",
+        model=None,
+        rules=None,
+        output=None,
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        llm_lint(args)
+
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "Error: Agent directory" in err
+
+
+def test_llm_lint_missing_instruction_txt(capsys: Any, tmp_path: Any) -> None:
+    """Verifies llm_lint exits when instruction.txt is missing in agent_dir."""
+    args = argparse.Namespace(
+        agent_dir=str(tmp_path),
+        project_id="test-proj",
+        location="global",
+        model=None,
+        rules=None,
+        output=None,
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        llm_lint(args)
+
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "Error: Could not find instruction.txt" in err
+
+
+def test_resolve_gcp_credentials_unresolved_project(
+    capsys: Any, monkeypatch: Any
+) -> None:
+    """Verifies resolve_gcp_credentials exits when project_id cannot be resolved."""
+    monkeypatch.delenv("PROJECT_ID", raising=False)
+    with pytest.raises(SystemExit) as excinfo:
+        resolve_gcp_credentials(
+            Path("/non/existent"), cli_project_id=None, cli_location=None
+        )
+
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "Error: GCP Project ID could not be resolved" in err
+
+
+def test_resolve_gcp_credentials_config_file(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    """Verifies resolve_gcp_credentials reads project_id from gecx-config.json."""
+    monkeypatch.delenv("PROJECT_ID", raising=False)
+    config_file = tmp_path / "gecx-config.json"
+    config_file.write_text(
+        '{"gcp_project_id": "json-proj", "location": "us-east1"}'
+    )
+
+    proj, loc = resolve_gcp_credentials(
+        tmp_path, cli_project_id=None, cli_location=None
+    )
+    assert proj == "json-proj"
+    assert loc == "us-east1"
+
+
+@mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
+def test_llm_lint_with_rules_filter(
+    mock_gemini_cls: Any, tmp_path: Any
+) -> None:
+    """Verifies llm_lint filters rules when --rules option is passed."""
+    agent_dir = tmp_path / "my_agent"
+    agent_dir.mkdir()
+    (agent_dir / "instruction.txt").write_text("Hello agent instruction")
+
+    mock_gemini_inst = mock_gemini_cls.return_value
+    mock_gemini_inst.generate.return_value = "PASSED: Clean prompt"
+
+    args = argparse.Namespace(
+        agent_dir=str(agent_dir),
+        project_id="test-proj",
+        location="us-central1",
+        model=None,
+        rules="clear-role, no-slang",
+        output=None,
+    )
+    llm_lint(args)
+    mock_gemini_inst.generate.assert_called_once()

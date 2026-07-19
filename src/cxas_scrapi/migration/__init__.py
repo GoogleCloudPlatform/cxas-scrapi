@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Migration package for porting DFCX to CXAS."""
 
 # Copyright 2026 Google LLC
@@ -14,46 +16,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from cxas_scrapi.migration.ai_augment import AIAugment
-from cxas_scrapi.migration.dfcx_conversation_runner import (
-    ConversationTrace,
-    ConversationTurn,
-    DFCXConversationRunner,
-)
-from cxas_scrapi.migration.dfcx_exporter import (
-    BaseDFCXClient,
-    ConversationalAgentsAPI,
-    DFCXAgentExporter,
-    DFCXAgents,
-    DFCXGenerativeSettings,
-    DFCXPlaybooks,
-    DFCXTools,
-)
-from cxas_scrapi.migration.dfcx_migration_reporter import DFCXMigrationReporter
-from cxas_scrapi.migration.flow_visualizer import (
-    FlowDependencyResolver,
-    FlowTreeVisualizer,
-)
-from cxas_scrapi.migration.graph_visualizer import HighLevelGraphVisualizer
-from cxas_scrapi.migration.main_visualizer import MainVisualizer
-from cxas_scrapi.migration.playbook_visualizer import PlaybookTreeVisualizer
+import importlib
+from typing import Any
 
-__all__ = [
-    "AIAugment",
-    "BaseDFCXClient",
-    "ConversationTrace",
-    "ConversationTurn",
-    "ConversationalAgentsAPI",
-    "DFCXAgentExporter",
-    "DFCXAgents",
-    "DFCXConversationRunner",
-    "DFCXGenerativeSettings",
-    "DFCXMigrationReporter",
-    "DFCXPlaybooks",
-    "DFCXTools",
-    "FlowDependencyResolver",
-    "FlowTreeVisualizer",
-    "HighLevelGraphVisualizer",
-    "MainVisualizer",
-    "PlaybookTreeVisualizer",
-]
+_LAZY_EXPORTS = {
+    "AIAugment": "cxas_scrapi.migration.ai_augment",
+    "ConversationTrace": "cxas_scrapi.migration.dfcx_conversation_runner",
+    "ConversationTurn": "cxas_scrapi.migration.dfcx_conversation_runner",
+    "DFCXConversationRunner": "cxas_scrapi.migration.dfcx_conversation_runner",
+    "BaseDFCXClient": "cxas_scrapi.migration.dfcx_exporter",
+    "ConversationalAgentsAPI": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXAgentExporter": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXAgents": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXGenerativeSettings": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXPlaybooks": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXTools": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXMigrationReporter": "cxas_scrapi.migration.dfcx_migration_reporter",
+    "FlowDependencyResolver": "cxas_scrapi.migration.flow_visualizer",
+    "FlowTreeVisualizer": "cxas_scrapi.migration.flow_visualizer",
+    "HighLevelGraphVisualizer": "cxas_scrapi.migration.graph_visualizer",
+    "MainVisualizer": "cxas_scrapi.migration.main_visualizer",
+    "PlaybookTreeVisualizer": "cxas_scrapi.migration.playbook_visualizer",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_EXPORTS:
+        mod = importlib.import_module(_LAZY_EXPORTS[name])
+        return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = list(_LAZY_EXPORTS.keys())

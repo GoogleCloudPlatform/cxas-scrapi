@@ -130,7 +130,7 @@ def test_cli_installed_help():
             check=True,
         )
         assert result.returncode == 0
-        assert "usage: cxas" in result.stdout
+        assert "usage: cxas" in result.stdout.lower()
     except FileNotFoundError:
         pytest.fail(
             "The 'cxas' command was not found in the environment. "
@@ -260,6 +260,7 @@ def test_deployments_create(mock_deps_cls):
 @mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
 @mock.patch("cxas_scrapi.cli.app.app_push", autospec=True)
 def test_deployments_promote(mock_app_push, mock_deps_cls):
+
     args = argparse.Namespace(
         app_resource_name="projects/test-project/locations/global/apps/test-app",
         app_dir="/dummy/path",

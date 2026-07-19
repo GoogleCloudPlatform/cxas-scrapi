@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any
+
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,15 +17,36 @@
 # limitations under the License.
 """CLI subcommand for AI-driven semantic linter on GECX instructions."""
 
-import argparse
 import ast
 import json
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
+from cxas_scrapi.cli.utils import LazyCallable, to_dataclass
 from cxas_scrapi.prompts import LLM_LINT_SYSTEM_PROMPT, LLM_LINT_USER_PROMPT
-from cxas_scrapi.utils.gemini import GeminiGenerate
+
+GeminiGenerate = LazyCallable("cxas_scrapi.utils.gemini", "GeminiGenerate")
+
+
+@dataclass(frozen=False)
+class LlmLintConfig:
+    """Configuration for LLM prompt linting.
+
+    Args:
+        agent_dir: Target sub-agent directory.
+        model: Gemini model for linting.
+        output: Optional output path for lint report.
+        project_id: Optional GCP project ID.
+        location: Optional GCP location.
+    """
+
+    agent_dir: str = "."
+    model: str = "gemini-2.5-flash"
+    output: str | None = None
+    project_id: str | None = None
+    location: str | None = None
 
 
 def discover_agent_callbacks(agent_dir: Path) -> list[tuple[str, Path]]:
@@ -179,8 +204,13 @@ def resolve_gcp_credentials(
     return project_id, location
 
 
-def llm_lint(args: argparse.Namespace) -> None:
-    """Executes the main linter flow."""
+def llm_lint(config: LlmLintConfig | Any) -> None:
+    """Executes the main linter flow.
+
+    Args:
+        config: LLM lint configuration object or arguments namespace.
+    """
+    args = to_dataclass(LlmLintConfig, config)
     agent_path = Path(args.agent_dir)
 
     if not agent_path.exists():
@@ -393,3 +423,19 @@ def llm_lint(args: argparse.Namespace) -> None:
                         f"for state: {state_name}",
                         file=sys.stderr,
                     )
+
+
+import click
+
+
+@click.command(name="llm-lint")
+@click.option("--agent-dir", required=True, help="Path to sub-agent directory.")
+@click.option(
+    "--model", default="gemini-2.5-flash", help="Gemini model for linting."
+)
+@click.option("--output", help="Output path for lint report.")
+@click.pass_context
+def llm_lint_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """Run AI-driven semantic prompt linter on agent instructions."""
+    cfg = to_dataclass(LlmLintConfig, ctx, **kwargs)
+    llm_lint(cfg)

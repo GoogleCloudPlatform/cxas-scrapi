@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """CLI subcommands for GECX App Versions management."""
 
 # Copyright 2026 Google LLC
@@ -21,6 +23,7 @@ import logging
 import os
 import sys
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from jinja2 import Template
@@ -28,9 +31,33 @@ from rich.console import Console
 from rich.table import Table
 
 from cxas_scrapi.cli.app import _resolve_app_args
-from cxas_scrapi.core.versions import Versions
+from cxas_scrapi.cli.utils import LazyCallable, to_dataclass
+
+Versions = LazyCallable("cxas_scrapi.core.versions", "Versions")
+Common = LazyCallable("cxas_scrapi.core.common", "Common")
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=False)
+class AppVersionsListConfig:
+    """Configuration for listing app versions."""
+
+    app_name: str
+
+
+@dataclass(frozen=False)
+class AppVersionsCompareConfig:
+    """Configuration for comparing app versions."""
+
+    app_name: str | None = None
+    source: str | None = None
+    target: str | None = None
+    version1: str | None = None
+    version2: str | None = None
+    output: str | None = None
+    verbose: bool = False
+    web: bool = False
 
 
 # --- Templates for output message and html report ---
@@ -100,8 +127,13 @@ HTML_DIFF_BLOCK_TEMPLATE = _load_template("versions_diff_block_template.html")
 HTML_REPORT_TEMPLATE = _load_template("versions_compare_report_template.html")
 
 
-def app_versions_list(args: argparse.Namespace) -> None:
-    """Handles the 'versions list' command."""
+def app_versions_list(config: AppVersionsListConfig | Any) -> None:
+    """Handles the 'versions list' command.
+
+    Args:
+        config: App versions list configuration object or arguments namespace.
+    """
+    args = to_dataclass(AppVersionsListConfig, config)
     _apps_client, app_name, display_name = _resolve_app_args(
         args.app_name, args
     )
@@ -357,8 +389,13 @@ def _generate_html_report(
             pass
 
 
-def app_versions_compare(args: argparse.Namespace) -> None:
-    """Handles the 'versions compare' command."""
+def app_versions_compare(config: AppVersionsCompareConfig | Any) -> None:
+    """Handles the 'versions compare' command.
+
+    Args:
+        config: App versions compare configuration object or arguments namespace.
+    """
+    args = to_dataclass(AppVersionsCompareConfig, config)
     console = Console()
 
     _apps_client, app_name, display_name = _resolve_app_args(
@@ -816,3 +853,20 @@ def app_versions_compare(args: argparse.Namespace) -> None:
     except Exception as e:
         console.print(f"[red]Failed to compare app versions: {e}[/]")
         sys.exit(1)
+
+
+import click
+
+
+@click.group(name="versions")
+def versions_group() -> None:
+    """Manage app version snapshots."""
+
+
+@versions_group.command(name="list")
+@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.pass_context
+def versions_list_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """List app version snapshots."""
+    cfg = to_dataclass(AppVersionsListConfig, ctx, **kwargs)
+    app_versions_list(cfg)

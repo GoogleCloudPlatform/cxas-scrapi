@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,15 +32,15 @@ import logging
 import os
 import re
 import sys
+from dataclasses import dataclass
 from typing import Any
 
-from google.cloud.dialogflowcx_v3beta1 import services as cx_services
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from cxas_scrapi.migration import grouping_review
+from cxas_scrapi.cli.utils import LazyCallable, to_dataclass
 from cxas_scrapi.migration.config import AGENT_MODELS, DEFAULT_MODEL
 from cxas_scrapi.migration.data_models import (
     DFCXAgentIR,
@@ -46,10 +48,20 @@ from cxas_scrapi.migration.data_models import (
     MigrationConfig,
     MigrationIR,
 )
-from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
-from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
-from cxas_scrapi.migration.main_visualizer import MainVisualizer
-from cxas_scrapi.migration.service import MigrationService
+
+MigrationService = LazyCallable(
+    "cxas_scrapi.migration.service", "MigrationService"
+)
+DependencyAnalyzer = LazyCallable(
+    "cxas_scrapi.migration.dfcx_dep_analyzer", "DependencyAnalyzer"
+)
+MainVisualizer = LazyCallable(
+    "cxas_scrapi.migration.main_visualizer", "MainVisualizer"
+)
+
+ConversationalAgentsAPI = LazyCallable(
+    "cxas_scrapi.migration.dfcx_exporter", "ConversationalAgentsAPI"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +185,9 @@ class MigrationCLI:
         self.console.print("[bold blue]Checking authentication...[/]")
         try:
             # Try to instantiate a client to trigger mTLS check
-            cx_services.agents.AgentsClient()
+            from google.cloud.dialogflowcx_v3beta1 import AgentsClient
+
+            AgentsClient()
             self.console.print("[green]✅ Authentication successful.[/]")
             return True
         except Exception as e:
@@ -743,6 +757,8 @@ class MigrationCLI:
                 async def _tui_callback(
                     ir, groupings, consolidator, root_key, dep_summary
                 ):
+                    from cxas_scrapi.migration import grouping_review
+
                     return await grouping_review.interactive_review(
                         ir=ir,
                         groupings=groupings,
@@ -841,7 +857,7 @@ class MigrationCLI:
 _sub_console = Console()
 
 
-def _resolve_bundle_path(args: argparse.Namespace) -> str:
+def _resolve_bundle_path(args: Any) -> str:
     """Resolve the IR bundle path from CLI args.
 
     ``--ir-bundle PATH`` wins. Otherwise ``--target-name TARGET`` resolves
@@ -867,7 +883,7 @@ def _resolve_bundle_path(args: argparse.Namespace) -> str:
 
 
 def _restore_service_and_bundle(
-    args: argparse.Namespace,
+    args: Any,
 ) -> tuple[MigrationService, IRBundle, str]:
     """Load the bundle and restore a :class:`MigrationService` from it.
     Honors ``--project-id`` and ``--location`` overrides."""
@@ -887,8 +903,67 @@ def _restore_service_and_bundle(
 # ---------------------------------------------------------------------------
 
 
-def run_end_to_end(args: argparse.Namespace) -> None:
-    """``cxas migrate dfcx-cxas run`` — non-interactive end-to-end."""
+@dataclass(frozen=False)
+class MigrationDfcxConfig:
+    """Configuration for DFCX migration."""
+
+    dfcx_agent_path: str = "."
+    output_dir: str = "."
+    source_agent_id: str | None = None
+    source_zip: str | None = None
+    project_id: str | None = None
+    location: str | None = None
+    target_name: str | None = None
+    env: str | None = None
+    model: str | None = None
+    profile: str | None = None
+    architecture: str | None = None
+    optimize: bool = False
+    no_optimize: bool = False
+    stage: int | str = 1
+    yes: bool = False
+    dry_run: bool = False
+    skip_deploy: bool = False
+    no_consolidate: bool = False
+    persist_bundle: bool = False
+    no_persist: bool = False
+    no_report: bool = False
+    no_lint: bool = False
+    no_web_confirm: bool = False
+    web_confirm_host: str | None = "127.0.0.1"
+    web_confirm_port: int | None = 0
+    web_confirm_timeout: float | int | None = 1800
+    auto_confirm_grouping: bool = False
+    experimental_agent_xprs: bool = False
+    grouping_json: str | None = None
+    dedup_version_label: str | None = None
+    version_label: str | None = None
+    default_agent_name: str | None = None
+    run: bool = False
+    no_unit_tests: bool = False
+    gen_hillclimbing_evals: bool = False
+    eval_runner_target: str | None = "Custom API Runner"
+    ir_bundle: str | None = None
+
+
+@dataclass(frozen=False)
+class MigrationStage1Config:
+    """Configuration for Stage 1 migration."""
+
+    ir_file: str = ""
+    ir_bundle: str | None = None
+    target_name: str | None = None
+    project_id: str | None = None
+    location: str | None = None
+
+
+def run_end_to_end(config: MigrationDfcxConfig | Any) -> None:
+    """``cxas migrate dfcx-cxas run`` — non-interactive end-to-end.
+
+    Args:
+        config: DFCX migration configuration object or arguments namespace.
+    """
+    args = to_dataclass(MigrationDfcxConfig, config)
     if not (args.source_agent_id or args.source_zip):
         _sub_console.print("[red]Pass --source-agent-id or --source-zip.[/]")
         sys.exit(1)
@@ -982,12 +1057,15 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         gen_report=gen_report,
         gen_unit_tests=gen_unit_tests,
         gen_hillclimbing_evals=gen_hillclimbing_evals,
-        eval_runner_target=eval_runner_target,
+        eval_runner_target=eval_runner_target or "Custom API Runner",
         source_agent_data_override=agent_data,
         web_confirm_grouping=web_confirm_grouping,
-        web_confirm_host=getattr(args, "web_confirm_host", "127.0.0.1"),
-        web_confirm_port=getattr(args, "web_confirm_port", 0),
-        web_confirm_timeout_s=getattr(args, "web_confirm_timeout", 1800),
+        web_confirm_host=getattr(args, "web_confirm_host", None) or "127.0.0.1",
+        web_confirm_port=getattr(args, "web_confirm_port", None)
+        if getattr(args, "web_confirm_port", None) is not None
+        else 0,
+        web_confirm_timeout_s=getattr(args, "web_confirm_timeout", None)
+        or 1800,
         auto_confirm_grouping=auto_confirm_grouping,
         experimental_agent_xprs=getattr(args, "experimental_agent_xprs", False)
         or os.environ.get("CXAS_EXPERIMENTAL_XPRS", "").lower()
@@ -1016,13 +1094,14 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         close_tee_logging()
 
 
-def run_stage_1(args: argparse.Namespace) -> None:
+def run_stage_1(config: MigrationDfcxConfig | Any) -> None:
     """``cxas migrate dfcx stage_1`` — variable dedup + structural
 
     Gemini consolidation against an existing bundle.
     """
+    args = to_dataclass(MigrationDfcxConfig, config)
     service, bundle, bundle_path = _restore_service_and_bundle(args)
-    persist_path = None if args.no_persist else bundle_path
+    persist_path = None if getattr(args, "no_persist", False) else bundle_path
 
     # Apply CLI overrides to the restored configuration
     if hasattr(args, "no_web_confirm"):
@@ -1039,7 +1118,7 @@ def run_stage_1(args: argparse.Namespace) -> None:
     async def _main():
         return await service.run_stage_1(
             bundle=bundle,
-            grouping_json_path=args.grouping_json,
+            grouping_json_path=getattr(args, "grouping_json", None),
             version_label=args.version_label,
             dedup_version_label=getattr(args, "dedup_version_label", None)
             or "0.0.2",
@@ -1054,11 +1133,12 @@ def run_stage_1(args: argparse.Namespace) -> None:
         close_tee_logging()
 
 
-def run_stage_2(args: argparse.Namespace) -> None:
+def run_stage_2(config: MigrationDfcxConfig | Any) -> None:
     """``cxas migrate dfcx stage_2`` — instruction state machines +
     tool mocks, with optional unit-test regen / lint / report."""
+    args = to_dataclass(MigrationDfcxConfig, config)
     service, bundle, bundle_path = _restore_service_and_bundle(args)
-    persist_path = None if args.no_persist else bundle_path
+    persist_path = None if getattr(args, "no_persist", False) else bundle_path
     target_name = bundle.config.target_name
 
     async def _main():
@@ -1070,10 +1150,10 @@ def run_stage_2(args: argparse.Namespace) -> None:
                 if not args.no_unit_tests
                 else None
             ),
-            run_lint=not args.no_lint,
+            run_lint=not getattr(args, "no_lint", False),
             write_report_to=(
                 f"{target_name}_optimization_report.md"
-                if not args.no_report
+                if not getattr(args, "no_report", False)
                 else None
             ),
             bundle=bundle,
@@ -1088,13 +1168,14 @@ def run_stage_2(args: argparse.Namespace) -> None:
         close_tee_logging()
 
 
-def run_stage_3(args: argparse.Namespace) -> None:
+def run_stage_3(config: MigrationDfcxConfig | Any) -> None:
     """``cxas migrate dfcx stage_3`` — parent-child topology wiring
 
     after consolidation.
     """
+    args = to_dataclass(MigrationDfcxConfig, config)
     service, bundle, bundle_path = _restore_service_and_bundle(args)
-    persist_path = None if args.no_persist else bundle_path
+    persist_path = None if getattr(args, "no_persist", False) else bundle_path
     mode = (
         "hub"
         if getattr(args, "architecture", "hub-and-spoke") == "hub-and-spoke"
@@ -1121,12 +1202,13 @@ def run_stage_3(args: argparse.Namespace) -> None:
         close_tee_logging()
 
 
-def run_resume(args: argparse.Namespace) -> None:
+def run_resume(config: MigrationDfcxConfig | Any) -> None:
     """``cxas migrate dfcx --optimize --stage resume`` — interactive
 
     bundle picker and stage menu. If ``--target-name`` or ``--ir-bundle``
     is given, skips the picker and goes straight to the stage menu.
     """
+    args = to_dataclass(MigrationDfcxConfig, config)
     if (
         not sys.stdin.isatty()
         or getattr(args, "yes", False)
@@ -1166,33 +1248,152 @@ def run_resume(args: argparse.Namespace) -> None:
         location=args.location,
         yes=args.yes,
     )
-    if stage == "stage_1":
-        run_stage_1(
-            argparse.Namespace(
-                **common,
-                grouping_json=None,
-                version_label="0.0.3",
-                dedup_version_label="0.0.2",
-                no_persist=False,
+    match stage:
+        case "stage_1":
+            run_stage_1(
+                argparse.Namespace(
+                    **common,
+                    grouping_json=None,
+                    version_label="0.0.3",
+                    dedup_version_label="0.0.2",
+                    no_persist=False,
+                )
             )
-        )
-    elif stage == "stage_2":
-        run_stage_2(
-            argparse.Namespace(
-                **common,
-                version_label="0.0.4",
-                no_unit_tests=False,
-                no_lint=False,
-                no_report=False,
-                no_persist=False,
+        case "stage_2":
+            run_stage_2(
+                argparse.Namespace(
+                    **common,
+                    version_label="0.0.4",
+                    no_unit_tests=False,
+                    no_lint=False,
+                    no_report=False,
+                    no_persist=False,
+                )
             )
-        )
+        case _:
+            run_stage_3(
+                argparse.Namespace(
+                    **common,
+                    architecture="hub-and-spoke",
+                    version_label="0.0.5",
+                    no_persist=False,
+                )
+            )
+
+
+def run_migration_dashboard(config: MigrationDfcxConfig | Any) -> None:
+    """Handles the unified 'cxas migrate dfcx' command, routing to
+    non-interactive run / optimize stages or the interactive TUI dashboard.
+    """
+    args = to_dataclass(MigrationDfcxConfig, config)
+    target_obj = config if hasattr(config, "__dict__") else args
+    if getattr(args, "run", False):
+        # Validate E2E requirements
+        if not (
+            getattr(args, "source_agent_id", None)
+            or getattr(args, "source_zip", None)
+        ):
+            print(
+                "Error: You must provide either --source-agent-id or "
+                "--source-zip for non-interactive --run."
+            )
+            sys.exit(1)
+        if not getattr(args, "project_id", None):
+            print(
+                "Error: Target --project-id is required for "
+                "non-interactive --run."
+            )
+            sys.exit(1)
+        if not getattr(args, "target_name", None):
+            print(
+                "Error: Target --target-name is required for "
+                "non-interactive --run."
+            )
+            sys.exit(1)
+
+        run_end_to_end(target_obj)
+
+    elif getattr(args, "optimize", False):
+        # Validate stage requirements
+        if not getattr(args, "stage", None):
+            print(
+                "Error: You must specify a target --stage (1, 2, 3, "
+                "or resume) when using --optimize."
+            )
+            sys.exit(1)
+
+        # Set default flags
+        if hasattr(config, "__dict__"):
+            config.yes = True
+        args.yes = True  # optimize stage is non-interactive by default
+
+        match str(args.stage):
+            case "1":
+                if not getattr(args, "version_label", None):
+                    if hasattr(config, "__dict__"):
+                        config.version_label = "0.0.3"
+                    args.version_label = "0.0.3"
+                run_stage_1(target_obj)
+            case "2":
+                if not getattr(args, "version_label", None):
+                    if hasattr(config, "__dict__"):
+                        config.version_label = "0.0.4"
+                    args.version_label = "0.0.4"
+                run_stage_2(target_obj)
+            case "3":
+                if not getattr(args, "version_label", None):
+                    if hasattr(config, "__dict__"):
+                        config.version_label = "0.0.5"
+                    args.version_label = "0.0.5"
+                run_stage_3(target_obj)
+            case "resume":
+                if hasattr(config, "__dict__"):
+                    config.yes = False
+                args.yes = False  # resume is interactive picker
+                run_resume(target_obj)
+
     else:
-        run_stage_3(
-            argparse.Namespace(
-                **common,
-                architecture="hub-and-spoke",
-                version_label="0.0.5",
-                no_persist=False,
-            )
-        )
+        # Default: Interactive TUI Dashboard Mode
+        dashboard = MigrationCLI()
+        cx_api = ConversationalAgentsAPI()
+        dashboard.run(default_agent_name=args.default_agent_name, cx_api=cx_api)
+
+
+import click
+
+
+@click.group(name="migration")
+def migration_group() -> None:
+    """Migrate Dialogflow CX agents to CXAS."""
+
+
+@migration_group.command(name="dfcx")
+@click.option("--source-agent-id", help="Source DFCX agent ID.")
+@click.option("--source-zip", help="Path to source DFCX zip export.")
+@click.option("--target-dir", help="Target directory for output.")
+@click.option("--default-agent-name", help="Default agent display name.")
+@click.option("--gcp-project-id", help="GCP Project ID.")
+@click.option("--location", help="GCP Location.")
+@click.option("--dashboard", is_flag=True, help="Launch migration dashboard.")
+@click.option(
+    "--optimize", is_flag=True, help="Run post-migration optimizations."
+)
+@click.option("--run", is_flag=True, help="Run migration immediately.")
+@click.option("--profile", help="Migration profile name.")
+@click.option("--persist-only", is_flag=True, help="Persist bundle only.")
+@click.option("--full-stack", is_flag=True, help="Run full stack optimization.")
+@click.pass_context
+def migration_dfcx_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """Migrate DFCX agent export to CXAS agent."""
+    cfg = to_dataclass(MigrationDfcxConfig, ctx, **kwargs)
+    run_migration_dashboard(cfg)
+
+
+@migration_group.command(name="stage-1")
+@click.option("--source-agent-id", help="Source DFCX agent ID.")
+@click.option("--source-zip", help="Path to source DFCX zip export.")
+@click.pass_context
+def migration_stage_1_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """Run stage 1 1:1 variable dedup and consolidation."""
+    cfg = to_dataclass(MigrationDfcxConfig, ctx, **kwargs)
+    run_stage_1(cfg)

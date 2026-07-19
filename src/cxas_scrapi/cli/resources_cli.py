@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any
+
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,12 +20,70 @@
 
 import argparse
 import sys
+from dataclasses import dataclass
+
+from cxas_scrapi.cli.utils import LazyCallable, to_dataclass
+
+Common = LazyCallable("cxas_scrapi.core.common", "Common")
 
 
-def tools_list(args: argparse.Namespace) -> None:
-    """Lists both tools and toolsets within a specific app."""
+@dataclass(frozen=False)
+class ResourcesToolsListConfig:
+    """Configuration for listing resource tools."""
+
+    app_name: str
+
+
+@dataclass(frozen=False)
+class ResourcesToolsDeleteConfig:
+    """Configuration for deleting resource tools."""
+
+    app_name: str
+    tool_name: str | None = None
+    name: str | None = None
+
+
+@dataclass(frozen=False)
+class CallbacksListConfig:
+    """Configuration for listing callbacks."""
+
+    app_name: str
+
+
+@dataclass(frozen=False)
+class CallbacksDeleteConfig:
+    """Configuration for deleting callbacks."""
+
+    app_name: str
+    agent_name: str | None = None
+    callback_type: str | None = None
+    name: str | None = None
+    index: int | None = None
+
+
+@dataclass(frozen=False)
+class VariablesListConfig:
+    """Configuration for listing variables."""
+
+    app_name: str
+
+
+@dataclass(frozen=False)
+class VariablesDeleteConfig:
+    """Configuration for deleting variables."""
+
+    app_name: str
+    name: str
+
+
+def tools_list(config: ResourcesToolsListConfig | Any) -> None:
+    """Lists both tools and toolsets within a specific app.
+
+    Args:
+        config: Tools list configuration object or arguments namespace.
+    """
+    args = to_dataclass(ResourcesToolsListConfig, config)
     print(f"Listing tools and toolsets for App: {args.app_name}")
-    from cxas_scrapi.core.common import Common
     from cxas_scrapi.core.tools import Tools
 
     app_name = Common._get_app_name(args.app_name)
@@ -66,10 +128,13 @@ def tools_list(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def tools_delete(args: argparse.Namespace) -> None:
-    """Deletes a specific tool or toolset."""
-    from cxas_scrapi.core.common import Common
+def tools_delete(config: ResourcesToolsDeleteConfig | Any) -> None:
+    """Deletes a specific tool or toolset.
 
+    Args:
+        config: Tools delete configuration object or arguments namespace.
+    """
+    args = to_dataclass(ResourcesToolsDeleteConfig, config)
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
         print(
@@ -112,10 +177,13 @@ def tools_delete(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def callbacks_list(args: argparse.Namespace) -> None:
-    """Lists callbacks attached to agents."""
-    from cxas_scrapi.core.common import Common
+def callbacks_list(config: CallbacksListConfig | Any) -> None:
+    """Lists callbacks attached to agents.
 
+    Args:
+        config: Callbacks list configuration object or arguments namespace.
+    """
+    args = to_dataclass(CallbacksListConfig, config)
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
         print(
@@ -186,10 +254,13 @@ def callbacks_list(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def callbacks_delete(args: argparse.Namespace) -> None:
-    """Deletes a callback from an agent by index."""
-    from cxas_scrapi.core.common import Common
+def callbacks_delete(config: CallbacksDeleteConfig | Any) -> None:
+    """Deletes a callback from an agent by index.
 
+    Args:
+        config: Callbacks delete configuration object or arguments namespace.
+    """
+    args = to_dataclass(CallbacksDeleteConfig, config)
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
         print(
@@ -241,12 +312,13 @@ def callbacks_delete(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def variables_list(args: argparse.Namespace) -> None:
-    """Lists variable declarations in an app."""
-    from google.cloud.ces_v1beta import types
+def variables_list(config: VariablesListConfig | Any) -> None:
+    """Lists variable declarations in an app.
 
-    from cxas_scrapi.core.common import Common
-
+    Args:
+        config: Variables list configuration object or arguments namespace.
+    """
+    args = to_dataclass(VariablesListConfig, config)
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
         print(
@@ -256,6 +328,8 @@ def variables_list(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     print(f"Listing variable declarations for App: {app_name}")
+
+    from google.cloud.ces_v1beta import types
 
     from cxas_scrapi.core.variables import Variables
 
@@ -312,10 +386,13 @@ def variables_list(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def variables_delete(args: argparse.Namespace) -> None:
-    """Deletes a variable declaration from the app."""
-    from cxas_scrapi.core.common import Common
+def variables_delete(config: VariablesDeleteConfig | Any) -> None:
+    """Deletes a variable declaration from the app.
 
+    Args:
+        config: Variables delete configuration object or arguments namespace.
+    """
+    args = to_dataclass(VariablesDeleteConfig, config)
     app_name = Common._get_app_name(args.app_name)
     if not app_name:
         print(
@@ -466,3 +543,38 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="The name of the variable to delete.",
     )
     parser_variables_delete.set_defaults(func=variables_delete)
+
+
+import click
+
+
+@click.group(name="resources")
+def resources_group() -> None:
+    """Manage GECX tools, callbacks, and variables."""
+
+
+@click.group(name="tools")
+def tools_group() -> None:
+    """Manage GECX tools."""
+
+
+@tools_group.command(name="list")
+@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.pass_context
+def tools_list_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """List tools defined on app."""
+    cfg = to_dataclass(ResourcesToolsListConfig, ctx, **kwargs)
+    tools_list(cfg)
+
+
+@tools_group.command(name="delete")
+@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.option("--name", required=True, help="Tool name to delete.")
+@click.pass_context
+def tools_delete_cmd(ctx: click.Context, **kwargs: Any) -> None:
+    """Delete a tool declaration."""
+    cfg = to_dataclass(ResourcesToolsDeleteConfig, ctx, **kwargs)
+    tools_delete(cfg)
+
+
+resources_group.add_command(tools_group, name="tools")

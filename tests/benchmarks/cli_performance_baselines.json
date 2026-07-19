@@ -1,0 +1,86 @@
+{
+  "cxas --help": {
+    "mean_ms": 154.56,
+    "median_ms": 153.58,
+    "min_ms": 149.1,
+    "max_ms": 164.67,
+    "p95_ms": 164.67
+  },
+  "cxas help llm-lint": {
+    "mean_ms": 156.25,
+    "median_ms": 154.25,
+    "min_ms": 152.82,
+    "max_ms": 163.5,
+    "p95_ms": 163.5
+  },
+  "cxas lint --list-rules": {
+    "mean_ms": 872.15,
+    "median_ms": 871.23,
+    "min_ms": 864.77,
+    "max_ms": 886.43,
+    "p95_ms": 886.43
+  },
+  "cxas trace --help": {
+    "mean_ms": 163.26,
+    "median_ms": 159.78,
+    "min_ms": 156.1,
+    "max_ms": 178.54,
+    "p95_ms": 178.54
+  },
+  "cxas trace search --help": {
+    "mean_ms": 179.7,
+    "median_ms": 178.99,
+    "min_ms": 160.27,
+    "max_ms": 197.47,
+    "p95_ms": 197.47
+  },
+  "cxas evals --help": {
+    "mean_ms": 159.33,
+    "median_ms": 157.01,
+    "min_ms": 152.62,
+    "max_ms": 170.93,
+    "p95_ms": 170.93
+  },
+  "cxas evals report --help": {
+    "mean_ms": 159.29,
+    "median_ms": 163.12,
+    "min_ms": 151.09,
+    "max_ms": 165.42,
+    "p95_ms": 165.42
+  },
+  "cxas apps --help": {
+    "mean_ms": 167.35,
+    "median_ms": 167.78,
+    "min_ms": 163.35,
+    "max_ms": 169.62,
+    "p95_ms": 169.62
+  },
+  "cxas apps list --help": {
+    "mean_ms": 175.29,
+    "median_ms": 172.48,
+    "min_ms": 165.65,
+    "max_ms": 197.04,
+    "p95_ms": 197.04
+  },
+  "cxas deployments --help": {
+    "mean_ms": 186.93,
+    "median_ms": 182.02,
+    "min_ms": 179.35,
+    "max_ms": 197.97,
+    "p95_ms": 197.97
+  },
+  "cxas run-session --help": {
+    "mean_ms": 154.51,
+    "median_ms": 151.14,
+    "min_ms": 148.54,
+    "max_ms": 167.4,
+    "p95_ms": 167.4
+  },
+  "cxas migrate dfcx --help": {
+    "mean_ms": 398.26,
+    "median_ms": 400.75,
+    "min_ms": 389.56,
+    "max_ms": 406.27,
+    "p95_ms": 406.27
+  }
+}
