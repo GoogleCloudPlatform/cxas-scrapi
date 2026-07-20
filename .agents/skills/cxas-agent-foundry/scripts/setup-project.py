@@ -16,7 +16,7 @@
 """Non-interactive project setup for GECX agents.
 
 Creates the project directory, pulls an existing app (if --app-id is provided),
-detects modality from app.json, and writes gecx-config.json.
+detects modality from app.json, and writes gecx-config.toml.
 
 For new agents (no --app-id):
   python scripts/setup-project.py --project-id my-project --name my-agent --modality audio
@@ -32,6 +32,8 @@ import json
 import os
 import subprocess
 import sys
+
+import toml
 
 
 def detect_modality_from_app(app_dir):
@@ -141,7 +143,7 @@ def main():
         app_name = folder_name
         deployed_app_id = None
 
-    # Write gecx-config.json
+    # Write gecx-config.toml
     config = {
         "gcp_project_id": args.project_id,
         "location": args.location,
@@ -153,9 +155,9 @@ def main():
         "default_channel": modality,
     }
 
-    config_path = os.path.join(project_dir, "gecx-config.json")
+    config_path = os.path.join(project_dir, "gecx-config.toml")
     with open(config_path, "w") as f:
-        json.dump(config, f, indent=2)
+        toml.dump(config, f)
     print(f"Wrote: {config_path}")
 
     # Set active project
@@ -166,7 +168,7 @@ def main():
 
     # For existing apps, bootstrap eval files
     if deployed_app_id:
-        print(f"\nBootstrapping eval files...")
+        print("\nBootstrapping eval files...")
         bootstrap_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bootstrap-evals.py")
         result = subprocess.run([sys.executable, bootstrap_script], cwd=workspace)
         if result.returncode != 0:

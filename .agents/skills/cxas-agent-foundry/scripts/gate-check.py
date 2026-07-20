@@ -16,13 +16,17 @@
 """Run the 6 build-verification gates against a deployed GECX app.
 
 The gates encode the checks documented in references/build-verification.md.
-Replaces the per-gate Python snippets the model used to re-derive on every build.
+Replaces the per-gate Python snippets the model used to re-derive on every
+build.
 
 Usage:
   python scripts/gate-check.py
-  python scripts/gate-check.py --skip-push       # Skip the lint+push round-trip in Gate 1
-  python scripts/gate-check.py --multi-turn prompts.json  # Run Gate 6 with the given prompts
-  python scripts/gate-check.py --json            # Print JSON result to stdout instead of pretty text
+  python scripts/gate-check.py --skip-push       # Skip the lint+push round-trip
+  in Gate 1
+  python scripts/gate-check.py --multi-turn prompts.json  # Run Gate 6 with the
+  given prompts
+  python scripts/gate-check.py --json            # Print JSON result to stdout
+  instead of pretty text
 """
 
 import argparse
@@ -33,7 +37,7 @@ import subprocess
 import sys
 import uuid
 
-from config import load_config, get_project_path
+from config import get_output_dir, get_project_path, load_config
 
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/gate-check"
 
@@ -177,7 +181,10 @@ def gate1_pull_lint_push(config, app_name, skip_push=False) -> GateResult:
 
     r.passed = lint_clean
     if not lint_clean:
-        r.error = "Lint not clean — run cxas lint and fix violations before continuing"
+        r.error = (
+            "Lint not clean — run cxas lint and fix violations before"
+            " continuing"
+        )
     _print_gate_footer(r)
     return r
 
@@ -211,26 +218,32 @@ def gate2_agent_hierarchy(app_name) -> GateResult:
         _print_gate_footer(r)
         return r
 
-    root_agent_display_name = agents_by_resource.get(app.root_agent) if app.root_agent else None
+    root_agent_display_name = (
+        agents_by_resource.get(app.root_agent) if app.root_agent else None
+    )
     print(f"  Root agent: {root_agent_display_name}")
     print(f"  Agents found: {len(agents_map)}")
 
     for name in agents_map:
-        is_root = (name == root_agent_display_name)
+        is_root = name == root_agent_display_name
         marker = " (ROOT)" if is_root else ""
         print(f"    - {name}{marker}")
 
-    r.findings.append({
-        "root_agent": root_agent_display_name,
-        "agents": list(agents_map.keys()),
-    })
+    r.findings.append(
+        {
+            "root_agent": root_agent_display_name,
+            "agents": list(agents_map.keys()),
+        }
+    )
 
     if not app.root_agent:
         r.passed = False
         r.error = "App has no root_agent set"
     elif root_agent_display_name not in agents_map:
         r.passed = False
-        r.error = f"Root agent {app.root_agent} listed on app but not in agents list"
+        r.error = (
+            f"Root agent {app.root_agent} listed on app but not in agents list"
+        )
     else:
         r.passed = True
 
@@ -275,12 +288,12 @@ def gate3_tool_associations(app_name) -> GateResult:
     for name in tools_map:
         print(f"    - {name}")
 
-    print(f"\n  Agent tool associations:")
+    print("\n  Agent tool associations:")
     per_agent = {}
     end_session_warnings = []
     for agent_name, resource in agents_map.items():
         agent = agents_client.get_agent(resource)
-        tool_ids = [t.split("/")[-1] for t in (agent.tools or [])]
+        tool_ids = [t.split("/")[-1] for t in agent.tools or []]
         toolsets = [
             {
                 "toolset": ts.toolset.split("/")[-1],
@@ -294,7 +307,7 @@ def gate3_tool_associations(app_name) -> GateResult:
             agent_name
             == (app.root_agent.split("/")[-1] if app.root_agent else None)
         )
-        has_end = any("end_session" in t for t in (agent.tools or []))
+        has_end = any("end_session" in t for t in agent.tools or [])
         flag = ""
         if is_root and not has_end:
             flag = "  WARNING: ROOT MISSING end_session"
@@ -317,7 +330,8 @@ def gate3_tool_associations(app_name) -> GateResult:
         ts_str = ", ".join(ts_formatted) if ts_formatted else "none"
 
         print(
-            f"    {agent_name}: tools=[{tools_formatted}] toolsets=[{ts_str}]{flag}"
+            f"    {agent_name}: tools=[{tools_formatted}]"
+            f" toolsets=[{ts_str}]{flag}"
         )
 
     r.findings.append(
@@ -338,7 +352,10 @@ def gate3_tool_associations(app_name) -> GateResult:
 
 
 def gate4_callback_inventory(app_name) -> GateResult:
-    """Inventory callbacks per agent, plus check that local callback tests are discoverable."""
+    """Inventory callbacks per agent.
+
+    Also checks that local callback tests are discoverable.
+    """
     r = GateResult(4, "Callback inventory + test discovery")
     _print_gate_header(r.gate, r.name)
 
@@ -379,19 +396,20 @@ def gate4_callback_inventory(app_name) -> GateResult:
         {"callbacks_per_agent": inventory, "total": total_callbacks}
     )
 
-    # Check whether local callback tests are wired up correctly. The runner globs
-    # evals/callback_tests/agents/<agent>/*_callbacks/<base>/test.py and SILENTLY
-    # skips any test whose python_code.py isn't in the same dir. If the platform
-    # has callbacks AND the user has authored tests under tests/, we expect at
-    # least one discoverable test — otherwise the symlink/copy step (run via
-    # scripts/sync-callbacks.py) was missed and the tests are dead.
+    # Check whether local callback tests are wired up correctly. The runner
+    # globs evals/callback_tests/agents/<agent>/*_callbacks/<base>/test.py
+    # and SILENTLY skips any test whose python_code.py isn't in the same
+    # dir. If the platform has callbacks AND the user has authored tests
+    # under tests/, we expect at least one discoverable test — otherwise
+    # the symlink/copy step (run via scripts/sync-callbacks.py) was missed
+    # and the tests are dead.
     cb_tests_dir = get_project_path("evals", "callback_tests")
     tests_root = os.path.join(cb_tests_dir, "tests")
     agents_root = os.path.join(cb_tests_dir, "agents")
 
     authored_count = 0
     if os.path.isdir(tests_root):
-        for dirpath, _dirs, files in os.walk(tests_root):
+        for _dirpath, _dirs, files in os.walk(tests_root):
             if "test.py" in files:
                 authored_count += 1
 
@@ -400,7 +418,7 @@ def gate4_callback_inventory(app_name) -> GateResult:
         try:
             from cxas_scrapi.evals.callback_evals import CallbackEvals
 
-            cb_runner = CallbackEvals()
+            CallbackEvals()
             # Pass empty pytest args so we just enumerate, but the runner does
             # execute tests. To avoid a slow test-run inside gate-check, just
             # glob the symlinks ourselves using the same pattern SCRAPI uses.
@@ -415,7 +433,8 @@ def gate4_callback_inventory(app_name) -> GateResult:
                     discoverable_count += 1
         except ImportError:
             r.warnings.append(
-                "cxas_scrapi.evals.callback_evals not importable — skipping discoverability check"
+                "cxas_scrapi.evals.callback_evals not importable — skipping"
+                " discoverability check"
             )
 
     r.findings.append(
@@ -425,21 +444,25 @@ def gate4_callback_inventory(app_name) -> GateResult:
         }
     )
     print(
-        f"  Local callback tests: {authored_count} authored, {discoverable_count} discoverable"
+        f"  Local callback tests: {authored_count} authored,"
+        f" {discoverable_count} discoverable"
     )
 
     if total_callbacks > 0 and authored_count > 0 and discoverable_count == 0:
         r.passed = False
         r.error = (
-            f"{authored_count} test.py files exist under {tests_root} but NONE are discoverable by "
-            f"test_all_callbacks_in_app_dir — the agents/.../python_code.py copies and test.py symlinks "
-            f"are missing. Run: python scripts/sync-callbacks.py "
-            f"(post-push) or python scripts/sync-callbacks.py --from-local <app_dir> (pre-push)."
+            f"{authored_count} test.py files exist under {tests_root}"
+            " but NONE are discoverable by test_all_callbacks_in_app_dir"
+            " — the agents/.../python_code.py copies and test.py symlinks"
+            " are missing. Run: python scripts/sync-callbacks.py"
+            " (post-push) or python scripts/sync-callbacks.py --from-local"
+            " <app_dir> (pre-push)."
         )
     elif authored_count > discoverable_count:
         r.warnings.append(
-            f"{authored_count - discoverable_count} authored test(s) are not discoverable — "
-            f"likely missing python_code.py or symlink under agents/. Re-run sync-callbacks.py."
+            f"{authored_count - discoverable_count} authored test(s) are not"
+            " discoverable — likely missing python_code.py or symlink under"
+            " agents/. Re-run sync-callbacks.py."
         )
         r.passed = True
     else:
@@ -485,7 +508,8 @@ def gate6_multi_turn_smoke(app_name, prompts_file) -> GateResult:
         print("  Skipped — pass --multi-turn <prompts.json> to enable.")
         print("  Expected file format:")
         print(
-            '    [{"text": "I need help with my account"}, {"text": "July 12, 1948"}, ...]'
+            '    [{"text": "I need help with my account"}, {"text": "July 12,'
+            ' 1948"}, ...]'
         )
         _print_gate_footer(r)
         return r
@@ -525,7 +549,8 @@ def gate6_multi_turn_smoke(app_name, prompts_file) -> GateResult:
     r.findings.append({"session_id": session_id, "turns": turns})
     print("  Note: pacing must be verified by reading the printed responses —")
     print(
-        "  agent should ask for ONE thing at a time, not dump all questions at once."
+        "  agent should ask for ONE thing at a time, not dump all questions at"
+        " once."
     )
     _print_gate_footer(r)
     return r
@@ -536,17 +561,25 @@ def gate6_multi_turn_smoke(app_name, prompts_file) -> GateResult:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run the 6 build-verification gates against a deployed GECX app."
+        description=(
+            "Run the 6 build-verification gates against a deployed GECX app."
+        )
     )
     parser.add_argument(
         "--skip-push",
         action="store_true",
-        help="Skip the lint+push round-trip in Gate 1 (use when you only want to verify, not modify the platform)",
+        help=(
+            "Skip the lint+push round-trip in Gate 1 (use when you only want to"
+            " verify, not modify the platform)"
+        ),
     )
     parser.add_argument(
         "--multi-turn",
         default=None,
-        help="Path to a JSON file of prompts to run for Gate 6 (otherwise Gate 6 is skipped)",
+        help=(
+            "Path to a JSON file of prompts to run for Gate 6 (otherwise Gate 6"
+            " is skipped)"
+        ),
     )
     parser.add_argument(
         "--json",
@@ -556,7 +589,10 @@ def main():
     parser.add_argument(
         "--save",
         default=None,
-        help="Save JSON result to a specific path (default: <project>/eval-reports/gate-check-<timestamp>.json)",
+        help=(
+            "Save JSON result to a specific path (default:"
+            " <project>/eval-reports/gate-check-<timestamp>.json)"
+        ),
     )
     args = parser.parse_args()
 
@@ -564,7 +600,8 @@ def main():
         import cxas_scrapi  # noqa: F401
     except ImportError:
         print(
-            "Error: cxas-scrapi is not installed. Activate venv (source .venv/bin/activate) and install cxas-scrapi first."
+            "Error: cxas-scrapi is not installed. Activate venv (source"
+            " .venv/bin/activate) and install cxas-scrapi first."
         )
         sys.exit(1)
 
@@ -601,7 +638,7 @@ def main():
     if args.save:
         out_path = args.save
     else:
-        reports_dir = get_project_path("eval-reports")
+        reports_dir = get_output_dir()
         os.makedirs(reports_dir, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         out_path = os.path.join(reports_dir, f"gate-check-{ts}.json")
@@ -619,9 +656,12 @@ def main():
             f"{summary['overall']['failed']} failed, "
             f"{summary['overall']['skipped']} skipped"
         )
-        print(
-            f"  Result: {'ALL PASS' if summary['overall']['all_pass'] else 'FAILURES — see above'}"
+        res_text = (
+            "ALL PASS"
+            if summary["overall"]["all_pass"]
+            else "FAILURES — see above"
         )
+        print(f"  Result: {res_text}")
         print(f"  JSON saved to: {out_path}")
         print(f"{'=' * 60}\n")
 

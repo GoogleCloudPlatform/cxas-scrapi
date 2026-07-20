@@ -38,7 +38,7 @@
 Agent development uses a **hybrid approach** -- local files in git for version control, with SCRAPI for running evals and platform operations. The core principle: **create and edit locally, push to platform**.
 
 Each agent is managed within a dedicated `<project>` workspace folder containing:
-- **`gecx-config.json`** -- Centralized config (project ID, app ID, location, modality).
+- **`gecx-config.toml`** -- Centralized config (`[default]` or `[profiles.*]` sections containing `gcp-project-id`, `deployed-app-id`, `location`, `modality`).
 - **`cxas_app/`** -- Local agent code (instructions, callbacks, tools, toolsets). The canonical source for agent definitions.
 - **`tdd.md`** -- Technical Design Document (the source of truth for architecture).
 - **`evals/`** -- Test definitions:

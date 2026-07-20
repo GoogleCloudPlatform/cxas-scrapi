@@ -970,7 +970,7 @@ def trace_group() -> None:
 
 @trace_group.command(name="search")
 @click.argument("query", required=True)
-@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.option("--app-name", "-a", required=False, help="App resource name.")
 @click.option(
     "--match",
     type=click.Choice(["phrase", "all", "any"]),

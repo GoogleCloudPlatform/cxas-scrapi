@@ -31,7 +31,7 @@ Check memory for project-specific context (app ID, variable handling rules, know
 3. **Variable handling** -- which variables the agent derives automatically vs needs as overrides (check the agent's `before_agent_callback` if unsure)
 
 **CRITICAL: Evaluation Channel Enforcement**
-If the app's `gecx-config.json` specifies `"modality": "audio"`, you MUST NOT run evaluations in text mode. The runner scripts will now throw a fatal error if you attempt to bypass this. When running eval scripts, either omit the `--channel` flag to rely on the default config, or explicitly pass `--channel audio`. Never pass `--channel text` for an audio agent.
+If the app's `gecx-config.toml` specifies `"modality": "audio"`, you MUST NOT run evaluations in text mode. The runner scripts will now throw a fatal error if you attempt to bypass this. When running eval scripts, either omit the `--channel` flag to rely on the default config, or explicitly pass `--channel audio`. Never pass `--channel text` for an audio agent.
 
 ## Four Eval Types
 
@@ -82,7 +82,7 @@ results_df = cb.test_all_callbacks_in_app_dir(app_dir="<project>/evals/callback_
 python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "Describe what changed and why" --auto-revert
 ```
 
-The script reads the channel from `gecx-config.json` automatically. It runs all eval types, triages failures, and generates an iteration report -- no need to run triage separately.
+The script reads the channel from `gecx-config.toml` automatically. It runs all eval types, triages failures, and generates an iteration report -- no need to run triage separately.
 
 To re-triage with different options (e.g., averaging across multiple runs), use the triage script directly:
 

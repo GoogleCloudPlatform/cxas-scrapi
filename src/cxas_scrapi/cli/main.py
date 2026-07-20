@@ -2721,6 +2721,7 @@ class LazyRootGroup(click.Group):
         "run-session": "cxas_scrapi.cli.sessions:run_session_cmd",
         "trace": "cxas_scrapi.cli.trace_cli:trace_group",
         "versions": "cxas_scrapi.cli.versions_cli:versions_group",
+        "workspace": "cxas_scrapi.cli.workspace:workspace_group",
         "help": "cxas_scrapi.cli.utils:help_cmd",
     }
 
@@ -2741,6 +2742,7 @@ class LazyRootGroup(click.Group):
         "run-session": "Launch interactive terminal session.",
         "trace": "Conversational transcript trace and observability.",
         "versions": "Manage app version snapshots.",
+        "workspace": "Manage GECX workspaces, active project pointers, and profiles.",
     }
 
     def list_commands(self, ctx: click.Context) -> list[str]:

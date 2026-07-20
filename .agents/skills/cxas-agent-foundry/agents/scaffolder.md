@@ -5,7 +5,7 @@ description: Bulk-generate all CXAS app files (agent JSONs, instruction.txt file
 
 # Scaffolder Agent
 
-**Role:** Architect-to-code translator. You take an APPROVED TDD (`<project>/tdd.md`) plus the project template, and produce a complete first-cut agent skeleton: every agent file, every tool file, every callback file, and a customized `app.json` and `gecx-config.json`.
+**Role:** Architect-to-code translator. You take an APPROVED TDD (`<project>/tdd.md`) plus the project template, and produce a complete first-cut agent skeleton: every agent file, every tool file, every callback file, and a customized `app.json` and `gecx-config.toml`.
 
 **Reasoning intensity: MEDIUM.** Mostly mechanical (TDD section → file template → write file), but the work that goes wrong is grounding. You must use ONLY the agents/tools/variables/callbacks listed in the TDD — never invent. Every file you write is a candidate for the user to read; fabricated names produce a build that lints clean but doesn't match the design.
 
@@ -18,8 +18,8 @@ description: Bulk-generate all CXAS app files (agent JSONs, instruction.txt file
 
 Optional:
 - `template_dir`: project template to copy from (default `assets/project-template/cxas_app/Sample_Support_Agent/`)
-- `model`: model to set in `app.json` (default: read from `<project>/gecx-config.json`)
-- `modality`: audio | text (default: read from `<project>/gecx-config.json`)
+- `model`: model to set in `app.json` (default: read from `<project>/gecx-config.toml`)
+- `modality`: audio | text (default: read from `<project>/gecx-config.toml`)
 
 ## Hard rule: TDD is the spec
 
@@ -43,7 +43,7 @@ You write ONLY what the TDD describes. If the TDD lists 7 sub-agents, you write 
 
 If `app_dir` doesn't exist:
 - Copy the template: `cp -r <template_dir>/* <app_dir>/`
-- Rename `Sample_Support_Agent` directory and references to the new app name (read from TDD or `gecx-config.json`)
+- Rename `Sample_Support_Agent` directory and references to the new app name (read from TDD or `gecx-config.toml`)
 - Remove template-specific files that don't apply (e.g., `Sample_Support_Agent` agents not in your TDD)
 
 ### Step 1.5 — Delete template examples (always run, even if app_dir already existed)
@@ -60,15 +60,25 @@ Why now and not later: eval-writer doesn't run until after you, and it consumes 
 
 Add the deleted paths to the manifest's `files_skipped` array with reason `"template example removed"` so the main thread can audit what was cleaned up.
 
-### Step 2 — Customize app.json
+### Step 2 — Customize app.json and gecx-config.toml
 
 Update `<app_dir>/app.json`:
-- `name` and `displayName` from `gecx-config.json`
+- `name` and `displayName` from `gecx-config.toml`
 - `rootAgent` to the TDD's named root agent. **Crucial**: This property must be strictly camelCase `rootAgent` (never snake_case `root_agent`) and must match an actual agent directory name under `agents/` (e.g., `"support_bot"`).
-- `modelSettings.model` from gecx-config
+- `modelSettings.model` from `gecx-config.toml`
 - `variableDeclarations` — every variable in the TDD's Variables section, with description + schema. **Every variable MUST have a description per the Zero Warnings Policy.**
 - `tools` array — every tool listed in the TDD's Tools section
 - `loggingSettings` — set `evaluationAudioRecordingConfig` for audio agents (required for golden runs)
+
+Output or update `<project_dir>/gecx-config.toml` formatted with valid TOML syntax (e.g., `[default]` section and `gcp-project-id` / `deployed-app-id` keys instead of JSON):
+```toml
+[default]
+gcp-project-id = "your-gcp-project-id"
+location = "us-central1"
+deployed-app-id = "your-app-id"
+modality = "TEXT" # or AUDIO
+model = "gemini-2.5-flash"
+```
 
 ### Step 3 — Write each agent
 

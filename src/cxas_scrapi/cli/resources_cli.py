@@ -559,7 +559,7 @@ def tools_group() -> None:
 
 
 @tools_group.command(name="list")
-@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.option("--app-name", "-a", required=False, help="App resource name.")
 @click.pass_context
 def tools_list_cmd(ctx: click.Context, **kwargs: Any) -> None:
     """List tools defined on app."""
@@ -568,7 +568,7 @@ def tools_list_cmd(ctx: click.Context, **kwargs: Any) -> None:
 
 
 @tools_group.command(name="delete")
-@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.option("--app-name", "-a", required=False, help="App resource name.")
 @click.option("--name", required=True, help="Tool name to delete.")
 @click.pass_context
 def tools_delete_cmd(ctx: click.Context, **kwargs: Any) -> None:

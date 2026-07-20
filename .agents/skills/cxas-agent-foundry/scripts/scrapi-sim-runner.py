@@ -30,15 +30,22 @@ import json
 import os
 import sys
 import time
+import uuid
 from datetime import datetime
 from typing import Any
 
 import yaml
-from config import get_project_path, load_app_name
+
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from config import get_output_dir, get_project_path, load_app_name
 
 from cxas_scrapi.evals.simulation_evals import (
     LLMUserConversation,
     SimulationEvals,
+    StepStatus,
 )
 from cxas_scrapi.utils.reporting import generate_html_report
 
@@ -48,7 +55,7 @@ USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/scrapi-sim-runner"
 EVALS_YAML = get_project_path("evals", "scenarios", "scenarios.yaml")
 SIM_EVALS_YAML = get_project_path("evals", "simulations", "simulations.yaml")
 SIM_TESTS_DIR = get_project_path("evals", "simulations")
-REPORTS_DIR = get_project_path("eval-reports")
+REPORTS_DIR = get_output_dir()
 
 _DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
@@ -68,13 +75,7 @@ def load_sim_templates():
         data = yaml.safe_load(f)
     if isinstance(data, list):
         return {ev["name"]: ev for ev in data}
-
-    evals = (data or {}).get("evals", [])
-    common_expectations = (data or {}).get("common_expectations", [])
-    if common_expectations:
-        for ev in evals:
-            ev.setdefault("expectations", []).extend(common_expectations)
-    return {ev["name"]: ev for ev in evals}
+    return {ev["name"]: ev for ev in (data or {}).get("evals", [])}
 
 
 def get_app_name():
@@ -98,7 +99,6 @@ def build_test_case(ev: dict[str, Any]) -> dict[str, Any] | None:
         "name": name,
         "steps": template["steps"],
         "expectations": template.get("expectations", []),
-        "audio_expectations": template.get("audio_expectations", []),
         "session_parameters": template.get("session_parameters", {}),
         "metadata": {
             "prd_id": ev.get("prd_id", ""),
@@ -109,39 +109,136 @@ def build_test_case(ev: dict[str, Any]) -> dict[str, Any] | None:
 
 
 class EnhancedSimRunner(SimulationEvals):
-    """Extended SimulationEvals that defaults initial utterance to 'Hi'."""
+    """Extended SimulationEvals that injects session variables."""
 
     def simulate_conversation(
         self,
         test_case: dict[str, Any],
-        sim_user_model: str | None = _DEFAULT_MODEL,
-        eval_model: str | None = _DEFAULT_MODEL,
+        initial_utterance: str = "Hi",
+        model: str = _DEFAULT_MODEL,
         session_id: str | None = None,
         console_logging: bool = True,
         modality: str = "text",
-        capture_agent_audio: bool = False,
+        use_tool_fakes: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
-        use_tool_fakes: bool = False,
-        voice_config: dict[str, Any] | None = None,
-        initial_utterance: str = "Hi",
         **kwargs: Any,
     ) -> LLMUserConversation:
-        return super().simulate_conversation(
+        """Run a simulated conversation with variable injection."""
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+
+        eval_conv = LLMUserConversation(
+            genai_client=self.genai_client,
+            genai_model=model,
             test_case=test_case,
-            sim_user_model=sim_user_model,
-            eval_model=eval_model,
-            session_id=session_id,
-            console_logging=console_logging,
-            modality=modality,
-            capture_agent_audio=capture_agent_audio,
-            background_noise_file=background_noise_file,
-            burst_noise_files=burst_noise_files,
-            use_tool_fakes=use_tool_fakes,
-            voice_config=voice_config,
-            initial_utterance=initial_utterance,
-            **kwargs,
         )
+
+        session_params = test_case.get("session_parameters", {})
+
+        if console_logging:
+            print("Starting simulated conversation...")
+            if session_params:
+                print(f"  Variables: {list(session_params.keys())}")
+
+        # First turn: inject variables alongside the initial utterance
+        user_utterance = initial_utterance
+        eval_conv._add_user_utterance(user_utterance)
+        eval_conv.current_turn += 1
+
+        detailed_trace = [f"User: {user_utterance}"]
+
+        first_turn = True
+        while user_utterance:
+            for attempt in range(self.max_retries):
+                try:
+                    run_kwargs = {
+                        "session_id": session_id,
+                        "text": user_utterance,
+                        "modality": modality,
+                        "use_tool_fakes": use_tool_fakes,
+                    }
+                    if background_noise_file:
+                        run_kwargs[
+                            "background_noise_file"
+                        ] = background_noise_file
+                    if burst_noise_files:
+                        run_kwargs["burst_noise_files"] = burst_noise_files
+                    # Inject variables on first turn only
+                    if first_turn and session_params:
+                        run_kwargs["variables"] = session_params
+                        first_turn = False
+                    else:
+                        first_turn = False
+
+                    response = self.sessions_client.run(**run_kwargs)
+                    break
+                except Exception as e:
+                    if attempt == self.max_retries - 1:
+                        raise e
+                    if console_logging:
+                        print(f"  Retry {attempt + 1}: {e}")
+                    time.sleep(self.retry_delay_base**attempt)
+
+            if not response:
+                break
+
+            if console_logging:
+                self.sessions_client.parse_result(response)
+
+            agent_text, trace_chunks, session_ended = (
+                self._parse_agent_response(response)
+            )
+            detailed_trace.append("\n".join(trace_chunks))
+
+            if session_ended:
+                if console_logging:
+                    print("\nSession ended by agent (end_session).")
+                # Mark current step as completed if the session ending
+                # is a valid success (escalation evals)
+                for prog in eval_conv.steps_progress:
+                    criteria = prog.step.success_criteria.lower()
+                    if prog.status != StepStatus.COMPLETED and (
+                        "escalat" in criteria
+                        or "transfer" in criteria
+                        or "being transferred" in criteria
+                    ):
+                        prog.status = StepStatus.COMPLETED
+                        prog.justification = (
+                            "Agent ended session via escalation/transfer"
+                            " — matches success criteria."
+                        )
+                break
+
+            result = eval_conv.next_user_utterance(agent_text)
+            if isinstance(result, tuple):
+                user_utterance, _ = result
+            else:
+                user_utterance = result
+            if user_utterance:
+                detailed_trace.append(f"User: {user_utterance}")
+
+        if console_logging:
+            print("\n--- Conversation Complete ---")
+            for step_prog in eval_conv.steps_progress:
+                status_icon = (
+                    "✓" if step_prog.status == StepStatus.COMPLETED else "✗"
+                )
+                print(
+                    f"  {status_icon} {step_prog.step.goal[:80]} →"
+                    f" {step_prog.status.value}"
+                )
+
+        # Evaluate expectations
+        self._evaluate_expectations(
+            eval_conv, detailed_trace, model, console_logging
+        )
+
+        # Attach extra data for reporting
+        eval_conv._session_id = session_id
+        eval_conv._detailed_trace = detailed_trace
+
+        return eval_conv
 
 
 def _parse_priorities(priority):
@@ -266,8 +363,9 @@ def cmd_run(args):
                     continue
                 if not tags:
                     print(
-                        f"  WARNING: sim '{name}' has no tags — including "
-                        "anyway (add tags for proper filtering)"
+                        f"  WARNING: sim '{name}' has no tags — including"
+                        " anyway (add"
+                        " tags for proper filtering)"
                     )
             tag_filter = getattr(args, "tag", None)
             if tag_filter and tag_filter not in tags:
@@ -293,8 +391,8 @@ def cmd_run(args):
     parallel = args.parallel or 1
 
     print(
-        f"Running {len(test_cases)} evals x {runs} runs "
-        f"({modality}, model: {model})"
+        f"Running {len(test_cases)} evals x {runs} runs ({modality}, model:"
+        f" {model})"
     )
     if parallel > 1:
         print(f"Parallelism: {parallel} concurrent sessions")
@@ -304,8 +402,8 @@ def cmd_run(args):
     sim = EnhancedSimRunner(
         app_name=app_name,
         user_agent_extension=USER_AGENT_EXTENSION,
-        expectations_only=args.expectations_only,
-        deployment_id=args.deployment_id,
+        expectations_only=getattr(args, "expectations_only", False),
+        deployment_id=getattr(args, "deployment_id", None),
     )
     all_results = sim.run_simulations(
         test_cases=test_cases,
@@ -316,7 +414,7 @@ def cmd_run(args):
         modality=modality,
         verbose=args.verbose,
         use_tool_fakes=args.use_tool_fakes,
-        capture_agent_audio=args.capture_agent_audio,
+        capture_agent_audio=getattr(args, "capture_agent_audio", False),
     )
 
     # Summary
@@ -380,11 +478,11 @@ def cmd_run(args):
 
 def main():
     try:
-        import cxas_scrapi  # noqa: F401, PLC0415
+        import cxas_scrapi  # noqa: F401
     except ImportError:
         print(
-            "Error: cxas-scrapi not installed. Activate venv "
-            "(source .venv/bin/activate) and install cxas-scrapi first."
+            "Error: cxas-scrapi not installed. Activate venv (source"
+            " .venv/bin/activate) and install cxas-scrapi first."
         )
         sys.exit(1)
 
@@ -432,31 +530,10 @@ def main():
         help="Use fake tools if available",
     )
     p_run.add_argument(
-        "--expectations-only",
-        action="store_true",
-        default=False,
-        help=(
-            "Evaluate test results using only expectations "
-            "(ignore goal success_criteria)"
-        ),
-    )
-    p_run.add_argument(
-        "--capture-agent-audio",
-        action="store_true",
-        default=False,
-        help="Capture real-time agent output audio as WAV files",
-    )
-    p_run.add_argument(
         "--gcs-report-path",
         type=str,
         default=None,
         help="GCS URI to upload report to (e.g. gs://bucket/report.html)",
-    )
-    p_run.add_argument(
-        "--deployment-id",
-        type=str,
-        default=None,
-        help="Target a specific deployment ID",
     )
 
     args = parser.parse_args()

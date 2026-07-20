@@ -14,11 +14,11 @@ Run these gates IN ORDER after building agents/tools/callbacks. ALL must pass be
 
 ## CRITICAL: Always use the existing app
 
-Read `gecx-config.json` for the app ID. Always construct the full resource path:
+Read `gecx-config.toml` (under `[default]` or `[profiles.*]`) for the app ID (`deployed-app-id`). Always construct the full resource path:
 ```python
 APP_NAME = f"projects/{PROJECT_ID}/locations/{LOCATION}/apps/{APP_ID}"
 ```
-**NEVER call `apps.create_app()` or `cxas create` during verification or eval runs.** That creates a new orphaned app. Always use the existing `deployed_app_id` from `gecx-config.json` with every SCRAPI client, `cxas pull`, `cxas push`, and eval script command.
+**NEVER call `apps.create_app()` or `cxas create` during verification or eval runs.** That creates a new orphaned app. Always use the existing `deployed-app-id` from `gecx-config.toml` (`[default]` or `[profiles.*]`) with every SCRAPI client, `cxas pull`, `cxas push`, and eval script command.
 
 ## Gate 1: Pull, Lint and Push
 Sync platform state to local, lint, fix issues, then push fixes back:

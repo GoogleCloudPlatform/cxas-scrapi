@@ -211,6 +211,12 @@ def llm_lint(config: LlmLintConfig | Any) -> None:
         config: LLM lint configuration object or arguments namespace.
     """
     args = to_dataclass(LlmLintConfig, config)
+    if not args.agent_dir:
+        print(
+            "Error: --agent-dir was not provided and no single agent directory could be automatically discovered.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     agent_path = Path(args.agent_dir)
 
     if not agent_path.exists():
@@ -429,7 +435,7 @@ import click
 
 
 @click.command(name="llm-lint")
-@click.option("--agent-dir", required=True, help="Path to sub-agent directory.")
+@click.option("--agent-dir", required=False, help="Path to sub-agent directory.")
 @click.option(
     "--model", default="gemini-2.5-flash", help="Gemini model for linting."
 )
