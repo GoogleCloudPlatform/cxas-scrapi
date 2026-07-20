@@ -10,7 +10,7 @@ This is a simple 2-agent customer support app (root + troubleshooting sub-agent)
 
 | File | Pattern |
 |------|---------|
-| `gecx-config.json` | Standard project configuration with placeholders |
+| `gecx-config.toml` | Standard project configuration with TOML syntax (`[default]` section and placeholders) |
 | `tdd.md` | Living Technical Design Document structure -- update before building |
 | `cxas_app/Sample_Support_Agent/app.json` | App config with variable declarations, naming conventions commentary |
 | `cxas_app/Sample_Support_Agent/agents/root_agent/root_agent.json` | Agent config with tool/callback references matching CXAS export format |
@@ -30,7 +30,7 @@ This is a simple 2-agent customer support app (root + troubleshooting sub-agent)
 ## How to Use
 
 1. **Copy** this template to a new project folder
-2. **Fill in** `gecx-config.json` with your GCP project details
+2. **Fill in** `gecx-config.toml` (`[default]` section: `gcp-project-id`, `deployed-app-id`, etc.) with your GCP project details
 3. **Write your TDD** using `tdd.md` as a skeleton -- fill in your agent design, eval plan, and build steps
 4. **Get TDD approval** before building anything
 5. **Adapt the app** -- modify instructions, callbacks, and tools for your use case

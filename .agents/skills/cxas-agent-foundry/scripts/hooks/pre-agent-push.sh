@@ -15,7 +15,7 @@
 
 # Drift detection before pushing local agent code to CXAS
 # Blocks the push if local files are stale (platform has changes not in local)
-# Also validates the push target matches gecx-config.json
+# Also validates the push target matches gecx-config.toml
 # Works with both Claude Code and Gemini CLI
 
 set -euo pipefail
@@ -40,7 +40,13 @@ if echo "$cmd" | grep -qE 'cxas(-eval)? push'; then
     exit 0
   fi
 
-  config_file="${project_dir}/gecx-config.json"
+  config_file="${project_dir}/gecx-config.toml"
+  is_toml=true
+  if [ ! -f "$config_file" ]; then
+    config_file="${project_dir}/gecx-config.json"
+    is_toml=false
+  fi
+
   if [ ! -f "$config_file" ]; then
     if [ "$agent" = "claude" ]; then
       echo '{}'
@@ -50,17 +56,38 @@ if echo "$cmd" | grep -qE 'cxas(-eval)? push'; then
     exit 0
   fi
 
-  app_dir="${project_dir}/$(jq -r '.app_dir // "cxas_app/"' "$config_file")"
-  project=$(jq -r '.gcp_project_id' "$config_file")
-  location=$(jq -r '.location' "$config_file")
-  deployed_app_id=$(jq -r '.deployed_app_id' "$config_file")
+  app_dir_val=""
+  project=""
+  location=""
+  deployed_app_id=""
+
+  if [ "$is_toml" = true ]; then
+    app_dir_val=$(parse_toml_key "app-dir" "$config_file")
+    [ -z "$app_dir_val" ] && app_dir_val=$(parse_toml_key "app_dir" "$config_file")
+    project=$(parse_toml_key "gcp-project-id" "$config_file")
+    [ -z "$project" ] && project=$(parse_toml_key "gcp_project_id" "$config_file")
+    location=$(parse_toml_key "location" "$config_file")
+    deployed_app_id=$(parse_toml_key "deployed-app-id" "$config_file")
+    [ -z "$deployed_app_id" ] && deployed_app_id=$(parse_toml_key "deployed_app_id" "$config_file")
+  else
+    app_dir_val=$(jq -r '.app_dir // "cxas_app/"' "$config_file")
+    project=$(jq -r '.gcp_project_id' "$config_file")
+    location=$(jq -r '.location' "$config_file")
+    deployed_app_id=$(jq -r '.deployed_app_id' "$config_file")
+  fi
+
+  : "${app_dir_val:=cxas_app/}"
+  app_dir="${project_dir}/${app_dir_val}"
+  project=$(echo "$project" | tr -d '[:space:]')
+  location=$(echo "$location" | tr -d '[:space:]')
+  deployed_app_id=$(echo "$deployed_app_id" | tr -d '[:space:]')
   app_resource="projects/${project}/locations/${location}/apps/${deployed_app_id}"
 
   # Validate push target matches config
   if echo "$cmd" | grep -q -- "--to"; then
     push_target=$(echo "$cmd" | grep -oP '(?<=--to\s)\S+' || echo "")
     if [ -n "$push_target" ] && [ "$push_target" != "$deployed_app_id" ] && [ "$push_target" != "$app_resource" ]; then
-      msg="WARNING: Push target ($push_target) does not match deployed_app_id ($deployed_app_id) in gecx-config.json. Verify you are pushing to the correct app."
+      msg="WARNING: Push target ($push_target) does not match deployed_app_id ($deployed_app_id) in gecx-config.toml (or config file). Verify you are pushing to the correct app."
       if [ "$agent" = "claude" ]; then
         echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"$msg\"}}"
       else

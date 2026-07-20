@@ -21,14 +21,15 @@ import sys
 import time
 from datetime import datetime
 
-from config import load_config as _load_shared_config, get_project_path
+from config import get_project_path
+from config import load_config as _load_shared_config
 
 # --- Paths ---
 REPORTS_DIR = get_project_path("eval-reports")
 
 
 def load_config():
-    """Load app config from gecx-config.json via shared config loader."""
+    """Load app config from gecx-config.toml via shared config loader."""
     raw = _load_shared_config()
     config = {
         "project": raw["gcp_project_id"],
@@ -44,7 +45,7 @@ def load_config():
         f"projects/{config['project']}/locations/{config['location']}/apps/{config['app_id']}"
     )
     print(
-        f"Config loaded from gecx-config.json (app: {config['app_name_short']})"
+        f"Config loaded from gecx-config.toml (app: {config['app_name_short']})"
     )
     return config
 
@@ -64,7 +65,7 @@ def main():
     parser.add_argument(
         "--channel",
         default=None,
-        help="Modality: text or audio (default: from gecx-config.json)",
+        help="Modality: text or audio (default: from gecx-config.toml)",
     )
     parser.add_argument(
         "--runs",
@@ -91,17 +92,6 @@ def main():
         default=5,
         help="Number of parallel worker sessions for simulations. Defaults to 5.",
     )
-    parser.add_argument(
-        "--deployment-id",
-        default=None,
-        help="Target a specific deployment ID for simulations.",
-    )
-    parser.add_argument(
-        "--use-tool-fakes",
-        action="store_true",
-        default=False,
-        help="Use fake tools if available for simulations.",
-    )
     args = parser.parse_args()
 
     # Load config
@@ -109,7 +99,7 @@ def main():
 
     if args.channel and args.channel != config.get("modality", "text"):
         print(
-            f"ERROR: Cannot run evals in '{args.channel}' mode. gecx-config.json specifies modality '{config.get('modality', 'text')}'."
+            f"ERROR: Cannot run evals in '{args.channel}' mode. gecx-config.toml specifies modality '{config.get('modality', 'text')}'."
         )
         print(
             "To fix: Remove the --channel flag or ensure it matches the app's configured modality."
@@ -160,8 +150,6 @@ def main():
             runs=args.runs,
             filter_tags=filter_tags,
             parallel=args.sim_parallel,
-            use_tool_fakes=args.use_tool_fakes,
-            deployment_id=args.deployment_id,
         )
     except Exception as e:
         print(f"\n  ERROR: Evaluation run failed: {e}")

@@ -54,6 +54,7 @@ def setup_stubs(config_mock):
     fake.load_config = lambda: config_mock
     fake.get_project_path = lambda *a: "/tmp/fakeproj/" + "/".join(a)
     fake.resolve_project_dir = lambda: "/tmp/fakeproj"
+    fake.get_output_dir = lambda: "/tmp/fakeproj/.scrapi-out"
     sys.modules["config"] = fake
 
     if _SCRIPTS_DIR not in sys.path:
@@ -79,12 +80,19 @@ def evals_runner():
 @pytest.fixture
 def sim_runner():
     """Import the scrapi-sim-runner module."""
+    if _SCRIPTS_DIR not in sys.path:
+        sys.path.insert(0, _SCRIPTS_DIR)
+    elif sys.path[0] != _SCRIPTS_DIR:
+        sys.path.remove(_SCRIPTS_DIR)
+        sys.path.insert(0, _SCRIPTS_DIR)
+
     spec = importlib.util.spec_from_file_location(
         "scrapi_sim_runner", os.path.join(_SCRIPTS_DIR, "scrapi-sim-runner.py")
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod
+    yield mod
+    sys.modules.pop("config", None)
 
 
 # ---------------------------------------------------------------------------

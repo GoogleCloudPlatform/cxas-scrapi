@@ -41,12 +41,12 @@ Methodology for systematically debugging eval failures and improving agent behav
 
 ## Prerequisites
 
-Check `<project>/gecx-config.json` first for project configuration (where `<project>` is the active project folder from `.active-project`, e.g., `troubleshoot-agent/`). If not present, check memory or ask the user.
+Check `<project>/gecx-config.toml` (`[default]` or `[profiles.*]`) first for project configuration (where `<project>` is the active project folder from `.active-project`, e.g., `troubleshoot-agent/`). If not present, check memory or ask the user.
 
 | Prerequisite | Check | If missing |
 |-------------|-------|------------|
 | **Environment** | `.venv/` exists, `cxas-scrapi` installed | Follow Onboarding Flow in `references/setup.md` |
-| **App name** | `<project>/gecx-config.json` -> `deployed_app_id` | Ask the user |
+| **App name** | `<project>/gecx-config.toml` (`[default]` / `[profiles.*]`) -> `deployed-app-id` | Ask the user |
 | **TDD (Mandatory)** | `<project>/tdd.md` | See `references/build.md` → Eval Creation (reverse-engineer TDD + bootstrap evals + run baseline), then return here |
 | **Evals** (goldens, sims, tool tests, callback tests) | `<project>/evals/{goldens,simulations,tool_tests,callback_tests}/` populated | See `references/build.md` → Eval Creation (bootstrap-evals.py + dispatch eval-writer per type) |
 | **Target pass rate** | Ask the user | e.g., 90%, 100% -- this is your exit criteria for the iteration loop |

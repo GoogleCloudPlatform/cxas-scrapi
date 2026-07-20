@@ -33,35 +33,32 @@ Everything else is derived:
 - **Model**: `gemini-3.1-flash-live` for audio, `gemini-3-flash` for text
 - **deployed_app_id**: `null` for new apps (set after first push)
 
-Once you have all answers, write `<project_name>/gecx-config.json` inside the project folder (NOT at the repo root):
-```json
-{
-  "gcp_project_id": "<project>",
-  "location": "us",
-  "app_name": "<app_name>",
-  "deployed_app_id": null,
-  "app_dir": "cxas_app/",
-  "model": "<model_based_on_modality>",
-  "modality": "<audio_or_text>",
-  "default_channel": "<audio_or_text>",
-  "gcs_bucket": "<gs://bucket-name>"
-}
+Once you have all answers, write `<project_name>/gecx-config.toml` inside the project folder (NOT at the repo root) in TOML format:
+```toml
+gcp-project-id = "<project>"
+location = "us"
+app-name = "<app_name>"
+app-dir = "cxas_app/"
+model = "<model_based_on_modality>"
+modality = "<audio_or_text>"
+default-channel = "<audio_or_text>"
+gcs-path = "<gs://bucket-name>"
 ```
 
-Omit the `gcs_bucket` field entirely for text agents (don't write `null` — leave it out).
+Omit the `gcs-path` field entirely for text agents (don't write empty — leave it out).
 
 ### Existing agent (connecting to an app that already exists)
 
 1. **GCP Project ID** -- which GCP project to use
 2. **App ID** -- the deployed app ID (short name or UUID)
 
-Once you have both, run the setup script to pull the app and auto-detect modality:
+Once you have both, run the workspace setup command to create a new workspace, pull the app, and auto-detect modality:
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/setup-project.py \
+cxas workspace create <project_name> \
   --project-id <gcp_project> \
   --app-id <app_id>
 ```
 
-The script pulls the app, reads `app.json` to detect the model and modality, writes `gecx-config.json`, and sets the active project. No need to ask for modality -- it's auto-detected from the deployed app.
+The command pulls the app, reads `app.json` to detect the model and modality, writes `gecx-config.toml`, and sets the active workspace. No need to ask for modality -- it's auto-detected from the deployed app.
 
-Note: For `deployed_app_id`, use the **short name** (e.g., `my-app-id`), NOT the full Google Cloud resource path. The SDK handles the pathing automatically.
+Note: For `app_id`, use the **short name** (e.g., `my-app-id`), NOT the full Google Cloud resource path. The SDK handles the pathing automatically.
