@@ -143,7 +143,7 @@ def conversations_group() -> None:
 
 
 @conversations_group.command(name="list")
-@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.option("--app-name", "-a", required=False, help="App resource name.")
 @click.pass_context
 def conversations_list_cmd(ctx: click.Context, **kwargs: Any) -> None:
     """List conversation histories."""

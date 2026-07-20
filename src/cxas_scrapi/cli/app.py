@@ -933,7 +933,7 @@ def app_push_cmd(ctx: click.Context, **kwargs: Any) -> None:
 
 
 @app_group.command(name="pull")
-@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.option("--app-name", "-a", required=False, help="App resource name.")
 @click.option("--target-dir", default=".", help="Target directory for pull.")
 @click.option("--overwrite", is_flag=True, help="Overwrite local files.")
 @click.pass_context

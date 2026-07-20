@@ -254,7 +254,7 @@ def deployments_group() -> None:
 
 
 @deployments_group.command(name="list")
-@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.option("--app-name", "-a", required=False, help="App resource name.")
 @click.pass_context
 def deployments_list_cmd(ctx: click.Context, **kwargs: Any) -> None:
     """List deployments for an app."""
@@ -263,7 +263,7 @@ def deployments_list_cmd(ctx: click.Context, **kwargs: Any) -> None:
 
 
 @deployments_group.command(name="create")
-@click.option("--app-name", "-a", required=True, help="App resource name.")
+@click.option("--app-name", "-a", required=False, help="App resource name.")
 @click.option("--deployment-id", required=True, help="Deployment ID.")
 @click.option(
     "--traffic-split",
