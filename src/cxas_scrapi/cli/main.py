@@ -32,10 +32,9 @@ from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
-from cxas_scrapi.utils.eval_utils import (
-    COMBINED_REPORT_FILENAME,
-    COMBINED_REPORT_JSON_FILENAME,
-)
+
+COMBINED_REPORT_FILENAME = "combined_evals_report.md"
+COMBINED_REPORT_JSON_FILENAME = "combined_evals_report.json"
 
 DEFAULT_MODEL = "gemini-3.1-flash-live"
 
