@@ -41,6 +41,7 @@ SIM_RESULTS_FILENAME = "sim_results.json"
 TOOL_RESULTS_FILENAME = "tool_results.csv"
 CALLBACK_RESULTS_FILENAME = "callback_results.csv"
 COMBINED_REPORT_FILENAME = "combined_report.html"
+COMBINED_REPORT_JSON_FILENAME = "combined_report.json"
 TIMESTAMP_PATTERN = r"\d{8}_\d{6}"
 
 logger = logging.getLogger(__name__)
