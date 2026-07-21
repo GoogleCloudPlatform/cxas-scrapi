@@ -22,9 +22,11 @@ from unittest.mock import ANY, mock_open, patch
 import pandas as pd
 import pytest
 
-from cxas_scrapi.utils.eval_utils import (
+from cxas_scrapi.constants import (
     COMBINED_REPORT_FILENAME,
     COMBINED_REPORT_JSON_FILENAME,
+)
+from cxas_scrapi.utils.eval_utils import (
     add_timestamp_suffix,
 )
 from cxas_scrapi.utils.reporting import (
