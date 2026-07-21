@@ -1672,9 +1672,7 @@ def generate_combined_report_from_dir(
     else:
         sim_files = []
         if "sims" in include:
-            sim_base, sim_ext = os.path.splitext(
-                constants.SIM_RESULTS_FILENAME
-            )
+            sim_base, sim_ext = os.path.splitext(constants.SIM_RESULTS_FILENAME)
             sim_files = glob.glob(
                 os.path.join(output_dir, f"{sim_base}*{sim_ext}")
             )
@@ -1706,9 +1704,7 @@ def generate_combined_report_from_dir(
             sim_files.sort(key=os.path.getmtime)
             latest_sim_file = sim_files[-1]
 
-            sim_base, sim_ext = os.path.splitext(
-                constants.SIM_RESULTS_FILENAME
-            )
+            sim_base, sim_ext = os.path.splitext(constants.SIM_RESULTS_FILENAME)
             sim_base_esc = re.escape(sim_base)
             sim_ext_esc = re.escape(sim_ext)
             pattern = (

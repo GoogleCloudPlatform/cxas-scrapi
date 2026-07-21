@@ -12,10 +12,119 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
-from typing import TYPE_CHECKING, Any
+import ast as _ast
+import importlib as _importlib
+import inspect as _inspect
+import pkgutil as _pkgutil
+import sys as _sys
+import threading as _threading
+from typing import TYPE_CHECKING as _TYPE_CHECKING
+from typing import Any as _Any
 
-if TYPE_CHECKING:
+_SYMBOL_CACHE: dict[str, tuple[str, str | None]] | None = None
+_LOCK = _threading.Lock()
+
+
+def _discover_exports() -> dict[str, tuple[str, str | None]]:
+    global _SYMBOL_CACHE  # noqa: PLW0603
+    if _SYMBOL_CACHE is not None:
+        return _SYMBOL_CACHE
+
+    with _LOCK:
+        if _SYMBOL_CACHE is not None:
+            return _SYMBOL_CACHE
+
+        source: str | None = None
+        try:
+            source_bytes = _pkgutil.get_data(__package__, "__init__.py")
+            if source_bytes:
+                source = source_bytes.decode("utf-8")
+        except Exception:
+            pass
+
+        if not source:
+            try:
+                mod = _sys.modules.get(__name__)
+                if mod and hasattr(mod, "__file__") and mod.__file__:
+                    with open(mod.__file__, encoding="utf-8") as f:
+                        source = f.read()
+            except Exception:
+                pass
+
+        if not source:
+            try:
+                mod = _sys.modules.get(__name__)
+                if mod:
+                    source = _inspect.getsource(mod)
+            except Exception:
+                pass
+
+        if not source:
+            raise ImportError("Unable to read package source for AST discovery")
+
+        cache: dict[str, tuple[str, str | None]] = {}
+        try:
+            tree = _ast.parse(source)
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.If):
+                    is_tc = False
+                    if isinstance(node.test, _ast.Name) and node.test.id in (
+                        "TYPE_CHECKING",
+                        "_TYPE_CHECKING",
+                    ):
+                        is_tc = True
+                    elif isinstance(
+                        node.test, _ast.Attribute
+                    ) and node.test.attr in (
+                        "TYPE_CHECKING",
+                        "_TYPE_CHECKING",
+                    ):
+                        is_tc = True
+
+                    if is_tc:
+                        for stmt in node.body:
+                            for sub_node in _ast.walk(stmt):
+                                if isinstance(sub_node, _ast.Import):
+                                    for alias in sub_node.names:
+                                        export_name = (
+                                            alias.asname
+                                            or alias.name.split(".")[-1]
+                                        )
+                                        cache[export_name] = (alias.name, None)
+                                elif isinstance(sub_node, _ast.ImportFrom):
+                                    if sub_node.level == 0:
+                                        base_mod = sub_node.module or ""
+                                    elif sub_node.module:
+                                        submod = sub_node.module.lstrip(".")
+                                        base_mod = f"{__name__}.{submod}"
+                                    else:
+                                        base_mod = __name__
+
+                                    for alias in sub_node.names:
+                                        export_name = alias.asname or alias.name
+                                        if base_mod in (
+                                            "cxas_scrapi",
+                                            __name__,
+                                        ):
+                                            cache[export_name] = (
+                                                f"{__name__}.{alias.name}",
+                                                None,
+                                            )
+                                        else:
+                                            cache[export_name] = (
+                                                base_mod,
+                                                alias.name,
+                                            )
+        except Exception as err:
+            raise ImportError(
+                f"Failed to parse AST in __init__.py: {err}"
+            ) from err
+
+        _SYMBOL_CACHE = cache
+        return cache
+
+
+if _TYPE_CHECKING:
     from cxas_scrapi.core.agents import Agents
     from cxas_scrapi.core.apps import Apps
     from cxas_scrapi.core.callbacks import Callbacks
@@ -34,8 +143,6 @@ if TYPE_CHECKING:
     from cxas_scrapi.evals.simulation_evals import SimulationEvals
     from cxas_scrapi.evals.tool_evals import ToolEvals
     from cxas_scrapi.evals.turn_evals import TurnEvals
-
-    # Migration / Visualization
     from cxas_scrapi.migration.dfcx_exporter import (
         BaseDFCXClient,
         ConversationalAgentsAPI,
@@ -53,55 +160,35 @@ if TYPE_CHECKING:
     from cxas_scrapi.migration.main_visualizer import MainVisualizer
     from cxas_scrapi.migration.playbook_visualizer import PlaybookTreeVisualizer
     from cxas_scrapi.utils.changelog_utils import ChangelogUtils
-
-    # Utilities
     from cxas_scrapi.utils.eval_utils import EvalUtils
     from cxas_scrapi.utils.google_sheets_utils import GoogleSheetsUtils
     from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
-else:
-    _LAZY_IMPORTS = {
-        "Agents": "cxas_scrapi.core.agents",
-        "Apps": "cxas_scrapi.core.apps",
-        "BaseDFCXClient": "cxas_scrapi.migration.dfcx_exporter",
-        "CallbackEvals": "cxas_scrapi.evals.callback_evals",
-        "Callbacks": "cxas_scrapi.core.callbacks",
-        "ChangelogUtils": "cxas_scrapi.utils.changelog_utils",
-        "Changelogs": "cxas_scrapi.core.changelogs",
-        "Common": "cxas_scrapi.core.common",
-        "ConversationHistory": "cxas_scrapi.core.conversation_history",
-        "ConversationalAgentsAPI": "cxas_scrapi.migration.dfcx_exporter",
-        "DFCXAgentExporter": "cxas_scrapi.migration.dfcx_exporter",
-        "DFCXAgents": "cxas_scrapi.migration.dfcx_exporter",
-        "DFCXGenerativeSettings": "cxas_scrapi.migration.dfcx_exporter",
-        "DFCXPlaybooks": "cxas_scrapi.migration.dfcx_exporter",
-        "DFCXTools": "cxas_scrapi.migration.dfcx_exporter",
-        "Deployments": "cxas_scrapi.core.deployments",
-        "EvalUtils": "cxas_scrapi.utils.eval_utils",
-        "Evaluations": "cxas_scrapi.core.evaluations",
-        "FlowDependencyResolver": "cxas_scrapi.migration.flow_visualizer",
-        "FlowTreeVisualizer": "cxas_scrapi.migration.flow_visualizer",
-        "GoogleSheetsUtils": "cxas_scrapi.utils.google_sheets_utils",
-        "GuardrailEvals": "cxas_scrapi.evals.guardrail_evals",
-        "Guardrails": "cxas_scrapi.core.guardrails",
-        "HighLevelGraphVisualizer": "cxas_scrapi.migration.graph_visualizer",
-        "MainVisualizer": "cxas_scrapi.migration.main_visualizer",
-        "PlaybookTreeVisualizer": "cxas_scrapi.migration.playbook_visualizer",
-        "SecretManagerUtils": "cxas_scrapi.utils.secret_manager_utils",
-        "Sessions": "cxas_scrapi.core.sessions",
-        "SimulationEvals": "cxas_scrapi.evals.simulation_evals",
-        "ToolEvals": "cxas_scrapi.evals.tool_evals",
-        "Tools": "cxas_scrapi.core.tools",
-        "TurnEvals": "cxas_scrapi.evals.turn_evals",
-        "Variables": "cxas_scrapi.core.variables",
-        "Versions": "cxas_scrapi.core.versions",
-    }
 
-    def __getattr__(name: str) -> Any:
-        if name in _LAZY_IMPORTS:
-            module_path = _LAZY_IMPORTS[name]
-            module = importlib.import_module(module_path)
-            return getattr(module, name)
-        raise AttributeError(f"module {__name__} has no attribute {name}")
+
+def __getattr__(name: str) -> _Any:
+    exports = _discover_exports()
+    if name in exports:
+        mod_path, target_attr = exports[name]
+        if target_attr is None:
+            val = _importlib.import_module(mod_path)
+        else:
+            mod = _importlib.import_module(mod_path)
+            try:
+                val = getattr(mod, target_attr)
+            except AttributeError as err:
+                if hasattr(mod, "__path__"):
+                    submod_path = f"{mod_path}.{target_attr}"
+                    try:
+                        val = _importlib.import_module(submod_path)
+                    except ModuleNotFoundError as mnf:
+                        if mnf.name == submod_path:
+                            raise err from None
+                        raise
+                else:
+                    raise
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
 __all__ = [
@@ -142,39 +229,14 @@ __all__ = [
 ]
 
 
-__all__ = [
-    "Agents",
-    "Apps",
-    "BaseDFCXClient",
-    "CallbackEvals",
-    "Callbacks",
-    "ChangelogUtils",
-    "Changelogs",
-    "Common",
-    "ConversationHistory",
-    "ConversationalAgentsAPI",
-    "DFCXAgentExporter",
-    "DFCXAgents",
-    "DFCXGenerativeSettings",
-    "DFCXPlaybooks",
-    "DFCXTools",
-    "Deployments",
-    "EvalUtils",
-    "Evaluations",
-    "FlowDependencyResolver",
-    "FlowTreeVisualizer",
-    "GoogleSheetsUtils",
-    "GuardrailEvals",
-    "Guardrails",
-    "HighLevelGraphVisualizer",
-    "MainVisualizer",
-    "PlaybookTreeVisualizer",
-    "SecretManagerUtils",
-    "Sessions",
-    "SimulationEvals",
-    "ToolEvals",
-    "Tools",
-    "TurnEvals",
-    "Variables",
-    "Versions",
-]
+def __dir__() -> list[str]:
+    keys = list(globals().keys())
+    return sorted(
+        set(__all__)
+        | {
+            k
+            for k in keys
+            if not k.startswith("_")
+            or (k.startswith("__") and k.endswith("__"))
+        }
+    )
