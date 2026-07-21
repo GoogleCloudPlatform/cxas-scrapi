@@ -57,6 +57,22 @@ def _fmt_duration(seconds):
     return f"{seconds:.1f}s"
 
 
+def _join_chunk_text(chunks):
+    """Join the text of every chunk in an agent response.
+
+    A single agent turn can be emitted as multiple chunks (e.g. a short
+    filler said before a tool call, then the substantive answer after the
+    tool returns). Rendering only the first chunk makes the turn look
+    truncated even though the platform stored — and the scorer evaluated —
+    the full response. Concatenate all chunk texts so the report matches.
+    """
+    if not chunks:
+        return ""
+    return " ".join(
+        text for c in chunks if (text := (c.get("text") or "").strip())
+    )
+
+
 def _resolve_tool_name(raw_name, tools_map):
     """Resolve a full resource path to a display name."""
     if not raw_name:
@@ -1172,6 +1188,82 @@ def _compile_callback_results_card(
     )
 
 
+def _build_turn_comparisons(turn):
+    """Build the expected/actual comparison rows for one replayed turn.
+
+    Each ``expectation_outcome`` entry pairs an expected element with what was
+    observed. An entry can also carry an *observed* agent response with no
+    expectation at all: this happens when the agent says more than the golden
+    modeled -- e.g. a short filler said before a tool call is matched to the
+    expected reply, and the substantive answer produced after the tool returns
+    is left unmatched. Those observed-only responses must still be rendered,
+    otherwise the report looks like the agent never said them even though the
+    platform recorded and the scorer evaluated the full turn.
+    """
+    comparisons = []
+    for o in turn.get("expectation_outcome", []):
+        exp = o.get("expectation", {})
+        comp = {"outcome": _outcome_str(o.get("outcome"))}
+
+        if "agent_response" in exp:
+            comp["type"] = "text"
+            comp["expected"] = _join_chunk_text(
+                exp["agent_response"].get("chunks", [])
+            )
+            obs = o.get("observed_agent_response", {})
+            comp["actual"] = (
+                _join_chunk_text(obs.get("chunks", [])) if obs else "(missed)"
+            )
+        elif "tool_call" in exp:
+            tc = exp["tool_call"]
+            comp["type"] = "tool_call"
+            comp["expected"] = (
+                tc.get("display_name") or tc.get("tool", "").split("/")[-1]
+            )
+            comp["expected_args"] = tc.get("args", {})
+            obs = o.get("observed_tool_call", {})
+            comp["actual"] = (
+                (obs.get("display_name") or obs.get("tool", "").split("/")[-1])
+                if obs
+                else "(missed)"
+            )
+            comp["actual_args"] = obs.get("args", {}) if obs else {}
+            tir = o.get("toolInvocationResult", {})
+            comp["tool_invocation_score"] = tir.get("parameterCorrectnessScore")
+            comp["tool_invocation_explanation"] = tir.get("explanation")
+        elif "agent_transfer" in exp:
+            at = exp["agent_transfer"]
+            comp["type"] = "transfer"
+            comp["expected"] = at.get(
+                "display_name", at.get("target_agent", "").split("/")[-1]
+            )
+            obs = o.get("observed_agent_transfer", {})
+            comp["actual"] = (
+                obs.get(
+                    "display_name",
+                    obs.get("target_agent", "").split("/")[-1],
+                )
+                if obs
+                else "(missed)"
+            )
+        elif "tool_response" in exp:
+            continue
+        elif o.get("observed_agent_response"):
+            # Observed agent utterance with no matching expected element --
+            # the agent said more than the golden turn modeled. Surface it so
+            # the turn's full agent output is visible instead of dropped.
+            comp["type"] = "text"
+            comp["expected"] = "(none)"
+            comp["actual"] = _join_chunk_text(
+                o["observed_agent_response"].get("chunks", [])
+            )
+        else:
+            continue
+
+        comparisons.append(comp)
+    return comparisons
+
+
 def load_golden_results(
     run_id: str, app_name: str, include: list[str] | None = None
 ) -> list[dict[str, Any]]:
@@ -1240,67 +1332,7 @@ def load_golden_results(
                 "semantic_explanation": sem.get("explanation"),
                 "comparisons": [],
             }
-            for o in turn.get("expectation_outcome", []):
-                exp = o.get("expectation", {})
-                outcome = _outcome_str(o.get("outcome"))
-                comp = {"outcome": outcome}
-
-                if "agent_response" in exp:
-                    chunks = exp["agent_response"].get("chunks", [])
-                    comp["type"] = "text"
-                    comp["expected"] = (
-                        chunks[0].get("text", "") if chunks else ""
-                    )
-                    obs = o.get("observed_agent_response", {})
-                    comp["actual"] = (
-                        obs.get("chunks", [{}])[0].get("text", "")
-                        if obs
-                        else "(missed)"
-                    )
-                elif "tool_call" in exp:
-                    tc = exp["tool_call"]
-                    comp["type"] = "tool_call"
-                    comp["expected"] = (
-                        tc.get("display_name")
-                        or tc.get("tool", "").split("/")[-1]
-                    )
-                    comp["expected_args"] = tc.get("args", {})
-                    obs = o.get("observed_tool_call", {})
-                    comp["actual"] = (
-                        (
-                            obs.get("display_name")
-                            or obs.get("tool", "").split("/")[-1]
-                        )
-                        if obs
-                        else "(missed)"
-                    )
-                    comp["actual_args"] = obs.get("args", {}) if obs else {}
-                    tir = o.get("toolInvocationResult", {})
-                    comp["tool_invocation_score"] = tir.get(
-                        "parameterCorrectnessScore"
-                    )
-                    comp["tool_invocation_explanation"] = tir.get("explanation")
-                elif "tool_response" in exp:
-                    continue
-                elif "agent_transfer" in exp:
-                    at = exp["agent_transfer"]
-                    comp["type"] = "transfer"
-                    comp["expected"] = at.get(
-                        "display_name",
-                        at.get("target_agent", "").split("/")[-1],
-                    )
-                    obs = o.get("observed_agent_transfer", {})
-                    if obs:
-                        comp["actual"] = obs.get(
-                            "display_name",
-                            obs.get("target_agent", "").split("/")[-1],
-                        )
-                    else:
-                        comp["actual"] = "(missed)"
-                else:
-                    continue
-
-                turn_data["comparisons"].append(comp)
+            turn_data["comparisons"] = _build_turn_comparisons(turn)
             turns.append(turn_data)
 
         expectations = []
