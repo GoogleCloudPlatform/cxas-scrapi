@@ -86,6 +86,16 @@ def test_app_name_extraction():
     assert Common._get_app_name("invalid-format") is None
 
 
+def test_session_id_extraction():
+    assert (
+        Common._get_session_id(
+            "projects/test-proj/locations/us/apps/abc/sessions/sess-123"
+        )
+        == "sess-123"
+    )
+    assert Common._get_session_id("invalid-format") is None
+
+
 def test_unwrap_value():
     assert Common.unwrap_value({"string_value": "hello"}) == "hello"
     assert Common.unwrap_value({"number_value": 42}) == 42

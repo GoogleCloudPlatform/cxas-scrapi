@@ -217,6 +217,17 @@ class Common:
         return None
 
     @staticmethod
+    def _get_session_id(resource_name: str) -> str | None:
+        """Extract session ID from a resource string."""
+        if not resource_name or "/sessions/" not in resource_name:
+            return None
+        try:
+            return resource_name.rsplit("/sessions/", maxsplit=1)[-1]
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def _tokenize_textproto(text):
         token_pattern = re.compile(
             r'(?P<STRING>"(?:\\.|[^"\\])*")|'

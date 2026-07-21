@@ -641,10 +641,8 @@ class BidiSessionHandler:
 
         if buffer_copy and self.capture_agent_audio:
             session_name = str(self._get_config_val("session", "") or "")
-            session_id = (
-                session_name.rsplit("/sessions/", maxsplit=1)[-1]
-                if "/sessions/" in session_name
-                else str(uuid.uuid4())
+            session_id = Common._get_session_id(session_name) or str(
+                uuid.uuid4()
             )
             current_turn = (self.turn_num or 0) + turn_index
             os.makedirs(f"/tmp/scrapi_evals/{session_id}", exist_ok=True)
@@ -770,11 +768,9 @@ class BidiSessionHandler:
                         session_name = str(
                             self._get_config_val("session", "") or ""
                         )
-                        session_id = (
-                            session_name.rsplit("/sessions/", maxsplit=1)[-1]
-                            if "/sessions/" in session_name
-                            else str(uuid.uuid4())
-                        )
+                        session_id = Common._get_session_id(
+                            session_name
+                        ) or str(uuid.uuid4())
                         current_turn = (
                             self.turn_num or 0
                         ) + self.current_agent_turn_idx
