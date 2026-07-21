@@ -14,17 +14,22 @@
 
 """CXAS SCRAPI package entrypoint with AST-based single-source lazy exports."""
 
-import threading
-from typing import TYPE_CHECKING, Any
+import threading as _threading
+from typing import TYPE_CHECKING
+from typing import Any as _Any
 
 from cxas_scrapi.utils._lazy import (
-    _extract_type_checking_imports,
-    _read_package_source,
-    lazy_import_attribute,
+    _extract_type_checking_imports as _extract_type_checking_imports,
+)
+from cxas_scrapi.utils._lazy import (
+    _read_package_source as _read_package_source,
+)
+from cxas_scrapi.utils._lazy import (
+    lazy_import_attribute as _lazy_import_attribute,
 )
 
 _SYMBOL_CACHE: dict[str, tuple[str, str | None]] | None = None
-_LOCK = threading.Lock()
+_LOCK = _threading.Lock()
 
 
 def _discover_exports() -> dict[str, tuple[str, str | None]]:
@@ -83,9 +88,9 @@ if TYPE_CHECKING:
     from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> _Any:
     exports = _discover_exports()
-    return lazy_import_attribute(name, exports, __name__, globals())
+    return _lazy_import_attribute(name, exports, __name__, globals())
 
 
 __all__ = [

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Helper utility for AST-based single-source lazy import discovery."""
+"""AST-based lazy import resolution engine using standard ast.NodeVisitor."""
 
 import ast
 import importlib
@@ -22,11 +22,71 @@ import sys
 from typing import Any
 
 
+class _TypeCheckingImportVisitor(ast.NodeVisitor):
+    """AST visitor that extracts import mappings inside
+    if TYPE_CHECKING: blocks.
+    """
+
+    def __init__(self, mod_name: str):
+        self.mod_name = mod_name
+        self.exports: dict[str, tuple[str, str | None]] = {}
+        self._in_tc = False
+
+    def visit_If(self, node: ast.If) -> None:
+        if self._is_type_checking(node.test):
+            old_state = self._in_tc
+            self._in_tc = True
+            for stmt in node.body:
+                self.visit(stmt)
+            self._in_tc = old_state
+
+    def visit_Import(self, node: ast.Import) -> None:
+        if not self._in_tc:
+            return
+        for alias in node.names:
+            export_name = alias.asname or alias.name.split(".")[-1]
+            self.exports[export_name] = (alias.name, None)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if not self._in_tc:
+            return
+        base_mod = self._resolve_base_module(node)
+        for alias in node.names:
+            export_name = alias.asname or alias.name
+            if base_mod in ("cxas_scrapi", self.mod_name):
+                self.exports[export_name] = (
+                    f"{self.mod_name}.{alias.name}",
+                    None,
+                )
+            else:
+                self.exports[export_name] = (base_mod, alias.name)
+
+    def _is_type_checking(self, test: ast.AST) -> bool:
+        if isinstance(test, ast.Name) and test.id in (
+            "TYPE_CHECKING",
+            "_TYPE_CHECKING",
+        ):
+            return True
+        if isinstance(test, ast.Attribute) and test.attr in (
+            "TYPE_CHECKING",
+            "_TYPE_CHECKING",
+        ):
+            return True
+        return False
+
+    def _resolve_base_module(self, node: ast.ImportFrom) -> str:
+        if node.level == 0:
+            return node.module or ""
+        if node.module:
+            submod = node.module.lstrip(".")
+            return f"{self.mod_name}.{submod}"
+        return self.mod_name
+
+
 def _read_package_source(pkg_name: str, mod_name: str) -> str:
     """Read source code for a package module across pkgutil, file,
     and inspect fallbacks.
     """
-    # 1. Try pkgutil (works in zip, PEX, PAR, package bundles)
     try:
         source_bytes = pkgutil.get_data(pkg_name, "__init__.py")
         if source_bytes:
@@ -34,7 +94,6 @@ def _read_package_source(pkg_name: str, mod_name: str) -> str:
     except Exception:
         pass
 
-    # 2. Try file system
     try:
         mod = sys.modules.get(mod_name)
         if mod and hasattr(mod, "__file__") and mod.__file__:
@@ -43,7 +102,6 @@ def _read_package_source(pkg_name: str, mod_name: str) -> str:
     except Exception:
         pass
 
-    # 3. Try inspect
     try:
         mod = sys.modules.get(mod_name)
         if mod:
@@ -57,61 +115,15 @@ def _read_package_source(pkg_name: str, mod_name: str) -> str:
 def _extract_type_checking_imports(
     source: str, mod_name: str
 ) -> dict[str, tuple[str, str | None]]:
-    """Parse AST and extract all import mappings inside
-    if TYPE_CHECKING: blocks.
-    """
-    cache: dict[str, tuple[str, str | None]] = {}
+    """Parse AST using _TypeCheckingImportVisitor and return import mapping."""
     try:
         tree = ast.parse(source)
     except Exception as err:
         raise ImportError(f"Failed to parse AST in __init__.py: {err}") from err
 
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-
-        # Check if test condition is TYPE_CHECKING or _TYPE_CHECKING
-        is_tc = False
-        if isinstance(node.test, ast.Name) and node.test.id in (
-            "TYPE_CHECKING",
-            "_TYPE_CHECKING",
-        ):
-            is_tc = True
-        elif isinstance(node.test, ast.Attribute) and node.test.attr in (
-            "TYPE_CHECKING",
-            "_TYPE_CHECKING",
-        ):
-            is_tc = True
-
-        if not is_tc:
-            continue
-
-        for stmt in node.body:
-            for sub_node in ast.walk(stmt):
-                if isinstance(sub_node, ast.Import):
-                    for alias in sub_node.names:
-                        export_name = alias.asname or alias.name.split(".")[-1]
-                        cache[export_name] = (alias.name, None)
-                elif isinstance(sub_node, ast.ImportFrom):
-                    if sub_node.level == 0:
-                        base_mod = sub_node.module or ""
-                    elif sub_node.module:
-                        submod = sub_node.module.lstrip(".")
-                        base_mod = f"{mod_name}.{submod}"
-                    else:
-                        base_mod = mod_name
-
-                    for alias in sub_node.names:
-                        export_name = alias.asname or alias.name
-                        if base_mod in ("cxas_scrapi", mod_name):
-                            cache[export_name] = (
-                                f"{mod_name}.{alias.name}",
-                                None,
-                            )
-                        else:
-                            cache[export_name] = (base_mod, alias.name)
-
-    return cache
+    visitor = _TypeCheckingImportVisitor(mod_name)
+    visitor.visit(tree)
+    return visitor.exports
 
 
 def lazy_import_attribute(
