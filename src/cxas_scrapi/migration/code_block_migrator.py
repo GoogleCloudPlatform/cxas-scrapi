@@ -224,22 +224,27 @@ class ToolCallTransformer(ast.NodeTransformer):
         self.generic_visit(node)
 
         # Strip DFCX-specific decorators
+        dfcx_decorators = {
+            "Action",
+            "Handler",
+            "system",
+            "action",
+            "handler",
+            "BeforeActionTrigger",
+            "BeforeModelTrigger",
+            "BeforeagentTrigger",
+            "BeforeAgentTrigger",
+            "PlaybookStartHandler",
+            "EventTrigger",
+        }
         new_decorators = []
         for dec in node.decorator_list:
-            if isinstance(dec, ast.Name) and dec.id in [
-                "Action",
-                "Handler",
-                "system",
-                "action",
-                "handler",
-            ]:
-                continue
-            elif (
-                isinstance(dec, ast.Call)
-                and isinstance(dec.func, ast.Name)
-                and dec.func.id
-                in ["Action", "Handler", "system", "action", "handler"]
-            ):
+            dec_name = ""
+            if isinstance(dec, ast.Name):
+                dec_name = dec.id
+            elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
+                dec_name = dec.func.id
+            if dec_name in dfcx_decorators:
                 continue
             new_decorators.append(dec)
         node.decorator_list = new_decorators
@@ -508,6 +513,8 @@ class CodeBlockMigrator:
                                 "handler",
                                 "BeforeActionTrigger",
                                 "BeforeModelTrigger",
+                                "BeforeagentTrigger",
+                                "BeforeAgentTrigger",
                                 "PlaybookStartHandler",
                                 "EventTrigger",
                             ]:
@@ -516,10 +523,13 @@ class CodeBlockMigrator:
                         if is_entry:
                             entry_functions.append((node.name, func_text))
                         else:
-                            helper_functions.append(func_text)
+                            helper_functions.append((node.name, func_text))
 
             if not entry_functions and helper_functions:
-                entry_functions.append(("main", helper_functions.pop()))
+                func_name, func_text = helper_functions.pop()
+                entry_functions.append((func_name, func_text))
+
+            helper_functions = [code for _, code in helper_functions]
 
             return explicit_imports, entry_functions, helper_functions
         except SyntaxError as e:
