@@ -301,7 +301,7 @@ class BidiSessionHandler:
         self,
         location: str,
         token: str,
-        config: dict[str, Any],
+        config: dict[str, Any] | types.SessionConfig,
         inputs: list[dict[str, Any]] | None = None,
         input_queue: queue.Queue | None = None,
         response_queue: queue.Queue | None = None,
@@ -380,6 +380,11 @@ class BidiSessionHandler:
                 logging.warning(
                     f"Failed to load continuous background noise file: {ex}"
                 )
+
+    def _get_config_val(self, key: str, default: Any = None) -> Any:
+        if isinstance(self.config, dict):
+            return self.config.get(key, default)
+        return getattr(self.config, key, default)
 
     def _get_next_noise_chunk(self, duration_ms: int) -> bytes:
         """Extracts the next chunk of continuous background noise PCM bytes."""
@@ -517,15 +522,26 @@ class BidiSessionHandler:
     def _send_inputs(self):
         try:
             logging.debug("Config dict: %s", self.config)
-            config_message = types.BidiSessionClientMessage(
-                config=types.SessionConfig(
-                    session=self.config["session"],
-                    input_audio_config=self.config.get("input_audio_config"),
-                    output_audio_config=self.config.get("output_audio_config"),
-                    use_tool_fakes=self.config.get("use_tool_fakes", False),
-                    historical_contexts=self.config.get("historical_contexts"),
+            if isinstance(self.config, types.SessionConfig):
+                config_message = types.BidiSessionClientMessage(
+                    config=self.config
                 )
-            )
+            else:
+                config_message = types.BidiSessionClientMessage(
+                    config=types.SessionConfig(
+                        session=self.config.get("session"),
+                        input_audio_config=self.config.get(
+                            "input_audio_config"
+                        ),
+                        output_audio_config=self.config.get(
+                            "output_audio_config"
+                        ),
+                        use_tool_fakes=self.config.get("use_tool_fakes", False),
+                        historical_contexts=self.config.get(
+                            "historical_contexts"
+                        ),
+                    )
+                )
             config_json = json_format.MessageToJson(
                 config_message._pb,
                 preserving_proto_field_name=False,
@@ -624,9 +640,9 @@ class BidiSessionHandler:
             self.current_agent_turn_idx += 1
 
         if buffer_copy and self.capture_agent_audio:
-            session_name = self.config.get("session", "")
+            session_name = str(self._get_config_val("session", "") or "")
             session_id = (
-                session_name.split("/sessions/")[-1]
+                session_name.rsplit("/sessions/", maxsplit=1)[-1]
                 if "/sessions/" in session_name
                 else str(uuid.uuid4())
             )
@@ -751,9 +767,11 @@ class BidiSessionHandler:
                         self.current_agent_turn_idx, b""
                     )
                     if buffer and self.capture_agent_audio:
-                        session_name = self.config.get("session", "")
+                        session_name = str(
+                            self._get_config_val("session", "") or ""
+                        )
                         session_id = (
-                            session_name.split("/sessions/")[-1]
+                            session_name.rsplit("/sessions/", maxsplit=1)[-1]
                             if "/sessions/" in session_name
                             else str(uuid.uuid4())
                         )
@@ -1004,7 +1022,7 @@ class BidiInteractiveSession:
         self,
         sessions_client: Any,
         session_id: str,
-        config: dict[str, Any],
+        config: dict[str, Any] | types.SessionConfig,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
@@ -1462,6 +1480,7 @@ class Sessions(Common):
     def create_interactive_session(
         self,
         session_id: str,
+        deployment_id: str | None = None,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
@@ -1495,6 +1514,9 @@ class Sessions(Common):
                 sample_rate_hertz=SAMPLE_RATE,
             ),
         }
+        dep_id = deployment_id or self.deployment_id
+        if dep_id:
+            config["deployment"] = f"{self.app_name}/deployments/{dep_id}"
 
         return BidiInteractiveSession(
             sessions_client=self,
