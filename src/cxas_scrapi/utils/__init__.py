@@ -37,6 +37,10 @@ def __getattr__(name: str) -> Any:
     if name in _DYNAMIC_IMPORTS:
         module = importlib.import_module(_DYNAMIC_IMPORTS[name])
         return getattr(module, name)
+    try:
+        return importlib.import_module(f"cxas_scrapi.utils.{name}")
+    except ImportError:
+        pass
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
