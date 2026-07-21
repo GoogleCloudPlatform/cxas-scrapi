@@ -25,6 +25,30 @@ from cxas_scrapi.migration.ai_augment import AIAugment
 logger = logging.getLogger(__name__)
 
 
+BUILTIN_DECORATORS = {"staticmethod", "classmethod", "property"}
+
+
+def _is_dfcx_trigger(
+    dec: ast.expr, explicit_imports: set[str] | None = None
+) -> bool:
+    """Returns True if the decorator is an unimported DFCX framework trigger."""
+    dec_name = ""
+    if isinstance(dec, ast.Name):
+        dec_name = dec.id
+    elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
+        dec_name = dec.func.id
+
+    if not dec_name:
+        return True
+    if dec_name in BUILTIN_DECORATORS:
+        return False
+    if explicit_imports:
+        for imp in explicit_imports:
+            if dec_name in imp:
+                return False
+    return True
+
+
 class ToolCallTransformer(ast.NodeTransformer):
     """AST Transformer to:
 
@@ -37,11 +61,15 @@ class ToolCallTransformer(ast.NodeTransformer):
     """
 
     def __init__(
-        self, tool_map: dict[str, Any], tool_display_name_map: dict[str, str]
+        self,
+        tool_map: dict[str, Any],
+        tool_display_name_map: dict[str, str],
+        explicit_imports: set[str] | None = None,
     ):
         super().__init__()
         self.tool_map = tool_map
         self.tool_display_name_map = tool_display_name_map
+        self.explicit_imports = explicit_imports or set()
         self.dependencies = (
             set()
         )  # Stores full resource names of referenced toolsets
@@ -223,28 +251,10 @@ class ToolCallTransformer(ast.NodeTransformer):
         # 1. Visit children FIRST
         self.generic_visit(node)
 
-        # Strip DFCX-specific decorators
-        dfcx_decorators = {
-            "Action",
-            "Handler",
-            "system",
-            "action",
-            "handler",
-            "BeforeActionTrigger",
-            "BeforeModelTrigger",
-            "BeforeagentTrigger",
-            "BeforeAgentTrigger",
-            "PlaybookStartHandler",
-            "EventTrigger",
-        }
+        # Strip unimported DFCX-specific trigger decorators
         new_decorators = []
         for dec in node.decorator_list:
-            dec_name = ""
-            if isinstance(dec, ast.Name):
-                dec_name = dec.id
-            elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
-                dec_name = dec.func.id
-            if dec_name in dfcx_decorators:
+            if _is_dfcx_trigger(dec, self.explicit_imports):
                 continue
             new_decorators.append(dec)
         node.decorator_list = new_decorators
@@ -496,30 +506,10 @@ class CodeBlockMigrator:
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     func_text = ast.unparse(node)
                     if func_text:
-                        is_entry = False
-                        for dec in node.decorator_list:
-                            dec_name = ""
-                            if isinstance(dec, ast.Name):
-                                dec_name = dec.id
-                            elif isinstance(dec, ast.Call) and isinstance(
-                                dec.func, ast.Name
-                            ):
-                                dec_name = dec.func.id
-                            if dec_name in [
-                                "Action",
-                                "Handler",
-                                "system",
-                                "action",
-                                "handler",
-                                "BeforeActionTrigger",
-                                "BeforeModelTrigger",
-                                "BeforeagentTrigger",
-                                "BeforeAgentTrigger",
-                                "PlaybookStartHandler",
-                                "EventTrigger",
-                            ]:
-                                is_entry = True
-                                break
+                        is_entry = any(
+                            _is_dfcx_trigger(dec, explicit_imports)
+                            for dec in node.decorator_list
+                        )
                         if is_entry:
                             entry_functions.append((node.name, func_text))
                         else:
@@ -615,7 +605,7 @@ class CodeBlockMigrator:
                 )
 
                 tool_transformer = ToolCallTransformer(
-                    tool_map, tool_display_name_map
+                    tool_map, tool_display_name_map, shared_imports
                 )
                 helper_tree = tool_transformer.visit(helper_tree)
                 ast.fix_missing_locations(helper_tree)
@@ -658,7 +648,7 @@ class CodeBlockMigrator:
                 )
 
                 transformer = ToolCallTransformer(
-                    tool_map, tool_display_name_map
+                    tool_map, tool_display_name_map, shared_imports
                 )
                 transformed_tree = transformer.visit(transformed_tree)
                 routing_parameters.update(transformer.discovered_parameters)
