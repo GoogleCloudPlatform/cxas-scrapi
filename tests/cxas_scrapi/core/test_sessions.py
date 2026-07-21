@@ -24,6 +24,7 @@ from google.protobuf import json_format
 
 from cxas_scrapi.core.sessions import (
     AgentTurnManager,
+    BidiInteractiveSession,
     BidiSessionHandler,
     Modality,
     Sessions,
@@ -925,3 +926,183 @@ def test_bidi_session_handler_pydub_missing_raises_error():
         assert "pydub is not installed or failed to import" in str(
             exc_info.value
         )
+
+
+@patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
+@patch("cxas_scrapi.core.sessions.threading.Thread")
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_interactive_session_start_and_close(
+    mock_sleep, mock_thread, mock_ws_app
+):
+    """Test starting and closing a BidiInteractiveSession hermetically."""
+    mock_sessions_client = MagicMock()
+    mock_sessions_client.location = "us"
+    mock_sessions_client.token = "fake_token"
+
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    session = BidiInteractiveSession(
+        sessions_client=mock_sessions_client,
+        session_id="s1",
+        config=config,
+    )
+
+    session.start()
+    assert session.wst is not None
+    mock_thread.assert_called_once()
+
+    session.close()
+    assert session.input_queue.get() is None
+
+
+@patch("cxas_scrapi.core.sessions.AudioTransformer")
+@patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
+@patch("cxas_scrapi.core.sessions.threading.Thread")
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_interactive_session_send_turn(
+    mock_sleep, mock_thread, mock_ws_app, mock_audio_transformer_cls
+):
+    """Test send_turn on BidiInteractiveSession."""
+    mock_transformer = mock_audio_transformer_cls.return_value
+    mock_transformer.text_to_speech_bytes.return_value = {
+        "audio_bytes": b"fake_audio",
+        "text": "Hello",
+    }
+
+    mock_sessions_client = MagicMock()
+    mock_sessions_client.location = "us"
+    mock_sessions_client.token = "fake_token"
+    mock_sessions_client.rate_limiter = None
+    mock_sessions_client.creds = MagicMock()
+    mock_sessions_client.project_id = "p"
+
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    session = BidiInteractiveSession(
+        sessions_client=mock_sessions_client,
+        session_id="s1",
+        config=config,
+    )
+
+    mock_response = MagicMock()
+    session.response_queue.put(mock_response)
+
+    res = session.send_turn("Hello")
+    assert res == mock_response
+
+    item = session.input_queue.get()
+    assert item["audio"]["text"] == "Hello"
+
+
+@patch("cxas_scrapi.core.sessions.AudioTransformer")
+@patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
+@patch("cxas_scrapi.core.sessions.threading.Thread")
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_interactive_session_send_turn_event(
+    mock_sleep, mock_thread, mock_ws_app, mock_audio_transformer_cls
+):
+    """Test send_turn with event on BidiInteractiveSession."""
+    mock_sessions_client = MagicMock()
+    mock_sessions_client.location = "us"
+    mock_sessions_client.token = "fake_token"
+    mock_sessions_client.rate_limiter = None
+
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    session = BidiInteractiveSession(
+        sessions_client=mock_sessions_client,
+        session_id="s1",
+        config=config,
+    )
+
+    mock_response = MagicMock()
+    session.response_queue.put(mock_response)
+
+    res = session.send_turn("event:WELCOME", variables={"var1": "val1"})
+    assert res == mock_response
+
+    var_item = session.input_queue.get()
+    assert var_item == {"variables": {"var1": "val1"}}
+
+    event_item = session.input_queue.get()
+    assert event_item == {"event": {"event": "WELCOME"}}
+
+
+@patch("cxas_scrapi.core.sessions.AudioTransformer")
+@patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
+@patch("cxas_scrapi.core.sessions.threading.Thread")
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_session_timeout(
+    mock_sleep, mock_thread, mock_ws_app, mock_audio_transformer_cls
+):
+    """Test TimeoutError when response_queue times out in
+    BidiInteractiveSession.
+    """
+    mock_transformer = mock_audio_transformer_cls.return_value
+    mock_transformer.text_to_speech_bytes.return_value = {
+        "audio_bytes": b"fake_audio",
+        "text": "Hello",
+    }
+
+    mock_sessions_client = MagicMock()
+    mock_sessions_client.location = "us"
+    mock_sessions_client.token = "fake_token"
+    mock_sessions_client.rate_limiter = None
+    mock_sessions_client.creds = MagicMock()
+    mock_sessions_client.project_id = "p"
+
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    session = BidiInteractiveSession(
+        sessions_client=mock_sessions_client,
+        session_id="s1",
+        config=config,
+    )
+
+    with patch.object(session.response_queue, "get", side_effect=queue.Empty):
+        with pytest.raises(TimeoutError) as exc_info:
+            session.send_turn("Hello")
+        assert "Timeout waiting for agent response via WebSocket" in str(
+            exc_info.value
+        )
+
+
+@patch("cxas_scrapi.core.sessions.Sessions._check_audio_requirements")
+@patch("cxas_scrapi.core.sessions.SessionServiceClient")
+def test_create_interactive_session(mock_client_cls, mock_check_reqs):
+    """Test Sessions.create_interactive_session."""
+    sessions = Sessions(
+        app_name="projects/p/locations/l/apps/a", deployment_id="d1"
+    )
+    interactive_session = sessions.create_interactive_session(
+        session_id="s1",
+        capture_agent_audio=True,
+    )
+    assert isinstance(interactive_session, BidiInteractiveSession)
+    assert interactive_session.session_id == "s1"
+    assert interactive_session.capture_agent_audio is True
+    assert (
+        interactive_session.config["deployment"]
+        == "projects/p/locations/l/apps/a/deployments/d1"
+    )
+
+
+@patch("cxas_scrapi.core.sessions.time.sleep")
+@patch("cxas_scrapi.core.sessions.json_format.MessageToJson")
+def test_bidi_session_handler_with_proto_session_config(
+    mock_message_to_json, mock_sleep
+):
+    """Test BidiSessionHandler when config is a types.SessionConfig proto
+    instance.
+    """
+    mock_message_to_json.return_value = "{}"
+
+    proto_config = types.SessionConfig(
+        session="projects/p/locations/us/apps/a/sessions/s1",
+        use_tool_fakes=True,
+    )
+
+    handler = BidiSessionHandler(
+        location="us", token="fake", config=proto_config, inputs=[]
+    )
+    handler.ws_app = MagicMock()
+
+    handler._send_inputs()
+
+    assert mock_message_to_json.call_count >= 1
