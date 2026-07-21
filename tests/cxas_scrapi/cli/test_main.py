@@ -22,7 +22,27 @@ from unittest import mock
 import pytest
 
 from cxas_scrapi.cli import main as main_cli
-from cxas_scrapi.cli.main import get_parser, run_session
+from cxas_scrapi.cli.main import get_parser
+
+
+@pytest.fixture(autouse=True)
+def clear_workspace_cache():
+    from cxas_scrapi import workspace as ws
+
+    ws._workspace_config_cache = None
+    ws._project_dir = None
+    ws._active_project_cache = None
+    with (
+        mock.patch(
+            "cxas_scrapi.workspace.resolve_project_dir",
+            side_effect=ValueError("No active project"),
+        ),
+        mock.patch(
+            "cxas_scrapi.workspace.find_workspace_root",
+            return_value=None,
+        ),
+    ):
+        yield
 
 
 def test_get_parser():
@@ -65,54 +85,11 @@ def test_get_parser_llm_lint():
     assert args.output == "/path/to/output.md"
 
 
-def test_get_parser_evals_report():
-    """Test that the parser can parse the evals report command with new model
-    flags.
-    """
-    parser = get_parser()
-    args = parser.parse_args(
-        [
-            "evals",
-            "report",
-            "--output-dir",
-            "/path/to/output",
-            "--sim-user-model",
-            "gemini-3.1-pro-preview",
-            "--eval-model",
-            "gemini-3.1-flash-lite",
-            "--run",
-        ]
-    )
-    assert args.command == "evals"
-    assert args.evals_command == "report"
-    assert args.output_dir == "/path/to/output"
-    assert args.sim_user_model == "gemini-3.1-pro-preview"
-    assert args.eval_model == "gemini-3.1-flash-lite"
-    assert args.run is True
-    assert args.timestamped is False
-
-
-def test_get_parser_evals_report_timestamped():
-    """Test parser parses evals report command with --timestamped."""
-    parser = get_parser()
-    args = parser.parse_args(
-        [
-            "evals",
-            "report",
-            "--output-dir",
-            "/path/to/output",
-            "--timestamped",
-        ]
-    )
-    assert args.command == "evals"
-    assert args.evals_command == "report"
-    assert args.output_dir == "/path/to/output"
-    assert args.timestamped is True
-
-
 def test_cli_installed_help():
     """Test that the 'cxas' command is installed and executable (verifies
-    setup.py)."""
+
+    setup.py).
+    """
     # This tests the installation of the wheel we just built and installed.
     # When running tests via 'conda run -n cxas-scrapi pytest', 'cxas'
     # should be in the PATH.
@@ -123,18 +100,30 @@ def test_cli_installed_help():
             "from cxas_scrapi.cli.main import main; "
             "main()"
         )
+        import os
+        import pathlib
+
+        env = os.environ.copy()
+        project_root = str(pathlib.Path(__file__).parents[3])
+        env["PYTHONPATH"] = (
+            project_root + os.pathsep + env.get("PYTHONPATH", "")
+        )
+
         result = subprocess.run(
             [sys.executable, "-c", py_code, "--help"],
             capture_output=True,
             text=True,
             check=True,
+            cwd="/tmp",
+            env=env,
         )
+
         assert result.returncode == 0
         assert "usage: cxas" in result.stdout
     except FileNotFoundError:
         pytest.fail(
-            "The 'cxas' command was not found in the environment. "
-            "Is it installed?"
+            "The 'cxas' command was not found in the environment. Is it"
+            " installed?"
         )
     except subprocess.CalledProcessError as e:
         pytest.fail(
@@ -143,10 +132,8 @@ def test_cli_installed_help():
         )
 
 
-@mock.patch("cxas_scrapi.core.apps.Apps", autospec=True)
-@mock.patch(
-    "cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True
-)
+@mock.patch("cxas_scrapi.cli.main.Apps", autospec=True)
+@mock.patch("cxas_scrapi.cli.main.ConversationHistory", autospec=True)
 def test_conversations_list(mock_ch_cls, mock_apps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app"
@@ -178,10 +165,8 @@ def test_conversations_list_invalid_app_name(capsys):
     assert "Error: Invalid App Name format" in captured.out
 
 
-@mock.patch("cxas_scrapi.core.apps.Apps", autospec=True)
-@mock.patch(
-    "cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True
-)
+@mock.patch("cxas_scrapi.cli.main.Apps", autospec=True)
+@mock.patch("cxas_scrapi.cli.main.ConversationHistory", autospec=True)
 def test_conversations_get(mock_ch_cls, mock_apps_cls):
     args = argparse.Namespace(
         conversation_resource_name="projects/test-project/locations/global/apps/test-app/conversations/test-conv"
@@ -218,7 +203,7 @@ def test_conversations_get_invalid_conversation_name(capsys):
     assert "Error: Invalid Conversation Resource Name format" in captured.out
 
 
-@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
 def test_deployments_list(mock_deps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app"
@@ -234,12 +219,14 @@ def test_deployments_list(mock_deps_cls):
     mock_deps_inst.list_deployments.assert_called_once()
 
 
-@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
 def test_deployments_create(mock_deps_cls):
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app",
         deployment_id="test-dep",
-        version_id="projects/test-project/locations/global/apps/test-app/versions/v1",
+        version_id=(
+            "projects/test-project/locations/global/apps/test-app/versions/v1"
+        ),
     )
     mock_deps_inst = mock_deps_cls.return_value
 
@@ -251,14 +238,14 @@ def test_deployments_create(mock_deps_cls):
     mock_deps_inst.create_deployment.assert_called_once_with(
         deployment_id="test-dep",
         display_name="test-dep",
-        app_version="projects/test-project/locations/global/apps/test-app/versions/v1",
-        channel_type="API",
-        traffic_split=None,
+        app_version=(
+            "projects/test-project/locations/global/apps/test-app/versions/v1"
+        ),
     )
 
 
-@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
-@mock.patch("cxas_scrapi.cli.app.app_push", autospec=True)
+@mock.patch("cxas_scrapi.cli.main.Deployments", autospec=True)
+@mock.patch("cxas_scrapi.cli.main.app_push", autospec=True)
 def test_deployments_promote(mock_app_push, mock_deps_cls):
     args = argparse.Namespace(
         app_resource_name="projects/test-project/locations/global/apps/test-app",
@@ -318,96 +305,228 @@ def test_get_parser_run_session_use_tool_fakes():
     assert args.use_tool_fakes is True
 
 
-@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
-def test_deployments_create_with_split(mock_deps_cls):
+def test_get_parser_workspace_set():
+    """Test that the parser can parse the workspace set command."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "workspace",
+            "set",
+            "--project-id",
+            "my-gcp-project",
+            "--app-id",
+            "my-app-id",
+            "--location",
+            "us-central1",
+            "--app-dir",
+            "custom_app",
+            "--evals-dir",
+            "custom_evals",
+            "--output-dir",
+            "custom_output",
+            "--model",
+            "gemini-pro",
+            "--modality",
+            "audio",
+        ]
+    )
+    assert args.command == "workspace"
+    assert args.workspace_command == "set"
+    assert args.gcp_project_id == "my-gcp-project"
+    assert args.deployed_app_id == "my-app-id"
+    assert args.location == "us-central1"
+    assert args.app_dir == "custom_app"
+    assert args.evals_dir == "custom_evals"
+    assert args.output_dir == "custom_output"
+    assert args.model == "gemini-pro"
+    assert args.modality == "audio"
+
+
+def test_get_parser_workspace_create():
+    """Test that the parser can parse the workspace create command."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "workspace",
+            "create",
+            "--target-dir",
+            "my_project",
+        ]
+    )
+    assert args.command == "workspace"
+    assert args.workspace_command == "create"
+    assert args.target_dir == "my_project"
+
+
+@mock.patch("cxas_scrapi.cli.workspace.ws.create_default_config")
+def test_workspace_create_calls_core_create(mock_create_config):
+    """Verify workspace_create delegates to create_default_config."""
+    from pathlib import Path
+
+    from cxas_scrapi.cli.workspace import workspace_create
+
+    args = argparse.Namespace(target_dir="some_dir")
+    workspace_create(args)
+    expected_path = str(Path("some_dir").resolve())
+    mock_create_config.assert_called_once_with(expected_path)
+
+
+@mock.patch("cxas_scrapi.cli.workspace.ws.resolve_project_dir")
+@mock.patch("cxas_scrapi.cli.workspace.ws.find_workspace_root")
+@mock.patch("cxas_scrapi.cli.workspace.ws.update_workspace_config")
+def test_workspace_set_calls_core_update(
+    mock_update_config, mock_find_ws_root, mock_resolve_dir, tmp_path
+):
+    """Verify workspace_set delegates to update_workspace_config."""
+    from cxas_scrapi.cli.workspace import workspace_set
+
+    project_dir = tmp_path / "my_project"
+    project_dir.mkdir()
+    (project_dir / "gecx-config.json").touch()
+
     args = argparse.Namespace(
-        app_name="projects/test-project/locations/global/apps/test-app",
-        deployment_id="test-dep",
-        version="v1",
-        version_id=None,
-        traffic_split="v1:90,v2:10",
+        gcp_project_id="proj",
+        deployed_app_id="app",
+        location="loc",
+        app_dir="dir",
+        evals_dir="evals",
+        output_dir="out",
+        model="model",
+        modality="mod",
     )
-    mock_deps_inst = mock_deps_cls.return_value
-
-    main_cli.deployments_create(args)
-
-    mock_deps_cls.assert_called_once_with(
-        app_name="projects/test-project/locations/global/apps/test-app"
-    )
-    mock_deps_inst.create_deployment.assert_called_once_with(
-        deployment_id="test-dep",
-        display_name="test-dep",
-        app_version="v1",
-        channel_type="API",
-        traffic_split={"v1": 90, "v2": 10},
+    mock_resolve_dir.return_value = str(project_dir)
+    mock_find_ws_root.return_value = str(tmp_path)
+    mock_update_config.return_value = (
+        True,
+        str(project_dir / "gecx-config.toml"),
     )
 
+    workspace_set(args)
 
-@mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
-def test_deployments_promote_with_split(mock_deps_cls):
-    args = argparse.Namespace(
-        app_resource_name=None,
-        app_dir=None,
-        live_deployment_resource_name=None,
-        app_name="projects/test-project/locations/global/apps/test-app",
-        deployment_id="live-dep",
-        version="v2",
-        traffic_split="v1:50,v2:50",
-    )
-
-    mock_deps_inst = mock_deps_cls.return_value
-    mock_deps_inst.get_deployment.return_value = mock.MagicMock()
-
-    main_cli.deployments_promote(args)
-
-    mock_deps_cls.assert_called_once_with(
-        app_name="projects/test-project/locations/global/apps/test-app"
-    )
-    mock_deps_inst.update_deployment.assert_called_once_with(
-        deployment_id="live-dep",
-        app_version="v2",
-        traffic_split={"v1": 50, "v2": 50},
-    )
+    expected_updates = {
+        "gcp_project_id": "proj",
+        "deployed_app_id": "app",
+        "location": "loc",
+        "app_dir": "dir",
+        "evals_dir": "evals",
+        "output_dir": "out",
+        "model": "model",
+        "modality": "mod",
+    }
+    mock_update_config.assert_called_once_with(expected_updates)
 
 
-@mock.patch("cxas_scrapi.core.evaluations.Evaluations", autospec=True)
-@mock.patch("cxas_scrapi.utils.eval_utils.EvalUtils", autospec=True)
-def test_run_eval_modality(mock_eval_utils_cls, mock_eval_cls):
-    """Test that run_eval forwards the modality argument to run_evaluation."""
-    args = argparse.Namespace(
-        app_name="projects/test-project/locations/global/apps/test-app",
-        evaluation_id="eval-123",
-        display_name_prefix=None,
-        tags=None,
-        modality="audio",
-        wait=False,
-        golden_run_method="STABLE",
-    )
-    mock_eval_inst = mock_eval_cls.return_value
-    mock_eval_utils_inst = mock_eval_utils_cls.return_value
-    mock_eval_utils_inst.evals_to_dataframe.return_value = {}
+@mock.patch("cxas_scrapi.cli.workspace.ws.resolve_project_dir")
+@mock.patch("cxas_scrapi.cli.workspace.ws.find_workspace_root")
+@mock.patch("cxas_scrapi.cli.workspace.ws.update_workspace_config")
+def test_workspace_set_handles_file_not_found(
+    mock_update_config, mock_find_ws_root, mock_resolve_dir, tmp_path, capsys
+):
+    """Verify workspace_set handles missing config file correctly."""
+    from cxas_scrapi.cli.workspace import workspace_set
 
-    main_cli.run_eval(args)
+    project_dir = tmp_path / "my_project"
+    project_dir.mkdir()
+    (project_dir / "gecx-config.json").touch()
 
-    mock_eval_cls.assert_called_once_with(app_name=args.app_name)
-    mock_eval_inst.run_evaluation.assert_called_once_with(
-        evaluations=["eval-123"],
-        app_name=args.app_name,
-        modality="audio",
-        golden_run_method="STABLE",
-    )
-
-
-def test_run_session_headless_failure(monkeypatch, capsys):
-    # Mock isatty to return False (headless environment)
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
-
-    args = argparse.Namespace(app_name="dummy_app", modality="TEXT")
+    args = argparse.Namespace(gcp_project_id="proj")
+    mock_resolve_dir.return_value = str(project_dir)
+    mock_find_ws_root.return_value = str(tmp_path)
+    mock_update_config.side_effect = FileNotFoundError("Config not found")
 
     with pytest.raises(SystemExit) as excinfo:
-        run_session(args)
+        workspace_set(args)
 
     assert excinfo.value.code == 1
     captured = capsys.readouterr()
-    expected_msg = "ERROR: 'run-session' requires an interactive terminal."
-    assert expected_msg in captured.err
+    assert "Error: Config not found" in captured.out
+
+
+@mock.patch("cxas_scrapi.workspace.resolve_project_dir")
+def test_workspace_show_prints_config(mock_resolve_dir, tmp_path, capsys):
+    """Verify that workspace_show prints the current configuration."""
+    import json
+
+    from cxas_scrapi.cli.workspace import workspace_show
+
+    mock_resolve_dir.return_value = str(tmp_path)
+
+    config_file = tmp_path / "gecx-config.json"
+    config_data = {
+        "gcp_project_id": "test-proj",
+        "deployed_app_id": "test-app",
+        "location": "us",
+        "app_dir": "app",
+        "evals_dir": "evals",
+        "output_dir": ".scrapi-out",
+    }
+    with open(config_file, "w") as f:
+        json.dump(config_data, f)
+
+    args = argparse.Namespace()
+    workspace_show(args)
+
+    captured = capsys.readouterr()
+    normalized_out = captured.out.replace("\n", "").replace(" ", "")
+    assert "ProjectPath:" in normalized_out
+    assert str(tmp_path).replace(" ", "") in normalized_out
+    assert "ConfigurationFile:" in normalized_out
+    assert "gecx-config" in normalized_out
+    assert '"gcp_project_id":"test-proj"' in normalized_out
+    assert '"output_dir":".scrapi-out"' in normalized_out
+
+
+def test_cli_no_args_prints_help():
+    """Test that running the cli with no arguments prints the main help page."""
+    py_code = (
+        "import sys; "
+        "sys.argv[0]='cxas'; "
+        "from cxas_scrapi.cli.main import main; "
+        "main()"
+    )
+    import os
+    import pathlib
+
+    env = os.environ.copy()
+    project_root = str(pathlib.Path(__file__).parents[3])
+    env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+
+    result = subprocess.run(
+        [sys.executable, "-c", py_code],
+        capture_output=True,
+        text=True,
+        cwd="/tmp",
+        env=env,
+    )
+    assert result.returncode == 0
+
+    assert "usage: cxas" in result.stdout
+    assert "options:" in result.stdout
+
+
+def test_cli_workspace_no_subcommand_prints_workspace_help():
+    """Verify 'cxas workspace' with no subcommand prints help."""
+    py_code = (
+        "import sys; "
+        "sys.argv[0]='cxas'; "
+        "from cxas_scrapi.cli.main import main; "
+        "main()"
+    )
+    import os
+    import pathlib
+
+    env = os.environ.copy()
+    project_root = str(pathlib.Path(__file__).parents[3])
+    env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+
+    result = subprocess.run(
+        [sys.executable, "-c", py_code, "workspace"],
+        capture_output=True,
+        text=True,
+        cwd="/tmp",
+        env=env,
+    )
+    assert result.returncode == 0
+
+    assert "usage: cxas workspace" in result.stdout
+    assert "Workspace Commands:" in result.stdout

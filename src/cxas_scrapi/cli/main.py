@@ -14,8 +14,6 @@
 
 """CLI script for running CXAS SCRAPI evaluations."""
 
-from __future__ import annotations
-
 import argparse
 import datetime
 import json
@@ -25,71 +23,65 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import TYPE_CHECKING
 
+import pandas as pd
+from google.api_core.exceptions import NotFound
+from google.protobuf.json_format import MessageToDict
+
+from cxas_scrapi import Sessions
+from cxas_scrapi.cli.app import (
+    app_branch,
+    app_create,
+    app_delete,
+    app_init,
+    app_lint,
+    app_pull,
+    app_push,
+    apps_get,
+    apps_list,
+)
+from cxas_scrapi.cli.create_local import handle_local_create
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
+from cxas_scrapi.cli.llm_lint import llm_lint
+from cxas_scrapi.cli.migration_cli import (
+    run_end_to_end,
+    run_resume,
+    run_stage_1,
+    run_stage_2,
+    run_stage_3,
+)
 from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
-from cxas_scrapi.utils.eval_utils import COMBINED_REPORT_FILENAME
-
-DEFAULT_MODEL = "gemini-3.1-flash-live"
-
-if TYPE_CHECKING:
-    import pandas as pd
-
-    from cxas_scrapi.cli.app import (
-        app_branch,
-        app_create,
-        app_delete,
-        app_init,
-        app_lint,
-        app_pull,
-        app_push,
-        apps_get,
-        apps_list,
-    )
-    from cxas_scrapi.cli.create_local import handle_local_create
-    from cxas_scrapi.cli.llm_lint import llm_lint
-    from cxas_scrapi.cli.versions_cli import (
-        app_versions_compare,
-        app_versions_list,
-    )
-    from cxas_scrapi.core.github import init_github_action
-    from cxas_scrapi.utils.eval_utils import EvalUtils
-else:
-    from cxas_scrapi.cli.utils import LazyCallable
-
-    app_branch = LazyCallable("cxas_scrapi.cli.app", "app_branch")
-    app_create = LazyCallable("cxas_scrapi.cli.app", "app_create")
-    app_delete = LazyCallable("cxas_scrapi.cli.app", "app_delete")
-    app_init = LazyCallable("cxas_scrapi.cli.app", "app_init")
-    app_lint = LazyCallable("cxas_scrapi.cli.app", "app_lint")
-    app_pull = LazyCallable("cxas_scrapi.cli.app", "app_pull")
-    app_push = LazyCallable("cxas_scrapi.cli.app", "app_push")
-    apps_get = LazyCallable("cxas_scrapi.cli.app", "apps_get")
-    apps_list = LazyCallable("cxas_scrapi.cli.app", "apps_list")
-    handle_local_create = LazyCallable(
-        "cxas_scrapi.cli.create_local", "handle_local_create"
-    )
-    llm_lint = LazyCallable("cxas_scrapi.cli.llm_lint", "llm_lint")
-    app_versions_list = LazyCallable(
-        "cxas_scrapi.cli.versions_cli", "app_versions_list"
-    )
-    app_versions_compare = LazyCallable(
-        "cxas_scrapi.cli.versions_cli", "app_versions_compare"
-    )
-    init_github_action = LazyCallable(
-        "cxas_scrapi.core.github", "init_github_action"
-    )
+from cxas_scrapi.cli.versions_cli import (
+    app_versions_compare,
+    app_versions_list,
+)
+from cxas_scrapi.cli.workspace import (
+    workspace_create,
+    workspace_set,
+    workspace_show,
+    workspace_unset,
+)
+from cxas_scrapi import workspace as ws
+from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.conversation_history import ConversationHistory
+from cxas_scrapi.core.deployments import Deployments
+from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
+from cxas_scrapi.core.github import init_github_action
+from cxas_scrapi.evals.callback_evals import CallbackEvals
+from cxas_scrapi.evals.tool_evals import ToolEvals
+from cxas_scrapi.migration.config import DEFAULT_MODEL
+from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
+from cxas_scrapi.utils.eval_utils import EvalUtils
 
 logger = logging.getLogger(__name__)
 
 
 def export_eval(args: argparse.Namespace) -> None:
     """Handles the 'export' command."""
-    from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
 
     print(f"Exporting evaluation: {args.evaluation_id}")
     # Use app_name to init client. Eval ID might be full resource name.
@@ -120,14 +112,6 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
     """Handles the unified 'cxas migrate dfcx' command, routing to
     non-interactive run / optimize stages or the interactive TUI dashboard.
     """
-    from cxas_scrapi.cli.migration_cli import (
-        run_end_to_end,
-        run_resume,
-        run_stage_1,
-        run_stage_2,
-        run_stage_3,
-    )
-
     if getattr(args, "run", False):
         # Validate E2E requirements
         if not (
@@ -185,7 +169,6 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
     else:
         # Default: Interactive TUI Dashboard Mode
         from cxas_scrapi.cli.migration_cli import MigrationCLI  # noqa: PLC0415
-        from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
 
         dashboard = MigrationCLI()
         cx_api = ConversationalAgentsAPI()
@@ -193,10 +176,7 @@ def run_migration_dashboard(args: argparse.Namespace) -> None:
 
 
 def push_eval(args: argparse.Namespace) -> None:
-    """Handles the 'push-eval' command."""
-    from cxas_scrapi.core.evaluations import Evaluations
-    from cxas_scrapi.utils.eval_utils import EvalUtils
-
+    """Handles the 'push' command."""
     print(f"Pushing evaluation(s) from {args.file} to App: {args.app_name}")
 
     eval_client = Evaluations(app_name=args.app_name)
@@ -230,8 +210,6 @@ def wait_for_evaluation_completion(
     timeout_seconds: int = 600,
 ) -> dict[str, pd.DataFrame]:
     """Waits for all new evaluation results to appear."""
-    import pandas as pd
-
     print(f"Waiting for {expected_count} evaluation(s) to complete...")
     start_time = time.time()
     while time.time() - start_time < timeout_seconds:
@@ -289,8 +267,6 @@ def filter_metrics_and_assess(
 ) -> bool:
     """Assesses the evaluation run and returns True if passed,
     False otherwise."""
-    import pandas as pd
-
     passed = True
 
     df_new_run = df_dict_new_run.get("summary", pd.DataFrame())
@@ -381,10 +357,6 @@ def filter_metrics_and_assess(
 
 def run_eval(args: argparse.Namespace) -> None:
     """Handles the 'run' command."""
-    import pandas as pd
-
-    from cxas_scrapi.core.evaluations import Evaluations
-    from cxas_scrapi.utils.eval_utils import EvalUtils
 
     print(f"Triggering evaluation for App: {args.app_name}")
     eval_client = Evaluations(app_name=args.app_name)
@@ -503,10 +475,7 @@ def run_eval(args: argparse.Namespace) -> None:
 
         # Step 2: Trigger evaluation
         eval_client.run_evaluation(
-            evaluations=evaluations_to_run,
-            app_name=args.app_name,
-            modality=args.modality,
-            golden_run_method=args.golden_run_method,
+            evaluations=evaluations_to_run, app_name=args.app_name
         )
         print("Evaluation triggered successfully based on CLI call.")
 
@@ -574,12 +543,20 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         generate_combined_report_from_dir,
     )
 
-    output_dir = args.output_dir
-    timestamp = None
-    if getattr(args, "timestamped", False):
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    config = {}
+    config_error = None
+    try:
+        config = ws.load_workspace_config()
+    except Exception as e:
+        config_error = str(e)
 
-    output_path = args.gcs_path or args.output
+    gcs_path = args.gcs_path or config.get("gcs_path")
+
+    output_dir = args.output_dir or config.get("output_dir") or ".scrapi-out"
+
+    output_path = gcs_path or args.output
+    if not output_path and output_dir:
+        output_path = os.path.join(output_dir, "combined_report.html")
 
     include_list = args.include.split(",") if args.include else []
     filter_files_list = (
@@ -592,48 +569,71 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         if getattr(args, "filter_tags", None)
         else []
     )
-    filter_names_list = (
-        args.filter_names.split(",")
-        if getattr(args, "filter_names", None)
-        else []
-    )
 
-    if getattr(args, "input_dir", None):
+    app_name = args.app_name
+    if not app_name:
+        if config:
+            project = config.get("gcp_project_id")
+            location = config.get("location", "us")
+            app_id = config.get("deployed_app_id")
+            if project and app_id:
+                app_name = (
+                    f"projects/{project}/locations/{location}/apps/{app_id}"
+                )
+            else:
+                missing = []
+                if not project:
+                    missing.append("gcp-project-id")
+                if not app_id:
+                    missing.append("deployed-app-id")
+                raise ValueError(
+                    f"App name was not found in your active profile inside gecx-config.toml (missing keys: {', '.join(missing)}). "
+                    "It is highly preferred to define this configuration in gecx-config.toml by running "
+                    "'cxas workspace set --deployed-app-id <app-id> --gcp-project-id <project-id>'. "
+                    "Do not use the CLI flag --app-name unless you are overriding the default configuration for "
+                    "one-time runs or temporary tests."
+                )
+        else:
+            raise ValueError(
+                f"App name was not provided on the CLI, and failed to load workspace configuration from gecx-config.toml (Error: {config_error}). "
+                "It is highly preferred to initialize the workspace with 'cxas init' and define this in your gecx-config.toml. "
+                "Only use the CLI flag --app-name for one-time overrides or temporary tests."
+            )
+
+    input_dir = getattr(args, "input_dir", None)
+    if not input_dir:
+        if config:
+            input_dir = config.get("evals_dir")
+            if not input_dir:
+                raise ValueError(
+                    "Evaluations directory was not found in your active profile inside gecx-config.toml (missing key: evals-dir). "
+                    "It is highly preferred to define this configuration in gecx-config.toml by running "
+                    "'cxas workspace set --evals-dir <path>'. "
+                    "Do not use the CLI flag --input-dir unless you are overriding the default configuration for "
+                    "one-time runs or temporary tests."
+                )
+        else:
+            raise ValueError(
+                f"Evaluations directory was not provided on the CLI, and failed to load workspace configuration from gecx-config.toml (Error: {config_error}). "
+                "It is highly preferred to initialize the workspace with 'cxas init' and define this in your gecx-config.toml. "
+                "Only use the CLI flag --input-dir for one-time overrides or temporary tests."
+            )
+
+    if input_dir:
         if args.tool_test_file == "evals/tool_tests/":
-            args.tool_test_file = os.path.join(args.input_dir, "tool_tests/")
+            args.tool_test_file = os.path.join(input_dir, "tool_tests/")
         if args.goldens_dir == "evals/goldens/":
-            args.goldens_dir = os.path.join(args.input_dir, "goldens/")
+            args.goldens_dir = os.path.join(input_dir, "goldens/")
         if args.simulation_dir == "evals/simulations/":
-            args.simulation_dir = os.path.join(args.input_dir, "simulations/")
+            args.simulation_dir = os.path.join(input_dir, "simulations/")
 
     sim_parallel = getattr(args, "sim_parallel", 5)
     golden_timeout = getattr(args, "golden_timeout", 600)
 
-    progress_callback = None
-    if getattr(args, "json_progress", False):
-
-        def progress_callback(stage: str, current: int, total: int):
-            import json
-            import sys
-
-            sys.stderr.write(
-                json.dumps(
-                    {
-                        "progress": {
-                            "stage": stage,
-                            "current": current,
-                            "total": total,
-                        }
-                    }
-                )
-                + "\n"
-            )
-            sys.stderr.flush()
-
     actual_output_path = generate_combined_report_from_dir(
         output_dir=output_dir,
         golden_run=args.golden_run,
-        app_name=args.app_name,
+        app_name=app_name,
         output_path=output_path,
         run=args.run,
         app_dir=args.app_dir,
@@ -642,31 +642,21 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         simulation_dir=args.simulation_dir,
         include=include_list,
         modality=args.modality,
-        sim_user_model=args.sim_user_model,
-        eval_model=args.eval_model,
         runs=args.runs,
         filter_files=filter_files_list,
         filter_tags=filter_tags_list,
-        filter_names=filter_names_list,
         parallel=sim_parallel,
         golden_timeout=golden_timeout,
         bg_noise_file=getattr(args, "bg_noise_file", None),
         burst_noise_files=getattr(args, "burst_noise_files", "").split(",")
         if getattr(args, "burst_noise_files", None)
         else None,
-        use_tool_fakes=getattr(args, "use_tool_fakes", False),
-        timestamp=timestamp,
-        expectations_only=getattr(args, "expectations_only", False),
-        deployment_id=getattr(args, "deployment_id", None),
-        progress_callback=progress_callback,
-        capture_agent_audio=getattr(args, "capture_agent_audio", False),
     )
     print(f"Combined report generated at {actual_output_path}")
 
 
 def test_tools(args: argparse.Namespace) -> None:
     """Handles the 'test-tools' command."""
-    from cxas_scrapi.evals.tool_evals import ToolEvals
 
     print(
         f"Running tool tests for App: {args.app_name} "
@@ -699,7 +689,6 @@ def test_tools(args: argparse.Namespace) -> None:
 
 def test_callbacks(args: argparse.Namespace) -> None:
     """Handles the 'test-callbacks' command."""
-    from cxas_scrapi.evals.callback_evals import CallbackEvals
 
     print(f"Running callback tests in App directory: {args.app_dir}")
     callback_evals = CallbackEvals()
@@ -734,7 +723,6 @@ def test_callbacks(args: argparse.Namespace) -> None:
 
 def test_single_callback(args: argparse.Namespace) -> None:
     """Handles the 'test-single-callback' command."""
-    from cxas_scrapi.evals.callback_evals import CallbackEvals
 
     print(
         f"Running single callback test for "
@@ -773,9 +761,6 @@ def test_single_callback(args: argparse.Namespace) -> None:
 
 def ci_test(args: argparse.Namespace) -> None:
     """Handles the 'ci-test' command."""
-    from cxas_scrapi.cli.app import app_push
-    from cxas_scrapi.core.apps import Apps
-    from cxas_scrapi.core.evaluations import Evaluations
 
     print("Starting CI Test Lifecycle...")
 
@@ -951,13 +936,6 @@ def local_test(args: argparse.Namespace) -> None:
 
 def run_session(args: argparse.Namespace) -> None:
     """Handles the 'run-session' command."""
-    from cxas_scrapi import Sessions
-
-    if not sys.stdin.isatty():
-        msg = "ERROR: 'run-session' requires an interactive terminal."
-        print(msg, file=sys.stderr)
-        sys.exit(1)
-
     try:
         session_client = Sessions(args.app_name)
         session_id = session_client.create_session_id()
@@ -985,12 +963,6 @@ def run_session(args: argparse.Namespace) -> None:
 
 def conversations_list(args: argparse.Namespace) -> None:
     """Lists conversations for an app."""
-    from google.protobuf.json_format import MessageToDict
-
-    from cxas_scrapi.core.apps import Apps
-    from cxas_scrapi.core.common import Common
-    from cxas_scrapi.core.conversation_history import ConversationHistory
-
     print(f"Listing conversations for App: {args.app_name}")
 
     # Extract and validate app_name
@@ -1024,12 +996,6 @@ def conversations_list(args: argparse.Namespace) -> None:
 
 def conversations_get(args: argparse.Namespace) -> None:
     """Gets details of a specific conversation."""
-    from google.protobuf.json_format import MessageToDict
-
-    from cxas_scrapi.core.apps import Apps
-    from cxas_scrapi.core.common import Common
-    from cxas_scrapi.core.conversation_history import ConversationHistory
-
     print(f"Getting conversation: {args.conversation_resource_name}")
 
     # Extract and validate app_name
@@ -1061,10 +1027,6 @@ def conversations_get(args: argparse.Namespace) -> None:
 
 def deployments_list(args: argparse.Namespace) -> None:
     """Lists deployments for an app."""
-    from google.protobuf.json_format import MessageToDict
-
-    from cxas_scrapi.core.deployments import Deployments
-
     print(f"Listing deployments for App: {args.app_name}")
 
     deployments_client = Deployments(app_name=args.app_name)
@@ -1086,108 +1048,19 @@ def deployments_list(args: argparse.Namespace) -> None:
 
 def deployments_create(args: argparse.Namespace) -> None:
     """Creates a deployment."""
-    from cxas_scrapi.core.deployments import Deployments
-
     print(f"Creating deployment {args.deployment_id} for App: {args.app_name}")
-
-    traffic_split = None
-    if getattr(args, "traffic_split", None):
-        try:
-            split_parts = args.traffic_split.split(",")
-            traffic_split = {}
-            for part in split_parts:
-                k, v = part.split(":")
-                traffic_split[k] = int(v)
-        except Exception as e:
-            print(f"Error parsing traffic-split: {e}")
-            sys.exit(1)
-
-    version_id = getattr(args, "version", None) or getattr(
-        args, "version_id", None
-    )
-    if not version_id and not traffic_split:
-        print(
-            "Error: You must provide either `--version` (or `--version-id`)"
-            " OR `--traffic-split`."
-        )
-        sys.exit(1)
-
-    display_name = getattr(args, "display_name", None) or args.deployment_id
-    channel_type = getattr(args, "channel_type", None) or "API"
 
     deployments_client = Deployments(app_name=args.app_name)
     deployment = deployments_client.create_deployment(
         deployment_id=args.deployment_id,
-        display_name=display_name,
-        app_version=version_id,
-        channel_type=channel_type,
-        traffic_split=traffic_split,
+        display_name=args.deployment_id,
+        app_version=args.version_id,
     )
     print(f"Deployment created successfully: {deployment.name}")
 
 
 def deployments_promote(args: argparse.Namespace) -> None:
     """Promotes app to live traffic."""
-    from google.api_core.exceptions import NotFound
-
-    from cxas_scrapi.cli.app import app_push
-    from cxas_scrapi.core.deployments import Deployments
-
-    has_id = getattr(args, "deployment_id", None)
-    has_split_or_ver = getattr(args, "version", None) or getattr(
-        args, "traffic_split", None
-    )
-    if has_id and has_split_or_ver:
-        app_name = args.app_name or getattr(args, "app_resource_name", None)
-        print(
-            f"Updating deployment {args.deployment_id} for App: {app_name}..."
-        )
-        deployments_client = Deployments(app_name=app_name)
-
-        traffic_split = None
-        if getattr(args, "traffic_split", None):
-            try:
-                split_parts = args.traffic_split.split(",")
-                traffic_split = {}
-                for part in split_parts:
-                    k, v = part.split(":")
-                    traffic_split[k] = int(v)
-            except Exception as e:
-                print(f"Error parsing traffic-split: {e}")
-                sys.exit(1)
-
-        kwargs = {}
-        if getattr(args, "version", None):
-            kwargs["app_version"] = args.version
-        if traffic_split:
-            kwargs["traffic_split"] = traffic_split
-
-        try:
-            deployments_client.update_deployment(
-                deployment_id=args.deployment_id, **kwargs
-            )
-            print("Successfully updated deployment traffic.")
-            return
-        except Exception as e:
-            print(f"Error updating deployment: {e}")
-            sys.exit(1)
-
-    if not all(
-        [
-            getattr(args, "app_resource_name", None),
-            getattr(args, "app_dir", None),
-            getattr(args, "live_deployment_resource_name", None),
-        ]
-    ):
-        print(
-            "Error: Missing required arguments. "
-            "You must provide either `--deployment-id` with"
-            " `--version`/`--traffic-split`, OR the legacy arguments: "
-            "`--app-resource-name`, `--app-dir`, and "
-            "`--live-deployment-resource-name`."
-        )
-        sys.exit(1)
-
     print(f"Promoting app {args.app_resource_name} to live traffic...")
 
     # Step 1: Push and create version
@@ -1249,41 +1122,10 @@ def deployments_promote(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def cmd_help(args: argparse.Namespace) -> None:
-    """Handles the 'help' command."""
-    parser = get_parser()
-    if getattr(args, "help_command", None):
-        try:
-            parser.parse_args([args.help_command, "--help"])
-        except SystemExit:
-            pass
-    else:
-        parser.print_help()
-
-
 def get_parser() -> argparse.ArgumentParser:
     """Sets up the argument parser."""
-    description = (
-        "CXAS SCRAPI Command Line Interface — Full CI/CD Suite\n\n"
-        "The cxas CLI puts the full power of CX Agent Studio in your\n"
-        "terminal: pull/push apps, run evals, manage versions, analyze\n"
-        "conversation traces, and lint configurations or prompts.\n\n"
-        "--- Key Verification & Linting Tools — When to Run Which ---\n\n"
-        "• cxas lint     : Fast, deterministic structural linter.\n"
-        "                  Validates directory layout, YAML/JSON schemas,\n"
-        "                  app.yaml/app.json correctness, & basic structure.\n"
-        "                  When to run: Continuously during development,\n"
-        "                  in pre-commit hooks, and as a first CI gate.\n\n"
-        "• cxas llm-lint : AI semantic natural language prompt linter.\n"
-        "                  Analyzes instructions (instruction.txt,\n"
-        "                  global_instruction.txt, & dynamic callbacks)\n"
-        "                  for clarity, tone, persona, & contradictions.\n"
-        "                  When to run: When authoring prompt engineering,\n"
-        "                  before code reviews, or during qualitative QA."
-    )
-
     parser = argparse.ArgumentParser(
-        description=description,
+        description="CXAS SCRAPI Evaluation Runner for CI/CD.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
@@ -1297,33 +1139,130 @@ def get_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--no-input",
-        action="store_true",
-        help=(
-            "Disable all interactive prompts. Use this in CI/CD pipelines "
-            "to prevent hanging on unexpected prompts."
-        ),
+        "--project-dir",
+        "-p",
+        help="Override the active GECX project directory path.",
+        required=False,
     )
 
     def _add_project_location_args(
         subparser: argparse.ArgumentParser, required: bool = True
     ) -> None:
         """Helper to add standard GCP args to subparsers."""
-        help_suffix = "" if required else " (Optional if using Display Name)"
+        # Load configuration safely by catching exceptions (which prevents startup exit(1) crash)
+        config = {}
+        try:
+            config = ws.load_workspace_config()
+        except Exception:
+            pass
+
+        default_project = config.get("gcp_project_id")
+        default_location = (
+            config.get("location", "us") if default_project else None
+        )
+
+        # Arguments are resolved dynamically at runtime, so they are not required at parser level
+        is_required = False
+        help_suffix = " (Optional, loaded from active profile)"
+
         subparser.add_argument(
             "--project-id",
-            required=required,
+            required=is_required,
+            default=default_project,
             help=f"The GCP Project ID.{help_suffix}",
         )
         subparser.add_argument(
             "--location",
-            required=required,
+            required=is_required,
+            default=default_location,
             help=f"The GCP Location (e.g., global, us-central1).{help_suffix}",
         )
 
     subparsers = parser.add_subparsers(
-        title="Commands", dest="command", required=True
+        title="Commands", dest="command", required=False
     )
+
+    # Parser for 'workspace'
+    parser_workspace = subparsers.add_parser(
+        "workspace", help="Manage GECX workspace configuration."
+    )
+    parser_workspace.set_defaults(
+        func=lambda args: parser_workspace.print_help()
+    )
+    workspace_subparsers = parser_workspace.add_subparsers(
+        title="Workspace Commands", dest="workspace_command", required=False
+    )
+
+    parser_workspace_set = workspace_subparsers.add_parser(
+        "set", help="Set the active GECX project workspace directory."
+    )
+    parser_workspace_set.add_argument(
+        "target_dir",
+        nargs="?",
+        help="Path to the GECX project directory.",
+    )
+    parser_workspace_set.add_argument(
+        "--profile",
+        help="Set the active configuration profile (e.g., prod.us-central1).",
+    )
+    parser_workspace_set.add_argument(
+        "--project-id",
+        dest="gcp_project_id",
+        help="Update the GCP Project ID.",
+    )
+    parser_workspace_set.add_argument(
+        "--app-id",
+        dest="deployed_app_id",
+        help="Update the deployed CXAS App ID.",
+    )
+    parser_workspace_set.add_argument(
+        "--location",
+        help="Update the GCP Location.",
+    )
+    parser_workspace_set.add_argument(
+        "--app-dir",
+        help="Update the local app directory path.",
+    )
+    parser_workspace_set.add_argument(
+        "--evals-dir",
+        help="Update the evaluations directory path.",
+    )
+    parser_workspace_set.add_argument(
+        "--output-dir",
+        help="Update the output directory path.",
+    )
+    parser_workspace_set.add_argument(
+        "--model",
+        help="Update the default Gemini model.",
+    )
+    parser_workspace_set.add_argument(
+        "--modality",
+        choices=["text", "audio"],
+        help="Update the evaluation execution modality.",
+    )
+    parser_workspace_set.set_defaults(
+        func=workspace_set, parser=parser_workspace_set
+    )
+
+    parser_workspace_show = workspace_subparsers.add_parser(
+        "show", help="Show the current project's configuration."
+    )
+    parser_workspace_show.set_defaults(func=workspace_show)
+
+    parser_workspace_create = workspace_subparsers.add_parser(
+        "create", help="Create a default gecx-config.json file."
+    )
+    parser_workspace_create.add_argument(
+        "--target-dir",
+        default=".",
+        help="Directory to initialize config (default: current directory).",
+    )
+    parser_workspace_create.set_defaults(func=workspace_create)
+
+    parser_workspace_unset = workspace_subparsers.add_parser(
+        "unset", help="Unset the active workspace project configuration."
+    )
+    parser_workspace_unset.set_defaults(func=workspace_unset)
 
     # Parser for 'migrate'
     parser_migrate = subparsers.add_parser("migrate", help="Migration tools.")
@@ -1431,17 +1370,7 @@ def get_parser() -> argparse.ArgumentParser:
         "--no-optimize",
         action="store_true",
         help=(
-            "DEPRECATED alias for --no-consolidate; kept for backward"
-            " compatibility. Skip Stage 1 + Stage 2 + Stage 3 entirely."
-        ),
-    )
-    e2e_group.add_argument(
-        "--no-consolidate",
-        action="store_true",
-        help=(
-            "Skip Stage 1/2/3 entirely. Produces a 1:1 transpile (every"
-            " source flow becomes its own CXAS agent). Use only when you"
-            " need the unoptimized form. Default: consolidate."
+            "Custom Mode: Skip Stage 1 + Stage 2 + Stage 3 optimization passes."
         ),
     )
     e2e_group.add_argument(
@@ -1457,62 +1386,6 @@ def get_parser() -> argparse.ArgumentParser:
         "-y",
         action="store_true",
         help="Non-interactive mode: auto-confirm stages and operations.",
-    )
-
-    # Grouping confirmation gate (Phase 4 — opt-in until Phase 5 default flip)
-    gate_group = parser_migrate_dfcx.add_argument_group(
-        "Grouping Confirmation Gate"
-    )
-    gate_group.add_argument(
-        "--no-web-confirm",
-        action="store_true",
-        help=(
-            "Skip the HTML grouping-confirmation gate and fall back to the"
-            " InquirerPy terminal TUI for grouping review."
-        ),
-    )
-    gate_group.add_argument(
-        "--auto-confirm-grouping",
-        action="store_true",
-        help=(
-            "Accept Gemini's proposed grouping without showing the review"
-            " gate. Intended for CI / scripted migrations."
-        ),
-    )
-    gate_group.add_argument(
-        "--web-confirm-host",
-        default="127.0.0.1",
-        help=(
-            "Bind host for the review server. Use 0.0.0.0 to allow access"
-            " from another machine. Default: 127.0.0.1"
-        ),
-    )
-    gate_group.add_argument(
-        "--web-confirm-port",
-        type=int,
-        default=0,
-        help="Bind port for the review server. 0 picks an ephemeral port.",
-    )
-    gate_group.add_argument(
-        "--web-confirm-timeout",
-        type=int,
-        default=1800,
-        help=(
-            "Seconds to wait for the user to confirm before aborting."
-            " Default: 1800 (30 min)."
-        ),
-    )
-
-    xprs_group = parser_migrate_dfcx.add_argument_group(
-        "Agent xprs Designer (Experimental Feature Gate)"
-    )
-    xprs_group.add_argument(
-        "--experimental-agent-xprs",
-        action="store_true",
-        help=(
-            "Enable experimental Agent xprs interactive designer and background"
-            " utterance harvesting (in progress, not fully connected)."
-        ),
     )
 
     # Optimization/Checkpoint Arguments (active when --optimize is specified)
@@ -1677,12 +1550,11 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_report.add_argument(
         "--output-dir",
-        required=True,
-        help="Directory containing eval results (sim_results.json, etc.).",
+        help="Directory containing eval results (sim_results.json, etc.). Defaults to workspace output-dir.",
     )
     parser_report.add_argument(
         "--output",
-        help=f"Output path. Defaults to <evals-dir>/{COMBINED_REPORT_FILENAME}",
+        help="Output path. Defaults to <evals-dir>/combined_report.html",
     )
     parser_report.add_argument(
         "--golden-run",
@@ -1728,6 +1600,11 @@ def get_parser() -> argparse.ArgumentParser:
         help="Optional: GCS path to store the combined report (starts with gs://).",
     )
     parser_report.add_argument(
+        "--format",
+        default="html",
+        help="Output format (default: html).",
+    )
+    parser_report.add_argument(
         "--runs",
         type=int,
         default=1,
@@ -1746,20 +1623,6 @@ def get_parser() -> argparse.ArgumentParser:
         choices=["text", "audio"],
         default="text",
         help="Evaluation execution modality (text or audio). Defaults to text.",
-    )
-    parser_report.add_argument(
-        "--sim-user-model",
-        help=(
-            "Gemini model name to use for the simulated user "
-            "(default: gemini-3.1-flash-lite)."
-        ),
-    )
-    parser_report.add_argument(
-        "--eval-model",
-        help=(
-            "Gemini model name to use for evaluating expectations "
-            "(default: gemini-3.1-flash-lite)."
-        ),
     )
     parser_report.add_argument(
         "--include",
@@ -1794,44 +1657,6 @@ def get_parser() -> argparse.ArgumentParser:
             "files."
         ),
     )
-    parser_report.add_argument(
-        "--use-tool-fakes",
-        action="store_true",
-        help="Enable tool fakes (bypass real tool backends).",
-    )
-    parser_report.add_argument(
-        "--timestamped",
-        action="store_true",
-        help="If set, nests the output files in a timestamped subdirectory.",
-    )
-    parser_report.add_argument(
-        "--expectations-only",
-        action="store_true",
-        default=False,
-        help=(
-            "Evaluate test results using only expectations "
-            "(ignore goal success_criteria)"
-        ),
-    )
-    parser_report.add_argument(
-        "--filter-names",
-        help="Optional: Comma-separated list of evaluation names to include.",
-    )
-    parser_report.add_argument(
-        "--json-progress",
-        action="store_true",
-        help="Output progress updates as JSON lines to stderr.",
-    )
-    parser_report.add_argument(
-        "--deployment-id",
-        default=None,
-        help="Optional: Target a specific deployment ID for simulations.",
-    )
-    parser_report.add_argument(
-        "--capture-agent-audio",
-        action="store_true",
-        help="Capture real-time agent output audio as WAV files",
-    )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
     parser_test_tools = subparsers.add_parser(
@@ -1840,8 +1665,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_test_tools.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_test_tools.add_argument(
         "--test-file",
@@ -1863,8 +1689,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_test_callbacks.add_argument(
         "--app-dir",
-        required=True,
-        help="The path to the app directory.",
+        required=False,
+        default=None,
+        help="The path to the app directory. (Optional, loaded from active profile if omitted)",
     )
     parser_test_callbacks.add_argument(
         "--agent-name",
@@ -1901,8 +1728,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_test_single_callback.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_test_single_callback.add_argument(
         "--agent-name",
@@ -1938,8 +1766,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_export.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_export.add_argument(
         "--evaluation-id",
@@ -1971,8 +1800,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_push_eval.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_push_eval.add_argument(
         "--file",
@@ -1987,8 +1817,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_run.add_argument(
         "--app-name",
-        required=True,
-        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+        required=False,
+        default=None,
+        help="The CXAS App ID (projects/.../locations/.../apps/...). (Optional, loaded from active profile if omitted)",
     )
     parser_run.add_argument(
         "--evaluation-id",
@@ -2032,15 +1863,6 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Filter out automated metrics (semantic similarity, "
             "hallucination) and only evaluate custom expectations."
-        ),
-    )
-    parser_run.add_argument(
-        "--golden-run-method",
-        choices=["STABLE", "NAIVE"],
-        default="STABLE",
-        help=(
-            "Method used to replay golden tests (STABLE or NAIVE). "
-            "Defaults to STABLE."
         ),
     )
 
@@ -2214,8 +2036,8 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_lint.add_argument(
         "--app-dir",
-        default=".",
-        help="Path to the app directory to lint (default: current directory).",
+        default=None,
+        help="Path to the app directory to lint (default: loaded from active profile or current directory).",
     )
     parser_lint.add_argument(
         "--fix",
@@ -2300,8 +2122,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_llm_lint.add_argument(
         "--agent-dir",
-        required=True,
-        help="Path to the sub-agent directory containing instruction.txt.",
+        required=False,
+        default=None,
+        help="Path to the sub-agent directory containing instruction.txt. (Optional, discovered from active profile if omitted)",
     )
     parser_llm_lint.add_argument(
         "--project-id",
@@ -2322,17 +2145,6 @@ def get_parser() -> argparse.ArgumentParser:
         help="Optional path to write the markdown lint report.",
     )
     parser_llm_lint.set_defaults(func=llm_lint)
-
-    # Parser for 'help'
-    parser_help = subparsers.add_parser(
-        "help", help="Show help for the CLI or a specific command."
-    )
-    parser_help.add_argument(
-        "help_command",
-        nargs="?",
-        help="The command to show help for (e.g., lint, llm-lint, run).",
-    )
-    parser_help.set_defaults(func=cmd_help)
 
     # Parser for 'init'
     parser_init = subparsers.add_parser(
@@ -2379,8 +2191,9 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'apps'
     parser_apps = subparsers.add_parser("apps", help="Manage apps (list, get).")
+    parser_apps.set_defaults(func=lambda args: parser_apps.print_help())
     apps_subparsers = parser_apps.add_subparsers(
-        title="Apps Commands", dest="apps_command", required=True
+        title="Apps Commands", dest="apps_command", required=False
     )
 
     parser_apps_list = apps_subparsers.add_parser("list", help="List all apps.")
@@ -2399,10 +2212,11 @@ def get_parser() -> argparse.ArgumentParser:
     parser_convs = subparsers.add_parser(
         "conversations", help="Manage conversations (list, get)."
     )
+    parser_convs.set_defaults(func=lambda args: parser_convs.print_help())
     convs_subparsers = parser_convs.add_subparsers(
         title="Conversations Commands",
         dest="conversations_command",
-        required=True,
+        required=False,
     )
 
     parser_convs_list = convs_subparsers.add_parser(
@@ -2428,10 +2242,11 @@ def get_parser() -> argparse.ArgumentParser:
     parser_deps = subparsers.add_parser(
         "deployments", help="Manage deployments (list, create, promote)."
     )
+    parser_deps.set_defaults(func=lambda args: parser_deps.print_help())
     deps_subparsers = parser_deps.add_subparsers(
         title="Deployments Commands",
         dest="deployments_command",
-        required=True,
+        required=False,
     )
 
     parser_deps_list = deps_subparsers.add_parser(
@@ -2459,36 +2274,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_deps_create.add_argument(
         "--version-id",
-        required=False,
+        required=True,
         help="Version ID for create_deployment.",
     )
-    parser_deps_create.add_argument(
-        "--version",
-        required=False,
-        help="Version ID for create_deployment.",
-    )
-    parser_deps_create.add_argument(
-        "--display-name",
-        required=False,
-        help="Display name for the deployment.",
-    )
-    parser_deps_create.add_argument(
-        "--channel-type",
-        required=False,
-        help="Channel type (e.g. API).",
-    )
-    parser_deps_create.add_argument(
-        "--traffic-split",
-        required=False,
-        help=(
-            "Either version or traffic split needs to be specified. Split "
-            "traffic between multiple app versions by percentage, colon "
-            "delimited. Traffic must sum to 100%%. Format: "
-            "version_id1:traffic_percentage1,version_id2:traffic_percentage2 "
-            '(e.g. "v1:90,v2:10").'
-        ),
-    )
-    _add_project_location_args(parser_deps_create, required=False)
     parser_deps_create.set_defaults(func=deployments_create)
 
     parser_deps_promote = deps_subparsers.add_parser(
@@ -2496,63 +2284,40 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_deps_promote.add_argument(
         "--app-resource-name",
-        required=False,
+        required=True,
         help="Fully qualified CXAS app resource name.",
     )
     parser_deps_promote.add_argument(
         "--app-dir",
-        required=False,
+        required=True,
         help="Path to the CXAS app directory.",
     )
     parser_deps_promote.add_argument(
         "--live-deployment-resource-name",
-        required=False,
+        required=True,
         help="Fully qualified live deployment resource name.",
     )
-    parser_deps_promote.add_argument(
-        "--app-name",
-        required=False,
-        help="The CXAS App ID.",
-    )
-    parser_deps_promote.add_argument(
-        "--deployment-id",
-        required=False,
-        help="Deployment ID.",
-    )
-    parser_deps_promote.add_argument(
-        "--version",
-        required=False,
-        help="Version ID to promote.",
-    )
-    parser_deps_promote.add_argument(
-        "--traffic-split",
-        required=False,
-        help=(
-            "Either version or traffic split needs to be specified. Split "
-            "traffic between multiple app versions by percentage, colon "
-            "delimited. Traffic must sum to 100%%. Format: "
-            "version_id1:traffic_percentage1,version_id2:traffic_percentage2 "
-            '(e.g. "v1:90,v2:10").'
-        ),
-    )
-    _add_project_location_args(parser_deps_promote, required=False)
     parser_deps_promote.set_defaults(func=deployments_promote)
 
     # Subparsers for 'local'
     parser_local = subparsers.add_parser(
         "local", help="Local workspace operations."
     )
+    parser_local.set_defaults(func=lambda args: parser_local.print_help())
     local_subparsers = parser_local.add_subparsers(
-        title="Local Commands", dest="local_command", required=True
+        title="Local Commands", dest="local_command", required=False
     )
 
     parser_local_create = local_subparsers.add_parser(
         "create", help="Create local templates for CXAS components."
     )
+    parser_local_create.set_defaults(
+        func=lambda args: parser_local_create.print_help()
+    )
     local_create_subparsers = parser_local_create.add_subparsers(
         title="Create Local Commands",
         dest="create_local_command",
-        required=True,
+        required=False,
     )
 
     parser_local_create_agent = local_create_subparsers.add_parser(
@@ -2583,29 +2348,13 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_local_create_tool.set_defaults(func=handle_local_create)
 
-    parser_local_create_guardrail = local_create_subparsers.add_parser(
-        "guardrail", help="Create local guardrail template."
-    )
-    parser_local_create_guardrail.add_argument(
-        "name", help="Display name of the guardrail."
-    )
-    parser_local_create_guardrail.add_argument(
-        "guardrail_type",
-        nargs="?",
-        default="llm_policy",
-        help="Type of guardrail (default: llm_policy).",
-    )
-    parser_local_create_guardrail.add_argument(
-        "--app-dir", default=".", help="App directory."
-    )
-    parser_local_create_guardrail.set_defaults(func=handle_local_create)
-
     # Subparsers for 'versions'
     parser_versions = subparsers.add_parser(
         "versions", help="Manage CXAS app versions (list, compare)."
     )
+    parser_versions.set_defaults(func=lambda args: parser_versions.print_help())
     versions_subparsers = parser_versions.add_subparsers(
-        title="Versions Commands", dest="versions_command", required=True
+        title="Versions Commands", dest="versions_command", required=False
     )
 
     parser_versions_list = versions_subparsers.add_parser(
@@ -2679,9 +2428,145 @@ def get_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_args_and_print_banner(args: argparse.Namespace) -> None:
+    """Dynamically resolves missing CLI arguments from active workspace profile and prints context banner."""
+    if not hasattr(args, "func"):
+        return
+    func_name = getattr(args.func, "__name__", "")
+    # Skip for workspace/app init/create commands and help prints
+    if func_name in (
+        "workspace_show",
+        "workspace_set",
+        "workspace_create",
+        "workspace_unset",
+        "app_init",
+        "app_create",
+        "run_migration_dashboard",
+        "init_github_action",
+        "<lambda>",
+    ):
+        return
+
+    try:
+        config = ws.load_workspace_config()
+    except Exception:
+        config = {}
+
+    if config:
+        if hasattr(args, "app_name") and getattr(args, "app_name", None) is None:
+            try:
+                args.app_name = ws.app_name()
+            except Exception:
+                pass
+        if hasattr(args, "app_resource_name") and getattr(args, "app_resource_name", None) is None:
+            try:
+                args.app_resource_name = ws.app_name()
+            except Exception:
+                pass
+        if hasattr(args, "app_dir") and getattr(args, "app_dir", None) in (None, "."):
+            args.app_dir = config.get("app_dir", getattr(args, "app_dir", "."))
+        if hasattr(args, "agent_dir") and getattr(args, "agent_dir", None) is None:
+            app_dir_val = config.get("app_dir", "app")
+            try:
+                app_dir_path = Path(ws.resolve_project_dir()) / app_dir_val
+                agents_dir = app_dir_path / "agents"
+                if agents_dir.exists():
+                    agent_subdirs = [
+                        d for d in agents_dir.iterdir()
+                        if d.is_dir() and (d / "instruction.txt").exists()
+                    ]
+                    if len(agent_subdirs) == 1:
+                        args.agent_dir = str(agent_subdirs[0])
+                    elif not agent_subdirs and (app_dir_path / "instruction.txt").exists():
+                        args.agent_dir = str(app_dir_path)
+            except Exception:
+                pass
+        if hasattr(args, "input_dir") and getattr(args, "input_dir", None) is None:
+            args.input_dir = config.get("evals_dir", "evals")
+        if hasattr(args, "output_dir") and getattr(args, "output_dir", None) is None:
+            args.output_dir = config.get("output_dir", ".scrapi-out")
+        if hasattr(args, "model") and getattr(args, "model", None) is None:
+            args.model = config.get("model", "gemini-2.5-flash")
+        if hasattr(args, "modality") and getattr(args, "modality", None) is None:
+            args.modality = config.get("modality", "AUDIO")
+
+    # If JSON output is requested or quiet, skip printing the visual banner
+    if getattr(args, "json_output", False) or getattr(args, "format", "") in ("json", "csv"):
+        return
+
+    if not config:
+        return
+
+    profile = "default"
+    try:
+        workspace_root = ws.find_workspace_root()
+        if workspace_root:
+            active_project_file = Path(workspace_root) / ".scrapi" / "active-project"
+            if active_project_file.is_file():
+                import toml
+                with active_project_file.open("r", encoding="utf-8") as f:
+                    profile = toml.load(f).get("active-profile") or "default"
+    except Exception:
+        pass
+
+    app_name_str = getattr(args, "app_name", None) or getattr(args, "app_resource_name", None)
+    if not app_name_str:
+        try:
+            app_name_str = ws.app_name()
+        except Exception:
+            app_name_str = "N/A"
+
+    project_dir_str = config.get("_project_dir", "")
+    app_dir_str = getattr(args, "app_dir", None) or config.get("app_dir", "app")
+    evals_dir_str = getattr(args, "input_dir", None) or config.get("evals_dir", "evals")
+
+    from rich.console import Console
+    console = Console(file=sys.stderr)
+    console.print(
+        f"[bold cyan][CXAS Workspace][/bold cyan] Profile: [yellow]{profile}[/yellow] | App: [green]{app_name_str}[/green]"
+    )
+    console.print(
+        f"[bold cyan][CXAS Workspace][/bold cyan] Project Dir: [dim]{project_dir_str}[/dim] | App Dir: [dim]{app_dir_str}[/dim] | Evals: [dim]{evals_dir_str}[/dim]"
+    )
+
+    skip_keys = {
+        "func",
+        "parser",
+        "app_name",
+        "app_resource_name",
+        "app_dir",
+        "agent_dir",
+        "input_dir",
+        "output_dir",
+        "project_dir",
+        "json_output",
+        "format",
+        "oauth_token",
+        "target_dir",
+    }
+    cmd_args = {}
+    for k, v in vars(args).items():
+        if k in skip_keys or k.endswith("_command") or k.endswith("_subcommand") or k.startswith("_"):
+            continue
+        if v is not None and v != [] and v != {}:
+            cmd_args[k] = v
+
+    if cmd_args:
+        formatted_args = " | ".join(
+            f"[bold]{k}[/bold]=[cyan]{repr(v)}[/cyan]" if isinstance(v, str) else f"[bold]{k}[/bold]=[magenta]{v}[/magenta]"
+            for k, v in cmd_args.items()
+        )
+        console.print(f"[bold cyan][CXAS Profile][/bold cyan] Args passed: {formatted_args}")
+
+    console.print("-" * 80)
+
+
 def main() -> None:
     parser = get_parser()
     args = parser.parse_args()
+
+    if getattr(args, "project_dir", None):
+        ws._project_dir = os.path.abspath(args.project_dir)
 
     if getattr(args, "oauth_token", None):
         os.environ["CXAS_OAUTH_TOKEN"] = args.oauth_token
@@ -2694,6 +2579,7 @@ def main() -> None:
     )
 
     if hasattr(args, "func"):
+        _resolve_args_and_print_banner(args)
         args.func(args)
     else:
         parser.print_help()
