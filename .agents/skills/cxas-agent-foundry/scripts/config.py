@@ -18,7 +18,7 @@ Delegates project resolution and configuration loading to the core SCRAPI
 workspace module.
 """
 
-from cxas_scrapi.core import workspace as ws
+from cxas_scrapi import workspace as ws
 
 
 def resolve_project_dir():

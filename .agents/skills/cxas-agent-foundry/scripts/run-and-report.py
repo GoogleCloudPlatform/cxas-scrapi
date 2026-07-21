@@ -33,7 +33,7 @@ import os
 import subprocess
 import sys
 
-import cxas_scrapi.core.workspace as ws
+import cxas_scrapi.workspace as ws
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 

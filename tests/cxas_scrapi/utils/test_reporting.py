@@ -790,7 +790,7 @@ evals:
         ]
 
 
-@patch("cxas_scrapi.core.workspace.resolve_project_dir")
+@patch("cxas_scrapi.workspace.resolve_project_dir")
 def test_generate_combined_report_no_workspace_raises_actionable_error(
     mock_resolve_dir,
 ):
@@ -808,14 +808,14 @@ def test_generate_combined_report_no_workspace_raises_actionable_error(
 @patch("cxas_scrapi.utils.reporting.run_all_evals")
 @patch("cxas_scrapi.utils.reporting.generate_combined_html_report")
 @patch("os.makedirs")
-@patch("cxas_scrapi.core.workspace.resolve_project_dir")
-@patch("cxas_scrapi.core.workspace.load_workspace_config")
-@patch("cxas_scrapi.core.workspace.app_name")
-@patch("cxas_scrapi.core.workspace.get_output_dir")
-@patch("cxas_scrapi.core.workspace.callback_tests_path")
-@patch("cxas_scrapi.core.workspace.tool_tests_path")
-@patch("cxas_scrapi.core.workspace.goldens_path")
-@patch("cxas_scrapi.core.workspace.simulations_path")
+@patch("cxas_scrapi.workspace.resolve_project_dir")
+@patch("cxas_scrapi.workspace.load_workspace_config")
+@patch("cxas_scrapi.workspace.app_name")
+@patch("cxas_scrapi.workspace.get_output_dir")
+@patch("cxas_scrapi.workspace.callback_tests_path")
+@patch("cxas_scrapi.workspace.tool_tests_path")
+@patch("cxas_scrapi.workspace.goldens_path")
+@patch("cxas_scrapi.workspace.simulations_path")
 def test_generate_combined_report_resolves_workspace_paths(
     mock_sims_path,
     mock_goldens_path,
@@ -873,10 +873,10 @@ def test_generate_combined_report_resolves_workspace_paths(
     "cxas_scrapi.utils.reporting.generate_combined_html_report", autospec=True
 )
 @patch("os.makedirs", autospec=True)
-@patch("cxas_scrapi.core.workspace.resolve_project_dir", autospec=True)
-@patch("cxas_scrapi.core.workspace.load_workspace_config", autospec=True)
-@patch("cxas_scrapi.core.workspace.app_name", autospec=True)
-@patch("cxas_scrapi.core.workspace.get_output_dir", autospec=True)
+@patch("cxas_scrapi.workspace.resolve_project_dir", autospec=True)
+@patch("cxas_scrapi.workspace.load_workspace_config", autospec=True)
+@patch("cxas_scrapi.workspace.app_name", autospec=True)
+@patch("cxas_scrapi.workspace.get_output_dir", autospec=True)
 def test_generate_combined_report_resolves_relative_explicit_paths(
     mock_get_out,
     mock_app_name,

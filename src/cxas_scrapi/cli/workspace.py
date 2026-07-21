@@ -24,7 +24,7 @@ import toml
 from rich.console import Console
 from rich.syntax import Syntax
 
-from cxas_scrapi.core import workspace as ws
+from cxas_scrapi import workspace as ws
 
 
 def find_repo_root() -> Path | None:

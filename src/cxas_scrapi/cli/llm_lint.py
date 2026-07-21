@@ -184,7 +184,7 @@ def llm_lint(args: argparse.Namespace) -> None:
     agent_dir = getattr(args, "agent_dir", None)
     if not agent_dir:
         try:
-            import cxas_scrapi.core.workspace as ws
+            import cxas_scrapi.workspace as ws
             config = ws.load_workspace_config()
             app_dir = Path(ws.resolve_project_dir()) / config.get("app_dir", "app")
             agents_dir = app_dir / "agents"

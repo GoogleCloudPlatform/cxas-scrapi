@@ -26,7 +26,7 @@ import google.protobuf.duration_pb2
 from google.cloud.ces_v1beta import types
 from rich.console import Console
 
-from cxas_scrapi.core import workspace as ws
+from cxas_scrapi import workspace as ws
 from cxas_scrapi.core.agents import Agents
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.tools import Tools

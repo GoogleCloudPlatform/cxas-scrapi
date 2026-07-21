@@ -31,7 +31,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.tree import Tree
 
-from cxas_scrapi.core import workspace as ws
+from cxas_scrapi import workspace as ws
 
 try:
     from google.colab import files  # type: ignore[import]

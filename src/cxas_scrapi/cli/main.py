@@ -64,7 +64,7 @@ from cxas_scrapi.cli.workspace import (
     workspace_show,
     workspace_unset,
 )
-from cxas_scrapi.core import workspace as ws
+from cxas_scrapi import workspace as ws
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.conversation_history import ConversationHistory

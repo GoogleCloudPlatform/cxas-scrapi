@@ -37,6 +37,11 @@ from rich.console import Console
 from rich.progress import track
 
 console = Console()
+
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
 from config import get_output_dir, get_project_path, load_app_name
 
 from cxas_scrapi.core.evaluations import Evaluations

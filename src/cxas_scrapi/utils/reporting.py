@@ -26,7 +26,7 @@ import pandas as pd
 import yaml
 
 from cxas_scrapi.core import tools
-from cxas_scrapi.core import workspace as ws
+from cxas_scrapi import workspace as ws
 from cxas_scrapi.evals import runner as evals_runner
 from cxas_scrapi.utils import (
     base_components,

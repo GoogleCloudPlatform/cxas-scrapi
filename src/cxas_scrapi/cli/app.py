@@ -26,7 +26,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from cxas_scrapi.core import workspace as ws
+from cxas_scrapi import workspace as ws
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.versions import Versions

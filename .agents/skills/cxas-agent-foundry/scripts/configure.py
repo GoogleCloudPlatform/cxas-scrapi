@@ -47,7 +47,7 @@ from cxas_scrapi.utils.ui_styles import ESCAPE_KEYBINDINGS, PROMPT_STYLE
 
 def _resolve_config_dir():
     """Return the directory where gecx-config.json and cxas_app/ should live."""
-    import cxas_scrapi.core.workspace as ws
+    import cxas_scrapi.workspace as ws
 
     project_dir = ws.find_project_dir()
     return project_dir if project_dir else os.getcwd()

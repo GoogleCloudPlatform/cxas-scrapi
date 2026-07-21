@@ -48,6 +48,15 @@ from cxas_scrapi.migration.flow_visualizer import (
 from cxas_scrapi.migration.graph_visualizer import HighLevelGraphVisualizer
 from cxas_scrapi.migration.main_visualizer import MainVisualizer
 from cxas_scrapi.migration.playbook_visualizer import PlaybookTreeVisualizer
+from cxas_scrapi.workspace import (
+    app_name,
+    find_project_dir,
+    find_workspace_root,
+    get_output_dir,
+    load_workspace_config,
+    project_path,
+    resolve_project_dir,
+)
 from cxas_scrapi.utils.changelog_utils import ChangelogUtils
 
 # Utilities

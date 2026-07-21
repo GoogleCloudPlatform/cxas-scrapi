@@ -14,11 +14,11 @@
 
 from unittest.mock import patch
 
-import cxas_scrapi.core.workspace as ws
+import cxas_scrapi.workspace as ws
 
 
-@patch("cxas_scrapi.core.workspace.resolve_project_dir")
-@patch("cxas_scrapi.core.workspace.load_workspace_config")
+@patch("cxas_scrapi.workspace.resolve_project_dir")
+@patch("cxas_scrapi.workspace.load_workspace_config")
 def test_callback_tests_path_resolves_correctly(
     mock_load_config, mock_resolve_dir
 ):
@@ -30,8 +30,8 @@ def test_callback_tests_path_resolves_correctly(
     )
 
 
-@patch("cxas_scrapi.core.workspace.resolve_project_dir")
-@patch("cxas_scrapi.core.workspace.load_workspace_config")
+@patch("cxas_scrapi.workspace.resolve_project_dir")
+@patch("cxas_scrapi.workspace.load_workspace_config")
 def test_callback_tests_path_default_evals_dir(
     mock_load_config, mock_resolve_dir
 ):
@@ -41,8 +41,8 @@ def test_callback_tests_path_default_evals_dir(
     assert ws.callback_tests_path() == "/mock/project/evals/callback_tests"
 
 
-@patch("cxas_scrapi.core.workspace.resolve_project_dir")
-@patch("cxas_scrapi.core.workspace.load_workspace_config")
+@patch("cxas_scrapi.workspace.resolve_project_dir")
+@patch("cxas_scrapi.workspace.load_workspace_config")
 def test_tool_tests_path_resolves_correctly(mock_load_config, mock_resolve_dir):
     mock_resolve_dir.return_value = "/mock/project"
     mock_load_config.return_value = {"evals_dir": "custom_evals"}
@@ -50,8 +50,8 @@ def test_tool_tests_path_resolves_correctly(mock_load_config, mock_resolve_dir):
     assert ws.tool_tests_path() == "/mock/project/custom_evals/tool_tests"
 
 
-@patch("cxas_scrapi.core.workspace.resolve_project_dir")
-@patch("cxas_scrapi.core.workspace.load_workspace_config")
+@patch("cxas_scrapi.workspace.resolve_project_dir")
+@patch("cxas_scrapi.workspace.load_workspace_config")
 def test_goldens_path_resolves_correctly(mock_load_config, mock_resolve_dir):
     mock_resolve_dir.return_value = "/mock/project"
     mock_load_config.return_value = {}
@@ -59,8 +59,8 @@ def test_goldens_path_resolves_correctly(mock_load_config, mock_resolve_dir):
     assert ws.goldens_path() == "/mock/project/evals/goldens"
 
 
-@patch("cxas_scrapi.core.workspace.resolve_project_dir")
-@patch("cxas_scrapi.core.workspace.load_workspace_config")
+@patch("cxas_scrapi.workspace.resolve_project_dir")
+@patch("cxas_scrapi.workspace.load_workspace_config")
 def test_simulations_path_resolves_correctly(
     mock_load_config, mock_resolve_dir
 ):

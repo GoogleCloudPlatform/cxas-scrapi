@@ -6,7 +6,7 @@ import pandas as pd
 from cxas_scrapi.cli.main import combined_evals_report_cmd
 
 
-@patch("cxas_scrapi.core.workspace.load_workspace_config", autospec=True)
+@patch("cxas_scrapi.workspace.load_workspace_config", autospec=True)
 def test_combined_evals_report_cmd(mock_load_config, tmp_path):
     mock_load_config.return_value = {
         "gcp_project_id": "test-project",
@@ -96,7 +96,7 @@ def test_combined_evals_report_cmd(mock_load_config, tmp_path):
         )
 
 
-@patch("cxas_scrapi.core.workspace.load_workspace_config", autospec=True)
+@patch("cxas_scrapi.workspace.load_workspace_config", autospec=True)
 def test_combined_evals_report_cmd_with_modality_and_runs(
     mock_load_config, tmp_path
 ):
@@ -156,7 +156,7 @@ def test_combined_evals_report_cmd_with_modality_and_runs(
         )
 
 
-@patch("cxas_scrapi.core.workspace.load_workspace_config", autospec=True)
+@patch("cxas_scrapi.workspace.load_workspace_config", autospec=True)
 def test_combined_evals_report_cmd_resolves_gcs_path_from_workspace_config(
     mock_load_config, tmp_path
 ):

@@ -35,6 +35,11 @@ from datetime import datetime
 from typing import Any
 
 import yaml
+
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
 from config import get_output_dir, get_project_path, load_app_name
 
 from cxas_scrapi.evals.simulation_evals import (

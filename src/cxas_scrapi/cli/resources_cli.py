@@ -30,7 +30,7 @@ def _resolve_resource_app_name(arg_app_name: str | None) -> str | None:
     if arg_app_name:
         return Common._get_app_name(arg_app_name)
     try:
-        import cxas_scrapi.core.workspace as ws
+        import cxas_scrapi.workspace as ws
         return ws.app_name()
     except Exception:
         return None

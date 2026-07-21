@@ -25,7 +25,7 @@ from cxas_scrapi.cli import workspace as cli_ws
 
 @pytest.fixture(autouse=True)
 def clear_workspace_cache():
-    from cxas_scrapi.core import workspace as ws
+    from cxas_scrapi import workspace as ws
 
     ws._workspace_config_cache = None
     ws._project_dir = None
@@ -55,7 +55,7 @@ class TestWorkspaceSet:
 
         with (
             mock.patch(
-                "cxas_scrapi.core.workspace.find_workspace_root",
+                "cxas_scrapi.workspace.find_workspace_root",
                 return_value=str(tmp_path),
             ),
             mock.patch("pathlib.Path.cwd", return_value=tmp_path),
@@ -87,7 +87,7 @@ class TestWorkspaceSet:
 
         with (
             mock.patch(
-                "cxas_scrapi.core.workspace.find_workspace_root",
+                "cxas_scrapi.workspace.find_workspace_root",
                 return_value=str(tmp_path),
             ),
             mock.patch("pathlib.Path.cwd", return_value=tmp_path),
@@ -123,11 +123,11 @@ class TestWorkspaceSet:
 
         with (
             mock.patch(
-                "cxas_scrapi.core.workspace.resolve_project_dir",
+                "cxas_scrapi.workspace.resolve_project_dir",
                 return_value=str(project_dir),
             ),
             mock.patch(
-                "cxas_scrapi.core.workspace.find_workspace_root",
+                "cxas_scrapi.workspace.find_workspace_root",
                 return_value=str(tmp_path),
             ),
         ):
@@ -185,7 +185,7 @@ class TestWorkspaceSet:
 
         with (
             mock.patch(
-                "cxas_scrapi.core.workspace.find_workspace_root",
+                "cxas_scrapi.workspace.find_workspace_root",
                 return_value=None,
             ),
             mock.patch("pathlib.Path.cwd", return_value=tmp_path),
@@ -222,7 +222,7 @@ class TestWorkspaceSet:
 
         with (
             mock.patch(
-                "cxas_scrapi.core.workspace.find_workspace_root",
+                "cxas_scrapi.workspace.find_workspace_root",
                 return_value=str(workspace_root),
             ),
             mock.patch("pathlib.Path.cwd", return_value=workspace_root),
@@ -274,15 +274,15 @@ class TestWorkspaceSet:
 
         with (
             mock.patch(
-                "cxas_scrapi.core.workspace.resolve_project_dir",
+                "cxas_scrapi.workspace.resolve_project_dir",
                 return_value=str(project_dir),
             ),
             mock.patch(
-                "cxas_scrapi.core.workspace.find_workspace_root",
+                "cxas_scrapi.workspace.find_workspace_root",
                 return_value=str(tmp_path),
             ),
             mock.patch(
-                "cxas_scrapi.core.workspace.update_workspace_config",
+                "cxas_scrapi.workspace.update_workspace_config",
                 return_value=(False, str(project_dir / "gecx-config.json")),
             ),
         ):
@@ -313,15 +313,15 @@ class TestWorkspaceSet:
 
         with (
             mock.patch(
-                "cxas_scrapi.core.workspace.resolve_project_dir",
+                "cxas_scrapi.workspace.resolve_project_dir",
                 return_value=str(project_dir),
             ),
             mock.patch(
-                "cxas_scrapi.core.workspace.find_workspace_root",
+                "cxas_scrapi.workspace.find_workspace_root",
                 return_value=str(tmp_path),
             ),
             mock.patch(
-                "cxas_scrapi.core.workspace.update_workspace_config",
+                "cxas_scrapi.workspace.update_workspace_config",
                 side_effect=FileNotFoundError("Config not found"),
             ),
         ):
@@ -353,7 +353,7 @@ class TestWorkspaceSet:
         with (
             mock.patch("pathlib.Path.cwd", return_value=tmp_path),
             mock.patch(
-                "cxas_scrapi.core.workspace.find_workspace_root",
+                "cxas_scrapi.workspace.find_workspace_root",
                 return_value=str(tmp_path),
             ),
         ):
@@ -390,7 +390,7 @@ class TestWorkspaceSet:
         with (
             mock.patch("pathlib.Path.cwd", return_value=cwd_dir),
             mock.patch(
-                "cxas_scrapi.core.workspace.find_workspace_root",
+                "cxas_scrapi.workspace.find_workspace_root",
                 return_value=str(mock_workspace_root),
             ),
         ):
@@ -430,7 +430,7 @@ class TestWorkspaceSet:
         with (
             mock.patch("pathlib.Path.cwd", return_value=cwd_dir),
             mock.patch(
-                "cxas_scrapi.core.workspace.find_workspace_root",
+                "cxas_scrapi.workspace.find_workspace_root",
                 return_value=str(workspace_root),
             ),
         ):
@@ -451,7 +451,7 @@ class TestWorkspaceShow:
         args = argparse.Namespace()
 
         with mock.patch(
-            "cxas_scrapi.core.workspace.resolve_project_dir",
+            "cxas_scrapi.workspace.resolve_project_dir",
             return_value=str(tmp_path),
         ):
             cli_ws.workspace_show(args)
@@ -466,7 +466,7 @@ class TestWorkspaceShow:
         args = argparse.Namespace()
 
         with mock.patch(
-            "cxas_scrapi.core.workspace.resolve_project_dir",
+            "cxas_scrapi.workspace.resolve_project_dir",
             side_effect=ValueError("Resolution failed"),
         ):
             with pytest.raises(SystemExit) as excinfo:
@@ -481,7 +481,7 @@ class TestWorkspaceShow:
         args = argparse.Namespace()
 
         with mock.patch(
-            "cxas_scrapi.core.workspace.resolve_project_dir",
+            "cxas_scrapi.workspace.resolve_project_dir",
             return_value=str(tmp_path),
         ):
             with pytest.raises(SystemExit) as excinfo:
@@ -496,7 +496,7 @@ class TestWorkspaceShow:
 
 
 class TestWorkspaceCreate:
-    @mock.patch("cxas_scrapi.core.workspace.create_default_config")
+    @mock.patch("cxas_scrapi.workspace.create_default_config")
     def test_workspace_create_success(self, mock_create, tmp_path):
         args = argparse.Namespace(target_dir=str(tmp_path))
 
@@ -510,7 +510,7 @@ class TestWorkspaceUnset:
         args = argparse.Namespace()
 
         with mock.patch(
-            "cxas_scrapi.core.workspace.unset_active_project",
+            "cxas_scrapi.workspace.unset_active_project",
             return_value=True,
         ):
             cli_ws.workspace_unset(args)
@@ -522,7 +522,7 @@ class TestWorkspaceUnset:
         args = argparse.Namespace()
 
         with mock.patch(
-            "cxas_scrapi.core.workspace.unset_active_project",
+            "cxas_scrapi.workspace.unset_active_project",
             return_value=False,
         ):
             cli_ws.workspace_unset(args)

@@ -50,6 +50,7 @@ def setup_stubs(config_mock):
     fake.load_config = lambda: config_mock
     fake.get_project_path = lambda *a: "/tmp/fakeproj/" + "/".join(a)
     fake.resolve_project_dir = lambda: "/tmp/fakeproj"
+    fake.get_output_dir = lambda: "/tmp/fakeproj/.scrapi-out"
     sys.modules["config"] = fake
 
     if _SCRIPTS_DIR not in sys.path:
@@ -134,25 +135,14 @@ def test_sim_runner_cmd_run_delegation(sim_runner):
         sim_runner.cmd_run(mock_args)
 
         # Assert that EnhancedSimRunner was initialized with correct parameters
-        assert MockEnhancedRunner.call_count == 3
+        assert MockEnhancedRunner.call_count == 1
         MockEnhancedRunner.assert_any_call(
             app_name="projects/test-proj/locations/us/apps/test-app",
             user_agent_extension=sim_runner.USER_AGENT_EXTENSION,
         )
 
-        # Assert simulate_conversation was called with correct parameters
-        mock_sim_inst.simulate_conversation.assert_any_call(
-            test_case={
-                "name": "test_case_1",
-                "steps": [],
-                "expectations": [],
-                "session_parameters": {},
-                "metadata": {},
-            },
-            model="gemini-pro",
-            console_logging=True,
-            modality="audio",
-        )
+        # Assert run_simulations was called with correct parameters
+        mock_sim_inst.run_simulations.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

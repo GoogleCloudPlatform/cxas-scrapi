@@ -28,18 +28,18 @@ from cxas_scrapi.cli import app as cli_app
 
 @pytest.fixture(autouse=True)
 def clear_workspace_cache():
-    from cxas_scrapi.core import workspace as ws
+    from cxas_scrapi import workspace as ws
 
     ws._workspace_config_cache = None
     ws._project_dir = None
     ws._active_project_cache = None
     with (
         mock.patch(
-            "cxas_scrapi.core.workspace.resolve_project_dir",
+            "cxas_scrapi.workspace.resolve_project_dir",
             side_effect=ValueError("No active project"),
         ),
         mock.patch(
-            "cxas_scrapi.core.workspace.find_workspace_root",
+            "cxas_scrapi.workspace.find_workspace_root",
             return_value=None,
         ),
     ):
@@ -211,7 +211,7 @@ def test_app_pull(
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
 
-@mock.patch("cxas_scrapi.core.workspace.load_workspace_config")
+@mock.patch("cxas_scrapi.workspace.load_workspace_config")
 def test_app_pull_resolves_default_target_dir_from_workspace_config(
     mock_load_config,
     mock_apps_client,
@@ -250,7 +250,7 @@ def test_app_pull_resolves_default_target_dir_from_workspace_config(
     assert os.path.exists(os.path.join(tmp_path, "custom_app_dir", "app.yaml"))
 
 
-@mock.patch("cxas_scrapi.core.workspace.load_workspace_config")
+@mock.patch("cxas_scrapi.workspace.load_workspace_config")
 def test_app_pull_resolves_app_from_workspace_config(
     mock_load_config,
     mock_apps_client,
@@ -290,7 +290,7 @@ def test_app_pull_resolves_app_from_workspace_config(
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
 
-@mock.patch("cxas_scrapi.core.workspace.load_workspace_config")
+@mock.patch("cxas_scrapi.workspace.load_workspace_config")
 @mock.patch("cxas_scrapi.cli.app._app_push")
 def test_app_push_resolves_target_from_workspace_config(
     mock_internal_push,
@@ -368,7 +368,7 @@ def test_app_push(mock_apps_client, tmp_path):
     assert "app_content" in call_args
 
 
-@mock.patch("cxas_scrapi.core.workspace.load_workspace_config")
+@mock.patch("cxas_scrapi.workspace.load_workspace_config")
 def test_app_push_resolves_default_app_dir_from_workspace_config(
     mock_load_config, mock_apps_client, tmp_path
 ):

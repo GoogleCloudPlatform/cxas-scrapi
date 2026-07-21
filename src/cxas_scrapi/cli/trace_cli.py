@@ -79,7 +79,7 @@ def _build_traces(args: argparse.Namespace) -> Traces:
     app_dir = getattr(args, "app_dir", None)
     if not app_name or not app_dir or app_dir == ".":
         try:
-            import cxas_scrapi.core.workspace as ws
+            import cxas_scrapi.workspace as ws
             if not app_name:
                 app_name = ws.app_name()
             if not app_dir or app_dir == ".":

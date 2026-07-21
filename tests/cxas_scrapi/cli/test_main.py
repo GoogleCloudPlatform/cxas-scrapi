@@ -27,18 +27,18 @@ from cxas_scrapi.cli.main import get_parser
 
 @pytest.fixture(autouse=True)
 def clear_workspace_cache():
-    from cxas_scrapi.core import workspace as ws
+    from cxas_scrapi import workspace as ws
 
     ws._workspace_config_cache = None
     ws._project_dir = None
     ws._active_project_cache = None
     with (
         mock.patch(
-            "cxas_scrapi.core.workspace.resolve_project_dir",
+            "cxas_scrapi.workspace.resolve_project_dir",
             side_effect=ValueError("No active project"),
         ),
         mock.patch(
-            "cxas_scrapi.core.workspace.find_workspace_root",
+            "cxas_scrapi.workspace.find_workspace_root",
             return_value=None,
         ),
     ):
@@ -442,7 +442,7 @@ def test_workspace_set_handles_file_not_found(
     assert "Error: Config not found" in captured.out
 
 
-@mock.patch("cxas_scrapi.core.workspace.resolve_project_dir")
+@mock.patch("cxas_scrapi.workspace.resolve_project_dir")
 def test_workspace_show_prints_config(mock_resolve_dir, tmp_path, capsys):
     """Verify that workspace_show prints the current configuration."""
     import json
