@@ -98,6 +98,7 @@ def app_pull(args: argparse.Namespace) -> None:
         app_name,
         args.target_dir,
         getattr(args, "overwrite", False),
+        getattr(args, "app_dir_name", None),
     )
 
 
@@ -106,6 +107,7 @@ def _app_pull(
     app_name: str,
     target_dir: str,
     overwrite: bool = False,
+    app_dir_name: Optional[str] = None,
 ) -> None:
     """Helper to pull an app from CXAS."""
     try:
@@ -121,13 +123,22 @@ def _app_pull(
         # Extract content to target directory.
         with zipfile.ZipFile(io.BytesIO(response.app_content)) as z:
             export_members = z.namelist()
-            z.extractall(target_dir)
+            if export_members:
+                top_dir = export_members[0].split("/")[0]
+                for info in z.infolist():
+                    if app_dir_name and info.filename.startswith(top_dir + "/"):
+                        suffix = info.filename[len(top_dir) + 1 :]
+                        info.filename = f"{app_dir_name}/{suffix}"
+                    elif app_dir_name and info.filename == top_dir:
+                        info.filename = app_dir_name
+                    z.extract(info, path=target_dir)
 
         # Handle overwrite logic if requested
         if overwrite and export_members:
             # Find the top level directory name in the zip (app name)
             top_dir = export_members[0].split("/")[0]
-            app_root = os.path.join(target_dir, top_dir)
+            final_dir_name = app_dir_name if app_dir_name else top_dir
+            app_root = os.path.join(target_dir, final_dir_name)
 
             if os.path.exists(app_root):
                 # Build set of exported paths relative to app_root
