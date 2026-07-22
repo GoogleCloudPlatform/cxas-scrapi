@@ -37,7 +37,7 @@ import urllib.parse
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from statistics import median
-from typing import Any, List
+from typing import Any
 
 from google import genai
 
