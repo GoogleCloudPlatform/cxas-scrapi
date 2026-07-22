@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Google CXAS SCRAPI Python SDK."""
+
 import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from cxas_scrapi import core, evals, migration, utils
     from cxas_scrapi.core.agents import Agents
     from cxas_scrapi.core.apps import Apps
     from cxas_scrapi.core.callbacks import Callbacks
@@ -34,8 +37,6 @@ if TYPE_CHECKING:
     from cxas_scrapi.evals.simulation_evals import SimulationEvals
     from cxas_scrapi.evals.tool_evals import ToolEvals
     from cxas_scrapi.evals.turn_evals import TurnEvals
-
-    # Migration / Visualization
     from cxas_scrapi.migration.dfcx_exporter import (
         BaseDFCXClient,
         ConversationalAgentsAPI,
@@ -49,97 +50,78 @@ if TYPE_CHECKING:
         FlowDependencyResolver,
         FlowTreeVisualizer,
     )
-    from cxas_scrapi.migration.graph_visualizer import HighLevelGraphVisualizer
+    from cxas_scrapi.migration.graph_visualizer import (
+        HighLevelGraphVisualizer,
+    )
     from cxas_scrapi.migration.main_visualizer import MainVisualizer
-    from cxas_scrapi.migration.playbook_visualizer import PlaybookTreeVisualizer
+    from cxas_scrapi.migration.playbook_visualizer import (
+        PlaybookTreeVisualizer,
+    )
     from cxas_scrapi.utils.changelog_utils import ChangelogUtils
-
-    # Utilities
     from cxas_scrapi.utils.eval_utils import EvalUtils
+    from cxas_scrapi.utils.gcs_utils import GCSUtils
     from cxas_scrapi.utils.google_sheets_utils import GoogleSheetsUtils
     from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
-else:
-    _LAZY_IMPORTS = {
-        "Agents": "cxas_scrapi.core.agents",
-        "Apps": "cxas_scrapi.core.apps",
-        "BaseDFCXClient": "cxas_scrapi.migration.dfcx_exporter",
-        "CallbackEvals": "cxas_scrapi.evals.callback_evals",
-        "Callbacks": "cxas_scrapi.core.callbacks",
-        "ChangelogUtils": "cxas_scrapi.utils.changelog_utils",
-        "Changelogs": "cxas_scrapi.core.changelogs",
-        "Common": "cxas_scrapi.core.common",
-        "ConversationHistory": "cxas_scrapi.core.conversation_history",
-        "ConversationalAgentsAPI": "cxas_scrapi.migration.dfcx_exporter",
-        "DFCXAgentExporter": "cxas_scrapi.migration.dfcx_exporter",
-        "DFCXAgents": "cxas_scrapi.migration.dfcx_exporter",
-        "DFCXGenerativeSettings": "cxas_scrapi.migration.dfcx_exporter",
-        "DFCXPlaybooks": "cxas_scrapi.migration.dfcx_exporter",
-        "DFCXTools": "cxas_scrapi.migration.dfcx_exporter",
-        "Deployments": "cxas_scrapi.core.deployments",
-        "EvalUtils": "cxas_scrapi.utils.eval_utils",
-        "Evaluations": "cxas_scrapi.core.evaluations",
-        "FlowDependencyResolver": "cxas_scrapi.migration.flow_visualizer",
-        "FlowTreeVisualizer": "cxas_scrapi.migration.flow_visualizer",
-        "GoogleSheetsUtils": "cxas_scrapi.utils.google_sheets_utils",
-        "GuardrailEvals": "cxas_scrapi.evals.guardrail_evals",
-        "Guardrails": "cxas_scrapi.core.guardrails",
-        "HighLevelGraphVisualizer": "cxas_scrapi.migration.graph_visualizer",
-        "MainVisualizer": "cxas_scrapi.migration.main_visualizer",
-        "PlaybookTreeVisualizer": "cxas_scrapi.migration.playbook_visualizer",
-        "SecretManagerUtils": "cxas_scrapi.utils.secret_manager_utils",
-        "Sessions": "cxas_scrapi.core.sessions",
-        "SimulationEvals": "cxas_scrapi.evals.simulation_evals",
-        "ToolEvals": "cxas_scrapi.evals.tool_evals",
-        "Tools": "cxas_scrapi.core.tools",
-        "TurnEvals": "cxas_scrapi.evals.turn_evals",
-        "Variables": "cxas_scrapi.core.variables",
-        "Versions": "cxas_scrapi.core.versions",
-    }
 
-    def __getattr__(name: str) -> Any:
-        if name in _LAZY_IMPORTS:
-            module_path = _LAZY_IMPORTS[name]
-            module = importlib.import_module(module_path)
-            return getattr(module, name)
-        raise AttributeError(f"module {__name__} has no attribute {name}")
+_DYNAMIC_IMPORTS: dict[str, str] = {
+    "Agents": "cxas_scrapi.core.agents",
+    "Apps": "cxas_scrapi.core.apps",
+    "BaseDFCXClient": "cxas_scrapi.migration.dfcx_exporter",
+    "CallbackEvals": "cxas_scrapi.evals.callback_evals",
+    "Callbacks": "cxas_scrapi.core.callbacks",
+    "ChangelogUtils": "cxas_scrapi.utils.changelog_utils",
+    "Changelogs": "cxas_scrapi.core.changelogs",
+    "Common": "cxas_scrapi.core.common",
+    "ConversationHistory": "cxas_scrapi.core.conversation_history",
+    "ConversationalAgentsAPI": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXAgentExporter": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXAgents": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXGenerativeSettings": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXPlaybooks": "cxas_scrapi.migration.dfcx_exporter",
+    "DFCXTools": "cxas_scrapi.migration.dfcx_exporter",
+    "Deployments": "cxas_scrapi.core.deployments",
+    "EvalUtils": "cxas_scrapi.utils.eval_utils",
+    "Evaluations": "cxas_scrapi.core.evaluations",
+    "FlowDependencyResolver": "cxas_scrapi.migration.flow_visualizer",
+    "FlowTreeVisualizer": "cxas_scrapi.migration.flow_visualizer",
+    "GCSUtils": "cxas_scrapi.utils.gcs_utils",
+    "GoogleSheetsUtils": "cxas_scrapi.utils.google_sheets_utils",
+    "GuardrailEvals": "cxas_scrapi.evals.guardrail_evals",
+    "Guardrails": "cxas_scrapi.core.guardrails",
+    "HighLevelGraphVisualizer": "cxas_scrapi.migration.graph_visualizer",
+    "MainVisualizer": "cxas_scrapi.migration.main_visualizer",
+    "PlaybookTreeVisualizer": "cxas_scrapi.migration.playbook_visualizer",
+    "SecretManagerUtils": "cxas_scrapi.utils.secret_manager_utils",
+    "Sessions": "cxas_scrapi.core.sessions",
+    "SimulationEvals": "cxas_scrapi.evals.simulation_evals",
+    "ToolEvals": "cxas_scrapi.evals.tool_evals",
+    "Tools": "cxas_scrapi.core.tools",
+    "TurnEvals": "cxas_scrapi.evals.turn_evals",
+    "Variables": "cxas_scrapi.core.variables",
+    "Versions": "cxas_scrapi.core.versions",
+    "core": "cxas_scrapi.core",
+    "evals": "cxas_scrapi.evals",
+    "migration": "cxas_scrapi.migration",
+    "utils": "cxas_scrapi.utils",
+}
 
 
-__all__ = [
-    "Agents",
-    "Apps",
-    "BaseDFCXClient",
-    "CallbackEvals",
-    "Callbacks",
-    "ChangelogUtils",
-    "Changelogs",
-    "Common",
-    "ConversationHistory",
-    "ConversationalAgentsAPI",
-    "DFCXAgentExporter",
-    "DFCXAgents",
-    "DFCXGenerativeSettings",
-    "DFCXPlaybooks",
-    "DFCXTools",
-    "Deployments",
-    "EvalUtils",
-    "Evaluations",
-    "FlowDependencyResolver",
-    "FlowTreeVisualizer",
-    "GoogleSheetsUtils",
-    "GuardrailEvals",
-    "Guardrails",
-    "HighLevelGraphVisualizer",
-    "MainVisualizer",
-    "PlaybookTreeVisualizer",
-    "SecretManagerUtils",
-    "Sessions",
-    "SimulationEvals",
-    "ToolEvals",
-    "Tools",
-    "TurnEvals",
-    "Variables",
-    "Versions",
-]
+def __getattr__(name: str) -> Any:
+    if name in _DYNAMIC_IMPORTS:
+        module_path = _DYNAMIC_IMPORTS[name]
+        module = importlib.import_module(module_path)
+        value = (
+            module
+            if module_path.endswith(f".{name}")
+            else getattr(module, name)
+        )
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals().keys()) | set(_DYNAMIC_IMPORTS.keys()))
 
 
 __all__ = [
@@ -163,6 +145,7 @@ __all__ = [
     "Evaluations",
     "FlowDependencyResolver",
     "FlowTreeVisualizer",
+    "GCSUtils",
     "GoogleSheetsUtils",
     "GuardrailEvals",
     "Guardrails",
@@ -177,4 +160,8 @@ __all__ = [
     "TurnEvals",
     "Variables",
     "Versions",
+    "core",
+    "evals",
+    "migration",
+    "utils",
 ]
