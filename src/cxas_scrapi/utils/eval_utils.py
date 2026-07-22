@@ -573,69 +573,12 @@ class EvalUtils(Evaluations):
             except (json.JSONDecodeError, TypeError):
                 pass
 
-            def _get_exp_act(outcome_obj):
-                e_text = ""
-                a_text = "(None / Missed)"
-                f_type = "Turn Expectation"
-                e_dict = outcome_obj.get("expectation", {})
-
-                if "agent_response" in e_dict:
-                    chunks = e_dict["agent_response"].get("chunks", [])
-                    e_text = "agent_response"
-                    if chunks:
-                        e_text = chunks[0].get("text", "agent_response")
-                    f_type = "Semantic Similarity"
-                elif "tool_call" in e_dict:
-                    e_text = e_dict["tool_call"].get(
-                        "display_name",
-                        e_dict["tool_call"].get("id", "tool_call"),
-                    )
-                    f_type = "Tool Call"
-                elif "tool_response" in e_dict:
-                    e_text = e_dict["tool_response"].get(
-                        "display_name", "tool_response"
-                    )
-                    f_type = "Tool Response"
-                elif "agent_transfer" in e_dict:
-                    e_text = e_dict["agent_transfer"].get(
-                        "display_name",
-                        e_dict["agent_transfer"].get(
-                            "target_agent", "agent_transfer"
-                        ),
-                    )
-                    f_type = "Routing / Agent"
-
-                if "observed_agent_response" in outcome_obj:
-                    chunks = outcome_obj["observed_agent_response"].get(
-                        "chunks", []
-                    )
-                    a_text = chunks[0].get("text", "") if chunks else ""
-                elif "observed_tool_call" in outcome_obj:
-                    a_text = outcome_obj["observed_tool_call"].get(
-                        "display_name",
-                        outcome_obj["observed_tool_call"].get("id", ""),
-                    )
-                elif "observed_tool_response" in outcome_obj:
-                    a_text = outcome_obj["observed_tool_response"].get(
-                        "display_name",
-                        outcome_obj["observed_tool_response"].get("id", ""),
-                    )
-                elif "observed_agent_transfer" in outcome_obj:
-                    a_text = outcome_obj["observed_agent_transfer"].get(
-                        "display_name",
-                        outcome_obj["observed_agent_transfer"].get(
-                            "target_agent", ""
-                        ),
-                    )
-
-                return e_text, a_text, f_type
-
             sem_handled = False
             tool_handled = False
 
             # Process individual explicit expectation failures
             for outcome_obj in outcomes:
-                e, a, f = _get_exp_act(outcome_obj)
+                e, a, f = self._get_exp_act(outcome_obj)
                 if f == "Tool Response":
                     continue
                 raw_outcome = outcome_obj.get("outcome")
@@ -703,7 +646,7 @@ class EvalUtils(Evaluations):
                 e_text, a_text = "", ""
                 for outcome_obj in outcomes:
                     if "agent_response" in outcome_obj.get("expectation", {}):
-                        e_text, a_text, _ = _get_exp_act(outcome_obj)
+                        e_text, a_text, _ = self._get_exp_act(outcome_obj)
                         break
                 raw_score = turn.get("semantic_score")
                 if isinstance(raw_score, (int, float)):
@@ -736,7 +679,7 @@ class EvalUtils(Evaluations):
                 e_text, a_text = "", ""
                 for outcome_obj in outcomes:
                     if "tool_call" in outcome_obj.get("expectation", {}):
-                        e_text, a_text, _ = _get_exp_act(outcome_obj)
+                        e_text, a_text, _ = self._get_exp_act(outcome_obj)
                         break
                 failures.append(
                     {
@@ -957,22 +900,11 @@ class EvalUtils(Evaluations):
                 )
 
             # Compute run summary aggregations
-            def _aggregate(arr):
-                if not arr:
-                    return {"Average": 0, "p50": 0, "p90": 0, "p99": 0}
-                ser = pd.Series(arr)
-                return {
-                    "Average": int(ser.mean()),
-                    "p50": int(ser.quantile(0.50)),
-                    "p90": int(ser.quantile(0.90)),
-                    "p99": int(ser.quantile(0.99)),
-                }
-
-            t_agg = _aggregate(run_total_turn_latencies)
-            tc_agg = _aggregate(run_tool_latencies)
-            llm_agg = _aggregate(run_llm_latencies)
-            gr_agg = _aggregate(run_guardrail_latencies)
-            cb_agg = _aggregate(run_callback_latencies)
+            t_agg = self._aggregate(run_total_turn_latencies)
+            tc_agg = self._aggregate(run_tool_latencies)
+            llm_agg = self._aggregate(run_llm_latencies)
+            gr_agg = self._aggregate(run_guardrail_latencies)
+            cb_agg = self._aggregate(run_callback_latencies)
 
             t_p50, t_p90, t_p99 = t_agg["p50"], t_agg["p90"], t_agg["p99"]
             llm_p50, llm_p90, llm_p99 = (
@@ -1507,6 +1439,73 @@ def evaluate_expectations(
         logging.getLogger(__name__).error(f"Error evaluating expectations: {e}")
         return []
 
+
+
+    @staticmethod
+    def _get_exp_act(outcome_obj: dict[str, Any]) -> tuple[str, str, str]:
+        e_text = ""
+        a_text = "(None / Missed)"
+        f_type = "Turn Expectation"
+        e_dict = outcome_obj.get("expectation", {})
+
+        if "agent_response" in e_dict:
+            chunks = e_dict["agent_response"].get("chunks", [])
+            e_text = "agent_response"
+            if chunks:
+                e_text = chunks[0].get("text", "agent_response")
+            f_type = "Semantic Similarity"
+        elif "tool_call" in e_dict:
+            e_text = e_dict["tool_call"].get(
+                "display_name",
+                e_dict["tool_call"].get("id", "tool_call"),
+            )
+            f_type = "Tool Call"
+        elif "tool_response" in e_dict:
+            e_text = e_dict["tool_response"].get(
+                "display_name", "tool_response"
+            )
+            f_type = "Tool Response"
+        elif "agent_transfer" in e_dict:
+            e_text = e_dict["agent_transfer"].get(
+                "display_name",
+                e_dict["agent_transfer"].get(
+                    "target_agent", "agent_transfer"
+                ),
+            )
+            f_type = "Routing / Agent"
+
+        if "observed_agent_response" in outcome_obj:
+            chunks = outcome_obj["observed_agent_response"].get("chunks", [])
+            a_text = chunks[0].get("text", "") if chunks else ""
+        elif "observed_tool_call" in outcome_obj:
+            a_text = outcome_obj["observed_tool_call"].get(
+                "display_name",
+                outcome_obj["observed_tool_call"].get("id", ""),
+            )
+        elif "observed_tool_response" in outcome_obj:
+            a_text = outcome_obj["observed_tool_response"].get(
+                "display_name",
+                outcome_obj["observed_tool_response"].get("id", ""),
+            )
+        elif "observed_agent_transfer" in outcome_obj:
+            a_text = outcome_obj["observed_agent_transfer"].get(
+                "display_name",
+                outcome_obj["observed_agent_transfer"].get("target_agent", ""),
+            )
+
+        return e_text, a_text, f_type
+
+    @staticmethod
+    def _aggregate(arr: list[Any]) -> dict[str, int]:
+        if not arr:
+            return {"Average": 0, "p50": 0, "p90": 0, "p99": 0}
+        ser = pd.Series(arr)
+        return {
+            "Average": int(ser.mean()),
+            "p50": int(ser.quantile(0.50)),
+            "p90": int(ser.quantile(0.90)),
+            "p99": int(ser.quantile(0.99)),
+        }
 
 def add_timestamp_suffix(filename: str, timestamp: str | None) -> str:
     """Appends a timestamp suffix to a filename, preserving the extension.

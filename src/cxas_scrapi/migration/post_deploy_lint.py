@@ -42,6 +42,7 @@ async def run_post_deploy_lint(
     (False, error_message).
     """
     console.print("\n[bold cyan]Running post-deployment lint…[/]")
+    assert service.ir is not None
     app_resource = service.ir.metadata.app_resource_name
     if not app_resource:
         msg = "No app_resource_name on IR metadata; cannot lint."

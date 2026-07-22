@@ -18,7 +18,10 @@ Consolidates shared styles, color schemes, and keybindings for CLI,
 Terminal User Interfaces (TUI), and notebook environments.
 """
 
-from InquirerPy.utils import get_style
+try:
+    from InquirerPy.utils import get_style  # type: ignore
+except ImportError:
+    get_style = None
 
 # Keybinding: map Escape to skip/cancel so fuzzy prompts can be aborted.
 ESCAPE_KEYBINDINGS = {"skip": [{"key": "escape"}]}
@@ -27,7 +30,7 @@ ESCAPE_KEYBINDINGS = {"skip": [{"key": "escape"}]}
 # Uses a steel-blue background with white text for the pointer/selected row,
 # and magenta for fuzzy-matched characters so they pop against both
 # light and dark terminal themes.
-PROMPT_STYLE = get_style(
+PROMPT_STYLE = get_style(  # type: ignore
     {
         "pointer": "#ffffff bg:#4a6fa5",
         "fuzzy_match": "#ff79c6 bold",

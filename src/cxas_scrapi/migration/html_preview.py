@@ -515,8 +515,9 @@ def _render_tool_inner(tool_dict: dict[str, Any] | None, ref: str) -> str:
         toolset = (
             tool_dict.get("openApiToolset")
             or tool_dict.get("open_api_toolset")
-            or {}
         )
+        if toolset is None:
+            toolset = {}
         schema = toolset.get("open_api_schema") or toolset.get("textSchema", "")
     if schema:
         parts.append(

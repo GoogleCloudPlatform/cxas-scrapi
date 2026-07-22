@@ -34,8 +34,12 @@ import logging
 import sys
 from typing import Any
 
-from InquirerPy import inquirer
-from InquirerPy.base.control import Choice
+try:
+    from InquirerPy import inquirer  # type: ignore
+    from InquirerPy.base.control import Choice  # type: ignore
+except ImportError:
+    inquirer = None
+    Choice = None
 from rich.console import Console
 from rich.tree import Tree
 

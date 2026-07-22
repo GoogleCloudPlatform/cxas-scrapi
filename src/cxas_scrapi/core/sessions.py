@@ -520,6 +520,7 @@ class BidiSessionHandler:
                 self.is_sending_audio = False
 
     def _send_inputs(self):
+        assert self.ws_app is not None
         try:
             logging.debug("Config dict: %s", self.config)
             if isinstance(self.config, types.SessionConfig):

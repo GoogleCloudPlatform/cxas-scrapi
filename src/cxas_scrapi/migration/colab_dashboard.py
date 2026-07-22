@@ -33,7 +33,7 @@ from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
 from cxas_scrapi.migration.main_visualizer import MainVisualizer
 
 try:
-    from google.colab import auth, files
+      from google.colab import auth, files  # type: ignore
 except ImportError:
     auth = None
     files = None
