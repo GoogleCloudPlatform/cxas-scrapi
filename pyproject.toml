@@ -119,6 +119,10 @@ select = [
     "PL", # pylint
     "RUF", # Ruff rules
     "UP",  # pyupgrade rules
+    "ANN", # flake8-annotations
+    "TCH", # flake8-type-checking
+    "SIM", # flake8-simplify
+    "PT",  # flake8-pytest-style
 ]
 ignore = [
     "E203",  # extend-ignore = E203 from flake8
@@ -134,6 +138,10 @@ ignore = [
     "RUF006",  # allow fire-and-forget create_task
     "RUF100",  # preserve unused noqa comments for external linter compatibility
     "RUF012",  # mutable class attributes (constants are fine)
+    "ANN401",  # dynamically typed Any
+    "ANN101",  # missing self type
+    "ANN102",  # missing cls type
+    "ANN204",  # missing return type for __init__
 ]
 
 [tool.ruff.lint.per-file-ignores]

@@ -118,7 +118,7 @@ def _get_required_fields(cls) -> list[str]:
     for i, line in enumerate(lines):
         match = re.match(r"^\s+(\w+)\s+\([^)]+\):$", line)
         if match and i + 1 < len(lines):
-            if lines[i + 1].strip().startswith("Required."):
+            if "REQUIRED" in lines[i + 1].upper():
                 required.append(match.group(1))
     return required
 

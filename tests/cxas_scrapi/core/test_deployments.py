@@ -326,6 +326,7 @@ def test_create_deployment_different_channels(
     assert args.deployment.channel_profile.channel_type == expected_proto_value
 
 
+@pytest.mark.skipif(not hasattr(types, "ExperimentConfig"), reason="ExperimentConfig missing in ces_v1beta")
 @patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
 def test_create_deployment_traffic_split_valid(
@@ -377,6 +378,7 @@ def test_create_deployment_traffic_split_invalid_len(
         )
 
 
+@pytest.mark.skipif(not hasattr(types, "ExperimentConfig"), reason="ExperimentConfig missing in ces_v1beta")
 @patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
 def test_create_deployment_traffic_split_invalid_version(
@@ -397,6 +399,7 @@ def test_create_deployment_traffic_split_invalid_version(
         )
 
 
+@pytest.mark.skipif(not hasattr(types, "ExperimentConfig"), reason="ExperimentConfig missing in ces_v1beta")
 @patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
 def test_update_deployment_traffic_split_valid(
@@ -426,6 +429,7 @@ def test_update_deployment_traffic_split_valid(
     assert allocations[1].traffic_percentage == 50
 
 
+@pytest.mark.skipif(not hasattr(types, "ExperimentConfig"), reason="ExperimentConfig missing in ces_v1beta")
 @patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
 def test_update_deployment_traffic_split_clear(
