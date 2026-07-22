@@ -28,9 +28,11 @@ from cxas_scrapi.utils.eval_utils import (
     add_timestamp_suffix,
 )
 from cxas_scrapi.utils.reporting import (
+    _build_turn_comparisons,
     _escape,
     _fmt_duration,
     _format_trace_line,
+    _join_chunk_text,
     _load_sim_test_cases,
     _resolve_tool_name,
     _upload_to_gcs,
@@ -189,6 +191,83 @@ def test_fmt_duration():
 
 def test_escape():
     assert _escape('<script>&"') == "&lt;script&gt;&amp;&quot;"
+
+
+def test_join_chunk_text():
+    # Multi-chunk turn (filler said before a tool call, then the answer
+    # after it returns) must render every chunk, not just the first.
+    assert _join_chunk_text(
+        [
+            {"text": "Thanks, Diane. Checking that now."},
+            {"text": "You're verified. The amount due is $4,120.80."},
+        ]
+    ) == (
+        "Thanks, Diane. Checking that now. "
+        "You're verified. The amount due is $4,120.80."
+    )
+    # Single chunk is unchanged.
+    assert _join_chunk_text([{"text": "hello"}]) == "hello"
+    # Empty / missing input.
+    assert _join_chunk_text([]) == ""
+    assert _join_chunk_text(None) == ""
+    # Blank and text-less chunks are skipped, not rendered as gaps.
+    assert _join_chunk_text([{"text": "  "}, {}, {"text": "kept"}]) == "kept"
+    assert _join_chunk_text([{"text": None}]) == ""
+
+
+def test_build_turn_comparisons_renders_unmatched_observed_response():
+    # Real shape of a turn where the agent emitted a filler before a tool
+    # call and the substantive answer after it. The platform matches the
+    # filler to the expected reply (entry 0) and records the substantive
+    # answer as an observed response with NO expectation (entry 3). The
+    # renderer must surface both, not drop the unmatched one.
+    turn = {
+        "expectation_outcome": [
+            {
+                "expectation": {
+                    "agent_response": {
+                        "chunks": [
+                            {"text": "Thanks. Checking now. You're set."}
+                        ]
+                    }
+                },
+                "observed_agent_response": {
+                    "chunks": [{"text": "Thanks. Checking now."}]
+                },
+                "outcome": 2,
+            },
+            {
+                "expectation": {
+                    "tool_call": {"display_name": "verify_caller", "args": {}}
+                },
+                "observed_tool_call": {"display_name": "verify_caller"},
+                "outcome": 1,
+            },
+            {
+                "expectation": {"tool_response": {}},
+                "outcome": 1,
+            },
+            {
+                "observed_agent_response": {
+                    "chunks": [{"text": "You're verified. $4,120.80 is due."}]
+                },
+                "outcome": 0,
+            },
+        ]
+    }
+
+    comps = _build_turn_comparisons(turn)
+
+    # tool_response entry is skipped; the other three render.
+    assert len(comps) == 3
+    assert comps[0]["type"] == "text"
+    assert comps[0]["actual"] == "Thanks. Checking now."
+    assert comps[1]["type"] == "tool_call"
+    assert comps[1]["actual"] == "verify_caller"
+    # The unmatched observed answer is surfaced, not dropped.
+    assert comps[2]["type"] == "text"
+    assert comps[2]["expected"] == "(none)"
+    assert comps[2]["actual"] == "You're verified. $4,120.80 is due."
 
 
 def test_resolve_tool_name():
