@@ -2174,6 +2174,14 @@ def get_parser() -> argparse.ArgumentParser:
             "the exported app will be deleted."
         ),
     )
+    parser_pull.add_argument(
+        "--no-app-folder",
+        action="store_true",
+        help=(
+            "Do not create a subdirectory with the app's name; extract "
+            "contents directly into target-dir."
+        ),
+    )
     _add_project_location_args(parser_pull, required=False)
     parser_pull.set_defaults(func=app_pull)
 
