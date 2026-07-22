@@ -21,8 +21,10 @@ if TYPE_CHECKING:
         eval_utils,
         gcs_utils,
         google_sheets_utils,
+        local,
         rate_limiter,
         secret_manager_utils,
+        tracing,
     )
     from cxas_scrapi.utils.changelog_utils import ChangelogUtils
     from cxas_scrapi.utils.eval_utils import EvalUtils
@@ -42,8 +44,10 @@ _DYNAMIC_IMPORTS: dict[str, str] = {
     "eval_utils": "cxas_scrapi.utils.eval_utils",
     "gcs_utils": "cxas_scrapi.utils.gcs_utils",
     "google_sheets_utils": "cxas_scrapi.utils.google_sheets_utils",
+    "local": "cxas_scrapi.utils.local",
     "rate_limiter": "cxas_scrapi.utils.rate_limiter",
     "secret_manager_utils": "cxas_scrapi.utils.secret_manager_utils",
+    "tracing": "cxas_scrapi.utils.tracing",
 }
 
 
@@ -71,6 +75,8 @@ __all__ = [
     "eval_utils",
     "gcs_utils",
     "google_sheets_utils",
+    "local",
     "rate_limiter",
     "secret_manager_utils",
+    "tracing",
 ]
