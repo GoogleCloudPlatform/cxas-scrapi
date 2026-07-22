@@ -112,6 +112,7 @@ async def run_stage_with_redeploy(
         agent.status = MigrationStatus.COMPILED
 
     if stage == 1:
+        assert service.ir is not None
         optimizer = await run_stage_1(
             service.ir, service.gemini_client, console
         )

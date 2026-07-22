@@ -126,31 +126,23 @@ def test_parse_textproto():
 
 
 def test_ces_api_endpoint_override():
-    # Run a subprocess with CES_API_ENDPOINT set
-    cmd = [
-        sys.executable,
-        "-c",
-        (
-            "from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT; "
-            "print(DEFAULT_API_ENDPOINT)"
-        ),
-    ]
-    env = os.environ.copy()
-    env["CES_API_ENDPOINT"] = "custom.ces.googleapis.com"
+    import importlib
+    from cxas_scrapi.core import common
 
-    # We need to make sure src is in python path for the subprocess
-    src_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../../../src")
-    )
-    if "PYTHONPATH" in env:
-        env["PYTHONPATH"] = f"{src_path}:{env['PYTHONPATH']}"
-    else:
-        env["PYTHONPATH"] = src_path
+    # Store original
+    orig_endpoint = os.environ.get("CES_API_ENDPOINT")
 
-    result = subprocess.run(
-        cmd, env=env, capture_output=True, text=True, check=True
-    )
-    assert result.stdout.strip() == "custom.ces.googleapis.com"
+    try:
+        os.environ["CES_API_ENDPOINT"] = "custom.ces.googleapis.com"
+        importlib.reload(common)
+        assert common.DEFAULT_API_ENDPOINT == "custom.ces.googleapis.com"
+    finally:
+        # Restore original env and reload to restore state
+        if orig_endpoint is not None:
+            os.environ["CES_API_ENDPOINT"] = orig_endpoint
+        else:
+            os.environ.pop("CES_API_ENDPOINT", None)
+        importlib.reload(common)
 
 
 def test_ces_transport_override_grpc():

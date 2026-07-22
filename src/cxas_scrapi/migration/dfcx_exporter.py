@@ -629,10 +629,10 @@ class DFCXPlaybooks(BaseDFCXClient):
         if not client_options:
             return []
         try:
-            client = cx_services.playbooks.PlaybooksClient(
+            client = cx_services.playbooks.PlaybooksClient(  # type: ignore
                 client_options=client_options
             )
-            request = cx_types.ListPlaybooksRequest(parent=agent_id)
+            request = cx_types.ListPlaybooksRequest(parent=agent_id)  # type: ignore
             playbooks = client.list_playbooks(request=request)
             return [MessageToDict(pb._pb) for pb in playbooks]
         except Exception as e:
@@ -652,7 +652,7 @@ class DFCXTools(BaseDFCXClient):
             client = cx_services.tools.ToolsClient(
                 client_options=client_options
             )
-            request = cx_types.ListToolsRequest(parent=agent_id)
+            request = cx_types.ListToolsRequest(parent=agent_id)  # type: ignore
             tools = client.list_tools(request=request)
             return [MessageToDict(t._pb) for t in tools]
         except Exception as e:
@@ -675,10 +675,10 @@ class DFCXGenerativeSettings(BaseDFCXClient):
             client = cx_services.agents.AgentsClient(
                 client_options=client_options
             )
-            request = cx_types.GetGenerativeSettingsRequest(
+            request = cx_types.GetGenerativeSettingsRequest(  # type: ignore
                 name=settings_name, language_code=language_code
             )
-            response = client.get_generative_settings(request=request)
+            response = client.get_generative_settings(request=request)  # type: ignore
             return MessageToDict(response._pb)
         except api_exceptions.NotFound:
             logger.info(

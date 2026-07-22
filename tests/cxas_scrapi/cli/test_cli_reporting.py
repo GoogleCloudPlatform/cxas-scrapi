@@ -1,3 +1,4 @@
+import argparse
 import json
 from unittest.mock import patch
 
@@ -42,7 +43,7 @@ def test_combined_evals_report_cmd(tmp_path):
     )
     df_callback.to_csv(callback_file, index=False)
 
-    class Args:
+    class Args(argparse.Namespace):
         def __init__(self):
             self.output_dir = str(evals_dir)
             self.output = None
@@ -105,7 +106,7 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
-    class Args:
+    class Args(argparse.Namespace):
         def __init__(self):
             self.output_dir = str(evals_dir)
             self.output = None
@@ -172,7 +173,7 @@ def test_combined_evals_report_cmd_timestamped(mock_datetime, tmp_path):
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
-    class Args:
+    class Args(argparse.Namespace):
         def __init__(self):
             self.output_dir = str(evals_dir)
             self.output = None
@@ -236,7 +237,7 @@ def test_combined_evals_report_cmd_with_filters_and_progress(tmp_path):
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
-    class Args:
+    class Args(argparse.Namespace):
         def __init__(self):
             self.output_dir = str(evals_dir)
             self.output = None
@@ -280,7 +281,7 @@ def test_combined_evals_report_cmd_format_json(tmp_path):
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
-    class Args:
+    class Args(argparse.Namespace):
         def __init__(self):
             self.output_dir = str(evals_dir)
             self.output = None
@@ -317,7 +318,7 @@ def test_combined_evals_report_cmd_with_deployment_id(tmp_path):
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
-    class Args:
+    class Args(argparse.Namespace):
         def __init__(self):
             self.output_dir = str(evals_dir)
             self.output = None

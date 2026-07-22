@@ -315,7 +315,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             self._history_client = (
                 cx_services.conversation_history.ConversationHistoryClient(
                     credentials=self.creds,
-                    client_options=self._client_options,
+                    client_options=self._client_options,  # type: ignore
                 )
             )
         return self._history_client
@@ -342,7 +342,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             query_input=query_input,
         )
         if query_param_kwargs:
-            request.query_params = cx_types.session.QueryParameters(
+            request.query_params = cx_types.session.QueryParameters(  # type: ignore
                 **query_param_kwargs
             )
         return request
@@ -364,7 +364,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             credentials=self.creds, client_options=self._client_options
         )
         self._tools_map = {
-            t.name: t.display_name
+            str(t.name): str(t.display_name)
             for t in client.list_tools(
                 request=cx_types.ListToolsRequest(parent=self.agent_id)
             )
@@ -378,7 +378,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             credentials=self.creds, client_options=self._client_options
         )
         self._playbooks_map = {
-            pb.name: pb.display_name
+            str(pb.name): str(pb.display_name)
             for pb in client.list_playbooks(
                 request=cx_types.ListPlaybooksRequest(parent=self.agent_id)
             )
@@ -392,7 +392,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             credentials=self.creds, client_options=self._client_options
         )
         self._flows_map = {
-            f.name: f.display_name
+            str(f.name): str(f.display_name)
             for f in client.list_flows(
                 request=cx_types.ListFlowsRequest(parent=self.agent_id)
             )
