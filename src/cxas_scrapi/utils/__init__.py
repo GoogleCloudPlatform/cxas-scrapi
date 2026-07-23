@@ -12,13 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+from typing import TYPE_CHECKING, Any
 
-from cxas_scrapi.utils.changelog_utils import ChangelogUtils
-from cxas_scrapi.utils.eval_utils import EvalUtils
-from cxas_scrapi.utils.gcs_utils import GCSUtils
-from cxas_scrapi.utils.google_sheets_utils import GoogleSheetsUtils
-from cxas_scrapi.utils.rate_limiter import RateLimiter
-from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
+if TYPE_CHECKING:
+    from cxas_scrapi.utils.changelog_utils import ChangelogUtils
+    from cxas_scrapi.utils.eval_utils import EvalUtils
+    from cxas_scrapi.utils.gcs_utils import GCSUtils
+    from cxas_scrapi.utils.google_sheets_utils import GoogleSheetsUtils
+    from cxas_scrapi.utils.rate_limiter import RateLimiter
+    from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
+
+_DYNAMIC_IMPORTS: dict[str, str] = {
+    "ChangelogUtils": "cxas_scrapi.utils.changelog_utils",
+    "EvalUtils": "cxas_scrapi.utils.eval_utils",
+    "GCSUtils": "cxas_scrapi.utils.gcs_utils",
+    "GoogleSheetsUtils": "cxas_scrapi.utils.google_sheets_utils",
+    "RateLimiter": "cxas_scrapi.utils.rate_limiter",
+    "SecretManagerUtils": "cxas_scrapi.utils.secret_manager_utils",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _DYNAMIC_IMPORTS:
+        module = importlib.import_module(_DYNAMIC_IMPORTS[name])
+        return getattr(module, name)
+    try:
+        return importlib.import_module(f"cxas_scrapi.utils.{name}")
+    except ImportError:
+        pass
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "ChangelogUtils",

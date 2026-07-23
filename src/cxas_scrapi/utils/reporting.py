@@ -26,6 +26,7 @@ import jinja2
 import pandas as pd
 import yaml
 
+from cxas_scrapi import constants
 from cxas_scrapi.core import tools
 from cxas_scrapi.evals import runner as evals_runner
 from cxas_scrapi.utils import (
@@ -1671,9 +1672,7 @@ def generate_combined_report_from_dir(
     else:
         sim_files = []
         if "sims" in include:
-            sim_base, sim_ext = os.path.splitext(
-                eval_utils.SIM_RESULTS_FILENAME
-            )
+            sim_base, sim_ext = os.path.splitext(constants.SIM_RESULTS_FILENAME)
             sim_files = glob.glob(
                 os.path.join(output_dir, f"{sim_base}*{sim_ext}")
             )
@@ -1682,7 +1681,7 @@ def generate_combined_report_from_dir(
         callback_files = []
         if "tools" in include:
             tool_base, tool_ext = os.path.splitext(
-                eval_utils.TOOL_RESULTS_FILENAME
+                constants.TOOL_RESULTS_FILENAME
             )
             tool_files = glob.glob(
                 os.path.join(output_dir, f"{tool_base}*{tool_ext}")
@@ -1692,7 +1691,7 @@ def generate_combined_report_from_dir(
             )
         if "callbacks" in include:
             cb_base, cb_ext = os.path.splitext(
-                eval_utils.CALLBACK_RESULTS_FILENAME
+                constants.CALLBACK_RESULTS_FILENAME
             )
             callback_files = glob.glob(
                 os.path.join(output_dir, f"{cb_base}*{cb_ext}")
@@ -1705,13 +1704,11 @@ def generate_combined_report_from_dir(
             sim_files.sort(key=os.path.getmtime)
             latest_sim_file = sim_files[-1]
 
-            sim_base, sim_ext = os.path.splitext(
-                eval_utils.SIM_RESULTS_FILENAME
-            )
+            sim_base, sim_ext = os.path.splitext(constants.SIM_RESULTS_FILENAME)
             sim_base_esc = re.escape(sim_base)
             sim_ext_esc = re.escape(sim_ext)
             pattern = (
-                rf"{sim_base_esc}_({eval_utils.TIMESTAMP_PATTERN}){sim_ext_esc}"
+                rf"{sim_base_esc}_({constants.TIMESTAMP_PATTERN}){sim_ext_esc}"
             )
             match = re.search(pattern, latest_sim_file)
             if match:
@@ -1782,9 +1779,9 @@ def generate_combined_report_from_dir(
 
     if not output_path:
         default_filename = (
-            eval_utils.COMBINED_REPORT_JSON_FILENAME
+            constants.COMBINED_REPORT_JSON_FILENAME
             if report_format == "json"
-            else eval_utils.COMBINED_REPORT_FILENAME
+            else constants.COMBINED_REPORT_FILENAME
         )
         report_name = eval_utils.add_timestamp_suffix(
             default_filename, resolved_timestamp

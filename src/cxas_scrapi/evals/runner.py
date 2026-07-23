@@ -22,14 +22,16 @@ from collections.abc import Callable
 
 from google.cloud.ces_v1beta.types import RunEvaluationOperationMetadata
 
+from cxas_scrapi.constants import (
+    CALLBACK_RESULTS_FILENAME,
+    SIM_RESULTS_FILENAME,
+    TOOL_RESULTS_FILENAME,
+)
 from cxas_scrapi.core.evaluations import Evaluations
 from cxas_scrapi.evals.callback_evals import CallbackEvals
 from cxas_scrapi.evals.simulation_evals import SimulationEvals
 from cxas_scrapi.evals.tool_evals import ToolEvals
 from cxas_scrapi.utils.eval_utils import (
-    CALLBACK_RESULTS_FILENAME,
-    SIM_RESULTS_FILENAME,
-    TOOL_RESULTS_FILENAME,
     EvalUtils,
     add_timestamp_suffix,
 )
