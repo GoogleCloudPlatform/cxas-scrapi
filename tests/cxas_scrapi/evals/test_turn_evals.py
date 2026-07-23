@@ -203,7 +203,7 @@ def test_extract_signals(mock_message_to_dict, mock_turn_evals):
 
     assert signals["full_text"] == "Hello there!"
     assert signals["called_tools"] == ["my_tool"]
-    assert signals["tool_inputs"] == {"my_tool": {"param": "value"}}
+    assert signals["tool_inputs"] == {"my_tool": [{"param": "value"}]}
 
 
 @patch("cxas_scrapi.evals.turn_evals.MessageToDict")
