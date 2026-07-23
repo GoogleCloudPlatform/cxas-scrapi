@@ -116,12 +116,31 @@ def test_generate_returns_parsed_for_json_schema(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_returns_none_on_failure(mock_genai):
+@patch("cxas_scrapi.utils.gemini.time.sleep")
+def test_generate_returns_none_on_failure(mock_sleep, mock_genai):
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.models.generate_content.side_effect = RuntimeError("boom")
     gen = GeminiGenerate(project_id="p")
     assert gen.generate(prompt="p") is None
+    # generate() retries transient failures before giving up (5 attempts).
+    assert fake_client.models.generate_content.call_count == 5
+
+
+@patch("cxas_scrapi.utils.gemini.genai")
+@patch("cxas_scrapi.utils.gemini.time.sleep")
+def test_generate_retries_transient_then_succeeds(mock_sleep, mock_genai):
+    """A transient error (e.g. 429) is retried, not swallowed as None."""
+    fake_client = MagicMock()
+    mock_genai.Client.return_value = fake_client
+    fake_client.models.generate_content.side_effect = [
+        RuntimeError("429 RESOURCE_EXHAUSTED"),
+        SimpleNamespace(text="ok"),
+    ]
+    gen = GeminiGenerate(project_id="p")
+    assert gen.generate(prompt="p") == "ok"
+    assert fake_client.models.generate_content.call_count == 2
+    assert mock_sleep.call_count == 1  # one backoff between the two attempts
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
