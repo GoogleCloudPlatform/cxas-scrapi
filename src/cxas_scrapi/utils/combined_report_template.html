@@ -271,7 +271,7 @@
           {% set failed_str = "false" if r.get("passed") else "true" %}
 
           <details class="run-detail" data-failed="{{ failed_str }}">
-            <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }} | turns: {{ r.get('turns','?') }}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}</summary>
+            <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }}{% if r.get('tool_check') and r.get('tool_check') != 'n/a' %} | tools: {{ r['tool_check'] }}{% endif %} | turns: {{ r.get('turns','?') }}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}</summary>
 
             {% if r.get('session_id') %}
               {% if ces_base %}
@@ -318,6 +318,16 @@
                   {% endif %}
                 </div>
               {% endfor %}
+
+              {% if r.get('tool_check') and r.get('tool_check') != 'n/a' %}
+                {% set t_cls = "met" if r['tool_check'] == "PASS" else "not-met" %}
+                <div class="expectation">
+                  <span class="badge {{ t_cls }}">tools: {{ r['tool_check'] | escape }}</span>
+                  <span class="meta">expected: {{ (r.get('expected_tool_calls') or []) | join(', ') or '(none)' }} &nbsp;|&nbsp; actual: {{ (r.get('actual_tool_calls') or []) | join(', ') or '(none)' }}</span>
+                  {% if r.get('missing_tool_calls') %}<br><span class="meta" style="color:#b00020;font-weight:600;">MISSING (declared but never called): {{ r['missing_tool_calls'] | join(', ') }}</span>{% endif %}
+                  {% if r.get('forbidden_tool_calls_hit') %}<br><span class="meta" style="color:#b00020;font-weight:600;">FORBIDDEN (called but must not): {{ r['forbidden_tool_calls_hit'] | join(', ') }}</span>{% endif %}
+                </div>
+              {% endif %}
 
               {% if r.get('_processed_trace') %}
                 <details open><summary>Conversation Trace ({{ r.get('turns','?') }} turns)</summary>

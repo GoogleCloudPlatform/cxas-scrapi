@@ -130,6 +130,35 @@ class SimulationReport:
         return html
 
 
+def evaluate_tool_calls(actual_tool_calls, expected, forbidden):
+    """Deterministically check the tools an agent ACTUALLY invoked against a
+    test case's ``expected_tool_calls`` / ``forbidden_tool_calls``.
+
+    Unlike goal/expectation judging (LLM-based, over the transcript text), this
+    inspects the real tool calls -- so an agent that merely *says* "I've done X"
+    without calling the tool is caught. Matching is on the tool basename,
+    case-insensitively. Returns a dict:
+    ``{ran, passed, actual, missing, forbidden_hit}``. ``ran`` is False when
+    the test case declares neither list (no scoring effect; back-compatible).
+    """
+
+    def _base(name):
+        return str(name).split("/")[-1].lower()
+
+    actual_bases = [_base(n) for n in (actual_tool_calls or [])]
+    expected = expected or []
+    forbidden = forbidden or []
+    missing = [t for t in expected if _base(t) not in actual_bases]
+    forbidden_hit = [t for t in forbidden if _base(t) in actual_bases]
+    return {
+        "ran": bool(expected or forbidden),
+        "passed": (not missing and not forbidden_hit),
+        "actual": list(actual_tool_calls or []),
+        "missing": missing,
+        "forbidden_hit": forbidden_hit,
+    }
+
+
 class Conversation:
     """Base class for users."""
 
@@ -137,6 +166,7 @@ class Conversation:
         self.current_turn = 0
         self.utterance_turn = 0
         self.transcript = []
+        self.actual_tool_calls: list[str] = []
 
     def get_num_turns(self) -> int:
         """Gets the number of turns in the conversation."""
@@ -151,11 +181,13 @@ class Conversation:
         self.transcript.append(f"Agent: {agent_response}")
 
     def _add_agent_tool_calls(self, tool_calls: list[Any]) -> None:
-        """Adds agent tool calls to the transcript."""
+        """Adds agent tool calls to the transcript and records them for
+        deterministic tool-call assertions."""
         for tc in tool_calls:
             self.transcript.append(
                 f"Agent Action: Call Tool {tc.name} with args {tc.args}"
             )
+            self.actual_tool_calls.append(tc.name)
 
     def _add_user_utterance(self, user_utterance: str) -> None:
         """Adds a user utterance to the transcript."""
@@ -813,12 +845,27 @@ class SimulationEvals(Apps):
             elif total_exp > 0:
                 passed = passed and (expectations_met == total_exp)
 
+            # Deterministic tool-call assertion (checks ACTUAL calls, not text).
+            tcheck = evaluate_tool_calls(
+                getattr(conv, "actual_tool_calls", []),
+                tc.get("expected_tool_calls", []),
+                tc.get("forbidden_tool_calls", []),
+            )
+            if tcheck["ran"]:
+                passed = passed and tcheck["passed"]
+
             status = "PASS" if passed else "FAIL"
             if parallel > 1 or not verbose:
+                tool_seg = (
+                    f"tools: {'ok' if tcheck['passed'] else 'FAIL'} | "
+                    if tcheck["ran"]
+                    else ""
+                )
                 print(
                     f"  {status}  {label} | goals: "
                     f"{goals_completed}/{total_goals} | "
                     f"expectations: {expectations_met}/{total_exp} | "
+                    f"{tool_seg}"
                     f"turns: {conv.current_turn} | {duration_s}s"
                 )
 
@@ -828,6 +875,15 @@ class SimulationEvals(Apps):
                 "passed": passed,
                 "goals": f"{goals_completed}/{total_goals}",
                 "expectations": f"{expectations_met}/{total_exp}",
+                "tool_check": (
+                    ("PASS" if tcheck["passed"] else "FAIL")
+                    if tcheck["ran"]
+                    else "n/a"
+                ),
+                "actual_tool_calls": tcheck["actual"],
+                "expected_tool_calls": tc.get("expected_tool_calls", []) or [],
+                "missing_tool_calls": tcheck["missing"],
+                "forbidden_tool_calls_hit": tcheck["forbidden_hit"],
                 "turns": conv.current_turn,
                 "duration_s": duration_s,
                 "session_id": session_id,
