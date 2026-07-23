@@ -139,8 +139,7 @@ ignore = [
     "RUF100",  # preserve unused noqa comments for external linter compatibility
     "RUF012",  # mutable class attributes (constants are fine)
     "ANN401",  # dynamically typed Any
-    "ANN101",  # missing self type
-    "ANN102",  # missing cls type
+
     "ANN204",  # missing return type for __init__
 ]
 

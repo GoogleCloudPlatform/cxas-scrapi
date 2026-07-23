@@ -14,6 +14,7 @@
 
 import logging
 import re
+import typing
 from typing import Any
 
 from cxas_scrapi.migration.data_models import DFCXAgentIR
@@ -46,7 +47,7 @@ class DFCXParameterExtractor:
         source: str,
         unified_parameters: dict[str, dict[str, Any]],
         parameter_name_map: dict[str, str],
-    ):
+    ) -> None:
         """Sanitizes and registers a parameter, upgrading its type if a stronger
 
         hint is found.
@@ -86,10 +87,10 @@ class DFCXParameterExtractor:
     @staticmethod
     def deep_scan_for_variables(
         obj: Any,
-        var_pattern,
-        unified_parameters,
-        parameter_name_map,
-    ):
+        var_pattern: typing.Any,
+        unified_parameters: typing.Any,
+        parameter_name_map: typing.Any,
+    ) -> None:
         Ext = DFCXParameterExtractor
         if isinstance(obj, dict):
             if "setParameterActions" in obj:

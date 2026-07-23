@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for dfcx_conversation_runner module."""
 
 import os
+import typing
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -41,15 +43,15 @@ FLOW_ID = f"{AGENT_BASE}/flows/f1"
 
 def _make_query_result(
     *,
-    agent_text="Hello!",
-    tool_id=TOOL_ID,
-    tool_action="lookup",
-    playbook_id=PLAYBOOK_ID,
-    flow_id=FLOW_ID,
-    page_display_name="Start Page",
-    intent_display_name="welcome",
-    confidence=0.92,
-):
+    agent_text: typing.Any = "Hello!",
+    tool_id: typing.Any = TOOL_ID,
+    tool_action: typing.Any = "lookup",
+    playbook_id: typing.Any = PLAYBOOK_ID,
+    flow_id: typing.Any = FLOW_ID,
+    page_display_name: typing.Any = "Start Page",
+    intent_display_name: typing.Any = "welcome",
+    confidence: typing.Any = 0.92,
+) -> typing.Any:
     """Build a fake QueryResult mirroring the shape of a real one."""
     tool_use = SimpleNamespace(
         tool=tool_id,
@@ -104,7 +106,9 @@ def _make_query_result(
     )
 
 
-def _build_runner_with_mock_session(query_result_factory=_make_query_result):
+def _build_runner_with_mock_session(
+    query_result_factory: typing.Any = _make_query_result,
+) -> typing.Any:
     """Construct a DFCXConversationRunner whose CX clients are mocked
     so the tests never touch the network."""
     fake_response = MagicMock()
@@ -128,7 +132,7 @@ def _build_runner_with_mock_session(query_result_factory=_make_query_result):
     return runner, fake_sessions_client
 
 
-def test_dataclass_round_trip():
+def test_dataclass_round_trip() -> None:
     trace = ConversationTrace(
         agent_id="a",
         session_id="s",
@@ -142,12 +146,12 @@ def test_dataclass_round_trip():
     assert d["turns"][0]["agent_responses"] == []
 
 
-def test_session_id_built_with_correct_prefix():
+def test_session_id_built_with_correct_prefix() -> None:
     runner = DFCXConversationRunner(agent_id=AGENT_BASE, creds=MagicMock())
     assert runner.session_id.startswith(f"{AGENT_BASE}/sessions/")
 
 
-def test_client_options_routes_regional_endpoint():
+def test_client_options_routes_regional_endpoint() -> None:
     """The runner inherits BaseDFCXClient's regional endpoint routing."""
     runner = DFCXConversationRunner.__new__(DFCXConversationRunner)
     assert runner._get_client_options(AGENT_BASE) == {
@@ -158,7 +162,7 @@ def test_client_options_routes_regional_endpoint():
     ) == {"api_endpoint": "dialogflow.googleapis.com"}
 
 
-def test_send_message_extracts_full_trace():
+def test_send_message_extracts_full_trace() -> None:
     runner, fake_client = _build_runner_with_mock_session()
 
     turn = runner.send_message("hello", parameters={"x": 1})
@@ -196,10 +200,10 @@ def test_send_message_extracts_full_trace():
     assert turn.current_playbooks == ["primary_playbook"]
 
 
-def test_inline_tool_action_is_tagged_and_id_preserved():
+def test_inline_tool_action_is_tagged_and_id_preserved() -> None:
     """Inline actions don't have a registered tools/<id> resource."""
 
-    def factory():
+    def factory() -> typing.Any:
         return _make_query_result(tool_id="inline-action")
 
     runner, _ = _build_runner_with_mock_session(query_result_factory=factory)
@@ -214,7 +218,7 @@ def test_inline_tool_action_is_tagged_and_id_preserved():
     assert "inline-action" not in runner._tools_map
 
 
-def test_run_golden_appends_turns():
+def test_run_golden_appends_turns() -> None:
     runner, fake_client = _build_runner_with_mock_session()
     fake_client.detect_intent.side_effect = [
         SimpleNamespace(query_result=_make_query_result(agent_text="hi 1")),
@@ -230,7 +234,7 @@ def test_run_golden_appends_turns():
     assert trace.turns[2].turn == 3
 
 
-def test_save_to_yaml_writes_expected_structure(tmp_path):
+def test_save_to_yaml_writes_expected_structure(tmp_path: typing.Any) -> None:
     runner, _ = _build_runner_with_mock_session()
     runner.send_message("hello")
 
@@ -257,10 +261,10 @@ def test_save_to_yaml_writes_expected_structure(tmp_path):
 
 
 def _make_recorded_conversation(
-    name="projects/p/locations/us-central1/agents/a/conversations/c1",
-    interactions=None,
-    start_time=None,
-):
+    name: typing.Any = "projects/p/locations/us-central1/agents/a/conversations/c1",  # noqa: E501
+    interactions: typing.Any = None,
+    start_time: typing.Any = None,
+) -> typing.Any:
     """Build a fake stored Conversation that mirrors the SDK shape."""
     if interactions is None:
         interactions = [
@@ -305,7 +309,7 @@ def _make_recorded_conversation(
     )
 
 
-def _build_runner_with_mock_history(convo):
+def _build_runner_with_mock_history(convo: typing.Any) -> typing.Any:
     """Construct a runner whose history client returns the supplied
     Conversation, with all maps pre-populated to avoid network calls."""
     fake_history_client = MagicMock()
@@ -325,7 +329,7 @@ def _build_runner_with_mock_history(convo):
     return runner, fake_history_client
 
 
-def test_list_conversations_returns_summary():
+def test_list_conversations_returns_summary() -> None:
     convo = _make_recorded_conversation()
     runner, fake_client = _build_runner_with_mock_history(convo)
 
@@ -338,7 +342,7 @@ def test_list_conversations_returns_summary():
     assert listing[0]["interaction_count"] == 2
 
 
-def test_get_conversation_replays_into_trace():
+def test_get_conversation_replays_into_trace() -> None:
     convo = _make_recorded_conversation()
     runner, fake_client = _build_runner_with_mock_history(convo)
 
@@ -361,7 +365,7 @@ def test_get_conversation_replays_into_trace():
     )
 
 
-def test_get_conversation_handles_non_text_inputs():
+def test_get_conversation_handles_non_text_inputs() -> None:
     interactions = [
         SimpleNamespace(
             request=SimpleNamespace(
@@ -399,7 +403,7 @@ def test_get_conversation_handles_non_text_inputs():
     assert "<event:WELCOME>" in queries
 
 
-def test_save_to_yaml_works_for_loaded_history(tmp_path):
+def test_save_to_yaml_works_for_loaded_history(tmp_path: typing.Any) -> None:
     convo = _make_recorded_conversation()
     runner, _ = _build_runner_with_mock_history(convo)
     runner.get_conversation(convo.name)
@@ -417,7 +421,7 @@ def test_save_to_yaml_works_for_loaded_history(tmp_path):
     assert loaded["turns"][0]["tool_calls"][0]["tool_id"] == TOOL_ID
 
 
-def test_from_conversation_classmethod():
+def test_from_conversation_classmethod() -> None:
     convo = _make_recorded_conversation()
     fake_history_client = MagicMock()
     fake_history_client.get_conversation.return_value = convo
@@ -439,7 +443,7 @@ def test_from_conversation_classmethod():
 
 
 @pytest.mark.online
-def test_live_history_pull_against_test_agent(tmp_path):
+def test_live_history_pull_against_test_agent(tmp_path: typing.Any) -> None:
     """List past conversations from the configured DFCX test agent, then
     pull the most recent one and persist it as YAML.
 
@@ -474,7 +478,7 @@ def test_live_history_pull_against_test_agent(tmp_path):
 
 
 @pytest.mark.online
-def test_live_conversation_against_test_agent(tmp_path):
+def test_live_conversation_against_test_agent(tmp_path: typing.Any) -> None:
     """Drive a real conversation against the configured DFCX test agent and
     persist the trace. Skipped unless --run-online is passed.
 

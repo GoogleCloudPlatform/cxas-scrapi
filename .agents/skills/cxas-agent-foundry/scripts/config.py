@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 """Shared config loader for GECX eval scripts.
 
 All scripts use gecx-config.json as the single source of truth for project
@@ -41,7 +42,7 @@ import sys
 _project_dir = None
 
 
-def _find_workspace_root():
+def _find_workspace_root() -> typing.Any:
     """Find the workspace root by looking for .agents/, .claude/, or .gemini/ in ancestors."""
     path = os.getcwd()
     for _ in range(10):
@@ -56,7 +57,7 @@ def _find_workspace_root():
     return os.getcwd()
 
 
-def resolve_project_dir():
+def resolve_project_dir() -> typing.Any:
     """Find the active project directory.
 
     Search order:
@@ -120,7 +121,7 @@ def resolve_project_dir():
     sys.exit(1)
 
 
-def get_project_path(*parts):
+def get_project_path(*parts: typing.Any) -> typing.Any:
     """Join parts relative to the active project directory.
 
     Usage: get_project_path("evals", "goldens") → /workspace/<project>/evals/goldens
@@ -128,7 +129,7 @@ def get_project_path(*parts):
     return os.path.join(resolve_project_dir(), *parts)
 
 
-def load_config():
+def load_config() -> typing.Any:
     """Load gecx-config.json from the active project and return the full config dict.
 
     Required keys: gcp_project_id, deployed_app_id
@@ -154,7 +155,7 @@ def load_config():
     return config
 
 
-def load_app_name():
+def load_app_name() -> typing.Any:
     """Load the full app resource name from gecx-config.json.
 
     Returns: "projects/{project}/locations/{location}/apps/{app_id}"

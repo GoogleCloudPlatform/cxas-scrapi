@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Utility functions for generating reports."""
 
+import contextlib
 import datetime
 import glob
 import json
 import os
 import re
+import typing
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -36,7 +39,7 @@ from cxas_scrapi.utils import (
 )
 
 
-def _escape(text):
+def _escape(text: typing.Any) -> typing.Any:
     """HTML-escape a string."""
     return (
         str(text)
@@ -47,7 +50,7 @@ def _escape(text):
     )
 
 
-def _fmt_duration(seconds):
+def _fmt_duration(seconds: typing.Any) -> str:
     """Format duration: seconds if < 60, minutes otherwise."""
     seconds_per_minute = 60
     if seconds is None:
@@ -57,7 +60,9 @@ def _fmt_duration(seconds):
     return f"{seconds:.1f}s"
 
 
-def _resolve_tool_name(raw_name, tools_map):
+def _resolve_tool_name(
+    raw_name: typing.Any, tools_map: typing.Any
+) -> typing.Any:
     """Resolve a full resource path to a display name."""
     if not raw_name:
         return raw_name
@@ -73,7 +78,7 @@ def _resolve_tool_name(raw_name, tools_map):
     return tool_id if "/" in raw_name else raw_name
 
 
-def _format_trace_line(line, tools_map):
+def _format_trace_line(line: typing.Any, tools_map: typing.Any) -> typing.Any:
     """Format a trace line, resolving tool IDs to display names."""
     if "Tool Call:" in line or "Tool Response:" in line:
         # Replace resource paths with display names
@@ -82,7 +87,7 @@ def _format_trace_line(line, tools_map):
     return line
 
 
-def _get_html_head(ts):
+def _get_html_head(ts: typing.Any) -> str:
     """Return the HTML head with CSS and JS."""
     css_path = os.path.join(
         os.path.dirname(__file__), "../resources/components/base/base.css"
@@ -109,8 +114,14 @@ def _get_html_head(ts):
 
 
 def _get_summary_block(
-    passed, total, errors, modality, model, ts, wall_clock_s
-):
+    passed: typing.Any,
+    total: typing.Any,
+    errors: typing.Any,
+    modality: typing.Any,
+    model: typing.Any,
+    ts: typing.Any,
+    wall_clock_s: typing.Any,
+) -> str:
     """Return the HTML summary block."""
     pct = 100 * passed / total if total else 0
     pass_threshold = 90
@@ -126,7 +137,7 @@ def _get_summary_block(
 """
 
 
-def _get_results_table(eval_stats):
+def _get_results_table(eval_stats: typing.Any) -> typing.Any:
     """Return the HTML results table."""
     html = """
 <h2>Results by Eval</h2>
@@ -154,7 +165,7 @@ def _get_results_table(eval_stats):
     return html
 
 
-def _render_session_link(session_id, ces_base):
+def _render_session_link(session_id: typing.Any, ces_base: typing.Any) -> str:
     """Render the session link."""
     if not session_id:
         return ""
@@ -172,7 +183,7 @@ def _render_session_link(session_id, ces_base):
     )
 
 
-def _render_session_parameters(sparams):
+def _render_session_parameters(sparams: typing.Any) -> typing.Any:
     """Render session parameters."""
     if not sparams:
         return ""
@@ -187,7 +198,7 @@ def _render_session_parameters(sparams):
     return html
 
 
-def _render_step_details(step_details):
+def _render_step_details(step_details: typing.Any) -> typing.Any:
     """Render step details."""
     if not step_details:
         return ""
@@ -209,7 +220,7 @@ def _render_step_details(step_details):
     return html
 
 
-def _render_expectation_details(expectation_details):
+def _render_expectation_details(expectation_details: typing.Any) -> typing.Any:
     """Render expectation details."""
     if not expectation_details:
         return ""
@@ -226,7 +237,7 @@ def _render_expectation_details(expectation_details):
     return html
 
 
-def _parse_trace(trace, tools_map):
+def _parse_trace(trace: typing.Any, tools_map: typing.Any) -> typing.Any:
     """Parse trace lines into typed entries."""
     parsed_lines = []
     for entry in trace:
@@ -268,7 +279,7 @@ def _parse_trace(trace, tools_map):
     return parsed_lines
 
 
-def _merge_trace_lines(parsed_lines):
+def _merge_trace_lines(parsed_lines: typing.Any) -> typing.Any:
     """Merge consecutive agent lines and pair tool calls with responses."""
     merged = []
     for kind, text in parsed_lines:
@@ -281,7 +292,7 @@ def _merge_trace_lines(parsed_lines):
     return merged
 
 
-def _render_merged_items(merged):
+def _render_merged_items(merged: typing.Any) -> typing.Any:
     """Render merged trace items to HTML."""
     html = ""
     for item in merged:
@@ -344,7 +355,9 @@ def _render_merged_items(merged):
     return html
 
 
-def _render_trace(trace, tools_map, turns):
+def _render_trace(
+    trace: typing.Any, tools_map: typing.Any, turns: typing.Any
+) -> typing.Any:
     """Render the conversation trace."""
     if not trace:
         return ""
@@ -364,7 +377,9 @@ def _render_trace(trace, tools_map, turns):
     return html
 
 
-def _get_run_detail(r, ces_base, tools_map):
+def _get_run_detail(
+    r: typing.Any, ces_base: typing.Any, tools_map: typing.Any
+) -> typing.Any:
     """Return the HTML for a single run detail."""
     html = ""
     run_cls = "pass" if r.get("passed") else "fail"
@@ -462,7 +477,7 @@ def generate_html_report(
 
     tools_map = {}
     if app_name:
-        try:
+        try:  # noqa: SIM105
             tools_map = tools.Tools(
                 app_name=app_name, user_agent_extension=user_agent_extension
             ).get_tools_map()
@@ -791,7 +806,7 @@ def generate_combined_html_report(
     # Prepare tools map for template if needed
     tools_map = {}
     if app_name:
-        try:
+        try:  # noqa: SIM105
             tools_map = tools.Tools(
                 app_name=app_name, user_agent_extension=user_agent_extension
             ).get_tools_map()
@@ -1025,7 +1040,7 @@ def generate_combined_json_report(
     tool_results = tool_results or []
     callback_results = callback_results or []
 
-    def _counts(results):
+    def _counts(results: typing.Any) -> typing.Any:
         return {
             "total": len(results),
             "passed": sum(1 for r in results if r.get("passed")),
@@ -1086,7 +1101,7 @@ def generate_combined_json_report(
     return output_path
 
 
-def _outcome_str(val):
+def _outcome_str(val: typing.Any) -> typing.Any:
     if isinstance(val, int):
         return {0: "UNSPECIFIED", 1: "PASS", 2: "FAIL"}.get(val, f"?{val}")
     return str(val) if val else "?"
@@ -1361,10 +1376,8 @@ def load_golden_results(
         for turn_result in golden.get("turn_replay_results", []):
             lat = turn_result.get("turn_latency", "")
             if isinstance(lat, str) and lat.endswith("s"):
-                try:
+                with contextlib.suppress(ValueError):
                     total_latency_s += float(lat.replace("s", ""))
-                except ValueError:
-                    pass
             elif isinstance(lat, dict):
                 total_latency_s += lat.get("seconds", 0) + (
                     lat.get("nanos", 0) / 1e9
@@ -1425,7 +1438,9 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
     return merged_cases
 
 
-def load_sim_results(json_path: str, sim_evals_yaml: str | None = None):
+def load_sim_results(
+    json_path: str, sim_evals_yaml: str | None = None
+) -> typing.Any:
     """Load sim results from JSON file.
 
     Handles both old (list) and new (envelope) formats.
@@ -1732,10 +1747,7 @@ def generate_combined_report_from_dir(
         if tool_files:
             tool_files.sort(key=os.path.getmtime)
             tf = tool_files[-1]
-            if tf.endswith(".csv"):
-                df = pd.read_csv(tf)
-            else:
-                df = pd.read_json(tf)
+            df = pd.read_csv(tf) if tf.endswith(".csv") else pd.read_json(tf)
             for _, row in df.iterrows():
                 tool_results.append(
                     {
@@ -1753,10 +1765,7 @@ def generate_combined_report_from_dir(
         if callback_files:
             callback_files.sort(key=os.path.getmtime)
             cf = callback_files[-1]
-            if cf.endswith(".csv"):
-                df = pd.read_csv(cf)
-            else:
-                df = pd.read_json(cf)
+            df = pd.read_csv(cf) if cf.endswith(".csv") else pd.read_json(cf)
             for _, row in df.iterrows():
                 callback_results.append(
                     {

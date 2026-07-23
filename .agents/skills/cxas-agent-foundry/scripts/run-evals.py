@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 """Run all 4 eval types and generate a combined report in one command (SCRAPI)."""
 
 import argparse
@@ -27,7 +28,7 @@ from config import load_config as _load_shared_config, get_project_path
 REPORTS_DIR = get_project_path("eval-reports")
 
 
-def load_config():
+def load_config() -> typing.Any:
     """Load app config from gecx-config.json via shared config loader."""
     raw = _load_shared_config()
     config = {
@@ -49,7 +50,7 @@ def load_config():
     return config
 
 
-def main():
+def main() -> typing.Any:
     try:
         import cxas_scrapi  # noqa: F401
     except ImportError:

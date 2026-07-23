@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for evaluation utility functions."""
 
 import sys
 import tempfile
+import typing
 from unittest.mock import MagicMock, mock_open, patch
 
 # Mock dependencies before importing EvalUtils
@@ -33,7 +35,7 @@ from cxas_scrapi.utils.eval_utils import (  # noqa: E402
 )
 
 
-def test_evals_to_dataframe_empty():
+def test_evals_to_dataframe_empty() -> None:
     """Test evals_to_dataframe with empty list."""
     utils = EvalUtils(
         app_name="projects/mock-project/locations/mock-location/apps/mock-app"
@@ -42,7 +44,7 @@ def test_evals_to_dataframe_empty():
     assert df is not None
 
 
-def test_evals_to_dataframe_with_data():
+def test_evals_to_dataframe_with_data() -> None:
     """Test evals_to_dataframe with valid metrics."""
     utils = EvalUtils(
         app_name="projects/mock-project/locations/mock-location/apps/mock-app"
@@ -50,7 +52,7 @@ def test_evals_to_dataframe_with_data():
 
     class MockEvalResult:
         @classmethod
-        def to_dict(cls, obj):
+        def to_dict(cls, obj: typing.Any) -> typing.Any:
             return obj.res_dict
 
     res = MockEvalResult()
@@ -89,7 +91,7 @@ def test_evals_to_dataframe_with_data():
     assert df_dict["metadata"].iloc[0]["score"] == "0 / 1"
 
 
-def test_to_bigquery():
+def test_to_bigquery() -> None:
     """Test to_bigquery export without requiring pandas."""
     utils = EvalUtils(app_name="projects/test_project/locations/l/apps/a")
 
@@ -116,7 +118,7 @@ def test_to_bigquery():
     del sys.modules["pandas_gbq"]
 
 
-def test_load_golden_eval_from_compressed_yaml():
+def test_load_golden_eval_from_compressed_yaml() -> None:
     """Test load_golden_eval_from_yaml with compressed format."""
     # We want to test that EvalUtils.load_golden_eval_from_yaml parses this
     # correctly from the local example file.
@@ -197,7 +199,7 @@ def test_load_golden_eval_from_compressed_yaml():
         )
 
 
-def test_load_golden_evals_from_compressed_yaml():
+def test_load_golden_evals_from_compressed_yaml() -> None:
     """Test load_golden_evals_from_yaml returns all conversations."""
     test_file_path = "tests/testdata/compressed_example.yaml"
     with (
@@ -230,7 +232,7 @@ def test_load_golden_evals_from_compressed_yaml():
         )
 
 
-def test_load_golden_eval_from_exported_yaml():
+def test_load_golden_eval_from_exported_yaml() -> None:
     test_file_path = "tests/testdata/exported_eval_example.yaml"
     with (
         patch("cxas_scrapi.utils.eval_utils.uuid.uuid4") as mock_uuid,
@@ -264,7 +266,7 @@ def test_load_golden_eval_from_exported_yaml():
         )
 
 
-def test_process_dataset_turn_with_tool_mapping():
+def test_process_dataset_turn_with_tool_mapping() -> None:
     """Test _process_dataset_turn correctly resolves tool names."""
     utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
     utils.tool_map = {
@@ -304,7 +306,7 @@ def test_process_dataset_turn_with_tool_mapping():
     assert tool_res["response"] == "res1"
 
 
-def test_process_dataset_turn_with_multi_agent_responses():
+def test_process_dataset_turn_with_multi_agent_responses() -> None:
     """Test _process_dataset_turn with multiple agent responses."""
     utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
 
@@ -343,7 +345,7 @@ def test_process_dataset_turn_with_multi_agent_responses():
     )
 
 
-def test_create_and_run_evaluation_from_yaml():
+def test_create_and_run_evaluation_from_yaml() -> None:
     """Test create_and_run_evaluation_from_yaml orchestration."""
     utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
 
@@ -379,7 +381,7 @@ def test_create_and_run_evaluation_from_yaml():
         assert res["run"] == mock_run_res
 
 
-def test_load_golden_eval_from_direct_export_yaml():
+def test_load_golden_eval_from_direct_export_yaml() -> None:
     """Test Case 1b: load_golden_eval_from_yaml with direct export format."""
     dummy_yaml = {
         "name": "Direct_Export_Eval",
@@ -409,7 +411,7 @@ def test_load_golden_eval_from_direct_export_yaml():
         )
 
 
-def test_process_conversation_expectations():
+def test_process_conversation_expectations() -> None:
     """Test _process_conversation_expectations with various formats."""
     utils = EvalUtils(
         app_name="projects/mock-project/locations/mock-location/apps/mock-app"
@@ -445,7 +447,7 @@ def test_process_conversation_expectations():
         )
 
 
-def test_evaluate_expectations_with_audio_paths():
+def test_evaluate_expectations_with_audio_paths() -> None:
     """Test evaluate_expectations interleaves audio parts when requested."""
     mock_client = MagicMock()
     mock_client.generate.return_value = MagicMock(results=[])
@@ -481,7 +483,7 @@ def test_evaluate_expectations_with_audio_paths():
         assert "Audio Audit: Spoken audio must match text" in prompt_text
 
 
-def test_eval_utils_credentials_propagation():
+def test_eval_utils_credentials_propagation() -> None:
     """Test that custom credentials and kwargs propagate down to all
     sub-clients.
     """

@@ -14,10 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import hashlib
 import importlib.metadata
 import os
 import re
+import typing
 from typing import Any
 
 from google.api_core.gapic_v1.client_info import ClientInfo
@@ -48,7 +50,7 @@ class Common:
         app_name: str
         | None = None,  # Optional: used to determine client_options
         user_agent_extension: str | None = None,
-    ):
+    ) -> None:
         self.scopes = GLOBAL_SCOPES
         if scope:
             self.scopes += scope
@@ -58,10 +60,8 @@ class Common:
         if creds:
             self.creds = creds
             if hasattr(self.creds, "refresh"):
-                try:
+                with contextlib.suppress(Exception):
                     self.creds.refresh(Request())
-                except Exception:
-                    pass
             self.token = getattr(self.creds, "token", None)
 
         elif creds_path:
@@ -121,7 +121,7 @@ class Common:
         return getattr(self, "_token", None)
 
     @token.setter
-    def token(self, value: str | None):
+    def token(self, value: str | None) -> None:
         self._token = value
 
     @staticmethod
@@ -217,7 +217,7 @@ class Common:
         return None
 
     @staticmethod
-    def _tokenize_textproto(text):
+    def _tokenize_textproto(text: typing.Any) -> typing.Any:
         token_pattern = re.compile(
             r'(?P<STRING>"(?:\\.|[^"\\])*")|'
             r"(?P<ID>[a-zA-Z_][a-zA-Z0-9_]*)|"
@@ -235,7 +235,7 @@ class Common:
             yield kind, value
 
     @staticmethod
-    def _parse_textproto_tokens(tokens):
+    def _parse_textproto_tokens(tokens: typing.Any) -> typing.Any:
         obj = {}
         current_key = None
 
@@ -295,12 +295,12 @@ class Common:
         return obj
 
     @staticmethod
-    def parse_textproto(text):
+    def parse_textproto(text: typing.Any) -> typing.Any:
         tokens = Common._tokenize_textproto(text)
         return Common._parse_textproto_tokens(tokens)
 
     @staticmethod
-    def unwrap_value(val):
+    def unwrap_value(val: typing.Any) -> typing.Any:
         if not isinstance(val, dict):
             return val
 
@@ -313,7 +313,7 @@ class Common:
                 else int(val["number_value"])
             )
         if "bool_value" in val:
-            return True if val["bool_value"] in (True, "true") else False
+            return val["bool_value"] in (True, "true")
         if "list_value" in val:
             values = val["list_value"].get("values", [])
             if not isinstance(values, list):
@@ -325,7 +325,7 @@ class Common:
         return val
 
     @staticmethod
-    def unwrap_struct(struct):
+    def unwrap_struct(struct: typing.Any) -> typing.Any:
         if not isinstance(struct, dict):
             return struct
 
@@ -368,7 +368,7 @@ class Common:
                 agent_texts.append(output["text"])
         return separator.join(agent_texts)
 
-    def get_grpc_transport(self, client_class: type):
+    def get_grpc_transport(self, client_class: type) -> typing.Any:
         """Creates a customer transport for CXAS SCRAPI calls."""
         transport_type = os.environ.get("CES_TRANSPORT", "grpc").lower()
 
@@ -394,7 +394,9 @@ class Common:
 
         return transport_class(channel=channel)
 
-    def recurse_proto_repeated_composite(self, repeated_object):
+    def recurse_proto_repeated_composite(
+        self, repeated_object: typing.Any
+    ) -> typing.Any:
         """Recursively converts RepeatedComposite objects to lists."""
         repeated_list = []
         for item in repeated_object:
@@ -409,7 +411,9 @@ class Common:
 
         return repeated_list
 
-    def recurse_proto_marshal_to_dict(self, marshal_object):
+    def recurse_proto_marshal_to_dict(
+        self, marshal_object: typing.Any
+    ) -> typing.Any:
         """Recursively converts MapComposite objects to dicts."""
         new_dict = {}
         for k, v in marshal_object.items():

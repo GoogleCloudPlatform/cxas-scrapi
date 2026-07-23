@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Callbacks class for CXAS Scrapi."""
 
 import inspect
 import re
 import textwrap
 import traceback
+import typing
 from collections.abc import Callable
 from typing import Any
 
@@ -30,7 +32,7 @@ from cxas_scrapi.core.agents import Agents
 class Callbacks(Agents):
     """Core Class for managing Agent Callback Resources."""
 
-    def __init__(self, app_name: str, **kwargs):
+    def __init__(self, app_name: str, **kwargs: typing.Any) -> None:
         """Initializes the Callbacks client.
 
         Args:

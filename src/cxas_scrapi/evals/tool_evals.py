@@ -100,7 +100,7 @@ class ToolEvals:
         app_name: str,
         creds: Any = None,
         user_agent_extension: str | None = None,
-    ):
+    ) -> None:
         """Initializes the ToolEvals class.
 
         Args:
@@ -168,7 +168,7 @@ class ToolEvals:
                         args[arg_name] = f"[{arg_name}]"
 
                 for sub_node in ast.walk(node):
-                    if isinstance(sub_node, ast.Return):
+                    if isinstance(sub_node, ast.Return):  # noqa: SIM102
                         if isinstance(sub_node.value, ast.Dict):
                             for key in sub_node.value.keys:
                                 if isinstance(key, ast.Constant):

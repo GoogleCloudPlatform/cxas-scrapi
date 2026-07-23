@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Utility functions for processing and running CXAS Guardrail Tests."""
 
 import datetime
 import json
 import logging
 import time
+import typing
 from typing import Annotated, Any, NamedTuple
 
 import pandas as pd
@@ -76,7 +78,7 @@ class GuardrailTestCase(BaseModel):
 class GuardrailEvals:
     """Utility class for testing CXAS Guardrails."""
 
-    def __init__(self, app_name: str, **kwargs):
+    def __init__(self, app_name: str, **kwargs: typing.Any) -> None:
         """Initializes the GuardrailEvals class.
 
         Args:

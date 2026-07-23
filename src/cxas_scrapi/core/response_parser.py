@@ -14,6 +14,7 @@
 
 import json
 import logging
+import typing
 from enum import Enum
 from typing import Any
 
@@ -52,13 +53,13 @@ class ParsedGuardrailTrigger:
         type_name: str,
         reason: str | None = None,
         span_dict: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.name = name
         self.type = type_name
         self.reason = reason
         self.span_dict = span_dict or {}
 
-    def __repr__(self):
+    def __repr__(self) -> typing.Any:
         return (
             f"ParsedGuardrailTrigger(name={self.name}, type={self.type}, "
             f"reason={self.reason})"
@@ -75,12 +76,14 @@ class ToolSource(str, Enum):
 class ParsedToolCall:
     """Represents a tool call made by the agent."""
 
-    def __init__(self, name: str, args: dict[str, Any], source: ToolSource):
+    def __init__(
+        self, name: str, args: dict[str, Any], source: ToolSource
+    ) -> None:
         self.name = name
         self.args = args
         self.source = source
 
-    def __repr__(self):
+    def __repr__(self) -> typing.Any:
         return (
             f"ParsedToolCall(name={self.name}, args={self.args}, "
             f"source={self.source})"
@@ -90,11 +93,11 @@ class ParsedToolCall:
 class ParsedToolResponse:
     """Represents a tool response returned to the agent."""
 
-    def __init__(self, name: str, response: Any):
+    def __init__(self, name: str, response: Any) -> None:
         self.name = name
         self.response = response
 
-    def __repr__(self):
+    def __repr__(self) -> typing.Any:
         return f"ParsedToolResponse(name={self.name}, response={self.response})"
 
 
@@ -103,7 +106,9 @@ class ParsedSessionResponse:
     SessionOutput lists.
     """
 
-    def __init__(self, response: Any, tools_map: dict[str, str] | None = None):
+    def __init__(
+        self, response: Any, tools_map: dict[str, str] | None = None
+    ) -> None:
         self.tools_map = tools_map or {}
         self.outputs = []
 
@@ -160,7 +165,7 @@ class ParsedSessionResponse:
                 return res
         return None
 
-    def _parse_guardrails(self, diagnostic_info: Any):
+    def _parse_guardrails(self, diagnostic_info: Any) -> None:
         """Extracts guardrail triggers from diagnostic_info.root_span."""
         root_span = getattr(diagnostic_info, "root_span", None)
         if root_span:
@@ -191,7 +196,7 @@ class ParsedSessionResponse:
                     span_dict=triggered_span,
                 )
 
-    def _parse(self):
+    def _parse(self) -> None:
         top_level_agent_text_found = False
         for output in self.outputs:
             if output is None:

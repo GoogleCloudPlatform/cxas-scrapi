@@ -95,7 +95,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     @staticmethod
     def _process_flat_resource(
         ctx: "_ResourceProcessingContext", path_parts: list[str], filename: str
-    ):
+    ) -> None:
         """Processes flat resources like webhooks and
         agentTransitionRouteGroups."""
         res_type = path_parts[0]
@@ -121,7 +121,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     @staticmethod
     def _process_standard_resource(
         ctx: "_ResourceProcessingContext", path_parts: list[str], filename: str
-    ):
+    ) -> None:
         """Processes standard resources with type/name/name.json structure."""
         res_type = path_parts[0]
         with ctx.zip_file.open(filename) as f:
@@ -696,7 +696,7 @@ class DFCXGenerativeSettings(BaseDFCXClient):
 class ConversationalAgentsAPI:
     """Facade class to access all Dialogflow CX resources for migration."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.agents = DFCXAgents()
         self.playbooks = DFCXPlaybooks()
         self.tools = DFCXTools()

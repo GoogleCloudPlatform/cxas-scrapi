@@ -6,6 +6,8 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+import typing
+
 """Shared helpers for the cxas-dfcx-migration skill scripts.
 
 The skill's stage scripts (`migrate.py` / `stage1.py` / `stage2.py` /
@@ -28,22 +30,32 @@ to the skill's InquirerPy UX:
   the existing rich.Prompt-based pickers without forking them.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: E402, F404
 
-import functools
-import os
-import sys
-from datetime import datetime
-from typing import Any
+import functools  # noqa: E402
+import os  # noqa: E402
+import sys  # noqa: E402
+from datetime import datetime  # noqa: E402
+from typing import TYPE_CHECKING, Any  # noqa: E402
 
-import _prompts  # InquirerPy-backed prompts (skill-local module)
-from rich.console import Console
+import _prompts  # InquirerPy-backed prompts (skill-local module)  # noqa: E402
 
-from cxas_scrapi.cli.migration_cli import MigrationCLI
-from cxas_scrapi.migration.config import AGENT_MODELS, DEFAULT_MODEL
-from cxas_scrapi.migration.data_models import DFCXAgentIR
-from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
-from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
+from cxas_scrapi.cli.migration_cli import MigrationCLI  # noqa: E402
+from cxas_scrapi.migration.config import (  # noqa: E402
+    AGENT_MODELS,
+    DEFAULT_MODEL,
+)
+from cxas_scrapi.migration.dfcx_dep_analyzer import (  # noqa: E402
+    DependencyAnalyzer,  # noqa: E402
+)
+from cxas_scrapi.migration.dfcx_exporter import (  # noqa: E402
+    ConversationalAgentsAPI,  # noqa: E402
+)
+
+if TYPE_CHECKING:
+    from rich.console import Console
+
+    from cxas_scrapi.migration.data_models import DFCXAgentIR
 
 
 @functools.lru_cache(maxsize=1)
@@ -111,7 +123,9 @@ def show_visualizations(prefix: str, console: Console) -> None:
 # ---------------------------------------------------------------------------
 
 
-def prompt_project_and_location(args, console: Console) -> tuple[str, str]:
+def prompt_project_and_location(
+    args: typing.Any, console: Console
+) -> tuple[str, str]:
     """Ask for project_id + location upfront. CLI flags
     (``--project-id``, ``--location``) are honored as defaults /
     overrides. Default location is ``us`` (matches
@@ -132,7 +146,7 @@ def prompt_project_and_location(args, console: Console) -> tuple[str, str]:
 
 
 def load_source_agent_inquirer(
-    args, console: Console
+    args: typing.Any, console: Console
 ) -> tuple[DFCXAgentIR, str, ConversationalAgentsAPI]:
     """InquirerPy variant of the source loader. Honors
     ``--source-agent-id`` / ``--zip-file`` CLI flags as overrides;
@@ -167,7 +181,7 @@ def load_source_agent_inquirer(
 
 
 def collect_migration_inputs(
-    args,
+    args: typing.Any,
     console: Console,
     *,
     default_target_prefix: str = "migrated_agent",

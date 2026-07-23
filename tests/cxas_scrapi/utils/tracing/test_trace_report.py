@@ -14,6 +14,7 @@
 
 import datetime
 import json
+import typing
 from types import SimpleNamespace
 
 from cxas_scrapi.utils.tracing import trace_report as tr
@@ -72,7 +73,7 @@ SAMPLE_DICT = {
 }
 
 
-def test_normalize_from_dict():
+def test_normalize_from_dict() -> None:
     n = tr.normalize(SAMPLE_DICT)
     assert n["conversation_id"] == "c1"
     assert n["channel"] == "MULTIMODAL"
@@ -90,17 +91,17 @@ def test_normalize_from_dict():
     ]
 
 
-def test_normalize_from_proto_like_object():
+def test_normalize_from_proto_like_object() -> None:
     class Proto:
         @staticmethod
-        def to_dict(_):
+        def to_dict(_: typing.Any) -> typing.Any:
             return SAMPLE_DICT
 
     n = tr.normalize(Proto())
     assert n["conversation_id"] == "c1"
 
 
-def test_channel_label_paths():
+def test_channel_label_paths() -> None:
     assert tr._channel_label([]) == "UNKNOWN"
     assert tr._channel_label(["INPUT_TYPE_TEXT"]) == "TEXT"
     assert tr._channel_label(["INPUT_TYPE_AUDIO"]) == "AUDIO"
@@ -111,34 +112,34 @@ def test_channel_label_paths():
     assert tr._channel_label(["INPUT_TYPE_IMAGE"]) == "OTHER"
 
 
-def test_input_type_name_object():
+def test_input_type_name_object() -> None:
     obj = SimpleNamespace(name="INPUT_TYPE_TEXT")
     assert tr._input_type_name(obj) == "INPUT_TYPE_TEXT"
     assert tr._input_type_name("input_type_audio") == "INPUT_TYPE_AUDIO"
 
 
-def test_to_iso_paths():
+def test_to_iso_paths() -> None:
     assert tr._to_iso(None) is None
     assert tr._to_iso("already") == "already"
     assert tr._to_iso(datetime.datetime(2026, 5, 1)).startswith("2026-05-01")
     assert tr._to_iso(123) == "123"
 
 
-def test_to_json_excludes_raw_by_default():
+def test_to_json_excludes_raw_by_default() -> None:
     n = tr.normalize(SAMPLE_DICT)
     out = json.loads(tr.to_json(n))
     assert "raw" not in out
     assert out["conversation_id"] == "c1"
 
 
-def test_to_json_with_raw_and_extras():
+def test_to_json_with_raw_and_extras() -> None:
     n = tr.normalize(SAMPLE_DICT)
     out = json.loads(tr.to_json(n, include_raw=True, extras={"foo": "bar"}))
     assert "raw" in out
     assert out["extras"] == {"foo": "bar"}
 
 
-def test_to_text_includes_all_kinds():
+def test_to_text_includes_all_kinds() -> None:
     n = tr.normalize(SAMPLE_DICT)
     text = tr.to_text(n, extras={"x": 1})
     assert "USER:" in text
@@ -150,7 +151,7 @@ def test_to_text_includes_all_kinds():
     assert "Extras" in text
 
 
-def test_to_text_truncates_long_response():
+def test_to_text_truncates_long_response() -> None:
     big = {"big": "x" * 500}
     n = tr.normalize(
         {
@@ -178,30 +179,30 @@ def test_to_text_truncates_long_response():
     assert "..." in text
 
 
-def test_to_text_unknown_kind_branch():
+def test_to_text_unknown_kind_branch() -> None:
     # Hit the fall-through `_entry_to_text` branch.
     assert tr._entry_to_text({"kind": "weird", "turn": 7}) == "[7]   weird"
 
 
-def test_to_markdown_with_console_url_and_extras():
+def test_to_markdown_with_console_url_and_extras() -> None:
     n = tr.normalize(SAMPLE_DICT)
     md = tr.to_markdown(n, console_url="https://x/y", extras={"S": "body"})
     assert "Open in CES Console" in md
     assert "## S" in md
 
 
-def test_to_markdown_with_dict_extras():
+def test_to_markdown_with_dict_extras() -> None:
     n = tr.normalize(SAMPLE_DICT)
     md = tr.to_markdown(n, extras={"Stats": {"count": 5}})
     assert "```json" in md
     assert '"count": 5' in md
 
 
-def test_to_markdown_unknown_kind_branch():
+def test_to_markdown_unknown_kind_branch() -> None:
     assert tr._entry_to_markdown({"kind": "weird", "turn": 3}) == "- [3] weird"
 
 
-def test_to_html_with_audio_and_extras_string_and_dict():
+def test_to_html_with_audio_and_extras_string_and_dict() -> None:
     n = tr.normalize(SAMPLE_DICT)
     html = tr.to_html(
         n,
@@ -216,33 +217,33 @@ def test_to_html_with_audio_and_extras_string_and_dict():
     assert "raw text" in html
 
 
-def test_to_html_unknown_kind_branch():
+def test_to_html_unknown_kind_branch() -> None:
     assert "weird" in tr._entry_to_html({"kind": "weird", "turn": 1})
 
 
-def test_chunk_to_entry_returns_none_for_unknown_chunk():
+def test_chunk_to_entry_returns_none_for_unknown_chunk() -> None:
     assert tr._chunk_to_entry({}, "user", 0) is None
 
 
-def test_chunk_to_entry_user_via_text_role_lower():
+def test_chunk_to_entry_user_via_text_role_lower() -> None:
     e = tr._chunk_to_entry({"text": "hi"}, "USER", 0)
     assert e["kind"] == "user"
 
 
-def test_chunk_to_entry_transcript_user_role():
+def test_chunk_to_entry_transcript_user_role() -> None:
     e = tr._chunk_to_entry({"transcript": "spoken"}, "user", 0)
     assert e["kind"] == "user"
     assert e["text"] == "spoken"
 
 
-def test_chunk_to_entry_agent_transfer_dict_value():
+def test_chunk_to_entry_agent_transfer_dict_value() -> None:
     e = tr._chunk_to_entry(
         {"agent_transfer": {"display_name": "agent_x"}}, "agent", 0
     )
     assert e["target"] == "agent_x"
 
 
-def test_chunk_to_entry_variable_chunks():
+def test_chunk_to_entry_variable_chunks() -> None:
     a = tr._chunk_to_entry({"default_variables": {"foo": "bar"}}, "user", 0)
     assert a["kind"] == "variable_default"
     assert a["variables"] == {"foo": "bar"}
@@ -309,7 +310,7 @@ SPAN_TURN = {
 }
 
 
-def test_normalize_with_spans_and_metrics():
+def test_normalize_with_spans_and_metrics() -> None:
     n = tr.normalize({"name": "p/c1", "turns": [SPAN_TURN]})
     assert n["num_turns"] == 1
     assert n["totals"]["tokens"]["input"] == 100
@@ -328,7 +329,7 @@ def test_normalize_with_spans_and_metrics():
     assert tool["tool_response"] == {"r": 1}
 
 
-def test_to_text_includes_span_lines_and_variable_kinds():
+def test_to_text_includes_span_lines_and_variable_kinds() -> None:
     n = tr.normalize({"name": "p/c1", "turns": [SPAN_TURN]})
     out = tr.to_text(n)
     assert "-- Turn 0 --" in out
@@ -339,7 +340,7 @@ def test_to_text_includes_span_lines_and_variable_kinds():
     assert "tokens(in/out/think/total)=100/25/0/125" in out
 
 
-def test_to_markdown_with_spans_and_totals():
+def test_to_markdown_with_spans_and_totals() -> None:
     n = tr.normalize({"name": "p/c1", "turns": [SPAN_TURN]})
     md = tr.to_markdown(n)
     assert "Total span time" in md
@@ -350,7 +351,7 @@ def test_to_markdown_with_spans_and_totals():
     assert "Variable update" in md
 
 
-def test_to_html_with_spans_and_totals():
+def test_to_html_with_spans_and_totals() -> None:
     n = tr.normalize({"name": "p/c1", "turns": [SPAN_TURN]})
     html = tr.to_html(n)
     assert "total span time" in html
@@ -358,19 +359,19 @@ def test_to_html_with_spans_and_totals():
     assert "Variable update" in html
 
 
-def test_fmt_ms_paths():
+def test_fmt_ms_paths() -> None:
     assert tr._fmt_ms(None) == "?"
     assert tr._fmt_ms(123.456) == "123.5ms"
 
 
-def test_to_int_paths():
+def test_to_int_paths() -> None:
     assert tr._to_int(None) is None
     assert tr._to_int(3) == 3
     assert tr._to_int("4") == 4
     assert tr._to_int("not-int") is None
 
 
-def test_to_int_or_float_paths():
+def test_to_int_or_float_paths() -> None:
     assert tr._to_int_or_float(None) is None
     assert tr._to_int_or_float(3) == 3
     assert tr._to_int_or_float(3.5) == 3.5
@@ -379,7 +380,7 @@ def test_to_int_or_float_paths():
     assert tr._to_int_or_float("nope") is None
 
 
-def test_duration_ms_paths():
+def test_duration_ms_paths() -> None:
     assert tr._duration_ms(None, None) is None
     assert tr._duration_ms(None, None, "1.25s") == 1250.0
     assert tr._duration_ms(None, None, "bad-s") is None
@@ -389,7 +390,7 @@ def test_duration_ms_paths():
     )
 
 
-def test_to_dt_paths():
+def test_to_dt_paths() -> None:
     assert tr._to_dt(None) is None
     assert tr._to_dt("invalid") is None
     dt = datetime.datetime(2026, 5, 1)
@@ -397,12 +398,12 @@ def test_to_dt_paths():
     assert tr._to_dt(123) is None
 
 
-def test_attr_handles_non_dict_attributes():
+def test_attr_handles_non_dict_attributes() -> None:
     assert tr._attr({"attributes": "not-a-dict"}, "k") is None
     assert tr._attr({"attributes": {"k": 4}}, "k") == 4
 
 
-def test_span_renderers_unknown_name():
+def test_span_renderers_unknown_name() -> None:
     s = {"name": "Other", "depth": 0, "duration_ms": 10.0}
     assert "Other" in tr._span_to_text(s)
     md = tr._span_to_markdown(s)

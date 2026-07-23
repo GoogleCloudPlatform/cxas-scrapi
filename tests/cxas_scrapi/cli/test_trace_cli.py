@@ -14,6 +14,8 @@
 
 import argparse
 import json
+import typing
+from typing import NoReturn
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,7 +25,7 @@ from cxas_scrapi.cli import trace_cli
 APP = "projects/p/locations/l/apps/a"
 
 
-def _ns(**overrides):
+def _ns(**overrides: typing.Any) -> typing.Any:
     base = dict(
         app_name=APP,
         app_dir=".",
@@ -36,7 +38,7 @@ def _ns(**overrides):
 
 
 @pytest.fixture
-def fake_traces(monkeypatch):
+def fake_traces(monkeypatch: typing.Any) -> typing.Any:
     fake = MagicMock()
     monkeypatch.setattr(
         "cxas_scrapi.core.traces.Traces", MagicMock(return_value=fake)
@@ -44,7 +46,7 @@ def fake_traces(monkeypatch):
     return fake
 
 
-def test_register_smoke():
+def test_register_smoke() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     trace_cli.register(sub)
@@ -55,7 +57,7 @@ def test_register_smoke():
     assert args.time_filter == "1d"
 
 
-def _search_ns(**overrides):
+def _search_ns(**overrides: typing.Any) -> typing.Any:
     base = dict(
         query="crashing",
         match="phrase",
@@ -73,7 +75,7 @@ def _search_ns(**overrides):
     return _ns(**base)
 
 
-def test_register_search_smoke():
+def test_register_search_smoke() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     trace_cli.register(sub)
@@ -101,7 +103,9 @@ def test_register_search_smoke():
     assert args.id_match is False
 
 
-def test_trace_search_table(fake_traces, capsys):
+def test_trace_search_table(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.search.return_value = [
         {
             "id": "c1",
@@ -122,7 +126,9 @@ def test_trace_search_table(fake_traces, capsys):
     assert kwargs["id_match"] is True
 
 
-def test_trace_search_table_with_snippets(fake_traces, capsys):
+def test_trace_search_table_with_snippets(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.search.return_value = [
         {
             "id": "c1",
@@ -139,13 +145,15 @@ def test_trace_search_table_with_snippets(fake_traces, capsys):
     assert "crashing" in out
 
 
-def test_trace_search_json(fake_traces, capsys):
+def test_trace_search_json(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.search.return_value = [{"id": "c1"}]
     trace_cli.trace_search(_search_ns(format="json"))
     assert json.loads(capsys.readouterr().out)[0]["id"] == "c1"
 
 
-def test_trace_search_csv_with_snippets(fake_traces, capsys):
+def test_trace_search_csv_with_snippets(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.search.return_value = [
         {
             "id": "c1",
@@ -166,19 +174,21 @@ def test_trace_search_csv_with_snippets(fake_traces, capsys):
     assert "a crashing | b crashing" in out
 
 
-def test_trace_search_csv_empty_no_output(fake_traces, capsys):
+def test_trace_search_csv_empty_no_output(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.search.return_value = []
     trace_cli.trace_search(_search_ns(format="csv"))
     assert capsys.readouterr().out == ""
 
 
-def test_trace_search_failure_exits(fake_traces):
+def test_trace_search_failure_exits(fake_traces: typing.Any) -> None:
     fake_traces.search.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_search(_search_ns(format="json"))
 
 
-def test_trace_list_table(fake_traces, capsys):
+def test_trace_list_table(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.list.return_value = [
         {
             "id": "c1",
@@ -203,7 +213,7 @@ def test_trace_list_table(fake_traces, capsys):
     assert "c1" in out
 
 
-def test_trace_list_json(fake_traces, capsys):
+def test_trace_list_json(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.list.return_value = [{"id": "c1"}]
     trace_cli.trace_list(
         _ns(
@@ -218,7 +228,7 @@ def test_trace_list_json(fake_traces, capsys):
     assert json.loads(out)[0]["id"] == "c1"
 
 
-def test_trace_list_csv(fake_traces, capsys):
+def test_trace_list_csv(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.list.return_value = [{"id": "c1", "ces_url": "u"}]
     trace_cli.trace_list(
         _ns(
@@ -234,7 +244,9 @@ def test_trace_list_csv(fake_traces, capsys):
     assert "c1,u" in out
 
 
-def test_trace_list_csv_empty_no_output(fake_traces, capsys):
+def test_trace_list_csv_empty_no_output(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.list.return_value = []
     trace_cli.trace_list(
         _ns(
@@ -248,7 +260,9 @@ def test_trace_list_csv_empty_no_output(fake_traces, capsys):
     assert capsys.readouterr().out == ""
 
 
-def test_trace_list_failure_exits(fake_traces, capsys):
+def test_trace_list_failure_exits(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.list.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_list(
@@ -262,7 +276,7 @@ def test_trace_list_failure_exits(fake_traces, capsys):
         )
 
 
-def test_trace_get_stdout(fake_traces, capsys):
+def test_trace_get_stdout(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.get_report.return_value = "MD report"
     trace_cli.trace_get(
         _ns(
@@ -279,7 +293,9 @@ def test_trace_get_stdout(fake_traces, capsys):
     assert "MD report" in capsys.readouterr().out
 
 
-def test_trace_get_writes_file(fake_traces, tmp_path, capsys):
+def test_trace_get_writes_file(
+    fake_traces: typing.Any, tmp_path: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.get_report.return_value = "json body"
     out_path = tmp_path / "out.json"
     trace_cli.trace_get(
@@ -298,7 +314,7 @@ def test_trace_get_writes_file(fake_traces, tmp_path, capsys):
     assert "Wrote" in capsys.readouterr().out
 
 
-def test_trace_get_failure(fake_traces):
+def test_trace_get_failure(fake_traces: typing.Any) -> None:
     fake_traces.get_report.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_get(
@@ -315,7 +331,7 @@ def test_trace_get_failure(fake_traces):
         )
 
 
-def test_trace_logs_text(fake_traces, capsys):
+def test_trace_logs_text(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.get_logs.return_value = [
         {"timestamp": "t", "severity": "WARNING", "message": "hi"}
     ]
@@ -326,7 +342,7 @@ def test_trace_logs_text(fake_traces, capsys):
     assert "WARNING" in out
 
 
-def test_trace_logs_json(fake_traces, capsys):
+def test_trace_logs_json(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.get_logs.return_value = [{"a": 1}]
     trace_cli.trace_logs(
         _ns(conversation_id="c1", level="ERROR", format="json")
@@ -334,7 +350,9 @@ def test_trace_logs_json(fake_traces, capsys):
     assert json.loads(capsys.readouterr().out) == [{"a": 1}]
 
 
-def test_trace_logs_string_response(fake_traces, capsys):
+def test_trace_logs_string_response(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.get_logs.return_value = "Cloud logging not enabled"
     trace_cli.trace_logs(
         _ns(conversation_id="c1", level="WARNING", format="text")
@@ -342,7 +360,7 @@ def test_trace_logs_string_response(fake_traces, capsys):
     assert "not enabled" in capsys.readouterr().out
 
 
-def test_trace_logs_failure(fake_traces):
+def test_trace_logs_failure(fake_traces: typing.Any) -> None:
     fake_traces.get_logs.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_logs(
@@ -350,26 +368,32 @@ def test_trace_logs_failure(fake_traces):
         )
 
 
-def test_trace_audio_download_success(fake_traces, capsys):
+def test_trace_audio_download_success(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.download_audio.return_value = "/tmp/a.wav"
     trace_cli.trace_audio_download(_ns(conversation_id="c1", out=None))
     assert "Downloaded to" in capsys.readouterr().out
 
 
-def test_trace_audio_download_no_audio(fake_traces, capsys):
+def test_trace_audio_download_no_audio(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.download_audio.return_value = None
     with pytest.raises(SystemExit) as exc:
         trace_cli.trace_audio_download(_ns(conversation_id="c1", out=None))
     assert exc.value.code == 2
 
 
-def test_trace_audio_download_failure(fake_traces):
+def test_trace_audio_download_failure(fake_traces: typing.Any) -> None:
     fake_traces.download_audio.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_audio_download(_ns(conversation_id="c1", out=None))
 
 
-def test_trace_audio_analyze(fake_traces, capsys):
+def test_trace_audio_analyze(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.analyze_audio.return_value = {"audio_cutoff": "ok"}
     trace_cli.trace_audio_analyze(
         _ns(conversation_id="c1", metric="audio_cutoff,voice_drift")
@@ -378,26 +402,26 @@ def test_trace_audio_analyze(fake_traces, capsys):
     assert "audio_cutoff" in out
 
 
-def test_trace_audio_analyze_failure(fake_traces):
+def test_trace_audio_analyze_failure(fake_traces: typing.Any) -> None:
     fake_traces.analyze_audio.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_audio_analyze(_ns(conversation_id="c1", metric=None))
 
 
-def test_trace_triage(fake_traces, capsys):
+def test_trace_triage(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.triage.return_value = {"hallucination": "none"}
     trace_cli.trace_triage(_ns(conversation_id="c1", metric=None))
     out = capsys.readouterr().out
     assert "hallucination" in out
 
 
-def test_trace_triage_failure(fake_traces):
+def test_trace_triage_failure(fake_traces: typing.Any) -> None:
     fake_traces.triage.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_triage(_ns(conversation_id="c1", metric=None))
 
 
-def test_trace_replay_md(fake_traces, capsys):
+def test_trace_replay_md(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.replay.return_value = {
         "diff": "+changed",
         "original": ["a"],
@@ -409,20 +433,22 @@ def test_trace_replay_md(fake_traces, capsys):
     assert "+changed" in out
 
 
-def test_trace_replay_md_no_diff(fake_traces, capsys):
+def test_trace_replay_md_no_diff(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.replay.return_value = {"original": ["a"], "replay": ["a"]}
     trace_cli.trace_replay(_ns(conversation_id="c1", diff=True, format="md"))
     out = capsys.readouterr().out
     assert "original" in out
 
 
-def test_trace_replay_json(fake_traces, capsys):
+def test_trace_replay_json(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.replay.return_value = {"diff": "+x"}
     trace_cli.trace_replay(_ns(conversation_id="c1", diff=True, format="json"))
     assert json.loads(capsys.readouterr().out) == {"diff": "+x"}
 
 
-def test_trace_replay_failure(fake_traces):
+def test_trace_replay_failure(fake_traces: typing.Any) -> None:
     fake_traces.replay.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_replay(
@@ -430,7 +456,9 @@ def test_trace_replay_failure(fake_traces):
         )
 
 
-def test_trace_stats_markdown(fake_traces, capsys):
+def test_trace_stats_markdown(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.aggregate_stats.return_value = {
         "time_filter": "7d",
         "total": 2,
@@ -460,7 +488,9 @@ def test_trace_stats_markdown(fake_traces, capsys):
     assert "5 calls" in out
 
 
-def test_trace_stats_markdown_no_transfers_branch(fake_traces, capsys):
+def test_trace_stats_markdown_no_transfers_branch(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.aggregate_stats.return_value = {
         "time_filter": "7d",
         "total": 0,
@@ -486,7 +516,9 @@ def test_trace_stats_markdown_no_transfers_branch(fake_traces, capsys):
     assert "_(no data)_" in out
 
 
-def test_trace_stats_json_to_file(fake_traces, tmp_path, capsys):
+def test_trace_stats_json_to_file(
+    fake_traces: typing.Any, tmp_path: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.aggregate_stats.return_value = {"total": 0, "time_filter": "7d"}
     p = tmp_path / "stats.json"
     trace_cli.trace_stats(
@@ -503,7 +535,7 @@ def test_trace_stats_json_to_file(fake_traces, tmp_path, capsys):
     assert "Wrote" in capsys.readouterr().out
 
 
-def test_trace_stats_failure(fake_traces):
+def test_trace_stats_failure(fake_traces: typing.Any) -> None:
     fake_traces.aggregate_stats.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_stats(
@@ -518,7 +550,9 @@ def test_trace_stats_failure(fake_traces):
         )
 
 
-def test_trace_bundle(fake_traces, tmp_path, capsys):
+def test_trace_bundle(
+    fake_traces: typing.Any, tmp_path: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.bundle.return_value = "/tmp/out.zip"
     trace_cli.trace_bundle(
         _ns(
@@ -533,7 +567,7 @@ def test_trace_bundle(fake_traces, tmp_path, capsys):
     assert "out.zip" in capsys.readouterr().out
 
 
-def test_trace_bundle_failure(fake_traces):
+def test_trace_bundle_failure(fake_traces: typing.Any) -> None:
     fake_traces.bundle.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_bundle(
@@ -548,7 +582,7 @@ def test_trace_bundle_failure(fake_traces):
         )
 
 
-def test_trace_bug_report(fake_traces, capsys):
+def test_trace_bug_report(fake_traces: typing.Any, capsys: typing.Any) -> None:
     fake_traces.report_bug.return_value = {"reason": "r"}
     trace_cli.trace_bug_report(
         _ns(conversation_id="c1", reason="r", severity="high")
@@ -557,7 +591,7 @@ def test_trace_bug_report(fake_traces, capsys):
     assert json.loads(out) == {"reason": "r"}
 
 
-def test_trace_bug_report_failure(fake_traces):
+def test_trace_bug_report_failure(fake_traces: typing.Any) -> None:
     fake_traces.report_bug.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_bug_report(
@@ -565,7 +599,9 @@ def test_trace_bug_report_failure(fake_traces):
         )
 
 
-def test_trace_open_prints_and_runs_open(fake_traces, capsys, monkeypatch):
+def test_trace_open_prints_and_runs_open(
+    fake_traces: typing.Any, capsys: typing.Any, monkeypatch: typing.Any
+) -> None:
     fake_traces.get_normalized.return_value = {"source": "LIVE"}
     fake_traces.console_url.return_value = "https://x/y"
     monkeypatch.setattr(trace_cli.platform, "system", lambda: "Darwin")
@@ -578,7 +614,9 @@ def test_trace_open_prints_and_runs_open(fake_traces, capsys, monkeypatch):
     fake_traces.console_url.assert_called_once_with("c1", source="LIVE")
 
 
-def test_trace_open_non_darwin(fake_traces, capsys, monkeypatch):
+def test_trace_open_non_darwin(
+    fake_traces: typing.Any, capsys: typing.Any, monkeypatch: typing.Any
+) -> None:
     fake_traces.get_normalized.return_value = {"source": "LIVE"}
     fake_traces.console_url.return_value = "https://x/y"
     monkeypatch.setattr(trace_cli.platform, "system", lambda: "Linux")
@@ -590,18 +628,20 @@ def test_trace_open_non_darwin(fake_traces, capsys, monkeypatch):
     fake_traces.console_url.assert_called_once_with("c1", source="LIVE")
 
 
-def test_trace_open_failure(fake_traces):
+def test_trace_open_failure(fake_traces: typing.Any) -> None:
     fake_traces.get_normalized.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):
         trace_cli.trace_open(_ns(conversation_id="c1"))
 
 
-def test_trace_open_subprocess_failure_silent(fake_traces, monkeypatch, capsys):
+def test_trace_open_subprocess_failure_silent(
+    fake_traces: typing.Any, monkeypatch: typing.Any, capsys: typing.Any
+) -> None:
     fake_traces.get_normalized.return_value = {"source": "LIVE"}
     fake_traces.console_url.return_value = "https://x/y"
     monkeypatch.setattr(trace_cli.platform, "system", lambda: "Darwin")
 
-    def boom(*_a, **_kw):
+    def boom(*_a: typing.Any, **_kw: typing.Any) -> NoReturn:
         raise RuntimeError("nope")
 
     monkeypatch.setattr(trace_cli.subprocess, "run", boom)
@@ -612,7 +652,7 @@ def test_trace_open_subprocess_failure_silent(fake_traces, monkeypatch, capsys):
 
 
 @patch("cxas_scrapi.core.traces.Traces")
-def test_build_traces_passes_through_args(mock_traces_cls):
+def test_build_traces_passes_through_args(mock_traces_cls: typing.Any) -> None:
     args = _ns(
         app_dir="/tmp/app",
         env_file="/tmp/env.json",

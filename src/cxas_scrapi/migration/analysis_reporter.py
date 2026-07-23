@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """MigrationAnalysisBuilder: emits a self-contained, tabbed HTML report
 that captures the state of a DFCX→CXAS migration as it runs.
 
@@ -39,15 +40,16 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
-
-from jinja2 import Template
+from typing import TYPE_CHECKING, Any
 
 from cxas_scrapi.migration.data_models import (
     DFCXAgentIR,
     IRBundle,
     MigrationIR,
 )
+
+if TYPE_CHECKING:
+    from jinja2 import Template
 
 logger = logging.getLogger(__name__)
 

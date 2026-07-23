@@ -1,3 +1,4 @@
+import typing
 import json
 import os
 import pathlib
@@ -10,7 +11,7 @@ from hill_climber import results_dir, history_file
 from utils.grading import grade_transcript_compliance, score_naturalness
 
 
-def load_active_batch(map_path="/tmp/active_eval_batch.json"):
+def load_active_batch(map_path: typing.Any="/tmp/active_eval_batch.json") -> typing.Any:
     """Loads the active evaluation batch spec metadata."""
     if not os.path.exists(map_path):
         print(f"Active batch mapping {map_path} not found.")
@@ -19,7 +20,7 @@ def load_active_batch(map_path="/tmp/active_eval_batch.json"):
         return json.load(f)
 
 
-def load_climb_history(history_path):
+def load_climb_history(history_path: typing.Any) -> typing.Any:
     """Loads the existing optimization hill-climb history json."""
     if os.path.exists(history_path):
         try:
@@ -30,7 +31,7 @@ def load_climb_history(history_path):
     return []
 
 
-def load_model_output(name, case_results_dir):
+def load_model_output(name: typing.Any, case_results_dir: typing.Any) -> typing.Any:
     """Locates case output strictly from authentic generator artifacts written by the agent."""
     output = ""
     case_path = pathlib.Path(case_results_dir)
@@ -42,8 +43,8 @@ def load_model_output(name, case_results_dir):
 
 
 def grade_single_case(
-    case_spec, iteration_results_dir, case_index, total_cases
-):
+    case_spec: typing.Any, iteration_results_dir: typing.Any, case_index: typing.Any, total_cases: typing.Any
+) -> typing.Any:
     """Grades a single evaluation case, writing its grade and raw results."""
     name = case_spec["case_name"]
     conv_id = case_spec.get("conv_id")
@@ -97,15 +98,15 @@ def grade_single_case(
 
 
 def save_iteration_progress(
-    climb_history,
-    history_path,
-    iteration_results_dir,
-    cases,
-    failures,
-    passes,
-    total_naturalness,
-    scored_cases,
-):
+    climb_history: typing.Any,
+    history_path: typing.Any,
+    iteration_results_dir: typing.Any,
+    cases: typing.Any,
+    failures: typing.Any,
+    passes: typing.Any,
+    total_naturalness: typing.Any,
+    scored_cases: typing.Any,
+) -> typing.Any:
     """Computes averages, writes the JSON history, and outputs the progress yaml."""
     current_iteration = len(climb_history) + 1
     avg_naturalness = (
@@ -164,7 +165,7 @@ def save_iteration_progress(
     print(f"Average Naturalness: {avg_naturalness:.1f}/3")
 
 
-def grade_eval_batch():
+def grade_eval_batch() -> typing.Any:
     """Coordinates active batch specs extraction, grading execution and reports compilation."""
     active_batch = load_active_batch()
     if not active_batch:

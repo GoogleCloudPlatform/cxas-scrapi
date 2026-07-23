@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import json
 import logging
@@ -427,7 +428,7 @@ def run_eval(args: argparse.Namespace) -> None:
             # Assuming tags are accessible as a
             # list/repeated field on the Evaluation
             # object
-            if args.tags and hasattr(eval_obj, "tags"):
+            if args.tags and hasattr(eval_obj, "tags"):  # noqa: SIM102
                 # intersection of CLI tags and agent tags
                 if any(t in eval_obj.tags for t in args.tags):
                     match = True
@@ -478,7 +479,7 @@ def run_eval(args: argparse.Namespace) -> None:
             # Assuming tags are accessible as a
             # list/repeated field on the Evaluation
             # object
-            if args.tags and hasattr(eval_obj, "tags"):
+            if args.tags and hasattr(eval_obj, "tags"):  # noqa: SIM102
                 # intersection of CLI tags and agent tags
                 if any(t in eval_obj.tags for t in args.tags):
                     match = True
@@ -615,7 +616,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     progress_callback = None
     if getattr(args, "json_progress", False):
 
-        def progress_callback(stage: str, current: int, total: int):
+        def progress_callback(stage: str, current: int, total: int) -> None:
             import json
             import sys
 
@@ -1257,10 +1258,8 @@ def cmd_help(args: argparse.Namespace) -> None:
     """Handles the 'help' command."""
     parser = get_parser()
     if getattr(args, "help_command", None):
-        try:
+        with contextlib.suppress(SystemExit):
             parser.parse_args([args.help_command, "--help"])
-        except SystemExit:
-            pass
     else:
         parser.print_help()
 

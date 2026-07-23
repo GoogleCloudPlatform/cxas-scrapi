@@ -13,13 +13,16 @@ independently and surface the resulting logs to the user."""
 from __future__ import annotations
 
 import logging
-
-from rich.console import Console
+from typing import TYPE_CHECKING
 
 from cxas_scrapi.migration.data_models import MigrationIR, MigrationStatus
 from cxas_scrapi.migration.optimizer import CXASOptimizer
-from cxas_scrapi.migration.service import MigrationService
-from cxas_scrapi.utils.gemini import GeminiGenerate
+
+if TYPE_CHECKING:
+    from rich.console import Console
+
+    from cxas_scrapi.migration.service import MigrationService
+    from cxas_scrapi.utils.gemini import GeminiGenerate
 
 logger = logging.getLogger(__name__)
 

@@ -71,7 +71,7 @@ def extract_transcript(conv: dict[str, Any]) -> dict[str, str] | None:
         return None
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Fetch non-contained (loss) transcripts from "

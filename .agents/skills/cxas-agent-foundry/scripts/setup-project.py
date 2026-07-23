@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 """Non-interactive project setup for GECX agents.
 
 Creates the project directory, pulls an existing app (if --app-id is provided),
@@ -34,7 +35,7 @@ import subprocess
 import sys
 
 
-def detect_modality_from_app(app_dir):
+def detect_modality_from_app(app_dir: typing.Any) -> typing.Any:
     """Read app.json and detect model/modality from modelSettings."""
     app_json_candidates = []
     for root, dirs, files in os.walk(app_dir):
@@ -64,7 +65,7 @@ def detect_modality_from_app(app_dir):
     return app_name, model, modality
 
 
-def main():
+def main() -> typing.Any:
     parser = argparse.ArgumentParser(description="Set up a GECX project directory.")
     parser.add_argument("--project-id", required=True, help="GCP project ID")
     parser.add_argument("--app-id", help="Existing app ID (short name or UUID). If provided, pulls the app and auto-detects modality.")

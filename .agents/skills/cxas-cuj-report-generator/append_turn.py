@@ -1,3 +1,4 @@
+import typing
 """Tool for agents to incrementally build transcripts in YAML format.
 
 Typical usage example:
@@ -20,7 +21,7 @@ from absl import app, flags, logging
 
 
 @contextlib.contextmanager
-def file_lock(lock_file_path: pathlib.Path):
+def file_lock(lock_file_path: pathlib.Path) -> typing.Any:
     lock_file_path.parent.mkdir(parents=True, exist_ok=True)
     f = open(lock_file_path, "w")
     try:

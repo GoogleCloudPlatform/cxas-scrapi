@@ -24,7 +24,7 @@ import graphviz
 class HighLevelGraphVisualizer:
     """Generates a macroscopic directed graph matching the DFCX UI Topology."""
 
-    def __init__(self, full_data: dict[str, Any]):
+    def __init__(self, full_data: dict[str, Any]) -> None:
         self.data = full_data
         self.uuid_to_name: dict[str, str] = {}
         self.name_to_uuid: dict[str, str] = {}
@@ -107,7 +107,7 @@ class HighLevelGraphVisualizer:
         label: str,
         condition: str = "Always",
         is_tool: bool = False,
-    ):
+    ) -> None:
         dst_uuid = self._resolve_to_uuid(dst_uuid)
         if not src_uuid or not dst_uuid:
             return

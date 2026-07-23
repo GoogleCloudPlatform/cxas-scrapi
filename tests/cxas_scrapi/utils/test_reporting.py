@@ -17,6 +17,7 @@ import importlib.util
 import json
 import os
 import sys
+import typing
 from unittest.mock import ANY, mock_open, patch
 
 import pandas as pd
@@ -43,7 +44,7 @@ from cxas_scrapi.utils.reporting import (
 
 
 @patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils")
-def test_upload_to_gcs_success(mock_gcs_cls):
+def test_upload_to_gcs_success(mock_gcs_cls: typing.Any) -> None:
     mock_gcs = mock_gcs_cls.return_value
     mock_gcs.upload_string.return_value = (
         "https://storage.mtls.cloud.google.com/bucket/report.html"
@@ -54,7 +55,7 @@ def test_upload_to_gcs_success(mock_gcs_cls):
 
 
 @patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils")
-def test_upload_to_gcs_failure(mock_gcs_cls):
+def test_upload_to_gcs_failure(mock_gcs_cls: typing.Any) -> None:
     mock_gcs = mock_gcs_cls.return_value
     mock_gcs.upload_string.side_effect = Exception("error")
 
@@ -66,8 +67,10 @@ def test_upload_to_gcs_failure(mock_gcs_cls):
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_gcs_success(
-    mock_file, mock_upload, mock_get_html_head
-):
+    mock_file: typing.Any,
+    mock_upload: typing.Any,
+    mock_get_html_head: typing.Any,
+) -> None:
     mock_get_html_head.return_value = "<html><head></head><body>"
     mock_upload.return_value = "https://url"
     results = [{"name": "test", "passed": True, "run": 1}]
@@ -82,8 +85,10 @@ def test_generate_html_report_gcs_success(
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_gcs_fallback_with_extension(
-    mock_file, mock_upload, mock_get_html_head
-):
+    mock_file: typing.Any,
+    mock_upload: typing.Any,
+    mock_get_html_head: typing.Any,
+) -> None:
     mock_get_html_head.return_value = "<html><head></head><body>"
     mock_upload.return_value = None
     results = [{"name": "test", "passed": True, "run": 1}]
@@ -100,8 +105,10 @@ def test_generate_html_report_gcs_fallback_with_extension(
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_gcs_fallback_no_extension(
-    mock_file, mock_upload, mock_get_html_head
-):
+    mock_file: typing.Any,
+    mock_upload: typing.Any,
+    mock_get_html_head: typing.Any,
+) -> None:
     mock_get_html_head.return_value = "<html><head></head><body>"
     mock_upload.return_value = None
     results = [{"name": "test", "passed": True, "run": 1}]
@@ -117,8 +124,10 @@ def test_generate_html_report_gcs_fallback_no_extension(
 @patch("cxas_scrapi.utils.reporting.tools.Tools")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_tools_failure(
-    mock_file, mock_tools_cls, mock_get_html_head
-):
+    mock_file: typing.Any,
+    mock_tools_cls: typing.Any,
+    mock_get_html_head: typing.Any,
+) -> None:
     mock_get_html_head.return_value = "<html><head></head><body>"
     # Simulate Tools(app_name).get_tools_map() failing
     mock_tools_cls.return_value.get_tools_map.side_effect = Exception(
@@ -135,7 +144,9 @@ def test_generate_html_report_tools_failure(
 
 @patch("cxas_scrapi.utils.reporting._get_html_head")
 @patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_local(mock_file, mock_get_html_head):
+def test_generate_html_report_local(
+    mock_file: typing.Any, mock_get_html_head: typing.Any
+) -> None:
     mock_get_html_head.return_value = "<html><head></head><body>"
     results = [
         {
@@ -181,31 +192,31 @@ def test_generate_html_report_local(mock_file, mock_get_html_head):
     assert "sess123" in content
 
 
-def test_fmt_duration():
+def test_fmt_duration() -> None:
     assert _fmt_duration(None) == ""
     assert _fmt_duration(30) == "30.0s"
     assert _fmt_duration(90) == "1.5m"
 
 
-def test_escape():
+def test_escape() -> None:
     assert _escape('<script>&"') == "&lt;script&gt;&amp;&quot;"
 
 
-def test_resolve_tool_name():
+def test_resolve_tool_name() -> None:
     tools_map = {"projects/p/tools/t1": "MyTool"}
     assert _resolve_tool_name("projects/p/tools/t1", tools_map) == "MyTool"
     assert _resolve_tool_name("projects/p/tools/t2", tools_map) == "t2"
     assert _resolve_tool_name(None, tools_map) is None
 
 
-def test_format_trace_line():
+def test_format_trace_line() -> None:
     tools_map = {"path/to/tool": "GreatTool"}
     line = "Tool Call: path/to/tool with args {}"
     assert "GreatTool" in _format_trace_line(line, tools_map)
     assert "Unrelated" in _format_trace_line("Unrelated", tools_map)
 
 
-def test_generate_combined_html_report(tmp_path):
+def test_generate_combined_html_report(tmp_path: typing.Any) -> None:
     output_path = os.path.join(tmp_path, "report.html")
 
     golden_results = [
@@ -299,7 +310,9 @@ def test_generate_combined_html_report(tmp_path):
 
 
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
-def test_generate_combined_html_report_gcs_success(mock_upload):
+def test_generate_combined_html_report_gcs_success(
+    mock_upload: typing.Any,
+) -> None:
     mock_upload.return_value = "https://url"
 
     resolved_path = generate_combined_html_report(
@@ -317,7 +330,9 @@ def test_generate_combined_html_report_gcs_success(mock_upload):
 
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
-def test_generate_combined_html_report_gcs_fallback(mock_file, mock_upload):
+def test_generate_combined_html_report_gcs_fallback(
+    mock_file: typing.Any, mock_upload: typing.Any
+) -> None:
     mock_upload.return_value = None
 
     resolved_path = generate_combined_html_report(
@@ -333,7 +348,7 @@ def test_generate_combined_html_report_gcs_fallback(mock_file, mock_upload):
     mock_file.assert_any_call("report.html", "w")
 
 
-def test_generate_combined_report_from_dir(tmp_path):
+def test_generate_combined_report_from_dir(tmp_path: typing.Any) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
@@ -384,7 +399,9 @@ def test_generate_combined_report_from_dir(tmp_path):
         assert "test_callback" in content
 
 
-def test_generate_combined_report_from_dir_include_all(tmp_path):
+def test_generate_combined_report_from_dir_include_all(
+    tmp_path: typing.Any,
+) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
@@ -419,7 +436,7 @@ def test_generate_combined_report_from_dir_include_all(tmp_path):
         assert "test_tool" in content
 
 
-def test_generate_combined_json_report_local(tmp_path):
+def test_generate_combined_json_report_local(tmp_path: typing.Any) -> None:
     output_path = tmp_path / COMBINED_REPORT_JSON_FILENAME
 
     sim_results = [
@@ -498,7 +515,9 @@ def test_generate_combined_json_report_local(tmp_path):
     assert results["callback"][0]["error"] == "boom"
 
 
-def test_generate_combined_json_report_serializes_non_json_values(tmp_path):
+def test_generate_combined_json_report_serializes_non_json_values(
+    tmp_path: typing.Any,
+) -> None:
     output_path = tmp_path / "report.json"
 
     generate_combined_json_report(
@@ -519,7 +538,9 @@ def test_generate_combined_json_report_serializes_non_json_values(tmp_path):
 
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
-def test_generate_combined_json_report_gcs_success(mock_file, mock_upload):
+def test_generate_combined_json_report_gcs_success(
+    mock_file: typing.Any, mock_upload: typing.Any
+) -> None:
     mock_upload.return_value = "https://url"
 
     resolved_path = generate_combined_json_report(
@@ -536,7 +557,9 @@ def test_generate_combined_json_report_gcs_success(mock_file, mock_upload):
 
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
-def test_generate_combined_json_report_gcs_fallback(mock_file, mock_upload):
+def test_generate_combined_json_report_gcs_fallback(
+    mock_file: typing.Any, mock_upload: typing.Any
+) -> None:
     mock_upload.return_value = None
 
     resolved_path = generate_combined_json_report(
@@ -551,8 +574,8 @@ def test_generate_combined_json_report_gcs_fallback(mock_file, mock_upload):
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_combined_json_report_gcs_fallback_no_extension(
-    mock_file, mock_upload
-):
+    mock_file: typing.Any, mock_upload: typing.Any
+) -> None:
     mock_upload.return_value = None
 
     resolved_path = generate_combined_json_report(
@@ -564,7 +587,7 @@ def test_generate_combined_json_report_gcs_fallback_no_extension(
     mock_file.assert_any_call("report_fallback.json", "w")
 
 
-def test_generate_combined_report_from_dir_json(tmp_path):
+def test_generate_combined_report_from_dir_json(tmp_path: typing.Any) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
@@ -619,7 +642,9 @@ def test_generate_combined_report_from_dir_json(tmp_path):
     assert report["results"]["callback"][0]["passed"] is False
 
 
-def test_generate_combined_report_from_dir_json_explicit_output(tmp_path):
+def test_generate_combined_report_from_dir_json_explicit_output(
+    tmp_path: typing.Any,
+) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
@@ -640,7 +665,9 @@ def test_generate_combined_report_from_dir_json_explicit_output(tmp_path):
     assert report["summary"]["total"] == 1
 
 
-def test_generate_combined_report_from_dir_invalid_format(tmp_path):
+def test_generate_combined_report_from_dir_invalid_format(
+    tmp_path: typing.Any,
+) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
@@ -650,7 +677,9 @@ def test_generate_combined_report_from_dir_invalid_format(tmp_path):
         )
 
 
-def test_generate_combined_report_from_dir_html_default_unchanged(tmp_path):
+def test_generate_combined_report_from_dir_html_default_unchanged(
+    tmp_path: typing.Any,
+) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
@@ -673,15 +702,15 @@ def test_generate_combined_report_from_dir_html_default_unchanged(tmp_path):
 @patch("os.path.exists")
 @patch("os.path.isdir")
 def test_run_all_evals_filtering(
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -715,15 +744,15 @@ def test_run_all_evals_filtering(
 @patch("os.path.exists")
 @patch("os.path.isdir")
 def test_run_all_evals_substring_filtering(
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -761,19 +790,19 @@ def test_run_all_evals_substring_filtering(
 @patch("yaml.safe_load")
 @patch("builtins.open", new_callable=mock_open)
 def test_run_all_evals_tag_filtering(
-    mock_open_file,
-    mock_yaml_load,
-    mock_load_golden,
-    mock_proto,
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_open_file: typing.Any,
+    mock_yaml_load: typing.Any,
+    mock_load_golden: typing.Any,
+    mock_proto: typing.Any,
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -822,17 +851,17 @@ def test_run_all_evals_tag_filtering(
 @patch("yaml.safe_load")
 @patch("builtins.open", new_callable=mock_open)
 def test_run_all_evals_include_filtering(
-    mock_open_file,
-    mock_yaml_load,
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_open_file: typing.Any,
+    mock_yaml_load: typing.Any,
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -873,15 +902,15 @@ def test_run_all_evals_include_filtering(
 @patch("os.path.exists")
 @patch("os.path.isdir")
 def test_run_all_evals_include_tools(
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -919,15 +948,15 @@ def test_run_all_evals_include_tools(
 @patch("os.path.exists")
 @patch("os.path.isdir")
 def test_run_all_evals_include_callbacks(
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
 
@@ -964,16 +993,16 @@ def test_run_all_evals_include_callbacks(
     read_data="evals:\n  - name: sim1\n    tags: [P0]",
 )
 def test_run_all_evals_dict_based_simulations(
-    mock_file,
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_file: typing.Any,
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -1028,17 +1057,17 @@ def test_run_all_evals_dict_based_simulations(
 @patch("yaml.safe_load")
 @patch("builtins.open", new_callable=mock_open)
 def test_run_all_evals_with_deployment_id(
-    mock_open_file,
-    mock_yaml_load,
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_open_file: typing.Any,
+    mock_yaml_load: typing.Any,
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -1061,7 +1090,7 @@ def test_run_all_evals_with_deployment_id(
     )
 
 
-def test_load_sim_test_cases_merges_common_parameters():
+def test_load_sim_test_cases_merges_common_parameters() -> None:
     yaml_data = """
 common_session_parameters:
   disable_disclaimer: true
@@ -1089,7 +1118,7 @@ evals:
         }
 
 
-def test_load_sim_test_cases_merges_common_expectations():
+def test_load_sim_test_cases_merges_common_expectations() -> None:
     yaml_data = """
 common_expectations:
   - "The agent welcomes the user"
@@ -1117,7 +1146,9 @@ evals:
         ]
 
 
-def test_generate_combined_report_from_dir_timestamped(tmp_path):
+def test_generate_combined_report_from_dir_timestamped(
+    tmp_path: typing.Any,
+) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
@@ -1182,13 +1213,13 @@ def test_generate_combined_report_from_dir_timestamped(tmp_path):
 @patch("cxas_scrapi.evals.runner.CallbackEvals")
 @patch("cxas_scrapi.evals.runner.EvalUtils")
 def test_run_all_evals_writes_timestamped_files(
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-    tmp_path,
-):
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
     # Set up real files in tmp_path
     sims_dir = tmp_path / "simulations"
     sims_dir.mkdir()
@@ -1225,7 +1256,9 @@ def test_run_all_evals_writes_timestamped_files(
 
 
 @patch("cxas_scrapi.utils.reporting.evals_runner.run_all_evals")
-def test_run_all_evals_expectations_only(mock_run_all_evals):
+def test_run_all_evals_expectations_only(
+    mock_run_all_evals: typing.Any,
+) -> None:
     run_all_evals(
         app_name="projects/p",
         expectations_only=True,
@@ -1262,7 +1295,7 @@ def test_run_all_evals_expectations_only(mock_run_all_evals):
 
 
 @pytest.fixture
-def sim_runner():
+def sim_runner() -> typing.Any:
     scripts_dir = os.path.abspath(".agents/skills/cxas-agent-foundry/scripts")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
@@ -1285,7 +1318,9 @@ def sim_runner():
     return runner
 
 
-def test_sim_runner_load_sim_templates_merges_common_expectations(sim_runner):
+def test_sim_runner_load_sim_templates_merges_common_expectations(
+    sim_runner: typing.Any,
+) -> None:
     yaml_data = """
 common_expectations:
   - "Common expectation 1"
@@ -1296,7 +1331,7 @@ evals:
       - "Specific expectation 1"
   - name: sim2
 """
-    with patch("os.path.exists", return_value=True):
+    with patch("os.path.exists", return_value=True):  # noqa: SIM117
         with patch("builtins.open", mock_open(read_data=yaml_data)):
             templates = sim_runner.load_sim_templates()
 
@@ -1313,15 +1348,15 @@ evals:
 
 
 def test_sim_runner_load_sim_templates_handles_missing_common_expectations(
-    sim_runner,
-):
+    sim_runner: typing.Any,
+) -> None:
     yaml_data = """
 evals:
   - name: sim1
     expectations:
       - "Specific expectation 1"
 """
-    with patch("os.path.exists", return_value=True):
+    with patch("os.path.exists", return_value=True):  # noqa: SIM117
         with patch("builtins.open", mock_open(read_data=yaml_data)):
             templates = sim_runner.load_sim_templates()
 
@@ -1332,8 +1367,8 @@ evals:
 
 
 def test_sim_runner_load_sim_templates_backward_compatibility_with_list(
-    sim_runner,
-):
+    sim_runner: typing.Any,
+) -> None:
     yaml_data = """
 - name: sim1
   expectations:
@@ -1342,7 +1377,7 @@ def test_sim_runner_load_sim_templates_backward_compatibility_with_list(
   expectations:
     - "Specific expectation 2"
 """
-    with patch("os.path.exists", return_value=True):
+    with patch("os.path.exists", return_value=True):  # noqa: SIM117
         with patch("builtins.open", mock_open(read_data=yaml_data)):
             templates = sim_runner.load_sim_templates()
 

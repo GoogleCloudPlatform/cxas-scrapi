@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ from cxas_scrapi.core.tools import Tools
 
 
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_list_tools(mock_client_cls):
+def test_list_tools(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
 
     mock_tool = MagicMock()
@@ -41,7 +42,7 @@ def test_list_tools(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_get_tools_map_toolset_success(mock_client_cls):
+def test_get_tools_map_toolset_success(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
 
     mock_tool = MagicMock()
@@ -78,7 +79,7 @@ def test_get_tools_map_toolset_success(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_get_tools_map_fault_tolerance(mock_client_cls):
+def test_get_tools_map_fault_tolerance(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
 
     mock_tool = MagicMock()
@@ -105,10 +106,14 @@ def test_get_tools_map_fault_tolerance(mock_client_cls):
 @patch("cxas_scrapi.core.tools.types.GetToolRequest")
 @patch("cxas_scrapi.core.tools.types.GetToolsetRequest")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_get_tool(mock_client_cls, mock_ts_req_cls, mock_t_req_cls):
+def test_get_tool(
+    mock_client_cls: typing.Any,
+    mock_ts_req_cls: typing.Any,
+    mock_t_req_cls: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -140,10 +145,12 @@ def test_get_tool(mock_client_cls, mock_ts_req_cls, mock_t_req_cls):
 
 @patch("cxas_scrapi.core.tools.types.CreateToolRequest")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_create_tool(mock_client_cls, mock_req_cls):
+def test_create_tool(
+    mock_client_cls: typing.Any, mock_req_cls: typing.Any
+) -> None:
     mock_client = mock_client_cls.return_value
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -171,10 +178,14 @@ def test_create_tool(mock_client_cls, mock_req_cls):
 @patch("cxas_scrapi.core.tools.types.Toolset")
 @patch("cxas_scrapi.core.tools.types.CreateToolsetRequest")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_create_toolset(mock_client_cls, mock_req_cls, mock_tool_cls):
+def test_create_toolset(
+    mock_client_cls: typing.Any,
+    mock_req_cls: typing.Any,
+    mock_tool_cls: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -204,10 +215,14 @@ def test_create_toolset(mock_client_cls, mock_req_cls, mock_tool_cls):
 @patch("cxas_scrapi.core.tools.types.Tool")
 @patch("cxas_scrapi.core.tools.types.UpdateToolRequest")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_update_tool(mock_client_cls, mock_req_cls, mock_tool_cls):
+def test_update_tool(
+    mock_client_cls: typing.Any,
+    mock_req_cls: typing.Any,
+    mock_tool_cls: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -230,10 +245,14 @@ def test_update_tool(mock_client_cls, mock_req_cls, mock_tool_cls):
 @patch("cxas_scrapi.core.tools.types.Toolset")
 @patch("cxas_scrapi.core.tools.types.UpdateToolsetRequest")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_update_toolset(mock_client_cls, mock_req_cls, mock_ts_cls):
+def test_update_toolset(
+    mock_client_cls: typing.Any,
+    mock_req_cls: typing.Any,
+    mock_ts_cls: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -256,10 +275,14 @@ def test_update_toolset(mock_client_cls, mock_req_cls, mock_ts_cls):
 @patch("cxas_scrapi.core.tools.types.DeleteToolRequest")
 @patch("cxas_scrapi.core.tools.types.DeleteToolsetRequest")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_delete_tool(mock_client_cls, mock_ts_req_cls, mock_t_req_cls):
+def test_delete_tool(
+    mock_client_cls: typing.Any,
+    mock_ts_req_cls: typing.Any,
+    mock_t_req_cls: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -283,12 +306,14 @@ def test_delete_tool(mock_client_cls, mock_ts_req_cls, mock_t_req_cls):
 
 @patch("requests.post")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_execute_tool(mock_client_cls, mock_post):
+def test_execute_tool(
+    mock_client_cls: typing.Any, mock_post: typing.Any
+) -> None:
     class FakeResponse:
-        def raise_for_status(self):
+        def raise_for_status(self) -> None:
             pass
 
-        def json(self):
+        def json(self) -> typing.Any:
             return {"result": "fake", "variables": {"var1": "val1"}}
 
     mock_post.return_value = FakeResponse()
@@ -325,12 +350,14 @@ def test_execute_tool(mock_client_cls, mock_post):
 
 @patch("requests.post")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_execute_toolset(mock_client_cls, mock_post):
+def test_execute_toolset(
+    mock_client_cls: typing.Any, mock_post: typing.Any
+) -> None:
     class FakeResponse:
-        def raise_for_status(self):
+        def raise_for_status(self) -> None:
             pass
 
-        def json(self):
+        def json(self) -> typing.Any:
             return {"result": "fake"}
 
     mock_post.return_value = FakeResponse()
@@ -370,29 +397,33 @@ def test_execute_toolset(mock_client_cls, mock_post):
 
 
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_execute_tool_not_found(mock_client_cls):
+def test_execute_tool_not_found(mock_client_cls: typing.Any) -> None:
     t = Tools("projects/p/locations/l/apps/A")
     t.creds = MagicMock()
 
-    with patch.object(
-        t,
-        "get_tools_map",
-        return_value={
-            "existing_tool": "projects/p/locations/l/apps/A/tools/o1"
-        },
+    with (
+        patch.object(
+            t,
+            "get_tools_map",
+            return_value={
+                "existing_tool": "projects/p/locations/l/apps/A/tools/o1"
+            },
+        ),
+        pytest.raises(ValueError, match="Tool 'missing_tool' not found"),
     ):
-        with pytest.raises(ValueError, match="Tool 'missing_tool' not found"):
-            t.execute_tool(tool_display_name="missing_tool", args={})
+        t.execute_tool(tool_display_name="missing_tool", args={})
 
 
 @patch("requests.post")
 @patch("cxas_scrapi.core.tools.AgentServiceClient")
-def test_execute_tool_with_context(mock_client_cls, mock_post):
+def test_execute_tool_with_context(
+    mock_client_cls: typing.Any, mock_post: typing.Any
+) -> None:
     class FakeResponse:
-        def raise_for_status(self):
+        def raise_for_status(self) -> None:
             pass
 
-        def json(self):
+        def json(self) -> typing.Any:
             return {"result": "fake"}
 
     mock_post.return_value = FakeResponse()

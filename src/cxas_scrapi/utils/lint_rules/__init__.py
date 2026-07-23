@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Import all rule modules to trigger @rule decorator registration."""
+
 
 from cxas_scrapi.utils.lint_rules import (  # noqa: F401
     callbacks,

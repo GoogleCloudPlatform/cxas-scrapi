@@ -553,7 +553,7 @@ def init_github_action(args: argparse.Namespace) -> None:
 
     if getattr(args, "auto_create_wif", False):
         github_owner, github_repo = None, None
-        if getattr(args, "github_repo", None):
+        if getattr(args, "github_repo", None):  # noqa: SIM102
             if "/" in args.github_repo:
                 github_owner, github_repo = args.github_repo.split("/", 1)
 

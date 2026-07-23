@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import typing
 import uuid
 from typing import Any
 
@@ -29,8 +30,11 @@ class InsightsUtils:
     """Utility class for high-level operations on Insights & Scorecards."""
 
     def __init__(
-        self, project_id: str, location: str = "us-central1", **kwargs
-    ):
+        self,
+        project_id: str,
+        location: str = "us-central1",
+        **kwargs: typing.Any,
+    ) -> None:
         self.project_id = project_id
         self.location = location
         self.scorecards_client = Scorecards(project_id, location, **kwargs)
@@ -47,10 +51,7 @@ class InsightsUtils:
             "answerChoices",
             "answerInstructions",
         )
-        for field in fields_to_match:
-            if q1.get(field) != q2.get(field):
-                return False
-        return True
+        return all(q1.get(field) == q2.get(field) for field in fields_to_match)
 
     def _sync_questions(
         self,

@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 """Inspect a GECX app and dump its architecture, tools, variables, callbacks, and existing evals.
 
 Usage:
@@ -33,7 +34,7 @@ from config import load_app_name
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/inspect-app"
 
 
-def inspect(app_name, verbose=False):
+def inspect(app_name: typing.Any, verbose: typing.Any=False) -> typing.Any:
     """Inspect app and return structured data."""
     from cxas_scrapi.core.apps import Apps
     from cxas_scrapi.core.agents import Agents
@@ -181,7 +182,7 @@ def inspect(app_name, verbose=False):
     return result
 
 
-def format_text(data):
+def format_text(data: typing.Any) -> typing.Any:
     """Format inspection data as readable text."""
     lines = []
     lines.append(f"App: {data['display_name']}")
@@ -260,7 +261,7 @@ def format_text(data):
     return "\n".join(lines)
 
 
-def main():
+def main() -> typing.Any:
     try:
         import cxas_scrapi
     except ImportError:

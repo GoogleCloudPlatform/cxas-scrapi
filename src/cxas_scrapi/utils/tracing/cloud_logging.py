@@ -42,7 +42,7 @@ class CloudLogsClient:
         filter_template: str,
         time_padding_seconds: int = 30,
         credentials: Any = None,
-    ):
+    ) -> None:
         if logging_v2 is None:
             raise ImportError(
                 "google-cloud-logging is required for `cxas trace logs`. "

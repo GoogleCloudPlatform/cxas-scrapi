@@ -24,7 +24,7 @@ from cxas_scrapi.migration.data_models import (
 )
 
 
-def test_link_and_finalize_topology():
+def test_link_and_finalize_topology() -> None:
     mock_ps_agents = MagicMock()
     mock_ps_apps = MagicMock()
     mock_reporter = MagicMock()

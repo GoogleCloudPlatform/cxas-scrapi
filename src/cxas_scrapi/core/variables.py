@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Variables class for CXAS Scrapi."""
 
 import enum
 import logging
+import typing
 from typing import Any
 
 from google.cloud.ces_v1beta import types
@@ -46,8 +48,8 @@ class Variables(Apps):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Variables client.
 
         Note that Variables are resources of the App itself, not a standalone
@@ -77,7 +79,7 @@ class Variables(Apps):
         self.resource_type = "variables"
 
     @staticmethod
-    def _check_schema_type(input_type: str | VariableType):
+    def _check_schema_type(input_type: str | VariableType) -> None:
         # these are the only valid types mapping to
         # types.App.VariableDeclaration.Schema.Type
         if isinstance(input_type, VariableType):

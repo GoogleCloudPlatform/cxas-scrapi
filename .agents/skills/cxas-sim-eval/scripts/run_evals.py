@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 import os
 import sys
 import logging
@@ -31,41 +32,41 @@ import threading
 USER_AGENT_EXTENSION = "skill/cxas-sim-eval/run_evals"
 
 class ThreadLocalStream:
-    def __init__(self, default_stream):
+    def __init__(self, default_stream: typing.Any) -> None:
         self.default_stream = default_stream
         self.local = threading.local()
 
-    def set_stream(self, stream):
+    def set_stream(self, stream: typing.Any) -> typing.Any:
         self.local.stream = stream
 
-    def clear_stream(self):
+    def clear_stream(self) -> typing.Any:
         if hasattr(self.local, 'stream'):
             del self.local.stream
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: typing.Any) -> typing.Any:
         if hasattr(self.local, 'stream'):
             return getattr(self.local.stream, name)
         return getattr(self.default_stream, name)
 
-    def write(self, data):
+    def write(self, data: typing.Any) -> typing.Any:
         if hasattr(self.local, 'stream'):
             self.local.stream.write(data)
         else:
             self.default_stream.write(data)
 
-    def flush(self):
+    def flush(self) -> typing.Any:
         if hasattr(self.local, 'stream'):
             self.local.stream.flush()
         else:
             self.default_stream.flush()
 
-    def isatty(self):
+    def isatty(self) -> typing.Any:
         return True
 
 thread_local_stdout = ThreadLocalStream(sys.stdout)
 sys.stdout = thread_local_stdout
 
-def run_single_eval(item, evals_dir, app_name, run_index, skip_analysis=False, modality="text"):
+def run_single_eval(item: typing.Any, evals_dir: typing.Any, app_name: typing.Any, run_index: typing.Any, skip_analysis: typing.Any=False, modality: typing.Any="text") -> typing.Any:
     json_path = os.path.join(evals_dir, item)
     log_path = json_path.replace(".json", f"_run_{run_index}.log")
     session_id = str(uuid.uuid4())
@@ -263,12 +264,12 @@ Output your analysis and suggestions in a clear, structured markdown format.
             "llm_suggestions": llm_suggestions
         }
 
-def ansi_to_html(text):
+def ansi_to_html(text: typing.Any) -> typing.Any:
     import html
     escaped = html.escape(text)
     
     span_open = False
-    def replace_ansi(match):
+    def replace_ansi(match: typing.Any) -> typing.Any:
         nonlocal span_open
         codes = match.group(1).split(';')
         if '0' in codes or not codes or codes == ['']:
@@ -298,7 +299,7 @@ def ansi_to_html(text):
         result += '</span>'
     return result
 
-def _upload_to_gcs(output_path, html_content):
+def _upload_to_gcs(output_path: typing.Any, html_content: typing.Any) -> typing.Any:
     """Uploads report to GCS and returns mTLS URL or None."""
     try:
         from cxas_scrapi.utils.gcs_utils import GCSUtils
@@ -312,7 +313,7 @@ def _upload_to_gcs(output_path, html_content):
         return None
 
 
-def generate_html_report(results, output_path, app_name):
+def generate_html_report(results: typing.Any, output_path: typing.Any, app_name: typing.Any) -> typing.Any:
     html_content = """
     <html>
     <head>
@@ -544,7 +545,7 @@ def generate_html_report(results, output_path, app_name):
         f.write(html_content)
     print(f"\nGenerated HTML summary report at: {output_path}")
 
-def main():
+def main() -> typing.Any:
     parser = argparse.ArgumentParser(description="Run CXAS Simulation Evaluations.")
     parser.add_argument("--app-name", required=True, help="Full resource name of the app (projects/.../locations/.../apps/...)")
     parser.add_argument("--output-dir", required=True, help="Base output directory containing sim_evals/")

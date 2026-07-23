@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import Mock, patch
 
 import pytest
@@ -20,7 +21,7 @@ from cxas_scrapi.utils.gcs_utils import GCSUtils
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_upload_string_success(mock_client_cls):
+def test_upload_string_success(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_bucket = Mock()
     mock_blob = Mock()
@@ -42,21 +43,23 @@ def test_upload_string_success(mock_client_cls):
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_upload_string_invalid_scheme(mock_client_cls):
+def test_upload_string_invalid_scheme(mock_client_cls: typing.Any) -> None:
     gcs = GCSUtils()
     with pytest.raises(ValueError, match="Invalid GCS URI"):
         gcs.upload_string("https://storage.com/file", "content")
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_upload_string_no_path(mock_client_cls):
+def test_upload_string_no_path(mock_client_cls: typing.Any) -> None:
     gcs = GCSUtils()
     with pytest.raises(ValueError, match="Invalid GCS URI"):
         gcs.upload_string("gs://bucket", "content")
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_upload_file_calls_upload_from_filename(mock_client_cls, tmp_path):
+def test_upload_file_calls_upload_from_filename(
+    mock_client_cls: typing.Any, tmp_path: typing.Any
+) -> None:
     mock_client = mock_client_cls.return_value
     mock_bucket = Mock()
     mock_blob = Mock()
@@ -76,7 +79,7 @@ def test_upload_file_calls_upload_from_filename(mock_client_cls, tmp_path):
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_download_blob_returns_bytes(mock_client_cls):
+def test_download_blob_returns_bytes(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_bucket = Mock()
     mock_blob = Mock()
@@ -89,7 +92,7 @@ def test_download_blob_returns_bytes(mock_client_cls):
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_download_string_decodes(mock_client_cls):
+def test_download_string_decodes(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_bucket = Mock()
     mock_blob = Mock()
@@ -102,7 +105,9 @@ def test_download_string_decodes(mock_client_cls):
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_download_to_file_creates_dirs(mock_client_cls, tmp_path):
+def test_download_to_file_creates_dirs(
+    mock_client_cls: typing.Any, tmp_path: typing.Any
+) -> None:
     mock_client = mock_client_cls.return_value
     mock_bucket = Mock()
     mock_blob = Mock()
@@ -117,7 +122,7 @@ def test_download_to_file_creates_dirs(mock_client_cls, tmp_path):
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_exists_returns_bool(mock_client_cls):
+def test_exists_returns_bool(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_bucket = Mock()
     mock_blob = Mock()
@@ -131,15 +136,15 @@ def test_exists_returns_bool(mock_client_cls):
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_parse_gcs_uri_validation_paths(mock_client_cls):
+def test_parse_gcs_uri_validation_paths(mock_client_cls: typing.Any) -> None:
     gcs = GCSUtils()
     # Missing `gs://` prefix is always rejected.
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         gcs._parse_gcs_uri("not-a-gs-uri")
     # Empty path is rejected by default (object operations need a path)...
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         gcs._parse_gcs_uri("gs://bucket/")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         gcs._parse_gcs_uri("gs://bucket")
     # ...but allowed when the caller explicitly opts in (bucket listings).
     assert gcs._parse_gcs_uri("gs://bucket", require_path=False) == (
@@ -151,12 +156,12 @@ def test_parse_gcs_uri_validation_paths(mock_client_cls):
         "path/x",
     )
     # Empty input still raises.
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         gcs._parse_gcs_uri("")
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_find_first_returns_match(mock_client_cls):
+def test_find_first_returns_match(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     blob_a = Mock(name="a")
     blob_a.name = "x/y/conv-1/full-session.wav"
@@ -170,7 +175,7 @@ def test_find_first_returns_match(mock_client_cls):
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_find_first_returns_none(mock_client_cls):
+def test_find_first_returns_none(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     blob_a = Mock(name="a")
     blob_a.name = "other/file.wav"
@@ -181,7 +186,7 @@ def test_find_first_returns_none(mock_client_cls):
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_list_with_prefix_returns_sorted(mock_client_cls):
+def test_list_with_prefix_returns_sorted(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     a, b, c = Mock(), Mock(), Mock()
     a.name = "p/c1/agent-turn-2.wav"
@@ -202,7 +207,7 @@ def test_list_with_prefix_returns_sorted(mock_client_cls):
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_find_dir_for_conversation(mock_client_cls):
+def test_find_dir_for_conversation(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     a, b = Mock(), Mock()
     a.name = "x/y/wrong/METADATA.json"
@@ -217,7 +222,9 @@ def test_find_dir_for_conversation(mock_client_cls):
 
 
 @patch("cxas_scrapi.utils.gcs_utils.storage.Client")
-def test_find_dir_for_conversation_not_found(mock_client_cls):
+def test_find_dir_for_conversation_not_found(
+    mock_client_cls: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
     a = Mock()
     a.name = "p/other/METADATA.json"

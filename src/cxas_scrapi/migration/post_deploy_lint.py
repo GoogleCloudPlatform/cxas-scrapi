@@ -15,10 +15,12 @@ import asyncio
 import logging
 import os
 import tempfile
+from typing import TYPE_CHECKING
 
-from rich.console import Console
+if TYPE_CHECKING:
+    from rich.console import Console
 
-from cxas_scrapi.migration.service import MigrationService
+    from cxas_scrapi.migration.service import MigrationService
 
 logger = logging.getLogger(__name__)
 

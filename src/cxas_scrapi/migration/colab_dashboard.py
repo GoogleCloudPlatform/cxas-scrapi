@@ -21,6 +21,7 @@ import os
 import re
 import time
 import traceback
+import typing
 from datetime import datetime
 
 import google.auth
@@ -33,7 +34,7 @@ from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
 from cxas_scrapi.migration.main_visualizer import MainVisualizer
 
 try:
-      from google.colab import auth, files  # type: ignore
+    from google.colab import auth, files  # type: ignore
 except ImportError:
     auth = None
     files = None
@@ -44,17 +45,17 @@ AGENT_ID_PATTERN = re.compile(r"projects/[^/]+/locations/[^/]+/agents/[^/]+")
 
 
 class OutputWidgetHandler(logging.Handler):
-    def __init__(self, output_widget):
+    def __init__(self, output_widget: typing.Any) -> None:
         super().__init__()
         self.output_widget = output_widget
 
-    def emit(self, record):
+    def emit(self, record: typing.Any) -> None:
         msg = self.format(record)
         self.output_widget.append_stdout(msg + "\n")
 
 
 class MigrationConfigurator:
-    def __init__(self):
+    def __init__(self) -> None:
         self.style = {"description_width": "initial"}
         self.layout = widgets.Layout(width="98%")
 
@@ -125,7 +126,7 @@ class MigrationConfigurator:
             layout=self.layout,
         )
 
-    def render(self):
+    def render(self) -> typing.Any:
         return widgets.VBox(
             [
                 widgets.HTML("<h3>Migration Configuration</h3>"),
@@ -167,7 +168,7 @@ class MigrationConfigurator:
 
 
 class AgentResourceSelector:
-    def __init__(self, cx_api):
+    def __init__(self, cx_api: typing.Any) -> None:
         self.cx_api = cx_api
         self.full_agent_data = None
         self.analyzer = None
@@ -193,7 +194,11 @@ class AgentResourceSelector:
         self.export_btn.on_click(self._export_json)
         self.analysis_output = widgets.Output()
 
-    def load_agent(self, agent_id, default_model="gemini-2.5-flash-001"):
+    def load_agent(
+        self,
+        agent_id: typing.Any,
+        default_model: typing.Any = "gemini-2.5-flash-001",
+    ) -> None:
         with self.container:
             clear_output()
             agent_id_match = AGENT_ID_PATTERN.search(agent_id)
@@ -213,8 +218,10 @@ class AgentResourceSelector:
                 logger.error(f"❌ Error loading agent: {e}")
 
     def load_agent_from_data(
-        self, agent_data, default_model="gemini-2.5-flash-001"
-    ):
+        self,
+        agent_data: typing.Any,
+        default_model: typing.Any = "gemini-2.5-flash-001",
+    ) -> None:
         with self.container:
             clear_output()
             logger.info("⏳ Processing uploaded agent data...")
@@ -225,11 +232,13 @@ class AgentResourceSelector:
             except Exception as e:
                 logger.error(f"❌ Error processing agent data: {e}")
 
-    def update_all_playbook_models(self, new_model):
+    def update_all_playbook_models(self, new_model: typing.Any) -> None:
         for row in self.playbook_rows:
             row["dropdown"].value = new_model
 
-    def _create_checkbox(self, label, tag, data_ref):
+    def _create_checkbox(
+        self, label: typing.Any, tag: typing.Any, data_ref: typing.Any
+    ) -> typing.Any:
         cb = widgets.Checkbox(
             value=True, description=label, layout=widgets.Layout(width="95%")
         )
@@ -238,7 +247,9 @@ class AgentResourceSelector:
         cb.observe(self._on_change, names="value")
         return cb
 
-    def _create_playbook_row(self, pb_data, default_model):
+    def _create_playbook_row(
+        self, pb_data: typing.Any, default_model: typing.Any
+    ) -> typing.Any:
         cb = widgets.Checkbox(
             value=True,
             description=pb_data.get("displayName"),
@@ -266,11 +277,11 @@ class AgentResourceSelector:
         )
         return cb, row_ui
 
-    def _on_change(self, change):
+    def _on_change(self, change: typing.Any) -> None:
         self._update_status()
         self.analysis_output.clear_output()
 
-    def _bulk_select(self, category, value):
+    def _bulk_select(self, category: typing.Any, value: typing.Any) -> None:
         if category == "playbooks":
             for row in self.playbook_rows:
                 row["checkbox"].value = value
@@ -279,7 +290,7 @@ class AgentResourceSelector:
                 cb.value = value
         self._update_status()
 
-    def _update_status(self):
+    def _update_status(self) -> None:
         pb_count = sum(1 for row in self.playbook_rows if row["checkbox"].value)
         flow_count = sum(1 for cb in self.checkboxes["flows"] if cb.value)
         text = "No Resources Selected"
@@ -311,7 +322,7 @@ class AgentResourceSelector:
             f"(Selected: {pb_count} Playbooks, {flow_count} Flows){warning_msg}"
         )
 
-    def _filter_widgets(self, text):
+    def _filter_widgets(self, text: typing.Any) -> None:
         search_term = text.lower()
         for row in self.playbook_rows:
             if search_term in row["checkbox"].description.lower():
@@ -325,7 +336,7 @@ class AgentResourceSelector:
             else:
                 cb.layout.display = "none"
 
-    def _run_analysis(self, b):
+    def _run_analysis(self, b: typing.Any) -> None:
         if not self.analyzer:
             return
         selected_ids = []
@@ -386,7 +397,7 @@ class AgentResourceSelector:
                 html += "</ul></div>"
                 display(widgets.HTML(html))
 
-    def _export_json(self, b):
+    def _export_json(self, b: typing.Any) -> None:
         data = self.get_selected_data()
         if not data:
             with self.analysis_output:
@@ -409,7 +420,7 @@ class AgentResourceSelector:
             with self.analysis_output:
                 print(f"❌ Error exporting JSON: {e}")
 
-    def _build_ui(self, default_model):
+    def _build_ui(self, default_model: typing.Any) -> None:
         self.checkboxes = {"playbooks": [], "flows": [], "config": []}
         self.playbook_rows = []
         agent_name = self.full_agent_data.display_name or "Unknown Agent"
@@ -440,7 +451,12 @@ class AgentResourceSelector:
             lambda change: self._filter_widgets(change["new"]), names="value"
         )
 
-        def create_section(title, color, items, category_key=None):
+        def create_section(
+            title: typing.Any,
+            color: typing.Any,
+            items: typing.Any,
+            category_key: typing.Any = None,
+        ) -> typing.Any:
             controls = []
             if category_key:
                 btn_all = widgets.Button(
@@ -514,7 +530,7 @@ class AgentResourceSelector:
             display(ui)
         self._update_status()
 
-    def get_selected_data(self):
+    def get_selected_data(self) -> typing.Any:
         if not self.full_agent_data:
             return None
         filtered_data = copy.deepcopy(self.full_agent_data)
@@ -533,11 +549,11 @@ class AgentResourceSelector:
         ]
         return filtered_data
 
-    def render(self):
+    def render(self) -> typing.Any:
         return self.container
 
 
-def authenticate_colab(project_id: str):
+def authenticate_colab(project_id: str) -> None:
     """Authenticates the user in a Colab environment."""
     is_colab_enterprise = os.environ.get("VERTEX_PRODUCT") == "COLAB_ENTERPRISE"
 
@@ -559,13 +575,15 @@ def authenticate_colab(project_id: str):
         )
 
 
-def render_migration_dashboard(cx_api, migration_service):
+def render_migration_dashboard(
+    cx_api: typing.Any, migration_service: typing.Any
+) -> None:
     """Renders the full interactive migration dashboard in a notebook."""
 
     selector_ui = AgentResourceSelector(cx_api)
     config_ui = MigrationConfigurator()
 
-    def on_global_model_change(change):
+    def on_global_model_change(change: typing.Any) -> None:
         selector_ui.update_all_playbook_models(change["new"])
 
     config_ui.model.observe(on_global_model_change, names="value")
@@ -615,7 +633,7 @@ def render_migration_dashboard(cx_api, migration_service):
     details_accordion.set_title(0, "📝 Detailed Resource Visualization")
     details_accordion.selected_index = None
 
-    def on_load_click(b):
+    def on_load_click(b: typing.Any) -> None:
         if not agent_id_input.value:
             with output_log:
                 logger.warning("⚠️ Please enter a Source Agent ID.")
@@ -628,7 +646,7 @@ def render_migration_dashboard(cx_api, migration_service):
         with output_log:
             print("✅ Agent loaded successfully.")
 
-    def on_upload_change(change):
+    def on_upload_change(change: typing.Any) -> None:
         if not upload_btn.value:
             return
         uploaded_files = upload_btn.value
@@ -673,7 +691,7 @@ def render_migration_dashboard(cx_api, migration_service):
             with output_log:
                 logger.error("❌ Failed to process uploaded zip.")
 
-    def on_visualize_click(b):
+    def on_visualize_click(b: typing.Any) -> None:
         filtered_data = selector_ui.get_selected_data()
         if not filtered_data or (
             not filtered_data.playbooks and not filtered_data.flows
@@ -699,7 +717,7 @@ def render_migration_dashboard(cx_api, migration_service):
 
         topology_accordion.selected_index = 0
 
-    def on_export_viz_click(b):
+    def on_export_viz_click(b: typing.Any) -> None:
         filtered_data = selector_ui.get_selected_data()
         if not filtered_data or (
             not filtered_data.playbooks and not filtered_data.flows
@@ -721,7 +739,7 @@ def render_migration_dashboard(cx_api, migration_service):
                 "✅ Export completed. Downloads should start automatically."
             )
 
-    def on_migrate_click(b):
+    def on_migrate_click(b: typing.Any) -> None:
         with output_log:
             # clear_output()
             try:
@@ -778,7 +796,7 @@ def render_migration_dashboard(cx_api, migration_service):
                 )
                 logger_to_use.addHandler(widget_handler)
 
-                async def _run():
+                async def _run() -> None:
                     with output_log:
                         try:
                             await migration_service.run_migration(

@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 """Sync callback code into evals/callback_tests/agents/.
 
 Also creates test.py symlinks.
@@ -54,7 +55,7 @@ AGENTS_DIR = get_project_path("evals", "callback_tests", "agents")
 TESTS_DIR = get_project_path("evals", "callback_tests", "tests")
 
 
-def derive_callback_name(field_name):
+def derive_callback_name(field_name: typing.Any) -> typing.Any:
     """Derive short callback name from field name.
 
     e.g. 'before_model_callbacks' -> 'before_model'
@@ -66,8 +67,8 @@ def derive_callback_name(field_name):
 
 
 def sync_agent_callbacks(
-    app_name, agent_name, agent_resource_name, dry_run=False
-):
+    app_name: typing.Any, agent_name: typing.Any, agent_resource_name: typing.Any, dry_run: typing.Any=False
+) -> typing.Any:
     """Sync callbacks for a single agent.
 
     Returns (synced, tests_found, tests_missing).
@@ -181,7 +182,7 @@ CALLBACK_TYPES = (
 )
 
 
-def _ensure_symlink(test_src, symlink_path, dry_run=False):
+def _ensure_symlink(test_src: typing.Any, symlink_path: typing.Any, dry_run: typing.Any=False) -> typing.Any:
     """Create or update the agents/.../test.py symlink → tests/.../test.py."""
     if not os.path.exists(test_src):
         print(f"  WARNING: No test found at {os.path.relpath(test_src)}")
@@ -207,7 +208,7 @@ def _ensure_symlink(test_src, symlink_path, dry_run=False):
     return True, False
 
 
-def sync_from_local(app_dir, agent_filter=None, dry_run=False):
+def sync_from_local(app_dir: typing.Any, agent_filter: typing.Any=None, dry_run: typing.Any=False) -> typing.Any:
     """Copy callback python_code.py files from a local app dir.
 
     Saves into evals/callback_tests/agents/.
@@ -297,7 +298,7 @@ def sync_from_local(app_dir, agent_filter=None, dry_run=False):
     )
 
 
-def main():
+def main() -> typing.Any:
     parser = argparse.ArgumentParser(
         description=(
             "Sync callback code into evals/callback_tests/agents/ "

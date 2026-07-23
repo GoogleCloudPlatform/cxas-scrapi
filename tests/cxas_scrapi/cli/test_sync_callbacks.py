@@ -1,5 +1,6 @@
 import os
 import sys
+import typing
 from unittest.mock import MagicMock, patch
 
 # Append scripts directory to sys.path so config can be resolved
@@ -12,12 +13,15 @@ scripts_dir = os.path.abspath(
 if scripts_dir not in sys.path:
     sys.path.insert(0, scripts_dir)
 
-import pytest
+import pytest  # noqa: E402
 
 try:
     import config  # noqa: E402
 except ImportError:
-    pytest.skip("Test requires agent foundry skills sandbox structure", allow_module_level=True)
+    pytest.skip(
+        "Test requires agent foundry skills sandbox structure",
+        allow_module_level=True,
+    )
 
 with patch.object(
     config, "get_project_path", return_value="/tmp/mock_project_path"
@@ -33,7 +37,7 @@ with patch.object(
     spec.loader.exec_module(sync_callbacks)
 
 
-def test_sync_agent_callbacks_passes_resource_name():
+def test_sync_agent_callbacks_passes_resource_name() -> None:
 
     with patch("cxas_scrapi.core.callbacks.Callbacks") as mock_callbacks_class:
         mock_callbacks_client = MagicMock()
@@ -55,8 +59,8 @@ def test_sync_agent_callbacks_passes_resource_name():
 @patch("sync_callbacks.load_app_name")
 @patch("sync_callbacks.sync_agent_callbacks")
 def test_main_loop_passes_resource_name(
-    mock_sync_agent_callbacks, mock_load_app_name
-):
+    mock_sync_agent_callbacks: typing.Any, mock_load_app_name: typing.Any
+) -> None:
     mock_load_app_name.return_value = "projects/P/locations/L/apps/A"
     mock_sync_agent_callbacks.return_value = (0, 0, 0)
 

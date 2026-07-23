@@ -22,7 +22,7 @@ import cxas_scrapi.core
 from cxas_scrapi.core.common import Common
 
 
-def test_core_classes_accept_kwargs():
+def test_core_classes_accept_kwargs() -> None:
     """
     Dynamically ensures all core API wrapper classes inheriting from Common
     accept **kwargs so that credentials and routing variables can be safely

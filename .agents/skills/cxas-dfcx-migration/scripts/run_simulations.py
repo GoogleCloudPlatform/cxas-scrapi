@@ -7,6 +7,8 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+import typing
+
 """Run converted DFCX test simulations against a deployed CXAS agent.
 
 Usage:
@@ -37,16 +39,16 @@ Examples:
         --filter 'RootAgent*'
 """
 
-import argparse
-import fnmatch
-import logging
-import os
-import sys
+import argparse  # noqa: E402
+import fnmatch  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import sys  # noqa: E402
 
-from rich.console import Console
-from rich.table import Table
+from rich.console import Console  # noqa: E402
+from rich.table import Table  # noqa: E402
 
-from cxas_scrapi.evals.turn_evals import TurnEvals
+from cxas_scrapi.evals.turn_evals import TurnEvals  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,7 +57,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def parse_args():
+def parse_args() -> typing.Any:
     parser = argparse.ArgumentParser(
         description="Run converted DFCX test simulations against a CXAS agent."
     )
@@ -98,7 +100,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     args = parse_args()
     console = Console()
 

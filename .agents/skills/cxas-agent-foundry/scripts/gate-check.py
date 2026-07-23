@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 """Run the 6 build-verification gates against a deployed GECX app.
 
 The gates encode the checks documented in references/build-verification.md.
@@ -42,7 +43,7 @@ USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/gate-check"
 
 
 class GateResult:
-    def __init__(self, gate, name):
+    def __init__(self, gate: typing.Any, name: typing.Any) -> None:
         self.gate = gate
         self.name = name
         self.passed = None
@@ -51,7 +52,7 @@ class GateResult:
         self.warnings = []
         self.error = None
 
-    def to_dict(self):
+    def to_dict(self) -> typing.Any:
         status = (
             "skipped" if self.skipped else ("pass" if self.passed else "fail")
         )
@@ -65,13 +66,13 @@ class GateResult:
         }
 
 
-def _print_gate_header(gate, name):
+def _print_gate_header(gate: typing.Any, name: typing.Any) -> typing.Any:
     print(f"\n{'=' * 60}")
     print(f"  Gate {gate}: {name}")
     print(f"{'=' * 60}")
 
 
-def _print_gate_footer(result: GateResult):
+def _print_gate_footer(result: GateResult) -> typing.Any:
     if result.skipped:
         print("  → SKIPPED")
         return
@@ -86,7 +87,7 @@ def _print_gate_footer(result: GateResult):
 # ---------- Gates ----------
 
 
-def gate1_pull_lint_push(config, app_name, skip_push=False) -> GateResult:
+def gate1_pull_lint_push(config: typing.Any, app_name: typing.Any, skip_push: typing.Any=False) -> GateResult:
     """Pull platform state, lint, optionally push, re-pull, re-lint."""
     r = GateResult(1, "Pull, Lint and Push")
     _print_gate_header(r.gate, r.name)
@@ -98,7 +99,7 @@ def gate1_pull_lint_push(config, app_name, skip_push=False) -> GateResult:
 
     env = {**os.environ, "GOOGLE_CLOUD_PROJECT": project_id}
 
-    def _run(cmd, label):
+    def _run(cmd: typing.Any, label: typing.Any) -> typing.Any:
         print(f"  $ {' '.join(cmd)}")
         result = subprocess.run(cmd, env=env, capture_output=True, text=True)
         if result.returncode != 0:
@@ -182,7 +183,7 @@ def gate1_pull_lint_push(config, app_name, skip_push=False) -> GateResult:
     return r
 
 
-def gate2_agent_hierarchy(app_name) -> GateResult:
+def gate2_agent_hierarchy(app_name: typing.Any) -> GateResult:
     """Verify root agent and all sub-agents exist."""
     r = GateResult(2, "Agent hierarchy")
     _print_gate_header(r.gate, r.name)
@@ -238,7 +239,7 @@ def gate2_agent_hierarchy(app_name) -> GateResult:
     return r
 
 
-def gate3_tool_associations(app_name) -> GateResult:
+def gate3_tool_associations(app_name: typing.Any) -> GateResult:
     """Verify tool associations; warn if root agent missing end_session."""
     r = GateResult(3, "Tool associations")
     _print_gate_header(r.gate, r.name)
@@ -337,7 +338,7 @@ def gate3_tool_associations(app_name) -> GateResult:
     return r
 
 
-def gate4_callback_inventory(app_name) -> GateResult:
+def gate4_callback_inventory(app_name: typing.Any) -> GateResult:
     """Inventory callbacks per agent, plus check that local callback tests are discoverable."""
     r = GateResult(4, "Callback inventory + test discovery")
     _print_gate_header(r.gate, r.name)
@@ -448,7 +449,7 @@ def gate4_callback_inventory(app_name) -> GateResult:
     return r
 
 
-def gate5_single_turn_smoke(app_name) -> GateResult:
+def gate5_single_turn_smoke(app_name: typing.Any) -> GateResult:
     """Send 'Hello' and verify the agent responds without crashing."""
     r = GateResult(5, "Single-turn smoke test")
     _print_gate_header(r.gate, r.name)
@@ -475,7 +476,7 @@ def gate5_single_turn_smoke(app_name) -> GateResult:
     return r
 
 
-def gate6_multi_turn_smoke(app_name, prompts_file) -> GateResult:
+def gate6_multi_turn_smoke(app_name: typing.Any, prompts_file: typing.Any) -> GateResult:
     """Run a sequence of prompts in one session and check natural pacing."""
     r = GateResult(6, "Multi-turn smoke test")
     _print_gate_header(r.gate, r.name)
@@ -534,7 +535,7 @@ def gate6_multi_turn_smoke(app_name, prompts_file) -> GateResult:
 # ---------- Main ----------
 
 
-def main():
+def main() -> typing.Any:
     parser = argparse.ArgumentParser(
         description="Run the 6 build-verification gates against a deployed GECX app."
     )

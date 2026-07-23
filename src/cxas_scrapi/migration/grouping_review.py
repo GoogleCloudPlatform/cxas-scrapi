@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
     from InquirerPy import inquirer  # type: ignore
@@ -43,12 +43,14 @@ except ImportError:
 from rich.console import Console
 from rich.tree import Tree
 
-from cxas_scrapi.migration.data_models import MigrationIR
 from cxas_scrapi.migration.structural_consolidator import (
     GROUP_NAME_RE,
     StructuralConsolidator,
     root_group_name,
 )
+
+if TYPE_CHECKING:
+    from cxas_scrapi.migration.data_models import MigrationIR
 
 logger = logging.getLogger(__name__)
 

@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 """Interactive configuration wizard for gecx-config.json.
 
 Uses Rich for display and InquirerPy for interactive prompts.
@@ -45,7 +46,7 @@ console = Console()
 
 from cxas_scrapi.utils.ui_styles import ESCAPE_KEYBINDINGS, PROMPT_STYLE
 
-def _resolve_config_dir():
+def _resolve_config_dir() -> typing.Any:
     """Return the directory where gecx-config.json and cxas_app/ should live.
 
     If .active-project is set, use that project directory.
@@ -62,7 +63,7 @@ def _resolve_config_dir():
     return os.getcwd()
 
 
-def _config_file():
+def _config_file() -> typing.Any:
     return os.path.join(_resolve_config_dir(), "gecx-config.json")
 
 
@@ -75,7 +76,7 @@ DEFAULT_PROJECTS = [
 LOCATIONS = ["us", "eu"]
 
 
-def banner():
+def banner() -> typing.Any:
     console.print()
     console.print(
         Panel(
@@ -89,7 +90,7 @@ def banner():
 
 
 
-def fetch_cxas_apps(project_id, location):
+def fetch_cxas_apps(project_id: typing.Any, location: typing.Any) -> typing.Any:
     """Fetch existing CXAS apps for a project using SCRAPI."""
     try:
         from cxas_scrapi.core.apps import Apps
@@ -108,7 +109,7 @@ def fetch_cxas_apps(project_id, location):
         return []
 
 
-def select_project():
+def select_project() -> typing.Any:
     """Select GCP project ID — prompts user to enter it directly."""
     console.print("[bold]1. GCP Project ID[/bold]")
 
@@ -124,7 +125,7 @@ def select_project():
     return project
 
 
-def select_location():
+def select_location() -> typing.Any:
     """Select CXAS location."""
     console.print("[bold]2. Location[/bold]")
 
@@ -140,7 +141,7 @@ def select_location():
     return location
 
 
-def select_app(project_id, location):
+def select_app(project_id: typing.Any, location: typing.Any) -> typing.Any:
     """Select an existing CXAS app or create a new one.
 
     Pressing Escape during fuzzy search returns to the mode selection.
@@ -208,7 +209,7 @@ def select_app(project_id, location):
         return selected["app_id"], selected["display_name"]
 
 
-def _create_new_app(project_id, location):
+def _create_new_app(project_id: typing.Any, location: typing.Any) -> typing.Any:
     """Create a new app in CXAS via SCRAPI and return the platform-assigned UUID."""
     generated_id = str(uuid.uuid4())
     app_id_slug = inquirer.text(
@@ -249,7 +250,7 @@ def _create_new_app(project_id, location):
         return None, display_name
 
 
-def select_modality():
+def select_modality() -> typing.Any:
     """Select default modality."""
     console.print("[bold]4. Default Modality[/bold]")
 
@@ -268,7 +269,7 @@ def select_modality():
     return modality
 
 
-def select_gcs_bucket(modality):
+def select_gcs_bucket(modality: typing.Any) -> typing.Any:
     """Enter GCS bucket for storing artifacts.
 
     REQUIRED for audio modality (the platform needs evaluationAudioRecordingConfig.gcsBucket
@@ -283,7 +284,7 @@ def select_gcs_bucket(modality):
             "  needs this bucket to run audio evals (without it, eval runs return HTTP 400).[/yellow]"
         )
 
-        def validate_bucket(val):
+        def validate_bucket(val: typing.Any) -> typing.Any:
             if not val:
                 return "GCS bucket is required for audio agents"
             if not val.startswith("gs://"):
@@ -299,7 +300,7 @@ def select_gcs_bucket(modality):
         return bucket
 
     # text modality — keep optional
-    def validate_bucket(val):
+    def validate_bucket(val: typing.Any) -> typing.Any:
         if not val:
             return True
         if not val.startswith("gs://"):
@@ -319,7 +320,7 @@ def select_gcs_bucket(modality):
     return bucket or None
 
 
-def select_model():
+def select_model() -> typing.Any:
     """Select the default model for the agent."""
     console.print("[bold]6. Model[/bold]")
 
@@ -332,7 +333,7 @@ def select_model():
     return model
 
 
-def review_and_confirm(config):
+def review_and_confirm(config: typing.Any) -> typing.Any:
     """Show a summary table and ask for confirmation."""
     console.print("[bold]Review Configuration[/bold]\n")
 
@@ -363,7 +364,7 @@ def review_and_confirm(config):
     return confirmed
 
 
-def load_existing_config():
+def load_existing_config() -> typing.Any:
     """Load existing config if present."""
     if os.path.exists(CONFIG_FILE):
         try:
@@ -374,7 +375,7 @@ def load_existing_config():
     return None
 
 
-def _show_current_config(config):
+def _show_current_config(config: typing.Any) -> typing.Any:
     """Display the current configuration."""
     table = Table(box=box.SIMPLE_HEAVY, show_header=False, padding=(0, 2))
     table.add_column("Setting", style="cyan")
@@ -394,7 +395,7 @@ def _show_current_config(config):
     console.print(table)
 
 
-def _has_local_changes(app_dir):
+def _has_local_changes(app_dir: typing.Any) -> typing.Any:
     """Check if the app directory has uncommitted git changes."""
     if not os.path.isdir(app_dir):
         return False
@@ -411,7 +412,7 @@ def _has_local_changes(app_dir):
         return any(os.scandir(app_dir))
 
 
-def main():
+def main() -> typing.Any:
     banner()
 
     existing = load_existing_config()
@@ -514,7 +515,7 @@ def main():
         sys.exit(1)
 
 
-def _pull_app(config):
+def _pull_app(config: typing.Any) -> typing.Any:
     """Pull the app from CXAS into the local app directory."""
     app_id = config["deployed_app_id"]
     project = config["gcp_project_id"]
@@ -584,7 +585,7 @@ def _pull_app(config):
         console.print(f"[dim]  {' '.join(pull_cmd)}[/dim]")
 
 
-def parse_args():
+def parse_args() -> typing.Any:
     """Parse CLI arguments for non-interactive mode."""
     import argparse
 
@@ -602,7 +603,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def main_non_interactive(args):
+def main_non_interactive(args: typing.Any) -> typing.Any:
     """Run configuration without interactive prompts."""
     banner()
 

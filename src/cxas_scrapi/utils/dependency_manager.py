@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class SessionDependencyManager:
     """Manages test dependencies and caches session IDs in memory."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._memory_cache = {}
 
     def resolve_session_id(self, test_name: str) -> str | None:
@@ -30,7 +30,7 @@ class SessionDependencyManager:
             return self._memory_cache[test_name]
         return None
 
-    def cache_session_id(self, test_name: str, session_id: str):
+    def cache_session_id(self, test_name: str, session_id: str) -> None:
         """Caches a session ID in memory."""
         self._memory_cache[test_name] = session_id
         logger.info(f"Cached session ID for {test_name} in memory.")

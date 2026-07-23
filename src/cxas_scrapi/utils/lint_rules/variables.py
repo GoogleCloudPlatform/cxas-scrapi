@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Variable-reference lint rules (V100-V104).
 
 Surfaces state/instruction/eval references that target undeclared keys,
@@ -22,6 +23,7 @@ mistyped nested children, or wrong parent objects after a flat→nested
 import ast
 import json
 import re
+import typing
 from pathlib import Path
 
 import yaml
@@ -76,7 +78,7 @@ def _resolve_app_root(context: LintContext) -> Path | None:
         if (app_dir / name).exists():
             return app_dir
     for d in app_dir.iterdir():
-        if d.is_dir() and not d.name.startswith("."):
+        if d.is_dir() and not d.name.startswith("."):  # noqa: SIM102
             if (d / "app.json").exists() or (d / "app.yaml").exists():
                 return d
     return None
@@ -202,7 +204,7 @@ class _StateAccessVisitor(ast.NodeVisitor):
         "frozenset": "set",
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.accesses: list[tuple[str, str, int, str | None]] = []
         self._skip_subscripts: set[int] = set()
 
@@ -210,9 +212,7 @@ class _StateAccessVisitor(ast.NodeVisitor):
     def _is_state_target(node: ast.AST) -> bool:
         if isinstance(node, ast.Name) and node.id == "state":
             return True
-        if isinstance(node, ast.Attribute) and node.attr == "state":
-            return True
-        return False
+        return bool(isinstance(node, ast.Attribute) and node.attr == "state")
 
     @staticmethod
     def _const_str(node: ast.AST) -> str | None:
@@ -346,7 +346,7 @@ def _collect_eval_var_refs(content: str) -> list[tuple[str, int]]:
     return refs
 
 
-def _walk_eval_for_var_keys(node, content: str, out: list) -> None:
+def _walk_eval_for_var_keys(node: typing.Any, content: str, out: list) -> None:
     if isinstance(node, dict):
         for k, v in node.items():
             if k in EVAL_VAR_KEYS and isinstance(v, dict):

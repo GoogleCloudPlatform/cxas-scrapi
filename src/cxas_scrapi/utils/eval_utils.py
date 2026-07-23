@@ -13,13 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Utility functions for processing and exporting CXAS Evaluation Results."""
 
+import contextlib
 import enum
 import json
 import logging
 import os
 import time
+import typing
 import uuid
 from typing import Any
 
@@ -78,7 +81,7 @@ class Conversations(BaseModel):
 class EvalUtils(Evaluations):
     """Utility class for processing and exporting CXAS Evaluation Results."""
 
-    def __init__(self, app_name: str, env: str = "PROD", **kwargs: Any):
+    def __init__(self, app_name: str, env: str = "PROD", **kwargs: Any) -> None:
         """Initializes the EvalUtils class for processing Evaluation Results.
 
         Args:
@@ -138,14 +141,14 @@ class EvalUtils(Evaluations):
         return {}
 
     @staticmethod
-    def _map_outcome(val):
+    def _map_outcome(val: typing.Any) -> typing.Any:
         if isinstance(val, int):
             outcome_map = {0: "UNSPECIFIED", 1: "PASS", 2: "FAIL"}
             return outcome_map.get(val, f"UNKNOWN_{val}")
         return str(val) if val is not None else None
 
     @staticmethod
-    def score_result_audio(result) -> bool:
+    def score_result_audio(result: typing.Any) -> bool:
         """Score a single result using audio-correct method.
         In audio mode, taskCompleted is broken (always False).
         Use goalScore AND allExpectationsSatisfied instead.
@@ -568,10 +571,8 @@ class EvalUtils(Evaluations):
         for turn in turns:
             outcomes_str = turn.get("expectation_outcomes", "[]")
             outcomes = []
-            try:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
                 outcomes = json.loads(outcomes_str)
-            except (json.JSONDecodeError, TypeError):
-                pass
 
             sem_handled = False
             tool_handled = False
@@ -974,7 +975,7 @@ class EvalUtils(Evaluations):
         dataset_table: str,
         project_id: str | None = None,
         if_exists: str = "append",
-    ):
+    ) -> None:
         """Exports a pandas DataFrame to a Google BigQuery table."""
         target_project = project_id or self._get_project_id(self.app_name)
         df.to_gbq(
@@ -1439,8 +1440,6 @@ def evaluate_expectations(
         logging.getLogger(__name__).error(f"Error evaluating expectations: {e}")
         return []
 
-
-
     @staticmethod
     def _get_exp_act(outcome_obj: dict[str, Any]) -> tuple[str, str, str]:
         e_text = ""
@@ -1468,9 +1467,7 @@ def evaluate_expectations(
         elif "agent_transfer" in e_dict:
             e_text = e_dict["agent_transfer"].get(
                 "display_name",
-                e_dict["agent_transfer"].get(
-                    "target_agent", "agent_transfer"
-                ),
+                e_dict["agent_transfer"].get("target_agent", "agent_transfer"),
             )
             f_type = "Routing / Agent"
 
@@ -1506,6 +1503,7 @@ def evaluate_expectations(
             "p90": int(ser.quantile(0.90)),
             "p99": int(ser.quantile(0.99)),
         }
+
 
 def add_timestamp_suffix(filename: str, timestamp: str | None) -> str:
     """Appends a timestamp suffix to a filename, preserving the extension.

@@ -80,7 +80,7 @@ class Traces(Common):
         creds: Any = None,
         scope: list[str] | None = None,
         **kwargs: Any,
-    ):
+    ) -> None:
         super().__init__(
             creds_path=creds_path,
             creds_dict=creds_dict,

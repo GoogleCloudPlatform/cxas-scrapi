@@ -28,9 +28,9 @@ from cxas_scrapi.evals.turn_evals import (
     TurnStep,
     TurnTestCase,
 )
-from cxas_scrapi.migration.data_models import DFCXAgentIR, MigrationIR
 
 if TYPE_CHECKING:
+    from cxas_scrapi.migration.data_models import DFCXAgentIR, MigrationIR
     from cxas_scrapi.utils.gemini import GeminiGenerate
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ class DFCXTestConverter:
         ir: MigrationIR,
         flow_to_agent_map: dict[str, str] | None = None,
         gemini_client: GeminiGenerate | None = None,
-    ):
+    ) -> None:
         self.ir = ir
         self._agent_names = set(ir.agents.keys())
         self._flow_map = flow_to_agent_map or {}

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
 @patch(
     "cxas_scrapi.utils.secret_manager_utils.secretmanager.SecretManagerServiceClient"
 )
-def test_create_or_get_secret_existing(mock_client_cls):
+def test_create_or_get_secret_existing(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_secret = MagicMock()
     mock_secret.name = "projects/test-project/secrets/my-secret"
@@ -37,7 +38,7 @@ def test_create_or_get_secret_existing(mock_client_cls):
 @patch(
     "cxas_scrapi.utils.secret_manager_utils.secretmanager.SecretManagerServiceClient"
 )
-def test_create_or_get_secret_new(mock_client_cls):
+def test_create_or_get_secret_new(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.list_secrets.return_value = []
     mock_created = MagicMock()
@@ -66,10 +67,12 @@ def test_create_or_get_secret_new(mock_client_cls):
 @patch(
     "cxas_scrapi.utils.secret_manager_utils.secretmanager.SecretManagerServiceClient"
 )
-def test_create_or_get_secret_missing_payload(mock_client_cls):
+def test_create_or_get_secret_missing_payload(
+    mock_client_cls: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.list_secrets.return_value = []
 
     sm = SecretManagerUtils("test-project")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         sm.create_or_get_secret("missing-secret")

@@ -182,7 +182,7 @@ class Scenario:
         md_lines.append(data["prompt"])
         md_lines.append("")
 
-        def append_formatted(prefix: str, text: str):
+        def append_formatted(prefix: str, text: str) -> None:
             text_lines = text.strip().split("\n")
             if not text_lines:
                 return

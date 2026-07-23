@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 """Triage golden eval results into failure categories for fast debugging.
 
 Usage:
@@ -61,13 +62,13 @@ SIM_TASK_INCOMPLETE = "SIM_TASK_INCOMPLETE"        # catch-all: passed=False but
 
 # --- Result parsing ---
 
-def _status_str(val) -> str:
+def _status_str(val: typing.Any) -> str:
     if isinstance(val, int):
         return {0: "UNSPECIFIED", 1: "PASS", 2: "FAIL"}.get(val, f"UNKNOWN_{val}")
     return str(val).upper() if val else "UNSPECIFIED"
 
 
-def _outcome_int(val) -> int:
+def _outcome_int(val: typing.Any) -> int:
     """Normalize outcome to int (0=unspecified, 1=pass, 2=fail)."""
     if isinstance(val, int):
         return val
@@ -155,7 +156,7 @@ def get_last_n_run_results(results: list, n: int) -> List[Tuple[str, str, list]]
     groups = group_results_by_run(results)
 
     # Sort runs by max create_time descending
-    def run_max_time(run_id):
+    def run_max_time(run_id: typing.Any) -> typing.Any:
         max_t = ""
         for r in groups[run_id]:
             rd = type(r).to_dict(r) if not isinstance(r, dict) else r
@@ -702,7 +703,7 @@ def cluster_failures(
     return dict(clusters_by_cat)
 
 
-def _ordered_dict():
+def _ordered_dict() -> typing.Any:
     """Factory for a dict that preserves insertion order — used by defaultdict."""
     from collections import OrderedDict
     return OrderedDict()
@@ -802,8 +803,8 @@ def triage_results(results: list, eval_name_lookup: Dict[str, str]) -> Dict[str,
 def _triage_typed(
     rows: list,
     name_key: str,
-    categorize_fn,
-    is_pass_fn,
+    categorize_fn: typing.Any,
+    is_pass_fn: typing.Any,
 ) -> Dict[str, Any]:
     """Shared per-type triage builder for sim / tool_test / callback_test results.
 
@@ -880,7 +881,7 @@ def triage_callback_test_results(rows: list) -> Dict[str, Any]:
 
 # --- Output ---
 
-def print_triage(triage: Dict[str, Any], run_short: str, time_str: str):
+def print_triage(triage: Dict[str, Any], run_short: str, time_str: str) -> typing.Any:
     """Print triage summary in the standard format."""
     total = triage["total"]
     passed = triage["passed"]
@@ -935,7 +936,7 @@ def print_triage(triage: Dict[str, Any], run_short: str, time_str: str):
             print(f"  {cat} ({len(items)}): {', '.join(detail_parts)}")
 
 
-def print_multi_run_triage(run_triages: List[Tuple[str, str, Dict[str, Any]]]):
+def print_multi_run_triage(run_triages: List[Tuple[str, str, Dict[str, Any]]]) -> typing.Any:
     """Print aggregated triage across multiple runs."""
     n = len(run_triages)
     print(f"\n=== Golden Triage (last {n} runs) ===\n")
@@ -989,7 +990,7 @@ def print_multi_run_triage(run_triages: List[Tuple[str, str, Dict[str, Any]]]):
         print(f"  {run_short} ({time_str}): {triage['passed']}/{triage['total']} ({pct:.1f}%)")
 
 
-def main():
+def main() -> typing.Any:
     try:
         import cxas_scrapi
     except ImportError:

@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for the Tier 1 read-only linter check in
 :meth:`StructuralConsolidator.synthesize_instructions`."""
 
 from __future__ import annotations
+
+import typing
 
 import pytest
 
@@ -79,26 +82,30 @@ class _FakeDesigner:
 
     def __init__(
         self,
-        gemini_client,
+        gemini_client: typing.Any,
         *,
         xml_response: str,
-    ):
+    ) -> None:
         self.gemini = gemini_client
         self._xml_response = xml_response
         self.calls_2b: list[dict] = []
 
-    async def run_step_2a(self, **kwargs):
+    async def run_step_2a(self, **kwargs: typing.Any) -> typing.Any:
         return {"role": "stub", "agent_metadata": {}}
 
-    async def run_step_2b_instructions(self, **kwargs):
+    async def run_step_2b_instructions(
+        self, **kwargs: typing.Any
+    ) -> typing.Any:
         self.calls_2b.append(kwargs)
         return self._xml_response
 
 
-def _patch_designer_class(monkeypatch, *, xml_response: str):
+def _patch_designer_class(
+    monkeypatch: typing.Any, *, xml_response: str
+) -> typing.Any:
     instances: list[_FakeDesigner] = []
 
-    def factory(gemini_client):
+    def factory(gemini_client: typing.Any) -> typing.Any:
         inst = _FakeDesigner(gemini_client, xml_response=xml_response)
         instances.append(inst)
         return inst
@@ -110,7 +117,7 @@ def _patch_designer_class(monkeypatch, *, xml_response: str):
     return instances
 
 
-def _patch_tree_view(monkeypatch):
+def _patch_tree_view(monkeypatch: typing.Any) -> None:
     """Make the combined tree view non-empty so synthesis proceeds."""
     monkeypatch.setattr(
         sc_module,
@@ -127,7 +134,9 @@ class _FakeGemini:
 
 
 @pytest.mark.asyncio
-async def test_canonical_xml_on_first_call_no_warning(monkeypatch):
+async def test_canonical_xml_on_first_call_no_warning(
+    monkeypatch: typing.Any,
+) -> None:
     instances = _patch_designer_class(monkeypatch, xml_response=CANONICAL_XML)
     _patch_tree_view(monkeypatch)
     ir = _ir()
@@ -143,8 +152,8 @@ async def test_canonical_xml_on_first_call_no_warning(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_bad_xml_returns_warning_but_keeps_instructions(
-    monkeypatch, caplog
-):
+    monkeypatch: typing.Any, caplog: typing.Any
+) -> None:
     """Tier 1 Check: A schema failure in Stage 1 must NOT trigger retries.
 
     It must log a warning, return 'warning', and save the instructions

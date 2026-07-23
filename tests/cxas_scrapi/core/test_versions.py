@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 from cxas_scrapi.core.versions import Versions
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_list_versions(mock_client_cls):
+def test_list_versions(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_ver = MagicMock()
     mock_ver.name = "projects/p/locations/l/apps/A/versions/v1"
@@ -32,7 +33,7 @@ def test_list_versions(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_get_versions_map(mock_client_cls):
+def test_get_versions_map(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_v1 = MagicMock()
     mock_v1.name = "projects/p/locations/l/apps/A/versions/v1"
@@ -54,13 +55,15 @@ def test_get_versions_map(mock_client_cls):
 
 @patch("cxas_scrapi.core.versions.types.GetAppVersionRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_get_version(mock_client_cls, mock_req_cls):
+def test_get_version(
+    mock_client_cls: typing.Any, mock_req_cls: typing.Any
+) -> None:
     mock_client = mock_client_cls.return_value
     mock_v = MagicMock()
     mock_v.name = "projects/p/locations/l/apps/A/versions/v1"
     mock_client.get_app_version.return_value = mock_v
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -80,10 +83,12 @@ def test_get_version(mock_client_cls, mock_req_cls):
 
 @patch("cxas_scrapi.core.versions.types.DeleteAppVersionRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_delete_version(mock_client_cls, mock_req_cls):
+def test_delete_version(
+    mock_client_cls: typing.Any, mock_req_cls: typing.Any
+) -> None:
     mock_client = mock_client_cls.return_value
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -100,11 +105,13 @@ def test_delete_version(mock_client_cls, mock_req_cls):
 
 @patch("cxas_scrapi.core.versions.types.RestoreAppVersionRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_revert_version(mock_client_cls, mock_req_cls):
+def test_revert_version(
+    mock_client_cls: typing.Any, mock_req_cls: typing.Any
+) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.restore_app_version.return_value = MagicMock()
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class DFCXToolConverter:
     """Converts Dialogflow CX tools and webhooks to CXAS resources."""
 
-    def __init__(self, secret_manager: Any, reporter: Any):
+    def __init__(self, secret_manager: Any, reporter: Any) -> None:
         self.secret_manager: Any = secret_manager
         self.reporter: Any = reporter
 

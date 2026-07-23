@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for CreateUtils."""
 
 import json
+import typing
 from pathlib import Path
 from unittest import mock
 
@@ -23,7 +25,7 @@ import pytest
 from cxas_scrapi.utils.local.create_utils import CreateUtils
 
 
-def test_create_agent(tmp_path):
+def test_create_agent(tmp_path: typing.Any) -> None:
     """Test create_agent creates directory and files correctly."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -62,7 +64,7 @@ def test_create_agent(tmp_path):
         assert "${price}" in content
 
 
-def test_create_agent_already_exists(tmp_path):
+def test_create_agent_already_exists(tmp_path: typing.Any) -> None:
     """Test create_agent raises FileExistsError when agent directory exists."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -77,7 +79,7 @@ def test_create_agent_already_exists(tmp_path):
     assert "already exists" in str(exc_info.value)
 
 
-def test_create_tool_non_python(tmp_path):
+def test_create_tool_non_python(tmp_path: typing.Any) -> None:
     """Test create_tool without PYTHON type."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -110,7 +112,7 @@ def test_create_tool_non_python(tmp_path):
     assert not (target_dir / "python_function").exists()
 
 
-def test_create_tool_python(tmp_path):
+def test_create_tool_python(tmp_path: typing.Any) -> None:
     """Test create_tool with PYTHON type."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -156,7 +158,7 @@ def test_create_tool_python(tmp_path):
         assert '"agent_action"' in content
 
 
-def test_create_tool_openapi(tmp_path):
+def test_create_tool_openapi(tmp_path: typing.Any) -> None:
     """Test create_tool with OPENAPI type."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -196,7 +198,7 @@ def test_create_tool_openapi(tmp_path):
     assert schema_file.exists()
 
 
-def test_create_tool_datastore(tmp_path):
+def test_create_tool_datastore(tmp_path: typing.Any) -> None:
     """Test create_tool with DATASTORE type."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -229,18 +231,18 @@ def test_create_tool_datastore(tmp_path):
         assert data["displayName"] == safe_name
 
 
-def test_create_tool_unsupported_type(tmp_path):
+def test_create_tool_unsupported_type(tmp_path: typing.Any) -> None:
     """Test create_tool raises ValueError for unsupported tool type."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
     (tmp_path / "agents").mkdir()
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:  # noqa: PT011
         utils.create_tool("My Tool", app_dir, tool_type="INVALID_TYPE")
     assert "Unsupported tool type" in str(exc_info.value)
 
 
-def test_create_tool_openapi_add_to_agent_error(tmp_path):
+def test_create_tool_openapi_add_to_agent_error(tmp_path: typing.Any) -> None:
     """Test create_tool raises ValueError when adding OPENAPI tool to agent."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -248,15 +250,15 @@ def test_create_tool_openapi_add_to_agent_error(tmp_path):
     agent_name = "My Agent"
 
     # Mock _get_agent to avoid reading files and parsing protobuf
-    with mock.patch.object(utils, "_get_agent", return_value=mock.Mock()):
-        with pytest.raises(ValueError) as exc_info:
+    with mock.patch.object(utils, "_get_agent", return_value=mock.Mock()):  # noqa: SIM117
+        with pytest.raises(ValueError) as exc_info:  # noqa: PT011
             utils.create_tool(
                 "My Tool", app_dir, tool_type="OPENAPI", add_to_agent=agent_name
             )
     assert "Open API tool cannot be added to an agent" in str(exc_info.value)
 
 
-def test_get_agent_missing_json_file(tmp_path):
+def test_get_agent_missing_json_file(tmp_path: typing.Any) -> None:
     """Test _get_agent raises FileNotFoundError when json file is missing."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -272,7 +274,7 @@ def test_get_agent_missing_json_file(tmp_path):
     assert "config not found at" in str(exc_info.value)
 
 
-def test_validate_app_dir_success(tmp_path):
+def test_validate_app_dir_success(tmp_path: typing.Any) -> None:
     """Test _validate_app_dir succeeds when both agents and tools exist."""
     utils = CreateUtils()
     (tmp_path / "agents").mkdir()
@@ -280,7 +282,7 @@ def test_validate_app_dir_success(tmp_path):
     utils._validate_app_dir(str(tmp_path))
 
 
-def test_validate_app_dir_missing_agents(tmp_path):
+def test_validate_app_dir_missing_agents(tmp_path: typing.Any) -> None:
     """Test _validate_app_dir fails when agents/ is missing."""
     utils = CreateUtils()
     (tmp_path / "tools").mkdir()
@@ -288,7 +290,7 @@ def test_validate_app_dir_missing_agents(tmp_path):
         utils._validate_app_dir(str(tmp_path))
 
 
-def test_create_tool_add_to_agent(tmp_path):
+def test_create_tool_add_to_agent(tmp_path: typing.Any) -> None:
     """Test create_tool with add_to_agent adds tool to agent's tools list."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -338,7 +340,7 @@ def test_create_tool_add_to_agent(tmp_path):
         )
 
 
-def test_create_guardrail_llm_policy(tmp_path):
+def test_create_guardrail_llm_policy(tmp_path: typing.Any) -> None:
     """Test create_guardrail creates directory and JSON correctly."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -366,7 +368,7 @@ def test_create_guardrail_llm_policy(tmp_path):
         assert "DO NOT FLAG" in data["llmPolicy"]["prompt"]
 
 
-def test_create_guardrail_adds_to_app_json(tmp_path):
+def test_create_guardrail_adds_to_app_json(tmp_path: typing.Any) -> None:
     """Test create_guardrail adds display name to app.json guardrails list."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -384,7 +386,9 @@ def test_create_guardrail_adds_to_app_json(tmp_path):
     assert "Existing" in app_data["guardrails"]
 
 
-def test_create_guardrail_creates_guardrails_key_in_app_json(tmp_path):
+def test_create_guardrail_creates_guardrails_key_in_app_json(
+    tmp_path: typing.Any,
+) -> None:
     """Test create_guardrail creates guardrails key if missing from app.json."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -401,7 +405,7 @@ def test_create_guardrail_creates_guardrails_key_in_app_json(tmp_path):
     assert app_data["guardrails"] == ["New Guardrail"]
 
 
-def test_create_guardrail_already_exists(tmp_path):
+def test_create_guardrail_already_exists(tmp_path: typing.Any) -> None:
     """Test create_guardrail raises FileExistsError when directory exists."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -416,20 +420,20 @@ def test_create_guardrail_already_exists(tmp_path):
     assert "already exists" in str(exc_info.value)
 
 
-def test_create_guardrail_unsupported_type(tmp_path):
+def test_create_guardrail_unsupported_type(tmp_path: typing.Any) -> None:
     """Test create_guardrail raises ValueError for unsupported type."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
     (tmp_path / "agents").mkdir()
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:  # noqa: PT011
         utils.create_guardrail(
             "My Guardrail", app_dir, guardrail_type="INVALID"
         )
     assert "Unsupported guardrail type" in str(exc_info.value)
 
 
-def test_create_tool_add_to_agent_missing(tmp_path):
+def test_create_tool_add_to_agent_missing(tmp_path: typing.Any) -> None:
     """Test create_tool with missing add_to_agent raises FileNotFoundError."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -443,7 +447,7 @@ def test_create_tool_add_to_agent_missing(tmp_path):
         "cxas_scrapi.utils.local.create_utils.json_format.MessageToDict"
     )
 
-    with mock.patch(patch_path, return_value=mock_dict):
+    with mock.patch(patch_path, return_value=mock_dict):  # noqa: SIM117
         with pytest.raises(FileNotFoundError) as exc_info:
             utils.create_tool(
                 display_name, app_dir, add_to_agent="Nonexistent Agent"
@@ -451,31 +455,31 @@ def test_create_tool_add_to_agent_missing(tmp_path):
     assert "config not found" in str(exc_info.value)
 
 
-def test_get_safe_display_name_empty_raises_value_error():
+def test_get_safe_display_name_empty_raises_value_error() -> None:
     """Test _get_safe_display_name raises ValueError on empty sanitized name."""
     utils = CreateUtils()
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:  # noqa: PT011
         utils._get_safe_display_name("!!!")
     assert "must contain at least one alphanumeric character" in str(
         exc_info.value
     )
 
 
-def test_get_safe_display_name_digit_prepends_underscore():
+def test_get_safe_display_name_digit_prepends_underscore() -> None:
     """Test _get_safe_display_name prepends '_' if name starts with digit."""
     utils = CreateUtils()
     assert utils._get_safe_display_name("2nd Tool") == "_2nd_tool"
 
 
-def test_get_safe_display_name_keyword_raises_value_error():
+def test_get_safe_display_name_keyword_raises_value_error() -> None:
     """Test _get_safe_display_name raises ValueError on reserved keywords."""
     utils = CreateUtils()
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:  # noqa: PT011
         utils._get_safe_display_name("def")
     assert "reserved keyword" in str(exc_info.value)
 
 
-def test_create_tool_already_exists_overwrites(tmp_path):
+def test_create_tool_already_exists_overwrites(tmp_path: typing.Any) -> None:
     """Test create_tool overwrites templates but keeps extra files intact."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
@@ -511,7 +515,7 @@ def test_create_tool_already_exists_overwrites(tmp_path):
     assert (tool_dir / f"{safe_name}.json").exists()
 
 
-def test_create_tool_add_to_agent_idempotency(tmp_path):
+def test_create_tool_add_to_agent_idempotency(tmp_path: typing.Any) -> None:
     """Test that create_tool does not add duplicate tools to agent config."""
     utils = CreateUtils()
     app_dir = str(tmp_path)
