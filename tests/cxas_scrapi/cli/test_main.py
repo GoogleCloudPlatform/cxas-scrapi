@@ -39,6 +39,43 @@ def test_get_parser():
     assert args.location == "us"
 
 
+def test_get_parser_pull_with_version_id():
+    """Parser accepts --version-id on the pull subcommand."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "pull",
+            "Test App",
+            "--version-id",
+            "0.0.3",
+            "--project-id",
+            "test-project",
+            "--location",
+            "us",
+        ]
+    )
+    assert args.command == "pull"
+    assert args.app == "Test App"
+    assert args.version_id == "0.0.3"
+
+
+def test_get_parser_pull_without_version_id():
+    """--version-id is optional; defaults to None."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "pull",
+            "Test App",
+            "--project-id",
+            "test-project",
+            "--location",
+            "us",
+        ]
+    )
+    assert args.command == "pull"
+    assert args.version_id is None
+
+
 def test_get_parser_llm_lint():
     """Test that the parser can parse the llm-lint command."""
     parser = get_parser()
