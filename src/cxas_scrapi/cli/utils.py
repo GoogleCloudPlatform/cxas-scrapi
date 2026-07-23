@@ -15,6 +15,8 @@
 
 """Utility functions and classes for the CLI."""
 
+import typing
+
 
 class LazyCallable:
     """A proxy wrapper that lazily imports and executes a callable."""

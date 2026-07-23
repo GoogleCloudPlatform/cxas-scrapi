@@ -148,7 +148,7 @@ def beforeModelCallback(session):
 def test_execute_callback_callable() -> None:
     """Test execute_callback with a Callable."""
 
-    def my_callable(session: typing.Any) -> typing.Any:
+    def my_callable(session):
         session["added_by_callable"] = True
         return session
 

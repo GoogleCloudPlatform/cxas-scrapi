@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import io
@@ -22,9 +24,12 @@ import re
 import sys
 import typing
 import uuid
-from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any
+
 
 import google.protobuf.duration_pb2
 from google.cloud.ces_v1beta import types
