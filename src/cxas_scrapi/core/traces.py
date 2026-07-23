@@ -101,10 +101,13 @@ class Traces(Common):
         # AppConfig is optional — `cxas trace list` works without a pulled app.
         self.app_config: AppConfig | None
         try:
+            from google.cloud.ces_v1beta import types  # noqa: PLC0415
+
             self.app_config = AppConfig.load(
                 app_dir=app_dir,
                 env_file=env_file,
                 environment=environment,
+                schema_cls=types.App,
             )
         except FileNotFoundError as e:
             logger.info(

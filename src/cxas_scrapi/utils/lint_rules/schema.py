@@ -20,6 +20,7 @@ Ported from ``utils/validator.py`` — the linter is now the single
 validation tool.
 """
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -35,6 +36,10 @@ from cxas_scrapi.utils.linter import (
     Rule,
     Severity,
     rule,
+)
+from cxas_scrapi.utils.proto_helpers import (
+    get_dummy_value_for_field,
+    to_camel_case,
 )
 
 # ── Shared helpers (ported from Validator) ───────────────────────────────
@@ -103,11 +108,6 @@ def _resolve_paths(data, extra_prefixes=(), base_path=None):
     return data
 
 
-def _to_camel_case(snake_str: str) -> str:
-    components = snake_str.split("_")
-    return components[0] + "".join(x.title() for x in components[1:])
-
-
 def _get_required_fields(cls) -> list[str]:
     """Parse the docstring of a proto class to find required fields."""
     doc = cls.__doc__
@@ -127,7 +127,7 @@ def _validate_fields(data: dict, cls, path: str = "") -> None:
     """Validate required fields and recurse into nested proto messages."""
     required = _get_required_fields(cls)
     missing = [
-        f for f in required if f not in data and _to_camel_case(f) not in data
+        f for f in required if f not in data and to_camel_case(f) not in data
     ]
     if missing:
         cls_name = getattr(cls, "__name__", str(cls))
@@ -139,7 +139,7 @@ def _validate_fields(data: dict, cls, path: str = "") -> None:
         for name, field in cls.meta.fields.items():
             if not (hasattr(field, "message") and field.message is not None):
                 continue
-            camel_name = _to_camel_case(name)
+            camel_name = to_camel_case(name)
             field_data = data.get(name) or data.get(camel_name)
             if field_data is None:
                 continue
@@ -231,6 +231,43 @@ _RESOURCE_SCHEMAS = [
 ]
 
 
+def _sanitize_placeholders(data: dict, cls) -> None:
+    """Recursively replaces environment placeholders with dummy typed values.
+
+    This replaces strings starting with $ with dummy values of the expected
+    primitive type. This sanitizes the config dict to conform to primitive
+    field types expected by the proto schema, preventing
+    json_format.ParseDict from failing on type mismatch for placeholders.
+
+    Args:
+        data: The config dictionary to modify in-place.
+        cls: The proto-plus Message class to inspect for field types.
+    """
+    if not hasattr(cls, "meta") or not hasattr(cls.meta, "fields"):
+        return
+    for name, field in cls.meta.fields.items():
+        camel_name = to_camel_case(name)
+        key = None
+        if name in data:
+            key = name
+        elif camel_name in data:
+            key = camel_name
+        if key is None:
+            continue
+
+        val = data[key]
+
+        if isinstance(val, str) and val.startswith("$"):
+            data[key] = get_dummy_value_for_field(field)
+        elif isinstance(field, proto.fields.RepeatedField):
+            for item in val if isinstance(val, list) else []:
+                if isinstance(item, dict) and field.message:
+                    _sanitize_placeholders(item, field.message)
+        elif isinstance(field, proto.fields.Field) and isinstance(val, dict):
+            if field.message:
+                _sanitize_placeholders(val, field.message)
+
+
 class SchemaValid(Rule):
     """Validates a resource directory against its CES proto schema.
 
@@ -319,8 +356,13 @@ class SchemaValid(Rule):
             return [self.make_result(rel, str(e))]
 
         try:
+            sanitized_data = copy.deepcopy(data)
+            _sanitize_placeholders(sanitized_data, self._proto_type)
+
             obj = self._proto_type()
-            json_format.ParseDict(data, obj._pb, ignore_unknown_fields=False)
+            json_format.ParseDict(
+                sanitized_data, obj._pb, ignore_unknown_fields=False
+            )
         except Exception as e:
             return [
                 self.make_result(rel, f"Proto schema validation failed: {e}")
