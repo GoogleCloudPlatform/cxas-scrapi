@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Run all 4 eval types and generate a combined report in one command (SCRAPI)."""
+import typing
 
 import argparse
 import os

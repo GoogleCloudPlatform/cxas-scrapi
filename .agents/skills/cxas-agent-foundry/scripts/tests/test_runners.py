@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Tests for scrapi-sim-runner.py and run-evals.py wrappers.
 
 Run from the project root:
     python -m pytest \
         .agents/skills/cxas-agent-foundry/scripts/tests/test_runners.py
 """
+import typing
 
 import importlib.util
 import os

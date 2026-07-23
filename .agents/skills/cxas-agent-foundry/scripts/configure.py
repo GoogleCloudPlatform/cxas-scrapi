@@ -13,12 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Interactive configuration wizard for gecx-config.json.
 
 Uses Rich for display and InquirerPy for interactive prompts.
 Called by setup.sh after virtualenv and dependencies are installed.
 """
+import typing
 
 import json
 import os

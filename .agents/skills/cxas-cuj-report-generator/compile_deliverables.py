@@ -1,9 +1,9 @@
-import typing
 """Unified GECX Master Ingestion Compiler for Dual Reports & Deliverables.
 
 This script automates the compilation of both GECX reports (Comprehensive Full
 and brief CUJ) and packages them into a zipped deliverables archive in one step.
 """
+import typing
 
 import argparse
 import os

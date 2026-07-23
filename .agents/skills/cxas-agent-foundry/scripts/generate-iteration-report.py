@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Snapshot agent state and generate HTML iteration reports.
 
 Usage:
@@ -22,6 +21,7 @@ Usage:
   python scripts/generate-iteration-report.py report --iteration 3
   python scripts/generate-iteration-report.py report --message "Fixed escalation by adding set_variables tool"
 """
+import typing
 
 import argparse
 import difflib

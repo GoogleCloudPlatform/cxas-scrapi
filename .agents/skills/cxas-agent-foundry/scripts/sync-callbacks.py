@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Sync callback code into evals/callback_tests/agents/.
 
 Also creates test.py symlinks.
@@ -40,6 +39,7 @@ Usage:
   # Show what would be synced:
   python scripts/sync-callbacks.py --dry-run
 """
+import typing
 
 import argparse
 import os

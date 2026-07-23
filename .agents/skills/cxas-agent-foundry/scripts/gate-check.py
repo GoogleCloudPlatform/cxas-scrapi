@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Run the 6 build-verification gates against a deployed GECX app.
 
 The gates encode the checks documented in references/build-verification.md.
@@ -25,6 +24,7 @@ Usage:
   python scripts/gate-check.py --multi-turn prompts.json  # Run Gate 6 with the given prompts
   python scripts/gate-check.py --json            # Print JSON result to stdout instead of pretty text
 """
+import typing
 
 import argparse
 import datetime

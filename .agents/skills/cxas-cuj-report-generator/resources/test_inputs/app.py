@@ -1,5 +1,5 @@
-import typing
 """Simple module for processing restaurant orders."""
+import typing
 
 
 def process_order(order_id: typing.Any, items: typing.Any) -> typing.Any:

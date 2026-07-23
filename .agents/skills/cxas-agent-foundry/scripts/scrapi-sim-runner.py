@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """LLM-User Simulation eval runner using cxas-scrapi.
 
 Extends SimulationEvals to support session variables, multi-step goals,
@@ -25,6 +24,7 @@ Usage:
   python scripts/scrapi-sim-runner.py convert [--priority P0]
   python scripts/scrapi-sim-runner.py list
 """
+import typing
 
 import argparse
 import json

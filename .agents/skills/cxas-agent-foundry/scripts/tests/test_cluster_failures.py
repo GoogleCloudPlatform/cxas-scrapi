@@ -6,12 +6,12 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
-import typing
 """Tests for the failure-clustering helpers in triage-results.py.
 
 Run from the project root or this directory:
     python -m pytest .agents/skills/cxas-agent-foundry/scripts/tests/test_cluster_failures.py
 """
+import typing
 
 import importlib.util
 import os

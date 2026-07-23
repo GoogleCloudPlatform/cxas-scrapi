@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Eval runner using cxas-scrapi SDK.
 
 Usage:
@@ -25,6 +24,7 @@ Usage:
   python scripts/scrapi-eval-runner.py status
   python scripts/scrapi-eval-runner.py report <run_id>
 """
+import typing
 
 import argparse
 import sys

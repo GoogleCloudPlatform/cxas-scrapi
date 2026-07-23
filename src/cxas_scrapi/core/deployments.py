@@ -209,11 +209,6 @@ class Deployments(Apps):
 
         if traffic_split:
             if hasattr(types, "ExperimentConfig"):
-                if len(traffic_split) < 2:
-                    raise ValueError(
-                        "Traffic split requires at least two versions."
-                    )
-
                 versions_client = Versions(
                     app_name=self.app_name, creds=self.creds
                 )
@@ -242,10 +237,9 @@ class Deployments(Apps):
                 experiment_config.version_release = version_release
                 deployment.experiment_config = experiment_config
             else:
-                import logging  # noqa: PLC0415
-
-                logging.getLogger(__name__).warning(
-                    "ExperimentConfig is not available in the current API schema, ignoring traffic_split."  # noqa: E501
+                raise NotImplementedError(
+                    "traffic_split requires ExperimentConfig which is "
+                    "not available in the current API schema."
                 )
 
         request = types.CreateDeploymentRequest(
@@ -308,11 +302,6 @@ class Deployments(Apps):
         if "traffic_split" in kwargs:
             traffic_split = kwargs.pop("traffic_split")
             if hasattr(types, "ExperimentConfig"):
-                if len(traffic_split) < 2:
-                    raise ValueError(
-                        "Traffic split requires at least two versions."
-                    )
-
                 versions_client = Versions(
                     app_name=self.app_name, creds=self.creds
                 )
@@ -342,10 +331,9 @@ class Deployments(Apps):
                 deployment.experiment_config = experiment_config
                 mask_paths.append("experiment_config")
             else:
-                import logging  # noqa: PLC0415
-
-                logging.getLogger(__name__).warning(
-                    "ExperimentConfig is not available in the current API schema, ignoring traffic_split."  # noqa: E501
+                raise NotImplementedError(
+                    "traffic_split requires ExperimentConfig which is "
+                    "not available in the current API schema."
                 )
         elif "app_version" in kwargs:
             # If promoting a new version without a traffic split,

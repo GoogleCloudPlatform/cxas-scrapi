@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Triage golden eval results into failure categories for fast debugging.
 
 Usage:
@@ -22,6 +21,7 @@ Usage:
   python scripts/triage-results.py --run-id abc12345                  # Specific run
   python scripts/triage-results.py --last 3                           # Average across last 3 runs
 """
+import typing
 
 import argparse
 import json

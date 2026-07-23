@@ -1,5 +1,5 @@
-import typing
 """Module to reconstruct a single HTML report from YAML transcripts."""
+import typing
 
 from __future__ import annotations
 

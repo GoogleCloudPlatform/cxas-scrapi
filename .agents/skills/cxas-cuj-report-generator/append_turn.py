@@ -1,9 +1,9 @@
-import typing
 """Tool for agents to incrementally build transcripts in YAML format.
 
 Typical usage example:
     python append_turn.py --transcript_file=p.yml --input_file=t.yml
 """
+import typing
 
 from __future__ import annotations
 

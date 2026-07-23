@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Bootstrap local eval files from an existing GECX agent.
 
 Pulls platform goldens, auto-generates tool tests, syncs callbacks,
@@ -27,6 +26,7 @@ Usage:
   python scripts/bootstrap-evals.py --skip-callbacks   # Skip callback sync
   python scripts/bootstrap-evals.py --dry-run          # Show what would be done
 """
+import typing
 
 import argparse
 import os

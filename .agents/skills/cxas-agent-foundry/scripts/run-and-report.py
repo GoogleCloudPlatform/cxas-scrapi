@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Single-command iteration step: snapshot + push goldens + run evals + triage + iteration report.
 
 Combines the boring parts of the debug iteration loop into one command so the
@@ -26,6 +25,7 @@ Usage:
   python run-and-report.py --message "Edited agent only" --no-push-goldens
   python run-and-report.py --message "Testing" --dry-run
 """
+import typing
 
 import argparse
 import os

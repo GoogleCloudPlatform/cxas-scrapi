@@ -7,7 +7,6 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
-import typing
 
 """Stage 1: CXASOptimizer variable dedup + structural Gemini consolidation.
 
@@ -29,6 +28,7 @@ import asyncio  # noqa: E402
 import logging  # noqa: E402
 import os  # noqa: E402
 import sys  # noqa: E402
+import typing
 
 from rich.console import Console  # noqa: E402
 from rich.logging import RichHandler  # noqa: E402

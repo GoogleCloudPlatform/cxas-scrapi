@@ -30,17 +30,19 @@ ESCAPE_KEYBINDINGS = {"skip": [{"key": "escape"}]}
 # Uses a steel-blue background with white text for the pointer/selected row,
 # and magenta for fuzzy-matched characters so they pop against both
 # light and dark terminal themes.
-PROMPT_STYLE = get_style(  # type: ignore
-    {
-        "pointer": "#ffffff bg:#4a6fa5",
-        "fuzzy_match": "#ff79c6 bold",
-        "fuzzy_prompt": "#6c99bb",
-        "fuzzy_info": "#888888",
-        "fuzzy_border": "#4a6fa5",
-        "questionmark": "#6c99bb bold",
-        "answer": "#61afef",
-        "input": "#98c379",
-        "marker": "#e5c07b",
-    },
-    style_override=False,
-)
+PROMPT_STYLE = None
+if get_style is not None:
+    PROMPT_STYLE = get_style(  # type: ignore
+        {
+            "pointer": "#ffffff bg:#4a6fa5",
+            "fuzzy_match": "#ff79c6 bold",
+            "fuzzy_prompt": "#6c99bb",
+            "fuzzy_info": "#888888",
+            "fuzzy_border": "#4a6fa5",
+            "questionmark": "#6c99bb bold",
+            "answer": "#61afef",
+            "input": "#98c379",
+            "marker": "#e5c07b",
+        },
+        style_override=False,
+    )

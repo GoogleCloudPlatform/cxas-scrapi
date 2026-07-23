@@ -6,7 +6,6 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
-import typing
 
 """Shared helpers for the cxas-dfcx-migration skill scripts.
 
@@ -35,6 +34,7 @@ from __future__ import annotations  # noqa: E402, F404
 import functools  # noqa: E402
 import os  # noqa: E402
 import sys  # noqa: E402
+import typing
 from datetime import datetime  # noqa: E402
 from typing import TYPE_CHECKING, Any  # noqa: E402
 

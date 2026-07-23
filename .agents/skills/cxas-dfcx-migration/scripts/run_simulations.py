@@ -7,7 +7,6 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
-import typing
 
 """Run converted DFCX test simulations against a deployed CXAS agent.
 
@@ -44,6 +43,7 @@ import fnmatch  # noqa: E402
 import logging  # noqa: E402
 import os  # noqa: E402
 import sys  # noqa: E402
+import typing
 
 from rich.console import Console  # noqa: E402
 from rich.table import Table  # noqa: E402

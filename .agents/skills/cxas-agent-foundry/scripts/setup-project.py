@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Non-interactive project setup for GECX agents.
 
 Creates the project directory, pulls an existing app (if --app-id is provided),
@@ -27,6 +26,7 @@ For existing agents:
 
   Modality, model, and app name are auto-detected from the pulled app.json.
 """
+import typing
 
 import argparse
 import json

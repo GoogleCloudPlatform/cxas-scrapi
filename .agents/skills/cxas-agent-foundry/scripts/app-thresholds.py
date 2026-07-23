@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """View and update app-level golden eval scoring thresholds.
 
 Usage:
@@ -24,6 +23,7 @@ Usage:
   python scripts/app-thresholds.py set --hallucination disabled
   python scripts/app-thresholds.py set --similarity 2 --extra-tools allow --hallucination disabled
 """
+import typing
 
 import argparse
 import glob

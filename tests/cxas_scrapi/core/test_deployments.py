@@ -372,18 +372,33 @@ def test_create_deployment_traffic_split_valid(
     assert allocations[1].traffic_percentage == 10
 
 
+@pytest.mark.skipif(
+    not hasattr(types, "ExperimentConfig"),
+    reason="ExperimentConfig missing in ces_v1beta",
+)
 @patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_create_deployment_traffic_split_invalid_len(
+def test_create_deployment_traffic_split_single_version(
     mock_client_cls: typing.Any, mock_versions_cls: typing.Any
 ) -> None:
+    mock_versions = mock_versions_cls.return_value
+    v1 = MagicMock()
+    v1.name = "projects/p/locations/l/apps/A/versions/v1"
+    mock_versions.list_versions.return_value = [v1]
+
     deps = Deployments("projects/p/locations/l/apps/A")
-    with pytest.raises(
-        ValueError, match="Traffic split requires at least two versions"
-    ):
-        deps.create_deployment(
-            "dep_id", "my_dep", "v1", traffic_split={"v1": 100}
-        )
+    deps.create_deployment("dep_id", "my_dep", "v1", traffic_split={"v1": 100})
+
+    mock_client = mock_client_cls.return_value
+    assert mock_client.create_deployment.call_count == 1
+
+    _, kwargs = mock_client.create_deployment.call_args
+    req = kwargs.get("request")
+    dep = req.deployment
+    allocs = dep.experiment_config.version_release.traffic_allocations
+    assert len(allocs) == 1
+    assert allocs[0].app_version == v1.name
+    assert allocs[0].traffic_percentage == 100
 
 
 @pytest.mark.skipif(

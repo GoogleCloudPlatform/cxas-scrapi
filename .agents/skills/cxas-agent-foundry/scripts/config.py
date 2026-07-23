@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Shared config loader for GECX eval scripts.
 
 All scripts use gecx-config.json as the single source of truth for project
@@ -33,6 +32,7 @@ Usage:
     config = load_config()                         # full config dict
     evals_dir = get_project_path("evals", "goldens")  # /workspace/<project>/evals/goldens
 """
+import typing
 
 import json
 import os

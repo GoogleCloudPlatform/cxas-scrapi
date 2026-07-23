@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Capture full conversation transcripts to build or verify golden evals.
 
 Reads user turns from golden YAML files and replays them against the live agent,
@@ -24,6 +23,7 @@ Usage:
   python scripts/capture-golden-transcripts.py --all
   python scripts/capture-golden-transcripts.py --all --channel audio
 """
+import typing
 
 import argparse
 import json

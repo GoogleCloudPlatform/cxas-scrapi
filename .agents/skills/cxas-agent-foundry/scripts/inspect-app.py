@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 """Inspect a GECX app and dump its architecture, tools, variables, callbacks, and existing evals.
 
 Usage:
@@ -22,6 +21,7 @@ Usage:
   python scripts/inspect-app.py --json            # Output as JSON
   python scripts/inspect-app.py --save report.md  # Save to file
 """
+import typing
 
 import argparse
 import json
