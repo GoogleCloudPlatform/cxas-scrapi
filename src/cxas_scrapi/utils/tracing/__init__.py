@@ -19,4 +19,3 @@ Grouped here (instead of the flat `utils/`) to keep observability-related
 modules separate from generic shared utilities. The orchestration class
 `Traces` lives in `cxas_scrapi.core.traces` and composes these helpers.
 """
-

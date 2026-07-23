@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 from datetime import datetime
 
-
 import google.protobuf.duration_pb2
 from google.cloud.ces_v1beta import types
 from rich.console import Console
@@ -210,7 +209,7 @@ class MigrationService:
         self,
         target_name: str | None,
         *,
-        bundle: "IRBundle | None" = None,
+        bundle: IRBundle | None = None,
         output_dir: str | None = None,
     ) -> MigrationAnalysisBuilder | None:
         """Create the analysis builder on first use; cheap no-op afterwards.
@@ -276,7 +275,7 @@ class MigrationService:
         *,
         project_id: str | None = None,
         location: str | None = None,
-    ) -> "MigrationService":
+    ) -> MigrationService:
         """Recreate a `MigrationService` from a persisted :class:`IRBundle`.
 
         Used by stage_1 / stage_2 / stage_3 to resume work against an already
@@ -352,7 +351,7 @@ class MigrationService:
     async def run_stage_1(
         self,
         *,
-        bundle: "IRBundle | None" = None,
+        bundle: IRBundle | None = None,
         gemini_client: GeminiGenerate | None = None,
         grouping_callback: Callable[..., Awaitable[dict | None]] | None = None,
         grouping_json_path: str | None = None,
@@ -523,7 +522,7 @@ class MigrationService:
     async def _run_stage_1_consolidation(
         self,
         *,
-        bundle: "IRBundle",
+        bundle: IRBundle,
         gemini: GeminiGenerate,
         grouping_callback: (
             Callable[[MigrationIR, dict], Awaitable[dict | None]] | None
@@ -703,7 +702,7 @@ class MigrationService:
         unit_tests_path: str | None = None,
         run_lint: bool = False,
         write_report_to: str | None = None,
-        bundle: "IRBundle | None" = None,
+        bundle: IRBundle | None = None,
         persist_bundle_path: str | None = None,
         console: Console | None = None,
     ) -> None:
@@ -853,7 +852,7 @@ class MigrationService:
     async def run_stage_3(
         self,
         *,
-        bundle: "IRBundle",
+        bundle: IRBundle,
         mode: str = "hub",
         version_label: str | None = "0.0.5",
         persist_bundle_path: str | None = None,
@@ -958,7 +957,7 @@ class MigrationService:
 
     def persist_bundle(
         self,
-        bundle: "IRBundle",
+        bundle: IRBundle,
         path: str,
         *,
         phase: str | None = None,
