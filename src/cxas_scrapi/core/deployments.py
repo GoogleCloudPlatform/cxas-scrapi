@@ -208,6 +208,10 @@ class Deployments(Apps):
         deployment.channel_profile = channel_profile
 
         if traffic_split:
+            if len(traffic_split) < 2:
+                raise ValueError(
+                    "Traffic split requires at least two versions."
+                )
             if hasattr(types, "ExperimentConfig"):
                 versions_client = Versions(
                     app_name=self.app_name, creds=self.creds
@@ -301,6 +305,10 @@ class Deployments(Apps):
 
         if "traffic_split" in kwargs:
             traffic_split = kwargs.pop("traffic_split")
+            if len(traffic_split) < 2:
+                raise ValueError(
+                    "Traffic split requires at least two versions."
+                )
             if hasattr(types, "ExperimentConfig"):
                 versions_client = Versions(
                     app_name=self.app_name, creds=self.creds
