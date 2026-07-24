@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+import typing
+
 import pytest
 import yaml
 
@@ -19,21 +22,20 @@ from cxas_scrapi.utils.tracing import trace_config as tc_mod
 from cxas_scrapi.utils.tracing.trace_config import TraceConfig
 
 
-def _write(path, payload):
+def _write(path: typing.Any, payload: typing.Any) -> None:
     with open(path, "w") as f:
         yaml.safe_dump(payload, f)
 
 
 @pytest.fixture(autouse=True)
-def _isolated_paths(tmp_path, monkeypatch):
+def _isolated_paths(tmp_path: typing.Any, monkeypatch: typing.Any) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         tc_mod, "USER_CONFIG_PATH", str(tmp_path / "no_user.yaml")
     )
-    yield
 
 
-def test_load_defaults_when_no_config_file_found():
+def test_load_defaults_when_no_config_file_found() -> None:
     cfg = TraceConfig.load()
     assert cfg.audio.uri_pattern == "{bucket}/{conversation_id}.wav"
     assert cfg.cloud_logging.default_level == "WARNING"
@@ -47,12 +49,12 @@ def test_load_defaults_when_no_config_file_found():
     )
 
 
-def test_load_explicit_path_missing_raises(tmp_path):
+def test_load_explicit_path_missing_raises(tmp_path: typing.Any) -> None:
     with pytest.raises(FileNotFoundError):
         TraceConfig.load(explicit_path=str(tmp_path / "nope.yaml"))
 
 
-def test_explicit_path_overrides(tmp_path):
+def test_explicit_path_overrides(tmp_path: typing.Any) -> None:
     p = tmp_path / "trace.yaml"
     _write(
         p,
@@ -69,7 +71,9 @@ def test_explicit_path_overrides(tmp_path):
     assert cfg.gemini.thinking_level == "low"
 
 
-def test_project_config_takes_precedence_over_user(tmp_path, monkeypatch):
+def test_project_config_takes_precedence_over_user(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
     (project_dir / ".cxas").mkdir()
@@ -86,7 +90,9 @@ def test_project_config_takes_precedence_over_user(tmp_path, monkeypatch):
     assert cfg.audio.download_dir == "./project"
 
 
-def test_user_config_used_when_no_project(monkeypatch, tmp_path):
+def test_user_config_used_when_no_project(
+    monkeypatch: typing.Any, tmp_path: typing.Any
+) -> None:
     user_path = tmp_path / "user.yaml"
     _write(user_path, {"audio": {"download_dir": "./user-only"}})
     monkeypatch.setattr(tc_mod, "USER_CONFIG_PATH", str(user_path))
@@ -94,14 +100,14 @@ def test_user_config_used_when_no_project(monkeypatch, tmp_path):
     assert cfg.audio.download_dir == "./user-only"
 
 
-def test_invalid_yaml_payload_raises(tmp_path):
+def test_invalid_yaml_payload_raises(tmp_path: typing.Any) -> None:
     p = tmp_path / "trace.yaml"
     _write(p, {"audio": {"uri_pattern": 123}})  # int where str expected
     with pytest.raises(ValueError, match="Invalid trace config"):
         TraceConfig.load(explicit_path=str(p))
 
 
-def test_empty_yaml_uses_defaults(tmp_path):
+def test_empty_yaml_uses_defaults(tmp_path: typing.Any) -> None:
     p = tmp_path / "trace.yaml"
     p.write_text("")
     cfg = TraceConfig.load(explicit_path=str(p))

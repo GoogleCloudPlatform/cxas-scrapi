@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -27,12 +28,12 @@ from cxas_scrapi.evals.tool_evals import (
 )
 
 
-def test_operator_enum():
+def test_operator_enum() -> None:
     assert Operator.EQUALS.value == "equals"
     assert Operator.CONTAINS.value == "contains"
 
 
-def test_expectation_model():
+def test_expectation_model() -> None:
     exp = Expectation(path="$.result", operator=Operator.EQUALS, value="PASSED")
     assert exp.path == "$.result"
     assert exp.operator == Operator.EQUALS
@@ -41,7 +42,9 @@ def test_expectation_model():
 
 @patch("cxas_scrapi.evals.tool_evals.Tools")
 @patch("cxas_scrapi.evals.tool_evals.Variables")
-def test_tool_evals_init(mock_variables, mock_tools):
+def test_tool_evals_init(
+    mock_variables: typing.Any, mock_tools: typing.Any
+) -> None:
     mock_tools_instance = mock_tools.return_value
     mock_tools_instance.get_tools_map.return_value = {"tool1": "id1"}
 
@@ -51,7 +54,7 @@ def test_tool_evals_init(mock_variables, mock_tools):
     mock_tools_instance.get_tools_map.assert_called_once_with(reverse=True)
 
 
-def test_parse_dict_input():
+def test_parse_dict_input() -> None:
     assert ToolEvals._parse_dict_input(None) == {}
     assert ToolEvals._parse_dict_input('{"a": 1}') == {"a": 1}
     assert ToolEvals._parse_dict_input("invalid") == {}
@@ -60,7 +63,7 @@ def test_parse_dict_input():
     assert ToolEvals._parse_dict_input(123) == {}
 
 
-def test_parse_python_code():
+def test_parse_python_code() -> None:
     code = """
 def my_tool(arg1, arg2):
     return {"status": "SUCCESS", "id": 123}
@@ -70,13 +73,13 @@ def my_tool(arg1, arg2):
     assert set(returns) == {"status", "id"}
 
 
-def test_parse_python_code_invalid():
+def test_parse_python_code_invalid() -> None:
     args, returns = ToolEvals._parse_python_code("def foo( *invalid syntax")
     assert args == {}
     assert returns == []
 
 
-def test_parse_properties():
+def test_parse_properties() -> None:
     # Helper to avoid instantiating ToolEvals to test isolated util
     tu = ToolEvals.__new__(ToolEvals)
     props = {
@@ -99,7 +102,7 @@ def test_parse_properties():
     assert parsed["unknown_prop"] == "[unknown_prop]"
 
 
-def test_get_value_at_path():
+def test_get_value_at_path() -> None:
     tu = ToolEvals.__new__(ToolEvals)
     data = {"a": {"b": [{"c": 1}, {"c": 2}]}}
     assert tu._get_value_at_path(data, "$.a.b[0].c") == 1
@@ -107,7 +110,7 @@ def test_get_value_at_path():
     assert tu._get_value_at_path(data, "$.not.found") is None
 
 
-def test_check_expectation():
+def test_check_expectation() -> None:
     tu = ToolEvals.__new__(ToolEvals)
     assert tu._check_expectation(
         1, Expectation(path="", operator=Operator.EQUALS, value=1)
@@ -152,7 +155,7 @@ def test_check_expectation():
     )
 
 
-def test_tool_test_case_validation():
+def test_tool_test_case_validation() -> None:
     # Test that empty expectations works
     tc = ToolTestCase(name="t1", tool="tool1")
     assert tc.args == {}
@@ -188,7 +191,7 @@ def test_tool_test_case_validation():
     assert tc5.context == {}
 
 
-def test_parse_python_function():
+def test_parse_python_function() -> None:
     tu = ToolEvals.__new__(ToolEvals)
     # Tool with properties in schema
     t1 = {
@@ -211,7 +214,7 @@ def test_parse_python_function():
     assert returns2 == ["world"]
 
 
-def test_parse_openapi_toolset():
+def test_parse_openapi_toolset() -> None:
     tu = ToolEvals.__new__(ToolEvals)
     schema = """
 paths:
@@ -243,7 +246,7 @@ paths:
     assert returns2 == []
 
 
-def test_validate_tool_test():
+def test_validate_tool_test() -> None:
     tu = ToolEvals.__new__(ToolEvals)
 
     tc = ToolTestCase(
@@ -271,7 +274,9 @@ def test_validate_tool_test():
 @patch("cxas_scrapi.evals.tool_evals.Tools")
 @patch("cxas_scrapi.evals.tool_evals.Variables")
 @patch("cxas_scrapi.evals.tool_evals.Apps")
-def test_run_tool_tests(mock_apps, mock_variables, mock_tools):
+def test_run_tool_tests(
+    mock_apps: typing.Any, mock_variables: typing.Any, mock_tools: typing.Any
+) -> None:
     mock_tools_instance = mock_tools.return_value
     mock_tools_instance.get_tools_map.return_value = {
         "tool1": "projects/p/locations/l/apps/test_app/tools/tool1"
@@ -321,7 +326,9 @@ def test_run_tool_tests(mock_apps, mock_variables, mock_tools):
 @patch("cxas_scrapi.evals.tool_evals.Tools")
 @patch("cxas_scrapi.evals.tool_evals.Variables")
 @patch("cxas_scrapi.evals.tool_evals.Apps")
-def test_run_tool_tests_with_context(mock_apps, mock_variables, mock_tools):
+def test_run_tool_tests_with_context(
+    mock_apps: typing.Any, mock_variables: typing.Any, mock_tools: typing.Any
+) -> None:
     mock_tools_instance = mock_tools.return_value
     mock_tools_instance.get_tools_map.return_value = {
         "tool1": "projects/p/locations/l/apps/test_app/tools/tool1"
@@ -372,8 +379,8 @@ def test_run_tool_tests_with_context(mock_apps, mock_variables, mock_tools):
 @patch("cxas_scrapi.evals.tool_evals.Variables")
 @patch("cxas_scrapi.evals.tool_evals.Apps")
 def test_run_tool_tests_openapi_with_context_fails(
-    mock_apps, mock_variables, mock_tools
-):
+    mock_apps: typing.Any, mock_variables: typing.Any, mock_tools: typing.Any
+) -> None:
     mock_tools_instance = mock_tools.return_value
     mock_tools_instance.get_tools_map.return_value = {
         "tool1": "toolsets/my_openapi_tool"
@@ -405,7 +412,7 @@ def test_run_tool_tests_openapi_with_context_fails(
     mock_tools_instance.execute_tool.assert_not_called()
 
 
-def test_calculate_stats():
+def test_calculate_stats() -> None:
     tu = ToolEvals.__new__(ToolEvals)
     df = pd.DataFrame(
         [
@@ -442,7 +449,7 @@ def test_calculate_stats():
     assert stats.tester == "user@google.com"
 
 
-def test_calculate_stats_empty():
+def test_calculate_stats_empty() -> None:
     tu = ToolEvals.__new__(ToolEvals)
     df = pd.DataFrame()
 
@@ -452,7 +459,7 @@ def test_calculate_stats_empty():
     assert stats.pass_rate == 0.0
 
 
-def test_generate_report():
+def test_generate_report() -> None:
     tu = ToolEvals.__new__(ToolEvals)
     df = pd.DataFrame(
         [

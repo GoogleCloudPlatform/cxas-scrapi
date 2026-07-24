@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Playbook-level Rich tree visualizer for DFCX agents."""
 
 import re
+import typing
 from typing import Any
 
 from rich.markup import escape
@@ -25,10 +27,10 @@ from rich.tree import Tree
 class PlaybookTreeVisualizer:
     """Generates a detailed Rich Tree for a single Playbook."""
 
-    def __init__(self, playbook_data: dict[str, Any]):
+    def __init__(self, playbook_data: dict[str, Any]) -> None:
         self.pb = playbook_data
 
-    def _render_steps(self, parent_node, steps):
+    def _render_steps(self, parent_node: typing.Any, steps: typing.Any) -> None:
         for step in steps:
             text = step.get("text", "")
             if text:

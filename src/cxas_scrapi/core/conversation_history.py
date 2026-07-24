@@ -16,6 +16,7 @@
 
 import datetime
 import logging
+import typing
 from typing import Any
 
 import pandas as pd
@@ -38,8 +39,8 @@ class ConversationHistory(Common):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         super().__init__(
             creds_path=creds_path,
             creds_dict=creds_dict,
@@ -56,7 +57,7 @@ class ConversationHistory(Common):
         )
 
     @staticmethod
-    def parse_conversation_to_yaml(filepath):
+    def parse_conversation_to_yaml(filepath: typing.Any) -> typing.Any:
         """Parses a direct CXAS Conversation History textproto into the
         target FDE YAML format."""
         with open(filepath) as f:
@@ -66,7 +67,7 @@ class ConversationHistory(Common):
         return ConversationHistory.conversation_dict_to_yaml(parsed)
 
     @staticmethod
-    def conversation_dict_to_yaml(conv_dict):
+    def conversation_dict_to_yaml(conv_dict: typing.Any) -> typing.Any:
         """Parses a direct CXAS Conversation History dictionary into the
         target FDE YAML format."""
 

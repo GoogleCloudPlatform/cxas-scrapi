@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Agents class for CXAS Scrapi."""
 
+import typing
 from typing import Any
 
 from google.cloud.ces_v1beta import AgentServiceClient, types
@@ -33,8 +35,8 @@ class Agents(Apps):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Agents client."""
         project_id = Common._get_project_id(app_name)
         location = Common._get_location(app_name)
@@ -164,7 +166,7 @@ class Agents(Apps):
         request = types.UpdateAgentRequest(agent=agent_data, update_mask=mask)
         return self.client.update_agent(request=request)
 
-    def delete_agent(self, agent_name: str):
+    def delete_agent(self, agent_name: str) -> None:
         """Deletes an agent."""
         request = types.DeleteAgentRequest(name=agent_name)
         self.client.delete_agent(request=request)

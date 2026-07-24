@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import time
+import typing
 from typing import Any
 
 from cxas_scrapi.core.insights import Insights
@@ -28,8 +29,11 @@ class Scorecards(Insights):
     """Core Class for managing CCAI Insights Scorecards."""
 
     def __init__(
-        self, project_id: str, location: str = "us-central1", **kwargs
-    ):
+        self,
+        project_id: str,
+        location: str = "us-central1",
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Scorecards client."""
         super().__init__(project_id=project_id, location=location, **kwargs)
 

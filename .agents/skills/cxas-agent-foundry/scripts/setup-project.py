@@ -26,6 +26,7 @@ For existing agents:
 
   Modality, model, and app name are auto-detected from the pulled app.json.
 """
+import typing
 
 import argparse
 import json
@@ -34,7 +35,7 @@ import subprocess
 import sys
 
 
-def detect_modality_from_app(app_dir):
+def detect_modality_from_app(app_dir: typing.Any) -> typing.Any:
     """Read app.json and detect model/modality from modelSettings."""
     app_json_candidates = []
     for root, dirs, files in os.walk(app_dir):
@@ -64,7 +65,7 @@ def detect_modality_from_app(app_dir):
     return app_name, model, modality
 
 
-def main():
+def main() -> typing.Any:
     parser = argparse.ArgumentParser(description="Set up a GECX project directory.")
     parser.add_argument("--project-id", required=True, help="GCP project ID")
     parser.add_argument("--app-id", help="Existing app ID (short name or UUID). If provided, pulls the app and auto-detects modality.")

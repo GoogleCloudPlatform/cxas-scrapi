@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Versions class for CXAS Scrapi."""
 
+import typing
 from typing import Any
 
 from google.cloud.ces_v1beta import types
@@ -32,8 +34,8 @@ class Versions(Apps):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Versions client."""
         project_id = Common._get_project_id(app_name)
         location = Common._get_location(app_name)

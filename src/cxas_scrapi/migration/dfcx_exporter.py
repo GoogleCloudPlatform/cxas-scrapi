@@ -95,7 +95,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     @staticmethod
     def _process_flat_resource(
         ctx: "_ResourceProcessingContext", path_parts: list[str], filename: str
-    ):
+    ) -> None:
         """Processes flat resources like webhooks and
         agentTransitionRouteGroups."""
         res_type = path_parts[0]
@@ -121,7 +121,7 @@ class DFCXAgentExporter(BaseDFCXClient):
     @staticmethod
     def _process_standard_resource(
         ctx: "_ResourceProcessingContext", path_parts: list[str], filename: str
-    ):
+    ) -> None:
         """Processes standard resources with type/name/name.json structure."""
         res_type = path_parts[0]
         with ctx.zip_file.open(filename) as f:
@@ -629,10 +629,10 @@ class DFCXPlaybooks(BaseDFCXClient):
         if not client_options:
             return []
         try:
-            client = cx_services.playbooks.PlaybooksClient(
+            client = cx_services.playbooks.PlaybooksClient(  # type: ignore
                 client_options=client_options
             )
-            request = cx_types.ListPlaybooksRequest(parent=agent_id)
+            request = cx_types.ListPlaybooksRequest(parent=agent_id)  # type: ignore
             playbooks = client.list_playbooks(request=request)
             return [MessageToDict(pb._pb) for pb in playbooks]
         except Exception as e:
@@ -652,7 +652,7 @@ class DFCXTools(BaseDFCXClient):
             client = cx_services.tools.ToolsClient(
                 client_options=client_options
             )
-            request = cx_types.ListToolsRequest(parent=agent_id)
+            request = cx_types.ListToolsRequest(parent=agent_id)  # type: ignore
             tools = client.list_tools(request=request)
             return [MessageToDict(t._pb) for t in tools]
         except Exception as e:
@@ -675,10 +675,10 @@ class DFCXGenerativeSettings(BaseDFCXClient):
             client = cx_services.agents.AgentsClient(
                 client_options=client_options
             )
-            request = cx_types.GetGenerativeSettingsRequest(
+            request = cx_types.GetGenerativeSettingsRequest(  # type: ignore
                 name=settings_name, language_code=language_code
             )
-            response = client.get_generative_settings(request=request)
+            response = client.get_generative_settings(request=request)  # type: ignore
             return MessageToDict(response._pb)
         except api_exceptions.NotFound:
             logger.info(
@@ -696,7 +696,7 @@ class DFCXGenerativeSettings(BaseDFCXClient):
 class ConversationalAgentsAPI:
     """Facade class to access all Dialogflow CX resources for migration."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.agents = DFCXAgents()
         self.playbooks = DFCXPlaybooks()
         self.tools = DFCXTools()

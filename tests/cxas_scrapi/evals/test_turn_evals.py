@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Unit tests for the TurnEvals testing utility."""
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -34,11 +36,11 @@ from cxas_scrapi.utils.eval_utils import (
 
 
 class MockTurnResponse:
-    def __init__(self, dict_data):
+    def __init__(self, dict_data: typing.Any) -> None:
         self._dict_data = dict_data
 
     @property
-    def _pb(self):
+    def _pb(self) -> None:
         # We'll just define an object that MessageToDict can process, or
         # mock MessageToDict directly. For testing, it's easier to mock
         # MessageToDict
@@ -46,7 +48,7 @@ class MockTurnResponse:
 
 
 @pytest.fixture
-def mock_turn_evals():
+def mock_turn_evals() -> typing.Any:
     with (
         patch("cxas_scrapi.evals.turn_evals.Sessions"),
         patch("cxas_scrapi.evals.turn_evals.Variables"),
@@ -55,7 +57,7 @@ def mock_turn_evals():
         return evals
 
 
-def test_load_turn_test_cases_from_yaml(mock_turn_evals):
+def test_load_turn_test_cases_from_yaml(mock_turn_evals: typing.Any) -> None:
     yaml_str = """
 tests:
   - name: test_greeting
@@ -81,7 +83,9 @@ tests:
 
 
 @patch("cxas_scrapi.evals.turn_evals.MessageToDict")
-def test_validate_turn_test_success(mock_message_to_dict, mock_turn_evals):
+def test_validate_turn_test_success(
+    mock_message_to_dict: typing.Any, mock_turn_evals: typing.Any
+) -> None:
     mock_message_to_dict.return_value = {
         "outputs": [
             {
@@ -137,7 +141,9 @@ def test_validate_turn_test_success(mock_message_to_dict, mock_turn_evals):
 
 
 @patch("cxas_scrapi.evals.turn_evals.MessageToDict")
-def test_validate_turn_test_failures(mock_message_to_dict, mock_turn_evals):
+def test_validate_turn_test_failures(
+    mock_message_to_dict: typing.Any, mock_turn_evals: typing.Any
+) -> None:
     mock_message_to_dict.return_value = {
         "outputs": [
             {
@@ -189,7 +195,9 @@ def test_validate_turn_test_failures(mock_message_to_dict, mock_turn_evals):
 
 
 @patch("cxas_scrapi.evals.turn_evals.MessageToDict")
-def test_extract_signals(mock_message_to_dict, mock_turn_evals):
+def test_extract_signals(
+    mock_message_to_dict: typing.Any, mock_turn_evals: typing.Any
+) -> None:
     mock_message_to_dict.return_value = {
         "text": "Hello there!",
         "toolCalls": {
@@ -207,7 +215,9 @@ def test_extract_signals(mock_message_to_dict, mock_turn_evals):
 
 
 @patch("cxas_scrapi.evals.turn_evals.MessageToDict")
-def test_run_turn_tests(mock_message_to_dict, mock_turn_evals):
+def test_run_turn_tests(
+    mock_message_to_dict: typing.Any, mock_turn_evals: typing.Any
+) -> None:
     mock_message_to_dict.return_value = {"text": "Hello!"}
 
     # Mock the session run to return a dummy response
@@ -234,8 +244,10 @@ def test_run_turn_tests(mock_message_to_dict, mock_turn_evals):
 @patch("cxas_scrapi.evals.turn_evals.evaluate_expectations")
 @patch("cxas_scrapi.evals.turn_evals.MessageToDict")
 def test_run_turn_tests_conversation_expectations(
-    mock_message_to_dict, mock_evaluate_expectations, mock_turn_evals
-):
+    mock_message_to_dict: typing.Any,
+    mock_evaluate_expectations: typing.Any,
+    mock_turn_evals: typing.Any,
+) -> None:
     mock_message_to_dict.return_value = {"text": "Hello!"}
 
     mock_evaluate_expectations.return_value = [
@@ -268,7 +280,9 @@ def test_run_turn_tests_conversation_expectations(
     assert "Overall good" in conv_row.iloc[0]["llm_results"]
 
 
-def test_run_turn_tests_multi_turn_passes_historical_contexts(mock_turn_evals):
+def test_run_turn_tests_multi_turn_passes_historical_contexts(
+    mock_turn_evals: typing.Any,
+) -> None:
     mock_turn_evals.sessions_client.run.return_value = MagicMock()
 
     cases = [
@@ -297,28 +311,30 @@ def test_run_turn_tests_multi_turn_passes_historical_contexts(mock_turn_evals):
     assert kwargs["historical_contexts"] is None
 
 
-def test_historical_context_config_mutually_exclusive():
+def test_historical_context_config_mutually_exclusive() -> None:
     # Valid cases
     HistoricalContextConfig(session_id="sid")
     HistoricalContextConfig(test_name="tname")
     HistoricalContextConfig(utterances=[{"user": "hi"}])
 
     # Invalid cases
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         HistoricalContextConfig(session_id="sid", test_name="tname")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         HistoricalContextConfig(session_id="sid", utterances=[{"user": "hi"}])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         HistoricalContextConfig(test_name="tname", utterances=[{"user": "hi"}])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         HistoricalContextConfig()  # None provided
 
 
-def test_run_turn_tests_resolves_test_name_dependency(mock_turn_evals):
+def test_run_turn_tests_resolves_test_name_dependency(
+    mock_turn_evals: typing.Any,
+) -> None:
     mock_turn_evals.sessions_client.run.return_value = MagicMock()
 
     # Mock dependency manager to return resolved ID only for "parent_test"
-    def resolve_session_id(name):
+    def resolve_session_id(name: typing.Any) -> str | None:
         if name == "parent_test":
             return "resolved_session_123"
         return None
@@ -344,7 +360,9 @@ def test_run_turn_tests_resolves_test_name_dependency(mock_turn_evals):
     assert kwargs["historical_contexts"] == "resolved_session_123"
 
 
-def test_run_turn_tests_passes_utterances_directly(mock_turn_evals):
+def test_run_turn_tests_passes_utterances_directly(
+    mock_turn_evals: typing.Any,
+) -> None:
     mock_turn_evals.sessions_client.run.return_value = MagicMock()
 
     utterances = [{"user": "Hello"}, {"agent": "Hi!"}]
@@ -363,7 +381,7 @@ def test_run_turn_tests_passes_utterances_directly(mock_turn_evals):
     assert kwargs["historical_contexts"] == utterances
 
 
-def test_topological_sort(mock_turn_evals):
+def test_topological_sort(mock_turn_evals: typing.Any) -> None:
     # Setup cases
     c1 = TurnTestCase(
         name="child1",
@@ -385,7 +403,9 @@ def test_topological_sort(mock_turn_evals):
     assert [c.name for c in sorted_cases] == ["parent", "child1", "grandchild"]
 
 
-def test_topological_sort_circular_dependency(mock_turn_evals):
+def test_topological_sort_circular_dependency(
+    mock_turn_evals: typing.Any,
+) -> None:
     # Setup cases
     c1 = TurnTestCase(
         name="a",
@@ -404,7 +424,7 @@ def test_topological_sort_circular_dependency(mock_turn_evals):
         mock_turn_evals._topological_sort(cases)
 
 
-def test_run_turn_tests_with_event(mock_turn_evals):
+def test_run_turn_tests_with_event(mock_turn_evals: typing.Any) -> None:
     mock_turn_evals.sessions_client.run.return_value = MagicMock()
 
     cases = [
@@ -423,7 +443,9 @@ def test_run_turn_tests_with_event(mock_turn_evals):
     assert kwargs["event"] == "welcome"
 
 
-def test_run_turn_tests_multi_turn_with_event(mock_turn_evals):
+def test_run_turn_tests_multi_turn_with_event(
+    mock_turn_evals: typing.Any,
+) -> None:
     mock_turn_evals.sessions_client.run.return_value = MagicMock()
 
     cases = [
@@ -457,7 +479,9 @@ def test_run_turn_tests_multi_turn_with_event(mock_turn_evals):
 
 @patch("cxas_scrapi.evals.turn_evals.Variables")
 @patch("cxas_scrapi.evals.turn_evals.Sessions")
-def test_turn_evals_init_with_rate_limiter(mock_sessions, mock_variables):
+def test_turn_evals_init_with_rate_limiter(
+    mock_sessions: typing.Any, mock_variables: typing.Any
+) -> None:
     mock_rate_limiter = MagicMock()
     _ = TurnEvals(
         app_name="projects/p/locations/l/apps/a",

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,7 +21,7 @@ from cxas_scrapi.core.scorecards import Scorecards
 
 
 @pytest.fixture
-def mock_google_auth():
+def mock_google_auth() -> typing.Any:
     with patch("google.auth.default") as mock_auth:
         mock_creds = MagicMock()
         mock_creds.token = "fake_token"
@@ -30,7 +31,9 @@ def mock_google_auth():
 
 
 @patch("requests.Session.request")
-def test_create_scorecard_with_questions(mock_request, mock_google_auth):
+def test_create_scorecard_with_questions(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     mock_sc = MagicMock()
     mock_sc.status_code = 200
     mock_sc.json.return_value = {
@@ -68,7 +71,9 @@ def test_create_scorecard_with_questions(mock_request, mock_google_auth):
 
 
 @patch("requests.Session.request")
-def test_delete_scorecard(mock_request, mock_google_auth):
+def test_delete_scorecard(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     mock_resp = MagicMock()
     mock_resp.status_code = 204
     mock_request.return_value = mock_resp
@@ -82,7 +87,9 @@ def test_delete_scorecard(mock_request, mock_google_auth):
 
 
 @patch("requests.Session.request")
-def test_tune_and_deploy_revision(mock_request, mock_google_auth):
+def test_tune_and_deploy_revision(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     mock_resp1 = MagicMock()
     mock_resp1.status_code = 200
     mock_resp1.json.return_value = {"name": "operations/op1"}
@@ -102,7 +109,9 @@ def test_tune_and_deploy_revision(mock_request, mock_google_auth):
 
 
 @patch("requests.Session.request")
-def test_activate_revision(mock_request, mock_google_auth):
+def test_activate_revision(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     mock_get1 = MagicMock()
     mock_get1.status_code = 200
     mock_get1.json.return_value = {"name": "rev_name", "state": "EDITABLE"}

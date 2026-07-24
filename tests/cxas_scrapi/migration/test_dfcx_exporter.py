@@ -21,7 +21,7 @@ import zipfile
 from cxas_scrapi.migration.dfcx_exporter import DFCXAgentExporter
 
 
-def test_process_zip_content_minimal():
+def test_process_zip_content_minimal() -> None:
     extractor = DFCXAgentExporter()
     agent_id = "projects/test-project/locations/global/agents/test-agent"
 
@@ -55,7 +55,7 @@ def test_process_zip_content_minimal():
     assert hasattr(result, "agent_transition_route_groups")
 
 
-def test_process_zip_content_complex():
+def test_process_zip_content_complex() -> None:
     extractor = DFCXAgentExporter()
     agent_id = "projects/test-project/locations/global/agents/test-agent"
 

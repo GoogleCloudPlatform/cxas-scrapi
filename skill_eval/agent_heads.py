@@ -17,14 +17,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import pathlib
 import re
 import shutil
 import sys
 import uuid
-from collections.abc import Sequence
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import google.auth
 import google.auth.transport.requests
@@ -34,6 +34,9 @@ from google.antigravity import Agent, LocalAgentConfig
 from google.antigravity.hooks import policy
 
 from skill_eval import benchmark, scenario, trajectory_extractor
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _get_default_project_id() -> str | None:
@@ -50,7 +53,9 @@ def _get_default_project_id() -> str | None:
 class ScaffoldingTestAgent(benchmark.BaseAgentHead):
     """A mock agent head that returns pre-defined scaffolding responses."""
 
-    def __init__(self, scenario_name: str, name: str = "ScaffoldingTestAgent"):
+    def __init__(
+        self, scenario_name: str, name: str = "ScaffoldingTestAgent"
+    ) -> None:
         self._name = name
         self._scenario_name = scenario_name
         self._session_id = uuid.uuid4().hex
@@ -136,7 +141,7 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
         setup_commands: Sequence[str] | None = None,
         run_uuid: str | None = None,
         keep_workspaces: bool = False,
-    ):
+    ) -> None:
         self._scenario_name = scenario_name
         self._session_id = uuid.uuid4().hex
         path_obj = pathlib.Path(scenario_path)
@@ -481,10 +486,8 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
     async def close(self) -> None:
         """Closes the conversation and the agent session."""
         if self._agent:
-            try:
+            with contextlib.suppress(Exception):
                 await self._agent.__aexit__(None, None, None)
-            except Exception:
-                pass
             self._agent = None
             self._events_last_turn = []
 
@@ -535,7 +538,7 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
                         lines = stdout.decode().split("\n")
 
                         for line in lines:
-                            if self._run_uuid in line:
+                            if self._run_uuid in line:  # noqa: SIM102
                                 # Extract the unique fully qualified App
                                 # Resource Name directly.
                                 if "projects/" in line:
@@ -613,10 +616,8 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
                     content = content.replace("{project_id}", project_id)
                     modified = True
                 if modified:
-                    try:
+                    with contextlib.suppress(OSError):
                         os.chmod(file_path, 0o644)
-                    except OSError:
-                        pass
                     with open(file_path, "w", encoding="utf-8") as fp:
                         fp.write(content)
                     logging.info(
@@ -633,10 +634,8 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
 
     def _make_workspace_writable(self) -> None:
         """Recursively chmods the staging workspace to be fully writable."""
-        try:
+        with contextlib.suppress(OSError):
             os.chmod(self._workspace_dir, 0o755)
-        except OSError:
-            pass
         for root, dirs, files in os.walk(self._workspace_dir):
             try:
                 if not os.path.islink(root):
@@ -646,17 +645,13 @@ class AntigravityAgentHead(benchmark.BaseAgentHead):
             for d in dirs:
                 path = os.path.join(root, d)
                 if not os.path.islink(path):
-                    try:
+                    with contextlib.suppress(OSError):
                         os.chmod(path, 0o755)
-                    except OSError:
-                        pass
             for f in files:
                 path = os.path.join(root, f)
                 if not os.path.islink(path):
-                    try:
+                    with contextlib.suppress(OSError):
                         os.chmod(path, 0o644)
-                    except OSError:
-                        pass
 
     @property
     def name(self) -> str:

@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Unit tests for the eval conversation utility."""
 
+import typing
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -36,7 +38,7 @@ from cxas_scrapi.utils.eval_utils import (
 )
 
 
-def test_llm_user_conversation():
+def test_llm_user_conversation() -> None:
     mock_gemini_client = MagicMock()
 
     user_utterance_0 = "event: welcome"
@@ -107,7 +109,7 @@ def test_llm_user_conversation():
     mock_gemini_client.generate.assert_called_once()
 
 
-def test_llm_user_conversation_max_turns():
+def test_llm_user_conversation_max_turns() -> None:
     mock_gemini_client = MagicMock()
 
     user_utterance_0 = "event: welcome"
@@ -154,7 +156,9 @@ def test_llm_user_conversation_max_turns():
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
-def test_user_simulator(mock_llm_conv_class, mock_sessions_class):
+def test_user_simulator(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -185,7 +189,7 @@ def test_user_simulator(mock_llm_conv_class, mock_sessions_class):
 
     # Initialize the SimulationEvals
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -229,8 +233,8 @@ def test_user_simulator(mock_llm_conv_class, mock_sessions_class):
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
 def test_user_simulator_audio_single_stream(
-    mock_llm_conv_class, mock_sessions_class
-):
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -276,7 +280,7 @@ def test_user_simulator_audio_single_stream(
     ]
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -318,7 +322,9 @@ def test_user_simulator_audio_single_stream(
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
-def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
+def test_user_simulator_audio(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
     """Default audio simulations use one bidi connection per turn."""
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
@@ -358,7 +364,7 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
     mock_sessions.run.side_effect = [mock_response_1, mock_response_2]
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -404,8 +410,8 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
 def test_user_simulator_audio_with_tool_fakes(
-    mock_llm_conv_class, mock_sessions_class
-):
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -450,7 +456,7 @@ def test_user_simulator_audio_with_tool_fakes(
     ]
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -479,8 +485,8 @@ def test_user_simulator_audio_with_tool_fakes(
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
 def test_user_simulator_audio_with_eval_enabled(
-    mock_llm_conv_class, mock_sessions_class
-):
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -531,7 +537,7 @@ def test_user_simulator_audio_with_eval_enabled(
     ]
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -571,7 +577,7 @@ def test_user_simulator_audio_with_eval_enabled(
     }
 
 
-def test_parse_agent_response_standard():
+def test_parse_agent_response_standard() -> None:
     mock_response = MagicMock()
     mock_output = MagicMock()
     mock_output.text = "Hello there"
@@ -585,7 +591,7 @@ def test_parse_agent_response_standard():
     mock_response.outputs = [mock_output]
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -602,7 +608,7 @@ def test_parse_agent_response_standard():
     assert not session_ended
 
 
-def test_parse_agent_response_agent_transfer():
+def test_parse_agent_response_agent_transfer() -> None:
     mock_response = MagicMock()
     mock_output = MagicMock()
     mock_output.text = ""
@@ -620,7 +626,7 @@ def test_parse_agent_response_agent_transfer():
     mock_response.outputs = [mock_output]
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -638,7 +644,7 @@ def test_parse_agent_response_agent_transfer():
     assert not session_ended
 
 
-def test_parse_agent_response_custom_payload():
+def test_parse_agent_response_custom_payload() -> None:
     mock_response = MagicMock()
     mock_output = MagicMock()
     mock_output.text = ""
@@ -656,7 +662,7 @@ def test_parse_agent_response_custom_payload():
     mock_response.outputs = [mock_output]
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -672,7 +678,7 @@ def test_parse_agent_response_custom_payload():
     assert not session_ended
 
 
-def test_parse_agent_response_diagnostic():
+def test_parse_agent_response_diagnostic() -> None:
     mock_response = MagicMock()
     mock_output = MagicMock()
     mock_output.text = ""
@@ -690,7 +696,7 @@ def test_parse_agent_response_diagnostic():
     mock_response.outputs = [mock_output]
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -706,7 +712,7 @@ def test_parse_agent_response_diagnostic():
     assert not session_ended
 
 
-def test_evaluate_expectations():
+def test_evaluate_expectations() -> None:
     app_name = "projects/test/locations/us/apps/123-abc"
     with patch(
         "cxas_scrapi.evals.simulation_evals.GeminiGenerate"
@@ -735,7 +741,7 @@ def test_evaluate_expectations():
     assert eval_conv.expectation_results == mock_output.results
 
 
-def test_simulation_report_rendering():
+def test_simulation_report_rendering() -> None:
     goals_df = pd.DataFrame([{"goal": "Goal 1", "status": "Met"}])
     expectations_df = pd.DataFrame([{"expectation": "Exp 1", "status": "Met"}])
 
@@ -755,7 +761,7 @@ def test_simulation_report_rendering():
 # Granular unit tests for refactored components
 
 
-def test_llm_user_check_conversation_status_continue():
+def test_llm_user_check_conversation_status_continue() -> None:
     mock_genai_client = MagicMock()
     test_case = {
         "steps": [{"goal": "greet"}],
@@ -764,7 +770,7 @@ def test_llm_user_check_conversation_status_continue():
     assert conv._check_conversation_status() is True
 
 
-def test_llm_user_check_conversation_status_max_turns():
+def test_llm_user_check_conversation_status_max_turns() -> None:
     mock_genai_client = MagicMock()
     test_case = {
         "steps": [{"goal": "greet"}],
@@ -776,7 +782,7 @@ def test_llm_user_check_conversation_status_max_turns():
     assert conv._check_conversation_status() is False
 
 
-def test_llm_user_get_active_step_index():
+def test_llm_user_get_active_step_index() -> None:
     mock_genai_client = MagicMock()
     test_case = {
         "steps": [{"goal": "greet"}, {"goal": "ask_hours"}],
@@ -794,7 +800,7 @@ def test_llm_user_get_active_step_index():
     assert conv._get_active_step_index() is None
 
 
-def test_llm_user_next_user_utterance_static_utterance_bypass():
+def test_llm_user_next_user_utterance_static_utterance_bypass() -> None:
     mock_genai_client = MagicMock()
     test_case = {
         "steps": [
@@ -834,9 +840,9 @@ def test_llm_user_next_user_utterance_static_utterance_bypass():
     mock_genai_client.generate.assert_not_called()
 
 
-def test_simulation_evals_add_agent_text():
+def test_simulation_evals_add_agent_text() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
     turn = Turn(tool_calls=[])
@@ -846,9 +852,9 @@ def test_simulation_evals_add_agent_text():
     assert turn.agent == ["Hello", "World"]
 
 
-def test_simulation_evals_match_tool_response():
+def test_simulation_evals_match_tool_response() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
     tc = ToolCall(action="my_tool", args={})
@@ -857,9 +863,9 @@ def test_simulation_evals_match_tool_response():
     assert tc.output == {"res": "ok"}
 
 
-def test_simulation_evals_get_turns_from_local_trace():
+def test_simulation_evals_get_turns_from_local_trace() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
     trace = [
@@ -877,9 +883,9 @@ def test_simulation_evals_get_turns_from_local_trace():
     assert any("[Custom Payload]" in text for text in turns[0].agent)
 
 
-def test_simulation_evals_process_platform_chunk_text():
+def test_simulation_evals_process_platform_chunk_text() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
     turn = Turn(tool_calls=[])
@@ -887,9 +893,9 @@ def test_simulation_evals_process_platform_chunk_text():
     assert turn.agent == "Hello"
 
 
-def test_simulation_evals_process_platform_chunk_tool_call():
+def test_simulation_evals_process_platform_chunk_tool_call() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
     turn = Turn(tool_calls=[])
@@ -899,9 +905,9 @@ def test_simulation_evals_process_platform_chunk_tool_call():
     assert turn.tool_calls[0].action == "my_tool"
 
 
-def test_simulation_evals_process_platform_chunk_agent_transfer():
+def test_simulation_evals_process_platform_chunk_agent_transfer() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
     turn = Turn(tool_calls=[])
@@ -912,9 +918,9 @@ def test_simulation_evals_process_platform_chunk_agent_transfer():
     assert turn.tool_calls[0].args["agent"] == "live_agent"
 
 
-def test_simulation_evals_process_platform_chunk_payload():
+def test_simulation_evals_process_platform_chunk_payload() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
     turn = Turn(tool_calls=[])
@@ -923,9 +929,9 @@ def test_simulation_evals_process_platform_chunk_payload():
     assert "[Custom Payload]" in turn.agent
 
 
-def test_simulation_evals_parse_platform_messages():
+def test_simulation_evals_parse_platform_messages() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
     messages = [
@@ -939,9 +945,9 @@ def test_simulation_evals_parse_platform_messages():
     assert turns[0].agent == "Hi! How can I help?"
 
 
-def test_simulation_evals_get_turns_fallback():
+def test_simulation_evals_get_turns_fallback() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
     res = {
@@ -957,9 +963,9 @@ def test_simulation_evals_get_turns_fallback():
         assert turns[0].agent == "Hello"
 
 
-def test_simulation_evals_send_request_with_retry_success():
+def test_simulation_evals_send_request_with_retry_success() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
 
@@ -976,9 +982,9 @@ def test_simulation_evals_send_request_with_retry_success():
     assert res is not None
 
 
-def test_simulation_evals_send_request_with_retry_failure():
+def test_simulation_evals_send_request_with_retry_failure() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
 
@@ -986,14 +992,13 @@ def test_simulation_evals_send_request_with_retry_failure():
     evals.sessions_client.run.side_effect = Exception("Permanent")
     evals.max_retries = 2
 
-    with patch("time.sleep"):
-        with pytest.raises(Exception, match="Permanent"):
-            evals._send_request_with_retry("sid", "hi", {}, "text", False)
+    with patch("time.sleep"), pytest.raises(Exception, match="Permanent"):
+        evals._send_request_with_retry("sid", "hi", {}, "text", False)
 
     assert evals.sessions_client.run.call_count == 2
 
 
-def test_llm_user_prepare_llm_prompt():
+def test_llm_user_prepare_llm_prompt() -> None:
     mock_genai_client = MagicMock()
     test_case = {
         "steps": [{"goal": "greet", "success_criteria": "hi"}],
@@ -1006,9 +1011,9 @@ def test_llm_user_prepare_llm_prompt():
     assert "Conversation History" in prompt
 
 
-def test_simulation_evals_prepare_simulation_jobs():
+def test_simulation_evals_prepare_simulation_jobs() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
 
@@ -1021,9 +1026,9 @@ def test_simulation_evals_prepare_simulation_jobs():
     assert jobs[2] == (test_cases[1], 0)
 
 
-def test_simulation_evals_aggregate_simulation_results_parallel():
+def test_simulation_evals_aggregate_simulation_results_parallel() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
 
@@ -1046,9 +1051,11 @@ def test_simulation_evals_aggregate_simulation_results_parallel():
 
 
 @patch("cxas_scrapi.evals.simulation_evals.ConversationHistory")
-def test_simulation_evals_get_turns_from_platform(mock_ch_class):
+def test_simulation_evals_get_turns_from_platform(
+    mock_ch_class: typing.Any,
+) -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
 
@@ -1072,16 +1079,16 @@ def test_simulation_evals_get_turns_from_platform(mock_ch_class):
 
 
 class MockProto:
-    def __init__(self, data):
+    def __init__(self, data: typing.Any) -> None:
         self.data = data
 
     @staticmethod
-    def to_dict(obj):
+    def to_dict(obj: typing.Any) -> typing.Any:
         return obj.data
 
 
 class TestSimToGolden(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.app_name = "projects/p/locations/l/apps/a"
 
         # Create instance without calling __init__ to avoid complex dependency
@@ -1117,7 +1124,7 @@ class TestSimToGolden(unittest.TestCase):
             )
 
     @patch("cxas_scrapi.evals.simulation_evals.ConversationHistory")
-    def test_export_results_to_golden(self, mock_ch_class):
+    def test_export_results_to_golden(self, mock_ch_class: typing.Any) -> None:
         mock_ch = mock_ch_class.return_value
 
         # Mock conversation data
@@ -1188,23 +1195,23 @@ class TestSimToGolden(unittest.TestCase):
             yaml_output = self.sim_evals.export_results_to_golden(results)
 
             # Basic checks on generated YAML
-            self.assertIn("user: hello", yaml_output)
-            self.assertIn("agent: hi there", yaml_output)
-            self.assertIn("user: how are you?", yaml_output)
-            self.assertIn("action: get_weather", yaml_output)
-            self.assertIn("city: London", yaml_output)
-            self.assertIn("output:", yaml_output)
-            self.assertIn("temp: 20", yaml_output)
-            self.assertIn("- It is 20 degrees.", yaml_output)
-            self.assertIn("Must say hi", yaml_output)
-            self.assertIn("key: val", yaml_output)
+            assert "user: hello" in yaml_output
+            assert "agent: hi there" in yaml_output
+            assert "user: how are you?" in yaml_output
+            assert "action: get_weather" in yaml_output
+            assert "city: London" in yaml_output
+            assert "output:" in yaml_output
+            assert "temp: 20" in yaml_output
+            assert "- It is 20 degrees." in yaml_output
+            assert "Must say hi" in yaml_output
+            assert "key: val" in yaml_output
 
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
 def test_simulation_evals_accumulates_vars(
-    mock_llm_conv_class, mock_sessions_class
-):
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -1235,7 +1242,9 @@ def test_simulation_evals_accumulates_vars(
 
     captured_variables = []
 
-    def mock_run_side_effect(*args, **kwargs):
+    def mock_run_side_effect(
+        *args: typing.Any, **kwargs: typing.Any
+    ) -> typing.Any:
         vars_arg = kwargs.get("variables")
         captured_variables.append(
             dict(vars_arg) if vars_arg is not None else None
@@ -1247,7 +1256,7 @@ def test_simulation_evals_accumulates_vars(
     mock_sessions.run.side_effect = mock_run_side_effect
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -1273,8 +1282,8 @@ def test_simulation_evals_accumulates_vars(
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
 def test_simulation_evals_adds_final_agent_response_on_session_ended(
-    mock_llm_conv_class, mock_sessions_class
-):
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -1301,7 +1310,7 @@ def test_simulation_evals_adds_final_agent_response_on_session_ended(
     mock_sessions.run.side_effect = [mock_response]
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -1326,12 +1335,12 @@ def test_simulation_evals_adds_final_agent_response_on_session_ended(
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 def test_simulation_evals_init_with_rate_limiter_and_deployment_id(
-    mock_sessions,
-):
+    mock_sessions: typing.Any,
+) -> None:
     mock_rate_limiter = MagicMock()
     app_name = "projects/test/locations/us/apps/123-abc"
     deployment_id = "xyz"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             _ = SimulationEvals(
                 app_name=app_name,
@@ -1349,8 +1358,8 @@ def test_simulation_evals_init_with_rate_limiter_and_deployment_id(
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
 def test_simulation_evals_simulate_conversation_use_tool_fakes(
-    mock_llm_conv_class, mock_sessions_class
-):
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -1365,7 +1374,7 @@ def test_simulation_evals_simulate_conversation_use_tool_fakes(
     mock_sessions.run.return_value = mock_response
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -1393,8 +1402,8 @@ def test_simulation_evals_simulate_conversation_use_tool_fakes(
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
 def test_simulation_evals_voice_config(
-    mock_llm_conv_class, mock_sessions_class
-):
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -1412,7 +1421,7 @@ def test_simulation_evals_voice_config(
     mock_sessions.run.side_effect = [mock_response_1, mock_response_2]
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 
@@ -1443,9 +1452,11 @@ def test_simulation_evals_voice_config(
 
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
-def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
+def test_simulation_evals_run_simulations_use_tool_fakes(
+    mock_sessions: typing.Any,
+) -> None:
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
 
@@ -1482,10 +1493,10 @@ def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
-    mock_sessions,
-):
+    mock_sessions: typing.Any,
+) -> None:
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
 
@@ -1522,9 +1533,11 @@ def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
 
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
-def test_simulation_evals_run_simulations_capture_agent_audio(mock_sessions):
+def test_simulation_evals_run_simulations_capture_agent_audio(
+    mock_sessions: typing.Any,
+) -> None:
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
 
@@ -1571,7 +1584,7 @@ def test_simulation_evals_run_simulations_capture_agent_audio(mock_sessions):
     )
 
 
-def test_simulation_evals_with_audio_expectations():
+def test_simulation_evals_with_audio_expectations() -> None:
     test_case = {
         "steps": [],
         "expectations": ["text expectation"],
@@ -1592,9 +1605,9 @@ def test_simulation_evals_with_audio_expectations():
     ]
 
 
-def test_simulation_evals_expectations_only_passing():
+def test_simulation_evals_expectations_only_passing() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name, expectations_only=True)
 
@@ -1626,9 +1639,9 @@ def test_simulation_evals_expectations_only_passing():
         assert res["passed"] is True
 
 
-def test_simulation_evals_expectations_only_failing():
+def test_simulation_evals_expectations_only_failing() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name, expectations_only=True)
 
@@ -1660,9 +1673,9 @@ def test_simulation_evals_expectations_only_failing():
         assert res["passed"] is False
 
 
-def test_simulation_evals_expectations_only_fallback():
+def test_simulation_evals_expectations_only_fallback() -> None:
     app_name = "projects/p/locations/l/apps/a"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name, expectations_only=True)
 
@@ -1691,7 +1704,7 @@ def test_simulation_evals_expectations_only_fallback():
         assert res["passed"] is True
 
 
-def test_llm_user_conversation_custom_initial_utterance():
+def test_llm_user_conversation_custom_initial_utterance() -> None:
     mock_gemini_client = MagicMock()
     test_case = {
         "steps": [{"goal": "greet"}],
@@ -1706,9 +1719,9 @@ def test_llm_user_conversation_custom_initial_utterance():
     assert got_user_utterance_0 == "Hello Agent"
 
 
-def test_simulation_evals_run_simulations_progress_callback():
+def test_simulation_evals_run_simulations_progress_callback() -> None:
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             evals = SimulationEvals(app_name=app_name)
 
@@ -1717,7 +1730,7 @@ def test_simulation_evals_run_simulations_progress_callback():
 
     progress_calls = []
 
-    def callback(current, total):
+    def callback(current: typing.Any, total: typing.Any) -> None:
         progress_calls.append((current, total))
 
     evals.run_simulations(
@@ -1734,8 +1747,8 @@ def test_simulation_evals_run_simulations_progress_callback():
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
 @patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
 def test_simulation_evals_escalation_transfer_handling(
-    mock_llm_conv_class, mock_sessions_class
-):
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
     mock_sessions = mock_sessions_class.return_value
     mock_eval_conv = mock_llm_conv_class.return_value
 
@@ -1751,7 +1764,7 @@ def test_simulation_evals_escalation_transfer_handling(
     mock_response = MagicMock()
 
     app_name = "projects/test/locations/us/apps/123-abc"
-    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
         with patch("cxas_scrapi.core.apps.AgentServiceClient"):
             simulator = SimulationEvals(app_name=app_name)
 

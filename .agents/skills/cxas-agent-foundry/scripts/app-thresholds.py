@@ -23,6 +23,7 @@ Usage:
   python scripts/app-thresholds.py set --hallucination disabled
   python scripts/app-thresholds.py set --similarity 2 --extra-tools allow --hallucination disabled
 """
+import typing
 
 import argparse
 import glob
@@ -39,13 +40,13 @@ EXTRA_TOOL_VALUES = {"allow": 1, "deny": 2}
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/app-thresholds"
 
 
-def get_app(project, location):
+def get_app(project: typing.Any, location: typing.Any) -> typing.Any:
     """Get the Apps client."""
     from cxas_scrapi.core.apps import Apps
     return Apps(project_id=project, location=location, user_agent_extension=USER_AGENT_EXTENSION)
 
 
-def cmd_show(args):
+def cmd_show(args: typing.Any) -> typing.Any:
     """Show current scoring thresholds."""
     app_name = load_app_name()
 
@@ -58,7 +59,7 @@ def cmd_show(args):
         sys.exit(1)
 
 
-def cmd_set(args):
+def cmd_set(args: typing.Any) -> typing.Any:
     """Update scoring thresholds."""
     from google.cloud.ces_v1beta import types
     from google.protobuf import field_mask_pb2
@@ -130,7 +131,7 @@ def cmd_set(args):
     _sync_thresholds_to_local(args)
 
 
-def _find_local_app_json():
+def _find_local_app_json() -> typing.Any:
     """Find the local app.json file in the project's cxas_app directory."""
     config = load_config()
     app_dir = get_project_path(config.get("app_dir", "cxas_app/"))
@@ -148,7 +149,7 @@ def _find_local_app_json():
     return None
 
 
-def _sync_thresholds_to_local(args):
+def _sync_thresholds_to_local(args: typing.Any) -> typing.Any:
     """Update the local app.json evaluationMetricsThresholds to match what was just set on the platform."""
     app_json_path = _find_local_app_json()
     if not app_json_path:
@@ -195,7 +196,7 @@ def _sync_thresholds_to_local(args):
         print(f"  Synced to local {rel_path}")
 
 
-def main():
+def main() -> typing.Any:
     try:
         import cxas_scrapi
     except ImportError:

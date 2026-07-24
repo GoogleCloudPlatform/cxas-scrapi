@@ -15,6 +15,7 @@
 import datetime
 import functools
 import json
+import typing
 from typing import Any
 
 from cxas_scrapi.utils.gemini import GeminiGenerate
@@ -22,7 +23,9 @@ from cxas_scrapi.utils.gemini import GeminiGenerate
 
 class ChangelogUtils:
     @staticmethod
-    def _get_nested_val(data: dict, path: list[str], default=None):
+    def _get_nested_val(
+        data: dict, path: list[str], default: typing.Any = None
+    ) -> typing.Any:
         """Safely gets a value from a nested dictionary."""
         if not isinstance(data, dict):
             return default

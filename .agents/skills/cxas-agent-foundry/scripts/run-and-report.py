@@ -25,6 +25,7 @@ Usage:
   python run-and-report.py --message "Edited agent only" --no-push-goldens
   python run-and-report.py --message "Testing" --dry-run
 """
+import typing
 
 import argparse
 import os
@@ -51,7 +52,7 @@ def _run(cmd: list[str], description: str, dry_run: bool = False) -> subprocess.
     return result
 
 
-def _ensure_eval_reports_dir():
+def _ensure_eval_reports_dir() -> typing.Any:
     """Create <project>/eval-reports/ if missing.
 
     Defensive — `setup-project.py` already creates this at bootstrap, but a
@@ -70,7 +71,7 @@ def _ensure_eval_reports_dir():
         os.makedirs(os.path.join(project, "eval-reports"), exist_ok=True)
 
 
-def _resolve_project_dir():
+def _resolve_project_dir() -> typing.Any:
     """Return the project root, or None when no project marker is found.
 
     Walks up from cwd looking for `.active-project` (whose contents name the
@@ -95,7 +96,7 @@ def _resolve_project_dir():
     return None
 
 
-def main():
+def main() -> typing.Any:
     _ensure_eval_reports_dir()
     parser = argparse.ArgumentParser(
         description="Single-command iteration step: snapshot + evals + triage + report"

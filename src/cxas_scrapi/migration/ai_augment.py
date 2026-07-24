@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class AIAugment:
     """Handles AI-powered augmentation tasks for the migration service."""
 
-    def __init__(self, gemini_client: GeminiGenerate):
+    def __init__(self, gemini_client: GeminiGenerate) -> None:
         """Initializes the AIAugment service.
 
         Args:

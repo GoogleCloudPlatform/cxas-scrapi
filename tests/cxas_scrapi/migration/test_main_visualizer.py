@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Unit tests for MainVisualizer."""
 
 import os
+import typing
 from unittest.mock import MagicMock, patch
 
 from rich.console import Console
@@ -108,7 +110,7 @@ EMPTY_DATA = {
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_dot():
+def _make_mock_dot() -> typing.Any:
     """Return a mock graphviz Digraph that produces dummy SVG bytes."""
     mock_dot = MagicMock()
     mock_dot.source = "digraph {}"
@@ -122,33 +124,33 @@ def _make_mock_dot():
 
 
 class TestMainVisualizerToolsTree:
-    def test_tools_tree_is_tree_instance(self):
+    def test_tools_tree_is_tree_instance(self) -> None:
         mv = MainVisualizer(DFCXAgentIR(**DATA_WITH_TOOLS))
         tree = mv._build_tools_tree()
         assert isinstance(tree, Tree)
 
-    def test_tool_name_in_tree(self):
+    def test_tool_name_in_tree(self) -> None:
         mv = MainVisualizer(DFCXAgentIR(**DATA_WITH_TOOLS))
         c = Console(force_terminal=False, width=200, record=True)
         c.print(mv._build_tools_tree())
         rendered = c.export_text()
         assert "SearchTool" in rendered
 
-    def test_webhook_name_in_tree(self):
+    def test_webhook_name_in_tree(self) -> None:
         mv = MainVisualizer(DFCXAgentIR(**DATA_WITH_TOOLS))
         c = Console(force_terminal=False, width=200, record=True)
         c.print(mv._build_tools_tree())
         rendered = c.export_text()
         assert "AuthWebhook" in rendered
 
-    def test_webhook_uri_in_tree(self):
+    def test_webhook_uri_in_tree(self) -> None:
         mv = MainVisualizer(DFCXAgentIR(**DATA_WITH_TOOLS))
         c = Console(force_terminal=False, width=200, record=True)
         c.print(mv._build_tools_tree())
         rendered = c.export_text()
         assert "auth.example.com" in rendered
 
-    def test_no_tools_message_when_empty(self):
+    def test_no_tools_message_when_empty(self) -> None:
         mv = MainVisualizer(DFCXAgentIR(**EMPTY_DATA))
         c = Console(force_terminal=False, width=200, record=True)
         c.print(mv._build_tools_tree())
@@ -161,7 +163,9 @@ class TestMainVisualizerTopology:
     @patch(
         "cxas_scrapi.migration.graph_visualizer.HighLevelGraphVisualizer.build"
     )
-    def test_visualize_topology_calls_display(self, mock_build, mock_display):
+    def test_visualize_topology_calls_display(
+        self, mock_build: typing.Any, mock_display: typing.Any
+    ) -> None:
         mock_build.return_value = _make_mock_dot()
         mv = MainVisualizer(DFCXAgentIR(**EMPTY_DATA))
         mv.visualize_topology()
@@ -172,8 +176,8 @@ class TestMainVisualizerTopology:
         "cxas_scrapi.migration.graph_visualizer.HighLevelGraphVisualizer.build"
     )
     def test_visualize_topology_fallback_on_pipe_error(
-        self, mock_build, mock_display
-    ):
+        self, mock_build: typing.Any, mock_display: typing.Any
+    ) -> None:
         """When pipe() raises, the fallback path displays the Digraph."""
         mock_dot = MagicMock()
         mock_dot.pipe.side_effect = Exception("graphviz binary not found")
@@ -186,18 +190,24 @@ class TestMainVisualizerTopology:
 
 class TestMainVisualizerDetails:
     @patch("cxas_scrapi.migration.main_visualizer.display")
-    def test_visualize_details_no_error_with_empty_data(self, mock_display):
+    def test_visualize_details_no_error_with_empty_data(
+        self, mock_display: typing.Any
+    ) -> None:
         mv = MainVisualizer(DFCXAgentIR(**EMPTY_DATA))
         mv.visualize_details()
 
     @patch("cxas_scrapi.migration.main_visualizer.display")
-    def test_visualize_details_renders_playbook(self, mock_display):
+    def test_visualize_details_renders_playbook(
+        self, mock_display: typing.Any
+    ) -> None:
         mv = MainVisualizer(DFCXAgentIR(**DATA_WITH_PLAYBOOK_AND_FLOW))
         mv.visualize_details()
         # Console output captured internally; just ensure no exception
 
     @patch("cxas_scrapi.migration.main_visualizer.display")
-    def test_visualize_details_renders_flow(self, mock_display):
+    def test_visualize_details_renders_flow(
+        self, mock_display: typing.Any
+    ) -> None:
         mv = MainVisualizer(DFCXAgentIR(**DATA_WITH_PLAYBOOK_AND_FLOW))
         mv.visualize_details()
 
@@ -207,7 +217,12 @@ class TestMainVisualizerExport:
     @patch(
         "cxas_scrapi.migration.graph_visualizer.HighLevelGraphVisualizer.build"
     )
-    def test_export_writes_md_file(self, mock_build, mock_display, tmp_path):
+    def test_export_writes_md_file(
+        self,
+        mock_build: typing.Any,
+        mock_display: typing.Any,
+        tmp_path: typing.Any,
+    ) -> None:
         mock_dot = MagicMock()
         mock_dot.render = MagicMock()
         mock_build.return_value = mock_dot
@@ -224,8 +239,11 @@ class TestMainVisualizerExport:
         "cxas_scrapi.migration.graph_visualizer.HighLevelGraphVisualizer.build"
     )
     def test_export_calls_render_on_graph(
-        self, mock_build, mock_display, tmp_path
-    ):
+        self,
+        mock_build: typing.Any,
+        mock_display: typing.Any,
+        tmp_path: typing.Any,
+    ) -> None:
         mock_dot = MagicMock()
         mock_build.return_value = mock_dot
 
@@ -240,8 +258,11 @@ class TestMainVisualizerExport:
         "cxas_scrapi.migration.graph_visualizer.HighLevelGraphVisualizer.build"
     )
     def test_export_md_contains_tools_section(
-        self, mock_build, mock_display, tmp_path
-    ):
+        self,
+        mock_build: typing.Any,
+        mock_display: typing.Any,
+        tmp_path: typing.Any,
+    ) -> None:
         mock_dot = MagicMock()
         mock_build.return_value = mock_dot
 
@@ -250,5 +271,5 @@ class TestMainVisualizerExport:
         mv.export_visualizations(prefix=prefix)
 
         md_file = f"{prefix}_detailed_resources.md"
-        content = open(md_file).read()
+        content = open(md_file).read()  # noqa: SIM115
         assert "Agent Tools" in content

@@ -16,6 +16,7 @@ import asyncio
 import logging
 import random
 import threading
+import typing
 from typing import Any
 
 from google import genai
@@ -30,10 +31,10 @@ class GeminiGenerate:
         self,
         project_id: str,
         location: str = "global",
-        credentials=None,
+        credentials: typing.Any = None,
         model_name: str = "gemini-3.1-pro-preview",
         max_concurrent_requests: int = 3,
-    ):
+    ) -> None:
         """Initializes the GeminiGenerate client.
 
         Args:

@@ -22,6 +22,7 @@ so adding a new format only means writing a new render function.
 import datetime
 import html as _html
 import json
+import typing
 from typing import Any
 
 from google.cloud.ces_v1beta import types as ces_types
@@ -187,7 +188,7 @@ def _attr(span: dict[str, Any], key: str) -> Any:
 
 
 def _duration_ms(start: Any, end: Any, duration: Any = None) -> float | None:
-    if duration:
+    if duration:  # noqa: SIM102
         # CES proto serializes as e.g. "0.131247s"
         if isinstance(duration, str) and duration.endswith("s"):
             try:
@@ -201,7 +202,7 @@ def _duration_ms(start: Any, end: Any, duration: Any = None) -> float | None:
     return None
 
 
-def _to_dt(x: Any):
+def _to_dt(x: Any) -> typing.Any:
     if x is None:
         return None
     if isinstance(x, datetime.datetime):

@@ -14,18 +14,24 @@
 
 import json
 import os
+import typing
 
 import pytest
 
 from cxas_scrapi.utils.tracing.app_config import ENV_VAR_PLACEHOLDER, AppConfig
 
 
-def _write(path, payload):
+def _write(path: typing.Any, payload: typing.Any) -> None:
     with open(path, "w") as f:
         json.dump(payload, f)
 
 
-def _make_app_dir(tmp_path, app, env=None, env_name=None):
+def _make_app_dir(
+    tmp_path: typing.Any,
+    app: typing.Any,
+    env: typing.Any = None,
+    env_name: typing.Any = None,
+) -> typing.Any:
     _write(tmp_path / "app.json", app)
     if env is not None:
         env_filename = (
@@ -35,12 +41,12 @@ def _make_app_dir(tmp_path, app, env=None, env_name=None):
     return str(tmp_path)
 
 
-def test_load_missing_app_json_raises(tmp_path):
+def test_load_missing_app_json_raises(tmp_path: typing.Any) -> None:
     with pytest.raises(FileNotFoundError, match=r"app\.json not found"):
         AppConfig.load(app_dir=str(tmp_path))
 
 
-def test_load_with_concrete_values(tmp_path):
+def test_load_with_concrete_values(tmp_path: typing.Any) -> None:
     app_dir = _make_app_dir(
         tmp_path,
         app={
@@ -73,7 +79,7 @@ def test_load_with_concrete_values(tmp_path):
     assert cfg.redaction_config() == {"foo": "bar"}
 
 
-def test_app_wrapper_key_supported(tmp_path):
+def test_app_wrapper_key_supported(tmp_path: typing.Any) -> None:
     """app.json may wrap content under an `app` key — both must work."""
     app_dir = _make_app_dir(
         tmp_path,
@@ -102,7 +108,7 @@ def test_app_wrapper_key_supported(tmp_path):
     assert cfg.root_agent() == "root_a"
 
 
-def test_env_var_substitution(tmp_path):
+def test_env_var_substitution(tmp_path: typing.Any) -> None:
     app_dir = _make_app_dir(
         tmp_path,
         app={
@@ -135,7 +141,9 @@ def test_env_var_substitution(tmp_path):
     }
 
 
-def test_env_var_unresolved_when_no_env_file(tmp_path, caplog):
+def test_env_var_unresolved_when_no_env_file(
+    tmp_path: typing.Any, caplog: typing.Any
+) -> None:
     app_dir = _make_app_dir(
         tmp_path,
         app={
@@ -148,7 +156,9 @@ def test_env_var_unresolved_when_no_env_file(tmp_path, caplog):
     assert cfg.audio_bucket() is None
 
 
-def test_env_var_unresolved_when_key_missing_in_env(tmp_path):
+def test_env_var_unresolved_when_key_missing_in_env(
+    tmp_path: typing.Any,
+) -> None:
     app_dir = _make_app_dir(
         tmp_path,
         app={
@@ -162,7 +172,9 @@ def test_env_var_unresolved_when_key_missing_in_env(tmp_path):
     assert cfg.audio_bucket() is None
 
 
-def test_env_var_when_env_value_is_also_placeholder(tmp_path):
+def test_env_var_when_env_value_is_also_placeholder(
+    tmp_path: typing.Any,
+) -> None:
     app_dir = _make_app_dir(
         tmp_path,
         app={
@@ -180,7 +192,7 @@ def test_env_var_when_env_value_is_also_placeholder(tmp_path):
     assert cfg.audio_bucket() is None
 
 
-def test_explicit_env_file_path(tmp_path):
+def test_explicit_env_file_path(tmp_path: typing.Any) -> None:
     app_dir = _make_app_dir(
         tmp_path,
         app={
@@ -203,7 +215,7 @@ def test_explicit_env_file_path(tmp_path):
     assert cfg.audio_bucket() == "gs://from-explicit"
 
 
-def test_named_environment(tmp_path):
+def test_named_environment(tmp_path: typing.Any) -> None:
     app_dir = _make_app_dir(
         tmp_path,
         app={
@@ -222,7 +234,7 @@ def test_named_environment(tmp_path):
     assert cfg.audio_bucket() == "gs://staging-bucket"
 
 
-def test_named_environment_file_missing_warns(tmp_path):
+def test_named_environment_file_missing_warns(tmp_path: typing.Any) -> None:
     app_dir = _make_app_dir(
         tmp_path,
         app={
@@ -235,7 +247,7 @@ def test_named_environment_file_missing_warns(tmp_path):
     assert cfg.audio_bucket() is None
 
 
-def test_missing_optional_fields_return_defaults(tmp_path):
+def test_missing_optional_fields_return_defaults(tmp_path: typing.Any) -> None:
     app_dir = _make_app_dir(tmp_path, app={"displayName": "minimal"})
     cfg = AppConfig.load(app_dir=app_dir)
     assert cfg.audio_bucket() is None
@@ -247,7 +259,7 @@ def test_missing_optional_fields_return_defaults(tmp_path):
     assert cfg.redaction_config() == {}
 
 
-def test_redaction_config_non_dict(tmp_path):
+def test_redaction_config_non_dict(tmp_path: typing.Any) -> None:
     app_dir = _make_app_dir(
         tmp_path,
         app={"loggingSettings": {"redactionConfig": "not-a-dict"}},
@@ -256,7 +268,9 @@ def test_redaction_config_non_dict(tmp_path):
     assert cfg.redaction_config() == {}
 
 
-def test_env_lookup_handles_app_key_wrapping_mismatch(tmp_path):
+def test_env_lookup_handles_app_key_wrapping_mismatch(
+    tmp_path: typing.Any,
+) -> None:
     """app.json may store keys at root while environment.json wraps them
     under `app.*` (or vice versa). Lookup must try both shapes."""
     app_dir = _make_app_dir(
@@ -280,7 +294,7 @@ def test_env_lookup_handles_app_key_wrapping_mismatch(tmp_path):
     assert cfg.audio_bucket() == "gs://wrapped"
 
 
-def test_env_lookup_app_to_root(tmp_path):
+def test_env_lookup_app_to_root(tmp_path: typing.Any) -> None:
     """Reverse direction: app.json wrapped in `app`, env.json at root."""
     app_dir = _make_app_dir(
         tmp_path,
@@ -301,13 +315,13 @@ def test_env_lookup_app_to_root(tmp_path):
     assert cfg.audio_bucket() == "gs://root"
 
 
-def test_display_name_missing_returns_none(tmp_path):
+def test_display_name_missing_returns_none(tmp_path: typing.Any) -> None:
     app_dir = _make_app_dir(tmp_path, app={"rootAgent": "ra"})
     cfg = AppConfig.load(app_dir=app_dir)
     assert cfg.display_name() is None
 
 
-def test_no_environment_file_no_default_present(tmp_path):
+def test_no_environment_file_no_default_present(tmp_path: typing.Any) -> None:
     app_dir = _make_app_dir(
         tmp_path,
         app={

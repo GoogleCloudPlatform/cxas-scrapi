@@ -11,10 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Tests for the llm-lint CLI command."""
 
 import argparse
 import json
+import typing
 from pathlib import Path
 from unittest import mock
 
@@ -22,7 +24,7 @@ from cxas_scrapi.cli.llm_lint import llm_lint, resolve_gcp_credentials
 from cxas_scrapi.prompts import LLM_LINT_SYSTEM_PROMPT, LLM_LINT_USER_PROMPT
 
 
-def test_resolve_gcp_credentials_from_cli():
+def test_resolve_gcp_credentials_from_cli() -> None:
     """Test resolving credentials directly from CLI arguments."""
     agent_dir = Path("/dummy/agent")
     proj, loc = resolve_gcp_credentials(
@@ -34,7 +36,7 @@ def test_resolve_gcp_credentials_from_cli():
     assert loc == "cli-loc"
 
 
-def test_resolve_gcp_credentials_from_env(monkeypatch):
+def test_resolve_gcp_credentials_from_env(monkeypatch: typing.Any) -> None:
     """Test resolving credentials from environment variables."""
     monkeypatch.setenv("PROJECT_ID", "env-proj")
     monkeypatch.setenv("LOCATION", "env-loc")
@@ -44,7 +46,7 @@ def test_resolve_gcp_credentials_from_env(monkeypatch):
     assert loc == "env-loc"
 
 
-def test_resolve_gcp_credentials_from_config(tmp_path):
+def test_resolve_gcp_credentials_from_config(tmp_path: typing.Any) -> None:
     """Test resolving credentials from walking up to gecx-config.json."""
     agent_dir = tmp_path / "agents" / "my-agent"
     agent_dir.mkdir(parents=True)
@@ -62,7 +64,9 @@ def test_resolve_gcp_credentials_from_config(tmp_path):
 
 
 @mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
-def test_llm_lint_success(mock_gemini_cls, tmp_path):
+def test_llm_lint_success(
+    mock_gemini_cls: typing.Any, tmp_path: typing.Any
+) -> None:
     """Test execution of llm_lint when no global instruction exists.
 
     Uses mocking for the Gemini API call.
@@ -122,7 +126,9 @@ def test_llm_lint_success(mock_gemini_cls, tmp_path):
 
 
 @mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
-def test_llm_lint_with_global_instruction(mock_gemini_cls, tmp_path):
+def test_llm_lint_with_global_instruction(
+    mock_gemini_cls: typing.Any, tmp_path: typing.Any
+) -> None:
     """Test execution of llm_lint when global instruction exists.
 
     Uses mocking for the Gemini API call.
@@ -191,7 +197,9 @@ def test_llm_lint_with_global_instruction(mock_gemini_cls, tmp_path):
 
 
 @mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
-def test_llm_lint_with_dynamic_callbacks(mock_gemini_cls, tmp_path):
+def test_llm_lint_with_dynamic_callbacks(
+    mock_gemini_cls: typing.Any, tmp_path: typing.Any
+) -> None:
     """Test execution of llm_lint when callbacks contain no DIs.
 
     Verifies only the base report is generated.
@@ -256,7 +264,9 @@ def test_llm_lint_with_dynamic_callbacks(mock_gemini_cls, tmp_path):
 
 
 @mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
-def test_llm_lint_with_dict_dynamic_instructions(mock_gemini_cls, tmp_path):
+def test_llm_lint_with_dict_dynamic_instructions(
+    mock_gemini_cls: typing.Any, tmp_path: typing.Any
+) -> None:
     """Test execution of llm_lint when callbacks contain dynamic DIs.
 
     Verifies reports are mapped correctly by state.
@@ -339,8 +349,8 @@ def test_llm_lint_with_dict_dynamic_instructions(mock_gemini_cls, tmp_path):
 
 @mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
 def test_llm_lint_warning_on_non_recommended_callbacks(
-    mock_gemini_cls, tmp_path
-):
+    mock_gemini_cls: typing.Any, tmp_path: typing.Any
+) -> None:
     """Test dynamic DIs outside before_agent_callbacks warn."""
     agent_dir = tmp_path / "agents" / "my-agent"
     agent_dir.mkdir(parents=True)
@@ -397,7 +407,9 @@ def test_llm_lint_warning_on_non_recommended_callbacks(
 
 
 @mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
-def test_llm_lint_flags_variable_update_instructions(mock_gemini_cls, tmp_path):
+def test_llm_lint_flags_variable_update_instructions(
+    mock_gemini_cls: typing.Any, tmp_path: typing.Any
+) -> None:
     """Validate variable update instructions are sent to Gemini for check."""
     agent_dir = tmp_path / "agents" / "my-agent"
     agent_dir.mkdir(parents=True)
@@ -456,8 +468,8 @@ def test_llm_lint_flags_variable_update_instructions(mock_gemini_cls, tmp_path):
 
 @mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
 def test_llm_lint_does_not_falsely_trigger_on_unrelated_instructions(
-    mock_gemini_cls, tmp_path
-):
+    mock_gemini_cls: typing.Any, tmp_path: typing.Any
+) -> None:
     """Validate unrelated instructions do not trigger update warning."""
     agent_dir = tmp_path / "agents" / "my-agent"
     agent_dir.mkdir(parents=True)

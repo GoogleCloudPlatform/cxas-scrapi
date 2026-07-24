@@ -15,10 +15,12 @@ import asyncio
 import logging
 import os
 import tempfile
+from typing import TYPE_CHECKING
 
-from rich.console import Console
+if TYPE_CHECKING:
+    from rich.console import Console
 
-from cxas_scrapi.migration.service import MigrationService
+    from cxas_scrapi.migration.service import MigrationService
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,7 @@ async def run_post_deploy_lint(
     (False, error_message).
     """
     console.print("\n[bold cyan]Running post-deployment lint…[/]")
+    assert service.ir is not None
     app_resource = service.ir.metadata.app_resource_name
     if not app_resource:
         msg = "No app_resource_name on IR metadata; cannot lint."

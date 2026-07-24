@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import typing
 from typing import Any
 
 from cxas_scrapi.core.insights import Insights
@@ -27,8 +28,11 @@ class IssueModels(Insights):
     """Core Class for managing CCAI Insights Topic Models (IssueModels)."""
 
     def __init__(
-        self, project_id: str, location: str = "us-central1", **kwargs
-    ):
+        self,
+        project_id: str,
+        location: str = "us-central1",
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the IssueModels client."""
         super().__init__(project_id=project_id, location=location, **kwargs)
 

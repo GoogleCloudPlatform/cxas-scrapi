@@ -7,6 +7,7 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+
 """Pure 1:1 DFCX → CXAS migration.
 
 This script is the first of three in the cxas-dfcx-migration skill:
@@ -25,30 +26,38 @@ Replaces rich.Prompt with InquirerPy and asks project + location upfront
 (default location is `us`).
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: E402, F404
 
-import argparse
-import asyncio
-import json
-import logging
-import os
-import sys
+import argparse  # noqa: E402
+import asyncio  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import sys  # noqa: E402
+import typing
 
-from rich.console import Console
-from rich.logging import RichHandler
+from rich.console import Console  # noqa: E402
+from rich.logging import RichHandler  # noqa: E402
 
 # Skill-local helpers
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _prompts  # noqa: E402
 import _shared  # noqa: E402
 
-from cxas_scrapi.migration import html_preview, phase_tracker
-from cxas_scrapi.migration.config import AGENT_MODELS
-from cxas_scrapi.migration.data_models import IRBundle, MigrationConfig
-from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
-from cxas_scrapi.migration.eval_generator import DeterministicEvalGenerator
-from cxas_scrapi.migration.main_visualizer import MainVisualizer
-from cxas_scrapi.migration.service import MigrationService
+from cxas_scrapi.migration import html_preview, phase_tracker  # noqa: E402
+from cxas_scrapi.migration.config import AGENT_MODELS  # noqa: E402
+from cxas_scrapi.migration.data_models import (  # noqa: E402
+    IRBundle,
+    MigrationConfig,
+)
+from cxas_scrapi.migration.dfcx_dep_analyzer import (  # noqa: E402
+    DependencyAnalyzer,  # noqa: E402
+)
+from cxas_scrapi.migration.eval_generator import (  # noqa: E402
+    DeterministicEvalGenerator,  # noqa: E402
+)
+from cxas_scrapi.migration.main_visualizer import MainVisualizer  # noqa: E402
+from cxas_scrapi.migration.service import MigrationService  # noqa: E402
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -146,11 +155,11 @@ def _build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-async def _run(args) -> None:
+async def _run(args: typing.Any) -> None:
     tracker = phase_tracker.PhaseTracker(console)
 
     # Phase 0: auth
-    if not _shared.auth_check(console):
+    if not _shared.auth_check(console):  # noqa: SIM102
         if not args.yes and not _prompts.prompt_yes_no(
             "Proceed anyway? (will likely fail)", default=False
         ):

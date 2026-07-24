@@ -7,6 +7,7 @@ import asyncio
 import io
 import json
 import logging
+import typing
 from typing import Any
 
 from rich.console import Console
@@ -103,10 +104,10 @@ CONSOLIDATE_TEMPLATE = """We have processed the agent's playbooks and flows in s
 class CUJGenerator:
     """Predicts typical customer user journeys (CUJs) using Gemini."""
 
-    def __init__(self, gemini_client: GeminiGenerate):
+    def __init__(self, gemini_client: GeminiGenerate) -> None:
         self.gemini = gemini_client
 
-    def get_tree_text(self, tree_obj) -> str:
+    def get_tree_text(self, tree_obj: typing.Any) -> str:
         """Helper to render Rich Tree structure into plain text."""
         buf = io.StringIO()
         console = Console(file=buf, force_terminal=False, width=120)

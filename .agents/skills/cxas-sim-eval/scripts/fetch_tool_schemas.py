@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 import argparse
 import os
 import sys
@@ -23,7 +24,7 @@ from cxas_scrapi import Tools
 
 USER_AGENT_EXTENSION = "skill/cxas-sim-eval/fetch_tool_schemas"
 
-def main():
+def main() -> typing.Any:
     parser = argparse.ArgumentParser(description="Fetch tool schemas for a given app.")
     parser.add_argument("--app-name", required=True, help="The full resource name of the app (e.g., projects/.../locations/.../apps/...)")
     parser.add_argument("--output-dir", required=True, help="Directory to save the tool schema files")
@@ -47,7 +48,7 @@ def main():
     # ----------------------------------------------------
     # Additional logic to retrieve tool descriptions
     # ----------------------------------------------------
-    def extract_description(pb_obj):
+    def extract_description(pb_obj: typing.Any) -> typing.Any:
         try:
             obj_dict = MessageToDict(pb_obj._pb)
         except AttributeError:

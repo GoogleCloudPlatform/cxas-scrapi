@@ -1,3 +1,4 @@
+import typing
 import argparse
 import json
 import os
@@ -11,12 +12,12 @@ cases_dir = os.path.join(skill_dir, "evals/cases")
 main_skill_file = os.path.join(skill_dir, "SKILL.md")
 
 
-def load_skill_content():
+def load_skill_content() -> typing.Any:
     with open(main_skill_file, "r") as f:
         return f.read()
 
 
-def prepare_batch(batch_start, batch_size, iteration=1, replications=1):
+def prepare_batch(batch_start: typing.Any, batch_size: typing.Any, iteration: typing.Any=1, replications: typing.Any=1) -> typing.Any:
     sources = [
         {"dir": os.path.join(skill_dir, "evals/cases"), "suffix": ""},
         {

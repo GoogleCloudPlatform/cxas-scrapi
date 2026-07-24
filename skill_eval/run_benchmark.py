@@ -175,7 +175,7 @@ class BenchmarkOrchestrator:
         report_dir: str,
         project: str | None = None,
         model_location: str = "global",
-    ):
+    ) -> None:
         self._report_dir = report_dir
         self._results: list[benchmark.ConversationResult] = []
         self._lock = asyncio.Lock()

@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 import unittest
 
 from skill_eval import benchmark, trajectory_extractor
 
 
 class MockToolCall:
-    def __init__(self, name, args, id=None):
+    def __init__(
+        self, name: typing.Any, args: typing.Any, id: typing.Any = None
+    ) -> None:
         self.name = name
         self.args = args
         self.id = id
@@ -27,14 +30,14 @@ class MockToolCall:
 class MockStep:
     def __init__(
         self,
-        step_index,
-        thinking="",
-        tool_calls=None,
-        status="UNKNOWN",
-        content="",
-        error="",
-        id="",
-    ):
+        step_index: typing.Any,
+        thinking: typing.Any = "",
+        tool_calls: typing.Any = None,
+        status: typing.Any = "UNKNOWN",
+        content: typing.Any = "",
+        error: typing.Any = "",
+        id: typing.Any = "",
+    ) -> None:
         self.step_index = step_index
         self.thinking = thinking
         self.tool_calls = tool_calls or []
@@ -45,15 +48,15 @@ class MockStep:
 
 
 class TrajectoryExtractorTest(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
         self.extractor = trajectory_extractor.TrajectoryExtractor()
 
-    def test_extract_new_events_empty(self):
+    def test_extract_new_events_empty(self) -> None:
         res = self.extractor.extract_new_events([])
-        self.assertEqual(res, [])
+        assert res == []
 
-    def test_extract_new_events_thinking_and_tool_call(self):
+    def test_extract_new_events_thinking_and_tool_call(self) -> None:
         step = MockStep(
             step_index=1,
             thinking="I need to check files.",
@@ -68,22 +71,22 @@ class TrajectoryExtractorTest(unittest.TestCase):
             id="step_1",
         )
         res = self.extractor.extract_new_events([step])
-        self.assertEqual(len(res), 2)
+        assert len(res) == 2
 
         event0 = res[0]
-        self.assertIsInstance(event0, benchmark.AgentMessageEvent)
         assert isinstance(event0, benchmark.AgentMessageEvent)
-        self.assertEqual(event0.text, "I need to check files.")
-        self.assertTrue(event0.is_thought)
+        assert isinstance(event0, benchmark.AgentMessageEvent)
+        assert event0.text == "I need to check files."
+        assert event0.is_thought
 
         event1 = res[1]
-        self.assertIsInstance(event1, benchmark.ToolCallEvent)
         assert isinstance(event1, benchmark.ToolCallEvent)
-        self.assertEqual(event1.name, "list_directory")
-        self.assertEqual(event1.args, {"directory_path": "/tmp"})
-        self.assertEqual(event1.call_id, "call_1")
+        assert isinstance(event1, benchmark.ToolCallEvent)
+        assert event1.name == "list_directory"
+        assert event1.args == {"directory_path": "/tmp"}
+        assert event1.call_id == "call_1"
 
-    def test_extract_new_events_tool_result(self):
+    def test_extract_new_events_tool_result(self) -> None:
         # Step 1: Tool call (Active)
         step1 = MockStep(
             step_index=1,
@@ -109,19 +112,19 @@ class TrajectoryExtractorTest(unittest.TestCase):
         )
 
         res1 = self.extractor.extract_new_events([step1])
-        self.assertEqual(len(res1), 1)
-        self.assertIsInstance(res1[0], benchmark.ToolCallEvent)
+        assert len(res1) == 1
+        assert isinstance(res1[0], benchmark.ToolCallEvent)
 
         res2 = self.extractor.extract_new_events([step1, step2])
-        self.assertEqual(len(res2), 1)
+        assert len(res2) == 1
         event2 = res2[0]
-        self.assertIsInstance(event2, benchmark.ToolResultEvent)
         assert isinstance(event2, benchmark.ToolResultEvent)
-        self.assertEqual(event2.call_id, "call_1")
-        self.assertEqual(event2.output, "Hello World")
-        self.assertFalse(event2.is_error)
+        assert isinstance(event2, benchmark.ToolResultEvent)
+        assert event2.call_id == "call_1"
+        assert event2.output == "Hello World"
+        assert not event2.is_error
 
-    def test_extract_subagent_spawned_and_finished(self):
+    def test_extract_subagent_spawned_and_finished(self) -> None:
         step = MockStep(
             step_index=1,
             tool_calls=[
@@ -136,34 +139,34 @@ class TrajectoryExtractorTest(unittest.TestCase):
             id="step_sub",
         )
         res = self.extractor.extract_new_events([step])
-        self.assertEqual(len(res), 4)
+        assert len(res) == 4
 
         # ToolCallEvent
         event0 = res[0]
-        self.assertIsInstance(event0, benchmark.ToolCallEvent)
         assert isinstance(event0, benchmark.ToolCallEvent)
-        self.assertEqual(event0.name, "start_subagent")
+        assert isinstance(event0, benchmark.ToolCallEvent)
+        assert event0.name == "start_subagent"
 
         # SubagentEvent (spawned)
         event1 = res[1]
-        self.assertIsInstance(event1, benchmark.SubagentEvent)
         assert isinstance(event1, benchmark.SubagentEvent)
-        self.assertEqual(event1.action, "spawned")
-        self.assertEqual(event1.subagent_id, "sub_1")
-        self.assertEqual(event1.prompt, "Research this")
+        assert isinstance(event1, benchmark.SubagentEvent)
+        assert event1.action == "spawned"
+        assert event1.subagent_id == "sub_1"
+        assert event1.prompt == "Research this"
 
         # ToolResultEvent
         event2 = res[2]
-        self.assertIsInstance(event2, benchmark.ToolResultEvent)
         assert isinstance(event2, benchmark.ToolResultEvent)
-        self.assertEqual(event2.output, "Synthesized research summary")
+        assert isinstance(event2, benchmark.ToolResultEvent)
+        assert event2.output == "Synthesized research summary"
 
         # SubagentEvent (finished)
         event3 = res[3]
-        self.assertIsInstance(event3, benchmark.SubagentEvent)
         assert isinstance(event3, benchmark.SubagentEvent)
-        self.assertEqual(event3.action, "finished")
-        self.assertEqual(event3.subagent_id, "sub_1")
+        assert isinstance(event3, benchmark.SubagentEvent)
+        assert event3.action == "finished"
+        assert event3.subagent_id == "sub_1"
 
 
 if __name__ == "__main__":

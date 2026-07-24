@@ -27,12 +27,15 @@ deploy and returns two lists:
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
-from cxas_scrapi.migration.data_models import MigrationIR
 from cxas_scrapi.migration.structural_consolidator import (
     AGENT_REF_RE,
     SENTINEL_REFS,
 )
+
+if TYPE_CHECKING:
+    from cxas_scrapi.migration.data_models import MigrationIR
 
 __all__ = [
     "PROMPT_VAR_RE",

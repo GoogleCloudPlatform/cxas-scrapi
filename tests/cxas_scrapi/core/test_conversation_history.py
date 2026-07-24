@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 from google.cloud.ces_v1beta import types
@@ -20,7 +21,7 @@ from cxas_scrapi.core.conversation_history import ConversationHistory
 
 
 @patch("cxas_scrapi.core.conversation_history.AgentServiceClient")
-def test_conversation_list(mock_client_cls):
+def test_conversation_list(mock_client_cls: typing.Any) -> None:
     """Test ConversationHistory.list_conversations."""
     mock_client = mock_client_cls.return_value
     mock_conv = MagicMock()
@@ -38,7 +39,9 @@ def test_conversation_list(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.conversation_history.AgentServiceClient")
-def test_list_conversations_extra_filter_and_sources(mock_client_cls):
+def test_list_conversations_extra_filter_and_sources(
+    mock_client_cls: typing.Any,
+) -> None:
     """extra_filter is ANDed with the time filter; sources map to enums."""
     mock_client = mock_client_cls.return_value
     mock_client.list_conversations.return_value = []
@@ -62,7 +65,9 @@ def test_list_conversations_extra_filter_and_sources(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.conversation_history.AgentServiceClient")
-def test_list_conversations_extra_filter_only(mock_client_cls):
+def test_list_conversations_extra_filter_only(
+    mock_client_cls: typing.Any,
+) -> None:
     """extra_filter alone (no time filter) becomes the whole filter."""
     mock_client = mock_client_cls.return_value
     mock_client.list_conversations.return_value = []
@@ -75,7 +80,7 @@ def test_list_conversations_extra_filter_only(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.conversation_history.AgentServiceClient")
-def test_conversation_get(mock_client_cls):
+def test_conversation_get(mock_client_cls: typing.Any) -> None:
     """Test ConversationHistory.get_conversation."""
     mock_client = mock_client_cls.return_value
     mock_conv = MagicMock()
@@ -90,7 +95,7 @@ def test_conversation_get(mock_client_cls):
     mock_client.get_conversation.assert_called_once()
 
 
-def test_conversation_dict_to_yaml():
+def test_conversation_dict_to_yaml() -> None:
     """Test static method conversation_dict_to_yaml."""
     conv_dict = {
         "turns": [
@@ -150,7 +155,7 @@ def test_conversation_dict_to_yaml():
 @patch(
     "cxas_scrapi.core.conversation_history.ConversationHistory.get_conversation"
 )
-def test_export_conversation_to_yaml(mock_get_conv):
+def test_export_conversation_to_yaml(mock_get_conv: typing.Any) -> None:
     """Test ConversationHistory.export_conversation_to_yaml."""
 
     # Mock the to_dict method
@@ -168,8 +173,10 @@ def test_export_conversation_to_yaml(mock_get_conv):
 
 @patch("cxas_scrapi.core.conversation_history.types.DeleteConversationRequest")
 @patch("cxas_scrapi.core.conversation_history.AgentServiceClient")
-def test_delete_conversation(mock_client_cls, mock_req_cls):
-    def side_effect(**kwargs):
+def test_delete_conversation(
+    mock_client_cls: typing.Any, mock_req_cls: typing.Any
+) -> None:
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -197,8 +204,10 @@ def test_delete_conversation(mock_client_cls, mock_req_cls):
     "cxas_scrapi.utils.latency_parser.LatencyParser.fetch_conversation_traces"
 )
 def test_get_latency_metrics_dfs_limit(
-    mock_fetch, mock_extract, mock_client_cls
-):
+    mock_fetch: typing.Any,
+    mock_extract: typing.Any,
+    mock_client_cls: typing.Any,
+) -> None:
     """Test get_latency_metrics_dfs with integer and string limits."""
     conv_client = ConversationHistory(app_name="projects/p/locations/l/apps/a")
 

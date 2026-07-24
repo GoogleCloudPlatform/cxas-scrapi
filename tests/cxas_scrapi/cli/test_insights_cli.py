@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+import typing
 from unittest.mock import patch
 
 from cxas_scrapi.cli.insights_cli import (
@@ -26,7 +27,7 @@ from cxas_scrapi.cli.insights_cli import (
 )
 
 
-def test_populate_insights_parser():
+def test_populate_insights_parser() -> None:
     parser = argparse.ArgumentParser()
     populate_insights_parser(parser)
     # Test subcommands exist by parsing valid args
@@ -87,7 +88,7 @@ def test_populate_insights_parser():
 
 
 @patch("cxas_scrapi.core.scorecards.Scorecards")
-def test_handle_create_scorecard(mock_sc_cls):
+def test_handle_create_scorecard(mock_sc_cls: typing.Any) -> None:
     mock_inst = mock_sc_cls.return_value
     mock_inst.create_scorecard_with_questions.return_value = (
         {"name": "projects/p/locations/l/qaScorecards/sc1/revisions/r1"},
@@ -105,7 +106,7 @@ def test_handle_create_scorecard(mock_sc_cls):
 
 
 @patch("cxas_scrapi.core.scorecards.Scorecards")
-def test_handle_add_question(mock_sc_cls):
+def test_handle_add_question(mock_sc_cls: typing.Any) -> None:
     mock_inst = mock_sc_cls.return_value
     mock_inst.create_question.return_value = {
         "name": (
@@ -133,7 +134,7 @@ def test_handle_add_question(mock_sc_cls):
 
 
 @patch("cxas_scrapi.core.issue_models.IssueModels")
-def test_handle_create_topic_model(mock_im_cls):
+def test_handle_create_topic_model(mock_im_cls: typing.Any) -> None:
     mock_inst = mock_im_cls.return_value
     mock_inst.create_topic_model_for_app.return_value = {
         "name": "projects/p/locations/l/issueModels/im1"
@@ -155,7 +156,7 @@ def test_handle_create_topic_model(mock_im_cls):
 
 
 @patch("cxas_scrapi.core.analysis_rules.AnalysisRules")
-def test_handle_create_analysis_rule(mock_ar_cls):
+def test_handle_create_analysis_rule(mock_ar_cls: typing.Any) -> None:
     mock_inst = mock_ar_cls.return_value
     mock_inst.create_rule_for_app.return_value = {
         "name": "projects/p/locations/l/analysisRules/ar1"
@@ -177,7 +178,7 @@ def test_handle_create_analysis_rule(mock_ar_cls):
 
 
 @patch("cxas_scrapi.utils.insights_utils.InsightsUtils")
-def test_handle_smoke_test_scorecard(mock_utils_cls):
+def test_handle_smoke_test_scorecard(mock_utils_cls: typing.Any) -> None:
     mock_inst = mock_utils_cls.return_value
     mock_inst.smoke_test_scorecard.return_value = [
         {"conversation_name": "conv1", "status": "PASSED", "qa_answer": {}}
@@ -197,7 +198,9 @@ def test_handle_smoke_test_scorecard(mock_utils_cls):
 
 
 @patch("cxas_scrapi.utils.insights_analytics.InsightsAnalytics")
-def test_handle_analyze_metrics(mock_analytics_cls, tmp_path):
+def test_handle_analyze_metrics(
+    mock_analytics_cls: typing.Any, tmp_path: typing.Any
+) -> None:
     mock_inst = mock_analytics_cls.return_value
     mock_inst.aggregate_metrics.return_value = {
         "kpis": {"total_conversations": 5}

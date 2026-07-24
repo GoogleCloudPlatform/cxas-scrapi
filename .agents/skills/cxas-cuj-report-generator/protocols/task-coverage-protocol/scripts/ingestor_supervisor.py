@@ -1,3 +1,4 @@
+import typing
 import argparse
 import json
 import os
@@ -15,12 +16,12 @@ PROMPTS_DIR = "/tmp/ingestor/prompts"
 class IngestorSupervisor:
     def __init__(
         self,
-        source_dir,
-        target_skill_dir,
-        include_extensions=None,
-        exclude_patterns=None,
-        scratch_dir=None,
-    ):
+        source_dir: typing.Any,
+        target_skill_dir: typing.Any,
+        include_extensions: typing.Any=None,
+        exclude_patterns: typing.Any=None,
+        scratch_dir: typing.Any=None,
+    ) -> None:
         self.source_dir = source_dir
         self.target_skill_dir = target_skill_dir
         self.scratch_dir = scratch_dir or "/tmp/gecx_scratch"
@@ -33,7 +34,7 @@ class IngestorSupervisor:
         self.include_extensions = include_extensions or []
         self.exclude_patterns = exclude_patterns or []
 
-    def scan_and_count_files(self):
+    def scan_and_count_files(self) -> typing.Any:
         """Recursively lists all files in the source directory matching the filters."""
         import fnmatch
 
@@ -59,7 +60,7 @@ class IngestorSupervisor:
                 files.append(os.path.join(root, f))
         return sorted(files)
 
-    def generate_case_prompt(self, file_path):
+    def generate_case_prompt(self, file_path: typing.Any) -> typing.Any:
         """Synthesizes target prompt instructions for Phase 2 Ingestion."""
         is_drawio = file_path.endswith(".drawio")
         skill_path = self.drawio_skill if is_drawio else self.cyara_skill
@@ -82,7 +83,7 @@ Read the structural digest of the conversation. Generate a high-fidelity, natura
 3. Speaker must be 'Agent' or 'User'.
 4. Output ONLY the raw YAML content in your response. No markdown wrappers or explanations."""
 
-    def validate_ingestion_output(self, output_content):
+    def validate_ingestion_output(self, output_content: typing.Any) -> typing.Any:
         """Deterministically validates the output YAML transcript schema and metadata."""
         try:
             data = yaml.safe_load(output_content)
@@ -125,17 +126,17 @@ Read the structural digest of the conversation. Generate a high-fidelity, natura
         except Exception as e:
             return False, f"YAML Parsing Error: {e}"
 
-    def load_state(self):
+    def load_state(self) -> typing.Any:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
                 return json.load(f)
         return None
 
-    def save_state(self, state):
+    def save_state(self, state: typing.Any) -> typing.Any:
         with open(STATE_FILE, "w") as f:
             json.dump(state, f, indent=2)
 
-    def prepare(self, state, all_files):
+    def prepare(self, state: typing.Any, all_files: typing.Any) -> typing.Any:
         """Prepares the next batch prompts and writes the JSON batch spec."""
         batch_start = state["batch_start"]
         batch = all_files[batch_start : batch_start + BATCH_SIZE]
@@ -181,7 +182,7 @@ Read the structural digest of the conversation. Generate a high-fidelity, natura
             " files..."
         )
 
-    def ingest(self, state, all_files):
+    def ingest(self, state: typing.Any, all_files: typing.Any) -> typing.Any:
         """Validates all completed batch output files, rebasing/resubmitting failures if needed."""
         batch_spec = state["batch_spec"]
 
@@ -235,7 +236,7 @@ Read the structural digest of the conversation. Generate a high-fidelity, natura
                 state["phase"] = "INGEST"
                 self.save_state(state)
 
-    def verify_deliverables(self):
+    def verify_deliverables(self) -> typing.Any:
         """Audits the existence and size of all registered GECX deliverables."""
         print("\n=== RUNNING AUTOMATED DELIVERABLES DELIVERY AUDIT ===")
         scratch_dir = self.scratch_dir
@@ -283,7 +284,7 @@ Read the structural digest of the conversation. Generate a high-fidelity, natura
         )
         return True
 
-    def run(self):
+    def run(self) -> typing.Any:
         all_files = self.scan_and_count_files()
         state = self.load_state()
         if not state:

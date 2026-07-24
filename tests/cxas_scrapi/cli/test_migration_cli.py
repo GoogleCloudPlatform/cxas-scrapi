@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for :class:`MigrationCLI`.
 
 Most of MigrationCLI is interactive (rich.Prompt loops), but the new
@@ -27,6 +28,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import typing
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -42,7 +44,7 @@ from cxas_scrapi.migration.data_models import (
 
 
 @pytest.fixture(autouse=True, scope="module")
-def mock_tee_logging():
+def mock_tee_logging() -> typing.Any:
     with (
         patch("cxas_scrapi.cli.migration_cli.start_tee_logging") as m_start,
         patch("cxas_scrapi.cli.migration_cli.close_tee_logging") as m_close,
@@ -50,7 +52,7 @@ def mock_tee_logging():
         yield m_start, m_close
 
 
-def _make_config(**overrides) -> MigrationConfig:
+def _make_config(**overrides: typing.Any) -> MigrationConfig:
     base = {
         "project_id": "test-project",
         "target_name": "test_target",
@@ -69,7 +71,7 @@ def _make_source() -> DFCXAgentIR:
     )
 
 
-def _make_service_mock():
+def _make_service_mock() -> typing.Any:
     service = MagicMock()
     service.location = "us"
     service.ir = MigrationIR(
@@ -87,7 +89,7 @@ def _make_service_mock():
 
 
 @pytest.mark.asyncio
-async def test_post_migration_opt_ins_all_off_skips_everything():
+async def test_post_migration_opt_ins_all_off_skips_everything() -> None:
     """With all optimization off, no stage methods are invoked."""
     cli = MigrationCLI()
     service = _make_service_mock()
@@ -105,7 +107,9 @@ async def test_post_migration_opt_ins_all_off_skips_everything():
 
 
 @pytest.mark.asyncio
-async def test_post_migration_opt_ins_persist_only_calls_persist_bundle():
+async def test_post_migration_opt_ins_persist_only_calls_persist_bundle() -> (
+    None
+):
     cli = MigrationCLI()
     service = _make_service_mock()
     config = _make_config(
@@ -124,7 +128,9 @@ async def test_post_migration_opt_ins_persist_only_calls_persist_bundle():
 
 
 @pytest.mark.asyncio
-async def test_post_migration_opt_ins_optimized_path_calls_stage1_and_stage3():
+async def test_post_migration_opt_ins_optimized_path_calls_stage1_and_stage3() -> (  # noqa: E501
+    None
+):
     cli = MigrationCLI()
     service = _make_service_mock()
     config = _make_config(
@@ -155,7 +161,7 @@ async def test_post_migration_opt_ins_optimized_path_calls_stage1_and_stage3():
 
 
 @pytest.mark.asyncio
-async def test_post_migration_opt_ins_full_stack_passes_persist_paths():
+async def test_post_migration_opt_ins_full_stack_passes_persist_paths() -> None:
     """With all optimization and persist on, run_stage_1 + run_stage_3 each
     get the bundle path so they persist after their respective stages.
     """
@@ -186,7 +192,7 @@ async def test_post_migration_opt_ins_full_stack_passes_persist_paths():
 
 
 @pytest.mark.asyncio
-async def test_post_migration_opt_ins_consolidate_failure_aborts_loop():
+async def test_post_migration_opt_ins_consolidate_failure_aborts_loop() -> None:
     """If Stage 1 raises, subsequent stages (Stage 2 & Stage 3) are aborted
     cleanly to prevent operating on a failed/stale state.
     """
@@ -218,7 +224,7 @@ def _run_help(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_dfcx_help_lists_run_and_optimize():
+def test_dfcx_help_lists_run_and_optimize() -> None:
     """`cxas migrate dfcx --help` lists --run, --optimize,
     and --profile arguments."""
     r = _run_help("migrate", "dfcx", "--help")
@@ -230,7 +236,7 @@ def test_dfcx_help_lists_run_and_optimize():
 
 
 @pytest.mark.parametrize("mode_arg", [["--run"], ["--optimize"]])
-def test_each_mode_help_renders(mode_arg: list[str]):
+def test_each_mode_help_renders(mode_arg: list[str]) -> None:
     r = _run_help("migrate", "dfcx", *mode_arg, "--help")
     assert r.returncode == 0, r.stderr
 
@@ -238,14 +244,14 @@ def test_each_mode_help_renders(mode_arg: list[str]):
 # --- _resolve_bundle_path ------------------------------------------------
 
 
-def test_resolve_bundle_path_honors_ir_bundle(tmp_path):
+def test_resolve_bundle_path_honors_ir_bundle(tmp_path: typing.Any) -> None:
     bundle = tmp_path / "b.json"
     bundle.write_text("{}")
     args = argparse.Namespace(ir_bundle=str(bundle), target_name=None)
     assert migration_cli._resolve_bundle_path(args) == str(bundle)
 
 
-def test_resolve_bundle_path_exits_when_missing(tmp_path):
+def test_resolve_bundle_path_exits_when_missing(tmp_path: typing.Any) -> None:
     args = argparse.Namespace(
         ir_bundle=str(tmp_path / "nope.json"), target_name=None
     )
@@ -254,14 +260,14 @@ def test_resolve_bundle_path_exits_when_missing(tmp_path):
     assert exc.value.code == 1
 
 
-def test_resolve_bundle_path_exits_when_no_args():
+def test_resolve_bundle_path_exits_when_no_args() -> None:
     args = argparse.Namespace(ir_bundle=None, target_name=None)
     with pytest.raises(SystemExit) as exc:
         migration_cli._resolve_bundle_path(args)
     assert exc.value.code == 1
 
 
-def test_parse_agent_id_extracts_from_formats():
+def test_parse_agent_id_extracts_from_formats() -> None:
     cli = MigrationCLI()
     expected = (
         "projects/my-project-123/locations/global/agents/"
@@ -286,7 +292,7 @@ def test_parse_agent_id_extracts_from_formats():
 # --- per-stage handlers --------------------------------------------------
 
 
-def _make_stage_namespace(**kwargs) -> argparse.Namespace:
+def _make_stage_namespace(**kwargs: typing.Any) -> argparse.Namespace:
     base = dict(
         ir_bundle="/tmp/fake_bundle.json",
         target_name=None,
@@ -298,7 +304,7 @@ def _make_stage_namespace(**kwargs) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
-def test_run_stage_1_delegates_to_service_run_stage_1():
+def test_run_stage_1_delegates_to_service_run_stage_1() -> None:
     args = _make_stage_namespace(
         grouping_json=None,
         version_label="0.0.3",
@@ -324,7 +330,7 @@ def test_run_stage_1_delegates_to_service_run_stage_1():
     assert kwargs["persist_bundle_path"] == "/tmp/fake_bundle.json"
 
 
-def test_run_stage_2_delegates_with_default_paths():
+def test_run_stage_2_delegates_with_default_paths() -> None:
     args = _make_stage_namespace(
         version_label="0.0.4",
         no_unit_tests=False,
@@ -354,7 +360,7 @@ def test_run_stage_2_delegates_with_default_paths():
     assert kwargs["persist_bundle_path"] == "/tmp/fake_bundle.json"
 
 
-def test_run_stage_2_no_flags_disable_optional_outputs():
+def test_run_stage_2_no_flags_disable_optional_outputs() -> None:
     args = _make_stage_namespace(
         version_label="0.0.4",
         no_unit_tests=True,
@@ -383,7 +389,7 @@ def test_run_stage_2_no_flags_disable_optional_outputs():
     assert kwargs["persist_bundle_path"] is None
 
 
-def test_run_stage_3_delegates_with_architecture_and_persist():
+def test_run_stage_3_delegates_with_architecture_and_persist() -> None:
     args = _make_stage_namespace(
         architecture="hub-and-spoke",
         version_label="0.0.5",
@@ -406,7 +412,7 @@ def test_run_stage_3_delegates_with_architecture_and_persist():
     assert kwargs["persist_bundle_path"] == "/tmp/b.json"
 
 
-def test_run_stage_3_original_hierarchy_maps_correctly():
+def test_run_stage_3_original_hierarchy_maps_correctly() -> None:
     args = _make_stage_namespace(
         architecture="original-hierarchy",
         version_label="0.0.5",
@@ -432,7 +438,7 @@ def test_run_stage_3_original_hierarchy_maps_correctly():
 # --- run (end-to-end) ----------------------------------------------------
 
 
-def test_run_end_to_end_exits_when_no_source():
+def test_run_end_to_end_exits_when_no_source() -> None:
     args = argparse.Namespace(
         source_agent_id=None,
         source_zip=None,
@@ -452,7 +458,7 @@ def test_run_end_to_end_exits_when_no_source():
     assert exc.value.code == 1
 
 
-def test_run_end_to_end_builds_config_and_calls_service():
+def test_run_end_to_end_builds_config_and_calls_service() -> None:
     args = argparse.Namespace(
         source_agent_id="projects/p/locations/us/agents/uuid",
         source_zip=None,

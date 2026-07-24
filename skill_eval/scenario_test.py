@@ -12,15 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for scenario abstraction."""
 
+import typing
+
+import pytest
 from absl.testing import absltest, parameterized
 
 from skill_eval import scenario
 
 
 class ScenarioTest(parameterized.TestCase):
-    def test_from_yaml_valid(self):
+    def test_from_yaml_valid(self) -> None:
         yaml_text = """
 prompt: This is prompt.
 rubric:
@@ -52,7 +56,7 @@ setup:
             setup=scenario.Setup(commands=('echo "hello"',)),
             assets=[],
         )
-        self.assertEqual(s, expected)
+        assert s == expected
 
     @parameterized.named_parameters(
         dict(
@@ -128,11 +132,13 @@ setup:
             expected_regex="Invalid setup command at index 0.*expected string",
         ),
     )
-    def test_from_yaml_invalid(self, yaml_text, expected_regex):
-        with self.assertRaisesRegex(ValueError, expected_regex):
+    def test_from_yaml_invalid(
+        self, yaml_text: typing.Any, expected_regex: typing.Any
+    ) -> None:
+        with pytest.raises(ValueError, match=expected_regex):
             scenario.Scenario.from_yaml("test", yaml_text)
 
-    def test_from_yaml_edge_cases(self):
+    def test_from_yaml_edge_cases(self) -> None:
         yaml_text = """
 prompt: This is prompt.
 rubric:
@@ -143,7 +149,7 @@ rubric:
 assets: null
 """
         s = scenario.Scenario.from_yaml("test_edge", yaml_text)
-        self.assertEqual(s.assets, [])
+        assert s.assets == []
         expected_text = """This is prompt.
 
 ## Rubric
@@ -152,7 +158,7 @@ assets: null
                  newline
   - **Good**: Met only after nudging or with errors
   - **Failed**: Not met"""
-        self.assertEqual(s.text, expected_text)
+        assert s.text == expected_text
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Utility for running tests for CES agent callbacks."""
 
 import glob
@@ -21,6 +22,7 @@ import os
 import sys
 import tempfile
 import time
+import typing
 from contextlib import redirect_stderr, redirect_stdout
 
 import pandas as pd
@@ -285,7 +287,7 @@ class CallbackEvals:
                 )
                 args = [temp_test_path] + (pytest_args or [])
                 if log_file:
-                    with open(log_file, "a", encoding="utf-8") as f:
+                    with open(log_file, "a", encoding="utf-8") as f:  # noqa: SIM117
                         with redirect_stdout(f), redirect_stderr(f):
                             pytest.main(args, plugins=[collector])
                 else:
@@ -302,13 +304,18 @@ class CallbackEvals:
 class _TestResultCollector:
     """Collects execution results from pytest test runs."""
 
-    def __init__(self, original_file, agent_name, callback_type):
+    def __init__(
+        self,
+        original_file: typing.Any,
+        agent_name: typing.Any,
+        callback_type: typing.Any,
+    ) -> None:
         self.results = []
         self.original_file = original_file
         self.agent_name = agent_name
         self.callback_type = callback_type
 
-    def _get_error_message(self, report):
+    def _get_error_message(self, report: typing.Any) -> typing.Any:
         if getattr(report, "longrepr", None):
             if hasattr(report.longrepr, "reprcrash") and getattr(
                 report.longrepr, "reprcrash", None
@@ -317,18 +324,8 @@ class _TestResultCollector:
             return str(report.longrepr)
         return None
 
-    def pytest_runtest_logreport(self, report):
-        if report.when == "call":
-            self.results.append(
-                {
-                    "agent_name": self.agent_name,
-                    "callback_type": self.callback_type,
-                    "test_name": report.nodeid.split("::")[-1],
-                    "status": report.outcome.upper(),
-                    "error_message": self._get_error_message(report),
-                }
-            )
-        elif report.failed:
+    def pytest_runtest_logreport(self, report: typing.Any) -> None:
+        if report.when == "call" or report.failed:
             self.results.append(
                 {
                     "agent_name": self.agent_name,
@@ -339,7 +336,7 @@ class _TestResultCollector:
                 }
             )
 
-    def pytest_collectreport(self, report):
+    def pytest_collectreport(self, report: typing.Any) -> None:
         if report.failed:
             self.results.append(
                 {
