@@ -78,6 +78,21 @@ class Conversations(BaseModel):
     conversations: list[Conversation]
 
 
+class ExpectationStatus(str, enum.Enum):
+    MET = "Met"
+    NOT_MET = "Not Met"
+
+
+class ExpectationResult(pydantic.BaseModel):
+    expectation: str
+    status: ExpectationStatus = ExpectationStatus.NOT_MET
+    justification: str = ""
+
+
+class ExpectationOutput(pydantic.BaseModel):
+    results: list[ExpectationResult] = []
+
+
 class EvalUtils(Evaluations):
     """Utility class for processing and exporting CXAS Evaluation Results."""
 
@@ -170,6 +185,70 @@ class EvalUtils(Evaluations):
             if key in tool_call:
                 return tool_call[key]
         return {}
+
+    @staticmethod
+    def _get_exp_act(outcome_obj: dict[str, Any]) -> tuple[str, str, str]:
+        e_text = ""
+        a_text = "(None / Missed)"
+        f_type = "Turn Expectation"
+        e_dict = outcome_obj.get("expectation", {})
+
+        if "agent_response" in e_dict:
+            chunks = e_dict["agent_response"].get("chunks", [])
+            e_text = "agent_response"
+            if chunks:
+                e_text = chunks[0].get("text", "agent_response")
+            f_type = "Semantic Similarity"
+        elif "tool_call" in e_dict:
+            e_text = e_dict["tool_call"].get(
+                "display_name",
+                e_dict["tool_call"].get("id", "tool_call"),
+            )
+            f_type = "Tool Call"
+        elif "tool_response" in e_dict:
+            e_text = e_dict["tool_response"].get(
+                "display_name", "tool_response"
+            )
+            f_type = "Tool Response"
+        elif "agent_transfer" in e_dict:
+            e_text = e_dict["agent_transfer"].get(
+                "display_name",
+                e_dict["agent_transfer"].get("target_agent", "agent_transfer"),
+            )
+            f_type = "Routing / Agent"
+
+        if "observed_agent_response" in outcome_obj:
+            chunks = outcome_obj["observed_agent_response"].get("chunks", [])
+            a_text = chunks[0].get("text", "") if chunks else ""
+        elif "observed_tool_call" in outcome_obj:
+            a_text = outcome_obj["observed_tool_call"].get(
+                "display_name",
+                outcome_obj["observed_tool_call"].get("id", ""),
+            )
+        elif "observed_tool_response" in outcome_obj:
+            a_text = outcome_obj["observed_tool_response"].get(
+                "display_name",
+                outcome_obj["observed_tool_response"].get("id", ""),
+            )
+        elif "observed_agent_transfer" in outcome_obj:
+            a_text = outcome_obj["observed_agent_transfer"].get(
+                "display_name",
+                outcome_obj["observed_agent_transfer"].get("target_agent", ""),
+            )
+
+        return e_text, a_text, f_type
+
+    @staticmethod
+    def _aggregate(arr: list[Any]) -> dict[str, int]:
+        if not arr:
+            return {"Average": 0, "p50": 0, "p90": 0, "p99": 0}
+        ser = pd.Series(arr)
+        return {
+            "Average": int(ser.mean()),
+            "p50": int(ser.quantile(0.50)),
+            "p90": int(ser.quantile(0.90)),
+            "p99": int(ser.quantile(0.99)),
+        }
 
     def _process_dataset_turn(
         self,
@@ -1328,21 +1407,6 @@ class EvalUtils(Evaluations):
         }
 
 
-class ExpectationStatus(str, enum.Enum):
-    MET = "Met"
-    NOT_MET = "Not Met"
-
-
-class ExpectationResult(pydantic.BaseModel):
-    expectation: str
-    status: ExpectationStatus = ExpectationStatus.NOT_MET
-    justification: str = ""
-
-
-class ExpectationOutput(pydantic.BaseModel):
-    results: list[ExpectationResult] = []
-
-
 def evaluate_expectations(
     gemini_client: Any,
     model_name: str,
@@ -1439,70 +1503,6 @@ def evaluate_expectations(
     except Exception as e:
         logging.getLogger(__name__).error(f"Error evaluating expectations: {e}")
         return []
-
-    @staticmethod
-    def _get_exp_act(outcome_obj: dict[str, Any]) -> tuple[str, str, str]:
-        e_text = ""
-        a_text = "(None / Missed)"
-        f_type = "Turn Expectation"
-        e_dict = outcome_obj.get("expectation", {})
-
-        if "agent_response" in e_dict:
-            chunks = e_dict["agent_response"].get("chunks", [])
-            e_text = "agent_response"
-            if chunks:
-                e_text = chunks[0].get("text", "agent_response")
-            f_type = "Semantic Similarity"
-        elif "tool_call" in e_dict:
-            e_text = e_dict["tool_call"].get(
-                "display_name",
-                e_dict["tool_call"].get("id", "tool_call"),
-            )
-            f_type = "Tool Call"
-        elif "tool_response" in e_dict:
-            e_text = e_dict["tool_response"].get(
-                "display_name", "tool_response"
-            )
-            f_type = "Tool Response"
-        elif "agent_transfer" in e_dict:
-            e_text = e_dict["agent_transfer"].get(
-                "display_name",
-                e_dict["agent_transfer"].get("target_agent", "agent_transfer"),
-            )
-            f_type = "Routing / Agent"
-
-        if "observed_agent_response" in outcome_obj:
-            chunks = outcome_obj["observed_agent_response"].get("chunks", [])
-            a_text = chunks[0].get("text", "") if chunks else ""
-        elif "observed_tool_call" in outcome_obj:
-            a_text = outcome_obj["observed_tool_call"].get(
-                "display_name",
-                outcome_obj["observed_tool_call"].get("id", ""),
-            )
-        elif "observed_tool_response" in outcome_obj:
-            a_text = outcome_obj["observed_tool_response"].get(
-                "display_name",
-                outcome_obj["observed_tool_response"].get("id", ""),
-            )
-        elif "observed_agent_transfer" in outcome_obj:
-            a_text = outcome_obj["observed_agent_transfer"].get(
-                "display_name",
-                outcome_obj["observed_agent_transfer"].get("target_agent", ""),
-            )
-
-        return e_text, a_text, f_type
-
-    @staticmethod
-    def _aggregate(arr: list[Any]) -> dict[str, int]:
-        if not arr:
-            return {"Average": 0, "p50": 0, "p90": 0, "p99": 0}
-        ser = pd.Series(arr)
-        return {
-            "Average": int(ser.mean()),
-            "p50": int(ser.quantile(0.50)),
-            "p90": int(ser.quantile(0.90)),
-            "p99": int(ser.quantile(0.99)),
-        }
 
 
 def add_timestamp_suffix(filename: str, timestamp: str | None) -> str:
