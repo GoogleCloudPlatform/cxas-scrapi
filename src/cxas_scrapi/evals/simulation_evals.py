@@ -288,6 +288,10 @@ class LLMUserConversation(Conversation):
         if not self._check_conversation_status():
             return "", {}
 
+        if self.current_turn == 0:
+            session_params = self.test_case.get("session_parameters", {})
+            return self.initial_utterance, session_params
+
         active_idx = self._get_active_step_index()
         if active_idx is not None:
             active_step_prog = self.steps_progress[active_idx]
@@ -305,10 +309,6 @@ class LLMUserConversation(Conversation):
                 )
                 merged_vars = {**session_params, **inject_vars}
                 return utterance, merged_vars
-
-        if self.current_turn == 0:
-            session_params = self.test_case.get("session_parameters", {})
-            return self.initial_utterance, session_params
 
         prompt = self._prepare_llm_prompt()
 

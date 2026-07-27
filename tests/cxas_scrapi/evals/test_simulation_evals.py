@@ -815,9 +815,16 @@ def test_llm_user_next_user_utterance_static_utterance_bypass() -> None:
     }
     conv = LLMUserConversation(mock_genai_client, "model", test_case)
 
-    # 1. First Turn (Turn 0): Should bypass LLM and return first step's
-    # static utterance
+    # 1. Turn 0: Returns initial utterance
     utterance, variables = conv.next_user_utterance()
+    assert utterance == "event: welcome"
+    assert variables == {"user_id": "123"}
+    mock_genai_client.generate.assert_not_called()
+
+    # 2. Turn 1: Bypasses LLM and returns first step's static utterance
+    utterance, variables = conv.next_user_utterance(
+        "Agent response to welcome"
+    )
     assert utterance == "Hello First Step"
     assert variables == {"user_id": "123", "var1": "val1"}
     assert conv.steps_progress[0].status == StepStatus.COMPLETED
@@ -826,8 +833,7 @@ def test_llm_user_next_user_utterance_static_utterance_bypass() -> None:
     )
     mock_genai_client.generate.assert_not_called()
 
-    # 2. Second Turn (Turn 1): Active step is now index 1 which is also
-    # static. Should bypass LLM again.
+    # 3. Turn 2: Active step is now index 1 which is also static
     utterance, variables = conv.next_user_utterance(
         "Agent response to first step"
     )
