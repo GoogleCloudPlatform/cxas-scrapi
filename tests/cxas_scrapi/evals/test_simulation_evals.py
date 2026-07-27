@@ -822,9 +822,7 @@ def test_llm_user_next_user_utterance_static_utterance_bypass() -> None:
     mock_genai_client.generate.assert_not_called()
 
     # 2. Turn 1: Bypasses LLM and returns first step's static utterance
-    utterance, variables = conv.next_user_utterance(
-        "Agent response to welcome"
-    )
+    utterance, variables = conv.next_user_utterance("Agent response to welcome")
     assert utterance == "Hello First Step"
     assert variables == {"user_id": "123", "var1": "val1"}
     assert conv.steps_progress[0].status == StepStatus.COMPLETED
