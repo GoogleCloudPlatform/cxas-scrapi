@@ -147,6 +147,17 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Non-interactive; accept all defaults.",
     )
+    p.add_argument(
+        "--no-consolidate",
+        action="store_true",
+        help=(
+            "Push the full 1:1 agent set to CXAS now instead of deferring "
+            "agent deployment to stage_1.py. WARNING: sources with >100 "
+            "flows/playbooks will exceed the CXAS 100-agent cap. By default "
+            "agents are NOT deployed here — stage_1.py pushes the "
+            "consolidated (N->M) set."
+        ),
+    )
     return p
 
 
@@ -224,6 +235,10 @@ async def _run(args: typing.Any) -> None:
         migration_version=inputs["migration_version"],
         # Stage 1 / Stage 2 are separate scripts; never inline-optimize here.
         optimize_for_cxas=False,
+        # Default: defer the agent push to stage_1.py (consolidated N->M set)
+        # so large sources don't exceed the CXAS 100-agent cap. --no-consolidate
+        # restores the immediate 1:1 push.
+        no_consolidate=args.no_consolidate,
         source_agent_data_override=filtered_data,
     )
 
@@ -322,10 +337,29 @@ async def _run(args: typing.Any) -> None:
         console.print(f"  • Unit tests:       {test_path}")
     if bundle.app_url:
         console.print(f"  • App console:      {bundle.app_url}")
-    console.print(
-        "\n[dim]Next:[/] [cyan]stage_1.py --target-name "
-        f"{inputs['target_name']}[/] for variable dedup + consolidation."
-    )
+
+    if config.consolidate:
+        console.print(
+            f"\n[yellow]Agent deployment DEFERRED:[/] the "
+            f"{len(service.ir.agents)} agents are compiled into the IR bundle "
+            "but NOT yet pushed to CXAS (app, variables and tools were "
+            "deployed). This keeps large sources under the CXAS 100-agent "
+            "cap. Run stage_1.py to push the consolidated (N->M) agents."
+        )
+        console.print(
+            "\n[dim]Next:[/] [cyan]stage_1.py --target-name "
+            f"{inputs['target_name']}[/] for variable dedup + consolidation "
+            "(this is the first agent push to CXAS)."
+        )
+    else:
+        console.print(
+            f"\n[green]Deployed {len(service.ir.agents)} agents 1:1 to CXAS[/] "
+            "(--no-consolidate)."
+        )
+        console.print(
+            "\n[dim]Next:[/] [cyan]stage_1.py --target-name "
+            f"{inputs['target_name']}[/] for variable dedup + consolidation."
+        )
 
 
 def main() -> None:

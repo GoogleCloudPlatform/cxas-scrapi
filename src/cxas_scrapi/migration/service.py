@@ -613,11 +613,15 @@ class MigrationService:
         # 4. Validate.
         structural_consolidator.validate_groupings(self.ir, groupings, root_key)
 
-        # 5. Snapshot pre-consolidation IR (for integrity check + rollback).
-        bundle.pre_consolidation_ir = self.ir.model_copy(deep=True)
+        # 5. Snapshot pre-consolidation IR transiently for the integrity
+        # check only. It is deliberately NOT stored on the bundle: the
+        # pre-consolidation ("orphan") agents must never surface in the
+        # persisted IR bundle or anywhere downstream. They live only in the
+        # migrate-stage bundle that is this stage's input.
+        pre_consolidation_ir = self.ir.model_copy(deep=True)
+        bundle.pre_consolidation_ir = None
 
         # 6. Consolidate IR + persist grouping.
-        pre_consolidation_ir = bundle.pre_consolidation_ir
         self.ir = consolidator.consolidate(groupings)
         bundle.grouping = groupings
         try:
@@ -671,10 +675,17 @@ class MigrationService:
                 f"error(s). First: {blocking[0]}"
             )
 
-        # 9. Deploy consolidated agents.
+        # 9. Deploy consolidated agents. Only the consolidated (N -> M)
+        # agents exist in self.ir here; the raw 1:1 originals were dropped by
+        # consolidate() and were never pushed to CXAS.
         console.print("\n[cyan]Pushing consolidated agents to CXAS…[/]")
         await self._deploy_base_resources(is_update_pass=True)
         await self._deploy_pending_agents(is_update_pass=True)
+        logger.info(
+            "Deployed %d consolidated agent(s); raw 1:1 agents were never "
+            "pushed to CXAS.",
+            len(self.ir.agents),
+        )
 
         # 10. Topology link + set root + orphan cleanup.
         try:
@@ -1571,26 +1582,48 @@ class MigrationService:
             except Exception as exc:
                 logger.warning("DFCX test case conversion failed: %s", exc)
 
-        # Create initial 1:1 transpile version snapshot unconditionally!
-        logger.info("\n--- Creating Initial Migrated Version 0.0.1 ---")
-        try:
-            Versions(target_app_resource_name).create_version(
-                display_name="0.0.1",
-                description="Initial migrated agent baseline",
-            )
-            logger.info(
-                "Successfully created initial transpile version 0.0.1 in CXAS."
-            )
-        except Exception as e:
-            logger.warning(
-                f"Failed to create initial transpile version 0.0.1: {e}"
-            )
+        # Create initial 1:1 transpile version snapshot. Skipped on the
+        # deferred staged path (not optimize_for_cxas AND consolidate): no
+        # agents are deployed there yet, and Stage 1 owns the version
+        # sequence starting at 0.0.2.
+        if config.optimize_for_cxas or not config.consolidate:
+            logger.info("\n--- Creating Initial Migrated Version 0.0.1 ---")
+            try:
+                Versions(target_app_resource_name).create_version(
+                    display_name="0.0.1",
+                    description="Initial migrated agent baseline",
+                )
+                logger.info(
+                    "Successfully created initial transpile version 0.0.1 "
+                    "in CXAS."
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to create initial transpile version 0.0.1: {e}"
+                )
 
         if config.optimize_for_cxas:
             logger.info(
                 "MIGRATION STAGE COMPLETE, ENTERING OPTIMIZATION PHASE..."
             )
+        elif config.consolidate:
+            # Staged skill path: Stage 1 consolidation runs next. Do NOT push
+            # the raw 1:1 agents here — a source with >100 flows/playbooks
+            # would exceed the CXAS 100-agent cap before consolidation can
+            # collapse them (N -> M). Base resources (app/vars/tools) are
+            # already deployed; agents stay COMPILED in the IR and are
+            # persisted to <target>_ir.json for Stage 1 to push as the
+            # consolidated set.
+            await self._deploy_base_resources(is_update_pass=True)
+            logger.info(
+                "Base resources deployed. Agent deployment DEFERRED to "
+                "Stage 1 (post-consolidation) to respect the CXAS 100-agent "
+                "cap. The %d compiled agents are saved in the IR bundle; run "
+                "stage_1.py to push the consolidated agents to CXAS.",
+                len(self.ir.agents),
+            )
         else:
+            # Explicit --no-consolidate: push the full 1:1 agent set now.
             logger.info(
                 "Pushing all resources to CXAS (no-consolidation path)..."
             )
