@@ -190,9 +190,64 @@ async def test_run_migration_success() -> None:
         "dfcx-123", use_export=True
     )
     mock_migrate.assert_called_once()
+    # Default config consolidates: base resources are pushed (Phase 1 fast
+    # deploy + deferred update pass) but agents are NOT deployed here — the
+    # agent push is deferred to Stage 1 to respect the CXAS 100-agent cap.
     assert service._deploy_base_resources.call_count == 2
-    service._deploy_pending_agents.assert_called_once()
+    service._deploy_pending_agents.assert_not_called()
     service.topology_linker.link_and_finalize_topology.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_migration_no_consolidate_pushes_agents() -> None:
+    """With no_consolidate=True, run_migration pushes the full 1:1 agent set
+    immediately (legacy behavior)."""
+    service = MigrationService(
+        project_id="test-project",
+        ps_apps_client=MagicMock(),
+        ps_agents_client=MagicMock(),
+        ps_tools_client=MagicMock(),
+        ps_toolsets_client=MagicMock(),
+        secret_manager_client=MagicMock(),
+        cx_api_client=MagicMock(),
+    )
+    service.exporter = MagicMock()
+    service.exporter.fetch_full_agent_details.return_value = DFCXAgentIR(
+        name="projects/p/locations/l/agents/a",
+        display_name="Test Agent",
+        default_language_code="en",
+        playbooks=[],
+        flows=[],
+    )
+    service.ai_augment = MagicMock()
+    service.ai_augment.generate_agent_description = AsyncMock(
+        return_value="Desc"
+    )
+    service._deploy_base_resources = AsyncMock()
+    service._deploy_pending_agents = AsyncMock()
+    service._process_single_flow = AsyncMock()
+    service.topology_linker = MagicMock()
+    service.reporter = MagicMock()
+
+    with (
+        patch(
+            "cxas_scrapi.migration.service.DFCXParameterExtractor."
+            "migrate_parameters"
+        ) as mock_migrate,
+        patch("cxas_scrapi.migration.service.Versions"),
+    ):
+        mock_migrate.return_value = ([], {})
+        config = MigrationConfig(
+            project_id="dummy-project",
+            target_name="cxas-app",
+            model="gemini-2.5-flash-001",
+            no_consolidate=True,
+        )
+        await service.run_migration(
+            source_cx_agent_id="dfcx-123", config=config
+        )
+
+    service._deploy_pending_agents.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -504,7 +559,10 @@ async def test_run_stage_1_consolidate_runs_consolidator_persists_grouping() -> 
     fake_consolidator.synthesize_instructions.assert_awaited_once()
     # Bundle mutated.
     assert bundle.grouping == fake_groupings
-    assert bundle.pre_consolidation_ir is not None
+    # The pre-consolidation snapshot is used transiently for the integrity
+    # check only and must NOT be persisted on the bundle — the raw 1:1
+    # ("orphan") agents must never surface downstream.
+    assert bundle.pre_consolidation_ir is None
     # Service IR replaced with consolidated output.
     assert service.ir is consolidated_ir
     # Update-pass deploys were called.
