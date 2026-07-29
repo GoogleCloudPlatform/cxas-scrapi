@@ -345,7 +345,7 @@ class ChangelogUtils:
             else:
                 cl = GeminiGenerate(
                     project_id=project_id,
-                    location=os.getenv("VERTEX_LOCATION", "global"),
+                    location=os.getenv("VERTEX_LOCATION", "us-central1"),
                     model_name="gemini-2.5-flash",
                 )
                 response_text = cl.generate(prompt=prompt)
