@@ -63,6 +63,8 @@ class GeminiConfig(BaseModel):
     # `gemini-3-flash-preview` supports both text and audio Parts and the
     # ThinkingConfig API. Override per-project via `trace.yaml: gemini.model`.
     model: str = "gemini-3-flash-preview"
+    # Vertex AI location for Gemini calls (e.g. "europe-west4", "us-central1", "global").
+    location: str | None = None
     # Vertex `ThinkingConfig` budget. Accepts "low" / "medium" / "high"
     # (or None to disable). Audio metric and transcript triage prompts are
     # classification-style, so "low" is a good default trade-off between

@@ -494,9 +494,14 @@ class Traces(Common):
         else:
             selected = list(ANALYSIS_REGISTRY.values())
 
+        vertex_location = (
+            self.trace_config.gemini.location
+            or os.getenv("VERTEX_LOCATION", "global")
+        )
         gem = GeminiGenerate(
             project_id=self.project_id,
             credentials=self.creds,
+            location=vertex_location,
             model_name=self.trace_config.gemini.model,
         )
         overrides = self.trace_config.gemini.audio_metrics
@@ -543,9 +548,14 @@ class Traces(Common):
         normalized = normalized or self.get_normalized(conversation_id)
         transcript = trace_report.to_text(normalized)
 
+        vertex_location = (
+            self.trace_config.gemini.location
+            or os.getenv("VERTEX_LOCATION", "global")
+        )
         gem = GeminiGenerate(
             project_id=self.project_id,
             credentials=self.creds,
+            location=vertex_location,
             model_name=self.trace_config.gemini.model,
         )
         all_metrics = self.trace_config.gemini.triage_metrics

@@ -15,6 +15,7 @@
 import datetime
 import functools
 import json
+import os
 import typing
 from typing import Any
 
@@ -344,7 +345,7 @@ class ChangelogUtils:
             else:
                 cl = GeminiGenerate(
                     project_id=project_id,
-                    location="us-central1",
+                    location=os.getenv("VERTEX_LOCATION", "global"),
                     model_name="gemini-2.5-flash",
                 )
                 response_text = cl.generate(prompt=prompt)

@@ -676,6 +676,22 @@ def test_analyze_audio_handles_unparseable_response(
     assert out["agent_cutoff"]["justification"] == "no verdict here"
 
 
+def test_analyze_audio_custom_location(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    _patch_audio_files(traces_obj, monkeypatch)
+    traces_obj.trace_config.gemini.location = "europe-west4"
+    mock_gemini_cls = MagicMock()
+    monkeypatch.setattr(traces_mod, "GeminiGenerate", mock_gemini_cls)
+    traces_obj.analyze_audio("c1", metrics=["agent_cutoff"])
+    mock_gemini_cls.assert_called_once_with(
+        project_id=traces_obj.project_id,
+        credentials=traces_obj.creds,
+        location="europe-west4",
+        model_name=traces_obj.trace_config.gemini.model,
+    )
+
+
 def test_list_audio_files_uses_gcs_listing(
     traces_obj: typing.Any, monkeypatch: typing.Any
 ) -> None:
