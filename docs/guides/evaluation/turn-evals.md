@@ -31,8 +31,15 @@ from cxas_scrapi.evals.turn_evals import TurnEvals
 
 turn_evals = TurnEvals(
     app_name="projects/my-project/locations/us/apps/my-app",
+    vertex_location="europe-west4",  # Optional: custom region for data residency
 )
 ```
+
+!!! note "Data Residency & Regional Vertex AI"
+    By default, Vertex AI calls use `"global"`. If your organization requires a specific region (e.g. `europe-west4` or `us-central1`), pass `vertex_location="europe-west4"` to `TurnEvals` or set the `VERTEX_LOCATION` environment variable:
+    ```bash
+    export VERTEX_LOCATION="europe-west4"
+    ```
 
 ---
 
