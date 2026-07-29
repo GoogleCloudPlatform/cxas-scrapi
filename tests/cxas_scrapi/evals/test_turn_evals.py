@@ -492,3 +492,42 @@ def test_turn_evals_init_with_rate_limiter(
         creds=None,
         rate_limiter=mock_rate_limiter,
     )
+
+
+@patch("cxas_scrapi.evals.turn_evals.GeminiGenerate")
+@patch("cxas_scrapi.evals.turn_evals.Variables")
+@patch("cxas_scrapi.evals.turn_evals.Sessions")
+def test_turn_evals_vertex_location_param(
+    mock_sessions: typing.Any, mock_variables: typing.Any, mock_gemini: typing.Any
+) -> None:
+    te = TurnEvals(
+        app_name="projects/p/locations/l/apps/a",
+        vertex_location="europe-west4",
+    )
+    assert te.vertex_location == "europe-west4"
+    mock_gemini.assert_called_once_with(
+        project_id="p",
+        location="europe-west4",
+        credentials=None,
+    )
+
+
+@patch("cxas_scrapi.evals.turn_evals.GeminiGenerate")
+@patch("cxas_scrapi.evals.turn_evals.Variables")
+@patch("cxas_scrapi.evals.turn_evals.Sessions")
+def test_turn_evals_vertex_location_env(
+    mock_sessions: typing.Any,
+    mock_variables: typing.Any,
+    mock_gemini: typing.Any,
+    monkeypatch: typing.Any,
+) -> None:
+    monkeypatch.setenv("VERTEX_LOCATION", "us-central1")
+    te = TurnEvals(
+        app_name="projects/p/locations/l/apps/a",
+    )
+    assert te.vertex_location == "us-central1"
+    mock_gemini.assert_called_once_with(
+        project_id="p",
+        location="us-central1",
+        credentials=None,
+    )

@@ -19,6 +19,7 @@ import enum
 import functools
 import inspect
 import json
+import os
 import re
 import shutil
 import time
@@ -404,6 +405,7 @@ class SimulationEvals(Apps):
         rate_limiter: RateLimiter | None = None,
         expectations_only: bool = False,
         deployment_id: str | None = None,
+        vertex_location: str | None = None,
         **kwargs: typing.Any,
     ) -> None:
         self.app_name = app_name
@@ -421,11 +423,13 @@ class SimulationEvals(Apps):
 
         # Vertex AI requires a specific region (e.g. global), whereas CXAS
         # Apps use 'us' or 'eu'
-        vertex_location = "global"
+        self.vertex_location = vertex_location or os.getenv(
+            "VERTEX_LOCATION", "global"
+        )
 
         self.genai_client = GeminiGenerate(
             project_id=self.project_id,
-            location=vertex_location,
+            location=self.vertex_location,
             credentials=self.creds,
         )
 
