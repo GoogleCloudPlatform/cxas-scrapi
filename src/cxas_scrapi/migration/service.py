@@ -129,7 +129,7 @@ class MigrationService:
         self,
         project_id: str,
         location: str = "global",
-        gemini_location: str | None = None,
+        gemini_location: str = "global",
         credentials: typing.Any = None,
         default_model: str = "gemini-3-flash-preview",
         ps_apps_client: Any = None,
@@ -167,7 +167,6 @@ class MigrationService:
             model_name="gemini-3.1-pro-preview",
             max_concurrent_requests=15,
         )
-        self.gemini_location = self.gemini_client.location
 
         self.exporter = ConversationalAgentsAPI()
         self.designer = AsyncAgentDesigner(gemini_client=self.gemini_client)

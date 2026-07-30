@@ -512,7 +512,7 @@ def test_turn_evals_vertex_location_param(
         location="europe-west4",
         credentials=None,
     )
-    assert te.vertex_location == "europe-west4"
+    assert te.genai_client.location == "europe-west4"
 
 
 @patch("cxas_scrapi.evals.turn_evals.GeminiGenerate")
@@ -531,7 +531,7 @@ def test_turn_evals_vertex_location_env(
     )
     mock_gemini.assert_called_once_with(
         project_id="p",
-        location=None,
+        location="global",
         credentials=None,
     )
-    assert te.vertex_location == "us-central1"
+    assert te.genai_client.location == "us-central1"

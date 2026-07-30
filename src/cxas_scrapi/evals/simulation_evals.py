@@ -404,7 +404,7 @@ class SimulationEvals(Apps):
         rate_limiter: RateLimiter | None = None,
         expectations_only: bool = False,
         deployment_id: str | None = None,
-        vertex_location: str | None = None,
+        vertex_location: str = "global",
         **kwargs: typing.Any,
     ) -> None:
         """Initializes the SimulationEvals client.
@@ -414,8 +414,7 @@ class SimulationEvals(Apps):
             rate_limiter: Optional RateLimiter for API calls
             expectations_only: Whether to run expectations only
             deployment_id: Optional deployment ID
-            vertex_location: Optional Vertex AI location (defaults to
-                VERTEX_LOCATION env var or 'global')
+            vertex_location: Optional Vertex AI location. Defaults to 'global'.
         """
         self.app_name = app_name
         self.expectations_only = expectations_only
@@ -437,7 +436,6 @@ class SimulationEvals(Apps):
             location=vertex_location,
             credentials=self.creds,
         )
-        self.vertex_location = self.genai_client.location
 
     def _parse_agent_response(
         self, response: Any

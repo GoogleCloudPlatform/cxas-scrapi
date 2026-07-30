@@ -256,7 +256,7 @@ class ChangelogUtils:
         vertex_client_or_project: Any,
         changelogs: list[dict[str, Any]],
         project_id: str | None = None,
-        vertex_location: str | None = None,
+        vertex_location: str = "us-central1",
     ) -> str:
         """Summarizes each non-evaluation changelog into a simple, specific
         one-liner."""
@@ -332,17 +332,7 @@ class ChangelogUtils:
         """
 
         try:
-            # Handle if the user passes the vertex framework client or strings
-
-            is_gemini_gen = False
-            try:
-                is_gemini_gen = isinstance(
-                    vertex_client_or_project, GeminiGenerate
-                )
-            except TypeError:
-                is_gemini_gen = False
-
-            if is_gemini_gen:
+            if hasattr(vertex_client_or_project, "generate"):
                 response_text = vertex_client_or_project.generate(
                     prompt=prompt, model_name="gemini-2.5-flash"
                 )

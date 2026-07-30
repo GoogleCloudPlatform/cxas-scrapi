@@ -130,7 +130,7 @@ class TurnEvals:
         app_name: str,
         creds: typing.Any = None,
         rate_limiter: RateLimiter | None = None,
-        vertex_location: str | None = None,
+        vertex_location: str = "global",
     ) -> None:
         """Initializes the TurnEvals class.
 
@@ -138,8 +138,7 @@ class TurnEvals:
             app_name: CXAS App Name
             creds: Optional Google Cloud credentials
             rate_limiter: Optional RateLimiter for API calls
-            vertex_location: Optional Vertex AI location (defaults to
-                VERTEX_LOCATION env var or 'global')
+            vertex_location: Optional Vertex AI location. Defaults to 'global'.
         """
         self.app_name = app_name
         self.creds = creds
@@ -157,7 +156,6 @@ class TurnEvals:
             location=vertex_location,
             credentials=self.creds,
         )
-        self.vertex_location = self.genai_client.location
 
         # Initialize Test Dependency Manager
         self.dependency_manager = SessionDependencyManager()

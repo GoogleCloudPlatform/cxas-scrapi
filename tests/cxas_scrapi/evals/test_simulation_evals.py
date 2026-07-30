@@ -1807,7 +1807,7 @@ def test_simulation_evals_vertex_location_param() -> None:
             location="europe-west4",
             credentials=sim.creds,
         )
-        assert sim.vertex_location == "europe-west4"
+        assert sim.genai_client.location == "europe-west4"
 
 
 def test_simulation_evals_vertex_location_env(monkeypatch: typing.Any) -> None:
@@ -1823,7 +1823,7 @@ def test_simulation_evals_vertex_location_env(monkeypatch: typing.Any) -> None:
         sim = SimulationEvals(app_name=app_name)
         mock_gemini.assert_called_once_with(
             project_id="test",
-            location=None,
+            location="global",
             credentials=sim.creds,
         )
-        assert sim.vertex_location == "us-central1"
+        assert sim.genai_client.location == "us-central1"
