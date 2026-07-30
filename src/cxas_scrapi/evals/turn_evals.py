@@ -152,15 +152,12 @@ class TurnEvals:
 
         # Initialize GenAI Client
         project_id = app_name.split("/")[1]
-        self.vertex_location = vertex_location or os.getenv(
-            "VERTEX_LOCATION", "global"
-        )
-
         self.genai_client = GeminiGenerate(
             project_id=project_id,
-            location=self.vertex_location,
+            location=vertex_location,
             credentials=self.creds,
         )
+        self.vertex_location = self.genai_client.location
 
         # Initialize Test Dependency Manager
         self.dependency_manager = SessionDependencyManager()

@@ -141,9 +141,6 @@ class MigrationService:
     ) -> None:
         self.project_id = project_id
         self.location = location
-        self.gemini_location = gemini_location or os.getenv(
-            "VERTEX_LOCATION", "global"
-        )
         self.credentials = credentials
         self.default_model = default_model
 
@@ -165,11 +162,12 @@ class MigrationService:
         # Initialize internal clients
         self.gemini_client = GeminiGenerate(
             project_id=project_id,
-            location=self.gemini_location,
+            location=gemini_location,
             credentials=credentials,
             model_name="gemini-3.1-pro-preview",
             max_concurrent_requests=15,
         )
+        self.gemini_location = self.gemini_client.location
 
         self.exporter = ConversationalAgentsAPI()
         self.designer = AsyncAgentDesigner(gemini_client=self.gemini_client)

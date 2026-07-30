@@ -14,6 +14,7 @@
 
 import asyncio
 import logging
+import os
 import random
 import threading
 import typing
@@ -30,7 +31,7 @@ class GeminiGenerate:
     def __init__(
         self,
         project_id: str,
-        location: str = "global",
+        location: str | None = None,
         credentials: typing.Any = None,
         model_name: str = "gemini-3.1-pro-preview",
         max_concurrent_requests: int = 3,
@@ -39,7 +40,8 @@ class GeminiGenerate:
 
         Args:
             project_id: Google Cloud project ID.
-            location: Vertex AI location. Defaults to 'global'.
+            location: Vertex AI location (defaults to VERTEX_LOCATION env var or
+              'global').
             credentials: Optional Google Cloud credentials.
             model_name: The Gemini model name to use. Defaults to
               'gemini-3.1-pro-preview'.
@@ -52,7 +54,7 @@ class GeminiGenerate:
             f"(Max Concurrency: {max_concurrent_requests})"
         )
         self.project_id = project_id
-        self.location = location
+        self.location = location or os.getenv("VERTEX_LOCATION", "global")
         self.credentials = credentials
         self._thread_local = threading.local()
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)

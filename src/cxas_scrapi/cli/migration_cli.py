@@ -627,8 +627,7 @@ class MigrationCLI:
             migration_service = MigrationService(
                 project_id=config.project_id,
                 location=config.location,
-                gemini_location=config.vertex_location
-                or os.getenv("VERTEX_LOCATION", "global"),
+                gemini_location=config.vertex_location,
                 default_model=config.model,
             )
 
