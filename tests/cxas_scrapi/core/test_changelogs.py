@@ -16,6 +16,7 @@ import typing
 from unittest.mock import MagicMock, patch
 
 from cxas_scrapi.core.changelogs import Changelogs
+from cxas_scrapi.utils.changelog_utils import ChangelogUtils
 
 
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
@@ -52,8 +53,6 @@ def test_get_changelog(mock_client_cls: typing.Any) -> None:
 
 def test_summarize_changelogs_custom_vertex_location() -> None:
     """Test ChangelogUtils.summarize_changelogs with vertex_location."""
-    from cxas_scrapi.utils.changelog_utils import ChangelogUtils
-
     changelogs = [
         {
             "action": "CREATE",
