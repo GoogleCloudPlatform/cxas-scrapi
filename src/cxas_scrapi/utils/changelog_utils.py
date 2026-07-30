@@ -334,7 +334,15 @@ class ChangelogUtils:
         try:
             # Handle if the user passes the vertex framework client or strings
 
-            if isinstance(vertex_client_or_project, GeminiGenerate):
+            is_gemini_gen = False
+            try:
+                is_gemini_gen = isinstance(
+                    vertex_client_or_project, GeminiGenerate
+                )
+            except TypeError:
+                is_gemini_gen = False
+
+            if is_gemini_gen:
                 response_text = vertex_client_or_project.generate(
                     prompt=prompt, model_name="gemini-2.5-flash"
                 )
