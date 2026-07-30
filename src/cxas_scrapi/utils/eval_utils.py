@@ -324,11 +324,25 @@ class EvalUtils(Evaluations):
             ):
                 tool_resource = f"{self.app_name}/tools/{action}"
 
+            # The ToolCall proto has a oneof tool_identifier: plain tools use
+            # the 'tool' resource string, but toolset operations MUST use the
+            # 'toolsetTool' message — the API rejects toolset paths in 'tool'.
+            if "/toolsets/" in tool_resource and "/tools/" in tool_resource:
+                toolset_name, tool_id = tool_resource.rsplit("/tools/", 1)
+                tool_identifier = {
+                    "toolsetTool": {
+                        "toolset": toolset_name,
+                        "toolId": tool_id,
+                    }
+                }
+            else:
+                tool_identifier = {"tool": tool_resource}
+
             tool_call_expectation = {
                 "expectation": {
                     "toolCall": {
                         "id": tool_call_id,
-                        "tool": tool_resource,
+                        **tool_identifier,
                         "args": tool_call.args,
                     }
                 }
@@ -341,7 +355,7 @@ class EvalUtils(Evaluations):
                         "expectation": {
                             "toolResponse": {
                                 "id": tool_call_id,
-                                "tool": tool_resource,
+                                **tool_identifier,
                                 "response": tool_call.output,
                             }
                         }
