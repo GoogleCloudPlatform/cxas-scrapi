@@ -1801,9 +1801,7 @@ def test_simulation_evals_vertex_location_param() -> None:
         patch("cxas_scrapi.core.apps.AgentServiceClient"),
     ):
         mock_gemini.return_value.location = "europe-west4"
-        sim = SimulationEvals(
-            app_name=app_name, vertex_location="europe-west4"
-        )
+        sim = SimulationEvals(app_name=app_name, vertex_location="europe-west4")
         mock_gemini.assert_called_once_with(
             project_id="test",
             location="europe-west4",
