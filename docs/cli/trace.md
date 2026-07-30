@@ -98,6 +98,7 @@ cloud_logging:
 
 gemini:
   model: gemini-2.5-flash
+  location: null                    # Optional: Vertex AI location (e.g. "europe-west4", "global"). Defaults to VERTEX_LOCATION env var or "global"
   # Audio analyses come from `cxas_scrapi.utils.audio_analysis.ANALYSIS_REGISTRY`
   # (5 built-ins: agent_voice_consistency, no_long_pauses,
   # agent_having_trouble, agent_looping, agent_cutoff). Each declares which
