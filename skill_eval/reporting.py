@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Reporting logic for CXAS skill benchmarking."""
 
 import dataclasses
@@ -20,6 +21,7 @@ import json
 import os
 import pathlib
 import re
+import typing
 import urllib.parse
 from collections.abc import Sequence
 from typing import Any
@@ -592,7 +594,9 @@ def generate_detail_html(
     )
 
 
-def _group_by_scenario(results: Sequence[benchmark.ConversationResult]):
+def _group_by_scenario(
+    results: Sequence[benchmark.ConversationResult],
+) -> typing.Any:
     grouped = {}
     for r in results:
         grouped.setdefault(r.scenario_name, []).append(r)

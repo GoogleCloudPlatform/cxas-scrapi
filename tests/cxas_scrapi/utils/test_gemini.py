@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import typing
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,7 +21,7 @@ from cxas_scrapi.utils.gemini import GeminiGenerate
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_with_parts_text_response(mock_genai):
+def test_generate_with_parts_text_response(mock_genai: typing.Any) -> None:
     mock_genai.types.Part.from_text = lambda text: f"text:{text}"
     mock_genai.types.GenerateContentConfig = MagicMock()
     fake_client = MagicMock()
@@ -43,7 +44,9 @@ def test_generate_with_parts_text_response(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_with_parts_returns_parsed_for_json_schema(mock_genai):
+def test_generate_with_parts_returns_parsed_for_json_schema(
+    mock_genai: typing.Any,
+) -> None:
     mock_genai.types.Part.from_text = lambda text: f"t:{text}"
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
@@ -62,7 +65,9 @@ def test_generate_with_parts_returns_parsed_for_json_schema(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_with_parts_returns_none_on_failure(mock_genai):
+def test_generate_with_parts_returns_none_on_failure(
+    mock_genai: typing.Any,
+) -> None:
     mock_genai.types.Part.from_text = lambda text: text
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
@@ -73,7 +78,9 @@ def test_generate_with_parts_returns_none_on_failure(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_with_parts_no_config_when_no_args(mock_genai):
+def test_generate_with_parts_no_config_when_no_args(
+    mock_genai: typing.Any,
+) -> None:
     mock_genai.types.Part.from_text = lambda text: text
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
@@ -88,7 +95,7 @@ def test_generate_with_parts_no_config_when_no_args(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_text_response(mock_genai):
+def test_generate_text_response(mock_genai: typing.Any) -> None:
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.models.generate_content.return_value = SimpleNamespace(
@@ -99,7 +106,9 @@ def test_generate_text_response(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_returns_parsed_for_json_schema(mock_genai):
+def test_generate_returns_parsed_for_json_schema(
+    mock_genai: typing.Any,
+) -> None:
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.models.generate_content.return_value = SimpleNamespace(
@@ -116,7 +125,7 @@ def test_generate_returns_parsed_for_json_schema(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_returns_none_on_failure(mock_genai):
+def test_generate_returns_none_on_failure(mock_genai: typing.Any) -> None:
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.models.generate_content.side_effect = RuntimeError("boom")
@@ -125,7 +134,7 @@ def test_generate_returns_none_on_failure(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_no_config_when_no_args(mock_genai):
+def test_generate_no_config_when_no_args(mock_genai: typing.Any) -> None:
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.models.generate_content.return_value = SimpleNamespace(
@@ -138,7 +147,7 @@ def test_generate_no_config_when_no_args(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_passes_thinking_level(mock_genai):
+def test_generate_passes_thinking_level(mock_genai: typing.Any) -> None:
     """thinking_level='low' wraps a ThinkingConfig and forwards it."""
     sentinel_thinking = MagicMock(name="ThinkingConfig")
     mock_genai.types.ThinkingConfig.return_value = sentinel_thinking
@@ -157,7 +166,9 @@ def test_generate_passes_thinking_level(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_with_parts_passes_thinking_level(mock_genai):
+def test_generate_with_parts_passes_thinking_level(
+    mock_genai: typing.Any,
+) -> None:
     sentinel_thinking = MagicMock(name="ThinkingConfig")
     mock_genai.types.ThinkingConfig.return_value = sentinel_thinking
     mock_genai.types.Part.from_text = lambda text: text
@@ -177,7 +188,7 @@ def test_generate_with_parts_passes_thinking_level(mock_genai):
 
 @patch("cxas_scrapi.utils.gemini.asyncio.sleep", new=AsyncMock())
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_async_success_with_schema(mock_genai):
+def test_generate_async_success_with_schema(mock_genai: typing.Any) -> None:
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.aio.models.generate_content = AsyncMock(
@@ -197,7 +208,7 @@ def test_generate_async_success_with_schema(mock_genai):
 
 @patch("cxas_scrapi.utils.gemini.asyncio.sleep", new=AsyncMock())
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_async_returns_text(mock_genai):
+def test_generate_async_returns_text(mock_genai: typing.Any) -> None:
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.aio.models.generate_content = AsyncMock(
@@ -210,7 +221,7 @@ def test_generate_async_returns_text(mock_genai):
 
 @patch("cxas_scrapi.utils.gemini.asyncio.sleep", new=AsyncMock())
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_async_quota_then_success(mock_genai):
+def test_generate_async_quota_then_success(mock_genai: typing.Any) -> None:
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     quota = RuntimeError("RESOURCE_EXHAUSTED 429")
@@ -226,7 +237,7 @@ def test_generate_async_quota_then_success(mock_genai):
 
 @patch("cxas_scrapi.utils.gemini.asyncio.sleep", new=AsyncMock())
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_async_all_retries_fail(mock_genai):
+def test_generate_async_all_retries_fail(mock_genai: typing.Any) -> None:
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client
     fake_client.aio.models.generate_content = AsyncMock(
@@ -240,7 +251,9 @@ def test_generate_async_all_retries_fail(mock_genai):
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
-def test_generate_async_zero_retries_returns_none(mock_genai):
+def test_generate_async_zero_retries_returns_none(
+    mock_genai: typing.Any,
+) -> None:
     """`max_retries=0` skips the loop entirely — falls through to None."""
     fake_client = MagicMock()
     mock_genai.Client.return_value = fake_client

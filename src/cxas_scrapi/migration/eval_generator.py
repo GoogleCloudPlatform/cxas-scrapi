@@ -35,7 +35,7 @@ class DeterministicEvalGenerator:
     the compiled Intermediate Representation (IR) of the agent.
     """
 
-    def __init__(self, ir_state: MigrationIR):
+    def __init__(self, ir_state: MigrationIR) -> None:
         self.ir = ir_state
 
     def _build_test_turn(

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import typing
 from datetime import datetime
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -124,7 +125,7 @@ def _make_service(ir: MigrationIR | None = None) -> MigrationService:
 
 
 @pytest.mark.asyncio
-async def test_run_migration_success():
+async def test_run_migration_success() -> None:
     # Mock external clients
     mock_ps_apps = MagicMock()
     mock_ps_agents = MagicMock()
@@ -189,13 +190,68 @@ async def test_run_migration_success():
         "dfcx-123", use_export=True
     )
     mock_migrate.assert_called_once()
+    # Default config consolidates: base resources are pushed (Phase 1 fast
+    # deploy + deferred update pass) but agents are NOT deployed here — the
+    # agent push is deferred to Stage 1 to respect the CXAS 100-agent cap.
     assert service._deploy_base_resources.call_count == 2
-    service._deploy_pending_agents.assert_called_once()
+    service._deploy_pending_agents.assert_not_called()
     service.topology_linker.link_and_finalize_topology.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_run_migration_early_utterance_harvesting():
+async def test_run_migration_no_consolidate_pushes_agents() -> None:
+    """With no_consolidate=True, run_migration pushes the full 1:1 agent set
+    immediately (legacy behavior)."""
+    service = MigrationService(
+        project_id="test-project",
+        ps_apps_client=MagicMock(),
+        ps_agents_client=MagicMock(),
+        ps_tools_client=MagicMock(),
+        ps_toolsets_client=MagicMock(),
+        secret_manager_client=MagicMock(),
+        cx_api_client=MagicMock(),
+    )
+    service.exporter = MagicMock()
+    service.exporter.fetch_full_agent_details.return_value = DFCXAgentIR(
+        name="projects/p/locations/l/agents/a",
+        display_name="Test Agent",
+        default_language_code="en",
+        playbooks=[],
+        flows=[],
+    )
+    service.ai_augment = MagicMock()
+    service.ai_augment.generate_agent_description = AsyncMock(
+        return_value="Desc"
+    )
+    service._deploy_base_resources = AsyncMock()
+    service._deploy_pending_agents = AsyncMock()
+    service._process_single_flow = AsyncMock()
+    service.topology_linker = MagicMock()
+    service.reporter = MagicMock()
+
+    with (
+        patch(
+            "cxas_scrapi.migration.service.DFCXParameterExtractor."
+            "migrate_parameters"
+        ) as mock_migrate,
+        patch("cxas_scrapi.migration.service.Versions"),
+    ):
+        mock_migrate.return_value = ([], {})
+        config = MigrationConfig(
+            project_id="dummy-project",
+            target_name="cxas-app",
+            model="gemini-2.5-flash-001",
+            no_consolidate=True,
+        )
+        await service.run_migration(
+            source_cx_agent_id="dfcx-123", config=config
+        )
+
+    service._deploy_pending_agents.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_migration_early_utterance_harvesting() -> None:
     mock_ps_apps = MagicMock()
     mock_ps_agents = MagicMock()
     mock_ps_tools = MagicMock()
@@ -314,7 +370,7 @@ async def test_run_migration_early_utterance_harvesting():
 # ---------------------------------------------------------------------------
 
 
-def test_persist_bundle_writes_file_and_appends_history():
+def test_persist_bundle_writes_file_and_appends_history() -> None:
     service = _make_service()
     bundle = _make_bundle()
     with tempfile.TemporaryDirectory() as td:
@@ -333,7 +389,7 @@ def test_persist_bundle_writes_file_and_appends_history():
     assert isinstance(entry.started_at, datetime)
 
 
-def test_persist_bundle_without_phase_skips_history():
+def test_persist_bundle_without_phase_skips_history() -> None:
     service = _make_service()
     bundle = _make_bundle()
     with tempfile.TemporaryDirectory() as td:
@@ -348,14 +404,14 @@ def test_persist_bundle_without_phase_skips_history():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_requires_bundle():
+async def test_run_stage_1_requires_bundle() -> None:
     service = _make_service()
     with pytest.raises(ValueError, match="requires bundle"):
         await service.run_stage_1(bundle=None)
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_creates_single_version_when_labels_set():
+async def test_run_stage_1_creates_single_version_when_labels_set() -> None:
     service = _make_service()
     fake_versions_client = MagicMock()
     bundle = _make_bundle()
@@ -427,7 +483,9 @@ async def test_run_stage_1_creates_single_version_when_labels_set():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_consolidate_runs_consolidator_persists_grouping():
+async def test_run_stage_1_consolidate_runs_consolidator_persists_grouping() -> (  # noqa: E501
+    None
+):
     """End-to-end consolidation path with mocked consolidator + grouping
     callback returning the proposed groupings unchanged."""
     service = _make_service()
@@ -501,7 +559,10 @@ async def test_run_stage_1_consolidate_runs_consolidator_persists_grouping():
     fake_consolidator.synthesize_instructions.assert_awaited_once()
     # Bundle mutated.
     assert bundle.grouping == fake_groupings
-    assert bundle.pre_consolidation_ir is not None
+    # The pre-consolidation snapshot is used transiently for the integrity
+    # check only and must NOT be persisted on the bundle — the raw 1:1
+    # ("orphan") agents must never surface downstream.
+    assert bundle.pre_consolidation_ir is None
     # Service IR replaced with consolidated output.
     assert service.ir is consolidated_ir
     # Update-pass deploys were called.
@@ -510,7 +571,7 @@ async def test_run_stage_1_consolidate_runs_consolidator_persists_grouping():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_consolidate_aborts_on_integrity_blocking():
+async def test_run_stage_1_consolidate_aborts_on_integrity_blocking() -> None:
     """When integrity_checks returns blocking errors,
     run_stage_1 raises RuntimeError.
     """
@@ -550,19 +611,21 @@ async def test_run_stage_1_consolidate_aborts_on_integrity_blocking():
             "check_consolidation_integrity",
             return_value=(["BLOCKING: unknown tool foo"], []),
         ),
+        pytest.raises(RuntimeError, match="blocking"),
     ):
-        with pytest.raises(RuntimeError, match="blocking"):
-            await service.run_stage_1(
-                bundle=bundle,
-                version_label=None,
-            )
+        await service.run_stage_1(
+            bundle=bundle,
+            version_label=None,
+        )
 
     # Deploy should NOT have run when we abort.
     service._deploy_base_resources.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_callback_returning_none_skips_consolidation():
+async def test_run_stage_1_callback_returning_none_skips_consolidation() -> (
+    None
+):
     """When the grouping_callback returns None, the consolidation block
     is skipped.
     """
@@ -577,7 +640,7 @@ async def test_run_stage_1_callback_returning_none_skips_consolidation():
     # Callback receives kwargs (ir, groupings, consolidator, root_key,
     # dep_summary) — accept **_ so the test doesn't have to mirror the
     # full contract.
-    async def reject_callback(**_):
+    async def reject_callback(**_: typing.Any) -> None:
         return None
 
     with (
@@ -614,7 +677,7 @@ async def test_run_stage_1_callback_returning_none_skips_consolidation():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_2_creates_version_when_label_set():
+async def test_run_stage_2_creates_version_when_label_set() -> None:
     service = _make_service()
     fake_versions_client = MagicMock()
 
@@ -638,7 +701,9 @@ async def test_run_stage_2_creates_version_when_label_set():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_2_generate_unit_tests_writes_json(tmp_path):
+async def test_run_stage_2_generate_unit_tests_writes_json(
+    tmp_path: typing.Any,
+) -> None:
     service = _make_service()
     out_path = str(tmp_path / "unit_tests.json")
 
@@ -672,7 +737,7 @@ async def test_run_stage_2_generate_unit_tests_writes_json(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_stage_2_run_lint_invokes_post_deploy_lint():
+async def test_run_stage_2_run_lint_invokes_post_deploy_lint() -> None:
     service = _make_service()
     fake_lint = AsyncMock(return_value=(True, "lint passed"))
 
@@ -698,7 +763,7 @@ async def test_run_stage_2_run_lint_invokes_post_deploy_lint():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_3_requires_grouping_on_bundle():
+async def test_run_stage_3_requires_grouping_on_bundle() -> None:
     service = _make_service()
     bundle = _make_bundle()  # bundle.grouping is None
     with pytest.raises(RuntimeError, match=r"bundle\.grouping"):
@@ -706,7 +771,9 @@ async def test_run_stage_3_requires_grouping_on_bundle():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_3_persists_bundle_on_success(tmp_path):
+async def test_run_stage_3_persists_bundle_on_success(
+    tmp_path: typing.Any,
+) -> None:
     service = _make_service()
     bundle = _make_bundle()
     bundle.grouping = {"RootGroup": {"agents": ["Root Agent"], "is_root": True}}
@@ -738,7 +805,9 @@ async def test_run_stage_3_persists_bundle_on_success(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_stage_3_triggers_orphan_cleanup_correct_keep_resources():
+async def test_run_stage_3_triggers_orphan_cleanup_correct_keep_resources() -> (
+    None
+):
     service = _make_service()
     service.ir.metadata.app_resource_name = "projects/p/locations/us/apps/X"
     service.ir.agents = {
@@ -786,7 +855,9 @@ async def test_run_stage_3_triggers_orphan_cleanup_correct_keep_resources():
 
 
 @pytest.mark.asyncio
-async def test_run_migration_optimize_for_cxas_calls_new_stage_methods():
+async def test_run_migration_optimize_for_cxas_calls_new_stage_methods() -> (
+    None
+):
     """run_migration with optimize_for_cxas=True should delegate to all three
     snake_case stage methods with correct standard version sequence parameters.
     """
@@ -865,7 +936,7 @@ async def test_run_migration_optimize_for_cxas_calls_new_stage_methods():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_installs_web_review_when_configured():
+async def test_run_stage_1_installs_web_review_when_configured() -> None:
     """When no callback is supplied and config.web_confirm_grouping is True,
     the service auto-installs grouping_web_review.web_review."""
     service = _make_service()
@@ -880,7 +951,7 @@ async def test_run_stage_1_installs_web_review_when_configured():
 
     captured = {}
 
-    async def fake_web_review(**kwargs):
+    async def fake_web_review(**kwargs: typing.Any) -> None:
         captured.update(kwargs)
 
     with (
@@ -924,7 +995,7 @@ async def test_run_stage_1_installs_web_review_when_configured():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_skips_web_review_when_auto_confirm():
+async def test_run_stage_1_skips_web_review_when_auto_confirm() -> None:
     """auto_confirm_grouping=True → no callback installed; Gemini proposal
     applied verbatim."""
     service = _make_service()
@@ -944,7 +1015,7 @@ async def test_run_stage_1_skips_web_review_when_auto_confirm():
 
     called = {"n": 0}
 
-    async def fake_web_review(**kwargs):  # noqa: ARG001
+    async def fake_web_review(**kwargs: typing.Any) -> None:  # noqa: ARG001
         called["n"] += 1
 
     with (
@@ -988,7 +1059,9 @@ async def test_run_stage_1_skips_web_review_when_auto_confirm():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_boots_server_early_and_passes_to_web_review():
+async def test_run_stage_1_boots_server_early_and_passes_to_web_review() -> (
+    None
+):
     """Verify that the service boots the review server early and reuses
     its context during consolidation.
     """
@@ -1073,7 +1146,7 @@ async def test_run_stage_1_boots_server_early_and_passes_to_web_review():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_auto_confirms_in_headless_context():
+async def test_run_stage_1_auto_confirms_in_headless_context() -> None:
     """When web_confirm_grouping is True but the runtime has no TTY
     (CI etc.), the install path must be skipped and Gemini's proposal
     auto-applied so the migration doesn't hang on the 30-min timeout."""
@@ -1094,7 +1167,7 @@ async def test_run_stage_1_auto_confirms_in_headless_context():
 
     called = {"n": 0}
 
-    async def fake_web_review(**kwargs):  # noqa: ARG001
+    async def fake_web_review(**kwargs: typing.Any) -> None:  # noqa: ARG001
         called["n"] += 1
 
     with (
@@ -1142,7 +1215,9 @@ async def test_run_stage_1_auto_confirms_in_headless_context():
 
 
 @pytest.mark.asyncio
-async def test_run_stage_1_skips_early_server_boot_in_headless_context():
+async def test_run_stage_1_skips_early_server_boot_in_headless_context() -> (
+    None
+):
     """The early review-server boot in run_stage_1 must never run in a
     headless context (CI, non-TTY), or pytest runs spawn real HTTP
     servers and browser tabs."""
@@ -1240,7 +1315,9 @@ def _make_run_migration_service() -> MigrationService:
 
 
 @pytest.mark.asyncio
-async def test_run_migration_skips_early_server_boot_in_headless_context():
+async def test_run_migration_skips_early_server_boot_in_headless_context() -> (
+    None
+):
     """run_migration with the default config (web_confirm_grouping=True)
     must skip the early review-server boot in headless contexts, so
     plain `pytest` runs never spawn servers or browser windows."""
@@ -1277,7 +1354,7 @@ async def test_run_migration_skips_early_server_boot_in_headless_context():
 
 
 @pytest.mark.asyncio
-async def test_run_migration_boots_server_early_when_interactive():
+async def test_run_migration_boots_server_early_when_interactive() -> None:
     """Complement to the headless regression test: with a TTY available
     and the web gate enabled, run_migration still boots the review
     server early (once)."""

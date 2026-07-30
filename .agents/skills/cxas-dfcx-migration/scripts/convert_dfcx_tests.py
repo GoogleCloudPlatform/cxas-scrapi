@@ -7,6 +7,7 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+
 """Convert DFCX test cases to CXAS TurnTestCase YAML files.
 
 Can read test cases from either an IR bundle or a raw test case directory.
@@ -26,23 +27,26 @@ Usage:
         --output-dir my_evals/simulations
 """
 
-import argparse
-import json
-import logging
-import os
-import sys
+import argparse  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import sys  # noqa: E402
+import typing
 
-from rich.console import Console
-from rich.table import Table
+from rich.console import Console  # noqa: E402
+from rich.table import Table  # noqa: E402
 
-from cxas_scrapi.migration.data_models import (
+from cxas_scrapi.migration.data_models import (  # noqa: E402
     DFCXAgentIR,
     IRAgent,
     IRBundle,
     IRMetadata,
     MigrationIR,
 )
-from cxas_scrapi.migration.dfcx_test_converter import DFCXTestConverter
+from cxas_scrapi.migration.dfcx_test_converter import (  # noqa: E402
+    DFCXTestConverter,  # noqa: E402
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,7 +55,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def parse_args():
+def parse_args() -> typing.Any:
     parser = argparse.ArgumentParser(
         description="Convert DFCX test cases to CXAS simulation YAML files."
     )
@@ -88,7 +92,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_from_bundle(path: str):
+def load_from_bundle(path: str) -> typing.Any:
     """Load test cases and build converter from an IR bundle."""
     bundle = IRBundle.load(path)
     source = bundle.source_agent_data
@@ -106,7 +110,9 @@ def load_from_bundle(path: str):
     return source, ir, flow_map, target_name
 
 
-def load_from_directory(source_dir: str, flow_map_path: str | None):
+def load_from_directory(
+    source_dir: str, flow_map_path: str | None
+) -> typing.Any:
     """Load test cases from a directory of JSON files."""
     test_cases = []
     for filename in sorted(os.listdir(source_dir)):
@@ -151,7 +157,7 @@ def load_from_directory(source_dir: str, flow_map_path: str | None):
     return source, ir, flow_map, "converted"
 
 
-def main():
+def main() -> None:
     args = parse_args()
     console = Console()
 

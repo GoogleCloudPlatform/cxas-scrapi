@@ -1,3 +1,4 @@
+import typing
 import json
 import os
 import yaml
@@ -8,7 +9,7 @@ evals_dir = os.path.join(base_dir, "evals")
 results_dir = os.path.join(evals_dir, ".eval_results")
 
 
-def compile_context():
+def compile_context() -> typing.Any:
     # 1. Read current SKILL.md guidelines
     main_skill_file = os.path.join(base_dir, "SKILL.md")
     main_skill = ""

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 import os
 import json
 import argparse
@@ -20,7 +21,7 @@ import concurrent.futures
 from google import genai
 from google.genai import types
 
-def load_tools(output_dir):
+def load_tools(output_dir: typing.Any) -> typing.Any:
     tools_info = {}
     agent_tools_path = os.path.join(output_dir, 'agent_tools.json')
     tools_dir = os.path.join(output_dir, 'tools')
@@ -70,7 +71,7 @@ def load_tools(output_dir):
     return tools_info
 
 
-def process_file(filename, source_dir, target_dir, client, tools_context, args):
+def process_file(filename: typing.Any, source_dir: typing.Any, target_dir: typing.Any, client: typing.Any, tools_context: typing.Any, args: typing.Any) -> typing.Any:
     src_file = os.path.join(source_dir, filename)
     print(f"Processing {src_file}...")
     
@@ -159,7 +160,7 @@ Output ONLY the converted JSON object. Do not include any markdown formatting or
     except Exception as e:
         print(f"Error converting {filename}: {e}")
 
-def main():
+def main() -> typing.Any:
     parser = argparse.ArgumentParser(description="Convert CXAS evaluations to SimulationEvals test cases.")
     parser.add_argument("--output-dir", required=True, help="Base output directory containing evals/ and tools/")
     parser.add_argument("--project", default="ces-deployment-dev")

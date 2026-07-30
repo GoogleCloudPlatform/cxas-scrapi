@@ -21,6 +21,7 @@ import logging
 import os
 import sys
 import time
+import typing
 from typing import Any
 
 from jinja2 import Template
@@ -252,7 +253,7 @@ def _generate_html_report(
 ) -> None:
     """Layer 3: Generate collapsible HTML report."""
 
-    def _resolve_report_path(args) -> str:
+    def _resolve_report_path(args: typing.Any) -> str:
         if args.output and args.output.endswith(".html"):
             return os.path.abspath(args.output)
 
@@ -365,7 +366,7 @@ def app_versions_compare(args: argparse.Namespace) -> None:
         args.app_name, args
     )
 
-    def get_clean_json(proto_message) -> str:
+    def get_clean_json(proto_message: typing.Any) -> str:
         d = (
             type(proto_message).to_dict(proto_message)
             if not isinstance(proto_message, dict)

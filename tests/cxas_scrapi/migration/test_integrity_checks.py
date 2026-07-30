@@ -58,7 +58,7 @@ def _ir(
     )
 
 
-def test_end_session_in_agent_tools_is_not_flagged():
+def test_end_session_in_agent_tools_is_not_flagged() -> None:
     """The deploy server auto-attaches ``end_session`` as a sentinel
     tool whose resource path appears in ``agent.tools``. The integrity
     check must NOT treat it as an unknown tool."""
@@ -78,7 +78,7 @@ def test_end_session_in_agent_tools_is_not_flagged():
     assert blocking == []
 
 
-def test_set_session_variables_sentinel_is_not_flagged():
+def test_set_session_variables_sentinel_is_not_flagged() -> None:
     optimized = _ir(
         agents={
             "RootAgent": {
@@ -96,7 +96,7 @@ def test_set_session_variables_sentinel_is_not_flagged():
     assert blocking == []
 
 
-def test_genuinely_unknown_tool_in_agent_tools_is_flagged():
+def test_genuinely_unknown_tool_in_agent_tools_is_flagged() -> None:
     """A non-sentinel tool that isn't in ``current_ir.tools`` IS a
     blocking error."""
     optimized = _ir(
@@ -115,7 +115,7 @@ def test_genuinely_unknown_tool_in_agent_tools_is_flagged():
     assert any("nonexistent_tool" in b for b in blocking)
 
 
-def test_known_tool_resolves_via_short_id():
+def test_known_tool_resolves_via_short_id() -> None:
     optimized = _ir(
         agents={
             "RootAgent": {
@@ -132,7 +132,7 @@ def test_known_tool_resolves_via_short_id():
     assert blocking == []
 
 
-def test_end_session_in_instruction_is_not_flagged():
+def test_end_session_in_instruction_is_not_flagged() -> None:
     """Block 3 (instruction ``{@TOOL: ...}`` refs) also skips sentinels.
     This was already the behavior pre-fix; covered for regression."""
     optimized = _ir(
@@ -149,7 +149,7 @@ def test_end_session_in_instruction_is_not_flagged():
     assert blocking == []
 
 
-def test_unknown_agent_ref_is_flagged():
+def test_unknown_agent_ref_is_flagged() -> None:
     optimized = _ir(
         agents={
             "RootAgent": {

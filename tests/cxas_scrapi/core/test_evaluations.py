@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
@@ -21,7 +22,7 @@ from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_evaluations_list(mock_client_cls):
+def test_evaluations_list(mock_client_cls: typing.Any) -> None:
     """Test Evaluations.list_evaluations."""
     mock_client = mock_client_cls.return_value
     mock_eval = MagicMock()
@@ -38,7 +39,7 @@ def test_evaluations_list(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_evaluations_get_map(mock_client_cls):
+def test_evaluations_get_map(mock_client_cls: typing.Any) -> None:
     """Test Evaluations.get_evaluations_map."""
     mock_client = mock_client_cls.return_value
 
@@ -80,7 +81,7 @@ def test_evaluations_get_map(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_evaluations_get(mock_client_cls):
+def test_evaluations_get(mock_client_cls: typing.Any) -> None:
     """Test Evaluations.get_evaluation."""
     mock_client = mock_client_cls.return_value
     mock_eval = MagicMock()
@@ -96,7 +97,7 @@ def test_evaluations_get(mock_client_cls):
     mock_client.get_evaluation.assert_called_once()
 
 
-def test_eval_dict_to_yaml():
+def test_eval_dict_to_yaml() -> None:
     """Test static method eval_dict_to_yaml for the new dataset format."""
     eval_dict = {
         "display_name": "Test Eval",
@@ -178,7 +179,7 @@ def test_eval_dict_to_yaml():
     assert turns[1]["tool_calls"][0]["args"] == {"param": "val"}
 
 
-def test_eval_dict_to_yaml_multi_agent():
+def test_eval_dict_to_yaml_multi_agent() -> None:
     """Test eval_dict_to_yaml with multiple agent responses in a single turn."""
     eval_dict = {
         "display_name": "Test Multi Agent Eval",
@@ -227,7 +228,7 @@ def test_eval_dict_to_yaml_multi_agent():
 
 
 @patch("cxas_scrapi.core.evaluations.Evaluations.get_evaluation")
-def test_export_evaluation(mock_get_eval):
+def test_export_evaluation(mock_get_eval: typing.Any) -> None:
     """Test Evaluations.export_evaluation."""
     mock_obj = MagicMock()
     mock_obj.display_name = "Exported Eval"
@@ -258,7 +259,7 @@ def test_export_evaluation(mock_get_eval):
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_import_evaluations(mock_client_cls):
+def test_import_evaluations(mock_client_cls: typing.Any) -> None:
     """Test Evaluations.import_evaluations."""
     mock_client = mock_client_cls.return_value
     evals_client = Evaluations(app_name="projects/p/locations/l/apps/a")
@@ -285,7 +286,7 @@ def test_import_evaluations(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_list_evaluation_expectations(mock_client_cls):
+def test_list_evaluation_expectations(mock_client_cls: typing.Any) -> None:
     """Test Evaluations.list_evaluation_expectations."""
     mock_client = mock_client_cls.return_value
     mock_client.list_evaluation_expectations.return_value = ["exp1", "exp2"]
@@ -298,7 +299,7 @@ def test_list_evaluation_expectations(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_get_evaluation_expectation(mock_client_cls):
+def test_get_evaluation_expectation(mock_client_cls: typing.Any) -> None:
     """Test Evaluations.get_evaluation_expectation."""
     mock_client = mock_client_cls.return_value
     mock_exp = MagicMock()
@@ -315,7 +316,7 @@ def test_get_evaluation_expectation(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_create_evaluation_expectation(mock_client_cls):
+def test_create_evaluation_expectation(mock_client_cls: typing.Any) -> None:
     """Test Evaluations.create_evaluation_expectation."""
     mock_client = mock_client_cls.return_value
     mock_client.create_evaluation_expectation.return_value = MagicMock(
@@ -331,7 +332,7 @@ def test_create_evaluation_expectation(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_update_evaluation_expectation(mock_client_cls):
+def test_update_evaluation_expectation(mock_client_cls: typing.Any) -> None:
     """Test Evaluations.update_evaluation_expectation."""
     mock_client = mock_client_cls.return_value
 
@@ -343,7 +344,7 @@ def test_update_evaluation_expectation(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_delete_evaluation_expectation(mock_client_cls):
+def test_delete_evaluation_expectation(mock_client_cls: typing.Any) -> None:
     """Test Evaluations.delete_evaluation_expectation."""
     mock_client = mock_client_cls.return_value
 
@@ -356,7 +357,7 @@ def test_delete_evaluation_expectation(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.evaluations.AgentServiceClient")
-def test_get_evaluation_thresholds(mock_agent_client_cls):
+def test_get_evaluation_thresholds(mock_agent_client_cls: typing.Any) -> None:
     """Test Evaluations.get_evaluation_thresholds."""
     mock_agent_client = mock_agent_client_cls.return_value
 
@@ -400,7 +401,9 @@ def test_get_evaluation_thresholds(mock_agent_client_cls):
 
 @patch("cxas_scrapi.core.evaluations.types")
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_run_evaluation(mock_client_cls, mock_types):
+def test_run_evaluation(
+    mock_client_cls: typing.Any, mock_types: typing.Any
+) -> None:
     """Test Evaluations.run_evaluation."""
 
     evals_client = Evaluations(app_name="projects/p/locations/l/apps/a")
@@ -453,16 +456,18 @@ def test_run_evaluation(mock_client_cls, mock_types):
         assert len(request_kwargs["evaluations"]) == 3
 
         # Test error cases
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError):  # noqa: PT011
             evals_client.run_evaluation()
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError):  # noqa: PT011
             evals_client.run_evaluation(evaluations=["Not Found"])
 
 
 @patch("cxas_scrapi.core.evaluations.types")
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_get_evaluation_run(mock_client_cls, mock_types):
+def test_get_evaluation_run(
+    mock_client_cls: typing.Any, mock_types: typing.Any
+) -> None:
     """Test Evaluations.get_evaluation_run."""
     mock_client = mock_client_cls.return_value
     evals_client = Evaluations(app_name="projects/p/locations/l/apps/a")
@@ -482,7 +487,9 @@ def test_get_evaluation_run(mock_client_cls, mock_types):
 
 @patch("cxas_scrapi.core.evaluations.types")
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_list_evaluation_results_by_run(mock_client_cls, mock_types):
+def test_list_evaluation_results_by_run(
+    mock_client_cls: typing.Any, mock_types: typing.Any
+) -> None:
     """Test Evaluations.list_evaluation_results_by_run."""
     mock_client = mock_client_cls.return_value
     mock_run = MagicMock()
@@ -502,7 +509,7 @@ def test_list_evaluation_results_by_run(mock_client_cls, mock_types):
     assert len(res) == 2
 
     # Test error condition
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         evals_client.list_evaluation_results_by_run(
             evaluation_run_id="invalid_format"
         )
@@ -511,17 +518,17 @@ def test_list_evaluation_results_by_run(mock_client_cls, mock_types):
 class MockEval:
     """Mock Evaluation proto object for testing."""
 
-    def __init__(self, display_name, data_dict):
+    def __init__(self, display_name: typing.Any, data_dict: typing.Any) -> None:
         self.display_name = display_name
         self.data_dict = data_dict
 
     @classmethod
-    def to_dict(cls, obj):
+    def to_dict(cls, obj: typing.Any) -> typing.Any:
         return obj.data_dict
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_build_search_index(mock_client_cls):
+def test_build_search_index(mock_client_cls: typing.Any) -> None:
     """Test Evaluations.build_search_index."""
     evals_client = Evaluations(app_name="projects/p/locations/l/apps/a")
     evals_client.list_evaluations = MagicMock(
@@ -552,7 +559,11 @@ def test_build_search_index(mock_client_cls):
 @patch("cxas_scrapi.core.evaluations.Agents")
 @patch("cxas_scrapi.core.evaluations.Tools")
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
-def test_search_evaluations(mock_client_cls, mock_tools_cls, mock_agents_cls):
+def test_search_evaluations(
+    mock_client_cls: typing.Any,
+    mock_tools_cls: typing.Any,
+    mock_agents_cls: typing.Any,
+) -> None:
     """Test Evaluations.search_evaluations."""
     evals_client = Evaluations(app_name="projects/p/locations/l/apps/a")
     evals_client.list_evaluations = MagicMock(
@@ -610,12 +621,12 @@ def test_search_evaluations(mock_client_cls, mock_tools_cls, mock_agents_cls):
     assert res == ["Eval Both"]
 
     # Test error cases
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         evals_client.search_evaluations(
             app_name="projects/p/locations/l/apps/a", tools=["Invalid Tool"]
         )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         evals_client.search_evaluations(
             app_name="projects/p/locations/l/apps/a", agents=["Invalid Agent"]
         )
@@ -632,8 +643,10 @@ def test_search_evaluations(mock_client_cls, mock_tools_cls, mock_agents_cls):
 @patch("cxas_scrapi.core.evaluations.types")
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
 def test_evaluations_create_evaluation(
-    mock_client_cls, mock_types, mock_json_format
-):
+    mock_client_cls: typing.Any,
+    mock_types: typing.Any,
+    mock_json_format: typing.Any,
+) -> None:
     """Test Evaluations.create_evaluation."""
     mock_client = mock_client_cls.return_value
     evals_client = Evaluations(app_name="projects/p/locations/l/apps/a")
@@ -674,7 +687,9 @@ def test_evaluations_create_evaluation(
 @patch("os.makedirs")
 @patch.object(Evaluations, "export_evaluation")
 @patch.object(Evaluations, "get_evaluations_map")
-def test_bulk_export_evals(mock_get_map, mock_export, mock_makedirs):
+def test_bulk_export_evals(
+    mock_get_map: typing.Any, mock_export: typing.Any, mock_makedirs: typing.Any
+) -> None:
     """Test Evaluations.bulk_export_evals."""
     evals_client = Evaluations(app_name="projects/p/locations/l/apps/a")
 

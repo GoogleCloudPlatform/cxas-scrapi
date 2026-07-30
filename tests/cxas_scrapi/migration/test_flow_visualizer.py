@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Unit tests for FlowDependencyResolver and FlowTreeVisualizer."""
+
+import typing
 
 from rich.console import Console
 from rich.tree import Tree
@@ -154,54 +157,54 @@ LOGIC_FLOW_WRAPPER = {
 
 
 class TestFlowDependencyResolver:
-    def setup_method(self):
+    def setup_method(self) -> None:
         self.resolver = FlowDependencyResolver(
             DFCXAgentIR(**MINIMAL_AGENT_DATA)
         )
 
-    def test_collects_intent_from_transition_route(self):
+    def test_collects_intent_from_transition_route(self) -> None:
         result = self.resolver.resolve(
             DFCXFlowModel(**FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK)
         )
         intent_names = [i.get("displayName") for i in result["intents"]]
         assert "confirm.yes" in intent_names
 
-    def test_collects_webhook_from_fulfillment(self):
+    def test_collects_webhook_from_fulfillment(self) -> None:
         result = self.resolver.resolve(
             DFCXFlowModel(**FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK)
         )
         wh_names = [w.get("displayName") for w in result["webhooks"]]
         assert "MyWebhook" in wh_names
 
-    def test_flow_type_1_for_logic_flow(self):
+    def test_flow_type_1_for_logic_flow(self) -> None:
         result = self.resolver.resolve(DFCXFlowModel(**LOGIC_FLOW_WRAPPER))
         assert result["flow_type"] == 1
 
-    def test_flow_type_2_for_conversational_flow(self):
+    def test_flow_type_2_for_conversational_flow(self) -> None:
         result = self.resolver.resolve(
             DFCXFlowModel(**CONVERSATIONAL_FLOW_WRAPPER)
         )
         assert result["flow_type"] == 2
 
-    def test_pages_preserved_in_result(self):
+    def test_pages_preserved_in_result(self) -> None:
         result = self.resolver.resolve(
             DFCXFlowModel(**FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK)
         )
         assert len(result["pages"]) == 1
         assert PAGE_UUID in result["pages"][0].page_id
 
-    def test_name_map_contains_flow(self):
+    def test_name_map_contains_flow(self) -> None:
         result = self.resolver.resolve(
             DFCXFlowModel(**FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK)
         )
         assert FLOW_UUID in result["name_map"]
         assert result["name_map"][FLOW_UUID] == "Main Flow"
 
-    def test_no_intents_when_no_routes(self):
+    def test_no_intents_when_no_routes(self) -> None:
         result = self.resolver.resolve(DFCXFlowModel(**LOGIC_FLOW_WRAPPER))
         assert result["intents"] == []
 
-    def test_webhook_lookup_by_display_name(self):
+    def test_webhook_lookup_by_display_name(self) -> None:
         """Webhooks referenced by displayName (not UUID) should be resolved."""
         agent_data = dict(MINIMAL_AGENT_DATA)
         flow_wrapper = {
@@ -224,7 +227,7 @@ class TestFlowDependencyResolver:
         result = resolver.resolve(DFCXFlowModel(**flow_wrapper))
         assert len(result["webhooks"]) == 1
 
-    def test_entity_collected_from_form_parameter(self):
+    def test_entity_collected_from_form_parameter(self) -> None:
         agent_data = {
             "name": "projects/p/locations/l/agents/a",
             "display_name": "Test Agent",
@@ -290,7 +293,9 @@ def _render_tree_to_str(tree: Tree) -> str:
 
 
 class TestFlowTreeVisualizer:
-    def _make_context(self, flow_wrapper=None, extra=None):
+    def _make_context(
+        self, flow_wrapper: typing.Any = None, extra: typing.Any = None
+    ) -> typing.Any:
         """Build a resolved context dict for the visualizer."""
         agent_data = dict(MINIMAL_AGENT_DATA)
         resolver = FlowDependencyResolver(DFCXAgentIR(**agent_data))
@@ -300,43 +305,43 @@ class TestFlowTreeVisualizer:
             ctx.update(extra)
         return ctx
 
-    def test_build_tree_returns_tree_instance(self):
+    def test_build_tree_returns_tree_instance(self) -> None:
         ctx = self._make_context()
         tree = FlowTreeVisualizer(ctx).build_tree()
         assert isinstance(tree, Tree)
 
-    def test_build_tree_root_contains_flow_name(self):
+    def test_build_tree_root_contains_flow_name(self) -> None:
         ctx = self._make_context()
         tree = FlowTreeVisualizer(ctx).build_tree()
         rendered = _render_tree_to_str(tree)
         assert "Test Flow" in rendered
 
-    def test_type1_label_present_for_logic_flow(self):
+    def test_type1_label_present_for_logic_flow(self) -> None:
         ctx = self._make_context(LOGIC_FLOW_WRAPPER)
         rendered = _render_tree_to_str(FlowTreeVisualizer(ctx).build_tree())
         assert "TYPE 1" in rendered
 
-    def test_type2_label_present_for_conversational_flow(self):
+    def test_type2_label_present_for_conversational_flow(self) -> None:
         ctx = self._make_context(CONVERSATIONAL_FLOW_WRAPPER)
         rendered = _render_tree_to_str(FlowTreeVisualizer(ctx).build_tree())
         assert "TYPE 2" in rendered
 
-    def test_page_name_appears_in_tree(self):
+    def test_page_name_appears_in_tree(self) -> None:
         ctx = self._make_context(FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK)
         rendered = _render_tree_to_str(FlowTreeVisualizer(ctx).build_tree())
         assert "Collect Info" in rendered
 
-    def test_intent_display_in_route(self):
+    def test_intent_display_in_route(self) -> None:
         ctx = self._make_context(FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK)
         rendered = _render_tree_to_str(FlowTreeVisualizer(ctx).build_tree())
         assert "confirm.yes" in rendered
 
-    def test_webhook_displayed_in_fulfillment(self):
+    def test_webhook_displayed_in_fulfillment(self) -> None:
         ctx = self._make_context(FLOW_WRAPPER_WITH_INTENT_AND_WEBHOOK)
         rendered = _render_tree_to_str(FlowTreeVisualizer(ctx).build_tree())
         assert "MyWebhook" in rendered
 
-    def test_event_handler_rendered(self):
+    def test_event_handler_rendered(self) -> None:
         flow_with_event = {
             "flow_id": "projects/p/l/a/flows/f1",
             "flow_data": {
@@ -358,7 +363,7 @@ class TestFlowTreeVisualizer:
         rendered = _render_tree_to_str(FlowTreeVisualizer(ctx).build_tree())
         assert "sys.no-match-1" in rendered
 
-    def test_set_parameter_action_rendered(self):
+    def test_set_parameter_action_rendered(self) -> None:
         flow_with_set_param = {
             "flow_id": "projects/p/l/a/flows/f1",
             "flow_data": {
@@ -385,7 +390,7 @@ class TestFlowTreeVisualizer:
         assert "myParam" in rendered
         assert "hello" in rendered
 
-    def test_empty_flow_builds_without_error(self):
+    def test_empty_flow_builds_without_error(self) -> None:
         empty_flow = {
             "flow_id": "projects/p/l/a/flows/f1",
             "flow_data": {

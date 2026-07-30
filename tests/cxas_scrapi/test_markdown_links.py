@@ -1,5 +1,6 @@
 import pathlib
 import re
+import typing
 
 import pytest
 import requests
@@ -9,7 +10,7 @@ DOCS_DIR = ROOT_DIR / "docs"
 README_PATH = ROOT_DIR / "README.md"
 
 
-def extract_links(text):
+def extract_links(text: typing.Any) -> typing.Any:
     # Extract markdown links: [text](url)
     markdown_links = re.findall(r"\[.*?\]\((.*?)\)", text)
     # Extract HTML links: <a href="url">...</a>
@@ -17,16 +18,16 @@ def extract_links(text):
     return set(markdown_links + html_links)
 
 
-def is_external(url):
+def is_external(url: typing.Any) -> typing.Any:
     return url.startswith("http://") or url.startswith("https://")
 
 
-def is_ignored(url):
+def is_ignored(url: typing.Any) -> typing.Any:
     ignored_patterns = ["mailto:", "#", "127.0.0.1", "localhost"]
     return any(pattern in url for pattern in ignored_patterns)
 
 
-def get_markdown_files():
+def get_markdown_files() -> typing.Any:
     files = []
     if README_PATH.exists():
         files.append(README_PATH)
@@ -38,7 +39,7 @@ def get_markdown_files():
 @pytest.mark.parametrize(
     "md_path", get_markdown_files(), ids=lambda p: str(p.relative_to(ROOT_DIR))
 )
-def test_markdown_links(md_path):
+def test_markdown_links(md_path: typing.Any) -> None:
     with open(md_path, encoding="utf-8") as f:
         content = f.read()
 

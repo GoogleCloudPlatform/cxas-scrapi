@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Eval conversation classes for CXAS Scrapi."""
 
 import enum
@@ -21,6 +22,7 @@ import json
 import re
 import shutil
 import time
+import typing
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -68,7 +70,7 @@ class Step(pydantic.BaseModel):
     # Variable injects are only supported for the first step
     inject_variables: dict[str, Any] = {}
 
-    def model_dump(self, **kwargs):
+    def model_dump(self, **kwargs: typing.Any) -> typing.Any:
         kwargs.setdefault("exclude_defaults", True)
         return super().model_dump(**kwargs)
 
@@ -84,7 +86,7 @@ class StepProgress(pydantic.BaseModel):
     status: StepStatus = StepStatus.NOT_STARTED
     justification: str = ""
 
-    def model_dump(self, **kwargs):
+    def model_dump(self, **kwargs: typing.Any) -> typing.Any:
         kwargs.setdefault("exclude_defaults", True)
         return super().model_dump(**kwargs)
 
@@ -96,11 +98,11 @@ class SimulationReport:
         self,
         goals_df: pd.DataFrame,
         expectations_df: pd.DataFrame | None = None,
-    ):
+    ) -> None:
         self.goals_df = goals_df
         self.expectations_df = expectations_df
 
-    def __str__(self):
+    def __str__(self) -> typing.Any:
         green = "\033[1;32m"
         red = "\033[1;31m"
         reset = "\033[0m"
@@ -123,7 +125,7 @@ class SimulationReport:
 
         return res
 
-    def _repr_html_(self):
+    def _repr_html_(self) -> typing.Any:
         html = "<h3>Goal Progress</h3>" + self.goals_df._repr_html_()
         if self.expectations_df is not None:
             html += "<h3>Expectations</h3>" + self.expectations_df._repr_html_()
@@ -133,7 +135,7 @@ class SimulationReport:
 class Conversation:
     """Base class for users."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.current_turn = 0
         self.utterance_turn = 0
         self.transcript = []
@@ -188,7 +190,7 @@ class LLMUserConversation(Conversation):
         test_case: dict[str, Any],
         max_turns: int = _MAX_TURNS,
         initial_utterance: str = _FIRST_UTTERANCE,
-    ):
+    ) -> None:
         super().__init__()
         self.genai_client = genai_client
         self.genai_model = genai_model
@@ -236,12 +238,9 @@ class LLMUserConversation(Conversation):
             return False
 
         # If all steps are completed, then the conversation is complete.
-        if all(
+        return not all(
             item.status == StepStatus.COMPLETED for item in self.steps_progress
-        ):
-            return False
-
-        return True
+        )
 
     def _get_active_step_index(self) -> int | None:
         """Finds the index of the first step that is not completed."""
@@ -289,6 +288,10 @@ class LLMUserConversation(Conversation):
         if not self._check_conversation_status():
             return "", {}
 
+        if self.current_turn == 0:
+            session_params = self.test_case.get("session_parameters", {})
+            return self.initial_utterance, session_params
+
         active_idx = self._get_active_step_index()
         if active_idx is not None:
             active_step_prog = self.steps_progress[active_idx]
@@ -306,10 +309,6 @@ class LLMUserConversation(Conversation):
                 )
                 merged_vars = {**session_params, **inject_vars}
                 return utterance, merged_vars
-
-        if self.current_turn == 0:
-            session_params = self.test_case.get("session_parameters", {})
-            return self.initial_utterance, session_params
 
         prompt = self._prepare_llm_prompt()
 
@@ -370,12 +369,12 @@ class LLMUserConversation(Conversation):
         return SimulationReport(goals_df, expectations_df)
 
 
-def cleanup_session_dir(func):
+def cleanup_session_dir(func: typing.Any) -> typing.Any:
     """Decorator to ensure session temporary directory is deleted on exit."""
     sig = inspect.signature(func)
 
     @functools.wraps(func)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:  # noqa: ANN001
         bound = sig.bind(self, *args, **kwargs)
         bound.apply_defaults()
 
@@ -405,8 +404,8 @@ class SimulationEvals(Apps):
         rate_limiter: RateLimiter | None = None,
         expectations_only: bool = False,
         deployment_id: str | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         self.app_name = app_name
         self.expectations_only = expectations_only
         project_id = app_name.split("/")[1]

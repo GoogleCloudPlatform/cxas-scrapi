@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,7 +21,7 @@ from cxas_scrapi.core.variables import Variables, VariableType
 
 
 @patch("cxas_scrapi.core.variables.Variables.get_app")
-def test_list_variables(mock_get_app):
+def test_list_variables(mock_get_app: typing.Any) -> None:
     mock_app = MagicMock()
     mock_app.variable_declarations = ["var1", "var2"]
     mock_get_app.return_value = mock_app
@@ -32,7 +33,7 @@ def test_list_variables(mock_get_app):
 
 
 @patch("cxas_scrapi.core.variables.Variables.get_app")
-def test_get_variable(mock_get_app):
+def test_get_variable(mock_get_app: typing.Any) -> None:
     mock_app = MagicMock()
     v1 = MagicMock(name="v1")
     v1.name = "my_var"
@@ -50,8 +51,10 @@ def test_get_variable(mock_get_app):
 @patch("cxas_scrapi.core.variables.types.App.VariableDeclaration")
 @patch("cxas_scrapi.core.variables.Variables.update_app")
 @patch("cxas_scrapi.core.variables.Variables.get_app")
-def test_create_variable(mock_get_app, mock_update_app, mock_vd):
-    def side_effect(**kwargs):
+def test_create_variable(
+    mock_get_app: typing.Any, mock_update_app: typing.Any, mock_vd: typing.Any
+) -> None:
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -77,8 +80,10 @@ def test_create_variable(mock_get_app, mock_update_app, mock_vd):
 @patch("cxas_scrapi.core.variables.types.App.VariableDeclaration")
 @patch("cxas_scrapi.core.variables.Variables.update_app")
 @patch("cxas_scrapi.core.variables.Variables.get_app")
-def test_update_variable(mock_get_app, mock_update_app, mock_vd):
-    def side_effect(**kwargs):
+def test_update_variable(
+    mock_get_app: typing.Any, mock_update_app: typing.Any, mock_vd: typing.Any
+) -> None:
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -105,7 +110,9 @@ def test_update_variable(mock_get_app, mock_update_app, mock_vd):
 
 @patch("cxas_scrapi.core.variables.Variables.update_app")
 @patch("cxas_scrapi.core.variables.Variables.get_app")
-def test_delete_variable(mock_get_app, mock_update_app):
+def test_delete_variable(
+    mock_get_app: typing.Any, mock_update_app: typing.Any
+) -> None:
     mock_app = MagicMock()
     v1 = MagicMock()
     v1.name = "rem_var"
@@ -124,15 +131,15 @@ def test_delete_variable(mock_get_app, mock_update_app):
     assert args["variable_declarations"][0].name == "keep_var"
 
 
-def test_check_schema_type():
-    with pytest.raises(ValueError):
+def test_check_schema_type() -> None:
+    with pytest.raises(ValueError):  # noqa: PT011
         Variables("projects/p/locations/l/apps/A")._check_schema_type("INVALID")
     Variables("projects/p/locations/l/apps/A")._check_schema_type(
         "STRING"
     )  # Should pass
 
 
-def test_create_variable_already_exists():
+def test_create_variable_already_exists() -> None:
     with (
         patch(
             "cxas_scrapi.core.variables.Variables.update_app"
@@ -151,7 +158,7 @@ def test_create_variable_already_exists():
         mock_update_app.assert_not_called()
 
 
-def test_delete_variable_not_found():
+def test_delete_variable_not_found() -> None:
     with (
         patch(
             "cxas_scrapi.core.variables.Variables.update_app"
@@ -168,19 +175,21 @@ def test_delete_variable_not_found():
         mock_update_app.assert_not_called()
 
 
-def test_check_schema_type_with_enum():
+def test_check_schema_type_with_enum() -> None:
     v = Variables("projects/p/locations/l/apps/A")
     v._check_schema_type(VariableType.STRING)  # Should pass
     v._check_schema_type("STRING")  # Should still pass
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         v._check_schema_type("INVALID")
 
 
 @patch("cxas_scrapi.core.variables.types.App.VariableDeclaration")
 @patch("cxas_scrapi.core.variables.Variables.update_app")
 @patch("cxas_scrapi.core.variables.Variables.get_app")
-def test_create_variable_with_enum(mock_get_app, mock_update_app, mock_vd):
-    def side_effect(**kwargs):
+def test_create_variable_with_enum(
+    mock_get_app: typing.Any, mock_update_app: typing.Any, mock_vd: typing.Any
+) -> None:
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)

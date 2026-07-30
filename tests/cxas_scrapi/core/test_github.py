@@ -14,6 +14,7 @@
 
 import argparse
 import subprocess
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,7 +50,7 @@ def _init_github_action_args(app_dir: str) -> argparse.Namespace:
     )
 
 
-def _init_git_repo(path):
+def _init_git_repo(path: typing.Any) -> None:
     subprocess.run(
         ["git", "init"],
         cwd=path,
@@ -59,7 +60,7 @@ def _init_git_repo(path):
     )
 
 
-def test_get_github_details_https():
+def test_get_github_details_https() -> None:
     with patch("subprocess.check_output") as mock_run:
         mock_run.return_value = "https://github.com/owner/repo.git\n"
         owner, repo = _get_github_details("/tmp")
@@ -67,7 +68,7 @@ def test_get_github_details_https():
         assert repo == "repo"
 
 
-def test_get_github_details_ssh():
+def test_get_github_details_ssh() -> None:
     with patch("subprocess.check_output") as mock_run:
         mock_run.return_value = "git@github.com:owner/repo.git\n"
         owner, repo = _get_github_details("/tmp")
@@ -75,7 +76,7 @@ def test_get_github_details_ssh():
         assert repo == "repo"
 
 
-def test_get_github_details_fail():
+def test_get_github_details_fail() -> None:
     with patch("subprocess.check_output") as mock_run:
         mock_run.side_effect = Exception("error")
         owner, repo = _get_github_details("/tmp")
@@ -83,7 +84,9 @@ def test_get_github_details_fail():
         assert repo is None
 
 
-def test_repo_relative_path_preserves_nested_app_dir(tmp_path):
+def test_repo_relative_path_preserves_nested_app_dir(
+    tmp_path: typing.Any,
+) -> None:
     repo_root = tmp_path / "repo"
     app_dir = repo_root / "customer-service-agent/cxas_app/App"
     app_dir.mkdir(parents=True)
@@ -94,7 +97,9 @@ def test_repo_relative_path_preserves_nested_app_dir(tmp_path):
     )
 
 
-def test_repo_relative_path_rejects_paths_outside_repo(tmp_path):
+def test_repo_relative_path_rejects_paths_outside_repo(
+    tmp_path: typing.Any,
+) -> None:
     repo_root = tmp_path / "repo"
     app_dir = tmp_path / "app"
     repo_root.mkdir()
@@ -104,7 +109,7 @@ def test_repo_relative_path_rejects_paths_outside_repo(tmp_path):
         _repo_relative_path(str(app_dir), str(repo_root))
 
 
-def test_auto_setup_wif_success():
+def test_auto_setup_wif_success() -> None:
     with (
         patch("subprocess.check_output") as mock_output,
         patch("subprocess.run") as mock_run,
@@ -124,7 +129,7 @@ def test_auto_setup_wif_success():
         assert mock_call.call_count >= 3
 
 
-def test_init_github_action_auto_create():
+def test_init_github_action_auto_create() -> None:
     args = argparse.Namespace(
         agent_name="testagent",
         app_id="projects/p/locations/l/apps/a",
@@ -155,7 +160,7 @@ def test_init_github_action_auto_create():
         assert args.service_account == "mock-sa"
 
 
-def test_init_github_action_missing_wif():
+def test_init_github_action_missing_wif() -> None:
     args = argparse.Namespace(
         agent_name="testagent",
         app_id="projects/p/locations/l/apps/a",
@@ -184,7 +189,9 @@ def test_init_github_action_missing_wif():
         init_github_action(args)
 
 
-def test_init_github_action_preserves_nested_app_dir(tmp_path, monkeypatch):
+def test_init_github_action_preserves_nested_app_dir(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     repo_root = tmp_path / "repo"
     app_dir = (
         repo_root / "customer-service-agent/cxas_app/Customer_Service_Agent"

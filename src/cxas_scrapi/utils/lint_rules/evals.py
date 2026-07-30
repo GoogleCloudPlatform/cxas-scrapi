@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Eval lint rules (E001-E011).
 
 Validates golden, scenario, and simulation YAML files.
 """
 
 import re
+import typing
 from pathlib import Path
 
 import yaml
@@ -52,7 +54,7 @@ def _parse_yaml(content: str) -> dict | None:
     return data if data else None
 
 
-def _iter_golden_turns(data: dict):
+def _iter_golden_turns(data: dict) -> typing.Any:
     """Yield (conv_name, turn_index, turn_dict) for golden eval turns."""
     for conv in data.get("conversations", []):
         conv_name = conv.get("conversation", "")

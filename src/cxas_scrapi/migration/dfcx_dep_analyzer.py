@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Dependency analyzer for DFCX resources."""
 
 import json
 import re
+import typing
 
 from cxas_scrapi.migration.data_models import DFCXAgentIR
 
@@ -23,7 +25,7 @@ from cxas_scrapi.migration.data_models import DFCXAgentIR
 class DependencyAnalyzer:
     """Analyzes references between DFCX resources."""
 
-    def __init__(self, agent_data: DFCXAgentIR):
+    def __init__(self, agent_data: DFCXAgentIR) -> None:
         self.data = agent_data
         self.id_map = {}  # DisplayName -> FullName
         self.name_map = {}  # FullName -> DisplayName
@@ -34,10 +36,10 @@ class DependencyAnalyzer:
         self._build_index()
         self._build_graph()
 
-    def _build_index(self):
+    def _build_index(self) -> None:
         """Builds lookup maps for all resources."""
 
-        def reg(res, type_label):
+        def reg(res: typing.Any, type_label: typing.Any) -> None:
             name = res.get("name", "")
             display_name = res.get("displayName", "")
             if name:
@@ -53,7 +55,7 @@ class DependencyAnalyzer:
             f = flow.flow_data
             reg(f, "Flow")
 
-    def _add_edge(self, source_id: str, target_identifier: str):
+    def _add_edge(self, source_id: str, target_identifier: str) -> None:
         """Adds a dependency edge if target exists."""
         if target_identifier.startswith("projects/"):
             target_id = target_identifier
@@ -64,7 +66,7 @@ class DependencyAnalyzer:
             self.graph[source_id].add(target_id)
             self.reverse_graph[target_id].add(source_id)
 
-    def _scan_text_for_refs(self, source_id: str, text: str):
+    def _scan_text_for_refs(self, source_id: str, text: str) -> None:
         """Scans text for ${TYPE:Name} patterns."""
         if not text:
             return
@@ -72,7 +74,7 @@ class DependencyAnalyzer:
         for _, ref_name in matches:
             self._add_edge(source_id, ref_name.strip())
 
-    def _build_graph(self):
+    def _build_graph(self) -> None:
         """Scans all resources to build dependency graph."""
         # 1. Scan Playbooks
         for pb in self.data.playbooks:

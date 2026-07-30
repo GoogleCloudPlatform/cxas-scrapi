@@ -24,11 +24,13 @@ import argparse
 import csv
 import io
 import json
+import typing
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from cxas_scrapi.core.traces import Traces
 
+import contextlib
 import logging
 import platform
 import re
@@ -396,7 +398,7 @@ def _stats_to_markdown(stats: dict) -> str:
         )
     dur = stats.get("duration_seconds", {})
 
-    def _fmt_sec(v):
+    def _fmt_sec(v: typing.Any) -> str:
         return "n/a" if v is None else f"{v:.2f} s"
 
     buf.write(
@@ -530,10 +532,8 @@ def trace_open(args: argparse.Namespace) -> None:
         sys.exit(1)
     print(url)
     if platform.system() == "Darwin":
-        try:
+        with contextlib.suppress(Exception):
             subprocess.run(["open", url], check=False)
-        except Exception:
-            pass
 
 
 # ----------------------------- argparse wiring ------------------------------

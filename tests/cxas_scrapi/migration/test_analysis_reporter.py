@@ -6,11 +6,13 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+
 """Unit tests for ``cxas_scrapi.migration.analysis_reporter``."""
 
 from __future__ import annotations
 
 import json
+import typing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -173,7 +175,7 @@ def _make_service(*, with_grouping: bool = False) -> SimpleNamespace:
 # --- Builder smoke ---------------------------------------------------------
 
 
-def test_snapshot_dataclass_defaults():
+def test_snapshot_dataclass_defaults() -> None:
     snap = MigrationAnalysisSnapshot(app_name="X", target_name="x")
     d = snap.to_dict()
     assert d["app_name"] == "X"
@@ -181,14 +183,16 @@ def test_snapshot_dataclass_defaults():
     assert d["evals"] is None
 
 
-def test_builder_paths_default_to_cwd(tmp_path, monkeypatch):
+def test_builder_paths_default_to_cwd(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     monkeypatch.chdir(tmp_path)
     b = MigrationAnalysisBuilder(target_name="demo", app_name="Demo")
     assert b.html_path == tmp_path / "demo_migration_analysis.html"
     assert b.json_path == tmp_path / "demo_migration_analysis.json"
 
 
-def test_builder_paths_use_output_dir(tmp_path):
+def test_builder_paths_use_output_dir(tmp_path: typing.Any) -> None:
     b = MigrationAnalysisBuilder(
         target_name="demo", app_name="Demo", output_dir=tmp_path
     )
@@ -196,7 +200,7 @@ def test_builder_paths_use_output_dir(tmp_path):
     assert b.json_path.parent == tmp_path
 
 
-def test_record_phase_appends(tmp_path):
+def test_record_phase_appends(tmp_path: typing.Any) -> None:
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     b.record_phase("a", "did a")
     b.record_phase("b", "did b", duration_s=1.5)
@@ -209,7 +213,7 @@ def test_record_phase_appends(tmp_path):
 # --- Snapshot derivation --------------------------------------------------
 
 
-def test_derives_kpis_from_service(tmp_path):
+def test_derives_kpis_from_service(tmp_path: typing.Any) -> None:
     svc = _make_service()
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     b.update_from_service(svc)
@@ -224,7 +228,7 @@ def test_derives_kpis_from_service(tmp_path):
     assert k["cxas_variables"] == 2
 
 
-def test_derives_tools_and_mock_detection(tmp_path):
+def test_derives_tools_and_mock_detection(tmp_path: typing.Any) -> None:
     svc = _make_service()
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     b.update_from_service(svc)
@@ -238,7 +242,7 @@ def test_derives_tools_and_mock_detection(tmp_path):
     assert toolsets["billing_api"]["operation_count"] == 2
 
 
-def test_used_by_reverse_index(tmp_path):
+def test_used_by_reverse_index(tmp_path: typing.Any) -> None:
     svc = _make_service()
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     b.update_from_service(svc)
@@ -246,7 +250,7 @@ def test_used_by_reverse_index(tmp_path):
     assert b.snapshot.toolsets["billing_api"]["callers"] == ["RootAgent"]
 
 
-def test_variables_referenced_by_instruction(tmp_path):
+def test_variables_referenced_by_instruction(tmp_path: typing.Any) -> None:
     svc = _make_service()
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     b.update_from_service(svc)
@@ -255,7 +259,7 @@ def test_variables_referenced_by_instruction(tmp_path):
     assert by_name["session_token"]["referenced_by"] == ["RootAgent"]
 
 
-def test_grouping_marks_absorbed_flows_and_root(tmp_path):
+def test_grouping_marks_absorbed_flows_and_root(tmp_path: typing.Any) -> None:
     svc = _make_service(with_grouping=True)
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     b.update_from_service(svc)
@@ -270,7 +274,7 @@ def test_grouping_marks_absorbed_flows_and_root(tmp_path):
 # --- Flush / rendering -----------------------------------------------------
 
 
-def test_flush_writes_html_and_json_atomically(tmp_path):
+def test_flush_writes_html_and_json_atomically(tmp_path: typing.Any) -> None:
     svc = _make_service(with_grouping=True)
     b = MigrationAnalysisBuilder("demo", "Demo App", output_dir=tmp_path)
     b.record_phase("source_loaded", "loaded source")
@@ -286,7 +290,7 @@ def test_flush_writes_html_and_json_atomically(tmp_path):
     assert data["agents"]["RootAgent"]["is_root"] is True
 
 
-def test_flush_is_idempotent(tmp_path):
+def test_flush_is_idempotent(tmp_path: typing.Any) -> None:
     svc = _make_service()
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     b.update_from_service(svc)
@@ -298,7 +302,9 @@ def test_flush_is_idempotent(tmp_path):
     assert len(first) == len(second) or abs(len(first) - len(second)) < 100
 
 
-def test_flush_never_raises_when_service_state_bad(tmp_path, caplog):
+def test_flush_never_raises_when_service_state_bad(
+    tmp_path: typing.Any, caplog: typing.Any
+) -> None:
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     # service object missing every expected attr
     b.update_from_service(SimpleNamespace())
@@ -327,7 +333,7 @@ def test_flush_never_raises_when_service_state_bad(tmp_path, caplog):
         "stage_3_topology",
     ],
 )
-def test_service_declares_all_planned_checkpoints(name):
+def test_service_declares_all_planned_checkpoints(name: typing.Any) -> None:
     """Sanity check that every documented checkpoint name actually fires
     in ``service.py``. Catches accidental rename/removal."""
     src = Path("src/cxas_scrapi/migration/service.py").read_text(
@@ -339,13 +345,15 @@ def test_service_declares_all_planned_checkpoints(name):
 # --- Grouping Review (Phase 3) --------------------------------------------
 
 
-def test_snapshot_pending_grouping_defaults_none():
+def test_snapshot_pending_grouping_defaults_none() -> None:
     snap = MigrationAnalysisSnapshot(app_name="X", target_name="x")
     assert snap.pending_grouping is None
     assert snap.to_dict()["pending_grouping"] is None
 
 
-def test_snapshot_pending_grouping_serializes_through(tmp_path):
+def test_snapshot_pending_grouping_serializes_through(
+    tmp_path: typing.Any,
+) -> None:
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     b.snapshot.pending_grouping = {
         "groupings": {
@@ -369,7 +377,9 @@ def test_snapshot_pending_grouping_serializes_through(tmp_path):
     assert pg["groupings"]["RootAgent"]["agents"] == ["Flow A", "Flow B"]
 
 
-def test_html_renders_grouping_tab_hidden_when_pending_is_none(tmp_path):
+def test_html_renders_grouping_tab_hidden_when_pending_is_none(
+    tmp_path: typing.Any,
+) -> None:
     svc = _make_service()
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     b.update_from_service(svc)
@@ -380,7 +390,9 @@ def test_html_renders_grouping_tab_hidden_when_pending_is_none(tmp_path):
     assert 'style="display:none;"' in html
 
 
-def test_html_renders_grouping_tab_with_pending_data(tmp_path):
+def test_html_renders_grouping_tab_with_pending_data(
+    tmp_path: typing.Any,
+) -> None:
     svc = _make_service()
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
     b.update_from_service(svc)
@@ -415,7 +427,9 @@ def test_html_renders_grouping_tab_with_pending_data(tmp_path):
     assert 'id="panel-grouping"' in html
 
 
-def test_html_confirm_button_disabled_without_live_endpoint(tmp_path):
+def test_html_confirm_button_disabled_without_live_endpoint(
+    tmp_path: typing.Any,
+) -> None:
     """In file:// read-only mode, the Confirm/Abort buttons are disabled."""
     svc = _make_service()
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
@@ -433,7 +447,7 @@ def test_html_confirm_button_disabled_without_live_endpoint(tmp_path):
 # --- Phase 5: always-on consolidation defaults ----------------------------
 
 
-def test_migration_config_consolidates_by_default():
+def test_migration_config_consolidates_by_default() -> None:
     """Post-Phase-5 invariant: default config consolidates and shows the
     web confirmation gate."""
     cfg = MigrationConfig(project_id="p", target_name="t", model="m")
@@ -443,7 +457,7 @@ def test_migration_config_consolidates_by_default():
     assert cfg.no_consolidate is False
 
 
-def test_migration_config_no_consolidate_disables_pipeline():
+def test_migration_config_no_consolidate_disables_pipeline() -> None:
     """--no-consolidate opt-out flips both consolidate and run_stage_3."""
     cfg = MigrationConfig(
         project_id="p", target_name="t", model="m", no_consolidate=True
@@ -452,7 +466,9 @@ def test_migration_config_no_consolidate_disables_pipeline():
     assert cfg.run_stage_3 is False
 
 
-def test_html_renders_agent_xprs_tab_and_banner_when_experimental(tmp_path):
+def test_html_renders_agent_xprs_tab_and_banner_when_experimental(
+    tmp_path: typing.Any,
+) -> None:
     svc = _make_service()
     svc.config.experimental_agent_xprs = True
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
@@ -467,7 +483,9 @@ def test_html_renders_agent_xprs_tab_and_banner_when_experimental(tmp_path):
     assert 'id="xprs-placeholder-desc"' in html
 
 
-def test_html_omits_agent_xprs_when_not_experimental(tmp_path):
+def test_html_omits_agent_xprs_when_not_experimental(
+    tmp_path: typing.Any,
+) -> None:
     svc = _make_service()
     svc.config.experimental_agent_xprs = False
     b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)

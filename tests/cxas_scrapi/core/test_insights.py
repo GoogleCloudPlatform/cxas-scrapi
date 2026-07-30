@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import io
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ from cxas_scrapi.core.insights import Insights
 
 
 @pytest.fixture
-def mock_google_auth():
+def mock_google_auth() -> typing.Any:
     with patch("google.auth.default") as mock_auth:
         mock_creds = MagicMock()
         mock_creds.token = "fake_token"
@@ -32,7 +33,9 @@ def mock_google_auth():
 
 
 @patch("requests.Session.request")
-def test_list_conversations(mock_request, mock_google_auth):
+def test_list_conversations(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     """Test Insights.list_conversations."""
     # Setup mock response
     mock_response = MagicMock()
@@ -63,7 +66,9 @@ def test_list_conversations(mock_request, mock_google_auth):
 
 
 @patch("requests.Session.request")
-def test_list_conversations_with_view(mock_request, mock_google_auth):
+def test_list_conversations_with_view(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     """Test Insights.list_conversations with view parameter."""
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -84,7 +89,9 @@ def test_list_conversations_with_view(mock_request, mock_google_auth):
 
 
 @patch("requests.Session.request")
-def test_get_conversation(mock_request, mock_google_auth):
+def test_get_conversation(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     """Test Insights.get_conversation."""
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -132,8 +139,10 @@ def test_get_conversation(mock_request, mock_google_auth):
 @patch("time.sleep", return_value=None)
 @patch("urllib3.connectionpool.HTTPConnectionPool._make_request")
 def test_insights_request_retry_on_failure(
-    mock_make_request, mock_sleep, mock_google_auth
-):
+    mock_make_request: typing.Any,
+    mock_sleep: typing.Any,
+    mock_google_auth: typing.Any,
+) -> None:
     """Test that Insights client retries on transient errors."""
     mock_resp1 = HTTPResponse(
         body=io.BytesIO(b"Service Unavailable"),

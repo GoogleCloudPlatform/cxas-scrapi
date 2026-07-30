@@ -21,7 +21,10 @@ import os
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+import pydantic
+
+BaseModel = pydantic.BaseModel
+Field = pydantic.Field
 
 logger = logging.getLogger(__name__)
 

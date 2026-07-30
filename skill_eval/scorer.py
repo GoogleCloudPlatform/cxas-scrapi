@@ -65,7 +65,7 @@ class Scorer:
         project: str,
         location: str = "global",
         model_name: str = _DEFAULT_MODEL,
-    ):
+    ) -> None:
         self._project = project
         self._location = location
         self._model_name = model_name

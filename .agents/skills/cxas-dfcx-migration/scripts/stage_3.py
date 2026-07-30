@@ -7,6 +7,7 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+
 """Stage 3: parent-child topology wiring for consolidated CXAS agents.
 
 Thin shell over :meth:`MigrationService.run_stage_3`. Loads the IR bundle
@@ -23,24 +24,25 @@ Supported architectures layout style:
       with smart cycle breaking.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: E402, F404
 
-import argparse
-import asyncio
-import logging
-import os
-import sys
+import argparse  # noqa: E402
+import asyncio  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import sys  # noqa: E402
+import typing
 
-from rich.console import Console
-from rich.logging import RichHandler
+from rich.console import Console  # noqa: E402
+from rich.logging import RichHandler  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _prompts  # noqa: E402
 import _shared  # noqa: E402
 
-from cxas_scrapi.migration import phase_tracker
-from cxas_scrapi.migration.data_models import IRBundle
-from cxas_scrapi.migration.service import MigrationService
+from cxas_scrapi.migration import phase_tracker  # noqa: E402
+from cxas_scrapi.migration.data_models import IRBundle  # noqa: E402
+from cxas_scrapi.migration.service import MigrationService  # noqa: E402
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -74,7 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _resolve_bundle_path(args) -> str:
+def _resolve_bundle_path(args: typing.Any) -> str:
     if args.ir_bundle:
         return args.ir_bundle
     path = IRBundle.find_default_bundle(args.target_name)
@@ -86,10 +88,10 @@ def _resolve_bundle_path(args) -> str:
     return path
 
 
-async def _run(args) -> None:
+async def _run(args: typing.Any) -> None:
     tracker = phase_tracker.PhaseTracker(console)
 
-    if not _shared.auth_check(console):
+    if not _shared.auth_check(console):  # noqa: SIM102
         if not args.yes and not _prompts.prompt_yes_no(
             "Proceed anyway?", default=False
         ):

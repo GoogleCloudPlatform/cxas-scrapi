@@ -246,9 +246,7 @@ class HardcodedData(Rule):
     def _should_skip(self, line: str) -> bool:
         if "{" in line and "}" in line:
             return True
-        if "<inline_example" in line or "</inline_example" in line:
-            return True
-        return False
+        return bool("<inline_example" in line or "</inline_example" in line)
 
     def check(
         self, file_path: Path, content: str, context: LintContext

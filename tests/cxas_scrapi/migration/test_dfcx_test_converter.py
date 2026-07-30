@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for DFCX test case converter."""
 
+import typing
 from unittest.mock import MagicMock
 
 import yaml
@@ -52,7 +54,13 @@ def _make_source(*test_cases: dict) -> DFCXAgentIR:
     )
 
 
-def _text_turn(text, responses=None, flow=None, prev_flow=None, params=None):
+def _text_turn(
+    text: typing.Any,
+    responses: typing.Any = None,
+    flow: typing.Any = None,
+    prev_flow: typing.Any = None,
+    params: typing.Any = None,
+) -> typing.Any:
     turn = {
         "userInput": {"input": {"text": {"text": text}}},
         "virtualAgentOutput": {},
@@ -66,7 +74,9 @@ def _text_turn(text, responses=None, flow=None, prev_flow=None, params=None):
     return turn
 
 
-def _event_turn(event, responses=None, flow=None):
+def _event_turn(
+    event: typing.Any, responses: typing.Any = None, flow: typing.Any = None
+) -> typing.Any:
     turn = {
         "userInput": {"input": {"event": {"event": event}}},
         "virtualAgentOutput": {},
@@ -78,7 +88,9 @@ def _event_turn(event, responses=None, flow=None):
     return turn
 
 
-def _dtmf_turn(digits, responses=None, flow=None):
+def _dtmf_turn(
+    digits: typing.Any, responses: typing.Any = None, flow: typing.Any = None
+) -> typing.Any:
     turn = {
         "userInput": {"input": {"dtmf": {"digits": digits}}},
         "virtualAgentOutput": {},
@@ -90,7 +102,7 @@ def _dtmf_turn(digits, responses=None, flow=None):
     return turn
 
 
-def _empty_text_turn(flow=None):
+def _empty_text_turn(flow: typing.Any = None) -> typing.Any:
     turn = {
         "userInput": {"input": {"text": {}}},
         "virtualAgentOutput": {},
@@ -100,7 +112,7 @@ def _empty_text_turn(flow=None):
     return turn
 
 
-def _mock_gemini(summary="Agent greets the user"):
+def _mock_gemini(summary: typing.Any = "Agent greets the user") -> typing.Any:
     mock = MagicMock()
     mock.generate.return_value = f"1. {summary}"
     return mock
@@ -109,14 +121,14 @@ def _mock_gemini(summary="Agent greets the user"):
 # --- Routing ---
 
 
-def test_route_to_agent_direct_match():
+def test_route_to_agent_direct_match() -> None:
     ir = _make_ir("MainMenu", "RootAgent")
     converter = DFCXTestConverter(ir)
     tc = {"testConfig": {"flow": "MainMenu"}}
     assert converter._route_test_to_agent(tc) == "MainMenu"
 
 
-def test_route_to_agent_via_flow_map():
+def test_route_to_agent_via_flow_map() -> None:
     ir = _make_ir("NavigationAgent")
     flow_map = {"Main Menu": "NavigationAgent"}
     converter = DFCXTestConverter(ir, flow_to_agent_map=flow_map)
@@ -124,21 +136,21 @@ def test_route_to_agent_via_flow_map():
     assert converter._route_test_to_agent(tc) == "NavigationAgent"
 
 
-def test_route_to_agent_sanitized_fallback():
+def test_route_to_agent_sanitized_fallback() -> None:
     ir = _make_ir("DefaultStartFlow")
     converter = DFCXTestConverter(ir)
     tc = {"testConfig": {"flow": "Default Start Flow"}}
     assert converter._route_test_to_agent(tc) == "DefaultStartFlow"
 
 
-def test_route_to_agent_no_flow():
+def test_route_to_agent_no_flow() -> None:
     ir = _make_ir("RootAgent")
     converter = DFCXTestConverter(ir)
     tc = {"testConfig": {}}
     assert converter._route_test_to_agent(tc) is None
 
 
-def test_route_to_agent_unknown_flow():
+def test_route_to_agent_unknown_flow() -> None:
     ir = _make_ir("RootAgent")
     converter = DFCXTestConverter(ir)
     tc = {"testConfig": {"flow": "NonexistentFlow"}}
@@ -148,7 +160,7 @@ def test_route_to_agent_unknown_flow():
 # --- Fuzzy match mode (no gemini_client) ---
 
 
-def test_convert_text_produces_fuzzy_match():
+def test_convert_text_produces_fuzzy_match() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -187,7 +199,7 @@ def test_convert_text_produces_fuzzy_match():
 # --- Behavioral mode (with gemini_client) ---
 
 
-def test_convert_text_produces_behavioral_string():
+def test_convert_text_produces_behavioral_string() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -216,7 +228,7 @@ def test_convert_text_produces_behavioral_string():
     assert report["fuzzy_match_assertions"] == 0
 
 
-def test_behavioral_caches_identical_responses():
+def test_behavioral_caches_identical_responses() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -245,7 +257,7 @@ def test_behavioral_caches_identical_responses():
     assert gemini.generate.call_count == 1
 
 
-def test_behavioral_fallback_on_gemini_failure():
+def test_behavioral_fallback_on_gemini_failure() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -271,7 +283,7 @@ def test_behavioral_fallback_on_gemini_failure():
     assert "Agent responds appropriately" in exp
 
 
-def test_batch_summarize_multiple_unique():
+def test_batch_summarize_multiple_unique() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -316,7 +328,7 @@ def test_batch_summarize_multiple_unique():
     )
 
 
-def test_parse_batch_response_fallback():
+def test_parse_batch_response_fallback() -> None:
     result = DFCXTestConverter._parse_batch_response(None, 3)
     assert len(result) == 3
     assert all("Agent responds" in s for s in result)
@@ -325,7 +337,7 @@ def test_parse_batch_response_fallback():
 # --- Event input ---
 
 
-def test_convert_event_input():
+def test_convert_event_input() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -351,7 +363,7 @@ def test_convert_event_input():
 # --- DTMF as text ---
 
 
-def test_convert_dtmf_as_text():
+def test_convert_dtmf_as_text() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -378,7 +390,7 @@ def test_convert_dtmf_as_text():
 # --- Multi-turn with flow change / agent_transfer ---
 
 
-def test_convert_multi_turn_with_agent_transfer():
+def test_convert_multi_turn_with_agent_transfer() -> None:
     ir = _make_ir("RootAgent", "BillingAgent")
     flow_map = {"Default Start Flow": "RootAgent", "Billing": "BillingAgent"}
     source = _make_source(
@@ -421,7 +433,7 @@ def test_convert_multi_turn_with_agent_transfer():
     assert report["agent_transfer_assertions"] >= 1
 
 
-def test_agent_transfer_with_behavioral():
+def test_agent_transfer_with_behavioral() -> None:
     ir = _make_ir("RootAgent", "BillingAgent")
     flow_map = {"Root": "RootAgent", "Billing": "BillingAgent"}
     source = _make_source(
@@ -460,7 +472,7 @@ def test_agent_transfer_with_behavioral():
 # --- SSML stripping ---
 
 
-def test_ssml_stripping():
+def test_ssml_stripping() -> None:
     ssml = (
         "<speak>Thank you for calling "
         '<prosody rate="slow">support</prosody>.</speak>'
@@ -470,14 +482,14 @@ def test_ssml_stripping():
     )
 
 
-def test_ssml_stripping_plain_text():
+def test_ssml_stripping_plain_text() -> None:
     assert DFCXTestConverter._strip_ssml("Hello world") == "Hello world"
 
 
 # --- Empty text turn skipping ---
 
 
-def test_empty_text_turns_skipped():
+def test_empty_text_turns_skipped() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -511,7 +523,7 @@ def test_empty_text_turns_skipped():
 # --- Post-consolidation rerouting ---
 
 
-def test_reroute_after_consolidation():
+def test_reroute_after_consolidation() -> None:
     test_cases = {
         "FlowA": [{"name": "test1"}],
         "FlowB": [{"name": "test2"}],
@@ -532,7 +544,7 @@ def test_reroute_after_consolidation():
 # --- Skip cases ---
 
 
-def test_skip_test_no_assertions():
+def test_skip_test_no_assertions() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -549,7 +561,7 @@ def test_skip_test_no_assertions():
     assert not tests_by_agent
 
 
-def test_skip_test_short_response():
+def test_skip_test_short_response() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -568,7 +580,7 @@ def test_skip_test_short_response():
 # --- Serialize to YAML ---
 
 
-def test_serialize_to_yaml_fuzzy_match():
+def test_serialize_to_yaml_fuzzy_match() -> None:
     tests_by_agent = {
         "RootAgent": [
             TurnTestCase(
@@ -596,7 +608,7 @@ def test_serialize_to_yaml_fuzzy_match():
     assert parsed["tests"][0]["turns"][0]["user"] == "hello"
 
 
-def test_serialize_to_yaml_behavioral():
+def test_serialize_to_yaml_behavioral() -> None:
     tests_by_agent = {
         "RootAgent": [
             TurnTestCase(
@@ -630,7 +642,7 @@ def test_serialize_to_yaml_behavioral():
 # --- Deduplication ---
 
 
-def test_duplicate_names_deduplicated():
+def test_duplicate_names_deduplicated() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -667,7 +679,7 @@ def test_duplicate_names_deduplicated():
 # --- Injected parameters ---
 
 
-def test_first_turn_injected_parameters():
+def test_first_turn_injected_parameters() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -699,7 +711,7 @@ def test_first_turn_injected_parameters():
 # --- Report ---
 
 
-def test_report_counts():
+def test_report_counts() -> None:
     ir = _make_ir("RootAgent", "BillingAgent")
     flow_map = {"Root": "RootAgent", "Billing": "BillingAgent"}
     source = _make_source(
@@ -737,7 +749,7 @@ def test_report_counts():
     assert report["agent_transfer_assertions"] >= 1
 
 
-def test_report_counts_behavioral():
+def test_report_counts_behavioral() -> None:
     ir = _make_ir("RootAgent")
     source = _make_source(
         {
@@ -763,7 +775,7 @@ def test_report_counts_behavioral():
 # --- FUZZY_MATCH truncation ---
 
 
-def test_fuzzy_match_truncated_to_max_length():
+def test_fuzzy_match_truncated_to_max_length() -> None:
     ir = _make_ir("RootAgent")
     long_response = "A" * 200
     source = _make_source(
@@ -785,7 +797,7 @@ def test_fuzzy_match_truncated_to_max_length():
 # --- Extract response text ---
 
 
-def test_extract_response_text():
+def test_extract_response_text() -> None:
     converter = DFCXTestConverter(_make_ir("RootAgent"))
     output = {
         "textResponses": [{"text": ["Hello, how can I help?"]}],
@@ -793,7 +805,7 @@ def test_extract_response_text():
     assert converter._extract_response_text(output) == "Hello, how can I help?"
 
 
-def test_extract_response_text_strips_ssml():
+def test_extract_response_text_strips_ssml() -> None:
     converter = DFCXTestConverter(_make_ir("RootAgent"))
     output = {
         "textResponses": [{"text": ["<speak>Hello world</speak>"]}],
@@ -801,7 +813,7 @@ def test_extract_response_text_strips_ssml():
     assert converter._extract_response_text(output) == "Hello world"
 
 
-def test_extract_response_text_skips_short():
+def test_extract_response_text_skips_short() -> None:
     converter = DFCXTestConverter(_make_ir("RootAgent"))
     output = {
         "textResponses": [{"text": ["OK"]}],
@@ -809,6 +821,6 @@ def test_extract_response_text_skips_short():
     assert converter._extract_response_text(output) == ""
 
 
-def test_extract_response_text_empty():
+def test_extract_response_text_empty() -> None:
     converter = DFCXTestConverter(_make_ir("RootAgent"))
     assert converter._extract_response_text({}) == ""

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ from cxas_scrapi.utils.insights_analytics import (
 )
 
 
-def test_calculate_start_time_iso():
+def test_calculate_start_time_iso() -> None:
     assert calculate_start_time_iso("24h") is not None
     assert calculate_start_time_iso("7d") is not None
     assert calculate_start_time_iso("all") is None
@@ -30,7 +31,7 @@ def test_calculate_start_time_iso():
 
 
 @pytest.fixture
-def mock_google_auth():
+def mock_google_auth() -> typing.Any:
     with patch("google.auth.default") as mock_auth:
         mock_creds = MagicMock()
         mock_creds.token = "fake_token"
@@ -39,7 +40,9 @@ def mock_google_auth():
         yield mock_creds
 
 
-def test_aggregate_metrics_and_html_dashboard(mock_google_auth):
+def test_aggregate_metrics_and_html_dashboard(
+    mock_google_auth: typing.Any,
+) -> None:
     analytics = InsightsAnalytics(project_id="p", location="l")
 
     sample_convs = [
@@ -122,7 +125,9 @@ def test_aggregate_metrics_and_html_dashboard(mock_google_auth):
     assert "Scorecard Evaluations & Question Breakdown" in html
 
 
-def test_aggregate_metrics_latest_analysis_fallback(mock_google_auth):
+def test_aggregate_metrics_latest_analysis_fallback(
+    mock_google_auth: typing.Any,
+) -> None:
     analytics = InsightsAnalytics(project_id="p", location="l")
     sample_convs = [
         {

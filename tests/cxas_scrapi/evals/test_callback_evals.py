@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Unit tests for the CallbackEvals testing utility."""
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -21,7 +23,7 @@ import pandas as pd
 from cxas_scrapi.evals.callback_evals import CallbackEvals
 
 
-def test_run_callback_tests_no_files(tmp_path):
+def test_run_callback_tests_no_files(tmp_path: typing.Any) -> None:
     utils = CallbackEvals()
     result = utils.test_all_callbacks_in_app_dir(app_dir=str(tmp_path))
     assert isinstance(result, pd.DataFrame)
@@ -35,7 +37,7 @@ def test_run_callback_tests_no_files(tmp_path):
     ]
 
 
-def test_run_callback_tests_missing_python_code(tmp_path):
+def test_run_callback_tests_missing_python_code(tmp_path: typing.Any) -> None:
     utils = CallbackEvals()
 
     agent_dir = tmp_path / "agents" / "agentA" / "my_callbacks" / "cb1"
@@ -48,7 +50,7 @@ def test_run_callback_tests_missing_python_code(tmp_path):
     assert len(result) == 0
 
 
-def test_run_callback_tests_success(tmp_path):
+def test_run_callback_tests_success(tmp_path: typing.Any) -> None:
     utils = CallbackEvals()
 
     agent_dir = tmp_path / "agents" / "agentA" / "my_callbacks" / "cb1"
@@ -70,7 +72,7 @@ def test_run_callback_tests_success(tmp_path):
     assert result.iloc[0]["callback_type"] == "my_callbacks"
 
 
-def test_run_callback_tests_failure(tmp_path):
+def test_run_callback_tests_failure(tmp_path: typing.Any) -> None:
     utils = CallbackEvals()
 
     agent_dir = tmp_path / "agents" / "agentA" / "my_callbacks" / "cb1"
@@ -92,7 +94,7 @@ def test_run_callback_tests_failure(tmp_path):
     assert result.iloc[0]["callback_type"] == "my_callbacks"
 
 
-def test_test_single_callback_for_agent(tmp_path):
+def test_test_single_callback_for_agent(tmp_path: typing.Any) -> None:
     utils = CallbackEvals()
 
     test_file = tmp_path / "test_cb.py"

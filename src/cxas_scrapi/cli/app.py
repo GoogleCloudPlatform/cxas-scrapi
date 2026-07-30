@@ -163,7 +163,7 @@ def _app_pull(
                             root_item = parts[0]
                             # Only remove if it belongs to a folder that WAS in
                             # the export
-                            if root_item in export_root_items:
+                            if root_item in export_root_items:  # noqa: SIM102
                                 if local_rel_path not in export_set:
                                     file_path = os.path.join(root, name)
                                     print(
@@ -181,7 +181,7 @@ def _app_pull(
 
                         if len(parts) > 1:
                             root_item = parts[0]
-                            if root_item in export_root_items:
+                            if root_item in export_root_items:  # noqa: SIM102
                                 if (
                                     local_rel_path not in export_set
                                     and (local_rel_path + "/") not in export_set

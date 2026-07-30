@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,7 +21,7 @@ from cxas_scrapi.core.apps import Apps
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_list_apps_mock(mock_client_cls):
+def test_list_apps_mock(mock_client_cls: typing.Any) -> None:
     """Test Apps.list_apps using mocks."""
     mock_client = mock_client_cls.return_value
 
@@ -45,7 +46,7 @@ def test_list_apps_mock(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_get_apps_map(mock_client_cls):
+def test_get_apps_map(mock_client_cls: typing.Any) -> None:
     """Test Apps.get_apps_map using mocks."""
     mock_client = mock_client_cls.return_value
 
@@ -85,7 +86,7 @@ def test_get_apps_map(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_import_app_validation(mock_client_cls):
+def test_import_app_validation(mock_client_cls: typing.Any) -> None:
     apps_client = Apps(
         project_id="mock-project", location="us", creds=MagicMock()
     )
@@ -117,7 +118,11 @@ def test_import_app_validation(mock_client_cls):
 @patch("builtins.open")
 @patch("cxas_scrapi.core.apps.types.ImportAppRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_import_app_local_file(mock_client_cls, mock_import_app_req, mock_open):
+def test_import_app_local_file(
+    mock_client_cls: typing.Any,
+    mock_import_app_req: typing.Any,
+    mock_open: typing.Any,
+) -> None:
     apps_client = Apps(
         project_id="mock-project", location="us", creds=MagicMock()
     )
@@ -144,8 +149,10 @@ def test_import_app_local_file(mock_client_cls, mock_import_app_req, mock_open):
     "google.cloud.ces_v1beta.types.ImportAppRequest.ImportOptions.ConflictResolutionStrategy"
 )
 def test_import_app_conflict_strategy(
-    mock_strategy_enum, mock_client_cls, mock_import_app_req
-):
+    mock_strategy_enum: typing.Any,
+    mock_client_cls: typing.Any,
+    mock_import_app_req: typing.Any,
+) -> None:
     apps_client = Apps(
         project_id="mock-project", location="us", creds=MagicMock()
     )
@@ -173,8 +180,8 @@ def test_import_app_conflict_strategy(
 @patch("cxas_scrapi.core.apps.types.ImportAppRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
 def test_import_app_backward_compatibility(
-    mock_client_cls, mock_import_app_req
-):
+    mock_client_cls: typing.Any, mock_import_app_req: typing.Any
+) -> None:
     apps_client = Apps(
         project_id="mock-project", location="us", creds=MagicMock()
     )
@@ -198,7 +205,9 @@ def test_import_app_backward_compatibility(
 
 @patch("cxas_scrapi.core.apps.types.ImportAppRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_import_as_new_app(mock_client_cls, mock_import_app_req):
+def test_import_as_new_app(
+    mock_client_cls: typing.Any, mock_import_app_req: typing.Any
+) -> None:
     apps_client = Apps(
         project_id="mock-project", location="us", creds=MagicMock()
     )
@@ -215,7 +224,9 @@ def test_import_as_new_app(mock_client_cls, mock_import_app_req):
 
 @patch("cxas_scrapi.core.apps.types.ExportAppRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_export_app_standard(mock_client_cls, mock_export_app_req):
+def test_export_app_standard(
+    mock_client_cls: typing.Any, mock_export_app_req: typing.Any
+) -> None:
     apps_client = Apps(
         project_id="mock-project", location="us", creds=MagicMock()
     )
@@ -238,7 +249,11 @@ def test_export_app_standard(mock_client_cls, mock_export_app_req):
 @patch("builtins.open")
 @patch("cxas_scrapi.core.apps.types.ExportAppRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_export_app_local_path(mock_client_cls, mock_export_app_req, mock_open):
+def test_export_app_local_path(
+    mock_client_cls: typing.Any,
+    mock_export_app_req: typing.Any,
+    mock_open: typing.Any,
+) -> None:
     apps_client = Apps(
         project_id="mock-project", location="us", creds=MagicMock()
     )
@@ -267,7 +282,7 @@ def test_export_app_local_path(mock_client_cls, mock_export_app_req, mock_open):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_export_app_validation(mock_client_cls):
+def test_export_app_validation(mock_client_cls: typing.Any) -> None:
     apps_client = Apps(
         project_id="mock-project", location="us", creds=MagicMock()
     )
@@ -285,7 +300,9 @@ def test_export_app_validation(mock_client_cls):
 
 @patch("cxas_scrapi.core.apps.types.UpdateAppRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_update_app_sparse(mock_client_cls, mock_update_app_req):
+def test_update_app_sparse(
+    mock_client_cls: typing.Any, mock_update_app_req: typing.Any
+) -> None:
     apps_client = Apps(
         project_id="mock-project", location="us", creds=MagicMock()
     )

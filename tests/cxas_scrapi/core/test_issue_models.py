@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,7 +21,7 @@ from cxas_scrapi.core.issue_models import IssueModels
 
 
 @pytest.fixture
-def mock_google_auth():
+def mock_google_auth() -> typing.Any:
     with patch("google.auth.default") as mock_auth:
         mock_creds = MagicMock()
         mock_creds.token = "fake_token"
@@ -30,7 +31,9 @@ def mock_google_auth():
 
 
 @patch("requests.Session.request")
-def test_create_topic_model_for_app(mock_request, mock_google_auth):
+def test_create_topic_model_for_app(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     mock_resp_create = MagicMock()
     mock_resp_create.status_code = 200
     mock_resp_create.json.return_value = {
@@ -69,7 +72,9 @@ def test_create_topic_model_for_app(mock_request, mock_google_auth):
 
 
 @patch("requests.Session.request")
-def test_list_issues_and_stats(mock_request, mock_google_auth):
+def test_list_issues_and_stats(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     mock_resp_stats = MagicMock()
     mock_resp_stats.status_code = 200
     mock_resp_stats.json.return_value = {"issueCount": 12}

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,12 +23,14 @@ from cxas_scrapi.utils.insights_utils import InsightsUtils
 
 class TestInsightsUtils:
     @pytest.fixture
-    def utils_with_mocked_client(self):
+    def utils_with_mocked_client(self) -> typing.Any:
         utils = InsightsUtils(project_id="test-project", location="us-central1")
         utils.scorecards_client = MagicMock(spec=Scorecards)
         return utils
 
-    def test_match_questions_identical(self, utils_with_mocked_client):
+    def test_match_questions_identical(
+        self, utils_with_mocked_client: typing.Any
+    ) -> None:
         q1 = {
             "questionBody": "Q1",
             "answerInstructions": "I1",
@@ -40,18 +43,24 @@ class TestInsightsUtils:
         }
         assert utils_with_mocked_client._match_questions(q1, q2) is True
 
-    def test_match_questions_different_body(self, utils_with_mocked_client):
+    def test_match_questions_different_body(
+        self, utils_with_mocked_client: typing.Any
+    ) -> None:
         q1 = {"questionBody": "Q1"}
         q2 = {"questionBody": "Q2"}
         assert utils_with_mocked_client._match_questions(q1, q2) is False
 
-    def test_match_questions_ignores_order(self, utils_with_mocked_client):
+    def test_match_questions_ignores_order(
+        self, utils_with_mocked_client: typing.Any
+    ) -> None:
         # order is NOT in fields_to_match by default
         q1 = {"questionBody": "Q1", "order": 1}
         q2 = {"questionBody": "Q1", "order": 2}
         assert utils_with_mocked_client._match_questions(q1, q2) is True
 
-    def test_sync_questions_non_destructive(self, utils_with_mocked_client):
+    def test_sync_questions_non_destructive(
+        self, utils_with_mocked_client: typing.Any
+    ) -> None:
         mock_client = utils_with_mocked_client.scorecards_client
 
         # Existing questions in revision

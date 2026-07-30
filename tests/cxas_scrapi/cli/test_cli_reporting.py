@@ -1,4 +1,6 @@
+import argparse
 import json
+import typing
 from unittest.mock import patch
 
 import pandas as pd
@@ -6,7 +8,7 @@ import pandas as pd
 from cxas_scrapi.cli.main import combined_evals_report_cmd
 
 
-def test_combined_evals_report_cmd(tmp_path):
+def test_combined_evals_report_cmd(tmp_path: typing.Any) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
@@ -42,8 +44,8 @@ def test_combined_evals_report_cmd(tmp_path):
     )
     df_callback.to_csv(callback_file, index=False)
 
-    class Args:
-        def __init__(self):
+    class Args(argparse.Namespace):
+        def __init__(self) -> None:
             self.output_dir = str(evals_dir)
             self.output = None
             self.gcs_path = None
@@ -101,12 +103,14 @@ def test_combined_evals_report_cmd(tmp_path):
         )
 
 
-def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
+def test_combined_evals_report_cmd_with_modality_and_runs(
+    tmp_path: typing.Any,
+) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
-    class Args:
-        def __init__(self):
+    class Args(argparse.Namespace):
+        def __init__(self) -> None:
             self.output_dir = str(evals_dir)
             self.output = None
             self.gcs_path = None
@@ -165,15 +169,17 @@ def test_combined_evals_report_cmd_with_modality_and_runs(tmp_path):
 
 
 @patch("cxas_scrapi.cli.main.datetime.datetime", autospec=True)
-def test_combined_evals_report_cmd_timestamped(mock_datetime, tmp_path):
+def test_combined_evals_report_cmd_timestamped(
+    mock_datetime: typing.Any, tmp_path: typing.Any
+) -> None:
     # Mock datetime.now() to return a fixed value
     mock_datetime.now.return_value.strftime.return_value = "20260622_171403"
 
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
-    class Args:
-        def __init__(self):
+    class Args(argparse.Namespace):
+        def __init__(self) -> None:
             self.output_dir = str(evals_dir)
             self.output = None
             self.gcs_path = None
@@ -232,12 +238,14 @@ def test_combined_evals_report_cmd_timestamped(mock_datetime, tmp_path):
         )
 
 
-def test_combined_evals_report_cmd_with_filters_and_progress(tmp_path):
+def test_combined_evals_report_cmd_with_filters_and_progress(
+    tmp_path: typing.Any,
+) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
-    class Args:
-        def __init__(self):
+    class Args(argparse.Namespace):
+        def __init__(self) -> None:
             self.output_dir = str(evals_dir)
             self.output = None
             self.gcs_path = None
@@ -276,12 +284,12 @@ def test_combined_evals_report_cmd_with_filters_and_progress(tmp_path):
         assert call_kwargs["progress_callback"] is not None
 
 
-def test_combined_evals_report_cmd_format_json(tmp_path):
+def test_combined_evals_report_cmd_format_json(tmp_path: typing.Any) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
-    class Args:
-        def __init__(self):
+    class Args(argparse.Namespace):
+        def __init__(self) -> None:
             self.output_dir = str(evals_dir)
             self.output = None
             self.gcs_path = None
@@ -313,12 +321,14 @@ def test_combined_evals_report_cmd_format_json(tmp_path):
         assert call_kwargs["report_format"] == "json"
 
 
-def test_combined_evals_report_cmd_with_deployment_id(tmp_path):
+def test_combined_evals_report_cmd_with_deployment_id(
+    tmp_path: typing.Any,
+) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
-    class Args:
-        def __init__(self):
+    class Args(argparse.Namespace):
+        def __init__(self) -> None:
             self.output_dir = str(evals_dir)
             self.output = None
             self.gcs_path = None

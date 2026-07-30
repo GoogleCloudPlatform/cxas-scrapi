@@ -91,7 +91,7 @@ You MUST output ONLY a valid JSON object. Do not include markdown fences (```jso
 class UtteranceCollector:
     """Early harvester and categorizer engine of legacy DFCX utterances."""
 
-    def __init__(self, gemini_client: GeminiGenerate):
+    def __init__(self, gemini_client: GeminiGenerate) -> None:
         self.gemini = gemini_client
         self.collected_utterances: set[str] = set()
         self.raw_metadata: list[dict[str, Any]] = []
@@ -297,7 +297,7 @@ class UtteranceCollector:
                                     self._add_utterance(
                                         arg.s, "CODE_PRINT", block_name
                                     )
-                    elif isinstance(node, ast.Call) and isinstance(
+                    elif isinstance(node, ast.Call) and isinstance(  # noqa: SIM102
                         node.func, ast.Attribute
                     ):
                         # E.g. logger.info("...") or logger.warning("...")

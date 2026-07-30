@@ -1,10 +1,11 @@
+import typing
 import json
 import os
 import re
 import yaml
 
 
-def extract_and_parse_yaml(output):
+def extract_and_parse_yaml(output: typing.Any) -> typing.Any:
     # Parse YAML output safely
     try:
         clean_yaml = ""
@@ -40,7 +41,7 @@ def extract_and_parse_yaml(output):
         return None, f"Output is not valid YAML: {e}"
 
 
-def normalize_to_transcripts(data):
+def normalize_to_transcripts(data: typing.Any) -> typing.Any:
     # Normalize data to a list of transcripts
     transcripts = []
     if isinstance(data, list):
@@ -66,7 +67,7 @@ def normalize_to_transcripts(data):
     return transcripts, None
 
 
-def check_basic_turn_structure(turns, idx):
+def check_basic_turn_structure(turns: typing.Any, idx: typing.Any) -> typing.Any:
     for t in turns:
         speaker = t.get("speaker")
         text = t.get("text", "")
@@ -80,7 +81,7 @@ def check_basic_turn_structure(turns, idx):
     return True, ""
 
 
-def check_html_and_escaped_entities(turns, idx):
+def check_html_and_escaped_entities(turns: typing.Any, idx: typing.Any) -> typing.Any:
     for t in turns:
         text = t.get("text", "")
         if re.search(r"<[^>]+>", text):
@@ -104,14 +105,14 @@ def check_html_and_escaped_entities(turns, idx):
     return True, ""
 
 
-def check_first_turn_is_agent(turns, idx):
+def check_first_turn_is_agent(turns: typing.Any, idx: typing.Any) -> typing.Any:
     first_turn = turns[0]
     if first_turn.get("speaker") != "Agent":
         return False, f"Transcript #{idx + 1}: Does not start with the Agent."
     return True, ""
 
 
-def check_no_spoken_urls(turns, idx):
+def check_no_spoken_urls(turns: typing.Any, idx: typing.Any) -> typing.Any:
     for t in turns:
         if t.get("speaker") == "Agent":
             text = t.get("text", "")
@@ -128,7 +129,7 @@ def check_no_spoken_urls(turns, idx):
     return True, ""
 
 
-def check_end_session(turns, idx):
+def check_end_session(turns: typing.Any, idx: typing.Any) -> typing.Any:
     if len(turns) < 3:
         return False, f"Transcript #{idx + 1} has less than 3 turns."
 
@@ -188,7 +189,7 @@ def check_end_session(turns, idx):
     return True, ""
 
 
-def validate_transcripts(transcripts, expectations):
+def validate_transcripts(transcripts: typing.Any, expectations: typing.Any) -> typing.Any:
     for idx, transcript in enumerate(transcripts):
         if not isinstance(transcript, dict):
             continue
@@ -220,7 +221,7 @@ def validate_transcripts(transcripts, expectations):
     return True, "All expectations satisfied."
 
 
-def grade_transcript_compliance(output, expectations):
+def grade_transcript_compliance(output: typing.Any, expectations: typing.Any) -> typing.Any:
     data, error = extract_and_parse_yaml(output)
     if error:
         return False, error
@@ -351,7 +352,7 @@ def check_scheduling_confirmation(text: str) -> tuple[bool, str]:
     return False, ""
 
 
-def calculate_transcript_naturalness(turns):
+def calculate_transcript_naturalness(turns: typing.Any) -> typing.Any:
     if not turns:
         return 0, ["FAIL: Transcript contains no turns."]
 
@@ -417,7 +418,7 @@ def check_empty_payloads(turn: dict) -> tuple[bool, str]:
     return False, ""
 
 
-def calculate_transcript_naturalness(turns):
+def calculate_transcript_naturalness(turns: typing.Any) -> typing.Any:
     if not turns:
         return 0, ["FAIL: Transcript contains no turns."]
 
@@ -576,7 +577,7 @@ def is_generic_robotic_text(text: str, label_name: str) -> tuple[bool, str]:
     return False, ""
 
 
-def score_naturalness(output):
+def score_naturalness(output: typing.Any) -> typing.Any:
     data, error = extract_and_parse_yaml(output)
     if error:
         return []

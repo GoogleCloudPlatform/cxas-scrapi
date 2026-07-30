@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Evaluations class for CXAS Scrapi."""
 
 import hashlib
 import json
 import os
+import typing
 from enum import Enum
 from typing import Any
 
@@ -39,7 +41,9 @@ class ExportFormat(Enum):
 
 
 class Evaluations(Common):
-    def __init__(self, app_name: str, env: str = "PROD", **kwargs):
+    def __init__(
+        self, app_name: str, env: str = "PROD", **kwargs: typing.Any
+    ) -> None:
         """Initializes the Evaluations client.
 
         Args:
@@ -66,7 +70,7 @@ class Evaluations(Common):
         self._eval_search_index: dict[str, str] = {}
 
     @staticmethod
-    def parse_eval_to_yaml(filepath):
+    def parse_eval_to_yaml(filepath: typing.Any) -> typing.Any:
         """Parses a CXAS Evaluation textproto file into the target FDE
         YAML format."""
         with open(filepath) as f:
@@ -88,7 +92,9 @@ class Evaluations(Common):
         return self._tools_map
 
     @staticmethod
-    def eval_dict_to_yaml(eval_dict, tools_map: dict[str, str] | None = None):
+    def eval_dict_to_yaml(
+        eval_dict: typing.Any, tools_map: dict[str, str] | None = None
+    ) -> typing.Any:
         """Parses a CXAS Evaluation dictionary into the target FDE YAML
         format."""
         golden = eval_dict.get("golden", {})

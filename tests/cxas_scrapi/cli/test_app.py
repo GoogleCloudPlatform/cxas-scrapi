@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for the App Lifecycle CLI Commands."""
 
 import argparse
@@ -19,6 +20,7 @@ import io
 import os
 import sys
 import time
+import typing
 import zipfile
 from unittest import mock
 
@@ -28,7 +30,7 @@ from cxas_scrapi.cli import app as cli_app
 
 
 @pytest.fixture
-def mock_apps_client():
+def mock_apps_client() -> typing.Any:
     with mock.patch(
         "cxas_scrapi.cli.app.Apps", autospec=True
     ) as mock_apps_class:
@@ -37,7 +39,7 @@ def mock_apps_client():
 
 
 @pytest.fixture
-def mock_common_get_project_id():
+def mock_common_get_project_id() -> typing.Any:
     with mock.patch(
         "cxas_scrapi.cli.app.Common._get_project_id",
         autospec=True,
@@ -47,7 +49,7 @@ def mock_common_get_project_id():
 
 
 @pytest.fixture
-def mock_common_get_location():
+def mock_common_get_location() -> typing.Any:
     with mock.patch(
         "cxas_scrapi.cli.app.Common._get_location",
         autospec=True,
@@ -57,8 +59,10 @@ def mock_common_get_location():
 
 
 def test_app_create(
-    mock_apps_client, mock_common_get_project_id, mock_common_get_location
-):
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+) -> None:
     args = argparse.Namespace(
         name="Test App",
         description="A test app",
@@ -79,8 +83,10 @@ def test_app_create(
 
 
 def test_app_create_with_app_id(
-    mock_apps_client, mock_common_get_project_id, mock_common_get_location
-):
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+) -> None:
     args = argparse.Namespace(
         name="Test App",
         description="A test app",
@@ -102,7 +108,7 @@ def test_app_create_with_app_id(
     )
 
 
-def test_apps_list(mock_apps_client, capsys):
+def test_apps_list(mock_apps_client: typing.Any, capsys: typing.Any) -> None:
     args = argparse.Namespace(project_id="test-project", location="us")
 
     app1 = mock.MagicMock()
@@ -126,11 +132,11 @@ def test_apps_list(mock_apps_client, capsys):
 
 
 def test_apps_get(
-    mock_apps_client,
-    mock_common_get_project_id,
-    mock_common_get_location,
-    capsys,
-):
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    capsys: typing.Any,
+) -> None:
     args = argparse.Namespace(
         app="projects/test-project/locations/us/apps/123",
         project_id="test-project",
@@ -155,11 +161,11 @@ def test_apps_get(
 
 
 def test_app_pull(
-    mock_apps_client,
-    mock_common_get_project_id,
-    mock_common_get_location,
-    tmp_path,
-):
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
     args = argparse.Namespace(
         app="Test App",
         target_dir=str(tmp_path / "pulled_app"),
@@ -192,7 +198,7 @@ def test_app_pull(
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
 
-def test_app_push(mock_apps_client, tmp_path):
+def test_app_push(mock_apps_client: typing.Any, tmp_path: typing.Any) -> None:
     args = argparse.Namespace(
         app_dir=str(tmp_path),
         to=None,
@@ -223,8 +229,10 @@ def test_app_push(mock_apps_client, tmp_path):
 
 
 def test_app_branch(
-    mock_apps_client, mock_common_get_project_id, mock_common_get_location
-):
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+) -> None:
     args = argparse.Namespace(
         source="projects/test-project/locations/us/apps/source-id",
         new_name="Branched App",
@@ -263,8 +271,10 @@ def test_app_branch(
 
 
 def test_app_delete_by_app_id(
-    mock_apps_client, mock_common_get_project_id, mock_common_get_location
-):
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+) -> None:
     args = argparse.Namespace(
         app_name="projects/test-project/locations/us/apps/123",
         display_name=None,
@@ -280,7 +290,7 @@ def test_app_delete_by_app_id(
     )
 
 
-def test_app_delete_by_display_name(mock_apps_client):
+def test_app_delete_by_display_name(mock_apps_client: typing.Any) -> None:
     args = argparse.Namespace(
         app_id=None,
         display_name="My App",
@@ -301,7 +311,9 @@ def test_app_delete_by_display_name(mock_apps_client):
     )
 
 
-def test_app_delete_missing_args(mock_apps_client, capsys):
+def test_app_delete_missing_args(
+    mock_apps_client: typing.Any, capsys: typing.Any
+) -> None:
     args = argparse.Namespace(
         app_id=None,
         display_name=None,
@@ -328,7 +340,9 @@ _LINT_RESOURCE_DEFAULTS = dict(
 )
 
 
-def _lint_args(tmp_path=None, **overrides):
+def _lint_args(
+    tmp_path: typing.Any = None, **overrides: typing.Any
+) -> typing.Any:
     """Build an argparse.Namespace with all lint flags defaulted."""
     defaults = dict(
         app_dir=str(tmp_path) if tmp_path else ".",
@@ -344,7 +358,7 @@ def _lint_args(tmp_path=None, **overrides):
     return argparse.Namespace(**defaults)
 
 
-def _make_lint_app(tmp_path, agents=None):
+def _make_lint_app(tmp_path: typing.Any, agents: typing.Any = None) -> None:
     """Helper to create a minimal app for lint testing."""
     (tmp_path / "app.json").write_text(
         '{"name": "test-app",'
@@ -367,7 +381,7 @@ def _make_lint_app(tmp_path, agents=None):
         )
 
 
-def test_app_lint_list_rules(capsys):
+def test_app_lint_list_rules(capsys: typing.Any) -> None:
     args = _lint_args(list_rules=True)
 
     with pytest.raises(SystemExit) as excinfo:
@@ -380,7 +394,9 @@ def test_app_lint_list_rules(capsys):
     assert "Available Rules" in captured.out
 
 
-def test_app_lint_no_app_found(capsys, tmp_path):
+def test_app_lint_no_app_found(
+    capsys: typing.Any, tmp_path: typing.Any
+) -> None:
     args = _lint_args(tmp_path)
 
     with pytest.raises(SystemExit) as excinfo:
@@ -391,22 +407,22 @@ def test_app_lint_no_app_found(capsys, tmp_path):
     assert "ERROR: No app directory found" in captured.out
 
 
-def test_app_lint_clean_app(capsys, tmp_path):
+def test_app_lint_clean_app(capsys: typing.Any, tmp_path: typing.Any) -> None:
     _make_lint_app(tmp_path)
     args = _lint_args(tmp_path)
 
-    with mock.patch(
-        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        pytest.raises(SystemExit) as excinfo,
     ):
-        with pytest.raises(SystemExit) as excinfo:
-            cli_app.app_lint(args)
+        cli_app.app_lint(args)
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
     assert "Lint PASSED" in captured.out
 
 
-def test_app_lint_with_errors(capsys, tmp_path):
+def test_app_lint_with_errors(capsys: typing.Any, tmp_path: typing.Any) -> None:
     (tmp_path / "app.json").write_text(
         '{"name": "test", "displayName": "Test", "rootAgent": "root_agent"}'
     )
@@ -420,26 +436,26 @@ def test_app_lint_with_errors(capsys, tmp_path):
 
     args = _lint_args(tmp_path)
 
-    with mock.patch(
-        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        pytest.raises(SystemExit) as excinfo,
     ):
-        with pytest.raises(SystemExit) as excinfo:
-            cli_app.app_lint(args)
+        cli_app.app_lint(args)
 
     assert excinfo.value.code == 1
     captured = capsys.readouterr()
     assert "Lint FAILED" in captured.out
 
 
-def test_app_lint_json_output(capsys, tmp_path):
+def test_app_lint_json_output(capsys: typing.Any, tmp_path: typing.Any) -> None:
     _make_lint_app(tmp_path)
     args = _lint_args(tmp_path, json_output=True)
 
-    with mock.patch(
-        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        pytest.raises(SystemExit) as excinfo,
     ):
-        with pytest.raises(SystemExit) as excinfo:
-            cli_app.app_lint(args)
+        cli_app.app_lint(args)
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
@@ -449,15 +465,17 @@ def test_app_lint_json_output(capsys, tmp_path):
     assert isinstance(parsed, list)
 
 
-def test_app_lint_validate_only(capsys, tmp_path):
+def test_app_lint_validate_only(
+    capsys: typing.Any, tmp_path: typing.Any
+) -> None:
     _make_lint_app(tmp_path)
     args = _lint_args(tmp_path, json_output=True, validate_only=True)
 
-    with mock.patch(
-        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        pytest.raises(SystemExit) as excinfo,
     ):
-        with pytest.raises(SystemExit) as excinfo:
-            cli_app.app_lint(args)
+        cli_app.app_lint(args)
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
@@ -471,15 +489,15 @@ def test_app_lint_validate_only(capsys, tmp_path):
         )
 
 
-def test_app_lint_only_filter(capsys, tmp_path):
+def test_app_lint_only_filter(capsys: typing.Any, tmp_path: typing.Any) -> None:
     _make_lint_app(tmp_path)
     args = _lint_args(tmp_path, json_output=True, only="config")
 
-    with mock.patch(
-        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        pytest.raises(SystemExit) as excinfo,
     ):
-        with pytest.raises(SystemExit) as excinfo:
-            cli_app.app_lint(args)
+        cli_app.app_lint(args)
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
@@ -492,15 +510,15 @@ def test_app_lint_only_filter(capsys, tmp_path):
         )
 
 
-def test_app_lint_rule_filter(capsys, tmp_path):
+def test_app_lint_rule_filter(capsys: typing.Any, tmp_path: typing.Any) -> None:
     _make_lint_app(tmp_path)
     args = _lint_args(tmp_path, json_output=True, rule="I001")
 
-    with mock.patch(
-        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        pytest.raises(SystemExit) as excinfo,
     ):
-        with pytest.raises(SystemExit) as excinfo:
-            cli_app.app_lint(args)
+        cli_app.app_lint(args)
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
@@ -513,7 +531,9 @@ def test_app_lint_rule_filter(capsys, tmp_path):
         )
 
 
-def test_app_push_zip_timestamp_touch(mock_apps_client, tmp_path):
+def test_app_push_zip_timestamp_touch(
+    mock_apps_client: typing.Any, tmp_path: typing.Any
+) -> None:
     # Create a valid root file and set its modification time
     # to an old epoch time (e.g., year 1975)
     old_file = os.path.join(tmp_path, "app.yaml")
@@ -562,7 +582,11 @@ def test_app_push_zip_timestamp_touch(mock_apps_client, tmp_path):
 
 
 @mock.patch("cxas_scrapi.cli.app.Versions", autospec=True)
-def test_app_push_create_version(mock_versions_cls, mock_apps_client, tmp_path):
+def test_app_push_create_version(
+    mock_versions_cls: typing.Any,
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
     mock_apps_client.creds = mock.MagicMock()
 
     args = argparse.Namespace(
@@ -603,7 +627,9 @@ def test_app_push_create_version(mock_versions_cls, mock_apps_client, tmp_path):
     assert args.created_version_name == expected
 
 
-def test_app_init_headless_failure(monkeypatch, capsys, tmp_path):
+def test_app_init_headless_failure(
+    monkeypatch: typing.Any, capsys: typing.Any, tmp_path: typing.Any
+) -> None:
     # Mock isatty to return False (headless environment)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
 

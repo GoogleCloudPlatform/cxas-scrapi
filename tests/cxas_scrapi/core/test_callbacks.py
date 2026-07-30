@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 from google.cloud.ces_v1beta import types
@@ -21,7 +22,9 @@ from cxas_scrapi.core.callbacks import Callbacks
 
 @patch("cxas_scrapi.core.callbacks.Agents.get_agent")
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
-def test_list_callbacks(mock_client_cls, mock_get_agent):
+def test_list_callbacks(
+    mock_client_cls: typing.Any, mock_get_agent: typing.Any
+) -> None:
     """Test list_callbacks."""
     mock_agent = MagicMock()
     mock_agent.before_agent_callbacks = []
@@ -42,7 +45,9 @@ def test_list_callbacks(mock_client_cls, mock_get_agent):
 
 @patch("cxas_scrapi.core.callbacks.Agents.get_agent")
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
-def test_get_callback(mock_client_cls, mock_get_agent):
+def test_get_callback(
+    mock_client_cls: typing.Any, mock_get_agent: typing.Any
+) -> None:
     """Test get_callback."""
     mock_agent = MagicMock()
     mock_cb = MagicMock()
@@ -61,14 +66,16 @@ def test_get_callback(mock_client_cls, mock_get_agent):
 
 @patch("cxas_scrapi.core.callbacks.Agents.get_agent")
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
-def test_create_callback(mock_client_cls, mock_get_agent):
+def test_create_callback(
+    mock_client_cls: typing.Any, mock_get_agent: typing.Any
+) -> None:
     """Test create_callback."""
     mock_agent = types.Agent()
     mock_get_agent.return_value = mock_agent
 
     cb_client = Callbacks(app_name="projects/p/locations/l/apps/a")
 
-    def my_cool_func(session):
+    def my_cool_func(session: typing.Any) -> None:
         pass
 
     cb_client.create_callback("agent1", "before_model", my_cool_func)
@@ -81,7 +88,9 @@ def test_create_callback(mock_client_cls, mock_get_agent):
 
 @patch("cxas_scrapi.core.callbacks.Agents.get_agent")
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
-def test_update_callback(mock_client_cls, mock_get_agent):
+def test_update_callback(
+    mock_client_cls: typing.Any, mock_get_agent: typing.Any
+) -> None:
     """Test update_callback."""
     mock_agent = types.Agent()
     cb = types.Callback(python_code="old", description="old")
@@ -105,7 +114,9 @@ def test_update_callback(mock_client_cls, mock_get_agent):
 
 @patch("cxas_scrapi.core.callbacks.Agents.get_agent")
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
-def test_delete_callback(mock_client_cls, mock_get_agent):
+def test_delete_callback(
+    mock_client_cls: typing.Any, mock_get_agent: typing.Any
+) -> None:
     """Test delete_callback."""
     mock_agent = types.Agent()
     cb1 = types.Callback(python_code="c1")
@@ -122,7 +133,7 @@ def test_delete_callback(mock_client_cls, mock_get_agent):
     cb_client.client.update_agent.assert_called_once()
 
 
-def test_execute_callback_string():
+def test_execute_callback_string() -> None:
     """Test execute_callback with a string."""
     code = """
 def beforeModelCallback(session):
@@ -134,10 +145,10 @@ def beforeModelCallback(session):
     assert res["result"]["new_var"] == 123
 
 
-def test_execute_callback_callable():
+def test_execute_callback_callable() -> None:
     """Test execute_callback with a Callable."""
 
-    def my_callable(session):
+    def my_callable(session: dict) -> dict:
         session["added_by_callable"] = True
         return session
 

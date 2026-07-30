@@ -6,6 +6,7 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+
 """Parent-child topology wiring for consolidated CXAS agents.
 
 After :class:`StructuralConsolidator` collapses N source agents into M
@@ -41,6 +42,7 @@ All functions are idempotent and safe to re-run.
 
 from __future__ import annotations
 
+import typing
 from typing import TYPE_CHECKING
 
 from cxas_scrapi.core.agents import Agents
@@ -230,7 +232,7 @@ def apply_topology(
     children: dict[str, set[str]],
     *,
     dry_run: bool = False,
-    progress=None,
+    progress: typing.Any = None,
 ) -> tuple[int, int, int]:
     """Push child_agents to CXAS via update_agent.
 
@@ -345,7 +347,7 @@ def delete_orphan_agents(
     keep_resources: set[str],
     *,
     max_passes: int = 5,
-    progress=None,
+    progress: typing.Any = None,
 ) -> tuple[int, int]:
     """Delete every CXAS agent under ``app_resource_name`` whose resource
     name is not in ``keep_resources``.

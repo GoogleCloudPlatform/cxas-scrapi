@@ -22,7 +22,7 @@ import io
 import json
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 
@@ -38,8 +38,10 @@ from cxas_scrapi.migration.flow_visualizer import (
     FlowTreeVisualizer,
 )
 from cxas_scrapi.migration.instruction_lint import lint_instruction_text
-from cxas_scrapi.utils.gemini import GeminiGenerate
-from cxas_scrapi.utils.linter import LintResult
+
+if TYPE_CHECKING:
+    from cxas_scrapi.utils.gemini import GeminiGenerate
+    from cxas_scrapi.utils.linter import LintResult
 
 logger = logging.getLogger(__name__)
 
@@ -359,7 +361,7 @@ def rewrite_agent_refs(
             return ""
 
         # 1. Exact group-name match (Gemini emitted the consolidated name).
-        if raw in group_names:
+        if raw in group_names:  # noqa: SIM108
             target_group = raw
         else:
             # 2. Exact IR-key match.
@@ -811,7 +813,7 @@ class StructuralConsolidator:
         ir: MigrationIR,
         gemini_client: GeminiGenerate,
         source_data: DFCXAgentIR | None = None,
-    ):
+    ) -> None:
         self.ir = ir
         self.gemini = gemini_client
         self.source_data = source_data

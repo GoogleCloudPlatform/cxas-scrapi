@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for the GECX resources CLI subcommands."""
 
 import argparse
+import typing
 from unittest import mock
 
 from cxas_scrapi.cli import resources_cli
 from cxas_scrapi.cli.main import get_parser
 
 
-def test_parser_resources():
+def test_parser_resources() -> None:
     """Test that subparsers parse GECX resources correctly."""
     parser = get_parser()
 
@@ -105,7 +107,7 @@ def test_parser_resources():
 
 
 @mock.patch("cxas_scrapi.core.tools.Tools", autospec=True)
-def test_tools_list(mock_tools_cls):
+def test_tools_list(mock_tools_cls: typing.Any) -> None:
     """Test listing tools."""
     args = argparse.Namespace(app_name="projects/p/locations/l/apps/a")
     mock_inst = mock_tools_cls.return_value
@@ -122,7 +124,7 @@ def test_tools_list(mock_tools_cls):
 
 
 @mock.patch("cxas_scrapi.core.tools.Tools", autospec=True)
-def test_tools_delete_by_display_name(mock_tools_cls):
+def test_tools_delete_by_display_name(mock_tools_cls: typing.Any) -> None:
     """Test deleting tools by display name."""
     args = argparse.Namespace(
         app_name="projects/p/locations/l/apps/a", name="My Tool"
@@ -141,7 +143,9 @@ def test_tools_delete_by_display_name(mock_tools_cls):
 
 @mock.patch("cxas_scrapi.core.agents.Agents", autospec=True)
 @mock.patch("cxas_scrapi.core.callbacks.Callbacks", autospec=True)
-def test_callbacks_list(mock_cb_cls, mock_agents_cls):
+def test_callbacks_list(
+    mock_cb_cls: typing.Any, mock_agents_cls: typing.Any
+) -> None:
     """Test listing callbacks."""
     args = argparse.Namespace(
         app_name="projects/p/locations/l/apps/a", agent_name=None
@@ -165,7 +169,9 @@ def test_callbacks_list(mock_cb_cls, mock_agents_cls):
 
 @mock.patch("cxas_scrapi.core.agents.Agents", autospec=True)
 @mock.patch("cxas_scrapi.core.callbacks.Callbacks", autospec=True)
-def test_callbacks_delete(mock_cb_cls, mock_agents_cls):
+def test_callbacks_delete(
+    mock_cb_cls: typing.Any, mock_agents_cls: typing.Any
+) -> None:
     """Test deleting a callback."""
     args = argparse.Namespace(
         app_name="projects/p/locations/l/apps/a",
@@ -190,7 +196,7 @@ def test_callbacks_delete(mock_cb_cls, mock_agents_cls):
 
 
 @mock.patch("cxas_scrapi.core.variables.Variables", autospec=True)
-def test_variables_list(mock_vars_cls):
+def test_variables_list(mock_vars_cls: typing.Any) -> None:
     """Test listing variables."""
     args = argparse.Namespace(app_name="projects/p/locations/l/apps/a")
     mock_inst = mock_vars_cls.return_value
@@ -208,7 +214,7 @@ def test_variables_list(mock_vars_cls):
 
 
 @mock.patch("cxas_scrapi.core.variables.Variables", autospec=True)
-def test_variables_delete(mock_vars_cls):
+def test_variables_delete(mock_vars_cls: typing.Any) -> None:
     """Test deleting a variable."""
     args = argparse.Namespace(
         app_name="projects/p/locations/l/apps/a", name="v1"

@@ -12,17 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import asyncio
+import contextlib
 import io
 import json
 import logging
 import os
 import re
 import sys
+import typing
 import uuid
-from collections.abc import Awaitable, Callable
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+from datetime import datetime
 
 import google.protobuf.duration_pb2
 from google.cloud.ces_v1beta import types
@@ -72,9 +78,6 @@ from cxas_scrapi.migration.structural_consolidator import StructuralConsolidator
 from cxas_scrapi.migration.utterance_collector import UtteranceCollector
 from cxas_scrapi.utils.gemini import GeminiGenerate
 from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
-
-if TYPE_CHECKING:
-    from cxas_scrapi.migration.data_models import IRBundle
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +130,7 @@ class MigrationService:
         project_id: str,
         location: str = "global",
         gemini_location: str = "global",
-        credentials=None,
+        credentials: typing.Any = None,
         default_model: str = "gemini-3-flash-preview",
         ps_apps_client: Any = None,
         ps_agents_client: Any = None,
@@ -135,7 +138,7 @@ class MigrationService:
         ps_toolsets_client: Any = None,
         secret_manager_client: Any = None,
         cx_api_client: Any = None,
-    ):
+    ) -> None:
         self.project_id = project_id
         self.location = location
         self.credentials = credentials
@@ -206,7 +209,7 @@ class MigrationService:
         self,
         target_name: str | None,
         *,
-        bundle: "IRBundle | None" = None,
+        bundle: IRBundle | None = None,
         output_dir: str | None = None,
     ) -> MigrationAnalysisBuilder | None:
         """Create the analysis builder on first use; cheap no-op afterwards.
@@ -268,11 +271,11 @@ class MigrationService:
     @classmethod
     def restore_from_bundle(
         cls,
-        bundle,
+        bundle: typing.Any,
         *,
         project_id: str | None = None,
         location: str | None = None,
-    ) -> "MigrationService":
+    ) -> MigrationService:
         """Recreate a `MigrationService` from a persisted :class:`IRBundle`.
 
         Used by stage_1 / stage_2 / stage_3 to resume work against an already
@@ -348,7 +351,7 @@ class MigrationService:
     async def run_stage_1(
         self,
         *,
-        bundle: "IRBundle | None" = None,
+        bundle: IRBundle | None = None,
         gemini_client: GeminiGenerate | None = None,
         grouping_callback: Callable[..., Awaitable[dict | None]] | None = None,
         grouping_json_path: str | None = None,
@@ -485,7 +488,7 @@ class MigrationService:
                     logger.warning("Test re-routing failed: %s", exc)
 
         # --- CXAS Version checkpoint: Post-Consolidation --------------------
-        if accepted_groupings:
+        if accepted_groupings:  # noqa: SIM102
             if version_label and self.ir.metadata.app_resource_name:
                 description = "Stage 1 Part B: structural consolidation"
                 try:
@@ -519,7 +522,7 @@ class MigrationService:
     async def _run_stage_1_consolidation(
         self,
         *,
-        bundle: "IRBundle",
+        bundle: IRBundle,
         gemini: GeminiGenerate,
         grouping_callback: (
             Callable[[MigrationIR, dict], Awaitable[dict | None]] | None
@@ -610,11 +613,15 @@ class MigrationService:
         # 4. Validate.
         structural_consolidator.validate_groupings(self.ir, groupings, root_key)
 
-        # 5. Snapshot pre-consolidation IR (for integrity check + rollback).
-        bundle.pre_consolidation_ir = self.ir.model_copy(deep=True)
+        # 5. Snapshot pre-consolidation IR transiently for the integrity
+        # check only. It is deliberately NOT stored on the bundle: the
+        # pre-consolidation ("orphan") agents must never surface in the
+        # persisted IR bundle or anywhere downstream. They live only in the
+        # migrate-stage bundle that is this stage's input.
+        pre_consolidation_ir = self.ir.model_copy(deep=True)
+        bundle.pre_consolidation_ir = None
 
         # 6. Consolidate IR + persist grouping.
-        pre_consolidation_ir = bundle.pre_consolidation_ir
         self.ir = consolidator.consolidate(groupings)
         bundle.grouping = groupings
         try:
@@ -668,10 +675,17 @@ class MigrationService:
                 f"error(s). First: {blocking[0]}"
             )
 
-        # 9. Deploy consolidated agents.
+        # 9. Deploy consolidated agents. Only the consolidated (N -> M)
+        # agents exist in self.ir here; the raw 1:1 originals were dropped by
+        # consolidate() and were never pushed to CXAS.
         console.print("\n[cyan]Pushing consolidated agents to CXAS…[/]")
         await self._deploy_base_resources(is_update_pass=True)
         await self._deploy_pending_agents(is_update_pass=True)
+        logger.info(
+            "Deployed %d consolidated agent(s); raw 1:1 agents were never "
+            "pushed to CXAS.",
+            len(self.ir.agents),
+        )
 
         # 10. Topology link + set root + orphan cleanup.
         try:
@@ -699,7 +713,7 @@ class MigrationService:
         unit_tests_path: str | None = None,
         run_lint: bool = False,
         write_report_to: str | None = None,
-        bundle: "IRBundle | None" = None,
+        bundle: IRBundle | None = None,
         persist_bundle_path: str | None = None,
         console: Console | None = None,
     ) -> None:
@@ -849,7 +863,7 @@ class MigrationService:
     async def run_stage_3(
         self,
         *,
-        bundle: "IRBundle",
+        bundle: IRBundle,
         mode: str = "hub",
         version_label: str | None = "0.0.5",
         persist_bundle_path: str | None = None,
@@ -954,7 +968,7 @@ class MigrationService:
 
     def persist_bundle(
         self,
-        bundle: "IRBundle",
+        bundle: IRBundle,
         path: str,
         *,
         phase: str | None = None,
@@ -977,7 +991,9 @@ class MigrationService:
         bundle.save(path)
         return path
 
-    def _inject_system_variables(self, dynamic_params: list | None = None):
+    def _inject_system_variables(
+        self, dynamic_params: list | None = None
+    ) -> None:
         """Injects global system variables required by migration tooling and
         callbacks.
         """
@@ -1231,7 +1247,9 @@ class MigrationService:
         created_tool_ids = set()
         created_toolset_ids = set()
 
-        def process_resource(cx_resource, is_webhook=False):
+        def process_resource(
+            cx_resource: typing.Any, is_webhook: typing.Any = False
+        ) -> None:
             if is_webhook:
                 res = self.tool_converter.convert_webhook_to_openapi_toolset(
                     cx_resource
@@ -1564,26 +1582,48 @@ class MigrationService:
             except Exception as exc:
                 logger.warning("DFCX test case conversion failed: %s", exc)
 
-        # Create initial 1:1 transpile version snapshot unconditionally!
-        logger.info("\n--- Creating Initial Migrated Version 0.0.1 ---")
-        try:
-            Versions(target_app_resource_name).create_version(
-                display_name="0.0.1",
-                description="Initial migrated agent baseline",
-            )
-            logger.info(
-                "Successfully created initial transpile version 0.0.1 in CXAS."
-            )
-        except Exception as e:
-            logger.warning(
-                f"Failed to create initial transpile version 0.0.1: {e}"
-            )
+        # Create initial 1:1 transpile version snapshot. Skipped on the
+        # deferred staged path (not optimize_for_cxas AND consolidate): no
+        # agents are deployed there yet, and Stage 1 owns the version
+        # sequence starting at 0.0.2.
+        if config.optimize_for_cxas or not config.consolidate:
+            logger.info("\n--- Creating Initial Migrated Version 0.0.1 ---")
+            try:
+                Versions(target_app_resource_name).create_version(
+                    display_name="0.0.1",
+                    description="Initial migrated agent baseline",
+                )
+                logger.info(
+                    "Successfully created initial transpile version 0.0.1 "
+                    "in CXAS."
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to create initial transpile version 0.0.1: {e}"
+                )
 
         if config.optimize_for_cxas:
             logger.info(
                 "MIGRATION STAGE COMPLETE, ENTERING OPTIMIZATION PHASE..."
             )
+        elif config.consolidate:
+            # Staged skill path: Stage 1 consolidation runs next. Do NOT push
+            # the raw 1:1 agents here — a source with >100 flows/playbooks
+            # would exceed the CXAS 100-agent cap before consolidation can
+            # collapse them (N -> M). Base resources (app/vars/tools) are
+            # already deployed; agents stay COMPILED in the IR and are
+            # persisted to <target>_ir.json for Stage 1 to push as the
+            # consolidated set.
+            await self._deploy_base_resources(is_update_pass=True)
+            logger.info(
+                "Base resources deployed. Agent deployment DEFERRED to "
+                "Stage 1 (post-consolidation) to respect the CXAS 100-agent "
+                "cap. The %d compiled agents are saved in the IR bundle; run "
+                "stage_1.py to push the consolidated agents to CXAS.",
+                len(self.ir.agents),
+            )
         else:
+            # Explicit --no-consolidate: push the full 1:1 agent set now.
             logger.info(
                 "Pushing all resources to CXAS (no-consolidation path)..."
             )
@@ -1648,7 +1688,9 @@ class MigrationService:
             f"{config.target_name}_migration_report.md"
         )
 
-    async def _deploy_base_resources(self, is_update_pass: bool = False):
+    async def _deploy_base_resources(
+        self, is_update_pass: bool = False
+    ) -> None:
         """Deploys App, Variables, and Tools from the IR."""
         app_id_uuid = self.ir.metadata.app_id
         app_name = self.ir.metadata.app_name
@@ -1691,10 +1733,8 @@ class MigrationService:
                 no_speech_timeout = self.source_agent_data.no_speech_timeout
 
             seconds = 7
-            try:
+            with contextlib.suppress(Exception):
                 seconds = int(no_speech_timeout.replace("s", ""))
-            except Exception:
-                pass
 
             inactivity_duration = google.protobuf.duration_pb2.Duration(
                 seconds=seconds
@@ -1954,7 +1994,7 @@ class MigrationService:
                     )
                     tool.status = MigrationStatus.FAILED
 
-    def _safe_dereference_tool_from_console(self, full_tool_name: str):
+    def _safe_dereference_tool_from_console(self, full_tool_name: str) -> None:
         """Finds all agents in the live console that reference the given tool,
         and dynamically removes the tool reference to bypass foreign key
         constraints.
@@ -2014,7 +2054,9 @@ class MigrationService:
             )
 
     @staticmethod
-    def _fix_agent_ref(match, valid_display_names):
+    def _fix_agent_ref(
+        match: typing.Any, valid_display_names: typing.Any
+    ) -> typing.Any:
         raw_name = match.group(1).strip()
         if raw_name.upper() in ["END_SESSION", "END_FLOW"]:
             return match.group(0)
@@ -2032,7 +2074,9 @@ class MigrationService:
         fallback_name = re.sub(r"[_]+", " ", raw_name).strip()
         return f"{{@AGENT: {fallback_name}}}"
 
-    async def _deploy_pending_agents(self, is_update_pass: bool = False):
+    async def _deploy_pending_agents(
+        self, is_update_pass: bool = False
+    ) -> None:
         """Deploys any agents in the IR that have been compiled but not yet
         deployed.
         """
@@ -2321,33 +2365,37 @@ class MigrationService:
 
                 # --- Attach system 'end_session' tool ---
                 end_session_resource = f"{full_app_name}/tools/end_session"
-                if requires_end_session or re.search(
-                    r"{@TOOL:\s*end_session\s*}", instruction, re.IGNORECASE
-                ):
-                    if end_session_resource not in resolved_tools:
-                        resolved_tools.append(end_session_resource)
-                        logger.info(
-                            "    - Automatically attached 'end_session' "
-                            "system tool driven by active "
-                            "callback/instruction requirements."
-                        )
+                if (
+                    requires_end_session
+                    or re.search(
+                        r"{@TOOL:\s*end_session\s*}", instruction, re.IGNORECASE
+                    )
+                ) and end_session_resource not in resolved_tools:
+                    resolved_tools.append(end_session_resource)
+                    logger.info(
+                        "    - Automatically attached 'end_session' "
+                        "system tool driven by active "
+                        "callback/instruction requirements."
+                    )
 
                 # --- Attach system 'set_session_variables' tool ---
                 set_vars_resource = (
                     f"{full_app_name}/tools/set_session_variables"
                 )
-                if re.search(
-                    r"{@TOOL:\s*set_session_variables\s*}",
-                    instruction,
-                    re.IGNORECASE,
+                if (
+                    re.search(
+                        r"{@TOOL:\s*set_session_variables\s*}",
+                        instruction,
+                        re.IGNORECASE,
+                    )
+                    and set_vars_resource not in resolved_tools
                 ):
-                    if set_vars_resource not in resolved_tools:
-                        resolved_tools.append(set_vars_resource)
-                        logger.info(
-                            "    - Detected 'set_session_variables' in "
-                            "instructions. Attached system tool "
-                            "automatically."
-                        )
+                    resolved_tools.append(set_vars_resource)
+                    logger.info(
+                        "    - Detected 'set_session_variables' in "
+                        "instructions. Attached system tool "
+                        "automatically."
+                    )
 
                 for t_ref in agent.tools:
                     if t_ref in ("end_session", end_session_resource):
@@ -2579,7 +2627,7 @@ class MigrationService:
                     # Recurse into nested structures
                     self._preprocess_text_fields(item)
         elif hasattr(data_structure.__class__, "model_fields"):
-            for key in data_structure.__class__.model_fields.keys():
+            for key in data_structure.__class__.model_fields:
                 val = getattr(data_structure, key)
                 if isinstance(val, str):
                     setattr(
@@ -2596,7 +2644,7 @@ class MigrationService:
         flow_wrapper: dict[str, Any],
         target_app_resource_name: str,
         parameter_name_map: dict[str, str],
-    ):
+    ) -> None:
         """Processes a single DFCX flow: resolves dependencies, visualizes,
         generates instructions and tools, and deploys them.
         """
@@ -2643,7 +2691,7 @@ class MigrationService:
                 r"([\'\"])([a-zA-Z0-9_-]+)([\'\"])"
             )
 
-            def flow_python_var_replacer(match):
+            def flow_python_var_replacer(match: typing.Any) -> str:
                 prefix = match.group(1)
                 quote = match.group(2)
                 var_name = match.group(3)
@@ -2752,7 +2800,7 @@ class MigrationService:
                 r"\$(?:(?:session|page)\.params\.)?([a-zA-Z0-9_-]+)"
             )
 
-            def flow_var_replacer(match):
+            def flow_var_replacer(match: typing.Any) -> typing.Any:
                 original_match = match.group(0)
                 var_name = next(g for g in match.groups() if g is not None)
 
@@ -2777,14 +2825,16 @@ class MigrationService:
 
             # B. Attach System end_session Tool
             end_session_res = f"{target_app_resource_name}/tools/end_session"
-            if re.search(
-                r"{@TOOL:\s*end_session\s*}", instructions_xml, re.IGNORECASE
+            if (
+                re.search(
+                    r"{@TOOL:\s*end_session\s*}",
+                    instructions_xml,
+                    re.IGNORECASE,
+                )
+                and end_session_res not in self.ir.agents[flow_name].tools
             ):
-                if end_session_res not in self.ir.agents[flow_name].tools:
-                    self.ir.agents[flow_name].tools.append(end_session_res)
-                    logger.info(
-                        f"[{flow_name}] Attached system tool: end_session"
-                    )
+                self.ir.agents[flow_name].tools.append(end_session_res)
+                logger.info(f"[{flow_name}] Attached system tool: end_session")
 
             # C. Attach Standard Tools/Toolsets referenced directly in XML
             xml_tools = re.findall(r"{@TOOL:\s*([^}]+)}", instructions_xml)

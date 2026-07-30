@@ -31,7 +31,7 @@ class GCSUtils(Common):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-    ):
+    ) -> None:
         """Initializes GCSUtils with common auth logic.
 
         Args:

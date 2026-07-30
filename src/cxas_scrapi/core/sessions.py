@@ -23,6 +23,7 @@ import struct
 import sys
 import threading
 import time
+import typing
 import uuid
 import wave
 from enum import Enum
@@ -55,6 +56,8 @@ try:
     from pydub import AudioSegment
 except ImportError:
     AudioSegment = None
+import contextlib
+
 from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
@@ -106,11 +109,11 @@ class ScrapiRunSessionResponse:
 
     def __init__(
         self, original_response: Any, agent_audio_paths: dict[int, str]
-    ):
+    ) -> None:
         self._original_response = original_response
         self.agent_audio_paths = agent_audio_paths
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> typing.Any:
         return getattr(self._original_response, name)
 
 
@@ -134,7 +137,7 @@ class BidiSessionError(Exception):
         close_msg: str | None = None,
         server_error_kind: str | None = None,
         server_trace_id: str | None = None,
-    ):
+    ) -> None:
         super().__init__(message)
         self.close_status_code = close_status_code
         self.close_msg = close_msg
@@ -158,7 +161,7 @@ class AgentTurnManager:
         sample_width: int = SAMPLE_WIDTH,
         skip_playback_wait: bool = False,
         interactive: bool = False,
-    ):
+    ) -> None:
         self.sample_rate = sample_rate
         self.sample_width = sample_width
         self.bytes_per_second = sample_rate * sample_width
@@ -181,7 +184,7 @@ class AgentTurnManager:
         sum_squares = sum(s * s for s in shorts)
         return math.sqrt(sum_squares / count)
 
-    def add_audio(self, audio_bytes: bytes):
+    def add_audio(self, audio_bytes: bytes) -> None:
         with self.lock:
             if self.interactive:
                 if self.turn_completed_flag:
@@ -193,11 +196,11 @@ class AgentTurnManager:
                 self.first_audio_received_time = time.time()
             self.len_audio_bytes_received += len(audio_bytes)
 
-    def mark_turn_completed(self):
+    def mark_turn_completed(self) -> None:
         with self.lock:
             self.turn_completed_flag = True
 
-    def reset(self):
+    def reset(self) -> None:
         with self.lock:
             self.len_audio_bytes_received = 0
             self.turn_completed_flag = False
@@ -206,7 +209,7 @@ class AgentTurnManager:
             self.is_welcome_turn = False
             self.current_turn_index = None
 
-    def prepare_for_turn(self, expected_turn_index: int):
+    def prepare_for_turn(self, expected_turn_index: int) -> None:
         with self.lock:
             logging.debug(
                 "Preparing manager for turn index %d. Resetting state.",
@@ -224,9 +227,7 @@ class AgentTurnManager:
             if self.current_turn_index is None:
                 self.current_turn_index = turn_idx
                 return True
-            if turn_idx != self.current_turn_index:
-                return False
-            return True
+            return turn_idx == self.current_turn_index
 
     def is_agent_done_talking(self) -> bool:
         with self.lock:
@@ -249,7 +250,7 @@ class AgentTurnManager:
                 return current_playback_time >= audio_duration_seconds
 
             if self.first_audio_received_time is None:
-                if self.turn_completed_flag:
+                if self.turn_completed_flag:  # noqa: SIM103
                     return True  # Agent didn't send any audio
                 return False
 
@@ -311,7 +312,7 @@ class BidiSessionHandler:
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
         skip_playback_wait: bool = False,
-    ):
+    ) -> None:
         self.uri = BIDI_SESSION_URI + location
         self.token = token
         self.config = config
@@ -407,7 +408,7 @@ class BidiSessionHandler:
 
         return chunk_segment.raw_data[:chunk_bytes_len]
 
-    def _send_silence(self, num_chunks: int):
+    def _send_silence(self, num_chunks: int) -> None:
         chunk_duration_ms = 100
         for _ in range(num_chunks):
             noise_chunk = self._get_next_noise_chunk(chunk_duration_ms)
@@ -424,7 +425,7 @@ class BidiSessionHandler:
 
     def _send_audio_message(
         self, audio_payload: dict[str, Any], turn_index: int
-    ):
+    ) -> None:
         with self.lock:
             self.is_sending_audio = True
         try:
@@ -519,7 +520,8 @@ class BidiSessionHandler:
             with self.lock:
                 self.is_sending_audio = False
 
-    def _send_inputs(self):
+    def _send_inputs(self) -> None:
+        assert self.ws_app is not None
         try:
             logging.debug("Config dict: %s", self.config)
             if isinstance(self.config, types.SessionConfig):
@@ -578,7 +580,7 @@ class BidiSessionHandler:
             if self.ws_app:
                 self.ws_app.close()
 
-    def _send_single_input(self, input_item: dict[str, Any], idx: int):
+    def _send_single_input(self, input_item: dict[str, Any], idx: int) -> None:
         if "audio" in input_item:
             self._send_audio_message(input_item["audio"], idx)
             return
@@ -632,7 +634,7 @@ class BidiSessionHandler:
         except Exception as e:
             logging.debug("Failed to send generic input %s: %s", input_item, e)
 
-    def _save_and_increment_agent_audio(self):
+    def _save_and_increment_agent_audio(self) -> None:
         with self.audio_lock:
             turn_index = self.current_agent_turn_idx
             buffer = self.turn_audio_buffers.get(turn_index, b"")
@@ -662,13 +664,13 @@ class BidiSessionHandler:
                     f"Failed to write WAV file {wav_filename}: {audio_err}"
                 )
 
-    def _on_open(self, ws):
+    def _on_open(self, ws: typing.Any) -> None:
         logging.debug("WebSocket connection opened")
         threading.Thread(target=self._send_inputs, daemon=True).start()
         if self.interactive:
             threading.Thread(target=self._silence_loop, daemon=True).start()
 
-    def _silence_loop(self):
+    def _silence_loop(self) -> None:
         while True:
             if (
                 not self.ws_app
@@ -689,7 +691,7 @@ class BidiSessionHandler:
             else:
                 time.sleep(0.1)
 
-    def _on_message(self, ws, message):
+    def _on_message(self, ws: typing.Any, message: typing.Any) -> None:
         logging.debug("===============")
         logging.debug("Received message: %s...", message[:100])
         try:
@@ -818,7 +820,7 @@ class BidiSessionHandler:
 
                     self.current_agent_turn_idx += 1
 
-            if response.end_session:
+            if response.end_session:  # noqa: SIM102
                 if self.response_queue is not None:
                     self.response_queue.put(
                         {
@@ -830,7 +832,7 @@ class BidiSessionHandler:
         except Exception as e:
             logging.debug("Failed to parse message: %s", e)
 
-    def _should_skip_output(self, response) -> bool:
+    def _should_skip_output(self, response: typing.Any) -> bool:
         """Filters comfort-noise/ack packets and stale-turn output.
 
         Only used in single-stream mode, where the persistent connection
@@ -875,7 +877,7 @@ class BidiSessionHandler:
         self.agent_turn_manager.is_welcome_turn = turn_idx <= 1
         return False
 
-    def _update_estimated_duration(self):
+    def _update_estimated_duration(self) -> None:
         """Updates the estimated speech duration from text received so far."""
         parsed = ParsedSessionResponse(self.current_turn_outputs)
         agent_text = parsed.consolidated_agent_text
@@ -892,7 +894,7 @@ class BidiSessionHandler:
                 estimated_duration
             )
 
-    def _on_error(self, ws, error):
+    def _on_error(self, ws: typing.Any, error: typing.Any) -> None:
         logging.debug("WebSocket error: %s", error)
         # Stash connection-level errors
         self._connection_error = error
@@ -904,7 +906,12 @@ class BidiSessionHandler:
                 }
             )
 
-    def _on_close(self, ws, close_status_code, close_msg):
+    def _on_close(
+        self,
+        ws: typing.Any,
+        close_status_code: typing.Any,
+        close_msg: typing.Any,
+    ) -> None:
         logging.debug(
             "WebSocket connection closed with code %s and reason: %s",
             close_status_code,
@@ -923,7 +930,7 @@ class BidiSessionHandler:
                 }
             )
 
-    def run(self):
+    def run(self) -> typing.Any:
         logging.debug("Connecting to WebSocket: %s", self.uri)
         self.ws_app = websocket.WebSocketApp(
             self.uri,
@@ -961,10 +968,8 @@ class BidiSessionHandler:
                     f"bidi run timed out after {_BIDI_RUN_TIMEOUT_S}s "
                     "(no end-of-turn or close)"
                 )
-            try:
+            with contextlib.suppress(Exception):
                 self.ws_app.close()
-            except Exception:
-                pass
             wst.join(timeout=5)
 
         # Check for abnormal WebSocket closures
@@ -1024,7 +1029,7 @@ class BidiInteractiveSession:
         bg_noise_snr: float = 15.0,
         skip_playback_wait: bool = True,
         voice_config: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.sessions_client = sessions_client
         self.session_id = session_id
         self.config = config
@@ -1050,7 +1055,7 @@ class BidiInteractiveSession:
         )
         self.wst = None
 
-    def start(self):
+    def start(self) -> None:
         """Connects to the WebSocket gateway in the background."""
         self.wst = self.handler.run()
         # Wait a short moment to ensure thread has started and
@@ -1110,7 +1115,7 @@ class BidiInteractiveSession:
                 "Timeout waiting for agent response via WebSocket"
             ) from err
 
-    def close(self):
+    def close(self) -> None:
         """Closes the WebSocket connection cleanly."""
         self.input_queue.put(None)  # Sentinel to close sending loop
         if self.wst is not None:
@@ -1128,8 +1133,8 @@ class Sessions(Common):
         app_name: str,
         deployment_id: str | None = None,
         rate_limiter: RateLimiter | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Sessions client."""
         super().__init__(app_name=app_name, **kwargs)
 
@@ -1144,7 +1149,7 @@ class Sessions(Common):
         self.rate_limiter = rate_limiter
         self._creds_lock = threading.Lock()
 
-    def _check_audio_requirements(self):
+    def _check_audio_requirements(self) -> None:
         """Checks if the necessary APIs are enabled and user has permissions."""
         if not self.project_id:
             raise ValueError(
@@ -1222,7 +1227,7 @@ class Sessions(Common):
         return {"mime_type": mime_type, "data": raw_bytes}
 
     @staticmethod
-    def _expand_pb_struct(pb_struct):
+    def _expand_pb_struct(pb_struct: typing.Any) -> typing.Any:
         try:
             return json.loads(json_format.MessageToJson(pb_struct))
         except Exception:
@@ -1238,7 +1243,7 @@ class Sessions(Common):
         else:
             return pb_struct
 
-    def parse_result(self, res: Any):
+    def parse_result(self, res: Any) -> None:
         """
         Parses the CX Agent Studio session response to extract and print
         turn-by-turn interactions including User Queries, Agent Responses,
@@ -1259,7 +1264,7 @@ class Sessions(Common):
 
             render = print
 
-            def render_html(text):
+            def render_html(text: typing.Any) -> typing.Any:
                 return text  # Pass-through for terminal
 
         elif HAS_IPYTHON:
@@ -1284,7 +1289,7 @@ class Sessions(Common):
 
             render = print
 
-            def render_html(text):
+            def render_html(text: typing.Any) -> typing.Any:
                 return re.sub(r"<[^>]*>", "", text).strip()
 
         outputs = getattr(res, "outputs", [])
@@ -1406,7 +1411,7 @@ class Sessions(Common):
                                 )
                             )
 
-    def get_structured_response(self, response) -> dict[str, Any]:
+    def get_structured_response(self, response: typing.Any) -> dict[str, Any]:
         """Parse response, avoiding duplicate text from diagnostic info.
 
         Returns a dictionary with keys:
@@ -1448,7 +1453,7 @@ class Sessions(Common):
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
-    ):
+    ) -> typing.Any:
         if self.rate_limiter:
             self.rate_limiter.wait_and_consume()
         with self._creds_lock:
@@ -1525,7 +1530,9 @@ class Sessions(Common):
             voice_config=voice_config,
         )
 
-    def make_text_request(self, config: dict, inputs: list[dict[str, Any]]):
+    def make_text_request(
+        self, config: dict, inputs: list[dict[str, Any]]
+    ) -> typing.Any:
         if self.rate_limiter:
             self.rate_limiter.wait_and_consume()
         request = types.RunSessionRequest(config=config, inputs=inputs)
@@ -1556,7 +1563,7 @@ class Sessions(Common):
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         voice_config: dict[str, Any] | None = None,
-    ):
+    ) -> typing.Any:
         """Sends inputs to a Conversational Agents Session and returns the
         response.
 
@@ -1689,11 +1696,11 @@ class Sessions(Common):
                         )
             config["historical_contexts"] = parsed_contexts
 
-        if variables:
-            if modality == Modality.TEXT:
-                inputs.append({"variables": variables})
-            elif modality == Modality.AUDIO and text is None and audio is None:
-                inputs.append({"variables": variables})
+        if variables and (
+            modality == Modality.TEXT
+            or (modality == Modality.AUDIO and text is None and audio is None)
+        ):
+            inputs.append({"variables": variables})
 
         if dtmf is not None:
             inputs.append({"dtmf": dtmf})
@@ -1823,7 +1830,7 @@ class Sessions(Common):
 
     def send_event(
         self, unique_id: str, event_name: str, event_vars: dict[str, Any]
-    ):
+    ) -> typing.Any:
         if self.rate_limiter:
             self.rate_limiter.wait_and_consume()
         config = {"session": f"{self.app_name}/sessions/{unique_id}"}

@@ -14,6 +14,7 @@
 
 import os
 import sys
+import typing
 import webbrowser
 from unittest.mock import MagicMock, create_autospec
 
@@ -36,8 +37,8 @@ os.environ["CXAS_OAUTH_TOKEN"] = "mock_token_for_tests"
 if "--run-online" not in sys.argv:
     mock_ces = create_autospec(real_ces)
 
-    def enforce_transport(client_class):
-        def _enforce(*args, **kwargs):
+    def enforce_transport(client_class: typing.Any) -> typing.Any:
+        def _enforce(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
             if "transport" not in kwargs:
                 raise ValueError(
                     "Client must be initialized with a transport from "
@@ -86,7 +87,7 @@ if "--run-online" not in sys.argv:
 from cxas_scrapi.utils.gemini import GeminiGenerate  # noqa: E402
 
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: typing.Any) -> None:
     parser.addoption(
         "--app-id",
         action="store",
@@ -113,13 +114,15 @@ def pytest_addoption(parser):
     )
 
 
-def pytest_configure(config):
+def pytest_configure(config: typing.Any) -> None:
     config.addinivalue_line(
         "markers", "online: mark test as requiring live API access"
     )
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(
+    config: typing.Any, items: typing.Any
+) -> None:
     if config.getoption("--run-online"):
         # --run-online given in cli: do not skip online tests
         return
@@ -130,12 +133,14 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture
-def app_id():
+def app_id() -> typing.Any:
     return TEST_APP_NAME
 
 
 @pytest.fixture(autouse=True)
-def mock_gemini_generate(request, monkeypatch):
+def mock_gemini_generate(
+    request: typing.Any, monkeypatch: typing.Any
+) -> typing.Any:
     """Centrally mock GeminiGenerate calls for all tests except test_gemini.py.
 
     This prevents unit tests from attempting real network calls to Gemini APIs,
@@ -146,13 +151,17 @@ def mock_gemini_generate(request, monkeypatch):
         yield
         return
 
-    async def mock_generate_async(self, prompt, **kwargs):
+    async def mock_generate_async(
+        self: typing.Any,
+        prompt: typing.Any,
+        **kwargs: typing.Any,  # noqa: ANN001
+    ) -> str:
         response_mime_type = kwargs.get("response_mime_type")
         if response_mime_type == "application/json":
             return "{}"
         return "mock_response"
 
-    def mock_generate(self, prompt, **kwargs):
+    def mock_generate(self, prompt: typing.Any, **kwargs: typing.Any) -> str:  # noqa: ANN001
         response_mime_type = kwargs.get("response_mime_type")
         if response_mime_type == "application/json":
             return "{}"
@@ -164,7 +173,7 @@ def mock_gemini_generate(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def mock_webbrowser(monkeypatch):
+def mock_webbrowser(monkeypatch: typing.Any) -> None:
     """Globally mock webbrowser to prevent opening browsers during tests."""
     monkeypatch.setattr(webbrowser, "open", lambda *args, **kwargs: True)
     monkeypatch.setattr(
