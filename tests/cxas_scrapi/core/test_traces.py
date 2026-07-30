@@ -772,6 +772,23 @@ def test_triage_runs_all_metrics_when_none_specified(
     )
 
 
+def test_triage_custom_location(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    traces_obj.history = MagicMock()
+    traces_obj.history.get_conversation.return_value = _conv_dict()
+    traces_obj.trace_config.gemini.location = "europe-west4"
+    mock_gemini_cls = MagicMock()
+    monkeypatch.setattr(traces_mod, "GeminiGenerate", mock_gemini_cls)
+    traces_obj.triage("c1", metrics=["hallucination"])
+    mock_gemini_cls.assert_called_once_with(
+        project_id=traces_obj.project_id,
+        credentials=traces_obj.creds,
+        location="europe-west4",
+        model_name=traces_obj.trace_config.gemini.model,
+    )
+
+
 def test_replay_with_diff(
     traces_obj: typing.Any, monkeypatch: typing.Any
 ) -> None:
