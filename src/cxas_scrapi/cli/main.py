@@ -664,6 +664,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         deployment_id=getattr(args, "deployment_id", None),
         progress_callback=progress_callback,
         capture_agent_audio=getattr(args, "capture_agent_audio", False),
+        single_bidi_stream=getattr(args, "single_bidi_stream", False),
         report_format=getattr(args, "format", "html") or "html",
     )
     print(f"Combined report generated at {actual_output_path}")
@@ -1846,6 +1847,11 @@ def get_parser() -> argparse.ArgumentParser:
         "--capture-agent-audio",
         action="store_true",
         help="Capture real-time agent output audio as WAV files",
+    )
+    parser_report.add_argument(
+        "--single-bidi-stream",
+        action="store_true",
+        help="Keep one persistent bidi WebSocket open per audio simulation instead of one connection per turn.",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
