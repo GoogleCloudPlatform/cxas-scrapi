@@ -39,11 +39,11 @@ class TestCloudEvalReporter(unittest.TestCase):
         ]
         cats = categorize_cloud_errors(errors)
 
-        self.assertIn(errors[0], cats["Tool Calls"])
-        self.assertIn(errors[1], cats["State & Variables"])
-        self.assertIn(errors[2], cats["Agent Handovers"])
-        self.assertIn(errors[3], cats["System & Infrastructure"])
-        self.assertIn(errors[4], cats["Generative & Phrasing"])
+        assert errors[0] in cats["Tool Calls"]
+        assert errors[1] in cats["State & Variables"]
+        assert errors[2] in cats["Agent Handovers"]
+        assert errors[3] in cats["System & Infrastructure"]
+        assert errors[4] in cats["Generative & Phrasing"]
 
     def test_unexpected_agent_transfer_capture(self) -> None:
         """Verifies observedAgentTransfer failures are flagged."""
@@ -64,12 +64,9 @@ class TestCloudEvalReporter(unittest.TestCase):
         }
         findings, telemetry = parse_evaluation_schema_details(mock_eval)
 
-        self.assertIn("main", telemetry["agentTransfers"])
-        self.assertTrue(
-            any(
-                "Agent transfer to 'main' failed expectation" in f
-                for f in findings
-            )
+        assert "main" in telemetry["agentTransfers"]
+        assert any(
+            "Agent transfer to 'main' failed expectation" in f for f in findings
         )
 
     def test_tool_order_false_alarm_suppression(self) -> None:
@@ -87,10 +84,8 @@ class TestCloudEvalReporter(unittest.TestCase):
         }
         findings, telemetry = parse_evaluation_schema_details(mock_eval)
 
-        self.assertEqual(telemetry["toolOrderedInvocationScore"], 0.0)
-        self.assertFalse(
-            any("Tool execution order differed" in f for f in findings)
-        )
+        assert telemetry["toolOrderedInvocationScore"] == 0.0
+        assert not any("Tool execution order differed" in f for f in findings)
 
     def test_generate_cloud_json_report(self) -> None:
         """Verifies structured JSON telemetry generation."""
@@ -111,16 +106,12 @@ class TestCloudEvalReporter(unittest.TestCase):
             linter_output="OK",
         )
 
-        self.assertEqual(payload["total"], 1)
-        self.assertEqual(payload["passed"], 1)
-        self.assertEqual(payload["failed"], 0)
-        self.assertEqual(
-            payload["schemaVersion"], "ces.v1beta.evaluation.proto"
-        )
-        self.assertEqual(payload["projectLinterAudit"]["totalIssues"], 1)
-        self.assertEqual(
-            payload["projectLinterAudit"]["issues"], mock_linter_issues
-        )
+        assert payload["total"] == 1
+        assert payload["passed"] == 1
+        assert payload["failed"] == 0
+        assert payload["schemaVersion"] == "ces.v1beta.evaluation.proto"
+        assert payload["projectLinterAudit"]["totalIssues"] == 1
+        assert payload["projectLinterAudit"]["issues"] == mock_linter_issues
 
     def test_undeclared_tool_and_span_errors_capture(self) -> None:
         """Verifies undeclared tool references and span errors from conversation trace are captured."""
@@ -151,16 +142,12 @@ class TestCloudEvalReporter(unittest.TestCase):
             ]
         }
         findings, _ = parse_evaluation_schema_details(mock_eval, mock_conv)
-        self.assertTrue(
-            any(
-                "References to undeclared tools: get_premium_and_out_of_bundle_usage"
-                in f
-                for f in findings
-            )
+        assert any(
+            "References to undeclared tools: get_premium_and_out_of_bundle_usage"
+            in f
+            for f in findings
         )
-        self.assertTrue(
-            any("Timeout in tool call" in f for f in findings)
-        )
+        assert any("Timeout in tool call" in f for f in findings)
 
     def test_state_machine_config_errors_capture(self) -> None:
         """Verifies state machine config_validation_failed and slot errors are caught and categorized."""
@@ -200,14 +187,10 @@ class TestCloudEvalReporter(unittest.TestCase):
             ]
         }
         findings, _ = parse_evaluation_schema_details(mock_eval, mock_conv)
-        self.assertTrue(
-            any("not in slots" in f for f in findings)
-        )
-        self.assertTrue(
-            any("unreachable" in f for f in findings)
-        )
+        assert any("not in slots" in f for f in findings)
+        assert any("unreachable" in f for f in findings)
         cats = categorize_cloud_errors(findings)
-        self.assertEqual(len(cats["State & Variables"]), 2)
+        assert len(cats["State & Variables"]) == 2
 
     def test_compute_performance_summary(self) -> None:
         """Verifies calculation of latency averages, max tools, and token economics."""
@@ -218,17 +201,20 @@ class TestCloudEvalReporter(unittest.TestCase):
                     {
                         "turn_latency": "2.5s",
                         "tool_call_latencies": [
-                            {"display_name": "slow_tool", "execution_latency": "0.45s"}
+                            {
+                                "display_name": "slow_tool",
+                                "execution_latency": "0.45s",
+                            }
                         ],
                     }
                 ],
             }
         ]
         perf = compute_performance_summary(mock_evals, "app-test-id")
-        self.assertEqual(perf["avgTurnSeconds"], 2.5)
-        self.assertEqual(perf["maxTurnSeconds"], 2.5)
-        self.assertEqual(perf["maxToolName"], "slow_tool")
-        self.assertEqual(perf["maxToolSeconds"], 0.45)
+        assert perf["avgTurnSeconds"] == 2.5
+        assert perf["maxTurnSeconds"] == 2.5
+        assert perf["maxToolName"] == "slow_tool"
+        assert perf["maxToolSeconds"] == 0.45
 
     def test_generate_cloud_json_report_performance_parity(self) -> None:
         """Verifies JSON agentic report includes aggregate performanceTelemetry and per-test granular telemetry."""
@@ -240,20 +226,23 @@ class TestCloudEvalReporter(unittest.TestCase):
                     {
                         "turn_latency": "1.2s",
                         "tool_call_latencies": [
-                            {"display_name": "lookup_tool", "execution_latency": "0.15s"}
+                            {
+                                "display_name": "lookup_tool",
+                                "execution_latency": "0.15s",
+                            }
                         ],
                     }
                 ],
             }
         ]
         json_report = generate_cloud_json_report(mock_evals, [], "app-test-id")
-        self.assertIn("performanceTelemetry", json_report)
-        self.assertEqual(json_report["performanceTelemetry"]["avgTurnSeconds"], 1.2)
+        assert "performanceTelemetry" in json_report
+        assert json_report["performanceTelemetry"]["avgTurnSeconds"] == 1.2
         detailed = json_report["detailedTelemetry"][0]["telemetry"]
-        self.assertIn("turnLatencies", detailed)
-        self.assertIn("toolCallLatencies", detailed)
-        self.assertEqual(detailed["turnLatencies"][0]["latencySeconds"], 1.2)
-        self.assertEqual(detailed["toolCallLatencies"][0]["toolName"], "lookup_tool")
+        assert "turnLatencies" in detailed
+        assert "toolCallLatencies" in detailed
+        assert detailed["turnLatencies"][0]["latencySeconds"] == 1.2
+        assert detailed["toolCallLatencies"][0]["toolName"] == "lookup_tool"
 
 
 if __name__ == "__main__":

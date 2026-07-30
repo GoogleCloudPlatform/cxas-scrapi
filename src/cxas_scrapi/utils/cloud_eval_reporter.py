@@ -20,17 +20,15 @@ project architecture over REST API, and formats interactive Tailwind HTML
 dashboards or structured JSON telemetry for AI coding assistants.
 """
 
+import contextlib
 import json
 import logging
 import os
 import re
 import shutil
 import subprocess
-import urllib.request
 from datetime import datetime
 from typing import Any
-
-from cxas_scrapi.utils.eval_utils import EvalUtils
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +228,9 @@ def build_score_badges(telemetry: dict[str, Any]) -> str:
         )
         badges.append(
             SCORE_BADGE_ITEM.format(
-                border_color=color, label="Semantic Consistency", value=f"{sem_score}/4"
+                border_color=color,
+                label="Semantic Consistency",
+                value=f"{sem_score}/4",
             )
         )
 
@@ -359,8 +359,8 @@ def categorize_cloud_errors(errors: list[str]) -> dict[str, list[str]]:
         else:
             cats["Tool Calls"].append(err)
 
-    for k in cats:
-        cats[k] = list(set(cats[k]))
+    for k, val in cats.items():
+        cats[k] = list(set(val))
     return cats
 
 
@@ -526,12 +526,10 @@ def parse_evaluation_schema_details(
         turn_num = idx + 1
 
         tl = str(turn.get("turn_latency", "0s")).rstrip("s")
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             telemetry["turnLatencies"].append(
                 {"turn": turn_num, "latencySeconds": round(float(tl), 4)}
             )
-        except (ValueError, TypeError):
-            pass
 
         for tc in turn.get("tool_call_latencies", []):
             tcl = str(tc.get("execution_latency", "0s")).rstrip("s")
@@ -540,7 +538,7 @@ def parse_evaluation_schema_details(
                 or tc.get("displayName")
                 or "unknown_tool"
             )
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 telemetry["toolCallLatencies"].append(
                     {
                         "turn": turn_num,
@@ -548,8 +546,6 @@ def parse_evaluation_schema_details(
                         "latencySeconds": round(float(tcl), 4),
                     }
                 )
-            except (ValueError, TypeError):
-                pass
 
         sem = (
             turn.get("semanticSimilarityResult")
@@ -714,29 +710,25 @@ def parse_evaluation_schema_details(
                     return
                 attrs = span.get("attributes", {})
                 if "input token count" in attrs:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         telemetry["tokenUsage"]["inputTokens"] += int(
                             float(attrs["input token count"])
                         )
-                    except (ValueError, TypeError):
-                        pass
                 if "output token count" in attrs:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         telemetry["tokenUsage"]["outputTokens"] += int(
                             float(attrs["output token count"])
                         )
-                    except (ValueError, TypeError):
-                        pass
                 if "time to first chunk (ms)" in attrs:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         telemetry["ttftMs"].append(
                             round(float(attrs["time to first chunk (ms)"]), 1)
                         )
-                    except (ValueError, TypeError):
-                        pass
-                if "model" in attrs and attrs["model"]:
-                    if attrs["model"] not in telemetry["models"]:
-                        telemetry["models"].append(str(attrs["model"]))
+                if (
+                    attrs.get("model")
+                    and attrs["model"] not in telemetry["models"]
+                ):
+                    telemetry["models"].append(str(attrs["model"]))
                 if (
                     attrs.get("type") == "LLM_PROMPT_SECURITY"
                     or "guardrail" in str(span.get("name", "")).lower()
@@ -812,7 +804,8 @@ def audit_cloud_project_linter(app_id: str, env: str = "prod") -> list[str]:
             t_name = uuid_to_name.get(t_id, t_id)
             if (
                 t_id not in ("set_variables", "end_session", "transfer_agent")
-                and t_name not in ("set_variables", "end_session", "transfer_agent")
+                and t_name
+                not in ("set_variables", "end_session", "transfer_agent")
                 and f"{{@TOOL: {t_name}}}" not in prompt
                 and f"{{@TOOL:{t_name}}}" not in prompt
                 and f"{{@TOOL: {t_id}}}" not in prompt
@@ -835,7 +828,9 @@ def audit_cloud_project_linter(app_id: str, env: str = "prod") -> list[str]:
 def _build_issues_html(issues: list[str]) -> str:
     """Helper to render bulleted list of issues in HTML cards."""
     if not issues:
-        return '<li class="text-gray-500 italic">No specific errors logged.</li>'
+        return (
+            '<li class="text-gray-500 italic">No specific errors logged.</li>'
+        )
     return "".join(
         f'<li class="text-sm font-mono text-gray-700 bg-gray-100 p-2 rounded '
         f'border-l-2 border-red-500">{i}</li>'
@@ -924,12 +919,10 @@ def compute_performance_summary(
         )
         for t_idx, turn in enumerate(turns):
             tl = str(turn.get("turn_latency", "0s")).rstrip("s")
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 turn_latencies.append(
-                    (float(tl), f"Turn {t_idx+1} ({name[:30]})")
+                    (float(tl), f"Turn {t_idx + 1} ({name[:30]})")
                 )
-            except (ValueError, TypeError):
-                pass
 
             for tc in turn.get("tool_call_latencies", []):
                 tcl = str(tc.get("execution_latency", "0s")).rstrip("s")
@@ -938,39 +931,35 @@ def compute_performance_summary(
                     or tc.get("displayName")
                     or "unknown_tool"
                 )
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     tool_latencies.append((float(tcl), t_name, name[:30]))
-                except (ValueError, TypeError):
-                    pass
 
         conv_data = _fetch_conversation_if_needed(item, app_id)
         if conv_data:
 
             def _walk_spans(span: dict[str, Any] | None) -> None:
-                nonlocal total_input_tokens, total_output_tokens, guardrails_checked, guardrails_triggered
+                nonlocal \
+                    total_input_tokens, \
+                    total_output_tokens, \
+                    guardrails_checked, \
+                    guardrails_triggered
                 if not span:
                     return
                 attrs = span.get("attributes", {})
                 if "input token count" in attrs:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         total_input_tokens += float(attrs["input token count"])
-                    except (ValueError, TypeError):
-                        pass
                 if "output token count" in attrs:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         total_output_tokens += float(
                             attrs["output token count"]
                         )
-                    except (ValueError, TypeError):
-                        pass
                 if "time to first chunk (ms)" in attrs:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         ttft_ms_list.append(
                             float(attrs["time to first chunk (ms)"])
                         )
-                    except (ValueError, TypeError):
-                        pass
-                if "model" in attrs and attrs["model"]:
+                if attrs.get("model"):
                     models_seen.add(str(attrs["model"]))
                 if (
                     attrs.get("type") == "LLM_PROMPT_SECURITY"
@@ -1007,9 +996,7 @@ def compute_performance_summary(
         else (0.0, "N/A", "N/A")
     )
 
-    avg_ttft = (
-        sum(ttft_ms_list) / len(ttft_ms_list) if ttft_ms_list else 0.0
-    )
+    avg_ttft = sum(ttft_ms_list) / len(ttft_ms_list) if ttft_ms_list else 0.0
     max_ttft = max(ttft_ms_list) if ttft_ms_list else 0.0
 
     return {
@@ -1032,16 +1019,14 @@ def compute_performance_summary(
 
 def _build_performance_summary_html(perf: dict[str, Any]) -> str:
     """Renders 4-card grid for executive performance and token economics telemetry."""
-    models_str = (
-        ", ".join(perf["models"]) if perf["models"] else "unspecified"
-    )
+    models_str = ", ".join(perf["models"]) if perf["models"] else "unspecified"
     in_k = (
-        f"{perf['inputTokens']/1000:.1f}k"
+        f"{perf['inputTokens'] / 1000:.1f}k"
         if perf["inputTokens"] >= 1000
         else str(perf["inputTokens"])
     )
     out_k = (
-        f"{perf['outputTokens']/1000:.1f}k"
+        f"{perf['outputTokens'] / 1000:.1f}k"
         if perf["outputTokens"] >= 1000
         else str(perf["outputTokens"])
     )
@@ -1052,15 +1037,15 @@ def _build_performance_summary_html(perf: dict[str, Any]) -> str:
             <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div class="p-4 bg-blue-50 rounded-lg border border-blue-200">
                     <span class="block text-xs font-bold text-blue-700 uppercase tracking-wide">⏱️ Latency Benchmark</span>
-                    <div class="mt-2 text-2xl font-extrabold text-blue-900">{perf['avgTurnSeconds']}s <span class="text-xs font-normal text-blue-600">avg turn</span></div>
+                    <div class="mt-2 text-2xl font-extrabold text-blue-900">{perf["avgTurnSeconds"]}s <span class="text-xs font-normal text-blue-600">avg turn</span></div>
                     <div class="mt-2 text-xs text-blue-800">
-                        <p><strong>Max Turn:</strong> {perf['maxTurnSeconds']}s ({perf['maxTurnTest']})</p>
-                        <p class="mt-1"><strong>Slowest Tool:</strong> {perf['maxToolName']} ({perf['maxToolSeconds']}s)</p>
+                        <p><strong>Max Turn:</strong> {perf["maxTurnSeconds"]}s ({perf["maxTurnTest"]})</p>
+                        <p class="mt-1"><strong>Slowest Tool:</strong> {perf["maxToolName"]} ({perf["maxToolSeconds"]}s)</p>
                     </div>
                 </div>
                 <div class="p-4 bg-emerald-50 rounded-lg border border-emerald-200">
                     <span class="block text-xs font-bold text-emerald-700 uppercase tracking-wide">🪙 Token Economics</span>
-                    <div class="mt-2 text-2xl font-extrabold text-emerald-900">{perf['totalTokens']:,} <span class="text-xs font-normal text-emerald-600">total</span></div>
+                    <div class="mt-2 text-2xl font-extrabold text-emerald-900">{perf["totalTokens"]:,} <span class="text-xs font-normal text-emerald-600">total</span></div>
                     <div class="mt-2 text-xs text-emerald-800">
                         <p><strong>Input / Output:</strong> {in_k} / {out_k}</p>
                         <p class="mt-1"><strong>Models:</strong> {models_str}</p>
@@ -1068,18 +1053,18 @@ def _build_performance_summary_html(perf: dict[str, Any]) -> str:
                 </div>
                 <div class="p-4 bg-purple-50 rounded-lg border border-purple-200">
                     <span class="block text-xs font-bold text-purple-700 uppercase tracking-wide">🚀 Model Responsiveness</span>
-                    <div class="mt-2 text-2xl font-extrabold text-purple-900">{perf['avgTtftMs']} ms <span class="text-xs font-normal text-purple-600">avg TTFT</span></div>
+                    <div class="mt-2 text-2xl font-extrabold text-purple-900">{perf["avgTtftMs"]} ms <span class="text-xs font-normal text-purple-600">avg TTFT</span></div>
                     <div class="mt-2 text-xs text-purple-800">
-                        <p><strong>Max TTFT:</strong> {perf['maxTtftMs']} ms</p>
-                        <p class="mt-1"><strong>Avg Tool Latency:</strong> {perf['avgToolSeconds']*1000:.1f} ms</p>
+                        <p><strong>Max TTFT:</strong> {perf["maxTtftMs"]} ms</p>
+                        <p class="mt-1"><strong>Avg Tool Latency:</strong> {perf["avgToolSeconds"] * 1000:.1f} ms</p>
                     </div>
                 </div>
                 <div class="p-4 bg-amber-50 rounded-lg border border-amber-200">
                     <span class="block text-xs font-bold text-amber-700 uppercase tracking-wide">🛡️ Safety Guardrails</span>
-                    <div class="mt-2 text-2xl font-extrabold text-amber-900">{perf['guardrailsTriggered']} <span class="text-xs font-normal text-amber-600">triggered</span></div>
+                    <div class="mt-2 text-2xl font-extrabold text-amber-900">{perf["guardrailsTriggered"]} <span class="text-xs font-normal text-amber-600">triggered</span></div>
                     <div class="mt-2 text-xs text-amber-800">
-                        <p><strong>Total Checked:</strong> {perf['guardrailsChecked']} checks</p>
-                        <p class="mt-1"><strong>Pass Rate:</strong> {100 - int((perf['guardrailsTriggered']/max(1, perf['guardrailsChecked']))*100)}% safe</p>
+                        <p><strong>Total Checked:</strong> {perf["guardrailsChecked"]} checks</p>
+                        <p class="mt-1"><strong>Pass Rate:</strong> {100 - int((perf["guardrailsTriggered"] / max(1, perf["guardrailsChecked"])) * 100)}% safe</p>
                     </div>
                 </div>
             </div>
@@ -1101,7 +1086,9 @@ def _fetch_conversation_if_needed(
     )
     if turns and isinstance(turns, list) and "conversation" in turns[0]:
         try:
-            from cxas_scrapi.core.conversation_history import ConversationHistory
+            from cxas_scrapi.core.conversation_history import (
+                ConversationHistory,
+            )
 
             ch = ConversationHistory(app_name=app_id)
             conv_obj = ch.get_conversation(turns[0]["conversation"])
@@ -1215,7 +1202,7 @@ def generate_cloud_html_report(
         if cloud_linter_issues
         else (
             '<p class="text-sm text-green-700 font-semibold">'
-            'All live cloud application agents passed architectural lint rules!</p>'
+            "All live cloud application agents passed architectural lint rules!</p>"
         )
     )
 
@@ -1235,14 +1222,14 @@ def generate_cloud_html_report(
         tab_btns.append(
             f'<button onclick="showTab(\'{tab_id}\')" id="btn-{tab_id}" '
             f'class="tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium '
-            f'text-sm border-transparent text-gray-500 hover:text-gray-700 '
+            f"text-sm border-transparent text-gray-500 hover:text-gray-700 "
             f'hover:border-gray-300">{cat_name} ({cnt})</button>'
         )
     tab_btns.append(
         '<button onclick="showTab(\'tab-linter\')" id="btn-tab-linter" '
         'class="tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm '
         'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">'
-        f'Project Linter ({len(cloud_linter_issues)})</button>'
+        f"Project Linter ({len(cloud_linter_issues)})</button>"
     )
 
     overview_cards_html = "".join(
@@ -1441,7 +1428,9 @@ def generate_cloud_report(
             linter_output=linter_output,
             eval_names_map=eval_names_map,
         )
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        os.makedirs(
+            os.path.dirname(os.path.abspath(output_path)), exist_ok=True
+        )
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
         return output_path
@@ -1454,7 +1443,9 @@ def generate_cloud_report(
             linter_output=linter_output,
             eval_names_map=eval_names_map,
         )
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        os.makedirs(
+            os.path.dirname(os.path.abspath(output_path)), exist_ok=True
+        )
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(html_doc)
         return output_path

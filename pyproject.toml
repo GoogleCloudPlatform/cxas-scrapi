@@ -165,6 +165,9 @@ ignore = [
 "skill_eval/**/*.py" = ["E501"]
 "src/cxas_scrapi/utils/insights_analytics.py" = ["E501"]
 "src/cxas_scrapi/utils/insights_utils.py" = ["E501"]
+# cloud_eval_reporter generates HTML/CSS templates and structured telemetry;
+# wrapping them would hurt readability. Lazy imports avoid circular dependencies.
+"src/cxas_scrapi/utils/cloud_eval_reporter.py" = ["E501", "PLC0415", "PLR0917"]
 "src/cxas_scrapi/utils/insights_reconciler.py" = ["E501"]
 "src/cxas_scrapi/utils/scorecard_eval_runner.py" = ["E501"]
 "src/cxas_scrapi/utils/metrics_extractor.py" = ["E501"]
