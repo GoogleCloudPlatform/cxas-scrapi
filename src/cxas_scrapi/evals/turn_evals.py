@@ -138,7 +138,8 @@ class TurnEvals:
             app_name: CXAS App Name
             creds: Optional Google Cloud credentials
             rate_limiter: Optional RateLimiter for API calls
-            vertex_location: Optional Vertex AI location (defaults to VERTEX_LOCATION env var or 'global')
+            vertex_location: Optional Vertex AI location (defaults to
+              VERTEX_LOCATION env var or 'global')
         """
         self.app_name = app_name
         self.creds = creds

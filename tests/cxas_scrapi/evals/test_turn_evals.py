@@ -498,7 +498,9 @@ def test_turn_evals_init_with_rate_limiter(
 @patch("cxas_scrapi.evals.turn_evals.Variables")
 @patch("cxas_scrapi.evals.turn_evals.Sessions")
 def test_turn_evals_vertex_location_param(
-    mock_sessions: typing.Any, mock_variables: typing.Any, mock_gemini: typing.Any
+    mock_sessions: typing.Any,
+    mock_variables: typing.Any,
+    mock_gemini: typing.Any,
 ) -> None:
     te = TurnEvals(
         app_name="projects/p/locations/l/apps/a",

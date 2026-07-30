@@ -48,3 +48,32 @@ def test_get_changelog(mock_client_cls: typing.Any) -> None:
 
     assert res.name == "projects/p/locations/l/apps/a/changelogs/c1"
     mock_client.get_changelog.assert_called_once()
+
+
+def test_summarize_changelogs_custom_vertex_location() -> None:
+    """Test ChangelogUtils.summarize_changelogs with vertex_location."""
+    from cxas_scrapi.utils.changelog_utils import ChangelogUtils
+
+    changelogs = [
+        {
+            "action": "CREATE",
+            "resourceType": "Tool",
+            "name": "tool_1",
+            "description": "tool desc",
+        }
+    ]
+    with patch("cxas_scrapi.utils.changelog_utils.GeminiGenerate") as mock_gem:
+        mock_gen_inst = mock_gem.return_value
+        mock_gen_inst.generate.return_value = "- Created tool 'tool_1'"
+        res = ChangelogUtils.summarize_changelogs(
+            vertex_client_or_project=None,
+            changelogs=changelogs,
+            project_id="my-proj",
+            vertex_location="europe-west4",
+        )
+        assert "- Created tool 'tool_1'" in res
+        mock_gem.assert_called_once_with(
+            project_id="my-proj",
+            location="europe-west4",
+            model_name="gemini-2.5-flash",
+        )

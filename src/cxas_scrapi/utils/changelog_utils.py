@@ -256,6 +256,7 @@ class ChangelogUtils:
         vertex_client_or_project: Any,
         changelogs: list[dict[str, Any]],
         project_id: str | None = None,
+        vertex_location: str | None = None,
     ) -> str:
         """Summarizes each non-evaluation changelog into a simple, specific
         one-liner."""
@@ -343,9 +344,12 @@ class ChangelogUtils:
                 )
                 response_text = response.text
             else:
+                loc = vertex_location or os.getenv(
+                    "VERTEX_LOCATION", "us-central1"
+                )
                 cl = GeminiGenerate(
                     project_id=project_id,
-                    location=os.getenv("VERTEX_LOCATION", "us-central1"),
+                    location=loc,
                     model_name="gemini-2.5-flash",
                 )
                 response_text = cl.generate(prompt=prompt)
