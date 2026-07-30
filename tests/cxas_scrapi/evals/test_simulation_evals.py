@@ -1800,15 +1800,16 @@ def test_simulation_evals_vertex_location_param() -> None:
         ) as mock_gemini,
         patch("cxas_scrapi.core.apps.AgentServiceClient"),
     ):
+        mock_gemini.return_value.location = "europe-west4"
         sim = SimulationEvals(
             app_name=app_name, vertex_location="europe-west4"
         )
-        assert sim.vertex_location == "europe-west4"
         mock_gemini.assert_called_once_with(
             project_id="test",
             location="europe-west4",
             credentials=sim.creds,
         )
+        assert sim.vertex_location == "europe-west4"
 
 
 def test_simulation_evals_vertex_location_env(monkeypatch: typing.Any) -> None:
@@ -1820,10 +1821,11 @@ def test_simulation_evals_vertex_location_env(monkeypatch: typing.Any) -> None:
         ) as mock_gemini,
         patch("cxas_scrapi.core.apps.AgentServiceClient"),
     ):
+        mock_gemini.return_value.location = "us-central1"
         sim = SimulationEvals(app_name=app_name)
-        assert sim.vertex_location == "us-central1"
         mock_gemini.assert_called_once_with(
             project_id="test",
-            location="us-central1",
+            location=None,
             credentials=sim.creds,
         )
+        assert sim.vertex_location == "us-central1"

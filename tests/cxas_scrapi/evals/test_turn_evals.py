@@ -502,16 +502,17 @@ def test_turn_evals_vertex_location_param(
     mock_variables: typing.Any,
     mock_gemini: typing.Any,
 ) -> None:
+    mock_gemini.return_value.location = "europe-west4"
     te = TurnEvals(
         app_name="projects/p/locations/l/apps/a",
         vertex_location="europe-west4",
     )
-    assert te.vertex_location == "europe-west4"
     mock_gemini.assert_called_once_with(
         project_id="p",
         location="europe-west4",
         credentials=None,
     )
+    assert te.vertex_location == "europe-west4"
 
 
 @patch("cxas_scrapi.evals.turn_evals.GeminiGenerate")
@@ -524,12 +525,13 @@ def test_turn_evals_vertex_location_env(
     monkeypatch: typing.Any,
 ) -> None:
     monkeypatch.setenv("VERTEX_LOCATION", "us-central1")
+    mock_gemini.return_value.location = "us-central1"
     te = TurnEvals(
         app_name="projects/p/locations/l/apps/a",
     )
-    assert te.vertex_location == "us-central1"
     mock_gemini.assert_called_once_with(
         project_id="p",
-        location="us-central1",
+        location=None,
         credentials=None,
     )
+    assert te.vertex_location == "us-central1"
