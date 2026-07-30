@@ -86,7 +86,7 @@ def test_app_name_extraction() -> None:
     assert Common._get_app_name("invalid-format") is None
 
 
-def test_session_id_extraction():
+def test_session_id_extraction() -> None:
     assert (
         Common._get_session_id(
             "projects/test-proj/locations/us/apps/abc/sessions/sess-123"
