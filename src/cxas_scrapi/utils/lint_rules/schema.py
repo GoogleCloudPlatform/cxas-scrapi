@@ -129,7 +129,10 @@ def _get_required_fields(cls) -> list[str]:  # noqa: ANN001
     for i, line in enumerate(lines):
         match = re.match(r"^\s+(\w+)\s+\([^)]+\):$", line)
         if match and i + 1 < len(lines):  # noqa: SIM102
-            if "REQUIRED" in lines[i + 1].upper():
+            # Only treat the field as required when its description STARTS
+            # with "Required." — descriptions like "Optional. Required
+            # properties of Type.OBJECT" must not match.
+            if lines[i + 1].strip().upper().startswith("REQUIRED"):
                 required.append(match.group(1))
     return required
 
