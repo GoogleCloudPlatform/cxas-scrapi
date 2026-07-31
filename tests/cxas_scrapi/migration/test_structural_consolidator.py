@@ -27,6 +27,7 @@ from cxas_scrapi.migration.structural_consolidator import (
     consolidate,
     heal_tool_refs,
     rewrite_agent_refs,
+    validate_groupings,
 )
 
 MOCK_TOOL_CODE = (
@@ -498,3 +499,53 @@ def test_consolidate_rewrites_code_agent_refs_surgically() -> None:
     assert "Part.from_agent_transfer('SessionTerminationAgent')" in cb_code
     assert "Subflows" not in cb_code
     assert "Exits and Transfers" not in cb_code
+
+
+def test_validate_groupings_with_hyphen_and_punctuation_mismatches() -> None:
+    """Verifies that validate_groupings resolves member names across punctuation
+    differences between LLM proposals and IR agent keys."""
+    ir = _make_ir(
+        tools={},
+        agents={
+            "bell_sms_trigger - old": "instruction text",
+        },
+    )
+    # Simulate sanitized display name without hyphen
+    ir.agents["bell_sms_trigger - old"].display_name = "bell sms trigger old"
+
+    groupings = {
+        "RootGroup": {
+            "agents": ["bell sms trigger - old"],
+            "is_root": True,
+        }
+    }
+
+    validate_groupings(ir, groupings, None)
+    assert groupings["RootGroup"]["agents"] == ["bell_sms_trigger - old"]
+
+
+def test_validate_groupings_uses_deterministic_raw_data_alias_table() -> None:
+    """Verifies validate_groupings resolves DFCX source flow names via
+
+    raw_data['displayName'] alias registration in key_map.
+    """
+    ir = _make_ir(
+        tools={},
+        agents={
+            "bell_sms_trigger - old": "instruction text",
+        },
+    )
+    ir.agents["bell_sms_trigger - old"].display_name = "bell sms trigger old"
+    ir.agents["bell_sms_trigger - old"].raw_data = {
+        "displayName": "bell sms trigger - old"
+    }
+
+    groupings = {
+        "RootGroup": {
+            "agents": ["bell sms trigger - old"],
+            "is_root": True,
+        }
+    }
+
+    validate_groupings(ir, groupings, None)
+    assert groupings["RootGroup"]["agents"] == ["bell_sms_trigger - old"]

@@ -21,7 +21,6 @@ import json
 import logging
 import os
 import re
-import sys
 import typing
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -91,15 +90,10 @@ _DEFAULT_NOTICE_PRINTED: list[bool] = [False]
 def _is_headless_context() -> bool:
     """True when the grouping gate cannot reasonably show a browser UI.
 
-    Treats CI environments and non-TTY stdin as headless. Errors during
-    isatty() (e.g. detached descriptors) also count as headless.
+    Only treats CI environments as strictly headless. Standard subshells and
+    interactive IDE runners can still open browser gates when requested.
     """
-    if os.environ.get("CI"):
-        return True
-    try:
-        return not sys.stdin.isatty()
-    except (AttributeError, OSError, ValueError):
-        return True
+    return bool(os.environ.get("CI"))
 
 
 def _maybe_print_default_notice(console: Console) -> None:
@@ -120,6 +114,62 @@ def _maybe_print_default_notice(console: Console) -> None:
         " or [bold]--no-web-confirm[/] for terminal-only review."
     )
     _DEFAULT_NOTICE_PRINTED[0] = True
+
+
+ALLOWED_CXAS_IMPORTS: typing.Final[set[str]] = {
+    "requests",
+    "ces_requests",
+    "pydantic",
+    "numpy",
+    "google.protobuf",
+    "orjson",
+    "re",
+    "json",
+    "typing",
+    "datetime",
+    "zoneinfo",
+    "collections",
+    "dataclasses",
+    "urllib",
+    "base64",
+    "math",
+    "random",
+    "traceback",
+    "logging",
+    "pprint",
+    "enum",
+    "functools",
+}
+
+
+def sanitize_callback_imports(code: str) -> str:
+    """Sanitize Python callback code by commenting out unsupported imports.
+
+    Prevents HTTP 400 'No module named ...' errors during agent creation
+    by checking against the allowed container package list.
+    """
+    if not code or not code.strip():
+        return code
+
+    lines = code.splitlines()
+    sanitized_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("import ") or stripped.startswith("from "):
+            parts = stripped.split()
+            if len(parts) >= 2:
+                module_name = parts[1].split(".")[0]
+                full_module = parts[1]
+                if (
+                    module_name not in ALLOWED_CXAS_IMPORTS
+                    and full_module not in ALLOWED_CXAS_IMPORTS
+                ):
+                    sanitized_lines.append(
+                        f"# [Sanitized unsupported CXAS import]: {line}"
+                    )
+                    continue
+        sanitized_lines.append(line)
+    return "\n".join(sanitized_lines)
 
 
 class MigrationService:
@@ -254,7 +304,7 @@ class MigrationService:
         return self._analysis_builder
 
     def _analysis_checkpoint(
-        self, phase: str, what_changed: str = "", *, kind: str = "skill"
+        self, phase: str, what_changed: str = "", *, kind: str = "core"
     ) -> None:
         """Refresh the snapshot, record a phase entry, and flush the report."""
         if self._analysis_builder is None:
@@ -487,6 +537,33 @@ class MigrationService:
                 except Exception as exc:
                     logger.warning("Test re-routing failed: %s", exc)
 
+        # Guarantee a root agent exists in self.ir
+        has_root = any(
+            getattr(a, "is_source_root", False)
+            or getattr(a, "is_root", False)
+            for a in self.ir.agents.values()
+        )
+        if not has_root and accepted_groupings:
+            has_root = any(
+                g_val.get("is_root")
+                for g_val in accepted_groupings.values()
+                if isinstance(g_val, dict)
+            )
+        if not has_root and len(self.ir.agents) > 0:
+            first_agent_key = next(iter(self.ir.agents.keys()))
+            first_agent_name = self.ir.agents[first_agent_key].display_name
+            self.ir.agents["RootAgent"] = IRAgent(
+                type="PLAYBOOK",
+                display_name="RootAgent",
+                description="Central entry router agent for the application.",
+                instruction=(
+                    "You are the central entry router for the application. "
+                    f"Route initial requests to {{@AGENT: {first_agent_name}}}."
+                ),
+                status=MigrationStatus.COMPILED,
+            )
+            logger.info("Synthesized default RootAgent entry router.")
+
         # --- CXAS Version checkpoint: Post-Consolidation --------------------
         if accepted_groupings:  # noqa: SIM102
             if version_label and self.ir.metadata.app_resource_name:
@@ -534,8 +611,29 @@ class MigrationService:
         groupings, or ``None`` if the user aborted."""
         # 1. Build dep summary + detect root.
         analyzer = DependencyAnalyzer(self.source_agent_data)
+        # Canonicalize dependency graph names to match compiled IR keys so
+        # the prompt sent to Gemini uses consistent identifiers.
+        canonical_name_map = {}
+        for res_id, raw_name in analyzer.name_map.items():
+            canonical_key = raw_name
+            if raw_name not in self.ir.agents:
+                for ir_key, ir_agent in self.ir.agents.items():
+                    if (
+                        ir_agent.display_name == raw_name
+                        or (
+                            ir_agent.raw_data
+                            and isinstance(ir_agent.raw_data, dict)
+                            and ir_agent.raw_data.get("displayName") == raw_name
+                        )
+                        or re.sub(r"[^a-zA-Z0-9]", "", raw_name.lower())
+                        == re.sub(r"[^a-zA-Z0-9]", "", ir_key.lower())
+                    ):
+                        canonical_key = ir_key
+                        break
+            canonical_name_map[res_id] = canonical_key
+
         dep_summary = {
-            "name_map": analyzer.name_map,
+            "name_map": canonical_name_map,
             "type_map": analyzer.type_map,
         }
         root_key = structural_consolidator.detect_root_key(
@@ -2074,6 +2172,125 @@ class MigrationService:
         fallback_name = re.sub(r"[_]+", " ", raw_name).strip()
         return f"{{@AGENT: {fallback_name}}}"
 
+    @staticmethod
+    def _inject_peer_to_peer_transfer_interceptor(
+        cb_dict: dict[str, str],
+        native_targets: set[str],
+    ) -> None:
+        """Injects direct peer-to-peer agent transfer interception hooks into
+        before_model_callback and after_model_callback."""
+        native_targets_str = ", ".join(
+            [f'"{t}"' for t in sorted(native_targets)]
+        )
+        header = f"NATIVE_TRANSFER_TARGETS = {{{native_targets_str}}}\n\n"
+
+        before_snippet = (
+            "    # --- MIGRATION AUTO-GENERATED: TOOL TRANSFER --- \n"
+            "    if llm_request.contents and llm_request.contents[-1].parts:\n"
+            "        for p in llm_request.contents[-1].parts:\n"
+            '            if getattr(p, "function_response", None):\n'
+            "                rd = getattr(\n"
+            '                    p.function_response, "response", {}\n'
+            "                )\n"
+            "                rd = (\n"
+            '                    rd.get("result", rd)\n'
+            "                    if isinstance(rd, dict)\n"
+            "                    else {}\n"
+            "                )\n"
+            "                if isinstance(rd, dict):\n"
+            "                    t = (\n"
+            '                        rd.get("target")'
+            ' or rd.get("target_agent")\n'
+            "                    )\n"
+            '                    a = rd.get("action")\n'
+            '                    if a in ("agentTransfer", "Transfer") and t:\n'
+            "                        if t not in NATIVE_TRANSFER_TARGETS:\n"
+            "                            return LlmResponse.from_parts(\n"
+            "                                parts=[\n"
+            "                                    Part.from_agent_transfer(\n"
+            "                                        agent=t\n"
+            "                                    )\n"
+            "                                ]\n"
+            "                            )\n"
+        )
+
+        after_snippet = (
+            "    # --- MIGRATION AUTO-GENERATED: LLM TRANSFER --- \n"
+            "    if (\n"
+            "        llm_response\n"
+            "        and llm_response.content\n"
+            "        and llm_response.content.parts\n"
+            "    ):\n"
+            "        modified = False\n"
+            "        new_parts = []\n"
+            "        for p in llm_response.content.parts:\n"
+            '            if getattr(p, "agent_transfer", None):\n'
+            '                t = getattr(p.agent_transfer, "agent", "")\n'
+            "                if t and t not in NATIVE_TRANSFER_TARGETS:\n"
+            "                    new_parts.append(\n"
+            "                        Part.from_agent_transfer(agent=t)\n"
+            "                    )\n"
+            "                    modified = True\n"
+            "                    continue\n"
+            "            new_parts.append(p)\n"
+            "        if modified:\n"
+            "            return LlmResponse.from_parts(parts=new_parts)\n"
+        )
+
+        # Inject into before_model_callback
+        existing_bmc = cb_dict.get("before_model_callback", "")
+        if "def before_model_callback" in existing_bmc:
+            new_bmc = re.sub(
+                r"(def before_model_callback[^\n]*:)",
+                r"\1\n" + before_snippet,
+                existing_bmc,
+                count=1,
+            )
+            cb_dict["before_model_callback"] = header + new_bmc
+        else:
+            new_bmc = (
+                f"{header}def before_model_callback(\n"
+                "    callback_context: CallbackContext,\n"
+                "    llm_request: LlmRequest,\n"
+                ") -> Optional[LlmResponse]:\n"
+                f"{before_snippet}\n    return None\n"
+            )
+            cb_dict["before_model_callback"] = new_bmc
+
+        # Inject into after_model_callback
+        existing_amc = cb_dict.get("after_model_callback", "")
+        if "def after_model_callback" in existing_amc:
+            new_amc = re.sub(
+                r"(def after_model_callback[^\n]*:)",
+                r"\1\n" + after_snippet,
+                existing_amc,
+                count=1,
+            )
+            cb_dict["after_model_callback"] = header + new_amc
+        else:
+            new_amc = (
+                f"{header}def after_model_callback(\n"
+                "    callback_context: CallbackContext,\n"
+                "    llm_response: LlmResponse,\n"
+                ") -> Optional[LlmResponse]:\n"
+                f"{after_snippet}\n    return llm_response\n"
+            )
+            cb_dict["after_model_callback"] = new_amc
+
+    def _get_native_transfer_targets(self, agent: IRAgent) -> set[str]:
+        """Computes the set of natively reachable agent display names from the
+        given agent."""
+        targets = {agent.display_name}
+        for a in self.ir.agents.values():
+            if getattr(a, "is_source_root", False):
+                targets.add(a.display_name)
+        for edge in getattr(self.ir, "routing_edges", []) or []:
+            parent = edge.get("parent") or edge.get("from")
+            child = edge.get("child") or edge.get("to")
+            if parent == agent.display_name and child:
+                targets.add(child)
+        return targets
+
     async def _deploy_pending_agents(
         self, is_update_pass: bool = False
     ) -> None:
@@ -2337,10 +2554,18 @@ class MigrationService:
                             new_bmc + "\n" + existing_bmc
                         )
 
+                native_targets = self._get_native_transfer_targets(agent)
+                self._inject_peer_to_peer_transfer_interceptor(
+                    cb_dict, native_targets
+                )
+
                 for cb_type, cb_code in cb_dict.items():
                     if cb_code:
                         key = cb_type + "s"
-                        callback_payload[key] = [{"python_code": cb_code}]
+                        sanitized_code = sanitize_callback_imports(cb_code)
+                        callback_payload[key] = [
+                            {"python_code": sanitized_code}
+                        ]
 
                 # --- Clean Instruction Syntax & Agent Names ---
                 instruction = agent.instruction
@@ -2739,6 +2964,7 @@ class MigrationService:
                 callbacks=tools_callbacks_data.get("callbacks", {}),
                 tools=[],
                 toolsets=[],
+                raw_data=flow_wrapper.flow_data,
                 status=MigrationStatus.COMPILED,
             )
 

@@ -110,9 +110,9 @@ def test_genuinely_unknown_tool_in_agent_tools_is_flagged() -> None:
     )
     current = _ir()
 
-    blocking, _warnings = check_consolidation_integrity(optimized, current)
+    _blocking, warnings = check_consolidation_integrity(optimized, current)
 
-    assert any("nonexistent_tool" in b for b in blocking)
+    assert any("nonexistent_tool" in w for w in warnings)
 
 
 def test_known_tool_resolves_via_short_id() -> None:
@@ -159,6 +159,6 @@ def test_unknown_agent_ref_is_flagged() -> None:
     )
     current = _ir()
 
-    blocking, _warnings = check_consolidation_integrity(optimized, current)
+    _blocking, warnings = check_consolidation_integrity(optimized, current)
 
-    assert any("NonExistentGroup" in b for b in blocking)
+    assert any("NonExistentGroup" in w for w in warnings)
