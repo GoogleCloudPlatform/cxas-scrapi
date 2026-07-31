@@ -1441,8 +1441,8 @@ def test_inject_peer_to_peer_transfer_interceptor() -> None:
 
     assert 'NATIVE_TRANSFER_TARGETS = {"Child1", "Root Agent"}' in bmc
     assert 'NATIVE_TRANSFER_TARGETS = {"Child1", "Root Agent"}' in amc
-    assert "target not in NATIVE_TRANSFER_TARGETS" in bmc
-    assert "target not in NATIVE_TRANSFER_TARGETS" in amc
+    assert "not in NATIVE_TRANSFER_TARGETS" in bmc
+    assert "not in NATIVE_TRANSFER_TARGETS" in amc
 
 
 def test_sanitize_callback_imports() -> None:
@@ -1462,11 +1462,11 @@ def before_model_callback(ctx, req):
     assert "from typing import Optional" in sanitized
     assert "import requests" in sanitized
     assert (
-        "# [Sanitized unsupported CXAS callback import]: import google.cloud"
+        "# [Sanitized unsupported CXAS import]: import google.cloud"
         in sanitized
     )
     assert (
-        "# [Sanitized unsupported CXAS callback import]: import dialogflow_cxx"
+        "# [Sanitized unsupported CXAS import]: import dialogflow_cxx"
         in sanitized
     )
 
