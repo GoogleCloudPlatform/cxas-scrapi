@@ -1,6 +1,39 @@
 # Changelog
 
 
+## [1.8.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.7.0...v1.8.0) (2026-07-30)
+
+
+### Features
+
+* **cli:** expose --single-bidi-stream flag to evals report CLI ([e81878b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e81878bad503b021622cd6d85c0fad62de27d0cc))
+* **cli:** expose --single-bidi-stream flag to evals report CLI ([93e8b7d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/93e8b7d047c79278e7ec4afff3413d7dd99cecd5))
+* **evals:** add JSON output format for combined eval reports ([a857351](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a8573511f43c3b587b325921013ffcb4ebf5180f))
+
+
+### Bug Fixes
+
+* address runtime NameErrors and callback eval failures in CI ([32b5cf7](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/32b5cf79ce7fb8e34976ab9eec43ea0f21c027e9))
+* **copybara:** address code review feedback ([c49b6f0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c49b6f006f54104ed029661dc71f2954ec38719e))
+* **copybara:** resolve pytype, testing, and struct issues for upstrea… ([17aff2a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/17aff2a67d9dd0635262bec99a66db38f1df2ab3))
+* **copybara:** resolve pytype, testing, and struct issues for upstream 1.7.0 sync ([50379a4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/50379a4e0c1d1dc6ebc7257eb551ffd16ec87561))
+* **cuj-report:** restore __future__ import ordering in skill scripts ([d6cf5a9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d6cf5a98854d532c734a1295e66662fcf6927d79))
+* Defer 1:1 agent push out of migrate.py to respect CXAS 100-agent cap ([838c140](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/838c1400dcf7e56bff0fe361c793d9715043ee0e))
+* **deployments:** restore two-version minimum for traffic splits ([293337e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/293337ef0bb2c3425c4d8ffd45882a1f92ed0865))
+* **evals:** apply CL 953545678 fix for turn 0 initial utterance in simulation evals ([7d60f9d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7d60f9d1ec8a7ff4c5205b92808b46ca7829fe23))
+* **evals:** move EvalUtils static helpers back into class scope ([7159ca9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7159ca90c0e284ed36d90445f2b8ca6721059556))
+* **migration:** dynamically strip unimported DFCX triggers while preserving standard Python decorators ([4a1c209](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4a1c2092e92ccb797307b078872f337ba67bd9b8))
+* **migration:** dynamically strip unimported DFCX triggers while preserving standard Python decorators ([53270bd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/53270bdb7fd7750f8974ead43a5a3bd6611f05cc))
+* **migration:** runtime NameError (DFCXFlowModel is not defined) when cxas CLI initializes ([3297ac1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3297ac18c04a58dbffdf240570333cf17c368b18))
+* **migration:** strip all DFCX trigger decorators and preserve original function names for Python tools ([5c11aa8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5c11aa806f16d0c5293269e129bffde60f067784))
+* **migration:** strip all DFCX trigger decorators and preserve original function names for Python tools ([510ddc1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/510ddc1f5e17fa874fe378c6960a487404c8482e))
+* resolve trailing ruff lint checks and CI failures ([266b882](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/266b882fd53b420b288f0092d50d96de15cb82f3))
+* **test:** hermetic bidi session mocks & PyType signature compatibility ([1b9f9da](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1b9f9dabf34dc0726f70f06f6804f7c4aa474220))
+* **test:** hermetic bidi session mocks & PyType signature compatibility ([6d235a2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6d235a2c03a51f592085494fcb102b264e58beef))
+* **tests:** add missing return type annotation to test_session_id_extraction ([bcc041d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bcc041d7151b9a4da4f68bd438f1933ba35f2806))
+* **typing:** manually upstream copybara type ignores and overrides ([c737fcd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c737fcd7689426c952c231f0bd4ed42faebc01bd))
+* **typing:** remove unused List import in traces.py ([4841bc1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4841bc130ca76cca4e0dc00855723a8e3df9027d))
+
 ## [1.7.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.6.0...v1.7.0) (2026-07-17)
 
 
