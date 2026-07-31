@@ -539,8 +539,7 @@ class MigrationService:
 
         # Guarantee a root agent exists in self.ir
         has_root = any(
-            getattr(a, "is_source_root", False)
-            or getattr(a, "is_root", False)
+            getattr(a, "is_source_root", False) or getattr(a, "is_root", False)
             for a in self.ir.agents.values()
         )
         if not has_root and accepted_groupings:

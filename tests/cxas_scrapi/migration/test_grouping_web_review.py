@@ -567,4 +567,3 @@ def test_all_flow_names_includes_bracketed_names() -> None:
     names = grouping_web_review._all_flow_names(ir)
     assert "[Core] Conf Routing" in names
     assert "Core Conf Routing" in names
-

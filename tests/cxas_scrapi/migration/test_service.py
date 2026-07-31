@@ -1492,5 +1492,3 @@ def test_sanitize_cxas_schema() -> None:
         },
     }
     assert "[Source Schema: WebhookResponse]" in desc
-
-

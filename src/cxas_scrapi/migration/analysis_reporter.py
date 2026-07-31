@@ -280,12 +280,12 @@ class MigrationAnalysisBuilder:
             stage_1 = (opt.get("stages") or {}).get("stage_1") or {}
             stage_2 = (opt.get("stages") or {}).get("stage_2") or {}
             if isinstance(stage_1, dict):
-                kpis["stage_1_variables_before"] = stage_1.get(
-                    "parameters_before"
-                ) or "—"
-                kpis["stage_1_variables_after"] = stage_1.get(
-                    "parameters_after"
-                ) or "—"
+                kpis["stage_1_variables_before"] = (
+                    stage_1.get("parameters_before") or "—"
+                )
+                kpis["stage_1_variables_after"] = (
+                    stage_1.get("parameters_after") or "—"
+                )
                 kpis["stage_2_lint_baseline"] = (
                     stage_2.get("lint_baseline") or "—"
                 )

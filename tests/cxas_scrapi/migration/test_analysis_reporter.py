@@ -510,4 +510,3 @@ def test_html_renders_grouping_tab_when_not_experimental(
     assert 'id="tab-grouping"' in html
     assert 'id="grouping-update-banner"' in html
     assert 'id="panel-grouping"' in html
-

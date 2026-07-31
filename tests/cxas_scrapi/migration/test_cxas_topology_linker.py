@@ -187,4 +187,3 @@ def test_compute_group_children_enforces_strict_tree() -> None:
     assert len(parents_of_c) <= 1, (
         f"GroupC has multiple parents: {parents_of_c}"
     )
-
