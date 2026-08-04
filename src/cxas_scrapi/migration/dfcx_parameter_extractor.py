@@ -21,6 +21,69 @@ from cxas_scrapi.migration.data_models import DFCXAgentIR
 
 logger = logging.getLogger(__name__)
 
+ALLOWED_CXAS_SCHEMA_FIELDS: typing.Final[set[str]] = {
+    "type",
+    "description",
+    "properties",
+    "items",
+    "enum",
+    "required",
+}
+
+
+def sanitize_cxas_schema(
+    schema: Any, description: str = ""
+) -> tuple[dict[str, Any], str]:
+    """Recursively canonicalizes a JSON Schema dictionary to conform strictly to
+
+    the Vertex AI Agents TypeSchema Protobuf allowlist, while preserving
+    semantic schema names in the human-readable description.
+    """
+    if not isinstance(schema, dict):
+        return {"type": "STRING"}, description
+
+    ref_name = (
+        schema.get("schemaReference", {}).get("schema")
+        or schema.get("title")
+        or str(schema.get("$ref", "")).split("/")[-1]
+    )
+    if ref_name and f"[Source Schema: {ref_name}]" not in description:
+        description = (
+            f"{description} [Source Schema: {ref_name}]"
+            if description
+            else f"[Source Schema: {ref_name}]"
+        )
+
+    clean: dict[str, Any] = {
+        k: v for k, v in schema.items() if k in ALLOWED_CXAS_SCHEMA_FIELDS
+    }
+    clean["type"] = str(clean.get("type", "STRING")).upper()
+    if clean["type"] not in (
+        "STRING",
+        "NUMBER",
+        "INTEGER",
+        "BOOLEAN",
+        "ARRAY",
+        "OBJECT",
+    ):
+        clean["type"] = "STRING"
+
+    if "properties" in clean and isinstance(clean["properties"], dict):
+        clean_props = {}
+        for prop_name, prop_schema in clean["properties"].items():
+            s_prop, _ = sanitize_cxas_schema(prop_schema)
+            clean_props[prop_name] = s_prop
+        clean["properties"] = clean_props
+
+    if "items" in clean and isinstance(clean["items"], dict):
+        s_items, _ = sanitize_cxas_schema(clean["items"])
+        clean["items"] = s_items
+
+    if "enum" in clean and not isinstance(clean["enum"], list):
+        clean.pop("enum", None)
+
+    return clean, description
+
 
 class DFCXParameterExtractor:
     """Production-grade Global Parameter Extraction Engine."""
@@ -63,26 +126,29 @@ class DFCXParameterExtractor:
         parameter_name_map[f"page.params.{clean_name}"] = sanitized_name
         parameter_name_map[f"${clean_name}"] = sanitized_name
 
+        clean_schema, enriched_description = sanitize_cxas_schema(
+            schema, description or f"Auto-extracted from {source}."
+        )
+
         if sanitized_name not in unified_parameters:
             unified_parameters[sanitized_name] = {
                 "name": sanitized_name,
-                "description": description or f"Auto-extracted from {source}.",
-                "schema": schema,
-                "_confidence": 1 if schema.get("type") == "STRING" else 2,
+                "description": enriched_description,
+                "schema": clean_schema,
+                "_confidence": 1 if clean_schema.get("type") == "STRING" else 2,
             }
         else:
             current_conf = unified_parameters[sanitized_name].get(
                 "_confidence", 1
             )
-            new_conf = 1 if schema.get("type") == "STRING" else 2
+            new_conf = 1 if clean_schema.get("type") == "STRING" else 2
 
             if new_conf > current_conf:
-                unified_parameters[sanitized_name]["schema"] = schema
+                unified_parameters[sanitized_name]["schema"] = clean_schema
                 unified_parameters[sanitized_name]["_confidence"] = new_conf
-                if description:
-                    unified_parameters[sanitized_name]["description"] = (
-                        description
-                    )
+                unified_parameters[sanitized_name]["description"] = (
+                    enriched_description
+                )
 
     @staticmethod
     def deep_scan_for_variables(

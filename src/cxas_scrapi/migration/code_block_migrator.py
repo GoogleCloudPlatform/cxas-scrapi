@@ -495,21 +495,72 @@ class CodeBlockMigrator:
     @staticmethod
     def _parse_code_block_with_ast(
         code_string: str,
+        protected_tool_names: set[str] | None = None,
     ) -> tuple[set[str], list[tuple[str, str]], list[str]]:
         explicit_imports = set()
         entry_functions = []
         helper_functions = []
+        if protected_tool_names is None:
+            protected_tool_names = set()
         try:
             tree = ast.parse(code_string)
+
+            # --- Priority 2: AST Call Graph Analysis ---
+            # Collect function names called inside any function body in file
+            callee_names: set[str] = set()
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for child in ast.walk(node):
+                        if isinstance(child, ast.Call):
+                            if isinstance(child.func, ast.Name):
+                                callee_names.add(child.func.id)
+                            elif isinstance(child.func, ast.Attribute):
+                                callee_names.add(child.func.attr)
+
             for node in tree.body:
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
                     explicit_imports.add(ast.unparse(node))
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     func_text = ast.unparse(node)
                     if func_text:
-                        is_entry = any(
-                            _is_dfcx_trigger(dec, explicit_imports)
-                            for dec in node.decorator_list
+                        # Priority 1: Protected names (instructions/manifests)
+                        is_protected = (
+                            node.name in protected_tool_names
+                            or f"usr_{node.name}" in protected_tool_names
+                        )
+                        # Priority 2: AST Call Graph - called by other functions
+                        is_callee_helper = (
+                            node.name in callee_names and not is_protected
+                        )
+                        is_internal_helper = (
+                            (node.name.startswith("_") and not is_protected)
+                            or is_callee_helper
+                            or any(
+                                pat in node.name.lower()
+                                for pat in (
+                                    "handle_no_input",
+                                    "handle_no_match",
+                                    "handle_webhook",
+                                    "no_input_",
+                                    "no_match_",
+                                    "webhook_error",
+                                    "webhook_timeout",
+                                    "webhook_bad_request",
+                                    "webhook_rejected",
+                                    "webhook_unavailable",
+                                    "webhook_not_found",
+                                    "malicious_user",
+                                    "blocked_by_safety",
+                                    "tool_error",
+                                )
+                            )
+                        )
+                        is_entry = is_protected or (
+                            not is_internal_helper
+                            and any(
+                                _is_dfcx_trigger(dec, explicit_imports)
+                                for dec in node.decorator_list
+                            )
                         )
                         if is_entry:
                             entry_functions.append((node.name, func_text))
@@ -587,8 +638,13 @@ class CodeBlockMigrator:
             "customize_response",
         }
 
+        protected_names = set(tool_display_name_map.keys()).union(
+            set(tool_map.keys())
+        )
         shared_imports, extracted_functions, helper_functions = (
-            self._parse_code_block_with_ast(code)
+            self._parse_code_block_with_ast(
+                code, protected_tool_names=protected_names
+            )
         )
 
         if not extracted_functions:

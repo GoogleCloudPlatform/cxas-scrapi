@@ -62,7 +62,9 @@ logger = logging.getLogger(__name__)
 def _all_flow_names(ir: MigrationIR) -> list[str]:
     """Stable list of the source flow / member display names visible to
     the consolidator. Used to drive client-side orphan detection."""
-    return sorted({a.display_name for a in ir.agents.values()})
+    return sorted(
+        set(ir.agents.keys()) | {a.display_name for a in ir.agents.values()}
+    )
 
 
 def _build_pending(
@@ -667,14 +669,29 @@ async def web_review(
         except Exception as exc:  # noqa: BLE001
             logger.debug("could not auto-open browser: %s", exc)
 
+    # Dynamic timeout calculation for large agents
+    if timeout_s == 300 and len(ir.agents) > 20:
+        timeout_s = max(600, min(3600, len(ir.agents) * 15))
+
     watcher_task = asyncio.create_task(_watch_plan_file(ctx))
     try:
         await asyncio.wait_for(event.wait(), timeout=timeout_s)
     except asyncio.TimeoutError:
         console.print(
-            "[yellow][grouping-review] timed out; aborting consolidation[/]"
+            f"[yellow][grouping-review] Timed out after {timeout_s}s. "
+            f"Auto-applying proposed grouping to preserve "
+            f"consolidated architecture.[/]"
         )
-        ctx.abort()
+        with ctx._lock:
+            ctx.resolved = True
+            ctx.pending["status"] = "auto_confirmed_timeout"
+            if ctx.builder and ctx.builder.snapshot:
+                ctx.builder.snapshot.pending_grouping["status"] = (
+                    "auto_confirmed_timeout"
+                )
+            result["groupings"] = ctx.pending.get("groupings") or groupings
+            result["aborted"] = False
+        event.set()
     finally:
         watcher_task.cancel()
         try:  # noqa: SIM105

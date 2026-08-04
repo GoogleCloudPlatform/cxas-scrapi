@@ -32,7 +32,13 @@ from cxas_scrapi.migration.data_models import (
     MigrationConfig,
     MigrationIR,
 )
-from cxas_scrapi.migration.service import MigrationService
+from cxas_scrapi.migration.dfcx_parameter_extractor import (
+    sanitize_cxas_schema,
+)
+from cxas_scrapi.migration.service import (
+    MigrationService,
+    sanitize_callback_imports,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures for stage-method tests
@@ -1391,3 +1397,98 @@ async def test_run_migration_boots_server_early_when_interactive() -> None:
         )
 
     boot_mock.assert_called_once()
+
+
+def test_get_native_transfer_targets() -> None:
+    service = _make_service()
+    root_agent = IRAgent(
+        type="PLAYBOOK",
+        display_name="Root Agent",
+        instruction="",
+        is_source_root=True,
+    )
+    child1 = IRAgent(type="PLAYBOOK", display_name="Child1", instruction="")
+    child2 = IRAgent(type="PLAYBOOK", display_name="Child2", instruction="")
+    service.ir.agents = {
+        "root": root_agent,
+        "c1": child1,
+        "c2": child2,
+    }
+    service.ir.routing_edges = [
+        {"parent": "Root Agent", "child": "Child1"},
+        {"parent": "Root Agent", "child": "Child2"},
+    ]
+
+    root_targets = service._get_native_transfer_targets(root_agent)
+    assert root_targets == {"Root Agent", "Child1", "Child2"}
+
+    child1_targets = service._get_native_transfer_targets(child1)
+    assert child1_targets == {"Root Agent", "Child1"}
+
+
+def test_inject_peer_to_peer_transfer_interceptor() -> None:
+    cb_dict: dict[str, str] = {}
+    native_targets = {"Root Agent", "Child1"}
+    MigrationService._inject_peer_to_peer_transfer_interceptor(
+        cb_dict, native_targets
+    )
+
+    assert "before_model_callback" in cb_dict
+    assert "after_model_callback" in cb_dict
+
+    bmc = cb_dict["before_model_callback"]
+    amc = cb_dict["after_model_callback"]
+
+    assert 'NATIVE_TRANSFER_TARGETS = {"Child1", "Root Agent"}' in bmc
+    assert 'NATIVE_TRANSFER_TARGETS = {"Child1", "Root Agent"}' in amc
+    assert "not in NATIVE_TRANSFER_TARGETS" in bmc
+    assert "not in NATIVE_TRANSFER_TARGETS" in amc
+
+
+def test_sanitize_callback_imports() -> None:
+    code = """import json
+import re
+from typing import Optional
+import google.cloud
+import dialogflow_cxx
+import requests
+
+def before_model_callback(ctx, req):
+    return None
+"""
+    sanitized = sanitize_callback_imports(code)
+    assert "import json" in sanitized
+    assert "import re" in sanitized
+    assert "from typing import Optional" in sanitized
+    assert "import requests" in sanitized
+    assert (
+        "# [Sanitized unsupported CXAS import]: import google.cloud"
+        in sanitized
+    )
+    assert (
+        "# [Sanitized unsupported CXAS import]: import dialogflow_cxx"
+        in sanitized
+    )
+
+
+def test_sanitize_cxas_schema() -> None:
+    raw_schema = {
+        "type": "OBJECT",
+        "title": "WebhookResponse",
+        "schemaReference": {"schema": "WebhookResponse"},
+        "$ref": "#/definitions/WebhookResponse",
+        "default": {},
+        "properties": {
+            "status": {"type": "string", "example": "OK"},
+            "code": {"type": "integer"},
+        },
+    }
+    clean, desc = sanitize_cxas_schema(raw_schema, "Test variable.")
+    assert clean == {
+        "type": "OBJECT",
+        "properties": {
+            "status": {"type": "STRING"},
+            "code": {"type": "INTEGER"},
+        },
+    }
+    assert "[Source Schema: WebhookResponse]" in desc

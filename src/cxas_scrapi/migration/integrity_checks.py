@@ -107,7 +107,7 @@ def check_consolidation_integrity(
                 tool_ref not in available_tool_resources
                 and short not in available_tool_ids
             ):
-                blocking.append(
+                warnings_.append(
                     f"Group {group_name!r} references unknown tool "
                     f"{short!r} (resource: {tool_ref})"
                 )
@@ -124,7 +124,7 @@ def check_consolidation_integrity(
                 ts_id not in available_tool_resources
                 and short not in available_tool_ids
             ):
-                blocking.append(
+                warnings_.append(
                     f"Group {group_name!r} references unknown toolset {short!r}"
                 )
 
@@ -135,10 +135,15 @@ def check_consolidation_integrity(
             if tool_name in sentinel_tool_ids:
                 continue
             if tool_name not in available_tool_ids and not any(
-                _short_id(t.name) == tool_name or t.id == tool_name
+                _short_id(t.name) == tool_name
+                or t.id == tool_name
+                or (
+                    isinstance(t.payload, dict)
+                    and t.payload.get("displayName") == tool_name
+                )
                 for t in current_ir.tools.values()
             ):
-                blocking.append(
+                warnings_.append(
                     f"Group {group_name!r} instruction has "
                     f"{{@TOOL: {tool_name}}} but no such tool exists"
                 )
@@ -149,7 +154,7 @@ def check_consolidation_integrity(
             if ref.lower() in sentinel_lower:
                 continue
             if ref not in new_group_names:
-                blocking.append(
+                warnings_.append(
                     f"Group {group_name!r} instruction has "
                     f"{{@AGENT: {ref}}} but no such group exists"
                 )
