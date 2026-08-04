@@ -3115,3 +3115,83 @@ def test_t013_valid_dict_json(
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
+
+
+# ── Schema Path Resolution (Windows / POSIX) ─────────────────────────────
+
+
+@pytest.fixture
+def agent_tree(tmp_path: typing.Any) -> typing.Any:
+    """App tree with an agent instruction file, returning (root, content)."""
+    agent_dir = tmp_path / "agents" / "My_Agent"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    content = "<role>You are a helpful agent.</role>"
+    (agent_dir / "instruction.txt").write_text(content)
+    return tmp_path, content
+
+
+def test_resolve_paths_posix_base_path(agent_tree: typing.Any) -> None:
+    """File references resolve when base_path uses forward slashes."""
+    from cxas_scrapi.utils.lint_rules.schema import _resolve_paths  # noqa: PLC0415,I001
+
+    root, content = agent_tree
+    base_path = str(root / "agents" / "My_Agent")
+
+    result = _resolve_paths(
+        "agents/My_Agent/instruction.txt",
+        extra_prefixes=("agents/",),
+        base_path=base_path,
+    )
+    assert result == content
+
+
+def test_resolve_paths_windows_base_path(agent_tree: typing.Any) -> None:
+    """File references resolve when base_path uses Windows backslashes.
+
+    Regression test: prefix matching previously failed on Windows because
+    base_path contains backslashes while file references use forward
+    slashes, raising FileNotFoundError for files that exist.
+    """
+    from cxas_scrapi.utils.lint_rules.schema import _resolve_paths  # noqa: PLC0415,I001
+
+    root, content = agent_tree
+    windows_base_path = (
+        str(root / "agents" / "My_Agent").replace("/", "\\")
+    )
+
+    result = _resolve_paths(
+        "agents/My_Agent/instruction.txt",
+        extra_prefixes=("agents/",),
+        base_path=windows_base_path,
+    )
+    assert result == content
+
+
+def test_resolve_paths_nested_structure(agent_tree: typing.Any) -> None:
+    """References nested in dicts/lists resolve regardless of separators."""
+    from cxas_scrapi.utils.lint_rules.schema import _resolve_paths  # noqa: PLC0415,I001
+
+    root, content = agent_tree
+    windows_base_path = (
+        str(root / "agents" / "My_Agent").replace("/", "\\")
+    )
+
+    result = _resolve_paths(
+        {"instruction": "agents/My_Agent/instruction.txt", "name": "x"},
+        extra_prefixes=("agents/",),
+        base_path=windows_base_path,
+    )
+    assert result == {"instruction": content, "name": "x"}
+
+
+def test_resolve_paths_missing_file_raises(agent_tree: typing.Any) -> None:
+    """A reference to a nonexistent file still raises FileNotFoundError."""
+    from cxas_scrapi.utils.lint_rules.schema import _resolve_paths  # noqa: PLC0415,I001
+
+    root, _ = agent_tree
+    with pytest.raises(FileNotFoundError):
+        _resolve_paths(
+            "agents/My_Agent/missing.txt",
+            extra_prefixes=("agents/",),
+            base_path=str(root / "agents" / "My_Agent"),
+        )
