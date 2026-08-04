@@ -495,3 +495,18 @@ def test_html_omits_agent_xprs_when_not_experimental(
     assert 'id="tab-xprs"' not in html
     assert 'id="panel-xprs"' not in html
     assert 'id="migration-update-banner"' not in html
+
+
+def test_html_renders_grouping_tab_when_not_experimental(
+    tmp_path: typing.Any,
+) -> None:
+    """Grouping Review tab and update banner must be present."""
+    svc = _make_service(with_grouping=True)
+    svc.config.experimental_agent_xprs = False
+    b = MigrationAnalysisBuilder("demo", "Demo", output_dir=tmp_path)
+    b.update_from_service(svc)
+    b.flush()
+    html = b.html_path.read_text(encoding="utf-8")
+    assert 'id="tab-grouping"' in html
+    assert 'id="grouping-update-banner"' in html
+    assert 'id="panel-grouping"' in html

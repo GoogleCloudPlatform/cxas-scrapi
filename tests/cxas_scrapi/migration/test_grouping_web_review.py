@@ -246,18 +246,18 @@ def test_apply_grouping_confirms_and_writes_plan(
     assert json.loads(plan_path.read_text())["RootAgent"]["is_root"] is True
 
 
-def test_apply_grouping_rejects_invalid(
+def test_apply_grouping_auto_allocates_orphans(
     tmp_path: typing.Any, monkeypatch: typing.Any
 ) -> None:
-    """POST with orphan flows → 400 + errors list; coroutine still waiting."""
+    """POST unassigned flows -> auto-allocates orphans to root group."""
     fixed_port = 18746
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
     _, _, thread, shared = _start_web_review(builder=b)
     base = _wait_for_server("127.0.0.1", fixed_port)
 
-    # Missing FlowC → orphan; validate_groupings should reject.
-    bad = {
+    # Missing FlowC → auto-assigned to RootAgent by validate_groupings.
+    partial = {
         "RootAgent": {
             "agents": ["FlowA", "FlowB"],
             "is_root": True,
@@ -265,18 +265,15 @@ def test_apply_grouping_rejects_invalid(
             "journey": "",
         }
     }
-    status, body = _http_post(f"{base}/api/grouping", {"groupings": bad})
-    assert status == 400
-    assert body["ok"] is False
-    assert body["errors"]
-    assert thread.is_alive()  # coroutine still waiting
-
-    # Abort to let the coroutine return.
-    status, body = _http_post(f"{base}/api/abort", {})
+    status, body = _http_post(f"{base}/api/grouping", {"groupings": partial})
     assert status == 200
     assert body == {"ok": True}
     thread.join(timeout=5)
-    assert shared["result"] is None
+    assert shared["result"]["RootAgent"]["agents"] == [
+        "FlowA",
+        "FlowB",
+        "FlowC",
+    ]
 
 
 def test_abort_returns_none(
@@ -345,7 +342,7 @@ def test_get_review_serves_html_with_injected_endpoint(
     thread.join(timeout=5)
 
 
-def test_timeout_returns_none_when_no_user_action(
+def test_timeout_auto_confirms_proposal(
     tmp_path: typing.Any, monkeypatch: typing.Any
 ) -> None:
     fixed_port = 18750
@@ -382,8 +379,8 @@ def test_timeout_returns_none_when_no_user_action(
     thread.start()
     thread.join(timeout=10)
     assert shared["exc"] is None
-    assert shared["result"] is None
-    assert b.snapshot.pending_grouping["status"] == "aborted"
+    assert shared["result"] == _initial_groupings()
+    assert b.snapshot.pending_grouping["status"] == "auto_confirmed_timeout"
 
 
 def test_save_xprs_config_writes_yaml_file(
@@ -552,3 +549,21 @@ def test_apply_grouping_noop_if_already_resolved(
     ctx.resolved = True
     errors2 = ctx.apply_grouping(groupings)
     assert errors2 == []
+
+
+def test_all_flow_names_includes_bracketed_names() -> None:
+    """_all_flow_names returns both IRAgent dict key and display_name."""
+    ir = MigrationIR(
+        metadata=IRMetadata(app_name="t"),
+        tools={},
+        agents={
+            "[Core] Conf Routing": IRAgent(
+                type="FLOW",
+                display_name="Core Conf Routing",
+                instruction="",
+            ),
+        },
+    )
+    names = grouping_web_review._all_flow_names(ir)
+    assert "[Core] Conf Routing" in names
+    assert "Core Conf Routing" in names

@@ -99,6 +99,7 @@ def test_combined_evals_report_cmd(tmp_path: typing.Any) -> None:
             deployment_id=None,
             progress_callback=None,
             capture_agent_audio=False,
+            single_bidi_stream=False,
             report_format="html",
         )
 
@@ -164,6 +165,7 @@ def test_combined_evals_report_cmd_with_modality_and_runs(
             deployment_id=None,
             progress_callback=None,
             capture_agent_audio=False,
+            single_bidi_stream=False,
             report_format="html",
         )
 
@@ -234,6 +236,7 @@ def test_combined_evals_report_cmd_timestamped(
             deployment_id=None,
             progress_callback=None,
             capture_agent_audio=False,
+            single_bidi_stream=False,
             report_format="html",
         )
 

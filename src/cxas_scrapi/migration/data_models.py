@@ -129,6 +129,7 @@ class IRAgent(BaseModel):
     callbacks: dict[str, Any] | None = None  # Used by Flows
     status: MigrationStatus = MigrationStatus.COMPILED
     resource_name: str | None = None  # Populated after deployment
+    is_source_root: bool = False
 
 
 class MigrationIR(BaseModel):

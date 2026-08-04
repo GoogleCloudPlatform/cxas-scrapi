@@ -172,11 +172,12 @@ def _has_path(edges: dict[str, set[str]], src: str, dst: str) -> bool:
 def compute_group_children_preserve_hierarchy(
     bundle: IRBundle,
 ) -> dict[str, set[str]]:
-    """Derive children from the source DFCX dep graph, breaking cycles.
+    """Derive children from the source DFCX dep graph, enforcing a strict tree.
 
     Edges are processed in priority order (root-out edges first, then by
-    source group fanout) and any edge that would close a cycle in the
-    accepted set is skipped. The accepted set is therefore a DAG.
+    source group fanout) and any edge that would close a cycle or assign an
+    agent more than one parent is skipped. The accepted set is therefore a
+    strict tree topology (in-degree <= 1).
 
     The root agent is forced to never appear as a child of any agent.
     """
@@ -203,12 +204,16 @@ def compute_group_children_preserve_hierarchy(
     candidates.sort(key=_priority)
 
     accepted: dict[str, set[str]] = {g: set() for g in bundle.grouping}
+    has_parent: set[str] = set()
     for src, tgt in candidates:
         if tgt in accepted[src]:
+            continue
+        if tgt in has_parent:
             continue
         if _has_path(accepted, tgt, src):
             continue
         accepted[src].add(tgt)
+        has_parent.add(tgt)
     return accepted
 
 
