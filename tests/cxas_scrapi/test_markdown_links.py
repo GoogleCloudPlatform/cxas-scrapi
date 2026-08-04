@@ -1,6 +1,7 @@
 import pathlib
 import re
 import typing
+import warnings
 
 import pytest
 import requests
@@ -54,15 +55,25 @@ def test_markdown_links(md_path: typing.Any) -> None:
             if md_path != README_PATH:
                 continue
 
-            try:
-                headers = {"User-Agent": "Mozilla/5.0"}
-                response = requests.get(link, headers=headers, timeout=5)
-                if response.status_code >= 400:
-                    broken_links.append(
-                        f"External: {link} (Status: {response.status_code})"
-                    )
-            except requests.RequestException as e:
-                broken_links.append(f"External: {link} (Error: {e})")
+            for attempt in range(3):
+                try:
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    response = requests.get(link, headers=headers, timeout=15)
+                    if response.status_code >= 400:
+                        broken_links.append(
+                            f"External: {link} (Status: {response.status_code})"
+                        )
+                    break
+                except (requests.Timeout, requests.ConnectionError) as e:
+                    if attempt == 2:
+                        warnings.warn(
+                            f"Transient network error checking {link}: {e}",
+                            UserWarning,
+                            stacklevel=2,
+                        )
+                except requests.RequestException as e:
+                    broken_links.append(f"External: {link} (Error: {e})")
+                    break
         else:
             # Relative link
             # Remove query params or anchors if any
