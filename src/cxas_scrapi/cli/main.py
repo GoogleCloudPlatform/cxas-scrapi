@@ -374,7 +374,39 @@ def filter_metrics_and_assess(
                 )
         else:
             print("WARNING: No custom expectations found in this evaluation.")
-            # Fallback: check basic tool execution result limit
+
+        # Grade deterministic turn expectations (tool calls, tool responses,
+        # agent transfers, unexpected events, engine errors) while ignoring
+        # only the automated LLM metrics (semantic similarity).
+        auto_metric_types = {"Semantic Similarity", "Hallucination"}
+        df_failures = df_dict_new_run.get("failures", pd.DataFrame())
+        if not df_failures.empty and "failure_type" in df_failures.columns:
+            deterministic = df_failures[
+                ~df_failures["failure_type"].isin(auto_metric_types)
+            ]
+        else:
+            deterministic = pd.DataFrame()
+
+        if not deterministic.empty:
+            print(
+                f"FAILED: {len(deterministic)} deterministic expectation "
+                "failure(s) (tool calls, transfers, unexpected events):"
+            )
+            for _, row in deterministic.iterrows():
+                turn = row.get("turn_index")
+                turn_str = f" (Turn {turn})" if turn is not None else ""
+                print(
+                    f"  - [{row.get('display_name', '?')}]"
+                    f" {row.get('failure_type')}{turn_str}: "
+                    f"expected={str(row.get('expected', ''))[:80]!r} "
+                    f"actual={str(row.get('actual', ''))[:80]!r}"
+                )
+            passed = False
+        else:
+            print(
+                "PASSED: All deterministic expectations met "
+                "(semantic-only differences ignored)."
+            )
 
     # Strict overall pass/fail based on the server constraints
     elif overall_status != "PASS":
