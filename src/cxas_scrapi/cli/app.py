@@ -29,6 +29,7 @@ from typing import Any
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.versions import Versions
+from cxas_scrapi.utils.archive_utils import ArchiveUtils
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +119,10 @@ def _app_pull(
         if not os.path.exists(target_dir):
             os.makedirs(target_dir)
 
-        # Extract content to target directory.
+        # Extract content to target directory safely.
         with zipfile.ZipFile(io.BytesIO(response.app_content)) as z:
             export_members = z.namelist()
-            z.extractall(target_dir)
+            ArchiveUtils.safe_extract_zip(z, target_dir)
 
         # Handle overwrite logic if requested
         if overwrite and export_members:
