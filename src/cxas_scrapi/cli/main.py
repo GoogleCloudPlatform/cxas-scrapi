@@ -2214,6 +2214,12 @@ def get_parser() -> argparse.ArgumentParser:
         help="Create a version after successful push.",
     )
     parser_push.add_argument(
+        "--version-name",
+        help=(
+            "Display name for the created version (used with --create-version)."
+        ),
+    )
+    parser_push.add_argument(
         "--version-description",
         help="Description for the created version.",
     )

@@ -596,6 +596,7 @@ def test_app_push_create_version(
         project_id="test-project",
         location="us",
         create_version=True,
+        version_name="v1.2.0",
         version_description="Release version 1.0",
     )
 
@@ -622,9 +623,53 @@ def test_app_push_create_version(
         app_name="projects/test-project/locations/us/apps/new-id",
         creds=mock_apps_client.creds,
     )
-    mock_versions_inst.create_version.assert_called_once()
+    mock_versions_inst.create_version.assert_called_once_with(
+        display_name="v1.2.0",
+        description="Release version 1.0",
+    )
     expected = "projects/test-project/locations/us/apps/new-id/versions/v1"
     assert args.created_version_name == expected
+
+
+@mock.patch("cxas_scrapi.cli.app.Versions", autospec=True)
+def test_app_push_create_version_default_name(
+    mock_versions_cls: typing.Any,
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    mock_apps_client.creds = mock.MagicMock()
+
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        display_name="New App Name",
+        project_id="test-project",
+        location="us",
+        create_version=True,
+        version_description="Release version 1.0",
+    )
+
+    with open(os.path.join(tmp_path, "app.yaml"), "w") as f:
+        f.write("name: test")
+
+    mock_lro = mock.MagicMock()
+    mock_imported_app = mock.MagicMock()
+    mock_imported_app.name = "projects/test-project/locations/us/apps/new-id"
+    mock_lro.result.return_value = mock_imported_app
+    mock_apps_client.import_as_new_app.return_value = mock_lro
+
+    mock_versions_inst = mock_versions_cls.return_value
+    mock_version = mock.MagicMock()
+    mock_version.name = (
+        "projects/test-project/locations/us/apps/new-id/versions/v1"
+    )
+    mock_versions_inst.create_version.return_value = mock_version
+
+    cli_app.app_push(args)
+
+    call_kwargs = mock_versions_inst.create_version.call_args[1]
+    assert call_kwargs["display_name"].startswith("import-")
+    assert call_kwargs["description"] == "Release version 1.0"
 
 
 def test_app_init_headless_failure(
