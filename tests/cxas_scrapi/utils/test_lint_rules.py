@@ -2546,6 +2546,160 @@ def test_a006_root_agent_valid(
     assert len(results) == 0
 
 
+# --- Rule A007 Tests ---
+
+
+def _voice_app(
+    default_code: str = "en-US",
+    supported: typing.Any = ("es-US",),
+    configs: typing.Any = None,
+) -> str:
+    import json  # noqa: PLC0415
+
+    app: dict = {
+        "name": "voice_app",
+        "displayName": "Voice App",
+        "languageSettings": {
+            "defaultLanguageCode": default_code,
+            "supportedLanguageCodes": list(supported),
+        },
+    }
+    if configs is not None:
+        app["audioProcessingConfig"] = {"synthesizeSpeechConfigs": configs}
+    return json.dumps(app)
+
+
+def test_a007_supported_language_missing_entry(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(configs={"en-US": {"voice": "en-US-Chirp3-HD-Zephyr"}})
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "'es-US' is declared in languageSettings" in results[0].message
+
+
+def test_a007_default_language_missing_entry(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(configs={"es-US": {"voice": "en-US-Chirp3-HD-Zephyr"}})
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "'en-US' is declared in languageSettings" in results[0].message
+    # The fix points at a locale that actually has an entry, not at the
+    # missing one.
+    assert "same keys as 'es-US'" in results[0].fix_suggestion
+
+
+def test_a007_delivery_keys_drift(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(
+            configs={
+                "en-US": {
+                    "voice": "en-US-Chirp3-HD-Zephyr",
+                    "instruction": "Accent: American English",
+                },
+                "es-US": {"voice": "en-US-Chirp3-HD-Zephyr"},
+            }
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "['es-US'] is missing instruction" in results[0].message
+
+
+def test_a007_all_languages_covered(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(
+            configs={
+                "en-US": {
+                    "voice": "en-US-Chirp3-HD-Zephyr",
+                    "instruction": "Accent: American English",
+                },
+                "es-US": {
+                    "voice": "en-US-Chirp3-HD-Zephyr",
+                    "instruction": "Accent: Spanish accent",
+                },
+            }
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_a007_text_only_app_ignored(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(_voice_app())
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_a007_single_language_app_ignored(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(
+            supported=(),
+            configs={"en-US": {"voice": "en-US-Chirp3-HD-Zephyr"}},
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_a007_ignores_agent_json(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "root_agent.json"
+    f.write_text(
+        _voice_app(configs={"en-US": {"voice": "en-US-Chirp3-HD-Zephyr"}})
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
 def test_s005_agent_paths_valid(
     tmp_path: typing.Any, context: typing.Any
 ) -> None:

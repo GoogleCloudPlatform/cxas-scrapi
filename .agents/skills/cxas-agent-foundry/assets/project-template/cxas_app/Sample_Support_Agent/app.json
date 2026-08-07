@@ -46,7 +46,36 @@
         "AUDIO / LANGUAGE / TIMEZONE:",
         "  Set these for voice agents. Text-only agents can omit them.",
         "  toolExecutionMode: PARALLEL reduces latency by running independent",
-        "  tool calls concurrently instead of sequentially."
+        "  tool calls concurrently instead of sequentially.",
+        "",
+        "  'instruction' is the style prompt: an audio profile and a",
+        "  director's note steering persona, pacing and intonation. It is",
+        "  the platform-level control for tone, the way speakingRate is for",
+        "  pace. A <persona> block in instruction.txt does not reach",
+        "  delivery.",
+        "",
+        "  ADDING A LANGUAGE IS TWO EDITS, NOT ONE. synthesizeSpeechConfigs",
+        "  is keyed by locale and entries do NOT inherit from each other, so",
+        "  a code added to supportedLanguageCodes with no entry here gets",
+        "  none of your voice, speakingRate or instruction. Nothing fails on",
+        "  push. Lint rule A007 catches it. Copy the whole en-US block and",
+        "  change only the accent line, keeping the prompt body in one",
+        "  language so the context never goes mixed-language:",
+        "",
+        "    \"supportedLanguageCodes\": [\"es-US\"],",
+        "    ...",
+        "    \"es-US\": {",
+        "      \"speakingRate\": 1.0,",
+        "      \"instruction\": \"...\\nAccent: Spanish accent\\n## Transcript:\\n\"",
+        "    }",
+        "",
+        "  If you set a named 'voice', name the same one in every locale so",
+        "  the caller hears one person after a language switch. Left unset,",
+        "  the service picks the default voice, which is already consistent",
+        "  across languages.",
+        "",
+        "  See references/gecx-design-guide.md -> 'Style Prompts and",
+        "  Per-Language Coverage'."
     ],
     "languageSettings": {
         "defaultLanguageCode": "en-US"
@@ -57,7 +86,8 @@
     "audioProcessingConfig": {
         "synthesizeSpeechConfigs": {
             "en-US": {
-                "speakingRate": 1.0
+                "speakingRate": 1.0,
+                "instruction": "Read the following transcript based on the audio profile and director's note.\n# Audio Profile\nYou are a real human being working in customer care, warm, patient and highly empathetic. You are answering a live phone call.\n# Director's note\n* Persona and tone: friendly, grounded and authentically conversational.\n* Pacing: keep the pace brisk and efficient. Do not over-exaggerate pauses.\n* Intonation: use natural pitch variation. Avoid sounding monotone or automated.\nAccent: American English\n## Transcript:\n"
             }
         }
     },

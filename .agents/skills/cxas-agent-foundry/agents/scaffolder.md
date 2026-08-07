@@ -69,6 +69,7 @@ Update `<app_dir>/app.json`:
 - `variableDeclarations` — every variable in the TDD's Variables section, with description + schema. **Every variable MUST have a description per the Zero Warnings Policy.**
 - `tools` array — every tool listed in the TDD's Tools section
 - `loggingSettings` — set `evaluationAudioRecordingConfig` for audio agents (required for golden runs)
+- `audioProcessingConfig.synthesizeSpeechConfigs` — one entry per language code in `languageSettings`, because entries do not inherit from each other. Copy whatever the default locale sets (`voice`, `speakingRate`, `instruction`) into every additional locale and change only the accent line inside the style prompt. Lint rule A007 flags a missing entry or a drifted key.
 
 ### Step 3 — Write each agent
 

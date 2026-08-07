@@ -23,6 +23,7 @@
    - **Switching mode:** Should switching be **explicit-only** (user must say "speak German") or **auto-detected** (agent detects from utterance)? **Default to explicit-only** -- auto-detection is non-deterministic on `gemini-3.1-flash-live` and is not recommended for production.
    - **Datastore language:** Is the knowledge base / datastore in a different language than the agent instructions? If yes, the translate-around-tool-calls pattern is required (see `references/gecx-design-guide.md` → Multilingual Agents).
    - **Voice persona:** Is there a specific approved voice? Non-default voices have a known issue where additional languages revert to the default voice. Re-saving app voice settings in the Console fixes this (see `references/gecx-design-guide.md` → Voice / Audio).
+   - **Per-language voice config:** Whatever the answer above, every language gets its own `synthesizeSpeechConfigs` entry in `app.json` naming the same `voice` and carrying the same `instruction` style prompt, with only the accent line changed. Entries do not inherit, and the Console propagation does not reach an app pushed from `app.json`. This is not a question to ask, it is a step to do (see `references/gecx-design-guide.md` → Style Prompts and Per-Language Coverage, and lint rule A007).
 
 ## Round 2: Write the Technical Design Document (TDD)
 

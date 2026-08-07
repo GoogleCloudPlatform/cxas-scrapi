@@ -780,3 +780,47 @@ Adjust the directive ("FASTER", "SLOWER", "moderate") to match the desired deliv
 **Fix:** This was resolved in the CES Console. When you set a voice in the Console for one language, it is now propagated to all configured additional languages automatically. If you observe voice identity changes after a language switch, re-save your app's voice settings to trigger the propagation.
 
 **Temporary workaround** (if you need to unblock before re-saving): Switch to the default voice (`Iapetus`) for the agent. The default voice is consistent across all languages. This is not ideal for agents with board-approved persona voices but eliminates the jarring switch.
+
+**Config-as-code apps do not get the Console propagation.** The fix above happens when a human re-saves voice settings in the Console. An app whose source of truth is `app.json` and which reaches the platform through `cxas push` never triggers it, and `cxas push --overwrite` will delete a locale entry the Console added if your file does not carry it. So for any app in this repo pattern, `synthesizeSpeechConfigs` must name every locale itself. Lint rule A007 (`config-language-voice-coverage`) checks this and fires when a language in `languageSettings` has no entry, or has an entry that omits a key the default locale sets.
+
+---
+
+### Voice / Audio: Style Prompts and Per-Language Coverage
+
+`SynthesizeSpeechConfig` carries an `instruction` field, a free-text style prompt that steers persona, pacing, intonation and accent. It is the platform-level control for tone, in the same way `speakingRate` is the platform-level control for pace, and it reaches delivery in a way that a `<persona>` block in the agent instruction does not. Confirm the field list against the live discovery document rather than a client library, since generated clients lag:
+
+```bash
+$ curl -s "https://ces.googleapis.com/\$discovery/rest?version=v1" \
+    | python3 -c "import json,sys; print(sorted(json.load(sys.stdin)['schemas']['SynthesizeSpeechConfig']['properties']))"
+['consentAudioGcsUri', 'instruction', 'model', 'speakingRate', 'voice', 'voiceSampleGcsUri']
+```
+
+**Apply it to every language, not just the default.** `synthesizeSpeechConfigs` is a map keyed by locale with no inheritance between entries. A prompt written into `en-US` does nothing for a caller who switched to Spanish. On a `gemini-composite-v1` app declaring `"supportedLanguageCodes": ["es-US"]`, the map held a single `en-US` key, so Spanish had no voice and no style prompt configured anywhere in the app. Nothing failed and nothing appeared in a diff.
+
+Write the same style prompt into each locale, changing only the accent line:
+
+```json
+"languageSettings": {
+  "defaultLanguageCode": "en-US",
+  "supportedLanguageCodes": ["es-US"],
+  "enableMultilingualSupport": true
+},
+"audioProcessingConfig": {
+  "synthesizeSpeechConfigs": {
+    "en-US": {
+      "voice": "en-US-Chirp3-HD-Zephyr",
+      "instruction": "Read the following transcript based on the audio profile and director's note.\n# Audio Profile\nYou are a real human being working in customer care, warm, patient and highly empathetic.\n# Director's note\n* Pacing: Keep the pace brisk and efficient. Do not over-exaggerate pauses.\nAccent: American English\n## Transcript:\n"
+    },
+    "es-US": {
+      "voice": "en-US-Chirp3-HD-Zephyr",
+      "instruction": "Read the following transcript based on the audio profile and director's note.\n# Audio Profile\nYou are a real human being working in customer care, warm, patient and highly empathetic.\n# Director's note\n* Pacing: Keep the pace brisk and efficient. Do not over-exaggerate pauses.\nAccent: Spanish accent\n## Transcript:\n"
+    }
+  }
+}
+```
+
+Two things about that pair. The prompt body stays in one language across all locales, which is deliberate and matches the translate-at-the-tool-boundary principle above: one language in, no mixed-language context. The accent line is the exception and must name the locale's own accent, because an otherwise English prompt steers a Spanish read toward an American one. Naming the same `voice` in both is what keeps the caller hearing the same person after a language switch.
+
+**A green read-back does not prove the prompt fired.** The discovery document qualifies `instruction` with "when using a generative model", and the sibling `model` field accepts one value today, `gemini-3.1-flash-tts-preview`, with Chirp3-HD used when it is empty. The API returns 200 and echoes back whatever you send, including a Chirp3-HD voice name alongside the generative model, so write-time validation tells you nothing about whether the engine honours the instruction. Verify tone with a real call in each language. If delivery is unchanged, setting `model` is the next thing to try, but note it forces the bare Gemini voice names, so `en-US-Chirp3-HD-Zephyr` becomes `Zephyr` and the voice audibly changes along with the tone.
+
+**Both CLI directions preserve the field.** `cxas push` copies `app.json` into the import ZIP and `cxas pull` returns raw exported JSON, so neither goes through a generated proto and neither strips `instruction` or `model`. Reading the vendored client and concluding the field does not exist is a false negative.

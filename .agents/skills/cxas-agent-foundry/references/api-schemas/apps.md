@@ -11,6 +11,7 @@ Top-level container for agents.
 - **timeZoneSettings** (-> TimeZoneSettings)
 - **loggingSettings** (-> LoggingSettings)
 - **modelSettings** (-> ModelSettings): Default LLM settings. Agents can override.
+- **audioProcessingConfig** (-> AudioProcessingConfig): Voice agents only.
 - **toolExecutionMode** (enum: `PARALLEL` | `SEQUENTIAL`): Default: PARALLEL.
 - **evaluationMetricsThresholds** (-> EvaluationMetricsThresholds): See `evaluations.md`.
 - **variableDeclarations** (array[-> AppVariableDeclaration])
@@ -30,8 +31,19 @@ Top-level container for agents.
 
 ### LanguageSettings
 - **defaultLanguageCode** (string)
-- **supportedLanguageCodes** (array[string])
+- **supportedLanguageCodes** (array[string]): Additional locales. Does not repeat the default.
 - **enableMultilingualSupport** (boolean)
+
+### AudioProcessingConfig
+- **synthesizeSpeechConfigs** (map[string -> SynthesizeSpeechConfig]): Keyed by language code. No inheritance between entries, so every locale in LanguageSettings needs its own. Lint rule A007 checks the coverage.
+
+### SynthesizeSpeechConfig
+- **voice** (string): Voice name, e.g. `en-US-Chirp3-HD-Zephyr`. Service picks one from the language code if unset.
+- **instruction** (string): Style prompt. Audio profile and director's note steering persona, pacing, intonation and accent. Applies "when using a generative model".
+- **speakingRate** (number): `1.0` is the default. Above speeds up, below slows down.
+- **model** (string): Synthesis model. One supported value, `gemini-3.1-flash-tts-preview`. Chirp3-HD is used when empty. Setting it forces bare Gemini voice names (`Zephyr`, not `en-US-Chirp3-HD-Zephyr`).
+- **voiceSampleGcsUri** (string)
+- **consentAudioGcsUri** (string)
 
 ### TimeZoneSettings
 - **timeZone** (string): IANA format (e.g., `America/Los_Angeles`).

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""App and agent config lint rules (A001-A005).
+"""App and agent config lint rules (A001-A007).
 
 Validates app.json and agent JSON configuration files.
 """
@@ -319,5 +319,115 @@ class AppRootAgentValidation(Rule):
                     ),
                 )
             )
+
+        return results
+
+
+@rule("config")
+class LanguageVoiceCoverage(Rule):
+    id = "A007"
+    name = "config-language-voice-coverage"
+    description = (
+        "Every configured language needs its own synthesizeSpeechConfigs "
+        "entry, carrying the same delivery keys as the default language"
+    )
+    default_severity = Severity.WARNING
+
+    # Keys on SynthesizeSpeechConfig that steer delivery. A locale that
+    # omits one the default locale sets will not sound like the rest of
+    # the app.
+    DELIVERY_KEYS = ("voice", "instruction", "speakingRate", "model")
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+
+        if file_path.name != "app.json":
+            return []
+
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            return []
+
+        audio = data.get("audioProcessingConfig") or {}
+        configs = audio.get("synthesizeSpeechConfigs") or {}
+        if not isinstance(configs, dict) or not configs:
+            # Text-only agents carry no voice config at all, so there is
+            # nothing to keep in sync.
+            return []
+
+        settings = data.get("languageSettings") or {}
+        default_code = settings.get("defaultLanguageCode") or ""
+        supported = settings.get("supportedLanguageCodes") or []
+        if not isinstance(supported, list):
+            supported = []
+
+        expected: list[str] = []
+        for code in [default_code, *supported]:
+            if isinstance(code, str) and code and code not in expected:
+                expected.append(code)
+
+        # The locale every other entry is compared against: the first
+        # configured language that actually has an entry, so the fix text
+        # never points at a locale that is itself missing.
+        covered = [code for code in expected if code in configs]
+        reference = covered[0] if covered else ""
+        like = f"'{reference}'" if reference else "the other locales"
+
+        results = []
+
+        for code in expected:
+            if code not in configs:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Language '{code}' is declared in "
+                            "languageSettings but has no "
+                            f"synthesizeSpeechConfigs['{code}'] entry, so "
+                            "nothing in this app sets its voice or "
+                            "delivery"
+                        ),
+                        fix=(
+                            "synthesizeSpeechConfigs is keyed by locale and "
+                            "app.json is the source of truth for a pushed "
+                            f"app. Add an entry for '{code}' carrying the "
+                            f"same keys as {like}: {{\"voice\": ..., "
+                            '"instruction": ...}'
+                        ),
+                    )
+                )
+
+        if not reference:
+            return results
+
+        reference_keys = {
+            key for key in self.DELIVERY_KEYS if key in configs[reference]
+        }
+        for code in sorted(configs):
+            if code == reference or not isinstance(configs[code], dict):
+                continue
+            missing = sorted(reference_keys - set(configs[code]))
+            if missing:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"synthesizeSpeechConfigs['{code}'] is missing "
+                            f"{', '.join(missing)}, which "
+                            f"'{reference}' sets. That language will be "
+                            "delivered differently from the rest of the app"
+                        ),
+                        fix=(
+                            f"Copy {', '.join(missing)} from "
+                            f"'{reference}' into '{code}'. A style prompt "
+                            "stays in one language across locales, but the "
+                            "accent line inside it has to name the locale's "
+                            "own accent"
+                        ),
+                    )
+                )
 
         return results

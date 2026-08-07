@@ -465,6 +465,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A004 | `config-missing-instruction` | Error | Agent directory must have an `instruction.txt` file |
     | A005 | `config-root-missing-end-session` | Error | Root agent must have `end_session` tool |
     | A006 | `config-root-agent` | Error | App config must have a valid `rootAgent` pointing to an existing agent directory |
+    | A007 | `config-language-voice-coverage` | Warning | Every configured language needs its own `synthesizeSpeechConfigs` entry with the same delivery keys |
 
     ---
 
@@ -487,6 +488,39 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* `root_agent` (snake_case) is used instead of `rootAgent`, `rootAgent` is missing or not a string, or the referenced agent directory/JSON is missing.
 
     *Fix:* Add or fix the `rootAgent` field in `app.json` and ensure the agent directory and config file exist.
+
+    ---
+
+    **A007 — config-language-voice-coverage**
+
+    `audioProcessingConfig.synthesizeSpeechConfigs` is a map keyed by locale, and `app.json` is the source of truth for a pushed app. A language declared in `languageSettings` with no entry in that map has nothing in your repo setting its voice, its `speakingRate` or its `instruction` style prompt. Nothing fails on push and nothing shows up in a diff, so the gap is only audible on a call in that language.
+
+    The same applies one level down. An entry that exists but omits a key the default locale sets, most commonly `instruction`, means the tone work landed in one language and not the others.
+
+    *Triggers:* An app that has a non-empty `synthesizeSpeechConfigs` and either a `defaultLanguageCode` or a `supportedLanguageCodes` entry with no matching key in the map, or a locale whose entry omits one of `voice`, `instruction`, `speakingRate` or `model` that the default locale sets.
+
+    *Fix:* Give every configured language its own entry with the same keys. A style prompt can stay in one language across locales, but the accent line inside it has to name that locale's own accent:
+
+    ```json
+    "languageSettings": {
+      "defaultLanguageCode": "en-US",
+      "supportedLanguageCodes": ["es-US"]
+    },
+    "audioProcessingConfig": {
+      "synthesizeSpeechConfigs": {
+        "en-US": {
+          "voice": "en-US-Chirp3-HD-Zephyr",
+          "instruction": "... Accent: American English\n## Transcript:\n"
+        },
+        "es-US": {
+          "voice": "en-US-Chirp3-HD-Zephyr",
+          "instruction": "... Accent: Spanish accent\n## Transcript:\n"
+        }
+      }
+    }
+    ```
+
+    Text-only agents carry no `synthesizeSpeechConfigs` at all and are never flagged.
 
 === "S — Structure"
 
