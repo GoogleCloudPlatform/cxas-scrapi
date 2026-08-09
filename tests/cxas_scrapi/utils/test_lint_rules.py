@@ -2553,6 +2553,7 @@ def _voice_app(
     default_code: str = "en-US",
     supported: typing.Any = ("es-US",),
     configs: typing.Any = None,
+    model: typing.Any = "gemini-composite-v1",
 ) -> str:
     import json  # noqa: PLC0415
 
@@ -2564,6 +2565,8 @@ def _voice_app(
             "supportedLanguageCodes": list(supported),
         },
     }
+    if model is not None:
+        app["modelSettings"] = {"model": model}
     if configs is not None:
         app["audioProcessingConfig"] = {"synthesizeSpeechConfigs": configs}
     return json.dumps(app)
@@ -2698,6 +2701,126 @@ def test_a007_ignores_agent_json(
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
+
+
+def test_a007_native_audio_app_ignored(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(
+            configs={"en-US": {"voice": "en-US-Chirp3-HD-Zephyr"}},
+            model="gemini-3.1-flash-live",
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_a007_unset_model_ignored(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(
+            configs={"en-US": {"voice": "en-US-Chirp3-HD-Zephyr"}},
+            model=None,
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_a007_later_composite_version_still_checked(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(
+            configs={"en-US": {"voice": "en-US-Chirp3-HD-Zephyr"}},
+            model="gemini-composite-v2",
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+
+
+def test_a007_root_language_entry_covers_regional_locale(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(
+            configs={
+                "en-US": {"voice": "en-US-Chirp3-HD-Zephyr"},
+                "es": {"voice": "en-US-Chirp3-HD-Zephyr"},
+            }
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_a007_locale_match_is_case_insensitive(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(
+            configs={
+                "en-us": {"voice": "en-US-Chirp3-HD-Zephyr"},
+                "ES-US": {"voice": "en-US-Chirp3-HD-Zephyr"},
+            }
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_a007_root_language_entry_still_checked_for_drift(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import LanguageVoiceCoverage  # noqa: PLC0415,I001
+
+    rule = LanguageVoiceCoverage()
+    f = tmp_path / "app.json"
+    f.write_text(
+        _voice_app(
+            configs={
+                "en-US": {
+                    "voice": "en-US-Chirp3-HD-Zephyr",
+                    "instruction": "Accent: American English",
+                },
+                "es": {"voice": "en-US-Chirp3-HD-Zephyr"},
+            }
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "synthesizeSpeechConfigs['es'] is missing instruction" in (
+        results[0].message
+    )
 
 
 def test_s005_agent_paths_valid(

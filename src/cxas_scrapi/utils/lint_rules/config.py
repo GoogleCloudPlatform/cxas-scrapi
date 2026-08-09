@@ -328,8 +328,9 @@ class LanguageVoiceCoverage(Rule):
     id = "A007"
     name = "config-language-voice-coverage"
     description = (
-        "Every configured language needs its own synthesizeSpeechConfigs "
-        "entry, carrying the same delivery keys as the default language"
+        "On a composite model app, every configured language needs a "
+        "synthesizeSpeechConfigs entry carrying the same delivery keys "
+        "as the default language"
     )
     default_severity = Severity.WARNING
 
@@ -337,6 +338,23 @@ class LanguageVoiceCoverage(Rule):
     # omits one the default locale sets will not sound like the rest of
     # the app.
     DELIVERY_KEYS = ("voice", "instruction", "speakingRate", "model")
+
+    # synthesizeSpeechConfigs is only consulted on the composite model,
+    # which cascades into a separate text-to-speech step. Matched as a
+    # substring so a later composite version stays covered.
+    COMPOSITE_MARKER = "composite"
+
+    @classmethod
+    def _serving_key(cls, code: str, by_lower: dict[str, str]) -> str:
+        """Return the map key CES would use for `code`, or "" if none does.
+
+        Lookup is case-insensitive and falls back to the root language, so
+        an 'es' entry serves 'es-US' and an 'EN-US' entry serves 'en-us'.
+        """
+        lowered = code.lower()
+        if lowered in by_lower:
+            return by_lower[lowered]
+        return by_lower.get(lowered.split("-")[0], "")
 
     def check(
         self, file_path: Path, content: str, context: LintContext
@@ -349,6 +367,14 @@ class LanguageVoiceCoverage(Rule):
         try:
             data = json.loads(content)
         except json.JSONDecodeError:
+            return []
+
+        model = (data.get("modelSettings") or {}).get("model") or ""
+        if self.COMPOSITE_MARKER not in str(model).lower():
+            # A native audio model speaks directly and never reaches the
+            # synthesis step, so a coverage gap costs it nothing. An unset
+            # model inherits from the parent and cannot be confirmed
+            # composite, so stay silent rather than guess.
             return []
 
         audio = data.get("audioProcessingConfig") or {}
@@ -369,36 +395,47 @@ class LanguageVoiceCoverage(Rule):
             if isinstance(code, str) and code and code not in expected:
                 expected.append(code)
 
-        # The locale every other entry is compared against: the first
-        # configured language that actually has an entry, so the fix text
-        # never points at a locale that is itself missing.
-        covered = [code for code in expected if code in configs]
-        reference = covered[0] if covered else ""
+        # CES resolves a locale case-insensitively and falls back to the
+        # root language, so coverage is not a plain key lookup.
+        by_lower = {
+            key.lower(): key for key in configs if isinstance(key, str)
+        }
+        served = {code: self._serving_key(code, by_lower) for code in expected}
+
+        # The entry every other one is compared against: the first
+        # configured language that actually resolves, so the fix text never
+        # points at a locale that is itself uncovered.
+        reference = next(
+            (
+                served[code]
+                for code in expected
+                if served[code] and isinstance(configs[served[code]], dict)
+            ),
+            "",
+        )
         like = f"'{reference}'" if reference else "the other locales"
 
         results = []
 
         for code in expected:
-            if code not in configs:
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=(
-                            f"Language '{code}' is declared in "
-                            "languageSettings but has no "
-                            f"synthesizeSpeechConfigs['{code}'] entry, so "
-                            "nothing in this app sets its voice or "
-                            "delivery"
-                        ),
-                        fix=(
-                            "synthesizeSpeechConfigs is keyed by locale and "
-                            "app.json is the source of truth for a pushed "
-                            f"app. Add an entry for '{code}' carrying the "
-                            f"same keys as {like}: {{\"voice\": ..., "
-                            '"instruction": ...}'
-                        ),
-                    )
+            if served[code]:
+                continue
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        f"Language '{code}' is declared in languageSettings "
+                        "but no synthesizeSpeechConfigs entry serves it, so "
+                        "nothing in this app sets its voice or delivery"
+                    ),
+                    fix=(
+                        "synthesizeSpeechConfigs is keyed by locale and "
+                        "app.json is the source of truth for a pushed app. "
+                        f"Add an entry for '{code}' carrying the same keys "
+                        f'as {like}: {{"voice": ..., "instruction": ...}}'
+                    ),
                 )
+            )
 
         if not reference:
             return results
@@ -406,23 +443,26 @@ class LanguageVoiceCoverage(Rule):
         reference_keys = {
             key for key in self.DELIVERY_KEYS if key in configs[reference]
         }
-        for code in sorted(configs):
-            if code == reference or not isinstance(configs[code], dict):
+        seen = {reference}
+        for code in expected:
+            key = served[code]
+            if not key or key in seen or not isinstance(configs[key], dict):
                 continue
-            missing = sorted(reference_keys - set(configs[code]))
+            seen.add(key)
+            missing = sorted(reference_keys - set(configs[key]))
             if missing:
                 results.append(
                     self.make_result(
                         file=rel,
                         message=(
-                            f"synthesizeSpeechConfigs['{code}'] is missing "
+                            f"synthesizeSpeechConfigs['{key}'] is missing "
                             f"{', '.join(missing)}, which "
                             f"'{reference}' sets. That language will be "
                             "delivered differently from the rest of the app"
                         ),
                         fix=(
                             f"Copy {', '.join(missing)} from "
-                            f"'{reference}' into '{code}'. A style prompt "
+                            f"'{reference}' into '{key}'. A style prompt "
                             "stays in one language across locales, but the "
                             "accent line inside it has to name the locale's "
                             "own accent"

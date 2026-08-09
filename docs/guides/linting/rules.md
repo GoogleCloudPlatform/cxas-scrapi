@@ -465,7 +465,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A004 | `config-missing-instruction` | Error | Agent directory must have an `instruction.txt` file |
     | A005 | `config-root-missing-end-session` | Error | Root agent must have `end_session` tool |
     | A006 | `config-root-agent` | Error | App config must have a valid `rootAgent` pointing to an existing agent directory |
-    | A007 | `config-language-voice-coverage` | Warning | Every configured language needs its own `synthesizeSpeechConfigs` entry with the same delivery keys |
+    | A007 | `config-language-voice-coverage` | Warning | On a composite model app, every configured language needs a `synthesizeSpeechConfigs` entry with the same delivery keys |
 
     ---
 
@@ -493,11 +493,15 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     **A007 — config-language-voice-coverage**
 
-    `audioProcessingConfig.synthesizeSpeechConfigs` is a map keyed by locale, and `app.json` is the source of truth for a pushed app. A language declared in `languageSettings` with no entry in that map has nothing in your repo setting its voice, its `speakingRate` or its `instruction` style prompt. Nothing fails on push and nothing shows up in a diff, so the gap is only audible on a call in that language.
+    `audioProcessingConfig.synthesizeSpeechConfigs` is a map keyed by locale, and `app.json` is the source of truth for a pushed app. A language declared in `languageSettings` that no entry serves has nothing in your repo setting its voice, its `speakingRate` or its `instruction` style prompt. Nothing fails on push and nothing shows up in a diff, so the gap is only audible on a call in that language.
 
     The same applies one level down. An entry that exists but omits a key the default locale sets, most commonly `instruction`, means the tone work landed in one language and not the others.
 
-    *Triggers:* An app that has a non-empty `synthesizeSpeechConfigs` and either a `defaultLanguageCode` or a `supportedLanguageCodes` entry with no matching key in the map, or a locale whose entry omits one of `voice`, `instruction`, `speakingRate` or `model` that the default locale sets.
+    *Scope:* Composite model apps only. `synthesizeSpeechConfigs` configures a separate synthesis step, and only the composite model has one. A native audio model such as `gemini-3.1-flash-live` speaks directly and never consults the map, so the rule stays silent on it. It also stays silent when `modelSettings.model` is unset, since an unset model inherits from the parent and cannot be confirmed composite.
+
+    *Coverage is not a plain key lookup.* Locales match case-insensitively, and the one fallback is to the root language, so an `es` entry serves `es-US` and an `EN-US` entry serves `en-us`. An `en-US` entry does not serve `es-US`. The rule resolves the same way the platform does, so a root-language entry counts as covered rather than being reported missing.
+
+    *Triggers:* A composite model app with a non-empty `synthesizeSpeechConfigs` and either a `defaultLanguageCode` or a `supportedLanguageCodes` entry that no key serves, or a served entry that omits one of `voice`, `instruction`, `speakingRate` or `model` that the reference locale sets.
 
     *Fix:* Give every configured language its own entry with the same keys. A style prompt can stay in one language across locales, but the accent line inside it has to name that locale's own accent:
 

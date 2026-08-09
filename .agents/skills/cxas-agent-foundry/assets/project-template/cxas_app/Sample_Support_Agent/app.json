@@ -54,13 +54,21 @@
         "  pace. A <persona> block in instruction.txt does not reach",
         "  delivery.",
         "",
+        "  COMPOSITE MODELS ONLY. synthesizeSpeechConfigs configures a",
+        "  separate synthesis step, and only a composite model has one.",
+        "  This template runs gemini-3.1-flash-live, a native audio model",
+        "  that speaks directly, so nothing in this block reaches it. Point",
+        "  modelSettings.model at a composite model before tuning voice.",
+        "",
         "  ADDING A LANGUAGE IS TWO EDITS, NOT ONE. synthesizeSpeechConfigs",
-        "  is keyed by locale and entries do NOT inherit from each other, so",
-        "  a code added to supportedLanguageCodes with no entry here gets",
-        "  none of your voice, speakingRate or instruction. Nothing fails on",
-        "  push. Lint rule A007 catches it. Copy the whole en-US block and",
-        "  change only the accent line, keeping the prompt body in one",
-        "  language so the context never goes mixed-language:",
+        "  is keyed by locale, matched case-insensitively, and its only",
+        "  fallback is to the root language, so an 'es' entry serves 'es-US'",
+        "  but an 'en-US' entry does not. A code added to",
+        "  supportedLanguageCodes that no entry serves gets none of your",
+        "  voice, speakingRate or instruction. Nothing fails on push. Lint",
+        "  rule A007 catches it. Copy the whole en-US block and change only",
+        "  the accent line, keeping the prompt body in one language so the",
+        "  context never goes mixed-language:",
         "",
         "    \"supportedLanguageCodes\": [\"es-US\"],",
         "    ...",
@@ -68,6 +76,12 @@
         "      \"speakingRate\": 1.0,",
         "      \"instruction\": \"...\\nAccent: Spanish accent\\n## Transcript:\\n\"",
         "    }",
+        "",
+        "  AN INSTRUCTION NEEDS A GENERATIVE SYNTHESIS MODEL BESIDE IT. Set",
+        "  \"model\": \"gemini-3.1-flash-tts-preview\" in the same entry or the",
+        "  default Chirp3-HD engine ignores the prompt. That switch also",
+        "  forces bare voice names, so en-US-Chirp3-HD-Zephyr becomes Zephyr",
+        "  and the voice audibly changes along with the tone.",
         "",
         "  If you set a named 'voice', name the same one in every locale so",
         "  the caller hears one person after a language switch. Left unset,",
@@ -86,8 +100,7 @@
     "audioProcessingConfig": {
         "synthesizeSpeechConfigs": {
             "en-US": {
-                "speakingRate": 1.0,
-                "instruction": "Read the following transcript based on the audio profile and director's note.\n# Audio Profile\nYou are a real human being working in customer care, warm, patient and highly empathetic. You are answering a live phone call.\n# Director's note\n* Persona and tone: friendly, grounded and authentically conversational.\n* Pacing: keep the pace brisk and efficient. Do not over-exaggerate pauses.\n* Intonation: use natural pitch variation. Avoid sounding monotone or automated.\nAccent: American English\n## Transcript:\n"
+                "speakingRate": 1.0
             }
         }
     },

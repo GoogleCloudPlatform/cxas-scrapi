@@ -795,7 +795,9 @@ $ curl -s "https://ces.googleapis.com/\$discovery/rest?version=v1" \
 ['consentAudioGcsUri', 'instruction', 'model', 'speakingRate', 'voice', 'voiceSampleGcsUri']
 ```
 
-**Apply it to every language, not just the default.** `synthesizeSpeechConfigs` is a map keyed by locale with no inheritance between entries. A prompt written into `en-US` does nothing for a caller who switched to Spanish. On a `gemini-composite-v1` app declaring `"supportedLanguageCodes": ["es-US"]`, the map held a single `en-US` key, so Spanish had no voice and no style prompt configured anywhere in the app. Nothing failed and nothing appeared in a diff.
+**This whole section applies to composite model apps only.** `synthesizeSpeechConfigs` configures a separate synthesis step, and only the composite model has one. A native audio model such as `gemini-3.1-flash-live` generates speech directly and never consults the map, so none of the tuning below reaches it. Check `modelSettings.model` before spending time here.
+
+**Apply it to every language, not just the default.** `synthesizeSpeechConfigs` is keyed by locale, matched case-insensitively, and its only fallback is to the root language: an `es` entry serves `es-US`, but an `en-US` entry does not. So a prompt written into `en-US` does nothing for a caller who switched to Spanish. On a `gemini-composite-v1` app declaring `"supportedLanguageCodes": ["es-US"]`, the map held a single `en-US` key, so Spanish had no voice and no style prompt configured anywhere in the app. Nothing failed and nothing appeared in a diff.
 
 Write the same style prompt into each locale, changing only the accent line:
 
@@ -821,6 +823,10 @@ Write the same style prompt into each locale, changing only the accent line:
 
 Two things about that pair. The prompt body stays in one language across all locales, which is deliberate and matches the translate-at-the-tool-boundary principle above: one language in, no mixed-language context. The accent line is the exception and must name the locale's own accent, because an otherwise English prompt steers a Spanish read toward an American one. Naming the same `voice` in both is what keeps the caller hearing the same person after a language switch.
 
-**A green read-back does not prove the prompt fired.** The discovery document qualifies `instruction` with "when using a generative model", and the sibling `model` field accepts one value today, `gemini-3.1-flash-tts-preview`, with Chirp3-HD used when it is empty. The API returns 200 and echoes back whatever you send, including a Chirp3-HD voice name alongside the generative model, so write-time validation tells you nothing about whether the engine honours the instruction. Verify tone with a real call in each language. If delivery is unchanged, setting `model` is the next thing to try, but note it forces the bare Gemini voice names, so `en-US-Chirp3-HD-Zephyr` becomes `Zephyr` and the voice audibly changes along with the tone.
+**An `instruction` with no `model` beside it is very likely inert, and the example above is exactly that shape.** The discovery document qualifies `instruction` with "when using a generative model". The sibling `model` field accepts one value today, `gemini-3.1-flash-tts-preview`, and states that Chirp3-HD is used when it is empty. Chirp3-HD is not a generative model, so an entry carrying a `Chirp3-HD` voice name and no `model` is asking a non-generative engine to read a style prompt. The API returns 200 and echoes the prompt straight back, so write-time validation tells you nothing.
+
+That is the state the entries above are in, and it is left that way deliberately, because setting `model` is not a free upgrade: it forces the bare Gemini voice names, so `en-US-Chirp3-HD-Zephyr` becomes `Zephyr` and the caller hears a different person. Changing engine and persona at once, on a production line, is not a change to make on the strength of a schema description.
+
+So the order is: place a real call in each language first and listen. If delivery is unchanged, that is the expected result rather than a bug in your prompt, and the next step is a controlled test of `model` with the voice change understood and signed off.
 
 **Both CLI directions preserve the field.** `cxas push` copies `app.json` into the import ZIP and `cxas pull` returns raw exported JSON, so neither goes through a generated proto and neither strips `instruction` or `model`. Reading the vendored client and concluding the field does not exist is a false negative.
