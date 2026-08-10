@@ -43,8 +43,10 @@ turn_evals = TurnEvals(
 | Operator | Description |
 |----------|-------------|
 | `CONTAINS` | Agent response contains the expected string |
+| `NOT_CONTAINS` | Agent response does not contain the expected string |
 | `EQUALS` | Agent response exactly equals the expected string |
 | `TOOL_CALLED` | The specified tool was called during this turn |
+| `TOOL_NOT_CALLED` | The specified tool was not called during this turn |
 | `TOOL_INPUT` | The specified tool was called with the expected input argument |
 | `TOOL_OUTPUT` | The specified tool returned the expected output |
 | `NO_TOOLS_CALLED` | No tools were called during this turn |
@@ -55,8 +57,10 @@ from cxas_scrapi.evals.turn_evals import TurnOperator
 
 # Available values
 TurnOperator.CONTAINS
+TurnOperator.NOT_CONTAINS
 TurnOperator.EQUALS
 TurnOperator.TOOL_CALLED
+TurnOperator.TOOL_NOT_CALLED
 TurnOperator.TOOL_INPUT
 TurnOperator.TOOL_OUTPUT
 TurnOperator.NO_TOOLS_CALLED

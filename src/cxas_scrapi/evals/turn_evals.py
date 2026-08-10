@@ -71,8 +71,10 @@ class TurnOperator(str, enum.Enum):
     """Operators for testing single-turn expectations."""
 
     CONTAINS = "contains"
+    NOT_CONTAINS = "not_contains"
     EQUALS = "equals"
     TOOL_CALLED = "tool_called"
+    TOOL_NOT_CALLED = "tool_not_called"
     TOOL_INPUT = "tool_input"
     TOOL_OUTPUT = "tool_output"
     NO_TOOLS_CALLED = "no_tools_called"
@@ -476,6 +478,14 @@ class TurnEvals:
                     justification = (
                         f"CONTAINS failed: '{expected}' not found in '{actual}'"
                     )
+            elif op == TurnOperator.NOT_CONTAINS:
+                actual = full_text.strip()
+                if str(expected).lower() in actual.lower():
+                    status = "FAILURE"
+                    justification = (
+                        f"NOT_CONTAINS failed: '{expected}' "
+                        f"unexpectedly found in '{actual}'"
+                    )
             elif op == TurnOperator.FUZZY_MATCH:
                 import numpy as np  # noqa: PLC0415
                 from sklearn.metrics.pairwise import (  # noqa: PLC0415
@@ -522,6 +532,18 @@ class TurnEvals:
                     justification = (
                         f"TOOL_CALLED failed: Expected tool '{expected}' was "
                         f"not called. Tools called: {called_tools}"
+                    )
+            elif op == TurnOperator.TOOL_NOT_CALLED:
+                actual = str(called_tools)
+                found = any(
+                    expected == t or t.endswith(expected) for t in called_tools
+                )
+                if found:
+                    status = "FAILURE"
+                    justification = (
+                        f"TOOL_NOT_CALLED failed: Unexpected tool "
+                        f"'{expected}' was called. "
+                        f"Tools called: {called_tools}"
                     )
             elif op == TurnOperator.NO_TOOLS_CALLED:
                 actual = str(called_tools)
