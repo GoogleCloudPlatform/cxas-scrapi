@@ -132,11 +132,17 @@ def test_validate_turn_test_success(
             TurnExpectation(
                 type=TurnOperator.TOOL_OUTPUT, value={"status": "SUCCESS"}
             ),
+            TurnExpectation(
+                type=TurnOperator.NOT_CONTAINS, value="wrong string"
+            ),
+            TurnExpectation(
+                type=TurnOperator.TOOL_NOT_CALLED, value="wrong_tool"
+            ),
         ],
     )
 
     results = mock_turn_evals.validate_turn_test(test_case, MagicMock())
-    assert len(results) == 5
+    assert len(results) == 7
     assert all(r["status"] == "SUCCESS" for r in results)
 
 
@@ -181,17 +187,23 @@ def test_validate_turn_test_failures(
                 type=TurnOperator.TOOL_INPUT, value={"query": "shoes"}
             ),
             TurnExpectation(type=TurnOperator.NO_TOOLS_CALLED, value=None),
+            TurnExpectation(type=TurnOperator.NOT_CONTAINS, value="Nope."),
+            TurnExpectation(
+                type=TurnOperator.TOOL_NOT_CALLED, value="other_tool"
+            ),
         ],
     )
 
     results = mock_turn_evals.validate_turn_test(test_case, MagicMock())
-    assert len(results) == 5
+    assert len(results) == 7
     assert all(r["status"] == "FAILURE" for r in results)
     assert any("CONTAINS failed" in r["justification"] for r in results)
     assert any("EQUALS failed" in r["justification"] for r in results)
     assert any("TOOL_CALLED failed" in r["justification"] for r in results)
     assert any("TOOL_INPUT failed" in r["justification"] for r in results)
     assert any("NO_TOOLS_CALLED failed" in r["justification"] for r in results)
+    assert any("NOT_CONTAINS failed" in r["justification"] for r in results)
+    assert any("TOOL_NOT_CALLED failed" in r["justification"] for r in results)
 
 
 @patch("cxas_scrapi.evals.turn_evals.MessageToDict")
