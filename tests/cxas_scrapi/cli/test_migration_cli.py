@@ -481,7 +481,12 @@ def test_run_end_to_end_builds_config_and_calls_service() -> None:
     fake_cx_api.fetch_full_agent_details.return_value = fake_agent_data
 
     fake_service = MagicMock()
-    fake_service.ir = MagicMock()
+    fake_service.ir = MigrationIR(
+        metadata=IRMetadata(
+            app_name="my_target",
+            app_id="11111111-1111-1111-1111-111111111111",
+        )
+    )
     fake_service.run_migration = AsyncMock(return_value=None)
 
     with (
@@ -508,3 +513,56 @@ def test_run_end_to_end_builds_config_and_calls_service() -> None:
     assert config_arg.consolidate is True
     assert config_arg.run_stage_3 is True
     assert config_arg.persist_bundle is True
+
+
+def test_run_end_to_end_direct_profile_persists_bundle_by_default() -> None:
+    """--profile direct defaults to persist_bundle=True and saves the bundle."""
+    args = argparse.Namespace(
+        source_agent_id="projects/p/locations/us/agents/uuid",
+        source_zip=None,
+        project_id="p",
+        location="us",
+        target_name="direct_target",
+        env="PROD",
+        model="gemini-2.5-flash-001",
+        profile="direct",
+        architecture="hub-and-spoke",
+        no_optimize=False,
+        no_persist=False,
+        yes=True,
+    )
+
+    fake_agent_data = _make_source()
+    fake_cx_api = MagicMock()
+    fake_cx_api.fetch_full_agent_details.return_value = fake_agent_data
+
+    fake_service = MagicMock()
+    fake_service.ir = MigrationIR(
+        metadata=IRMetadata(
+            app_name="direct_target",
+            app_id="11111111-1111-1111-1111-111111111111",
+        )
+    )
+    fake_service.run_migration = AsyncMock(return_value=None)
+    fake_service.persist_bundle = MagicMock(
+        return_value="direct_target_ir.json"
+    )
+
+    with (
+        patch.object(
+            migration_cli, "ConversationalAgentsAPI", return_value=fake_cx_api
+        ),
+        patch.object(
+            migration_cli, "MigrationService", return_value=fake_service
+        ),
+    ):
+        migration_cli.run_end_to_end(args)
+
+    config_arg = fake_service.run_migration.call_args.kwargs["config"]
+    assert config_arg.profile == "direct"
+    assert config_arg.no_consolidate is True
+    assert config_arg.persist_bundle is True
+    fake_service.persist_bundle.assert_called_once()
+    assert (
+        fake_service.persist_bundle.call_args.args[1] == "direct_target_ir.json"
+    )
