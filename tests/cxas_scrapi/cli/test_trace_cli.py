@@ -682,7 +682,7 @@ def test_register_transcribe_audio_smoke() -> None:
             APP,
             "c1",
             "--model",
-            "gemini-2.5-flash",
+            "gemini-3.5-flash",
             "--only-non-english",
             "--table",
             "updates_tbl",
@@ -691,7 +691,7 @@ def test_register_transcribe_audio_smoke() -> None:
     )
     assert args.func == trace_cli.trace_transcribe_audio
     assert args.conversation_id == "c1"
-    assert args.model == "gemini-2.5-flash"
+    assert args.model == "gemini-3.5-flash"
     assert args.only_non_english is True
     assert args.output_table == "updates_tbl"
     assert args.dry_run is True
@@ -710,13 +710,13 @@ def test_register_audio_transcribe_smoke() -> None:
             APP,
             "c1",
             "--model",
-            "gemini-2.5-flash-lite",
+            "gemini-3.5-flash",
             "--only-non-english",
         ]
     )
     assert args.func == trace_cli.trace_transcribe_audio
     assert args.conversation_id == "c1"
-    assert args.model == "gemini-2.5-flash-lite"
+    assert args.model == "gemini-3.5-flash"
     assert args.only_non_english is True
 
 
@@ -727,7 +727,7 @@ def test_trace_transcribe_audio_table_format(
         "source_table": "p.d.src",
         "output_table": "p.d.dst",
         "dry_run": False,
-        "model_used": "gemini-2.5-flash",
+        "model_used": "gemini-3.5-flash",
         "only_non_english": False,
         "total_user_turns_inspected": 2,
         "total_turns_reprocessed": 2,
@@ -756,7 +756,7 @@ def test_trace_transcribe_audio_table_format(
         source_table=None,
         dataset=None,
         project=None,
-        model="gemini-2.5-flash",
+        model="gemini-3.5-flash",
         only_non_english=False,
         dry_run=False,
         limit=None,
@@ -784,7 +784,7 @@ def test_trace_transcribe_audio_json_format(
         source_table=None,
         dataset=None,
         project=None,
-        model="gemini-2.5-flash",
+        model="gemini-3.5-flash",
         only_non_english=False,
         dry_run=True,
         limit=None,
@@ -826,7 +826,7 @@ def test_trace_transcribe_audio_markdown_format(
         source_table=None,
         dataset=None,
         project=None,
-        model="gemini-2.5-flash",
+        model="gemini-3.5-flash",
         only_non_english=False,
         dry_run=False,
         limit=None,

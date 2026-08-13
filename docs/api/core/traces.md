@@ -32,7 +32,7 @@ for item in user_audios:
 # 2. Transcribe turns using Gemini Flash and compute WER metrics
 results = traces.transcribe_user_turns(
     conversation_id="conv-12345",
-    model="gemini-2.5-flash",
+    model="gemini-3.5-flash",
     only_non_english=False,
     max_workers=8,
 )
@@ -54,7 +54,7 @@ for res in results:
 # Reprocess user turn messages into a shared BigQuery updates table
 reprocess_summary = traces.reprocess_transcriptions(
     conversation_id="conv-12345",
-    model="gemini-2.5-flash",
+    model="gemini-3.5-flash",
     only_non_english=True,  # Only reprocess non-English/accented turns
     output_table="my_dataset.reprocessed_transcripts",
     max_workers=16,

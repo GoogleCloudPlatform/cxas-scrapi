@@ -82,7 +82,7 @@ The `cxas trace audio transcribe` (or `cxas trace transcribe-audio`) subcommand 
 
 ### Capabilities
 1. **GCS Audio Turn Discovery**: Automatically locates user turn recordings (`user-turn-*.wav`) for a conversation in the app's configured GCS audio bucket.
-2. **Gemini STT Transcription**: Transcribes user speech verbatim using `GeminiGenerate` (`gemini-2.5-flash`, `gemini-2.5-flash-lite`, etc.) with zero temperature.
+2. **Gemini STT Transcription**: Transcribes user speech verbatim using `GeminiGenerate` (`gemini-3.5-flash`, `gemini-2.5-flash-lite`, etc.) with zero temperature.
 3. **Word Error Rate (WER) Metrics**: Aligns baseline CES real-time transcripts with Gemini transcription ground-truth using dynamic programming Levenshtein distance, reporting Substitutions ($S$), Deletions ($D$), Insertions ($I$), and overall WER ($WER = \frac{S + D + I}{N}$).
 4. **Multilingual & Non-English Turn Filtering**: Pass `--only-non-english` to filter and reprocess only user turns containing non-ASCII / foreign characters.
 5. **Append-Only BigQuery Updates Table**: Safely appends only the reprocessed/updated turns into a target BigQuery table (`reprocessed_transcripts`), auto-creating the table schema if it does not exist. This design avoids DML locks and table overwrite conflicts when running multiple parallel CLI jobs simultaneously.
@@ -93,7 +93,7 @@ The `cxas trace audio transcribe` (or `cxas trace transcribe-audio`) subcommand 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `conversation_id` | *(positional)* | The conversation/session ID to transcribe. |
-| `--model` | `gemini-2.5-flash` | Gemini model name for speech-to-text transcription. |
+| `--model` | `gemini-3.5-flash` | Gemini model name for speech-to-text transcription. |
 | `--only-non-english` | `False` | Only transcribe and reprocess user turns containing non-English / non-ASCII characters. |
 | `--table` / `--output-table` | `reprocessed_transcripts` | Destination BigQuery table for appending reprocessed turn updates. |
 | `--source-table` | *(app export table)* | Source BigQuery table name containing conversations. |
@@ -111,7 +111,7 @@ The `cxas trace audio transcribe` (or `cxas trace transcribe-audio`) subcommand 
 ```bash
 cxas trace transcribe-audio conv-12345 \
   --app-name projects/my-project/locations/us/apps/my-app \
-  --model gemini-2.5-flash \
+  --model gemini-3.5-flash \
   --dry-run
 ```
 

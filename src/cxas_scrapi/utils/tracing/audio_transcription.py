@@ -33,7 +33,7 @@ from cxas_scrapi.utils.gemini import GeminiGenerate
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TRANSCRIPTION_MODEL = "gemini-2.5-flash"
+DEFAULT_TRANSCRIPTION_MODEL = "gemini-3.5-flash"
 
 DEFAULT_TRANSCRIPTION_PROMPT = (
     "Transcribe the speech in this audio recording accurately and verbatim.\n"
