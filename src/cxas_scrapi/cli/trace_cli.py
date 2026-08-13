@@ -328,7 +328,7 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
             source_table=getattr(args, "source_table", None),
             bq_dataset=getattr(args, "dataset", None),
             bq_project=getattr(args, "project", None),
-            model_name=getattr(args, "model", "gemini-2.5-flash"),
+            model_name=getattr(args, "model", "gemini-3.5-flash"),
             only_non_english=getattr(args, "only_non_english", False),
             dry_run=getattr(args, "dry_run", False),
             limit=getattr(args, "limit", None),
@@ -877,8 +877,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     p_audio_transcribe.add_argument("conversation_id")
     p_audio_transcribe.add_argument(
         "--model",
-        default="gemini-2.5-flash",
-        help="Gemini model name (default: gemini-2.5-flash).",
+        default="gemini-3.5-flash",
+        help="Gemini model name (default: gemini-3.5-flash).",
     )
     p_audio_transcribe.add_argument(
         "--only-non-english",
@@ -926,8 +926,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         )
         p_transcribe.add_argument(
             "--model",
-            default="gemini-2.5-flash",
-            help="Gemini model name (default: gemini-2.5-flash).",
+            default="gemini-3.5-flash",
+            help="Gemini model name (default: gemini-3.5-flash).",
         )
         p_transcribe.add_argument(
             "--only-non-english",
