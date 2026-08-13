@@ -38,6 +38,8 @@ from cxas_scrapi.utils import (
     report_components,
 )
 
+_ORIG_OPEN = open
+
 
 def _escape(text: typing.Any) -> typing.Any:
     """HTML-escape a string."""
@@ -928,7 +930,7 @@ def generate_combined_html_report(
     template_path = os.path.join(
         os.path.dirname(__file__), "combined_report_template.html"
     )
-    with open(template_path) as f:
+    with _ORIG_OPEN(template_path) as f:
         template_content = f.read()
     template = jinja2.Template(template_content)
     html = template.render(

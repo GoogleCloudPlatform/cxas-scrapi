@@ -226,6 +226,7 @@ class Common:
             return resource_name.rsplit("/sessions/", maxsplit=1)[-1]
         except Exception:
             pass
+
     def get_bigquery_client(
         self, project_id: str | None = None
     ) -> bigquery.Client:

@@ -1283,4 +1283,3 @@ def test_reprocess_transcriptions_cloning_and_bq_update(
     assert res["total_turns_reprocessed"] == 1
     assert res["turns"][0]["gemini_transcript"] == "Updated user speech"
     assert res["turns"][0]["updated_in_bq"] is True
-
