@@ -67,6 +67,22 @@ from cxas_scrapi.utils.tracing.trace_config import TraceConfig
 
 logger = logging.getLogger(__name__)
 
+REPROCESSED_TRANSCRIPTS_SCHEMA = [
+    bigquery.SchemaField("conversation_id", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("turn_index", "INT64", mode="REQUIRED"),
+    bigquery.SchemaField("audio_uri", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("original_transcript", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("updated_transcript", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("wer", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("substitutions", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("deletions", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("insertions", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("hits", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("is_non_english", "BOOL", mode="NULLABLE"),
+    bigquery.SchemaField("model", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("reprocessed_at", "TIMESTAMP", mode="NULLABLE"),
+]
+
 
 class Traces(Common):
     """Orchestrates listing, fetching, enriching and analyzing conversations.
@@ -652,35 +668,34 @@ class Traces(Common):
     def reprocess_transcriptions(
         self,
         conversation_id: str | None = None,
-        destination_table: str | None = None,
+        output_table: str | None = None,
+        source_table: str | None = None,
         bq_dataset: str | None = None,
         bq_project: str | None = None,
         model_name: str = DEFAULT_TRANSCRIPTION_MODEL,
         only_non_english: bool = False,
-        clone_table: bool = True,
         dry_run: bool = False,
         limit: int | None = None,
         prompt: str | None = None,
         max_workers: int = 8,
     ) -> dict[str, Any]:
         """Reprocesses user speech transcriptions from GCS audio, computes WER,
-        and writes updated transcriptions to matching user turns in a cloned
-        BigQuery table.
+        and appends updated turn records to a BigQuery destination table.
 
         Args:
             conversation_id: Optional specific conversation ID. If omitted,
-                reprocesses conversations found in the BigQuery table.
-            destination_table: Cloned BigQuery table name or qualified
-                reference (e.g. `dataset.table_retranscribed`). Defaults to
-                `{src_table}_retranscribed`.
+                reprocesses conversations found in the BigQuery source table.
+            output_table: Target BigQuery table name or qualified reference
+                (e.g. `dataset.reprocessed_transcripts`). Defaults to
+                `{dataset}.reprocessed_transcripts`.
+            source_table: Source BigQuery table name containing conversations.
+                Defaults to the app's CES BigQuery export table.
             bq_dataset: Optional BigQuery dataset override.
             bq_project: Optional BigQuery project override.
             model_name: Gemini Flash / Flash-Lite model name (default:
                 gemini-2.5-flash).
             only_non_english: If True, only reprocesses turns that contain
                 non-English characters.
-            clone_table: If True (and not dry_run), clones the source BQ table
-                to destination table before applying updates.
             dry_run: If True, calculates transcriptions and WER without
                 mutating BigQuery.
             limit: Maximum number of conversations to process.
@@ -699,7 +714,7 @@ class Traces(Common):
         dataset = bq_dataset or (
             bq_settings.get("dataset") if bq_settings else None
         )
-        table_id = (self.app_name or "").split("/")[-1]
+        src_table_name = source_table or (self.app_name or "").split("/")[-1]
 
         if not proj or not dataset:
             raise ValueError(
@@ -708,45 +723,50 @@ class Traces(Common):
                 "`bq_dataset` / `bq_project`."
             )
 
-        src_table_ref = f"{proj}.{dataset}.{table_id}"
+        if "." in src_table_name:
+            src_table_ref = src_table_name
+        else:
+            src_table_ref = f"{proj}.{dataset}.{src_table_name}"
 
-        # Resolve destination table
-        if destination_table:
-            if "." in destination_table:
-                parts = destination_table.split(".")
+        # Resolve output destination table
+        if output_table:
+            if "." in output_table:
+                parts = output_table.split(".")
                 if len(parts) == 2:
                     dst_table_ref = f"{proj}.{parts[0]}.{parts[1]}"
                 else:
-                    dst_table_ref = destination_table
+                    dst_table_ref = output_table
             else:
-                dst_table_ref = f"{proj}.{dataset}.{destination_table}"
+                dst_table_ref = f"{proj}.{dataset}.{output_table}"
         else:
-            dst_table_ref = f"{proj}.{dataset}.{table_id}_retranscribed"
+            dst_table_ref = f"{proj}.{dataset}.reprocessed_transcripts"
 
         bq_client = self.get_bigquery_client(project_id=proj)
 
-        # Clone table if needed
-        cloned_created = False
-        if clone_table and not dry_run:
+        # Ensure output table exists if not dry_run
+        if not dry_run:
             try:
                 bq_client.get_table(dst_table_ref)
-                logger.info(f"Target table {dst_table_ref} already exists.")
             except Exception:
-                logger.info(f"Cloning {src_table_ref} to {dst_table_ref}...")
-                clone_job = bq_client.query(
-                    f"CREATE TABLE `{dst_table_ref}` CLONE `{src_table_ref}`"
-                )
-                clone_job.result()
-                cloned_created = True
+                try:
+                    table_obj = bigquery.Table(
+                        dst_table_ref, schema=REPROCESSED_TRANSCRIPTS_SCHEMA
+                    )
+                    bq_client.create_table(table_obj, exists_ok=True)
+                    logger.info(
+                        f"Created BigQuery destination table {dst_table_ref}"
+                    )
+                except Exception as ex:
+                    logger.warning(
+                        "Could not auto-create destination table %s: %s",
+                        dst_table_ref,
+                        ex,
+                    )
 
-        target_table_ref = (
-            dst_table_ref if (not dry_run and clone_table) else src_table_ref
-        )
-
-        # Query rows from BigQuery
+        # Query rows from BigQuery source table
         if conversation_id:
             query = (
-                f"SELECT * FROM `{target_table_ref}` "
+                f"SELECT * FROM `{src_table_ref}` "
                 f"WHERE conversation_id = @conv_id ORDER BY turn_index"
             )
             job_config = bigquery.QueryJobConfig(
@@ -758,7 +778,7 @@ class Traces(Common):
             )
         else:
             query = (
-                f"SELECT * FROM `{target_table_ref}` "
+                f"SELECT * FROM `{src_table_ref}` "
                 f"ORDER BY create_time DESC, turn_index ASC"
             )
             job_config = None
@@ -845,7 +865,7 @@ class Traces(Common):
                     "gemini_transcript": None,
                     "contains_non_english": False,
                     "reprocessed": False,
-                    "updated_in_bq": False,
+                    "appended_to_bq": False,
                     "wer": None,
                 }
 
@@ -859,7 +879,7 @@ class Traces(Common):
                     "gemini_transcript": None,
                     "contains_non_english": has_non_english,
                     "reprocessed": False,
-                    "updated_in_bq": False,
+                    "appended_to_bq": False,
                     "wer": None,
                     "error": "Audio file not found in GCS",
                 }
@@ -886,81 +906,10 @@ class Traces(Common):
                     "gemini_transcript": None,
                     "contains_non_english": has_non_english,
                     "reprocessed": False,
-                    "updated_in_bq": False,
+                    "appended_to_bq": False,
                     "wer": None,
                     "error": str(ex),
                 }
-
-            # Update turn in cloned BigQuery table
-            updated_in_bq = False
-            if not dry_run:
-                try:
-                    # Build updated user chunks
-                    for m in messages:
-                        if m.get("role") == "user":
-                            updated_chunks = []
-                            chunk_updated = False
-                            for c in m.get("chunks", []):
-                                c_copy = dict(c)
-                                if "transcript" in c_copy:
-                                    c_copy["transcript"] = gemini_transcript
-                                    chunk_updated = True
-                                updated_chunks.append(c_copy)
-                            if not chunk_updated:
-                                updated_chunks.append(
-                                    {"transcript": gemini_transcript}
-                                )
-                            m["chunks"] = updated_chunks
-
-                    # Execute UPDATE query
-                    for m in messages:
-                        if m.get("role") == "user":
-                            new_chunks_json = json.dumps(
-                                m.get("chunks", []), default=str
-                            )
-                            update_sql = (
-                                f"UPDATE `{target_table_ref}`\n"
-                                "SET messages = ARRAY(\n"
-                                "  SELECT AS STRUCT\n"
-                                "    m.role,\n"
-                                "    m.event_time,\n"
-                                "    CASE\n"
-                                '      WHEN m.role = "user" THEN'
-                                " PARSE_JSON(@new_chunks_json)\n"
-                                "      ELSE m.chunks\n"
-                                "    END AS chunks\n"
-                                "  FROM UNNEST(messages) AS m\n"
-                                ")\n"
-                                "WHERE conversation_id = @conv_id AND"
-                                " turn_index = @turn_idx\n"
-                            )
-                            update_job = bq_client.query(
-                                update_sql,
-                                job_config=bigquery.QueryJobConfig(
-                                    query_parameters=[
-                                        bigquery.ScalarQueryParameter(
-                                            "new_chunks_json",
-                                            "STRING",
-                                            new_chunks_json,
-                                        ),
-                                        bigquery.ScalarQueryParameter(
-                                            "conv_id", "STRING", cid
-                                        ),
-                                        bigquery.ScalarQueryParameter(
-                                            "turn_idx", "INT64", t_idx
-                                        ),
-                                    ]
-                                ),
-                            )
-                            update_job.result()
-                    updated_in_bq = True
-                except Exception as bq_ex:
-                    logger.error(
-                        "Failed to update BQ table for %s turn %s: %s",
-                        cid,
-                        t_idx,
-                        bq_ex,
-                    )
 
             return {
                 "conversation_id": cid,
@@ -970,7 +919,7 @@ class Traces(Common):
                 "gemini_transcript": gemini_transcript,
                 "contains_non_english": has_non_english,
                 "reprocessed": True,
-                "updated_in_bq": updated_in_bq,
+                "appended_to_bq": False,
                 **wer_metrics,
             }
 
@@ -994,6 +943,58 @@ class Traces(Common):
                 int(t.get("turn_index") or 0),
             )
         )
+
+        # Append reprocessed turns to BigQuery destination table
+        rows_to_insert = []
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        for t in turn_results:
+            if t.get("reprocessed") and t.get("gemini_transcript") is not None:
+                rows_to_insert.append(
+                    {
+                        "conversation_id": t["conversation_id"],
+                        "turn_index": int(t["turn_index"]),
+                        "audio_uri": t.get("audio_uri"),
+                        "original_transcript": t.get("ces_transcript"),
+                        "updated_transcript": t.get("gemini_transcript"),
+                        "wer": t.get("wer"),
+                        "substitutions": t.get("substitutions"),
+                        "deletions": t.get("deletions"),
+                        "insertions": t.get("insertions"),
+                        "hits": t.get("hits"),
+                        "is_non_english": t.get("contains_non_english"),
+                        "model": model_name,
+                        "reprocessed_at": now_iso,
+                    }
+                )
+
+        if not dry_run and rows_to_insert:
+            try:
+                errors = bq_client.insert_rows_json(
+                    dst_table_ref, rows_to_insert
+                )
+                if errors:
+                    logger.error(
+                        f"Failed to append rows to {dst_table_ref}: {errors}"
+                    )
+                else:
+                    logger.info(
+                        "Appended %s updated turns to %s",
+                        len(rows_to_insert),
+                        dst_table_ref,
+                    )
+                    for t in turn_results:
+                        if (
+                            t.get("reprocessed")
+                            and t.get("gemini_transcript") is not None
+                        ):
+                            t["appended_to_bq"] = True
+            except Exception as bq_ex:
+                logger.error(
+                    "Failed to insert rows into BigQuery destination table"
+                    " %s: %s",
+                    dst_table_ref,
+                    bq_ex,
+                )
 
         for t in turn_results:
             total_user_turns_inspected += 1
@@ -1022,8 +1023,7 @@ class Traces(Common):
 
         return {
             "source_table": src_table_ref,
-            "destination_table": dst_table_ref if not dry_run else None,
-            "cloned_table_created": cloned_created,
+            "output_table": dst_table_ref,
             "dry_run": dry_run,
             "model_used": model_name,
             "only_non_english": only_non_english,

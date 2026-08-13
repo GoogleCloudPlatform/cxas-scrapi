@@ -684,8 +684,8 @@ def test_register_transcribe_audio_smoke() -> None:
             "--model",
             "gemini-2.5-flash",
             "--only-non-english",
-            "--clone-table",
-            "cloned_tbl",
+            "--table",
+            "updates_tbl",
             "--dry-run",
         ]
     )
@@ -693,7 +693,7 @@ def test_register_transcribe_audio_smoke() -> None:
     assert args.conversation_id == "c1"
     assert args.model == "gemini-2.5-flash"
     assert args.only_non_english is True
-    assert args.destination_table == "cloned_tbl"
+    assert args.output_table == "updates_tbl"
     assert args.dry_run is True
 
 
@@ -725,8 +725,7 @@ def test_trace_transcribe_audio_table_format(
 ) -> None:
     fake_traces.reprocess_transcriptions.return_value = {
         "source_table": "p.d.src",
-        "destination_table": "p.d.dst",
-        "cloned_table_created": True,
+        "output_table": "p.d.dst",
         "dry_run": False,
         "model_used": "gemini-2.5-flash",
         "only_non_english": False,
@@ -742,7 +741,7 @@ def test_trace_transcribe_audio_table_format(
                 "gemini_transcript": "hello",
                 "contains_non_english": False,
                 "reprocessed": True,
-                "updated_in_bq": True,
+                "appended_to_bq": True,
                 "wer": 0.0,
                 "substitutions": 0,
                 "deletions": 0,
@@ -753,12 +752,12 @@ def test_trace_transcribe_audio_table_format(
 
     args = _ns(
         conversation_id="c1",
-        destination_table="dst",
+        output_table="dst",
+        source_table=None,
         dataset=None,
         project=None,
         model="gemini-2.5-flash",
         only_non_english=False,
-        no_clone=False,
         dry_run=False,
         limit=None,
         format="table",
@@ -781,12 +780,12 @@ def test_trace_transcribe_audio_json_format(
 
     args = _ns(
         conversation_id="c1",
-        destination_table=None,
+        output_table=None,
+        source_table=None,
         dataset=None,
         project=None,
         model="gemini-2.5-flash",
         only_non_english=False,
-        no_clone=False,
         dry_run=True,
         limit=None,
         format="json",
@@ -803,7 +802,7 @@ def test_trace_transcribe_audio_markdown_format(
 ) -> None:
     fake_traces.reprocess_transcriptions.return_value = {
         "source_table": "p.d.src",
-        "destination_table": "p.d.dst",
+        "output_table": "p.d.dst",
         "total_user_turns_inspected": 1,
         "total_turns_reprocessed": 1,
         "overall_wer": 0.0,
@@ -815,7 +814,7 @@ def test_trace_transcribe_audio_markdown_format(
                 "gemini_transcript": "No",
                 "contains_non_english": False,
                 "reprocessed": True,
-                "updated_in_bq": True,
+                "appended_to_bq": True,
                 "wer": 0.0,
             }
         ],
@@ -823,12 +822,12 @@ def test_trace_transcribe_audio_markdown_format(
 
     args = _ns(
         conversation_id="c1",
-        destination_table="dst",
+        output_table="dst",
+        source_table=None,
         dataset=None,
         project=None,
         model="gemini-2.5-flash",
         only_non_english=False,
-        no_clone=False,
         dry_run=False,
         limit=None,
         format="md",

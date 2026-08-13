@@ -1220,7 +1220,7 @@ def test_transcribe_user_turns_only_non_english(
 
 
 @patch("cxas_scrapi.core.traces.AudioTranscriber")
-def test_reprocess_transcriptions_cloning_and_bq_update(
+def test_reprocess_transcriptions_and_bq_append(
     mock_transcriber_cls: MagicMock,
     traces_obj: typing.Any,
     monkeypatch: typing.Any,
@@ -1231,6 +1231,7 @@ def test_reprocess_transcriptions_cloning_and_bq_update(
 
     # Mock BigQuery Client
     mock_bq = MagicMock()
+    mock_bq.insert_rows_json.return_value = []
     mock_row_1 = {
         "conversation_id": "c1",
         "turn_index": 1,
@@ -1273,13 +1274,13 @@ def test_reprocess_transcriptions_cloning_and_bq_update(
 
     res = traces_obj.reprocess_transcriptions(
         conversation_id="c1",
-        destination_table="cloned_table",
-        clone_table=True,
+        output_table="updates_table",
         dry_run=False,
     )
 
     assert res["source_table"] == "test-p.test_ds.a"
-    assert res["destination_table"] == "test-p.test_ds.cloned_table"
+    assert res["output_table"] == "test-p.test_ds.updates_table"
     assert res["total_turns_reprocessed"] == 1
     assert res["turns"][0]["gemini_transcript"] == "Updated user speech"
-    assert res["turns"][0]["updated_in_bq"] is True
+    assert res["turns"][0]["appended_to_bq"] is True
+    assert mock_bq.insert_rows_json.called

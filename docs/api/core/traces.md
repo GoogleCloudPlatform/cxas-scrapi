@@ -48,21 +48,21 @@ for res in results:
     print(f"  Gemini Hyp: {res['gemini_transcript']}")
 ```
 
-### 2. Reprocess Conversation in Cloned BigQuery Table
+### 2. Reprocess Conversations into BigQuery Updates Table
 
 ```python
-# Reprocess user turn messages into a cloned BigQuery export table
+# Reprocess user turn messages into a shared BigQuery updates table
 reprocess_summary = traces.reprocess_transcriptions(
     conversation_id="conv-12345",
     model="gemini-2.5-flash",
     only_non_english=True,  # Only reprocess non-English/accented turns
-    destination_table="my_dataset.conversation_export_reprocessed",
-    clone=True,
+    output_table="my_dataset.reprocessed_transcripts",
     max_workers=16,
 )
 
-print(f"Cloned Table: {reprocess_summary['cloned_table']}")
-print(f"Updated Turns: {reprocess_summary['updated_turns']}")
+print(f"Output Table: {reprocess_summary['output_table']}")
+print(f"Reprocessed Turns: {reprocess_summary['total_turns_reprocessed']}")
+print(f"Overall WER: {reprocess_summary['overall_wer']:.1%}")
 ```
 
 ### 3. Direct Word Error Rate (WER) Utility Usage

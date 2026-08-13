@@ -85,8 +85,8 @@ The `cxas trace audio transcribe` (or `cxas trace transcribe-audio`) subcommand 
 2. **Gemini STT Transcription**: Transcribes user speech verbatim using `GeminiGenerate` (`gemini-2.5-flash`, `gemini-2.5-flash-lite`, etc.) with zero temperature.
 3. **Word Error Rate (WER) Metrics**: Aligns baseline CES real-time transcripts with Gemini transcription ground-truth using dynamic programming Levenshtein distance, reporting Substitutions ($S$), Deletions ($D$), Insertions ($I$), and overall WER ($WER = \frac{S + D + I}{N}$).
 4. **Multilingual & Non-English Turn Filtering**: Pass `--only-non-english` to filter and reprocess only user turns containing non-ASCII / foreign characters.
-5. **Cloned BigQuery Table Reprocessing**: Safely clones the BigQuery export table (`CREATE TABLE <dst> CLONE <src>`) and updates user turn messages with the verbatim Gemini transcription, preserving all other turn messages and chunks.
-6. **Parallel Concurrency**: Fully parallelized across user turns and BigQuery row updates using `--max-workers`.
+5. **Append-Only BigQuery Updates Table**: Safely appends only the reprocessed/updated turns into a target BigQuery table (`reprocessed_transcripts`), auto-creating the table schema if it does not exist. This design avoids DML locks and table overwrite conflicts when running multiple parallel CLI jobs simultaneously.
+6. **Parallel Concurrency**: Fully parallelized across user turns and BigQuery row inserts using `--max-workers`.
 
 ### Command Flags
 
@@ -95,13 +95,13 @@ The `cxas trace audio transcribe` (or `cxas trace transcribe-audio`) subcommand 
 | `conversation_id` | *(positional)* | The conversation/session ID to transcribe. |
 | `--model` | `gemini-2.5-flash` | Gemini model name for speech-to-text transcription. |
 | `--only-non-english` | `False` | Only transcribe and reprocess user turns containing non-English / non-ASCII characters. |
-| `--clone-table` / `--destination-table` | `None` | BigQuery destination table name. Defaults to `<source_table>_reprocessed`. |
+| `--table` / `--output-table` | `reprocessed_transcripts` | Destination BigQuery table for appending reprocessed turn updates. |
+| `--source-table` | *(app export table)* | Source BigQuery table name containing conversations. |
 | `--dataset` | `None` | Override BigQuery dataset ID (otherwise inferred from `app.json` or remote settings). |
 | `--project` | `None` | Override Google Cloud Project ID. |
 | `--dry-run` | `False` | Run transcription and WER calculation without modifying BigQuery tables. |
-| `--no-clone` | `False` | Directly update the source table instead of cloning first. |
 | `--limit` | `None` | Limit the maximum number of user turns to transcribe. |
-| `--max-workers` | `8` | Degree of concurrency for parallel GCS reading, Gemini transcription, and BigQuery updating. |
+| `--max-workers` | `8` | Degree of concurrency for parallel GCS reading, Gemini transcription, and BigQuery appending. |
 | `--format` | `table` | Output format: `table`, `json`, `csv`, or `md`. |
 | `--out` | `None` | Write the output report to a local file. |
 
@@ -124,11 +124,11 @@ cxas trace audio transcribe conv-12345 \
   --out transcription_wer_report.md
 ```
 
-#### 3. Reprocess into a cloned BigQuery export table in parallel
+#### 3. Reprocess turns into a shared BigQuery updates table in parallel
 ```bash
 cxas trace transcribe-audio conv-12345 \
   --app-name projects/my-project/locations/us/apps/my-app \
-  --destination-table my_dataset.conversation_export_v2 \
+  --table my_dataset.reprocessed_transcripts \
   --max-workers 16
 ```
 
