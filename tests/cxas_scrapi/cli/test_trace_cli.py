@@ -845,4 +845,3 @@ def test_trace_transcribe_audio_failure(fake_traces: typing.Any) -> None:
     args = _ns(conversation_id="c1")
     with pytest.raises(SystemExit):
         trace_cli.trace_transcribe_audio(args)
-

@@ -400,13 +400,9 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
                     .replace("\n", " ")
                 )
                 wer = (
-                    f"{t.get('wer'):.1%}"
-                    if t.get("wer") is not None
-                    else "N/A"
+                    f"{t.get('wer'):.1%}" if t.get("wer") is not None else "N/A"
                 )
-                sdi = (
-                    f"{t.get('substitutions', 0)}/{t.get('deletions', 0)}/{t.get('insertions', 0)}"
-                )
+                sdi = f"{t.get('substitutions', 0)}/{t.get('deletions', 0)}/{t.get('insertions', 0)}"
                 up = "Yes" if t.get("updated_in_bq") else "No"
                 buf.write(
                     f"| `{cid_short}` | {t_idx} | {ne} | {ces} | {gem} | {wer}"
@@ -443,9 +439,7 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
             ces = t.get("ces_transcript") or ""
             gem = t.get("gemini_transcript") or ""
             wer = f"{t.get('wer'):.1%}" if t.get("wer") is not None else "-"
-            sdi = (
-                f"{t.get('substitutions', 0)}/{t.get('deletions', 0)}/{t.get('insertions', 0)}"
-            )
+            sdi = f"{t.get('substitutions', 0)}/{t.get('deletions', 0)}/{t.get('insertions', 0)}"
             up = "Yes" if t.get("updated_in_bq") else "No"
             table.add_row(cid_disp, t_idx, ne, ces, gem, wer, sdi, up)
 
@@ -454,8 +448,7 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
         )
         if results.get("destination_table"):
             console.print(
-                f"[bold]Cloned Table:[/bold]"
-                f" {results.get('destination_table')}"
+                f"[bold]Cloned Table:[/bold] {results.get('destination_table')}"
             )
         console.print(
             f"[bold]Inspected Turns:[/bold]"

@@ -562,6 +562,7 @@ class Traces(Common):
                 turn_idx = int(match.group(1))
                 user_audio_map[turn_idx] = f
         return dict(sorted(user_audio_map.items()))
+
     def transcribe_user_turns(
         self,
         conversation_id: str,
