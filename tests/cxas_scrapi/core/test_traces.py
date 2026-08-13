@@ -19,7 +19,7 @@ import typing
 import zipfile
 from types import SimpleNamespace
 from typing import NoReturn
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1071,3 +1071,216 @@ def test_agent_text_per_turn() -> None:
         ]
     }
     assert traces_mod._agent_text_per_turn(n) == ["hello world", "second"]
+
+
+# ---------------------- audio transcription & reprocessing -------------------
+
+
+def test_get_user_audio_uris(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    monkeypatch.setattr(
+        traces_obj,
+        "list_audio_files",
+        lambda cid: [
+            "gs://bucket/dir/METADATA.json",
+            "gs://bucket/dir/full-session.wav",
+            "gs://bucket/dir/agent-turn-1.wav",
+            "gs://bucket/dir/user-turn-1.wav",
+            "gs://bucket/dir/agent-turn-2.wav",
+            "gs://bucket/dir/user-turn-2.wav",
+            "gs://bucket/dir/user-turn-5.wav",
+        ],
+    )
+    user_audio_map = traces_obj.get_user_audio_uris("c1")
+    assert user_audio_map == {
+        1: "gs://bucket/dir/user-turn-1.wav",
+        2: "gs://bucket/dir/user-turn-2.wav",
+        5: "gs://bucket/dir/user-turn-5.wav",
+    }
+
+
+@patch("cxas_scrapi.core.traces.AudioTranscriber")
+def test_transcribe_user_turns(
+    mock_transcriber_cls: MagicMock,
+    traces_obj: typing.Any,
+    monkeypatch: typing.Any,
+) -> None:
+    mock_transcriber = MagicMock()
+
+    def _mock_eval(
+        reference_transcript: str,
+        audio_source: str,
+        turn_index: int | None = None,
+        conversation_id: str | None = None,
+        prompt: str | None = None,
+    ) -> dict[str, typing.Any]:
+        return {
+            "conversation_id": conversation_id,
+            "turn_index": turn_index,
+            "audio_source": audio_source,
+            "ces_transcript": reference_transcript,
+            "gemini_transcript": "No",
+            "wer": 0.0,
+            "substitutions": 0,
+            "deletions": 0,
+            "insertions": 0,
+            "hits": 1,
+            "reference_words": 1,
+            "hypothesis_words": 1,
+            "contains_non_english": False,
+        }
+
+    mock_transcriber.evaluate_turn.side_effect = _mock_eval
+    mock_transcriber_cls.return_value = mock_transcriber
+
+    monkeypatch.setattr(
+        traces_obj,
+        "get_normalized",
+        lambda cid: {
+            "conversation_id": cid,
+            "entries": [
+                {"kind": "user", "turn": 1, "text": "No."},
+                {"kind": "agent", "turn": 1, "text": "Okay."},
+                {"kind": "user", "turn": 2, "text": "No."},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        traces_obj,
+        "get_user_audio_uris",
+        lambda cid: {
+            1: "gs://bucket/dir/user-turn-1.wav",
+            2: "gs://bucket/dir/user-turn-2.wav",
+        },
+    )
+
+    results = traces_obj.transcribe_user_turns("c1")
+    assert len(results) == 2
+    assert results[0]["turn_index"] == 1
+    assert results[0]["reprocessed"] is True
+    assert results[0]["wer"] == 0.0
+    assert results[1]["turn_index"] == 2
+    assert results[1]["reprocessed"] is True
+
+
+@patch("cxas_scrapi.core.traces.AudioTranscriber")
+def test_transcribe_user_turns_only_non_english(
+    mock_transcriber_cls: MagicMock,
+    traces_obj: typing.Any,
+    monkeypatch: typing.Any,
+) -> None:
+    mock_transcriber = MagicMock()
+    mock_transcriber.evaluate_turn.return_value = {
+        "conversation_id": "c1",
+        "turn_index": 2,
+        "ces_transcript": "Café",
+        "gemini_transcript": "Cafe",
+        "wer": 0.0,
+        "substitutions": 0,
+        "deletions": 0,
+        "insertions": 0,
+        "hits": 1,
+        "reference_words": 1,
+        "hypothesis_words": 1,
+        "contains_non_english": True,
+    }
+    mock_transcriber_cls.return_value = mock_transcriber
+
+    monkeypatch.setattr(
+        traces_obj,
+        "get_normalized",
+        lambda cid: {
+            "conversation_id": cid,
+            "entries": [
+                {"kind": "user", "turn": 1, "text": "Hello world"},
+                {"kind": "user", "turn": 2, "text": "Café"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        traces_obj,
+        "get_user_audio_uris",
+        lambda cid: {
+            1: "gs://bucket/dir/user-turn-1.wav",
+            2: "gs://bucket/dir/user-turn-2.wav",
+        },
+    )
+
+    results = traces_obj.transcribe_user_turns("c1", only_non_english=True)
+    assert len(results) == 2
+    # Turn 1 is English -> skipped/not reprocessed
+    assert results[0]["turn_index"] == 1
+    assert results[0]["reprocessed"] is False
+    assert results[0]["contains_non_english"] is False
+    # Turn 2 is non-English -> reprocessed
+    assert results[1]["turn_index"] == 2
+    assert results[1]["reprocessed"] is True
+    assert results[1]["contains_non_english"] is True
+
+
+@patch("cxas_scrapi.core.traces.AudioTranscriber")
+def test_reprocess_transcriptions_cloning_and_bq_update(
+    mock_transcriber_cls: MagicMock,
+    traces_obj: typing.Any,
+    monkeypatch: typing.Any,
+) -> None:
+    mock_transcriber = MagicMock()
+    mock_transcriber.transcribe.return_value = "Updated user speech"
+    mock_transcriber_cls.return_value = mock_transcriber
+
+    # Mock BigQuery Client
+    mock_bq = MagicMock()
+    mock_row_1 = {
+        "conversation_id": "c1",
+        "turn_index": 1,
+        "messages": [
+            {
+                "role": "user",
+                "event_time": "2026-05-01T00:00:00Z",
+                "chunks": [{"transcript": "Original speech"}],
+            },
+            {
+                "role": "agent",
+                "event_time": "2026-05-01T00:00:01Z",
+                "chunks": [{"transcript": "Agent response"}],
+            },
+        ],
+    }
+    # Mock query returning row
+    mock_query_job = MagicMock()
+    mock_query_job.result.return_value = [mock_row_1]
+    mock_bq.query.return_value = mock_query_job
+
+    monkeypatch.setattr(
+        traces_obj, "get_bigquery_client", lambda project_id: mock_bq
+    )
+    monkeypatch.setattr(
+        traces_obj,
+        "_get_remote_bigquery_export_settings",
+        lambda: {
+            "enabled": True,
+            "project": "test-p",
+            "dataset": "test_ds",
+            "table": "test_app",
+        },
+    )
+    monkeypatch.setattr(
+        traces_obj,
+        "get_user_audio_uris",
+        lambda cid: {1: "gs://bucket/dir/user-turn-1.wav"},
+    )
+
+    res = traces_obj.reprocess_transcriptions(
+        conversation_id="c1",
+        destination_table="cloned_table",
+        clone_table=True,
+        dry_run=False,
+    )
+
+    assert res["source_table"] == "test-p.test_ds.a"
+    assert res["destination_table"] == "test-p.test_ds.cloned_table"
+    assert res["total_turns_reprocessed"] == 1
+    assert res["turns"][0]["gemini_transcript"] == "Updated user speech"
+    assert res["turns"][0]["updated_in_bq"] is True
+

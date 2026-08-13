@@ -317,6 +317,169 @@ def trace_audio_analyze(args: argparse.Namespace) -> None:
     print(json.dumps(results, indent=2, default=str))
 
 
+def trace_transcribe_audio(args: argparse.Namespace) -> None:
+    """Reprocesses user speech from GCS audio, calculates WER, and updates BQ."""
+    try:
+        traces = _build_traces(args)
+        results = traces.reprocess_transcriptions(
+            conversation_id=getattr(args, "conversation_id", None),
+            destination_table=getattr(args, "destination_table", None),
+            bq_dataset=getattr(args, "dataset", None),
+            bq_project=getattr(args, "project", None),
+            model_name=getattr(args, "model", "gemini-2.5-flash"),
+            only_non_english=getattr(args, "only_non_english", False),
+            clone_table=not getattr(args, "no_clone", False),
+            dry_run=getattr(args, "dry_run", False),
+            limit=getattr(args, "limit", None),
+            max_workers=getattr(args, "max_workers", 8),
+        )
+    except Exception as e:
+        print(f"Transcription reprocess failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    fmt = getattr(args, "format", "table")
+    out_text = ""
+
+    if fmt == "json":
+        out_text = json.dumps(results, indent=2, default=str)
+    elif fmt == "csv":
+        turns = results.get("turns", [])
+        if turns:
+            buf = io.StringIO()
+            writer = csv.DictWriter(buf, fieldnames=list(turns[0].keys()))
+            writer.writeheader()
+            writer.writerows(turns)
+            out_text = buf.getvalue()
+    elif fmt in ("md", "markdown"):
+        buf = io.StringIO()
+        buf.write("# Audio Transcription & WER Report\n\n")
+        buf.write(f"- **Source Table**: `{results.get('source_table')}`\n")
+        if results.get("destination_table"):
+            buf.write(
+                f"- **Destination Table**: `{results.get('destination_table')}`\n"
+            )
+        buf.write(f"- **Model**: `{results.get('model_used')}`\n")
+        buf.write(
+            f"- **Only Non-English**: {results.get('only_non_english')}\n"
+        )
+        buf.write(f"- **Dry Run**: {results.get('dry_run')}\n")
+        buf.write(
+            f"- **User Turns Inspected**:"
+            f" {results.get('total_user_turns_inspected')}\n"
+        )
+        buf.write(
+            f"- **Turns Reprocessed**:"
+            f" {results.get('total_turns_reprocessed')}\n"
+        )
+        overall_wer = results.get("overall_wer")
+        wer_str = f"{overall_wer:.2%}" if overall_wer is not None else "N/A"
+        buf.write(f"- **Overall WER**: {wer_str}\n\n")
+
+        turns = results.get("turns", [])
+        if turns:
+            buf.write(
+                "| Conv ID | Turn | Non-Eng | CES Transcript | Gemini"
+                " Transcript | WER | S / D / I | Updated BQ |\n"
+            )
+            buf.write(
+                "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n"
+            )
+            for t in turns:
+                cid = t.get("conversation_id", "")
+                cid_short = cid[-12:] if len(cid) > 12 else cid
+                t_idx = t.get("turn_index", "")
+                ne = "Yes" if t.get("contains_non_english") else "No"
+                ces = (
+                    (t.get("ces_transcript") or "")
+                    .replace("|", "\\|")
+                    .replace("\n", " ")
+                )
+                gem = (
+                    (t.get("gemini_transcript") or "")
+                    .replace("|", "\\|")
+                    .replace("\n", " ")
+                )
+                wer = (
+                    f"{t.get('wer'):.1%}"
+                    if t.get("wer") is not None
+                    else "N/A"
+                )
+                sdi = (
+                    f"{t.get('substitutions', 0)}/{t.get('deletions', 0)}/{t.get('insertions', 0)}"
+                )
+                up = "Yes" if t.get("updated_in_bq") else "No"
+                buf.write(
+                    f"| `{cid_short}` | {t_idx} | {ne} | {ces} | {gem} | {wer}"
+                    f" | {sdi} | {up} |\n"
+                )
+        out_text = buf.getvalue()
+    else:  # default: table
+        from rich.console import Console
+        from rich.table import Table
+
+        console = Console()
+        overall_wer = results.get("overall_wer")
+        wer_pct = f"{overall_wer:.2%}" if overall_wer is not None else "N/A"
+        avg_wer = results.get("average_turn_wer")
+        avg_wer_pct = f"{avg_wer:.2%}" if avg_wer is not None else "N/A"
+
+        table = Table(
+            title=f"Transcription & WER Reprocess Results (Overall WER: {wer_pct})"
+        )
+        table.add_column("Conv ID", style="cyan", no_wrap=True)
+        table.add_column("Turn", justify="right")
+        table.add_column("Non-Eng", justify="center")
+        table.add_column("CES Transcript", style="yellow")
+        table.add_column("Gemini Transcript", style="green")
+        table.add_column("WER", justify="right")
+        table.add_column("S/D/I", justify="center")
+        table.add_column("BQ Updated", justify="center")
+
+        for t in results.get("turns", []):
+            cid = t.get("conversation_id", "")
+            cid_disp = f"...{cid[-14:]}" if len(cid) > 16 else cid
+            t_idx = str(t.get("turn_index", ""))
+            ne = "Yes" if t.get("contains_non_english") else "No"
+            ces = t.get("ces_transcript") or ""
+            gem = t.get("gemini_transcript") or ""
+            wer = f"{t.get('wer'):.1%}" if t.get("wer") is not None else "-"
+            sdi = (
+                f"{t.get('substitutions', 0)}/{t.get('deletions', 0)}/{t.get('insertions', 0)}"
+            )
+            up = "Yes" if t.get("updated_in_bq") else "No"
+            table.add_row(cid_disp, t_idx, ne, ces, gem, wer, sdi, up)
+
+        console.print(
+            f"[bold]Source Table:[/bold] {results.get('source_table')}"
+        )
+        if results.get("destination_table"):
+            console.print(
+                f"[bold]Cloned Table:[/bold]"
+                f" {results.get('destination_table')}"
+            )
+        console.print(
+            f"[bold]Inspected Turns:[/bold]"
+            f" {results.get('total_user_turns_inspected')} | "
+            f"[bold]Reprocessed:[/bold]"
+            f" {results.get('total_turns_reprocessed')} | "
+            f"[bold]Overall WER:[/bold] [magenta]{wer_pct}[/magenta] | "
+            f"[bold]Avg Turn WER:[/bold] {avg_wer_pct}"
+        )
+        console.print(table)
+        if getattr(args, "out", None):
+            buf = io.StringIO()
+            c_file = Console(file=buf, no_color=True)
+            c_file.print(table)
+            out_text = buf.getvalue()
+
+    if getattr(args, "out", None) and out_text:
+        with open(args.out, "w") as f:
+            f.write(out_text)
+        print(f"Wrote report to {args.out}")
+    elif fmt in ("json", "csv", "md", "markdown"):
+        print(out_text)
+
+
 # --------------------------------- triage -----------------------------------
 
 
@@ -708,6 +871,121 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     p_audio_analyze.set_defaults(func=trace_audio_analyze)
+
+    p_audio_transcribe = audio_subparsers.add_parser(
+        "transcribe",
+        help="Transcribe user turn audio with Gemini and compute WER.",
+    )
+    add_trace_args(p_audio_transcribe)
+    p_audio_transcribe.add_argument("conversation_id")
+    p_audio_transcribe.add_argument(
+        "--model",
+        default="gemini-2.5-flash",
+        help="Gemini model name (default: gemini-2.5-flash).",
+    )
+    p_audio_transcribe.add_argument(
+        "--only-non-english",
+        action="store_true",
+        help="Only reprocess turns containing non-English characters.",
+    )
+    p_audio_transcribe.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Dry run without mutating BigQuery.",
+    )
+    p_audio_transcribe.add_argument(
+        "--format",
+        choices=["table", "json", "csv", "md", "markdown"],
+        default="table",
+    )
+    p_audio_transcribe.add_argument(
+        "--max-workers",
+        type=int,
+        default=8,
+        help="Maximum concurrent worker threads for parallel transcription (default: 8).",
+    )
+    p_audio_transcribe.add_argument(
+        "--out",
+        help="File path to save the output report.",
+    )
+    p_audio_transcribe.set_defaults(func=trace_transcribe_audio)
+
+    # transcribe-audio / retranscribe
+    for cmd_name in ("transcribe-audio", "retranscribe"):
+        p_transcribe = trace_subparsers.add_parser(
+            cmd_name,
+            help=(
+                "Reprocess user speech transcriptions from GCS audio, compute "
+                "WER metric, and update cloned BigQuery table."
+            ),
+        )
+        add_trace_args(p_transcribe)
+        p_transcribe.add_argument(
+            "conversation_id",
+            nargs="?",
+            default=None,
+            help="Optional conversation ID to reprocess a single trace.",
+        )
+        p_transcribe.add_argument(
+            "--model",
+            default="gemini-2.5-flash",
+            help="Gemini model name (default: gemini-2.5-flash).",
+        )
+        p_transcribe.add_argument(
+            "--only-non-english",
+            action="store_true",
+            help="Only reprocess turns containing non-English characters.",
+        )
+        p_transcribe.add_argument(
+            "--clone-table",
+            "--destination-table",
+            dest="destination_table",
+            help=(
+                "Destination BigQuery table name for cloned data (default: "
+                "<source_table>_retranscribed)."
+            ),
+        )
+        p_transcribe.add_argument(
+            "--dataset",
+            help="BigQuery dataset override.",
+        )
+        p_transcribe.add_argument(
+            "--project",
+            help="BigQuery project override.",
+        )
+        p_transcribe.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Calculate transcriptions and WER without mutating BigQuery.",
+        )
+        p_transcribe.add_argument(
+            "--no-clone",
+            action="store_true",
+            help="Do not clone table (writes directly to target table).",
+        )
+        p_transcribe.add_argument(
+            "--limit",
+            type=int,
+            default=None,
+            help="Max conversations to reprocess.",
+        )
+        p_transcribe.add_argument(
+            "--format",
+            choices=["table", "json", "csv", "md", "markdown"],
+            default="table",
+        )
+        p_transcribe.add_argument(
+            "--max-workers",
+            type=int,
+            default=8,
+            help="Maximum concurrent worker threads for parallel transcription (default: 8).",
+        )
+        p_transcribe.add_argument(
+            "--out",
+            help="File path to save the output report.",
+        )
+        p_transcribe.set_defaults(func=trace_transcribe_audio)
 
     # triage
     p_triage = trace_subparsers.add_parser(
