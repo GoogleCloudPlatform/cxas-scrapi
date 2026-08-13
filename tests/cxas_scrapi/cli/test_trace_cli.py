@@ -665,3 +665,184 @@ def test_build_traces_passes_through_args(mock_traces_cls: typing.Any) -> None:
     assert kwargs["env_file"] == "/tmp/env.json"
     assert kwargs["environment"] == "dev"
     assert kwargs["trace_config_path"] == "/tmp/trace.yaml"
+
+
+# ------------------ transcribe-audio CLI tests ------------------------------
+
+
+def test_register_transcribe_audio_smoke() -> None:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    trace_cli.register(sub)
+    args = parser.parse_args(
+        [
+            "trace",
+            "transcribe-audio",
+            "--app-name",
+            APP,
+            "c1",
+            "--model",
+            "gemini-2.5-flash",
+            "--only-non-english",
+            "--clone-table",
+            "cloned_tbl",
+            "--dry-run",
+        ]
+    )
+    assert args.func == trace_cli.trace_transcribe_audio
+    assert args.conversation_id == "c1"
+    assert args.model == "gemini-2.5-flash"
+    assert args.only_non_english is True
+    assert args.destination_table == "cloned_tbl"
+    assert args.dry_run is True
+
+
+def test_register_audio_transcribe_smoke() -> None:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    trace_cli.register(sub)
+    args = parser.parse_args(
+        [
+            "trace",
+            "audio",
+            "transcribe",
+            "--app-name",
+            APP,
+            "c1",
+            "--model",
+            "gemini-2.5-flash-lite",
+            "--only-non-english",
+        ]
+    )
+    assert args.func == trace_cli.trace_transcribe_audio
+    assert args.conversation_id == "c1"
+    assert args.model == "gemini-2.5-flash-lite"
+    assert args.only_non_english is True
+
+
+def test_trace_transcribe_audio_table_format(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
+    fake_traces.reprocess_transcriptions.return_value = {
+        "source_table": "p.d.src",
+        "destination_table": "p.d.dst",
+        "cloned_table_created": True,
+        "dry_run": False,
+        "model_used": "gemini-2.5-flash",
+        "only_non_english": False,
+        "total_user_turns_inspected": 2,
+        "total_turns_reprocessed": 2,
+        "overall_wer": 0.1,
+        "average_turn_wer": 0.1,
+        "turns": [
+            {
+                "conversation_id": "c1",
+                "turn_index": 1,
+                "ces_transcript": "hello",
+                "gemini_transcript": "hello",
+                "contains_non_english": False,
+                "reprocessed": True,
+                "updated_in_bq": True,
+                "wer": 0.0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+            }
+        ],
+    }
+
+    args = _ns(
+        conversation_id="c1",
+        destination_table="dst",
+        dataset=None,
+        project=None,
+        model="gemini-2.5-flash",
+        only_non_english=False,
+        no_clone=False,
+        dry_run=False,
+        limit=None,
+        format="table",
+        out=None,
+    )
+    trace_cli.trace_transcribe_audio(args)
+    out = capsys.readouterr().out
+    assert "Transcription & WER Reprocess Results" in out
+    assert "p.d.src" in out
+
+
+def test_trace_transcribe_audio_json_format(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
+    fake_traces.reprocess_transcriptions.return_value = {
+        "source_table": "p.d.src",
+        "total_turns_reprocessed": 1,
+        "overall_wer": 0.0,
+    }
+
+    args = _ns(
+        conversation_id="c1",
+        destination_table=None,
+        dataset=None,
+        project=None,
+        model="gemini-2.5-flash",
+        only_non_english=False,
+        no_clone=False,
+        dry_run=True,
+        limit=None,
+        format="json",
+        out=None,
+    )
+    trace_cli.trace_transcribe_audio(args)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source_table"] == "p.d.src"
+    assert payload["overall_wer"] == 0.0
+
+
+def test_trace_transcribe_audio_markdown_format(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
+    fake_traces.reprocess_transcriptions.return_value = {
+        "source_table": "p.d.src",
+        "destination_table": "p.d.dst",
+        "total_user_turns_inspected": 1,
+        "total_turns_reprocessed": 1,
+        "overall_wer": 0.0,
+        "turns": [
+            {
+                "conversation_id": "c1",
+                "turn_index": 1,
+                "ces_transcript": "No.",
+                "gemini_transcript": "No",
+                "contains_non_english": False,
+                "reprocessed": True,
+                "updated_in_bq": True,
+                "wer": 0.0,
+            }
+        ],
+    }
+
+    args = _ns(
+        conversation_id="c1",
+        destination_table="dst",
+        dataset=None,
+        project=None,
+        model="gemini-2.5-flash",
+        only_non_english=False,
+        no_clone=False,
+        dry_run=False,
+        limit=None,
+        format="md",
+        out=None,
+    )
+    trace_cli.trace_transcribe_audio(args)
+    out = capsys.readouterr().out
+    assert "# Audio Transcription & WER Report" in out
+    assert "| Conv ID | Turn |" in out
+
+
+def test_trace_transcribe_audio_failure(fake_traces: typing.Any) -> None:
+    fake_traces.reprocess_transcriptions.side_effect = RuntimeError("BQ Error")
+    args = _ns(conversation_id="c1")
+    with pytest.raises(SystemExit):
+        trace_cli.trace_transcribe_audio(args)
+
