@@ -132,6 +132,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/cxas_scrapi/migration/prompts.py" = ["E501"]
+".agents/skills/cxas-eval-coverage/scripts/*.py" = ["E501"]
 "src/cxas_scrapi/prompts/llm_lint_prompts.py" = ["E501"]
 # html_preview is dominated by HTML/CSS template strings; wrapping them would
 # hurt readability of the templates themselves. The Python code in this file
