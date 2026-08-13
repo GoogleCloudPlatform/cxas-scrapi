@@ -318,17 +318,18 @@ def trace_audio_analyze(args: argparse.Namespace) -> None:
 
 
 def trace_transcribe_audio(args: argparse.Namespace) -> None:
-    """Reprocesses user speech from GCS audio, calculates WER, and updates BQ."""
+    """Reprocesses user speech from GCS audio, calculates WER, and appends to BQ."""
     try:
         traces = _build_traces(args)
         results = traces.reprocess_transcriptions(
             conversation_id=getattr(args, "conversation_id", None),
-            destination_table=getattr(args, "destination_table", None),
+            output_table=getattr(args, "table", None)
+            or getattr(args, "output_table", None),
+            source_table=getattr(args, "source_table", None),
             bq_dataset=getattr(args, "dataset", None),
             bq_project=getattr(args, "project", None),
             model_name=getattr(args, "model", "gemini-2.5-flash"),
             only_non_english=getattr(args, "only_non_english", False),
-            clone_table=not getattr(args, "no_clone", False),
             dry_run=getattr(args, "dry_run", False),
             limit=getattr(args, "limit", None),
             max_workers=getattr(args, "max_workers", 8),
@@ -354,10 +355,8 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
         buf = io.StringIO()
         buf.write("# Audio Transcription & WER Report\n\n")
         buf.write(f"- **Source Table**: `{results.get('source_table')}`\n")
-        if results.get("destination_table"):
-            buf.write(
-                f"- **Destination Table**: `{results.get('destination_table')}`\n"
-            )
+        if results.get("output_table"):
+            buf.write(f"- **Output Table**: `{results.get('output_table')}`\n")
         buf.write(f"- **Model**: `{results.get('model_used')}`\n")
         buf.write(
             f"- **Only Non-English**: {results.get('only_non_english')}\n"
@@ -379,7 +378,7 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
         if turns:
             buf.write(
                 "| Conv ID | Turn | Non-Eng | CES Transcript | Gemini"
-                " Transcript | WER | S / D / I | Updated BQ |\n"
+                " Transcript | WER | S / D / I | Appended BQ |\n"
             )
             buf.write(
                 "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n"
@@ -403,7 +402,7 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
                     f"{t.get('wer'):.1%}" if t.get("wer") is not None else "N/A"
                 )
                 sdi = f"{t.get('substitutions', 0)}/{t.get('deletions', 0)}/{t.get('insertions', 0)}"
-                up = "Yes" if t.get("updated_in_bq") else "No"
+                up = "Yes" if t.get("appended_to_bq") else "No"
                 buf.write(
                     f"| `{cid_short}` | {t_idx} | {ne} | {ces} | {gem} | {wer}"
                     f" | {sdi} | {up} |\n"
@@ -429,7 +428,7 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
         table.add_column("Gemini Transcript", style="green")
         table.add_column("WER", justify="right")
         table.add_column("S/D/I", justify="center")
-        table.add_column("BQ Updated", justify="center")
+        table.add_column("BQ Appended", justify="center")
 
         for t in results.get("turns", []):
             cid = t.get("conversation_id", "")
@@ -440,15 +439,15 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
             gem = t.get("gemini_transcript") or ""
             wer = f"{t.get('wer'):.1%}" if t.get("wer") is not None else "-"
             sdi = f"{t.get('substitutions', 0)}/{t.get('deletions', 0)}/{t.get('insertions', 0)}"
-            up = "Yes" if t.get("updated_in_bq") else "No"
+            up = "Yes" if t.get("appended_to_bq") else "No"
             table.add_row(cid_disp, t_idx, ne, ces, gem, wer, sdi, up)
 
         console.print(
             f"[bold]Source Table:[/bold] {results.get('source_table')}"
         )
-        if results.get("destination_table"):
+        if results.get("output_table"):
             console.print(
-                f"[bold]Cloned Table:[/bold] {results.get('destination_table')}"
+                f"[bold]Output Table:[/bold] {results.get('output_table')}"
             )
         console.print(
             f"[bold]Inspected Turns:[/bold]"
@@ -459,6 +458,11 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
             f"[bold]Avg Turn WER:[/bold] {avg_wer_pct}"
         )
         console.print(table)
+        if getattr(args, "out", None):
+            buf = io.StringIO()
+            c_file = Console(file=buf, no_color=True)
+            c_file.print(table)
+            out_text = buf.getvalue()
         if getattr(args, "out", None):
             buf = io.StringIO()
             c_file = Console(file=buf, no_color=True)
@@ -910,7 +914,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
             cmd_name,
             help=(
                 "Reprocess user speech transcriptions from GCS audio, compute "
-                "WER metric, and update cloned BigQuery table."
+                "WER metric, and append updated turns to BigQuery."
             ),
         )
         add_trace_args(p_transcribe)
@@ -931,12 +935,20 @@ def register(subparsers: argparse._SubParsersAction) -> None:
             help="Only reprocess turns containing non-English characters.",
         )
         p_transcribe.add_argument(
-            "--clone-table",
-            "--destination-table",
-            dest="destination_table",
+            "--table",
+            "--output-table",
+            dest="output_table",
             help=(
-                "Destination BigQuery table name for cloned data (default: "
-                "<source_table>_retranscribed)."
+                "Destination BigQuery table name for appending reprocessed"
+                " turn updates (default: <dataset>.reprocessed_transcripts)."
+            ),
+        )
+        p_transcribe.add_argument(
+            "--source-table",
+            dest="source_table",
+            help=(
+                "Source BigQuery table name containing conversations (default:"
+                " app CES export table)."
             ),
         )
         p_transcribe.add_argument(
@@ -951,11 +963,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
             "--dry-run",
             action="store_true",
             help="Calculate transcriptions and WER without mutating BigQuery.",
-        )
-        p_transcribe.add_argument(
-            "--no-clone",
-            action="store_true",
-            help="Do not clone table (writes directly to target table).",
         )
         p_transcribe.add_argument(
             "--limit",
