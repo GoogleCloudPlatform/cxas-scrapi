@@ -576,9 +576,9 @@ class Traces(Common):
         Args:
             conversation_id: Conversation ID of the trace.
             model_name: Gemini model name for transcription (default:
-              gemini-2.5-flash).
+                gemini-2.5-flash).
             only_non_english: If True, only reprocesses turns that contain
-              non-English characters.
+                non-English characters.
             prompt: Optional custom prompt instruction for transcription.
             max_workers: Maximum worker threads for parallel transcription.
 
@@ -593,6 +593,7 @@ class Traces(Common):
             project_id=self.project_id or "",
             credentials=self.creds,
             model_name=model_name,
+            prompt=prompt,
         )
 
         user_entries = [
@@ -663,26 +664,25 @@ class Traces(Common):
         max_workers: int = 8,
     ) -> dict[str, Any]:
         """Reprocesses user speech transcriptions from GCS audio, computes WER,
-
         and writes updated transcriptions to matching user turns in a cloned
         BigQuery table.
 
         Args:
             conversation_id: Optional specific conversation ID. If omitted,
-              reprocesses conversations found in the BigQuery table.
+                reprocesses conversations found in the BigQuery table.
             destination_table: Cloned BigQuery table name or qualified
-              reference (e.g. `dataset.table_retranscribed`). Defaults to
-              `{src_table}_retranscribed`.
+                reference (e.g. `dataset.table_retranscribed`). Defaults to
+                `{src_table}_retranscribed`.
             bq_dataset: Optional BigQuery dataset override.
             bq_project: Optional BigQuery project override.
             model_name: Gemini Flash / Flash-Lite model name (default:
-              gemini-2.5-flash).
+                gemini-2.5-flash).
             only_non_english: If True, only reprocesses turns that contain
-              non-English characters.
+                non-English characters.
             clone_table: If True (and not dry_run), clones the source BQ table
-              to destination table before applying updates.
+                to destination table before applying updates.
             dry_run: If True, calculates transcriptions and WER without
-              mutating BigQuery.
+                mutating BigQuery.
             limit: Maximum number of conversations to process.
             prompt: Optional transcription prompt override.
             max_workers: Maximum worker threads for concurrent processing.
