@@ -25,6 +25,7 @@ All `cxas trace` subcommands share a few flags:
 | `cxas trace logs <id>` | Fetch Cloud Logging entries correlated to a conversation. |
 | `cxas trace audio download <id>` | Download the GCS audio recording. |
 | `cxas trace audio analyze <id>` | Run configured Gemini audio metrics over the recording. |
+| `cxas trace audio transcribe <id>` / `cxas trace transcribe-audio <id>` | Transcribe GCS user turn audio with Gemini Flash/Flash-Lite, calculate WER against CES transcripts, and optionally reprocess into a cloned BigQuery export table. |
 | `cxas trace triage <id>` | Run text-only Gemini triage prompts over the transcript. |
 | `cxas trace replay <id>` | Replay user inputs against the current agent and diff. |
 | `cxas trace stats` | Aggregate stats over recent conversations. |
@@ -72,6 +73,67 @@ cxas trace bug-report conv-id-1 \
   --app-name projects/p/locations/l/apps/a \
   --reason "agent hallucinated the refund amount" --severity high
 ```
+
+---
+
+## Audio Transcription, WER Evaluation & BigQuery Reprocessing
+
+The `cxas trace audio transcribe` (or `cxas trace transcribe-audio`) subcommand enables end-to-end audio speech-to-text transcription auditing using Gemini Flash/Flash-Lite multimodal models.
+
+### Capabilities
+1. **GCS Audio Turn Discovery**: Automatically locates user turn recordings (`user-turn-*.wav`) for a conversation in the app's configured GCS audio bucket.
+2. **Gemini STT Transcription**: Transcribes user speech verbatim using `GeminiGenerate` (`gemini-2.5-flash`, `gemini-2.5-flash-lite`, etc.) with zero temperature.
+3. **Word Error Rate (WER) Metrics**: Aligns baseline CES real-time transcripts with Gemini transcription ground-truth using dynamic programming Levenshtein distance, reporting Substitutions ($S$), Deletions ($D$), Insertions ($I$), and overall WER ($WER = \frac{S + D + I}{N}$).
+4. **Multilingual & Non-English Turn Filtering**: Pass `--only-non-english` to filter and reprocess only user turns containing non-ASCII / foreign characters.
+5. **Cloned BigQuery Table Reprocessing**: Safely clones the BigQuery export table (`CREATE TABLE <dst> CLONE <src>`) and updates user turn messages with the verbatim Gemini transcription, preserving all other turn messages and chunks.
+6. **Parallel Concurrency**: Fully parallelized across user turns and BigQuery row updates using `--max-workers`.
+
+### Command Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `conversation_id` | *(positional)* | The conversation/session ID to transcribe. |
+| `--model` | `gemini-2.5-flash` | Gemini model name for speech-to-text transcription. |
+| `--only-non-english` | `False` | Only transcribe and reprocess user turns containing non-English / non-ASCII characters. |
+| `--clone-table` / `--destination-table` | `None` | BigQuery destination table name. Defaults to `<source_table>_reprocessed`. |
+| `--dataset` | `None` | Override BigQuery dataset ID (otherwise inferred from `app.json` or remote settings). |
+| `--project` | `None` | Override Google Cloud Project ID. |
+| `--dry-run` | `False` | Run transcription and WER calculation without modifying BigQuery tables. |
+| `--no-clone` | `False` | Directly update the source table instead of cloning first. |
+| `--limit` | `None` | Limit the maximum number of user turns to transcribe. |
+| `--max-workers` | `8` | Degree of concurrency for parallel GCS reading, Gemini transcription, and BigQuery updating. |
+| `--format` | `table` | Output format: `table`, `json`, `csv`, or `md`. |
+| `--out` | `None` | Write the output report to a local file. |
+
+### Examples
+
+#### 1. Transcribe a conversation and view WER metrics (Dry Run)
+```bash
+cxas trace transcribe-audio conv-12345 \
+  --app-name projects/my-project/locations/us/apps/my-app \
+  --model gemini-2.5-flash \
+  --dry-run
+```
+
+#### 2. Transcribe only non-English turns and output as Markdown
+```bash
+cxas trace audio transcribe conv-12345 \
+  --app-name projects/my-project/locations/us/apps/my-app \
+  --only-non-english \
+  --format md \
+  --out transcription_wer_report.md
+```
+
+#### 3. Reprocess into a cloned BigQuery export table in parallel
+```bash
+cxas trace transcribe-audio conv-12345 \
+  --app-name projects/my-project/locations/us/apps/my-app \
+  --destination-table my_dataset.conversation_export_v2 \
+  --max-workers 16
+```
+
+---
+
 
 ## Configuration: `./.cxas/trace.yaml`
 

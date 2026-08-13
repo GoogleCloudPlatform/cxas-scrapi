@@ -103,21 +103,21 @@ def calculate_wer(
     Args:
         reference: Ground truth / baseline transcript (e.g. CES transcription).
         hypothesis: Predicted / generated transcript (e.g. Gemini
-          transcription).
+            transcription).
         normalize: Whether to normalize case, punctuation, and whitespace
-          before computing WER. Defaults to True.
+            before computing WER. Defaults to True.
 
     Returns:
         Dictionary containing:
-          - wer: float (rounded to 4 decimal places)
-          - substitutions: int
-          - deletions: int
-          - insertions: int
-          - hits: int (matching words)
-          - reference_words: int
-          - hypothesis_words: int
-          - reference_tokens: list[str]
-          - hypothesis_tokens: list[str]
+            - wer: float (rounded to 4 decimal places)
+            - substitutions: int
+            - deletions: int
+            - insertions: int
+            - hits: int (matching words)
+            - reference_words: int
+            - hypothesis_words: int
+            - reference_tokens: list[str]
+            - hypothesis_tokens: list[str]
     """
     if normalize:
         ref_words = normalize_text(reference)
