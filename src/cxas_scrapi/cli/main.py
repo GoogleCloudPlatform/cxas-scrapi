@@ -2171,6 +2171,15 @@ def get_parser() -> argparse.ArgumentParser:
         "--target-dir", default=".", help="Directory to extract to."
     )
     parser_pull.add_argument(
+        "--version-id",
+        default=None,
+        help=(
+            "Optional. Export a specific app version instead of the live app. "
+            "Can be a bare version ID (e.g., '0.0.3') or a full resource name "
+            "(e.g., 'projects/.../locations/.../apps/.../versions/0.0.3')."
+        ),
+    )
+    parser_pull.add_argument(
         "--overwrite",
         action="store_true",
         help=(

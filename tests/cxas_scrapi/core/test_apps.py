@@ -243,6 +243,36 @@ def test_export_app_standard(
         kwargs.get("name") == "projects/mock-project/locations/us/apps/test-app"
     )
     assert kwargs.get("gcs_uri") == "gs://bucket/path"
+    assert kwargs.get("app_version") is None
+    assert result == mock_operation
+
+
+@patch("cxas_scrapi.core.apps.types.ExportAppRequest")
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_export_app_with_app_version(
+    mock_client_cls: typing.Any, mock_export_app_req: typing.Any
+) -> None:
+    apps_client = Apps(
+        project_id="mock-project", location="us", creds=MagicMock()
+    )
+    mock_operation = MagicMock()
+    apps_client.client.export_app.return_value = mock_operation
+
+    result = apps_client.export_app(
+        app_name="projects/mock-project/locations/us/apps/test-app",
+        gcs_uri="gs://bucket/path",
+        app_version="projects/mock-project/locations/us/apps/test-app/versions/0.0.3",
+    )
+
+    kwargs = mock_export_app_req.call_args[1]
+    assert (
+        kwargs.get("name") == "projects/mock-project/locations/us/apps/test-app"
+    )
+    assert kwargs.get("gcs_uri") == "gs://bucket/path"
+    assert (
+        kwargs.get("app_version")
+        == "projects/mock-project/locations/us/apps/test-app/versions/0.0.3"
+    )
     assert result == mock_operation
 
 

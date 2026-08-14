@@ -93,11 +93,20 @@ def app_pull(args: argparse.Namespace) -> None:
 
     apps_client, app_name, _ = _resolve_app_args(args.app, args)
 
+    version_id = getattr(args, "version_id", None)
+    app_version = None
+    if version_id:
+        if "/" in version_id:
+            app_version = version_id
+        else:
+            app_version = f"{app_name}/versions/{version_id}"
+
     _app_pull(
-        apps_client,
-        app_name,
-        args.target_dir,
-        getattr(args, "overwrite", False),
+        apps_client=apps_client,
+        app_name=app_name,
+        target_dir=args.target_dir,
+        overwrite=getattr(args, "overwrite", False),
+        app_version=app_version,
     )
 
 
@@ -106,12 +115,18 @@ def _app_pull(
     app_name: str,
     target_dir: str,
     overwrite: bool = False,
+    app_version: str | None = None,
 ) -> None:
     """Helper to pull an app from CXAS."""
     try:
         # Export the app
-        print("Exporting app from CXAS...")
-        lro = apps_client.export_app(app_name=app_name)
+        export_kwargs: dict[str, Any] = {"app_name": app_name}
+        if app_version:
+            print(f"Exporting app version {app_version} from CXAS...")
+            export_kwargs["app_version"] = app_version
+        else:
+            print("Exporting app from CXAS...")
+        lro = apps_client.export_app(**export_kwargs)
         response = lro.result()
 
         # Determine the target directory

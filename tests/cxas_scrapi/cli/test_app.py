@@ -198,6 +198,79 @@ def test_app_pull(
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
 
+def test_app_pull_with_bare_version_id(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "pulled_app"),
+        project_id="test-project",
+        location="us",
+        version_id="0.0.3",
+    )
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("app.yaml", "name: Test App")
+    dummy_zip_bytes = dummy_zip_io.getvalue()
+
+    mock_lro = mock.MagicMock()
+    mock_response = mock.MagicMock()
+    mock_response.app_content = dummy_zip_bytes
+    mock_lro.result.return_value = mock_response
+    mock_apps_client.export_app.return_value = mock_lro
+
+    cli_app.app_pull(args)
+
+    mock_apps_client.export_app.assert_called_once_with(
+        app_name="projects/test-project/locations/us/apps/123",
+        app_version="projects/test-project/locations/us/apps/123/versions/0.0.3",
+    )
+    assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
+
+
+def test_app_pull_with_full_version_resource_name(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    full_version = "projects/test-project/locations/us/apps/123/versions/0.0.3"
+    args = argparse.Namespace(
+        app="projects/test-project/locations/us/apps/123",
+        target_dir=str(tmp_path / "pulled_app"),
+        project_id="test-project",
+        location="us",
+        version_id=full_version,
+    )
+
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("app.yaml", "name: Test App")
+    dummy_zip_bytes = dummy_zip_io.getvalue()
+
+    mock_lro = mock.MagicMock()
+    mock_response = mock.MagicMock()
+    mock_response.app_content = dummy_zip_bytes
+    mock_lro.result.return_value = mock_response
+    mock_apps_client.export_app.return_value = mock_lro
+
+    cli_app.app_pull(args)
+
+    mock_apps_client.export_app.assert_called_once_with(
+        app_name="projects/test-project/locations/us/apps/123",
+        app_version=full_version,
+    )
+    assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
+
+
 def test_app_push(mock_apps_client: typing.Any, tmp_path: typing.Any) -> None:
     args = argparse.Namespace(
         app_dir=str(tmp_path),
