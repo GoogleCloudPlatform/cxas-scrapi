@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import tempfile
 from typing import TYPE_CHECKING
 
@@ -51,23 +52,33 @@ async def run_post_deploy_lint(
         console.print(f"[yellow]{msg}[/]")
         return False, msg
 
+    # Resolve cxas binary path relative to the current python interpreter
+    cxas_bin = os.path.join(os.path.dirname(sys.executable), "cxas")
+    if not os.path.isfile(cxas_bin) or not os.access(cxas_bin, os.X_OK):
+        cxas_bin = "cxas"  # Fallback to PATH
+
     with tempfile.TemporaryDirectory(prefix="cxas_lint_") as temp_dir:
         console.print(f"  Pulling {app_resource} → {temp_dir}")
-        pull = await asyncio.create_subprocess_exec(
-            "cxas",
-            "pull",
-            app_resource,
-            "--target-dir",
-            temp_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, pull_err = await pull.communicate()
-        if pull.returncode != 0:
-            err = pull_err.decode(errors="replace")
-            logger.error("cxas pull failed: %s", err)
-            console.print(f"[red]cxas pull failed:[/]\n{err}")
-            return False, err
+        try:
+            pull = await asyncio.create_subprocess_exec(
+                cxas_bin,
+                "pull",
+                app_resource,
+                "--target-dir",
+                temp_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, pull_err = await pull.communicate()
+            if pull.returncode != 0:
+                err = pull_err.decode(errors="replace")
+                logger.error("cxas pull failed: %s", err)
+                console.print(f"[red]cxas pull failed:[/]\n{err}")
+                return False, err
+        except FileNotFoundError:
+            msg = f"Error: '{cxas_bin}' command not found. Ensure it is in your PATH or virtualenv."
+            console.print(f"[red]{msg}[/]")
+            return False, msg
 
         app_dir = _find_app_dir(temp_dir)
         if not app_dir:
@@ -76,17 +87,22 @@ async def run_post_deploy_lint(
             return False, msg
 
         console.print(f"  Linting {app_dir}")
-        lint = await asyncio.create_subprocess_exec(
-            "cxas",
-            "lint",
-            "--app-dir",
-            app_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        lint_out, _ = await lint.communicate()
-        output = lint_out.decode(errors="replace")
-        console.print(output)
+        try:
+            lint = await asyncio.create_subprocess_exec(
+                cxas_bin,
+                "lint",
+                "--app-dir",
+                app_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            lint_out, _ = await lint.communicate()
+            output = lint_out.decode(errors="replace")
+            console.print(output)
+        except FileNotFoundError:
+            msg = f"Error: '{cxas_bin}' command not found. Ensure it is in your PATH or virtualenv."
+            console.print(f"[red]{msg}[/]")
+            return False, msg
 
         if lint.returncode == 0:
             console.print("[bold green]Lint passed with 0 errors.[/]")

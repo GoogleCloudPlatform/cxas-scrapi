@@ -783,6 +783,11 @@ def ci_test(args: argparse.Namespace) -> None:
     from cxas_scrapi.core.apps import Apps
     from cxas_scrapi.core.evaluations import Evaluations
 
+    # Resolve cxas binary path relative to the current python interpreter
+    cxas_bin = os.path.join(os.path.dirname(sys.executable), "cxas")
+    if not os.path.isfile(cxas_bin) or not os.access(cxas_bin, os.X_OK):
+        cxas_bin = "cxas"  # Fallback to PATH
+
     print("Starting CI Test Lifecycle...")
 
     if hasattr(args, "display_name") and args.display_name:
@@ -813,7 +818,7 @@ def ci_test(args: argparse.Namespace) -> None:
         if os.path.exists(test_file):
             print(f"\\n--- Running Tool Tests on {temp_app_name} ---")
             cmd = [
-                "cxas",
+                cxas_bin,
                 "test-tools",
                 "--app-name",
                 temp_app_name,
@@ -842,7 +847,7 @@ def ci_test(args: argparse.Namespace) -> None:
             )
             for eval_id in all_eval_ids:
                 cmd = [
-                    "cxas",
+                    cxas_bin,
                     "run",
                     "--app-name",
                     temp_app_name,

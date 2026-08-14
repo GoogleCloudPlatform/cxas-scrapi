@@ -537,8 +537,13 @@ def _pull_app(config: typing.Any) -> typing.Any:
     else:
         app_resource = f"projects/{project}/locations/{location}/apps/{app_id}"
 
+    # Resolve cxas binary
+    cxas_bin = os.path.join(os.path.dirname(sys.executable), "cxas")
+    if not os.path.isfile(cxas_bin) or not os.access(cxas_bin, os.X_OK):
+        cxas_bin = "cxas"  # Fallback to PATH
+
     pull_cmd = [
-        "cxas", "pull", app_resource,
+        cxas_bin, "pull", app_resource,
         "--project-id", project,
         "--location", location,
         "--target-dir", app_dir,
