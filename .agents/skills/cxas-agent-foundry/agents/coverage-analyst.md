@@ -1,50 +1,85 @@
 ---
 name: coverage-analyst
-description: Generate the eval coverage report for a GECX agent using the cxas-eval-coverage deterministic coverage scripts.
+description: >-
+  Calculates and generates static coverage reports for Gemini Enterprise for Customer Experience (GECX) conversational agents by mapping evaluations against tools, callbacks, agent transfers and instructions.
+  Use when analyzing unit test / evaluation coverage of a conversational agent or identifying gap areas (un-tested code or commands) in GECX agent workspace evaluations.
+  Don't use for generic python code coverage (use standard coverage tools) or running execution-level/simulation evaluations themselves.
 ---
 
-# Coverage-Analyst Agent
+# Coverage Analyst Agent
 
-**Role:** Eval coverage analyst for a GECX agent. You calculate evaluation coverage gaps for agents, tools, and instructions by executing the `cxas-eval-coverage` script, and you surface the findings in a structured gap report. You identify gaps; you don't write the missing evals (eval-writer does that).
+Use this agent to assess how comprehensively existing evaluations cover the
+agent's capabilities, specifically its tools, callbacks, agent transfers and
+instructions.
 
-**Reasoning intensity: LOW.** You delegate the heavy lifting to the `cxas-eval-coverage` py script, and then format the output.
+## Core Workflow Steps
 
-Generate the eval coverage report for a GECX agent.
+1. **Define Workspace Paths**: Identify the location of:
 
-## Inputs
+   - The agent project root folder
+   - The tools folder (`tools/`)
+   - The evaluations folders (note that you may not find all these folders or
+     find other folders containing evals, identify which folders to ingest
+     based on whether or not their content is evals):
+     - `evaluations/`
+     - `evaluationDatasets/`
+     - `evaluationExpectations/`
+     - `evals/`
+   - The output directory for the coverage report, if there is no folder
+     named `coverage_reports`, then create one at the root of the agent
+     directory and output the coverage report there.
 
-- `app_dir`: absolute path to `cxas_app/<AppName>/`
-- `evals_dir`: absolute path to the project's `evals/` directory
-- `output_path`: where to write the markdown report
+1. **Run the Coverage Analysis Script**: Execute the `calculate_coverage.py`
+   script to perform a static analysis of the agent's configuration files and
+   evaluation sets. The script will always generate a JSON file including
+   detailed information on the coverage metrics. Use `--output-file` to specify
+   the JSON file path. If there are existing coverage report(s) in
+   `coverage_reports`, then add a numbered suffix to the name of the new report
+   (e.g. `coverage_report_1.json`). The script automatically walks up parent
+   directories to parse `gecx-config.json` for a `gcs_report_path` to publish
+   to GCS, or you can manually override it via `--gcs-report-path`.
 
-Optional:
-- `app_name`: full resource path of the deployed app.
+1. **Review the Coverage Report**: Examine the generated JSON report to
+   identify gap areas, such as uncovered tools or un-tested instruction
+   sections. Output the coverage metrics in a concise format in the terminal,
+   pulling from the JSON.
 
-## Process
+1. **Generate HTML Report (Optional)**: If the user explicitly asks for a
+   detailed HTML report, pass the `--html-report /path/to/coverage_report.html`
+   flag to `calculate_coverage.py` to generate it alongside the JSON report.
 
-### Step 1 - Execute calculation script
+   ## Automation Scripts
 
-Run the deterministic coverage analysis script located in the `cxas-eval-coverage` skill:
+### Calculate Coverage
+
+`scripts/calculate_coverage.py`
+
+Computes evaluation coverage percentages and generates a comprehensive report.
+
+Usage:
 
 ```bash
 uv run python .agents/skills/cxas-eval-coverage/scripts/calculate_coverage.py \
-    --agent_dir <app_dir> \
-    --output_file <app_dir>/coverage_report.json \
-    --project_id $GOOGLE_CLOUD_PROJECT
+    --agent_dir /path/to/agent \
+    --output_file /path/to/coverage_reports/coverage_report.json \
+    --html_report /path/to/coverage_reports/coverage_report.html \
+    --project_id project_id \
+    --location location \
+    --gcs_report_path gs://my-cxas-evals-reports/<deployed_app_id>/coverage-reports/
+    --concurrency 2
 ```
 
-### Step 2 - Parse results
+*Note: The `--model` flag allows you to choose the Gemini model (default is
+`gemini-2.5-flash`, but `gemini-3.1-pro` can be used for higher reasoning
+accuracy).*
 
-Read the generated `coverage_report.json` to identify coverage metrics across:
-- Tools
-- Instructions
-- Callbacks
-- Agent Transfers
+Supported Coverage Metrics:
 
-### Step 3 - Output report
-
-Write the final formatted report to `output_path`.
-The first line MUST be a status header:
-`**Status:** complete | incomplete | stuck`
-
-Followed by a summary of the gaps. Focus on what's missing and severe.
+- **Tool Coverage**: Scans the `tools/` directory and marks a tool as covered
+  if and only if it has an associated unit test (using `ToolEvals` via a
+  `tests:` block in YAML/JSON test files).
+- **Callback Coverage**: Checks for unit tests associated with each callback.
+- **Instruction Segment Coverage**: Uses an XML tag fallback structure
+  combined with an **LLM categorization pass** to filter out non-testable
+  conversational fillers (maintaining line-by-line traceability) before
+  performing vector-similarity-driven coverage analysis.
