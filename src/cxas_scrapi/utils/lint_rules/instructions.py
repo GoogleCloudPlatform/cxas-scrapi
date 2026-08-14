@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Instruction lint rules (I001-I014).
+"""Instruction lint rules (I001-I016).
 
 Validates agent instruction files against CXAS design guide best practices.
 """
@@ -246,9 +246,7 @@ class HardcodedData(Rule):
     def _should_skip(self, line: str) -> bool:
         if "{" in line and "}" in line:
             return True
-        if "<inline_example" in line or "</inline_example" in line:
-            return True
-        return False
+        return bool("<inline_example" in line or "</inline_example" in line)
 
     def check(
         self, file_path: Path, content: str, context: LintContext
@@ -631,6 +629,345 @@ class MissingCurrentDate(Rule):
                     " {{current_date}} to the"
                     " instruction or global"
                     " instruction"
+                ),
+            )
+        ]
+
+
+@rule("instructions")
+class BannedLegacyXmlTags(Rule):
+    id = "I015"
+    name = "banned-legacy-xml-tags"
+    description = (
+        "Instruction contains legacy CamelCase / state-machine XML tags"
+        " that diverge from the canonical taskflow schema"
+    )
+    default_severity = Severity.ERROR
+
+    BANNED_TAGS = (
+        "<Agent>",
+        "<Conversation_Schema>",
+        "<Persona>",
+        "<Role>",
+        "<General_Instruction>",
+        "<Context>",
+        "<state",
+        "<transitions>",
+        "<transition ",
+    )
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+        return [
+            self.make_result(
+                file=rel,
+                line=_find_line(content, tag),
+                message=(
+                    f"Banned legacy XML tag '{tag}' — use the canonical"
+                    " lowercase taskflow schema instead"
+                ),
+                fix=(
+                    "Rewrite into <role>/<persona>/<primary_goal>/"
+                    "<constraints>/<guidelines>/<taskflow>/<subtask>/"
+                    "<step>/<trigger>/<action>"
+                ),
+            )
+            for tag in self.BANNED_TAGS
+            if tag in content
+        ]
+
+
+# --- I016: prose state machine -------------------------------------------
+#
+# Each signal below is one deterministic surface form of "I built a state
+# machine in the prompt". They are grouped into four categories so the rule
+# can fire on *co-occurrence* (several mild tells together) rather than on
+# any single weak phrase. A handful are flagged high-confidence (HC): they
+# are near-definitional FSM markers (reading/writing a retry counter or a
+# named state, an orchestrator agent_action interpreter loop, a state machine
+# named in a step) and fire on their own.
+#
+# Surface forms are kept disjoint from I003 (bare ``IF ... ELSE``) and I005
+# (``<conditional_logic>``) so no line is reported by two rules: ``if_code``
+# only matches a quoted ALL_CAPS enum or a ``result.<field>`` subject, never a
+# bare IF/ELSE, and nothing here keys on the ``<conditional_logic>`` tag.
+
+# (name, compiled regex, category, high_confidence)
+_SM_SIGNALS: list[tuple[str, re.Pattern, str, bool]] = [
+    # --- control_flow: hand-driven GOTO edges between named steps --------
+    # Plain forward navigation ("proceed to subtask conclusion") is weak: it
+    # is also the design-guide-endorsed way to move between subtasks, so it
+    # only contributes to the total and never fires on its own.
+    (
+        "forward_jump",
+        re.compile(
+            r"(?i)\b(?:proceed|transition|route|go|continue|jump)\s+to\s+"
+            r"(?:the\s+)?(?:sub-?task|step)\b"
+        ),
+        "control_flow",
+        False,
+    ),
+    # Back-edges create a cycle — the hallmark of a hand-rolled FSM.
+    (
+        "loop_edge",
+        re.compile(
+            r"(?i)\b(?:loop\s+back|go\s+back|come\s+back|return|back)\s+to\s+"
+            r"(?:the\s+)?(?:sub-?task|step)\b"
+        ),
+        "control_flow",
+        False,
+    ),
+    # A jump gated by a condition is a dispatch-table edge ("Else if user
+    # says 'edit', go to step X") — not benign sequential navigation. Only
+    # if/else/otherwise count: a plain "when done, proceed to step" is
+    # sequencing, not a branch.
+    (
+        "conditional_jump",
+        re.compile(
+            r"(?i)\b(?:if|else|otherwise)\b.*\b"
+            r"(?:go|proceed|route|transition|jump|loop|continue|return)\s+"
+            r"(?:back\s+)?to\s+(?:the\s+)?(?:sub-?task|step)\b"
+        ),
+        "control_flow",
+        False,
+    ),
+    (
+        "arrow",
+        re.compile(
+            r"->\s*(?:Proceed|Call|Go|Loop|Ask|If|STOP|Transition|Route)"
+        ),
+        "control_flow",
+        False,
+    ),
+    (
+        "stop",
+        re.compile(r"(?<![A-Za-z])STOP\.(?:\s|$)"),
+        "control_flow",
+        False,
+    ),
+    # --- retry_state: counters the LLM is asked to read / advance --------
+    (
+        "counter_cmp",
+        re.compile(
+            r"(?i)\{?\b\w*(?:_counter|_count|noCount|retry|_retry)\b\}?\s+"
+            r"(?:is|==|!=)\s+(?:\"?(?:0|1|2|3)\"?|null|not\s+set)"
+        ),
+        "retry_state",
+        True,
+    ),
+    (
+        "update_counter",
+        re.compile(
+            r"(?i)update_params\w*[^\n]*\b\w*"
+            r"(?:counter|_count|_retry|noCount)\b\s*[:=]\s*['\"]?[0-3]['\"]?"
+        ),
+        "retry_state",
+        True,
+    ),
+    (
+        "ordinal",
+        re.compile(
+            r"(?i)\b(?:1st|2nd|3rd|first|second|third)\s+"
+            r"(?:consecutive\s+)?(?:attempt|occurrence|repeat|failure|try)\b"
+        ),
+        "retry_state",
+        False,
+    ),
+    # --- state_inspect: reading / writing an explicit state variable -----
+    (
+        "state_var_eq",
+        re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}\s*(?:==|!=)\s*\"?\w+"),
+        "state_inspect",
+        False,
+    ),
+    # Persisting an UPPER_SNAKE state value to a *_state / *_status field,
+    # e.g. update_params(value='{"flow_status": "BAG_VERIFICATION"}').
+    (
+        "state_write",
+        re.compile(
+            r"(?i)\b(?:flow_status|[a-z][a-z0-9_]*_state"
+            r"|[a-z][a-z0-9_]*_status)\b"
+            r"[\"']?\s*[:=,]\s*[\"'{]*\s*[\"']?[A-Z][A-Z0-9_]{2,}"
+        ),
+        "state_inspect",
+        True,
+    ),
+    # Dispatching on that state in a trigger ("When user is in BAG_VERIFICATION
+    # flow.").
+    (
+        "state_trigger",
+        re.compile(
+            r"(?i)\bwhen\b[^<>\n]*\b(?:is\s+in|in\s+the|status\s+is|state\s+is)"
+            r"\b[^<>\n]*\b[A-Z][A-Z0-9_]{2,}\b"
+        ),
+        "state_inspect",
+        False,
+    ),
+    # --- orchestrator_fsm: an externalized FSM driven from prose ---------
+    (
+        "agent_action_verbatim",
+        re.compile(
+            r"(?i)(?:follow|execute)\s+(?:the\s+)?returned\s+"
+            r"[`'\"]?agent_action[`'\"]?\s+verbatim"
+        ),
+        "orchestrator_fsm",
+        True,
+    ),
+    (
+        "lookup_flag",
+        re.compile(r"(?i)lookup_flag\s*[:=]\s*['\"][A-Z][A-Z_]{2,}['\"]"),
+        "orchestrator_fsm",
+        True,
+    ),
+    # "state machine" named in a step/subtask (e.g. <step name="Run Qty
+    # Capture State Machine">). Scoped to names so that merely *describing*
+    # FSM logic as living in code does not trip the rule.
+    (
+        "state_machine_step",
+        re.compile(
+            r"(?i)(?:name\s*=\s*[\"'][^\"']*|<(?:step|subtask)\b[^>]*)"
+            r"state[ -]?machine"
+        ),
+        "orchestrator_fsm",
+        True,
+    ),
+    # IF on a tool result code / quoted enum — disjoint from I003's IF/ELSE.
+    (
+        "if_code",
+        re.compile(
+            r"^\s*[-*]?\s*(?:IF|If)\s+"
+            r"(?:\"[A-Z_]{3,}\"|result\.[a-z_]+\s*(?:==|is|differs))"
+        ),
+        "orchestrator_fsm",
+        False,
+    ),
+]
+
+_SM_STRONG_EDGES = {"loop_edge", "conditional_jump"}
+
+
+@rule("instructions")
+class ProseStateMachine(Rule):
+    id = "I016"
+    name = "prose-state-machine"
+    description = (
+        "Instruction encodes a state machine in prose (named-step GOTOs,"
+        " retry counters, STOP tokens, state writes, orchestrator"
+        " agent_action traversal) instead of in deterministic code"
+    )
+    default_severity = Severity.WARNING
+
+    # Configurable firing levers (options.I016 in cxaslint.yaml).
+    DEFAULT_MIN_DISTINCT_CATEGORIES = 2
+    DEFAULT_MIN_TOTAL = 4
+    DEFAULT_MIN_STRONG_EDGES = 3
+
+    @staticmethod
+    def _mask_examples(content: str) -> list[str]:
+        """Blank out whole <inline_example>...</inline_example> regions.
+
+        Control-flow tokens that appear only in a sample transcript should not
+        count toward the score. Region-scoped (not just the tag lines) so a
+        multi-line example body is fully excluded.
+        """
+        masked = []
+        inside = False
+        for line in content.split("\n"):
+            opens = "<inline_example" in line
+            closes = "</inline_example" in line
+            if inside or opens:
+                masked.append("")
+            else:
+                masked.append(line)
+            if opens and not closes:
+                inside = True
+            elif closes:
+                inside = False
+        return masked
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        opts = context.options.get("I016", {})
+        min_distinct = opts.get(
+            "min_distinct_categories", self.DEFAULT_MIN_DISTINCT_CATEGORIES
+        )
+        min_total = opts.get("min_total", self.DEFAULT_MIN_TOTAL)
+        min_strong = opts.get("min_strong_edges", self.DEFAULT_MIN_STRONG_EDGES)
+
+        lines = self._mask_examples(content)
+
+        counts: dict[str, int] = {}
+        first_line: dict[str, int] = {}
+        for name, pattern, _category, _hc in _SM_SIGNALS:
+            for i, line in enumerate(lines, 1):
+                hits = len(pattern.findall(line))
+                if hits:
+                    counts[name] = counts.get(name, 0) + hits
+                    first_line.setdefault(name, i)
+
+        if not counts:
+            return []
+
+        categories = {
+            cat for name, _pat, cat, _hc in _SM_SIGNALS if counts.get(name)
+        }
+        hc_hits = [
+            name
+            for name, _pat, _cat, hc in _SM_SIGNALS
+            if hc and counts.get(name)
+        ]
+        total = sum(counts.values())
+        distinct_categories = len(categories)
+        strong_edges = sum(counts.get(n, 0) for n in _SM_STRONG_EDGES)
+
+        fires = (
+            bool(hc_hits)
+            or (distinct_categories >= min_distinct and total >= min_total)
+            or strong_edges >= min_strong
+        )
+        if not fires:
+            return []
+
+        # Anchor the single result at the strongest evidence available.
+        anchor_order = (
+            hc_hits
+            + ["conditional_jump", "loop_edge"]
+            + [name for name, *_ in _SM_SIGNALS]
+        )
+        anchor_line = next(
+            (first_line[n] for n in anchor_order if n in first_line), None
+        )
+
+        summary = ", ".join(
+            f"{name}×{counts[name]}"
+            for name, *_ in _SM_SIGNALS
+            if counts.get(name)
+        )
+        rel = str(file_path.relative_to(context.project_root))
+        return [
+            self.make_result(
+                file=rel,
+                line=anchor_line,
+                message=(
+                    "Instruction encodes a state machine in prose"
+                    f" ({distinct_categories} categories, {total} signals:"
+                    f" {summary}). Control flow should be deterministic code,"
+                    " not LLM-interpreted text."
+                ),
+                fix=(
+                    "Move control flow out of the prompt. Put retry/attempt"
+                    " counters and failure limits in a before_model/"
+                    "after_model callback (slot-filling keeps retry state in"
+                    " Python — never ask the LLM to read/increment a {counter}"
+                    " variable). Replace 'Proceed to subtask X'/'Loop back to"
+                    " step Y'/STOP GOTOs, state-variable writes, and"
+                    " IF-on-agent_action dispatch with declarative"
+                    " slot-filling DAG transitions so the framework owns"
+                    " routing. Write a goal-oriented prompt that states intent,"
+                    " not a transition table."
                 ),
             )
         ]

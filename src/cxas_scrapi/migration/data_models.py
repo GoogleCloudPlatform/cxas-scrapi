@@ -21,7 +21,10 @@ import os
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+import pydantic
+
+BaseModel = pydantic.BaseModel
+Field = pydantic.Field
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,7 @@ class MigrationStatus(str, enum.Enum):
     COMPILED = "Compiled"
     GENERATED = "Generated"
     DEPLOYED = "Deployed"
+    LOCAL = "Local"
     FAILED = "Failed"
     ERROR = "Error"
     PENDING = "Pending"
@@ -89,10 +93,10 @@ class DFCXAgentIR(BaseModel):
 class IRMetadata(BaseModel):
     """Metadata for the migration target."""
 
-    app_name: str  # The display name of the target Polysynth app
-    app_id: str | None = None  # The UUID generated for the new Polysynth app
+    app_name: str  # The display name of the target CXAS app
+    app_id: str | None = None  # The UUID generated for the new CXAS app
     app_resource_name: str | None = (
-        None  # The full resource name of the Polysynth app
+        None  # The full resource name of the CXAS app
     )
     default_model: str = "gemini-2.5-flash-001"
 
@@ -125,6 +129,7 @@ class IRAgent(BaseModel):
     callbacks: dict[str, Any] | None = None  # Used by Flows
     status: MigrationStatus = MigrationStatus.COMPILED
     resource_name: str | None = None  # Populated after deployment
+    is_source_root: bool = False
 
 
 class MigrationIR(BaseModel):
@@ -138,6 +143,7 @@ class MigrationIR(BaseModel):
     test_cases: dict[str, Any] = Field(default_factory=dict)
     test_runs: dict[str, Any] = Field(default_factory=dict)
     optimization_logs: dict[str, Any] = Field(default_factory=dict)
+    xprs_designer_data: dict[str, Any] | None = None
 
 
 class MigrationConfig(BaseModel):
@@ -154,24 +160,35 @@ class MigrationConfig(BaseModel):
     gen_hillclimbing_evals: bool = False
     eval_runner_target: str = "Custom API Runner"
     migration_version: str = "2.0"
+    # Deprecated since Phase 5: consolidation is now the unconditional
+    # default. Field retained as a no-op accepted value so old callers /
+    # scripts don't break. Use ``no_consolidate=True`` to skip Stage 1/2/3.
     optimize_for_cxas: bool = False
+    no_consolidate: bool = False
     persist_bundle: bool = False
     interactive: bool = False
     source_agent_data_override: DFCXAgentIR | None = None
+    # Phase 5: HTML-driven grouping confirmation gate is the default.
+    # MigrationService installs the web_review callback for Stage 1
+    # consolidation unless --no-web-confirm or --auto-confirm-grouping.
+    web_confirm_grouping: bool = True
+    web_confirm_host: str = "127.0.0.1"
+    web_confirm_port: int = 0  # 0 = pick an ephemeral port
+    web_confirm_timeout_s: int = 1800
+    auto_confirm_grouping: bool = False  # CI escape hatch: skip gate
+    experimental_agent_xprs: bool = (
+        False  # Phase 1: Experimental Agent xprs Designer UI & harvesting gate
+    )
 
     @property
     def consolidate(self) -> bool:
-        """Backward-compatibility property hook: consolidation is active
-        whenever optimize is active.
-        """
-        return self.optimize_for_cxas
+        """Consolidation runs by default; ``no_consolidate=True`` opts out."""
+        return not self.no_consolidate
 
     @property
     def run_stage_3(self) -> bool:
-        """Backward-compatibility property hook: Stage 3 parent-child routing
-        is active whenever optimize is active.
-        """
-        return self.optimize_for_cxas
+        """Stage 3 topology wiring runs whenever consolidation runs."""
+        return not self.no_consolidate
 
 
 class StageHistoryEntry(BaseModel):

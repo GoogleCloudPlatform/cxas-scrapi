@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import os
-import subprocess
 import sys
+import typing
 from unittest.mock import MagicMock, patch
 
 # Ensure correct path
@@ -25,7 +25,7 @@ sys.path.append(
 from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 
 
-def test_common_init():
+def test_common_init() -> None:
     try:
         Common()
         print("PASS: Initialized Common with default creds (ADC).")
@@ -34,7 +34,7 @@ def test_common_init():
 
 
 @patch("cxas_scrapi.core.common.default")
-def test_common_auth(mock_auth):
+def test_common_auth(mock_auth: typing.Any) -> None:
     # Temporarily clear the globally mocked oauth token for this specific test
     original_val = os.environ.pop("CXAS_OAUTH_TOKEN", None)
     try:
@@ -47,7 +47,7 @@ def test_common_auth(mock_auth):
             os.environ["CXAS_OAUTH_TOKEN"] = original_val
 
 
-def test_client_options():
+def test_client_options() -> None:
     us_id = "projects/my-project/locations/us/agents/my-agent"
     opts = Common._get_client_options(us_id)
     assert opts["api_endpoint"] == DEFAULT_API_ENDPOINT
@@ -57,7 +57,7 @@ def test_client_options():
     assert opts["api_endpoint"] == DEFAULT_API_ENDPOINT
 
 
-def test_project_id_extraction():
+def test_project_id_extraction() -> None:
     assert (
         Common._get_project_id("projects/test-proj/locations/us/apps/abc")
         == "test-proj"
@@ -65,14 +65,14 @@ def test_project_id_extraction():
     assert Common._get_project_id("invalid-format") is None
 
 
-def test_location_extraction():
+def test_location_extraction() -> None:
     assert (
         Common._get_location("projects/test-proj/locations/us/apps/abc") == "us"
     )
     assert Common._get_location("invalid-format") is None
 
 
-def test_app_name_extraction():
+def test_app_name_extraction() -> None:
     assert (
         Common._get_app_name(
             "projects/test-proj/locations/us/apps/abc/conversations/123"
@@ -86,7 +86,17 @@ def test_app_name_extraction():
     assert Common._get_app_name("invalid-format") is None
 
 
-def test_unwrap_value():
+def test_session_id_extraction() -> None:
+    assert (
+        Common._get_session_id(
+            "projects/test-proj/locations/us/apps/abc/sessions/sess-123"
+        )
+        == "sess-123"
+    )
+    assert Common._get_session_id("invalid-format") is None
+
+
+def test_unwrap_value() -> None:
     assert Common.unwrap_value({"string_value": "hello"}) == "hello"
     assert Common.unwrap_value({"number_value": 42}) == 42
     assert Common.unwrap_value({"bool_value": True})
@@ -95,7 +105,7 @@ def test_unwrap_value():
     ) == ["a"]
 
 
-def test_unwrap_struct():
+def test_unwrap_struct() -> None:
     struct = {
         "fields": [
             {"key": "name", "value": {"string_value": "test"}},
@@ -105,55 +115,48 @@ def test_unwrap_struct():
     assert Common.unwrap_struct(struct) == {"name": "test", "age": 30}
 
 
-def test_tokenize():
+def test_tokenize() -> None:
     text = '{ key: "value" }'
     tokens = list(Common._tokenize_textproto(text))
     kinds = [t[0] for t in tokens]
     assert kinds == ["LBRACE", "ID", "COLON", "STRING", "RBRACE"]
 
 
-def test_parse():
+def test_parse() -> None:
     text = '{ key: "value" num: 42 bool_val: true }'
     tokens = Common._tokenize_textproto(text)
     res = Common._parse_textproto_tokens(tokens)
     assert res == {"key": "value", "num": "42", "bool_val": True}
 
 
-def test_parse_textproto():
+def test_parse_textproto() -> None:
     text = '{ key: "value" nested: { inner: 1 } }'
     res = Common.parse_textproto(text)
     assert res == {"key": "value", "nested": {"inner": "1"}}
 
 
-def test_ces_api_endpoint_override():
-    # Run a subprocess with CES_API_ENDPOINT set
-    cmd = [
-        sys.executable,
-        "-c",
-        (
-            "from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT; "
-            "print(DEFAULT_API_ENDPOINT)"
-        ),
-    ]
-    env = os.environ.copy()
-    env["CES_API_ENDPOINT"] = "custom.ces.googleapis.com"
+def test_ces_api_endpoint_override() -> None:
+    import importlib  # noqa: PLC0415
 
-    # We need to make sure src is in python path for the subprocess
-    src_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../../../src")
-    )
-    if "PYTHONPATH" in env:
-        env["PYTHONPATH"] = f"{src_path}:{env['PYTHONPATH']}"
-    else:
-        env["PYTHONPATH"] = src_path
+    from cxas_scrapi.core import common  # noqa: PLC0415
 
-    result = subprocess.run(
-        cmd, env=env, capture_output=True, text=True, check=True
-    )
-    assert result.stdout.strip() == "custom.ces.googleapis.com"
+    # Store original
+    orig_endpoint = os.environ.get("CES_API_ENDPOINT")
+
+    try:
+        os.environ["CES_API_ENDPOINT"] = "custom.ces.googleapis.com"
+        importlib.reload(common)
+        assert common.DEFAULT_API_ENDPOINT == "custom.ces.googleapis.com"
+    finally:
+        # Restore original env and reload to restore state
+        if orig_endpoint is not None:
+            os.environ["CES_API_ENDPOINT"] = orig_endpoint
+        else:
+            os.environ.pop("CES_API_ENDPOINT", None)
+        importlib.reload(common)
 
 
-def test_ces_transport_override_grpc():
+def test_ces_transport_override_grpc() -> None:
     # Default should be grpc
     common = Common(creds=MagicMock())
     mock_client = MagicMock()
@@ -162,7 +165,7 @@ def test_ces_transport_override_grpc():
 
 
 @patch.dict(os.environ, {"CES_TRANSPORT": "rest"})
-def test_ces_transport_override_rest():
+def test_ces_transport_override_rest() -> None:
     common = Common(creds=MagicMock())
     mock_client = MagicMock()
     common.get_grpc_transport(mock_client)

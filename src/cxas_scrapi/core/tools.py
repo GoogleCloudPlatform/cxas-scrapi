@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Tools class for CXAS Scrapi."""
 
+import typing
 from typing import Any
 
 import requests
 import yaml
+from google.api_core import exceptions as google_exceptions
 from google.cloud.ces_v1beta import (
     AgentServiceClient,
     ToolServiceClient,
@@ -27,7 +30,7 @@ from google.protobuf import field_mask_pb2
 from google.protobuf.json_format import MessageToDict
 
 from cxas_scrapi.core.apps import Apps
-from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT
+from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.variables import Variables
 
 
@@ -41,11 +44,17 @@ class Tools(Apps):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Tools client."""
-        project_id = app_name.split("/")[1]
-        location = app_name.split("/")[3]
+        project_id = Common._get_project_id(app_name)
+        location = Common._get_location(app_name)
+        if not project_id or not location:
+            raise ValueError(
+                f"Invalid app_name format: {app_name}. "
+                "Expected format: "
+                "projects/<project>/locations/<location>/apps/<app>"
+            )
 
         super().__init__(
             project_id=project_id,
@@ -185,18 +194,24 @@ class Tools(Apps):
                         )
                         tools_dict.update(openapi_tools)
                 else:
-                    toolset_tools = self.retrieve_tools(
-                        tool.name.split("/")[-1]
-                    )
-                    for toolset_tool in toolset_tools.tools:
-                        if reverse:
-                            tools_dict[toolset_tool.display_name] = (
-                                toolset_tool.name
-                            )
-                        else:
-                            tools_dict[toolset_tool.name] = (
-                                toolset_tool.display_name
-                            )
+                    try:
+                        toolset_tools = self.retrieve_tools(
+                            tool.name.split("/")[-1]
+                        )
+                        for toolset_tool in toolset_tools.tools:
+                            if reverse:
+                                tools_dict[toolset_tool.display_name] = (
+                                    toolset_tool.name
+                                )
+                            else:
+                                tools_dict[toolset_tool.name] = (
+                                    toolset_tool.display_name
+                                )
+                    except google_exceptions.GoogleAPICallError as e:
+                        print(
+                            f"[WARNING] Failed to retrieve tools for toolset"
+                            f" {tool.display_name}: {e}"
+                        )
             elif reverse:
                 tools_dict[tool.display_name] = tool.name
             else:
@@ -281,7 +296,7 @@ class Tools(Apps):
             )
             return self.client.create_tool(request=request)
 
-    def update_tool(self, tool_name: str, **kwargs) -> Any:
+    def update_tool(self, tool_name: str, **kwargs: typing.Any) -> Any:
         """Updates specific fields of an existing Tool or Toolset."""
         mask_paths = list(kwargs.keys())
 

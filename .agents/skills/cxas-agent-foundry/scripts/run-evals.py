@@ -14,6 +14,7 @@
 # limitations under the License.
 
 """Run all 4 eval types and generate a combined report in one command (SCRAPI)."""
+import typing
 
 import argparse
 import os
@@ -27,7 +28,7 @@ from config import load_config as _load_shared_config, get_project_path
 REPORTS_DIR = get_project_path("eval-reports")
 
 
-def load_config():
+def load_config() -> typing.Any:
     """Load app config from gecx-config.json via shared config loader."""
     raw = _load_shared_config()
     config = {
@@ -49,7 +50,7 @@ def load_config():
     return config
 
 
-def main():
+def main() -> typing.Any:
     try:
         import cxas_scrapi  # noqa: F401
     except ImportError:
@@ -90,6 +91,27 @@ def main():
         type=int,
         default=5,
         help="Number of parallel worker sessions for simulations. Defaults to 5.",
+    )
+    parser.add_argument(
+        "--deployment-id",
+        default=None,
+        help="Target a specific deployment ID for simulations.",
+    )
+    parser.add_argument(
+        "--use-tool-fakes",
+        action="store_true",
+        default=False,
+        help="Use fake tools if available for simulations.",
+    )
+    parser.add_argument(
+        "--skip-playback-wait",
+        action="store_true",
+        help="Skip waiting for agent audio playback to finish before sending the next turn (speeds up audio simulations but may cause barge-in/cut-offs).",
+    )
+    parser.add_argument(
+        "--single-bidi-stream",
+        action="store_true",
+        help="Keep one persistent bidi WebSocket open per audio simulation instead of one connection per turn (the default).",
     )
     args = parser.parse_args()
 
@@ -149,6 +171,10 @@ def main():
             runs=args.runs,
             filter_tags=filter_tags,
             parallel=args.sim_parallel,
+            use_tool_fakes=args.use_tool_fakes,
+            deployment_id=args.deployment_id,
+            skip_playback_wait=args.skip_playback_wait,
+            single_bidi_stream=args.single_bidi_stream,
         )
     except Exception as e:
         print(f"\n  ERROR: Evaluation run failed: {e}")

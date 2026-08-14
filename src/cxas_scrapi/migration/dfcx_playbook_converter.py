@@ -14,6 +14,7 @@
 
 import logging
 import re
+import typing
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 class DFCXPlaybookConverter:
     """Converts Dialogflow CX playbooks to CXAS agents."""
 
-    def __init__(self, reporter: Any):
+    def __init__(self, reporter: Any) -> None:
         self.reporter = reporter
 
     @staticmethod
@@ -50,7 +51,9 @@ class DFCXPlaybookConverter:
         return instruction_lines
 
     @staticmethod
-    def var_replacer(match, parameter_name_map, reporter):
+    def var_replacer(
+        match: typing.Any, parameter_name_map: typing.Any, reporter: typing.Any
+    ) -> typing.Any:
         original_match = match.group(0)
         var_name = next(g for g in match.groups() if g is not None)
 
@@ -70,7 +73,10 @@ class DFCXPlaybookConverter:
 
     @staticmethod
     def replace_tool_reference(
-        match: re.Match, cx_tool_display_name_to_id_map, tool_map, reporter
+        match: re.Match,
+        cx_tool_display_name_to_id_map: typing.Any,
+        tool_map: typing.Any,
+        reporter: typing.Any,
     ) -> str:
         dfcx_display_name = match.group(1).strip()
         dfcx_tool_id = cx_tool_display_name_to_id_map.get(dfcx_display_name)
@@ -115,7 +121,7 @@ class DFCXPlaybookConverter:
             return new_ref
 
     @staticmethod
-    def replace_routing_ref(match: re.Match, reporter) -> str:
+    def replace_routing_ref(match: re.Match, reporter: typing.Any) -> str:
         original = match.group(0)
         target_name = match.group(2).strip()
         new_ref = f"{{@AGENT: {target_name}}}"

@@ -271,7 +271,7 @@ class GenerateContentConfig(BaseModel):
         default=None, alias="excludedTools"
     )
 
-    def hide_tool(self, tool_name: str):
+    def hide_tool(self, tool_name: str) -> None:
         if self.excluded_tools is None:
             self.excluded_tools = []
         self.excluded_tools.append(tool_name)
@@ -372,7 +372,7 @@ class CallbackContext(BaseModel):
         return self.state
 
     @variables.setter
-    def variables(self, value: dict[str, Any]):
+    def variables(self, value: dict[str, Any]) -> None:
         self.state = value
 
     # Shortcut function for getting a variable from the state.

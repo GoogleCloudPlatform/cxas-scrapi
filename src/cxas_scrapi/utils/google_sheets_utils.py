@@ -40,7 +40,7 @@ class GoogleSheetsUtils(Common):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-    ):
+    ) -> None:
         # Ensure sheets scopes are included
         auth_scopes = scope or []
         for s in SHEETS_SCOPE:
@@ -65,7 +65,7 @@ class GoogleSheetsUtils(Common):
             self.sheets_client = None
             self._handle_api_error(e)
 
-    def _preflight_api_checks(self):
+    def _preflight_api_checks(self) -> None:
         """Runs a lightweight test to ensure Drive APIs are enabled on the
         quota project.
         Skips if running in Google Colab since Colab's native auth handles
@@ -163,7 +163,7 @@ class GoogleSheetsUtils(Common):
         dataframe: pd.DataFrame,
         sheet_name: str,
         worksheet_name: str | None = None,
-    ):
+    ) -> None:
         """Move data from a pandas DataFrame to Google Sheets.
 
         Args:
@@ -195,7 +195,7 @@ class GoogleSheetsUtils(Common):
         dataframe: pd.DataFrame,
         sheet_name: str,
         worksheet_name: str | None = None,
-    ):
+    ) -> None:
         """Append data from a pandas DataFrame to an existing Google Sheet tab.
 
         Args:

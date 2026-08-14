@@ -6,6 +6,7 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+
 """InquirerPy-based prompt library shared across migrate / stage1 / stage2.
 
 Mirrors the prompt patterns used in the cxas-agent-foundry skill's

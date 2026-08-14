@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Drive a conversation with a Dialogflow CX (DFCX) agent and persist the
 full trace (user turns, agent responses, tool calls, playbook/flow
 invocations) as YAML.
@@ -23,6 +24,7 @@ This module talks to Dialogflow CX directly via the
 import json
 import logging
 import os
+import typing
 import uuid
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
@@ -99,7 +101,7 @@ class DFCXConversationRunner(BaseDFCXClient):
         language_code: str = "en",
         session_id: str | None = None,
         environment_id: str | None = None,
-    ):
+    ) -> None:
         self.agent_id = agent_id
         self.language_code = language_code
         self.creds = Common(creds_path=creds_path, creds=creds).creds
@@ -253,7 +255,7 @@ class DFCXConversationRunner(BaseDFCXClient):
         return runner
 
     @staticmethod
-    def _extract_user_input(query_input) -> str | None:
+    def _extract_user_input(query_input: typing.Any) -> str | None:
         """Pull the user-facing text out of a recorded QueryInput."""
         if query_input is None:
             return None
@@ -303,19 +305,19 @@ class DFCXConversationRunner(BaseDFCXClient):
     # Lazy CX clients
     # ------------------------------------------------------------------ #
 
-    def _get_sessions_client(self):
+    def _get_sessions_client(self) -> typing.Any:
         if self._sessions_client is None:
             self._sessions_client = cx_services.sessions.SessionsClient(
                 credentials=self.creds, client_options=self._client_options
             )
         return self._sessions_client
 
-    def _get_history_client(self):
+    def _get_history_client(self) -> typing.Any:
         if self._history_client is None:
             self._history_client = (
                 cx_services.conversation_history.ConversationHistoryClient(
                     credentials=self.creds,
-                    client_options=self._client_options,
+                    client_options=self._client_options,  # type: ignore
                 )
             )
         return self._history_client
@@ -325,7 +327,7 @@ class DFCXConversationRunner(BaseDFCXClient):
         text: str,
         parameters: dict[str, Any] | None,
         end_user_metadata: dict[str, Any] | None,
-    ):
+    ) -> typing.Any:
         text_input = cx_types.session.TextInput(text=text)
         query_input = cx_types.session.QueryInput(
             text=text_input, language_code=self.language_code
@@ -342,7 +344,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             query_input=query_input,
         )
         if query_param_kwargs:
-            request.query_params = cx_types.session.QueryParameters(
+            request.query_params = cx_types.session.QueryParameters(  # type: ignore
                 **query_param_kwargs
             )
         return request
@@ -364,7 +366,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             credentials=self.creds, client_options=self._client_options
         )
         self._tools_map = {
-            t.name: t.display_name
+            str(t.name): str(t.display_name)
             for t in client.list_tools(
                 request=cx_types.ListToolsRequest(parent=self.agent_id)
             )
@@ -378,7 +380,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             credentials=self.creds, client_options=self._client_options
         )
         self._playbooks_map = {
-            pb.name: pb.display_name
+            str(pb.name): str(pb.display_name)
             for pb in client.list_playbooks(
                 request=cx_types.ListPlaybooksRequest(parent=self.agent_id)
             )
@@ -392,7 +394,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             credentials=self.creds, client_options=self._client_options
         )
         self._flows_map = {
-            f.name: f.display_name
+            str(f.name): str(f.display_name)
             for f in client.list_flows(
                 request=cx_types.ListFlowsRequest(parent=self.agent_id)
             )
@@ -424,7 +426,7 @@ class DFCXConversationRunner(BaseDFCXClient):
     # Trace extraction
     # ------------------------------------------------------------------ #
 
-    def _build_turn(self, user_query: str, res) -> ConversationTurn:
+    def _build_turn(self, user_query: str, res: typing.Any) -> ConversationTurn:
         """Convert a DFCX QueryResult into a ConversationTurn."""
         turn = ConversationTurn(
             turn=len(self.trace.turns) + 1,
@@ -474,7 +476,9 @@ class DFCXConversationRunner(BaseDFCXClient):
 
         return turn
 
-    def _collect_action(self, action, turn: ConversationTurn) -> None:
+    def _collect_action(
+        self, action: typing.Any, turn: ConversationTurn
+    ) -> None:
         """Inspect a single action from action_tracing_info and route it."""
         agent_utterance = getattr(action, "agent_utterance", None)
         if agent_utterance and getattr(agent_utterance, "text", ""):
@@ -504,7 +508,7 @@ class DFCXConversationRunner(BaseDFCXClient):
                 }
             )
 
-    def _build_tool_call(self, tool_use) -> dict[str, Any]:
+    def _build_tool_call(self, tool_use: typing.Any) -> dict[str, Any]:
         """Normalize a tool_use action.
 
         Inline actions (no registered tool resource) are tagged
@@ -533,7 +537,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             ),
         }
 
-    def _extract_tool_params(self, params) -> Any:
+    def _extract_tool_params(self, params: typing.Any) -> Any:
         """Convert proto-marshal tool params to plain Python.
 
         DFCX wraps tool I/O under a single empty-string top-level key for
@@ -557,7 +561,7 @@ class DFCXConversationRunner(BaseDFCXClient):
             return empty_top_key
         return param_map
 
-    def _convert_parameters(self, params) -> dict[str, Any]:
+    def _convert_parameters(self, params: typing.Any) -> dict[str, Any]:
         """Recursively turn proto MapComposite/RepeatedComposite into plain
         Python types so they can be YAML-serialized cleanly."""
         out = {}
@@ -570,7 +574,9 @@ class DFCXConversationRunner(BaseDFCXClient):
             out[key] = value
         return out
 
-    def _recurse_marshal_to_dict(self, marshal_object) -> dict[str, Any]:
+    def _recurse_marshal_to_dict(
+        self, marshal_object: typing.Any
+    ) -> dict[str, Any]:
         out: dict[str, Any] = {}
         for k, v in marshal_object.items():
             if isinstance(v, maps.MapComposite):
@@ -582,7 +588,9 @@ class DFCXConversationRunner(BaseDFCXClient):
             out[k] = converted
         return out
 
-    def _recurse_repeated_composite(self, repeated_object) -> list[Any]:
+    def _recurse_repeated_composite(
+        self, repeated_object: typing.Any
+    ) -> list[Any]:
         out: list[Any] = []
         for item in repeated_object:
             if isinstance(item, maps.MapComposite):

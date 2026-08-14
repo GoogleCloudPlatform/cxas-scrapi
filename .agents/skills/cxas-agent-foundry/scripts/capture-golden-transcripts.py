@@ -23,6 +23,7 @@ Usage:
   python scripts/capture-golden-transcripts.py --all
   python scripts/capture-golden-transcripts.py --all --channel audio
 """
+import typing
 
 import argparse
 import json
@@ -41,7 +42,7 @@ TRANSCRIPTS_DIR = get_project_path("evals", "goldens", "transcripts")
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/capture-golden-transcripts"
 
 
-def load_golden_scripts():
+def load_golden_scripts() -> typing.Any:
     """Load user turns and session parameters from golden YAML files."""
     scripts = {}
     for fname in sorted(os.listdir(GOLDENS_DIR)):
@@ -61,7 +62,7 @@ def load_golden_scripts():
     return scripts
 
 
-def parse_response_deduped(response) -> Dict[str, Any]:
+def parse_response_deduped(response: typing.Any) -> Dict[str, Any]:
     """Parse response, avoiding duplicate text from diagnostic info."""
     agent_texts = []
     tool_calls = []
@@ -115,7 +116,7 @@ def parse_response_deduped(response) -> Dict[str, Any]:
     }
 
 
-def capture(name: str, scripts: dict, app_name: str, channel: str = "text"):
+def capture(name: str, scripts: dict, app_name: str, channel: str = "text") -> typing.Any:
     """Capture a single golden transcript."""
     config = scripts[name]
     sessions = Sessions(app_name, user_agent_extension=USER_AGENT_EXTENSION)
@@ -170,7 +171,7 @@ def capture(name: str, scripts: dict, app_name: str, channel: str = "text"):
     return {"name": name, "session_parameters": params, "transcript": transcript}
 
 
-def main():
+def main() -> typing.Any:
     try:
         import cxas_scrapi  # noqa: F401
     except ImportError:

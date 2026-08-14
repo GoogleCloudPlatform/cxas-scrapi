@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 from cxas_scrapi.core.guardrails import Guardrails
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_list_guardrails(mock_client_cls):
+def test_list_guardrails(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_gr = MagicMock()
     mock_gr.name = "projects/p/locations/l/apps/A/guardrails/gr1"
@@ -31,7 +32,7 @@ def test_list_guardrails(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_get_guardrails_map(mock_client_cls):
+def test_get_guardrails_map(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_gr1 = MagicMock()
     mock_gr1.name = "projects/p/locations/l/apps/A/guardrails/g1"
@@ -52,7 +53,7 @@ def test_get_guardrails_map(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_get_guardrail(mock_client_cls):
+def test_get_guardrail(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_gr = MagicMock()
     mock_gr.name = "projects/p/locations/l/apps/A/guardrails/gr_id"
@@ -67,11 +68,15 @@ def test_get_guardrail(mock_client_cls):
 @patch("cxas_scrapi.core.guardrails.types.Guardrail")
 @patch("cxas_scrapi.core.guardrails.types.CreateGuardrailRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_create_guardrail(mock_client_cls, mock_req_cls, mock_gr_cls):
+def test_create_guardrail(
+    mock_client_cls: typing.Any,
+    mock_req_cls: typing.Any,
+    mock_gr_cls: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.create_guardrail.return_value = MagicMock()
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -99,11 +104,15 @@ def test_create_guardrail(mock_client_cls, mock_req_cls, mock_gr_cls):
 @patch("cxas_scrapi.core.guardrails.types.Guardrail")
 @patch("cxas_scrapi.core.guardrails.types.UpdateGuardrailRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_update_guardrail(mock_client_cls, mock_req_cls, mock_gr_cls):
+def test_update_guardrail(
+    mock_client_cls: typing.Any,
+    mock_req_cls: typing.Any,
+    mock_gr_cls: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.update_guardrail.return_value = MagicMock()
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -125,10 +134,12 @@ def test_update_guardrail(mock_client_cls, mock_req_cls, mock_gr_cls):
 
 @patch("cxas_scrapi.core.guardrails.types.DeleteGuardrailRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_delete_guardrail(mock_client_cls, mock_req_cls):
+def test_delete_guardrail(
+    mock_client_cls: typing.Any, mock_req_cls: typing.Any
+) -> None:
     mock_client = mock_client_cls.return_value
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)

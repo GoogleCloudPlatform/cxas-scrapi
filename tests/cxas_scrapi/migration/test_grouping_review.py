@@ -6,6 +6,7 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+
 """Tests for :mod:`cxas_scrapi.migration.grouping_review`.
 
 The interactive InquirerPy loop is mocked at the prompt level; we
@@ -16,6 +17,7 @@ the structure of the rendered Rich trees, and the return contract
 
 from __future__ import annotations
 
+import typing
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -48,7 +50,9 @@ def _make_ir(agent_names: list[str] | None = None) -> MigrationIR:
     )
 
 
-def _make_consolidator(consolidated_ir: MigrationIR | None = None):
+def _make_consolidator(
+    consolidated_ir: MigrationIR | None = None,
+) -> typing.Any:
     """Build a fake StructuralConsolidator with the two methods the
     review TUI calls: ``consolidate`` and ``propose_groupings``."""
     consolidator = MagicMock()
@@ -66,13 +70,13 @@ def _make_consolidator(consolidated_ir: MigrationIR | None = None):
 # ---------------------------------------------------------------------------
 
 
-def _render_tree_to_str(tree) -> str:
+def _render_tree_to_str(tree: typing.Any) -> str:
     buf = StringIO()
     RichConsole(file=buf, width=200, force_terminal=False).print(tree)
     return buf.getvalue()
 
 
-def test_render_ir_tree_marks_root_agent():
+def test_render_ir_tree_marks_root_agent() -> None:
     ir = _make_ir()
     tree = grouping_review.render_ir_tree(ir, "Test", root_key="RootAgent")
     out = _render_tree_to_str(tree)
@@ -81,7 +85,7 @@ def test_render_ir_tree_marks_root_agent():
     assert "(root)" in out
 
 
-def test_render_ir_tree_no_root_does_not_mark_anything():
+def test_render_ir_tree_no_root_does_not_mark_anything() -> None:
     ir = _make_ir()
     tree = grouping_review.render_ir_tree(ir, "Test", root_key=None)
     assert "(root)" not in _render_tree_to_str(tree)
@@ -92,7 +96,7 @@ def test_render_ir_tree_no_root_does_not_mark_anything():
 # ---------------------------------------------------------------------------
 
 
-def test_render_diff_prints_summary_stats():
+def test_render_diff_prints_summary_stats() -> None:
     before = _make_ir(["A", "B", "C"])
     after = _make_ir(["AB", "C"])
     fake_console = MagicMock()
@@ -111,7 +115,7 @@ def test_render_diff_prints_summary_stats():
 
 
 @pytest.mark.asyncio
-async def test_interactive_review_accept_returns_groupings_unchanged():
+async def test_interactive_review_accept_returns_groupings_unchanged() -> None:
     """On [a]ccept the loop returns the groupings dict — NOT the
     consolidated IR. Caller is responsible for committing."""
     ir = _make_ir()
@@ -127,6 +131,7 @@ async def test_interactive_review_accept_returns_groupings_unchanged():
         patch.object(
             grouping_review.inquirer, "select", return_value=fake_select
         ),
+        patch("sys.stdin.isatty", return_value=True),
     ):
         result = await grouping_review.interactive_review(
             ir, groupings, consolidator, root_key="RootAgent"
@@ -138,7 +143,7 @@ async def test_interactive_review_accept_returns_groupings_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_interactive_review_quit_returns_none():
+async def test_interactive_review_quit_returns_none() -> None:
     ir = _make_ir()
     groupings = {"RootGroup": {"agents": ["RootAgent"], "is_root": True}}
     consolidator = _make_consolidator()
@@ -151,6 +156,7 @@ async def test_interactive_review_quit_returns_none():
         patch.object(
             grouping_review.inquirer, "select", return_value=fake_select
         ),
+        patch("sys.stdin.isatty", return_value=True),
     ):
         result = await grouping_review.interactive_review(
             ir, groupings, consolidator
@@ -160,7 +166,7 @@ async def test_interactive_review_quit_returns_none():
 
 
 @pytest.mark.asyncio
-async def test_interactive_review_preview_failure_returns_none():
+async def test_interactive_review_preview_failure_returns_none() -> None:
     """If consolidator.consolidate raises during preview, the loop
     aborts cleanly with None."""
     ir = _make_ir()
@@ -171,14 +177,15 @@ async def test_interactive_review_preview_failure_returns_none():
     )
 
     fake_console = MagicMock()
-    result = await grouping_review.interactive_review(
-        ir, groupings, consolidator, console=fake_console
-    )
+    with patch("sys.stdin.isatty", return_value=True):
+        result = await grouping_review.interactive_review(
+            ir, groupings, consolidator, console=fake_console
+        )
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_interactive_review_repropose_then_accept():
+async def test_interactive_review_repropose_then_accept() -> None:
     """[r]e-propose calls ``consolidator.propose_groupings(feedback)``
     and uses the new groupings on the next iteration."""
     ir = _make_ir()
@@ -200,6 +207,7 @@ async def test_interactive_review_repropose_then_accept():
             grouping_review.inquirer, "select", return_value=fake_select
         ),
         patch.object(grouping_review.inquirer, "text", return_value=fake_text),
+        patch("sys.stdin.isatty", return_value=True),
     ):
         result = await grouping_review.interactive_review(
             ir,

@@ -142,10 +142,10 @@ def before_agent_callback(callback_context: CallbackContext) -> Content | None:
 
     # Return a scripted greeting for the first turn
     return Content(parts=[
-        Part(text=(
+        Part.from_text(
             "Welcome to Bella Notte. I can help you make, modify, or cancel a reservation. "
             "What can I do for you today?"
-        ))
+        )
     ])
 ```
 
@@ -174,9 +174,9 @@ def before_agent_callback(callback_context: CallbackContext) -> Content | None:
         state["_silence_count"] = str(silence_count)
 
         if silence_count >= 3:
-            return Content(parts=[Part(text="I'm going to end this session. Please call us back when you're ready.")])
+            return Content(parts=[Part.from_text("I'm going to end this session. Please call us back when you're ready.")])
 
-        return Content(parts=[Part(text="I'm sorry, I didn't catch that. Are you still there?")])
+        return Content(parts=[Part.from_text("I'm sorry, I didn't catch that. Are you still there?")])
 
     # Clear silence count on valid input
     state["_silence_count"] = "0"
@@ -238,7 +238,7 @@ Offer to help with anything else.
 
 ## `before_model_callback` for DAG and slot-filling
 
-`before_model_callback` fires just before the model is called and can return an `LlmResponse` to preempt the model entirely. This is the correct hook for deterministic slot-filling logic — where you want to check whether all required slots are collected and short-circuit the model call when they are.
+`before_model_callback` fires just before the model is called and can return an `LlmResponse` to intercept the turn. This is the correct hook for deterministic slot-filling logic — where you want to check whether all required slots are collected and trigger the action deterministically.
 
 ```python
 def before_model_callback(
@@ -264,28 +264,83 @@ def before_model_callback(
     missing = [field for field in required if not ctx.get(field)]
 
     if not missing:
-        # All slots collected — transition stage and preempt model
+        # All slots collected — transition stage and trigger action
         state["_conversation_stage"] = "confirming_slot"
-        return LlmResponse(
-            content=Content(parts=[
-                Part(
-                    function_call={"name": "check_availability", "args": {
+        return LlmResponse.from_parts(
+            parts=[
+                Part.from_function_call(
+                    name="check_availability",
+                    args={
                         "date": ctx["date"],
                         "time": ctx["time"],
                         "party_size": ctx["party_size"]
-                    }}
+                    }
                 )
-            ])
+            ]
         )
 
     # Not all slots filled — let the model collect the next missing field
     return None
 ```
 
-When `before_model_callback` returns an `LlmResponse`, the platform treats it as if the model produced that response. The model is not called at all. This makes the transition from slot-filling to action deterministic — the model cannot skip the `check_availability` call because the callback forces it.
+---
 
-!!! note "Preemption vs. guidance"
-    Use `before_model_callback` preemption for transitions that must be deterministic: "when all slots are filled, always call `check_availability`." Use dynamic prompting (`before_agent_callback`) for behavioral guidance: "in the `gathering_details` stage, ask for one field at a time." The two patterns complement each other.
+## Preemption vs. LLM Re-Invocation Lifecycle
+
+A critical architectural distinction in `before_model_callback` is **when the LLM is completely bypassed versus when returning a response triggers a subsequent LLM call**.
+
+### 1. Deterministic Preemption (Bypasses LLM Completely)
+When `before_model_callback` returns an `LlmResponse` containing **only text/media parts** (and no function calls), CXAS delivers the text to the user/TTS, concludes the agent turn, and yields to wait for the user's next utterance. The LLM is **never invoked**:
+
+```python
+# Pattern: Synchronous Tool Execution + Text-Only Preemption
+def before_model_callback(callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
+    variables = callback_context.variables
+    if variables.get("nextAction") == "BAN Confirm Rejected":
+        # 1. Execute tool or update state synchronously in Python sandbox
+        variables["nextAction"] = "Enter Account or ITN"
+        variables["idNumber"] = ""
+
+        # 2. Return ONLY text parts -- LLM is COMPLETELY bypassed
+        return LlmResponse.from_parts(
+            parts=[
+                Part.from_text(text="What's the account or phone number you're calling about?")
+            ]
+        )
+    return None
+```
+
+### 2. Platform Tool Delegation & Model Synthesis (Invokes LLM)
+When `before_model_callback` returns an `LlmResponse` containing a **`Part.from_function_call(...)`**:
+1. CXAS delivers any prefix text to the user/TTS (e.g., using `partial=True` for latency masking audio fillers).
+2. CXAS schedules and executes the tool via the platform runtime.
+3. Upon tool completion, CXAS feeds the resulting `toolResponse` back into the **LLM**.
+4. The LLM runs a model turn to interpret the tool output and formulate the final response.
+
+```python
+# Pattern: Audio Filler + Asynchronous Tool Delegation for LLM Reasoning
+def before_model_callback(callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
+    if callback_context.variables.get("needs_lookup") == "true":
+        callback_context.variables["needs_lookup"] = "false"
+        return LlmResponse.from_parts(
+            parts=[
+                # Audio filler spoken while tool executes
+                Part.from_text(text="Please give me just a moment while I pull up your records.", partial=True),
+                # Tool dispatched by CES runtime -> output fed back to LLM
+                Part.from_function_call(name="fetch_customer_record", args={"account_id": "ACC123"})
+            ]
+        )
+    return None
+```
+
+### ⚠️ The `EMPTY_RESPONSE` Voice Gotcha
+If your intent was to deterministically ask a question and wait for the caller, but you return `Part.from_function_call(...)` alongside text (or modify state and return `None`), the platform triggers a post-tool LLM turn. 
+
+If the conversation turn state has already been handled and contains no new user utterance, the LLM receives an empty prompt turn and can return **`EMPTY_RESPONSE`** (`fallback reason: empty_response`), which causes the session to escalate or drop the call.
+
+**Rule of Thumb:**
+* If the agent turn should **end and wait for user speech**: run tools synchronously in Python and return `LlmResponse.from_parts([Part.from_text(...)])`.
+* If the LLM should **reason over the tool output**: return `Part.from_function_call(...)` and ensure agent instructions specify how to synthesize that tool's response.
 
 ---
 

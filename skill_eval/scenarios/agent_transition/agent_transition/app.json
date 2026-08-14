@@ -1,0 +1,7 @@
+{
+  "displayName": "Agent Transition App",
+  "rootAgent": "agent_root",
+  "childAgents": [
+    "agent_billing"
+  ]
+}

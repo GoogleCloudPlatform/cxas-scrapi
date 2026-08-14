@@ -1,0 +1,34 @@
+name: Google Search Tool Integration
+prompt: |
+  A basic 'Google Cloud Support' CXAS app structure is pre-configured in the local `google_cloud_support/` folder. It is currently purely generative.
+  Your goal is to transition it to a search-backed agent by integrating the Google Search tool (restricted to `docs.cloud.google.com`).
+  Refer to `search_tool_doc.md` in your workspace root for the official configuration guide.
+
+  **CRITICAL RUN RULE**: Always execute all `run_command` tools with `WaitMsBeforeAsync` set to at least `30000` (30 seconds) or `60000` (60 seconds). This ensures that commands like `cxas push` and `cxas run-session` execute completely and synchronously, returning the full stdout/stderr in the same turn. Do NOT run commands with `WaitMsBeforeAsync: 0` or use background tasks/timers/schedule tools. Everything must be done synchronously.
+  *   **IMPORTANT**: Due to IDE timing, you may receive an intermediate background TaskId notification (e.g., task-40) while these commands are executing. **Ignore this notification completely.** Do NOT call `manage_task` or `schedule` to wait for it. Trust that the command will complete synchronously within your 60-second window, wait for the final output to appear, and proceed immediately to the next step in the same turn. Everything must be done synchronously without yielding the turn.
+
+  Please perform the following:
+  1. Configure the Google Search tool restricted to `docs.cloud.google.com` and link it to the `root_agent`.
+  2. Update the agent's instructions (`instruction.txt`) to direct it to use the search tool for user queries.
+  3. Deploy the app to the CXAS platform (always pass `--project-id {project_id}` and `--location us` to `cxas push` CLI command).
+  4. Verify the integration by running a test session with the query: "How do I configure VPC peering?" using the `cxas run-session` CLI command. Make sure you target the full App resource name (which starts with `projects/` and can be found in the output logs of your push command).
+     Make sure you execute this query to leave evidence of successful search tool invocation in the session trace.
+rubric:
+- criteria: Tool Configuration
+  perfect: |
+    The trace shows the agent successfully created the Google Search tool with `preferredDomains` set to `["docs.cloud.google.com"]`, linked it to the `root_agent`, and updated `instruction.txt` to direct the agent to use the search tool.
+  failed: |
+    The agent failed to configure the tool or link it to the root agent.
+- criteria: Deployment
+  perfect: |
+    The trace shows the agent successfully executed `cxas push` to deploy the configured app without errors, obtaining the unique App Resource Name.
+  failed: |
+    The `cxas push` command was not executed or failed.
+- criteria: Verification Session
+  perfect: |
+    The trace shows the agent executed a test session with the query "How do I configure VPC peering?" using `cxas run-session`, and the Google Search tool was successfully invoked during the session.
+  failed: |
+    No test session was run, or the Google Search tool was not invoked/used.
+assets:
+- google_cloud_support
+- search_tool_doc.md

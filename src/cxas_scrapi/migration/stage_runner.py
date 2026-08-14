@@ -13,13 +13,16 @@ independently and surface the resulting logs to the user."""
 from __future__ import annotations
 
 import logging
-
-from rich.console import Console
+from typing import TYPE_CHECKING
 
 from cxas_scrapi.migration.data_models import MigrationIR, MigrationStatus
 from cxas_scrapi.migration.optimizer import CXASOptimizer
-from cxas_scrapi.migration.service import MigrationService
-from cxas_scrapi.utils.gemini import GeminiGenerate
+
+if TYPE_CHECKING:
+    from rich.console import Console
+
+    from cxas_scrapi.migration.service import MigrationService
+    from cxas_scrapi.utils.gemini import GeminiGenerate
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +115,7 @@ async def run_stage_with_redeploy(
         agent.status = MigrationStatus.COMPILED
 
     if stage == 1:
+        assert service.ir is not None
         optimizer = await run_stage_1(
             service.ir, service.gemini_client, console
         )

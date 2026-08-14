@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Changelogs class for CXAS Scrapi."""
+
+import typing
 
 from google.cloud.ces_v1beta import types
 
@@ -22,7 +25,7 @@ from cxas_scrapi.core.agents import Agents
 class Changelogs(Agents):
     """Core Class for managing Changelog Resources."""
 
-    def __init__(self, app_name: str, **kwargs):
+    def __init__(self, app_name: str, **kwargs: typing.Any) -> None:
         """Initializes the Changelogs client.
 
         Args:

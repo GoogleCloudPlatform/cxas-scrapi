@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cxas-scrapi"
-version = "1.4.1"
+version = "1.8.0"
 description = "A high level scripting API for CX Agent Studio developers."
 readme = "README.md"
 authors = [
@@ -76,6 +76,12 @@ dev = [
   "ruff",
   "twine",
   "pre-commit",
+  "mdformat>=0.7.21",
+  "mdformat-gfm",
+  "mdformat-frontmatter",
+  "mdformat-gfm-alerts",
+  "google-antigravity>=0.1.0",
+  "markdown",
 ]
 docs = [
   "mkdocs-material[imaging]>=9.5",
@@ -113,6 +119,10 @@ select = [
     "PL", # pylint
     "RUF", # Ruff rules
     "UP",  # pyupgrade rules
+    "ANN", # flake8-annotations
+    "TCH", # flake8-type-checking
+    "SIM", # flake8-simplify
+    "PT",  # flake8-pytest-style
 ]
 ignore = [
     "E203",  # extend-ignore = E203 from flake8
@@ -128,9 +138,13 @@ ignore = [
     "RUF006",  # allow fire-and-forget create_task
     "RUF100",  # preserve unused noqa comments for external linter compatibility
     "RUF012",  # mutable class attributes (constants are fine)
+    "ANN401",  # dynamically typed Any
+
+    "ANN204",  # missing return type for __init__
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"src/cxas_scrapi/cli/**" = ["PLC0415", "E501"]
 "src/cxas_scrapi/migration/prompts.py" = ["E501"]
 ".agents/skills/cxas-eval-coverage/scripts/*.py" = ["E501"]
 "src/cxas_scrapi/prompts/llm_lint_prompts.py" = ["E501"]
@@ -144,6 +158,12 @@ ignore = [
 # Audio-analysis prompts are verbatim text intended for Gemini and must not be
 # reflowed; line-length doesn't apply to prompt content.
 "src/cxas_scrapi/utils/tracing/audio_analysis.py" = ["E501"]
+# Benchmark orchestrator, reports generator, and scenarios contain multi-line HTML templates
+# and long prompts that cannot be reflowed without breaking layout.
+"skill_eval/**/*.py" = ["E501"]
+"src/cxas_scrapi/utils/insights_analytics.py" = ["E501"]
+"src/cxas_scrapi/utils/insights_utils.py" = ["E501"]
+"examples/bella_notte/run_insights_demo.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

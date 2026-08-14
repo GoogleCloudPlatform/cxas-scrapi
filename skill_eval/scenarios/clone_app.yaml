@@ -1,0 +1,24 @@
+name: Clone CXAS App using cxas CLI
+setup:
+  commands:
+  - "cxas delete --project-id {project_id} --location us --display-name sunday-mobile-target-{uuid} --force || true"
+  - "cxas delete --project-id {project_id} --location us --display-name sunday-mobile-source-{uuid} --force || true"
+  - "cxas create --project-id {project_id} --location us sunday-mobile-source-{uuid}"
+prompt: |
+  Clone the CXAS app `sunday-mobile-source-{uuid}` (project `{project_id}`, location `us`) to create a target app named `sunday-mobile-target-{uuid}` in the same project and location. Verify that the target app exists and contains the cloned configuration, then return the new target App ID.
+rubric:
+- criteria: Branching/Cloning Execution
+  perfect: |
+    The execution trace shows the agent successfully branched/cloned the source app to the target app `sunday-mobile-target-{uuid}` using the `cxas branch` command or manual pull-create-push sequence without errors.
+  good: |
+    Met only after nudging or with errors.
+  failed: |
+    The trace shows the agent failed to clone the app or encountered errors.
+- criteria: Target App Verification
+  perfect: |
+    The trace shows the agent verified that the target app `sunday-mobile-target-{uuid}` exists and contains the cloned configuration by calling `cxas apps get sunday-mobile-target-{uuid} --project-id {project_id} --location us` or listing apps.
+  good: |
+    Met only after nudging or with errors.
+  failed: |
+    The trace shows the agent failed to verify the target app.
+assets: []

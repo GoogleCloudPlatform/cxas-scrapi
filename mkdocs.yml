@@ -143,6 +143,7 @@ nav:
     - getting-started/index.md
     - Installation: getting-started/installation.md
     - Authentication: getting-started/authentication.md
+    - IAM Permissions: getting-started/iam-permissions.md
     - Quick Start (Python): getting-started/quickstart-python.md
     - Quick Start (CLI): getting-started/quickstart-cli.md
     - Concepts: getting-started/concepts.md
@@ -162,6 +163,7 @@ nav:
     - Self-Healing Errors: patterns/self-healing.md
   - Tutorials:
     - tutorials/index.md
+    - Agentic Development Environment: tutorials/agentic-development-env.md
     - Restaurant Reservation: tutorials/restaurant-reservation.md
   - Guides:
     - guides/index.md
@@ -232,8 +234,10 @@ nav:
     - cxas local-test: cli/local-test.md
     - cxas init-github-action: cli/init-github-action.md
     - cxas lint: cli/lint.md
+    - cxas llm-lint: cli/llm-lint.md
     - cxas init: cli/init.md
     - cxas insights: cli/insights.md
+    - cxas trace: cli/trace.md
   - API Reference:
     - api/index.md
     - Core:
@@ -250,6 +254,7 @@ nav:
       - api/core/changelogs.md
       - api/core/callbacks.md
       - api/core/conversation-history.md
+      - api/core/traces.md
       - api/core/insights.md
     - Evals:
       - api/evals/tool-evals.md

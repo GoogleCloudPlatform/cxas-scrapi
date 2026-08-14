@@ -1,9 +1,10 @@
+import typing
 import json
 import os
 import time
 
 
-def simulate_batch_ingestion():
+def simulate_batch_ingestion() -> typing.Any:
     spec_path = "/tmp/ingestor/batch_spec.json"
     if not os.path.exists(spec_path):
         print("Error: batch_spec.json not found!")

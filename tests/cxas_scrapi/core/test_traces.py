@@ -15,9 +15,11 @@
 import datetime
 import json
 import os
+import typing
 import zipfile
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from typing import NoReturn
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -30,13 +32,13 @@ APP = "projects/p/locations/l/apps/a"
 
 
 def _conv(
-    cid="c1",
-    source="LIVE",
-    input_types=("INPUT_TYPE_TEXT",),
-    start="2026-05-01T00:00:00",
-    end="2026-05-01T00:01:00",
-    turns=None,
-):
+    cid: typing.Any = "c1",
+    source: typing.Any = "LIVE",
+    input_types: typing.Any = ("INPUT_TYPE_TEXT",),
+    start: typing.Any = "2026-05-01T00:00:00",
+    end: typing.Any = "2026-05-01T00:01:00",
+    turns: typing.Any = None,
+) -> typing.Any:
     """Builds a fake CES Conversation-like object."""
     return SimpleNamespace(
         name=f"{APP}/conversations/{cid}",
@@ -49,13 +51,13 @@ def _conv(
 
 
 def _conv_dict(
-    cid="c1",
-    source="LIVE",
-    input_types=("INPUT_TYPE_TEXT",),
-    start="2026-05-01T00:00:00",
-    end="2026-05-01T00:01:00",
-    turns=None,
-):
+    cid: typing.Any = "c1",
+    source: typing.Any = "LIVE",
+    input_types: typing.Any = ("INPUT_TYPE_TEXT",),
+    start: typing.Any = "2026-05-01T00:00:00",
+    end: typing.Any = "2026-05-01T00:01:00",
+    turns: typing.Any = None,
+) -> typing.Any:
     return {
         "name": f"{APP}/conversations/{cid}",
         "source": source,
@@ -93,20 +95,24 @@ def _conv_dict(
 
 
 @pytest.fixture
-def traces_obj(tmp_path, monkeypatch):
+def traces_obj(tmp_path: typing.Any, monkeypatch: typing.Any) -> typing.Any:
     """Traces with no app dir; audio config from trace.yaml only."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(traces_mod.TraceConfig, "_pick_path", lambda *_: None)
     return Traces(app_name=APP, app_dir=str(tmp_path / "missing"))
 
 
-def test_init_with_missing_app_dir_logs_and_continues(tmp_path, monkeypatch):
+def test_init_with_missing_app_dir_logs_and_continues(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     monkeypatch.chdir(tmp_path)
     t = Traces(app_name=APP, app_dir=str(tmp_path / "no-app-dir"))
     assert t.app_config is None
 
 
-def test_init_with_app_dir_loads_app_config(tmp_path, monkeypatch):
+def test_init_with_app_dir_loads_app_config(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     (tmp_path / "app.json").write_text(
         json.dumps(
             {
@@ -122,7 +128,7 @@ def test_init_with_app_dir_loads_app_config(tmp_path, monkeypatch):
     assert t.app_config.audio_bucket() == "gs://from-app-json"
 
 
-def test_list_filters_by_channel(traces_obj):
+def test_list_filters_by_channel(traces_obj: typing.Any) -> None:
     text_conv = _conv("c-text", input_types=["INPUT_TYPE_TEXT"])
     audio_conv = _conv("c-audio", input_types=["INPUT_TYPE_AUDIO"])
     multi_conv = _conv(
@@ -148,7 +154,7 @@ def test_list_filters_by_channel(traces_obj):
     assert len(rows_all) == 3
 
 
-def test_list_respects_limit(traces_obj):
+def test_list_respects_limit(traces_obj: typing.Any) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.list_conversations.return_value = [
         _conv("a"),
@@ -159,7 +165,7 @@ def test_list_respects_limit(traces_obj):
     assert [r["id"] for r in rows] == ["a", "b"]
 
 
-def test_get_normalized(traces_obj):
+def test_get_normalized(traces_obj: typing.Any) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     n = traces_obj.get_normalized("c1")
@@ -170,7 +176,7 @@ def test_get_normalized(traces_obj):
 # ------------------------------- search ------------------------------------
 
 
-def test_build_search_filter_phrase_with_id_match():
+def test_build_search_filter_phrase_with_id_match() -> None:
     f = traces_mod._build_search_filter("app crashing")
     assert f == (
         '(customer_conversation_id="app crashing" OR '
@@ -178,7 +184,7 @@ def test_build_search_filter_phrase_with_id_match():
     )
 
 
-def test_build_search_filter_all_and_any():
+def test_build_search_filter_all_and_any() -> None:
     f_all = traces_mod._build_search_filter(
         "app crashing", match="all", id_match=False
     )
@@ -193,24 +199,24 @@ def test_build_search_filter_all_and_any():
     )
 
 
-def test_build_search_filter_single_word_no_parens():
+def test_build_search_filter_single_word_no_parens() -> None:
     f = traces_mod._build_search_filter("crashing", match="all", id_match=False)
     assert f == 'ces_transcript.search("crashing")'
 
 
-def test_build_search_filter_escapes_quotes_and_backslashes():
+def test_build_search_filter_escapes_quotes_and_backslashes() -> None:
     f = traces_mod._build_search_filter('a "b" \\c', id_match=False)
     assert f == r'ces_transcript.search("a \"b\" \\c")'
 
 
-def test_build_search_filter_rejects_empty_and_bad_mode():
-    with pytest.raises(ValueError):
+def test_build_search_filter_rejects_empty_and_bad_mode() -> None:
+    with pytest.raises(ValueError):  # noqa: PT011
         traces_mod._build_search_filter("   ")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         traces_mod._build_search_filter("hi", match="fuzzy")
 
 
-def test_search_passes_filter_and_sources(traces_obj):
+def test_search_passes_filter_and_sources(traces_obj: typing.Any) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.list_conversations.return_value = [_conv("c-match")]
 
@@ -228,7 +234,7 @@ def test_search_passes_filter_and_sources(traces_obj):
     assert kwargs["time_filter"] == "7d"
 
 
-def test_search_with_snippets(traces_obj):
+def test_search_with_snippets(traces_obj: typing.Any) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.list_conversations.return_value = [_conv("c1")]
     traces_obj.get_normalized = MagicMock(
@@ -257,7 +263,7 @@ def test_search_with_snippets(traces_obj):
     assert "crashing" in snippets[0]["text"]
 
 
-def test_extract_snippets_scope_and_window():
+def test_extract_snippets_scope_and_window() -> None:
     normalized = {
         "entries": [
             {
@@ -282,7 +288,7 @@ def test_extract_snippets_scope_and_window():
     assert out[0]["text"].endswith("…")
 
 
-def test_get_report_all_formats(traces_obj):
+def test_get_report_all_formats(traces_obj: typing.Any) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
 
@@ -302,14 +308,16 @@ def test_get_report_all_formats(traces_obj):
     assert "<html" in html
 
 
-def test_get_report_unknown_format_raises(traces_obj):
+def test_get_report_unknown_format_raises(traces_obj: typing.Any) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     with pytest.raises(ValueError, match="Unknown format"):
         traces_obj.get_report("c1", fmt="xml")
 
 
-def test_get_report_with_logs_audio_analysis_triage(traces_obj):
+def test_get_report_with_logs_audio_analysis_triage(
+    traces_obj: typing.Any,
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.get_logs = MagicMock(return_value=[{"msg": "log"}])
@@ -334,7 +342,7 @@ def test_get_report_with_logs_audio_analysis_triage(traces_obj):
     assert "Transcript Triage" in payload["extras"]
 
 
-def test_get_report_audio_download_failure(traces_obj):
+def test_get_report_audio_download_failure(traces_obj: typing.Any) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.download_audio = MagicMock(side_effect=RuntimeError("fail"))
@@ -343,7 +351,7 @@ def test_get_report_audio_download_failure(traces_obj):
     assert "Download failed" in payload["extras"]["Audio"]
 
 
-def test_get_report_no_audio_returns_message(traces_obj):
+def test_get_report_no_audio_returns_message(traces_obj: typing.Any) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.download_audio = MagicMock(return_value=None)
@@ -352,7 +360,9 @@ def test_get_report_no_audio_returns_message(traces_obj):
     assert payload["extras"]["Audio"] == "No audio available."
 
 
-def test_get_logs_when_app_disables_cloud_logging(tmp_path, monkeypatch):
+def test_get_logs_when_app_disables_cloud_logging(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     (tmp_path / "app.json").write_text(
         json.dumps(
             {
@@ -368,7 +378,7 @@ def test_get_logs_when_app_disables_cloud_logging(tmp_path, monkeypatch):
     assert "not enabled" in msg
 
 
-def test_get_logs_no_project_id(traces_obj):
+def test_get_logs_no_project_id(traces_obj: typing.Any) -> None:
     traces_obj.project_id = None
     msg = traces_obj.get_logs(
         "c1", normalized={"start_time": None, "end_time": None}
@@ -376,7 +386,9 @@ def test_get_logs_no_project_id(traces_obj):
     assert "project ID is unknown" in msg
 
 
-def test_get_logs_invokes_cloud_logs_client(traces_obj, monkeypatch):
+def test_get_logs_invokes_cloud_logs_client(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     fake_client = MagicMock()
     fake_client.fetch.return_value = [{"timestamp": "t", "message": "m"}]
     monkeypatch.setattr(
@@ -389,7 +401,9 @@ def test_get_logs_invokes_cloud_logs_client(traces_obj, monkeypatch):
     fake_client.fetch.assert_called_once()
 
 
-def test_resolve_audio_uri_uses_payload_audio_uri(traces_obj):
+def test_resolve_audio_uri_uses_payload_audio_uri(
+    traces_obj: typing.Any,
+) -> None:
     traces_obj.history = MagicMock()
     d = _conv_dict(
         turns=[
@@ -409,13 +423,17 @@ def test_resolve_audio_uri_uses_payload_audio_uri(traces_obj):
     assert traces_obj.resolve_audio_uri("c1") == "gs://from-payload/a.wav"
 
 
-def test_resolve_audio_uri_no_bucket_returns_none(traces_obj):
+def test_resolve_audio_uri_no_bucket_returns_none(
+    traces_obj: typing.Any,
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     assert traces_obj.resolve_audio_uri("c1") is None
 
 
-def test_resolve_audio_uri_uses_trace_config_override(traces_obj, monkeypatch):
+def test_resolve_audio_uri_uses_trace_config_override(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.trace_config.audio.bucket_override = "gs://override"
@@ -425,8 +443,8 @@ def test_resolve_audio_uri_uses_trace_config_override(traces_obj, monkeypatch):
 
 
 def test_resolve_audio_uri_search_bucket_finds_via_listing(
-    traces_obj, monkeypatch
-):
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.trace_config.audio.bucket_override = "gs://b"
@@ -445,8 +463,8 @@ def test_resolve_audio_uri_search_bucket_finds_via_listing(
 
 
 def test_resolve_audio_uri_search_bucket_returns_none_when_missing(
-    traces_obj, monkeypatch
-):
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.trace_config.audio.bucket_override = "gs://b"
@@ -460,7 +478,9 @@ def test_resolve_audio_uri_search_bucket_returns_none_when_missing(
     assert traces_obj.resolve_audio_uri("c1") is None
 
 
-def test_resolve_audio_uri_uses_app_config_bucket(tmp_path, monkeypatch):
+def test_resolve_audio_uri_uses_app_config_bucket(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     (tmp_path / "app.json").write_text(
         json.dumps(
             {
@@ -478,7 +498,9 @@ def test_resolve_audio_uri_uses_app_config_bucket(tmp_path, monkeypatch):
     assert t.resolve_audio_uri("c1") == "gs://from-app/c1.wav"
 
 
-def test_download_audio_success(traces_obj, tmp_path, monkeypatch):
+def test_download_audio_success(
+    traces_obj: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.trace_config.audio.bucket_override = "gs://b"
@@ -495,7 +517,7 @@ def test_download_audio_success(traces_obj, tmp_path, monkeypatch):
     fake_gcs.download_to_file.assert_called_once()
 
 
-def test_download_audio_no_uri_returns_none(traces_obj):
+def test_download_audio_no_uri_returns_none(traces_obj: typing.Any) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     assert traces_obj.download_audio("c1") is None
@@ -510,14 +532,20 @@ _FAKE_FILES = [
 ]
 
 
-def _patch_audio_files(traces_obj, monkeypatch, files=_FAKE_FILES):
+def _patch_audio_files(
+    traces_obj: typing.Any,
+    monkeypatch: typing.Any,
+    files: typing.Any = _FAKE_FILES,
+) -> None:
     traces_obj.list_audio_files = MagicMock(return_value=files)
     monkeypatch.setattr(
         traces_mod.genai.types.Part, "from_uri", lambda **kw: "audio_part"
     )
 
 
-def test_analyze_audio_no_files(traces_obj, monkeypatch):
+def test_analyze_audio_no_files(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.list_audio_files = MagicMock(return_value=[])
@@ -526,7 +554,9 @@ def test_analyze_audio_no_files(traces_obj, monkeypatch):
     }
 
 
-def test_analyze_audio_runs_named_subset(traces_obj, monkeypatch):
+def test_analyze_audio_runs_named_subset(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     _patch_audio_files(traces_obj, monkeypatch)
     fake_gem = MagicMock()
     fake_gem.generate_with_parts.side_effect = [
@@ -553,7 +583,9 @@ def test_analyze_audio_runs_named_subset(traces_obj, monkeypatch):
     ]
 
 
-def test_analyze_audio_runs_all_when_metrics_none(traces_obj, monkeypatch):
+def test_analyze_audio_runs_all_when_metrics_none(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     _patch_audio_files(traces_obj, monkeypatch)
     fake_gem = MagicMock()
     fake_gem.generate_with_parts.return_value = "PASS — looks fine"
@@ -564,7 +596,9 @@ def test_analyze_audio_runs_all_when_metrics_none(traces_obj, monkeypatch):
     assert set(out.keys()) == set(ANALYSIS_REGISTRY.keys())
 
 
-def test_analyze_audio_skips_unknown_metric(traces_obj, monkeypatch, caplog):
+def test_analyze_audio_skips_unknown_metric(
+    traces_obj: typing.Any, monkeypatch: typing.Any, caplog: typing.Any
+) -> None:
     _patch_audio_files(traces_obj, monkeypatch)
     fake_gem = MagicMock()
     fake_gem.generate_with_parts.return_value = "PASS — ok"
@@ -577,7 +611,9 @@ def test_analyze_audio_skips_unknown_metric(traces_obj, monkeypatch, caplog):
     assert set(out.keys()) == {"agent_cutoff"}
 
 
-def test_analyze_audio_skip_when_filter_returns_empty(traces_obj, monkeypatch):
+def test_analyze_audio_skip_when_filter_returns_empty(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     """If a registered analysis sees no matching files, it returns SKIP."""
     _patch_audio_files(
         traces_obj,
@@ -594,7 +630,9 @@ def test_analyze_audio_skip_when_filter_returns_empty(traces_obj, monkeypatch):
     fake_gem.generate_with_parts.assert_not_called()
 
 
-def test_analyze_audio_uses_yaml_prompt_override(traces_obj, monkeypatch):
+def test_analyze_audio_uses_yaml_prompt_override(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     _patch_audio_files(traces_obj, monkeypatch)
     traces_obj.trace_config.gemini.audio_metrics = {
         "agent_cutoff": GeminiMetric(prompt="custom override prompt"),
@@ -611,7 +649,9 @@ def test_analyze_audio_uses_yaml_prompt_override(traces_obj, monkeypatch):
     assert parts[-1] == "custom override prompt"
 
 
-def test_analyze_audio_handles_gemini_none(traces_obj, monkeypatch):
+def test_analyze_audio_handles_gemini_none(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     _patch_audio_files(traces_obj, monkeypatch)
     fake_gem = MagicMock()
     fake_gem.generate_with_parts.return_value = None
@@ -622,7 +662,9 @@ def test_analyze_audio_handles_gemini_none(traces_obj, monkeypatch):
     assert out["agent_cutoff"]["result"] == "ERROR"
 
 
-def test_analyze_audio_handles_unparseable_response(traces_obj, monkeypatch):
+def test_analyze_audio_handles_unparseable_response(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     _patch_audio_files(traces_obj, monkeypatch)
     fake_gem = MagicMock()
     fake_gem.generate_with_parts.return_value = "no verdict here"
@@ -634,7 +676,9 @@ def test_analyze_audio_handles_unparseable_response(traces_obj, monkeypatch):
     assert out["agent_cutoff"]["justification"] == "no verdict here"
 
 
-def test_list_audio_files_uses_gcs_listing(traces_obj, monkeypatch):
+def test_list_audio_files_uses_gcs_listing(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.trace_config.audio.bucket_override = "gs://b"
     fake_gcs = MagicMock()
     fake_gcs.find_dir_for_conversation.return_value = "p/d/conv-1/"
@@ -648,13 +692,15 @@ def test_list_audio_files_uses_gcs_listing(traces_obj, monkeypatch):
     )
 
 
-def test_list_audio_files_returns_empty_when_no_bucket(traces_obj):
+def test_list_audio_files_returns_empty_when_no_bucket(
+    traces_obj: typing.Any,
+) -> None:
     assert traces_obj.list_audio_files("c1") == []
 
 
 def test_list_audio_files_returns_empty_when_dir_not_found(
-    traces_obj, monkeypatch
-):
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.trace_config.audio.bucket_override = "gs://b"
     fake_gcs = MagicMock()
     fake_gcs.find_dir_for_conversation.return_value = None
@@ -664,7 +710,7 @@ def test_list_audio_files_returns_empty_when_dir_not_found(
     assert traces_obj.list_audio_files("c1") == []
 
 
-def test_parse_pass_fail_branches():
+def test_parse_pass_fail_branches() -> None:
     assert traces_mod._parse_pass_fail(None)["result"] == "ERROR"
     assert traces_mod._parse_pass_fail("PASS — all good")["result"] == "PASS"
     assert traces_mod._parse_pass_fail("FAIL — bad call")["result"] == "FAIL"
@@ -680,7 +726,9 @@ def test_parse_pass_fail_branches():
     assert traces_mod._parse_pass_fail("nothing useful")["result"] == "UNKNOWN"
 
 
-def test_triage_runs_metrics(traces_obj, monkeypatch):
+def test_triage_runs_metrics(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     fake_gem = MagicMock()
@@ -692,7 +740,9 @@ def test_triage_runs_metrics(traces_obj, monkeypatch):
     assert list(out.keys()) == ["hallucination"]
 
 
-def test_triage_runs_all_metrics_when_none_specified(traces_obj, monkeypatch):
+def test_triage_runs_all_metrics_when_none_specified(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     fake_gem = MagicMock()
@@ -706,7 +756,9 @@ def test_triage_runs_all_metrics_when_none_specified(traces_obj, monkeypatch):
     )
 
 
-def test_replay_with_diff(traces_obj, monkeypatch):
+def test_replay_with_diff(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
 
@@ -726,7 +778,9 @@ def test_replay_with_diff(traces_obj, monkeypatch):
     assert "+different reply" in out["diff"]
 
 
-def test_replay_handles_session_run_failure(traces_obj, monkeypatch):
+def test_replay_handles_session_run_failure(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     fake_sess = MagicMock()
@@ -740,7 +794,9 @@ def test_replay_handles_session_run_failure(traces_obj, monkeypatch):
     assert "diff" not in out
 
 
-def test_aggregate_stats(traces_obj, monkeypatch):
+def test_aggregate_stats(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     convs = [
         _conv("a", input_types=["INPUT_TYPE_TEXT"]),
         _conv("b", input_types=["INPUT_TYPE_AUDIO"]),
@@ -748,7 +804,7 @@ def test_aggregate_stats(traces_obj, monkeypatch):
     traces_obj.history = MagicMock()
     traces_obj.history.list_conversations.return_value = convs
 
-    def fake_get_normalized(cid):
+    def fake_get_normalized(cid: typing.Any) -> typing.Any:
         return {
             "conversation_id": cid,
             "source": "LIVE",
@@ -774,10 +830,13 @@ def test_aggregate_stats(traces_obj, monkeypatch):
     assert stats["success_rate_no_transfer"] == 0.5
     assert stats["duration_seconds"]["p50"] == 30.0
     tools = dict(stats["top_tools"])
-    assert tools["lookup"] == 1 and tools["calc"] == 1
+    assert tools["lookup"] == 1
+    assert tools["calc"] == 1
 
 
-def test_aggregate_stats_handles_fetch_error(traces_obj, monkeypatch):
+def test_aggregate_stats_handles_fetch_error(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.list_conversations.return_value = [_conv("a")]
     traces_obj.get_normalized = MagicMock(side_effect=RuntimeError("err"))
@@ -785,7 +844,9 @@ def test_aggregate_stats_handles_fetch_error(traces_obj, monkeypatch):
     assert stats["total"] == 0
 
 
-def test_bundle_creates_zip(traces_obj, tmp_path, monkeypatch):
+def test_bundle_creates_zip(
+    traces_obj: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.trace_config.audio.bucket_override = "gs://b"
@@ -836,7 +897,9 @@ def test_bundle_creates_zip(traces_obj, tmp_path, monkeypatch):
     assert "c1.wav" in names
 
 
-def test_bundle_skips_failing_audio_download(traces_obj, tmp_path, monkeypatch):
+def test_bundle_skips_failing_audio_download(
+    traces_obj: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.download_audio = MagicMock(side_effect=RuntimeError("nope"))
@@ -848,12 +911,14 @@ def test_bundle_skips_failing_audio_download(traces_obj, tmp_path, monkeypatch):
     assert "c1.wav" not in names
 
 
-def test_report_bug_requires_bucket(traces_obj):
+def test_report_bug_requires_bucket(traces_obj: typing.Any) -> None:
     with pytest.raises(ValueError, match=r"bug_report\.bucket"):
         traces_obj.report_bug("c1", reason="r")
 
 
-def test_report_bug_uploads_artifacts(traces_obj, monkeypatch):
+def test_report_bug_uploads_artifacts(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.trace_config.bug_report.bucket = "gs://bugs"
@@ -897,7 +962,9 @@ def test_report_bug_uploads_artifacts(traces_obj, monkeypatch):
     assert "bug_report.json" in info["uploaded"]
 
 
-def test_report_bug_skips_failing_artifacts(traces_obj, monkeypatch):
+def test_report_bug_skips_failing_artifacts(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     traces_obj.history = MagicMock()
     traces_obj.history.get_conversation.return_value = _conv_dict()
     traces_obj.trace_config.bug_report.bucket = "gs://bugs"
@@ -922,7 +989,7 @@ def test_report_bug_skips_failing_artifacts(traces_obj, monkeypatch):
     assert "gemini_analysis.json" not in info["uploaded"]
 
 
-def test_console_url_format(traces_obj):
+def test_console_url_format(traces_obj: typing.Any) -> None:
     # 1. Without source
     url = traces_obj.console_url("conv-1")
     assert url == (
@@ -938,7 +1005,9 @@ def test_console_url_format(traces_obj):
     )
 
 
-def test_metadata_collects_fields(traces_obj, monkeypatch):
+def test_metadata_collects_fields(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
     monkeypatch.setattr(traces_mod, "_gcloud_account", lambda: "kr@x")
     monkeypatch.setattr(traces_mod, "_git_sha", lambda: "abc123")
     md = traces_obj._metadata()
@@ -947,7 +1016,7 @@ def test_metadata_collects_fields(traces_obj, monkeypatch):
     assert md["git_sha"] == "abc123"
 
 
-def test_helpers_pure_logic():
+def test_helpers_pure_logic() -> None:
     assert traces_mod._enum_name(None) is None
     assert traces_mod._enum_name(SimpleNamespace(name="X")) == "X"
     assert traces_mod._ts_iso(None) is None
@@ -975,8 +1044,8 @@ def test_helpers_pure_logic():
     ]
 
 
-def test_git_sha_and_gcloud_account_failures(monkeypatch):
-    def boom(*_a, **_kw):
+def test_git_sha_and_gcloud_account_failures(monkeypatch: typing.Any) -> None:
+    def boom(*_a: typing.Any, **_kw: typing.Any) -> NoReturn:
         raise FileNotFoundError("nope")
 
     monkeypatch.setattr(traces_mod.subprocess, "check_output", boom)
@@ -984,7 +1053,7 @@ def test_git_sha_and_gcloud_account_failures(monkeypatch):
     assert traces_mod._gcloud_account() is None
 
 
-def test_git_sha_and_gcloud_account_success(monkeypatch):
+def test_git_sha_and_gcloud_account_success(monkeypatch: typing.Any) -> None:
     monkeypatch.setattr(
         traces_mod.subprocess, "check_output", lambda *a, **k: b"abc\n"
     )
@@ -992,7 +1061,7 @@ def test_git_sha_and_gcloud_account_success(monkeypatch):
     assert traces_mod._gcloud_account() == "abc"
 
 
-def test_agent_text_per_turn():
+def test_agent_text_per_turn() -> None:
     n = {
         "entries": [
             {"kind": "user", "turn": 0, "text": "hi"},
@@ -1002,3 +1071,216 @@ def test_agent_text_per_turn():
         ]
     }
     assert traces_mod._agent_text_per_turn(n) == ["hello world", "second"]
+
+
+# ---------------------- audio transcription & reprocessing -------------------
+
+
+def test_get_user_audio_uris(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    monkeypatch.setattr(
+        traces_obj,
+        "list_audio_files",
+        lambda cid: [
+            "gs://bucket/dir/METADATA.json",
+            "gs://bucket/dir/full-session.wav",
+            "gs://bucket/dir/agent-turn-1.wav",
+            "gs://bucket/dir/user-turn-1.wav",
+            "gs://bucket/dir/agent-turn-2.wav",
+            "gs://bucket/dir/user-turn-2.wav",
+            "gs://bucket/dir/user-turn-5.wav",
+        ],
+    )
+    user_audio_map = traces_obj.get_user_audio_uris("c1")
+    assert user_audio_map == {
+        1: "gs://bucket/dir/user-turn-1.wav",
+        2: "gs://bucket/dir/user-turn-2.wav",
+        5: "gs://bucket/dir/user-turn-5.wav",
+    }
+
+
+@patch("cxas_scrapi.core.traces.AudioTranscriber")
+def test_transcribe_user_turns(
+    mock_transcriber_cls: MagicMock,
+    traces_obj: typing.Any,
+    monkeypatch: typing.Any,
+) -> None:
+    mock_transcriber = MagicMock()
+
+    def _mock_eval(
+        reference_transcript: str,
+        audio_source: str,
+        turn_index: int | None = None,
+        conversation_id: str | None = None,
+        prompt: str | None = None,
+    ) -> dict[str, typing.Any]:
+        return {
+            "conversation_id": conversation_id,
+            "turn_index": turn_index,
+            "audio_source": audio_source,
+            "ces_transcript": reference_transcript,
+            "gemini_transcript": "No",
+            "wer": 0.0,
+            "substitutions": 0,
+            "deletions": 0,
+            "insertions": 0,
+            "hits": 1,
+            "reference_words": 1,
+            "hypothesis_words": 1,
+            "contains_non_english": False,
+        }
+
+    mock_transcriber.evaluate_turn.side_effect = _mock_eval
+    mock_transcriber_cls.return_value = mock_transcriber
+
+    monkeypatch.setattr(
+        traces_obj,
+        "get_normalized",
+        lambda cid: {
+            "conversation_id": cid,
+            "entries": [
+                {"kind": "user", "turn": 1, "text": "No."},
+                {"kind": "agent", "turn": 1, "text": "Okay."},
+                {"kind": "user", "turn": 2, "text": "No."},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        traces_obj,
+        "get_user_audio_uris",
+        lambda cid: {
+            1: "gs://bucket/dir/user-turn-1.wav",
+            2: "gs://bucket/dir/user-turn-2.wav",
+        },
+    )
+
+    results = traces_obj.transcribe_user_turns("c1")
+    assert len(results) == 2
+    assert results[0]["turn_index"] == 1
+    assert results[0]["reprocessed"] is True
+    assert results[0]["wer"] == 0.0
+    assert results[1]["turn_index"] == 2
+    assert results[1]["reprocessed"] is True
+
+
+@patch("cxas_scrapi.core.traces.AudioTranscriber")
+def test_transcribe_user_turns_only_non_english(
+    mock_transcriber_cls: MagicMock,
+    traces_obj: typing.Any,
+    monkeypatch: typing.Any,
+) -> None:
+    mock_transcriber = MagicMock()
+    mock_transcriber.evaluate_turn.return_value = {
+        "conversation_id": "c1",
+        "turn_index": 2,
+        "ces_transcript": "Café",
+        "gemini_transcript": "Cafe",
+        "wer": 0.0,
+        "substitutions": 0,
+        "deletions": 0,
+        "insertions": 0,
+        "hits": 1,
+        "reference_words": 1,
+        "hypothesis_words": 1,
+        "contains_non_english": True,
+    }
+    mock_transcriber_cls.return_value = mock_transcriber
+
+    monkeypatch.setattr(
+        traces_obj,
+        "get_normalized",
+        lambda cid: {
+            "conversation_id": cid,
+            "entries": [
+                {"kind": "user", "turn": 1, "text": "Hello world"},
+                {"kind": "user", "turn": 2, "text": "Café"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        traces_obj,
+        "get_user_audio_uris",
+        lambda cid: {
+            1: "gs://bucket/dir/user-turn-1.wav",
+            2: "gs://bucket/dir/user-turn-2.wav",
+        },
+    )
+
+    results = traces_obj.transcribe_user_turns("c1", only_non_english=True)
+    assert len(results) == 2
+    # Turn 1 is English -> skipped/not reprocessed
+    assert results[0]["turn_index"] == 1
+    assert results[0]["reprocessed"] is False
+    assert results[0]["contains_non_english"] is False
+    # Turn 2 is non-English -> reprocessed
+    assert results[1]["turn_index"] == 2
+    assert results[1]["reprocessed"] is True
+    assert results[1]["contains_non_english"] is True
+
+
+@patch("cxas_scrapi.core.traces.AudioTranscriber")
+def test_reprocess_transcriptions_and_bq_append(
+    mock_transcriber_cls: MagicMock,
+    traces_obj: typing.Any,
+    monkeypatch: typing.Any,
+) -> None:
+    mock_transcriber = MagicMock()
+    mock_transcriber.transcribe.return_value = "Updated user speech"
+    mock_transcriber_cls.return_value = mock_transcriber
+
+    # Mock BigQuery Client
+    mock_bq = MagicMock()
+    mock_bq.insert_rows_json.return_value = []
+    mock_row_1 = {
+        "conversation_id": "c1",
+        "turn_index": 1,
+        "messages": [
+            {
+                "role": "user",
+                "event_time": "2026-05-01T00:00:00Z",
+                "chunks": [{"transcript": "Original speech"}],
+            },
+            {
+                "role": "agent",
+                "event_time": "2026-05-01T00:00:01Z",
+                "chunks": [{"transcript": "Agent response"}],
+            },
+        ],
+    }
+    # Mock query returning row
+    mock_query_job = MagicMock()
+    mock_query_job.result.return_value = [mock_row_1]
+    mock_bq.query.return_value = mock_query_job
+
+    monkeypatch.setattr(
+        traces_obj, "get_bigquery_client", lambda project_id: mock_bq
+    )
+    monkeypatch.setattr(
+        traces_obj,
+        "_get_remote_bigquery_export_settings",
+        lambda: {
+            "enabled": True,
+            "project": "test-p",
+            "dataset": "test_ds",
+            "table": "test_app",
+        },
+    )
+    monkeypatch.setattr(
+        traces_obj,
+        "get_user_audio_uris",
+        lambda cid: {1: "gs://bucket/dir/user-turn-1.wav"},
+    )
+
+    res = traces_obj.reprocess_transcriptions(
+        conversation_id="c1",
+        output_table="updates_table",
+        dry_run=False,
+    )
+
+    assert res["source_table"] == "test-p.test_ds.a"
+    assert res["output_table"] == "test-p.test_ds.updates_table"
+    assert res["total_turns_reprocessed"] == 1
+    assert res["turns"][0]["gemini_transcript"] == "Updated user speech"
+    assert res["turns"][0]["appended_to_bq"] is True
+    assert mock_bq.insert_rows_json.called

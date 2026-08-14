@@ -14,6 +14,7 @@
 
 import logging
 import re
+import typing
 from typing import Any
 
 from cxas_scrapi.migration.data_models import (
@@ -32,7 +33,7 @@ class CXASTopologyLinker:
 
     def __init__(
         self, ps_agents_client: Any, ps_apps_client: Any, reporter: Any
-    ):
+    ) -> None:
         self.ps_agents = ps_agents_client
         self.ps_apps = ps_apps_client
         self.reporter = reporter
@@ -48,7 +49,7 @@ class CXASTopologyLinker:
         source_agent_data: DFCXAgentIR,
         ps_agents: Any,
         reporter: Any,
-    ):
+    ) -> None:
         if ir_key in processed_nodes:
             return
 
@@ -122,7 +123,7 @@ class CXASTopologyLinker:
         instruction = agent_data.instruction
         gen_refs = re.findall(r"{@AGENT:\s*([^}]+)}", instruction)
 
-        def normalize_name(name):
+        def normalize_name(name: typing.Any) -> typing.Any:
             return re.sub(r"[_\\-]+", " ", name).strip().lower()
 
         for child_name in gen_refs:
@@ -199,7 +200,7 @@ class CXASTopologyLinker:
         ir: MigrationIR,
         source_agent_data: DFCXAgentIR,
         groupings: dict | None = None,
-    ):
+    ) -> None:
         """Extracts routing dependencies and sets parent/child links with
         circular reference protection.
         """
@@ -221,7 +222,7 @@ class CXASTopologyLinker:
         processed_nodes = set()
 
         # Trigger recursive linking for all deployed agents using IR keys
-        for ir_key in deployed_agent_map.keys():
+        for ir_key in deployed_agent_map:
             if ir_key not in processed_nodes:
                 CXASTopologyLinker.link_children_recursive(
                     ir_key,

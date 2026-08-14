@@ -54,7 +54,23 @@ When you pass a display name (e.g., `"My Support Agent"`) instead of a resource 
 | [`cxas ci-test`](ci-test.md) | Run the full CI test lifecycle against a temporary app. |
 | [`cxas local-test`](local-test.md) | Run the CI test lifecycle inside a local Docker container. |
 | [`cxas init-github-action`](init-github-action.md) | Generate a GitHub Actions workflow file for your agent. |
-| [`cxas lint`](lint.md) | Lint your app directory for best-practice violations. |
+| [`cxas lint`](lint.md) | Fast, deterministic structural and configuration linter across 60+ rules. |
+| [`cxas llm-lint`](llm-lint.md) | AI-driven semantic natural language prompt linter for sub-agent instructions using Gemini. |
+| [`cxas help`](index.md) | Show detailed help for the CLI or any specific subcommand. |
 | [`cxas init`](init.md) | Bootstrap a project with AI agent development skills. |
 | [`cxas insights`](insights.md) | Manage QA scorecards via the Insights API. |
 | [`cxas trace`](trace.md) | Inspect, analyze, and report on individual conversations (deployed/build/eval) — list, fetch report, merge Cloud Logs, download/analyze audio with Gemini, replay against current agent, aggregate stats, and flag platform bugs. |
+
+---
+
+## Static Linting vs AI Semantic Linting
+
+CXAS provides two complementary linting tools designed for different stages of your development workflow:
+
+1. **`cxas lint` (Static Structural Linter)**
+   - **What it does:** Runs deterministic checks against file layouts, YAML/JSON schemas, `app.yaml`/`app.json` configs, callback naming conventions, and basic instruction lengths.
+   - **When to run:** Continuously while coding, inside Git pre-commit hooks, and as a fast initial gate in local/CI test pipelines.
+
+2. **`cxas llm-lint` (AI Semantic Linter)**
+   - **What it does:** Uses Gemini to review the *actual meaning, tone, persona adherence, and logical consistency* of your natural language prompts (`instruction.txt`, `global_instruction.txt`, and dynamic state instructions in `before_agent_callbacks`).
+   - **When to run:** When authoring or refactoring prompt engineering instructions, conducting thorough prompt quality reviews, or preparing for high-stakes production deployments.

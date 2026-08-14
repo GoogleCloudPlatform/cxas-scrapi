@@ -3,6 +3,7 @@
 This script automates the compilation of both GECX reports (Comprehensive Full
 and brief CUJ) and packages them into a zipped deliverables archive in one step.
 """
+import typing
 
 import argparse
 import os
@@ -10,7 +11,7 @@ import subprocess
 import sys
 
 
-def run_command(cmd, cwd=None):
+def run_command(cmd: typing.Any, cwd: typing.Any=None) -> typing.Any:
     print(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -19,7 +20,7 @@ def run_command(cmd, cwd=None):
     print(result.stdout)
 
 
-def compile_deliverables():
+def compile_deliverables() -> typing.Any:
     parser = argparse.ArgumentParser(
         description="GECX Unified Deliverables Compiler"
     )

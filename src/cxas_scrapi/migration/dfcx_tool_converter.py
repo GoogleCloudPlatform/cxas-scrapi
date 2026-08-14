@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 class DFCXToolConverter:
     """Converts Dialogflow CX tools and webhooks to CXAS resources."""
 
-    def __init__(self, secret_manager: Any, reporter: Any):
-        self.secret_manager = secret_manager
-        self.reporter = reporter
+    def __init__(self, secret_manager: Any, reporter: Any) -> None:
+        self.secret_manager: Any = secret_manager
+        self.reporter: Any = reporter
 
     @staticmethod
     def sanitize_resource_id(
@@ -324,7 +324,7 @@ class DFCXToolConverter:
     def convert_webhook_to_openapi_toolset(
         self, cx_webhook: dict[str, Any]
     ) -> dict[str, Any] | None:
-        """Converts a DFCX Webhook into a generalized Polysynth OpenAPI
+        """Converts a DFCX Webhook into a generalized CXAS OpenAPI
         Toolset payload.
         """
         display_name = cx_webhook.get("displayName", "unnamed_webhook")

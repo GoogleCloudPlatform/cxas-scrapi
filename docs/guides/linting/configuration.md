@@ -141,6 +141,18 @@ options:
     max_words: 4000  # Default is 3000
 ```
 
+**I016 — prose-state-machine:**
+
+```yaml
+options:
+  I016:
+    min_distinct_categories: 2  # Categories of signal needed to fire (default 2)
+    min_total: 4                # Total signal occurrences needed (default 4)
+    min_strong_edges: 3         # Conditional jumps + loop back-edges to fire (default 3)
+```
+
+Raise these to make the rule less sensitive (e.g. a repo with many large, legitimately multi-step collectors); lower them to catch milder state machines. High-confidence markers (retry counters, state writes, `lookup_flag` enums, `agent_action`-verbatim loops, "state machine" step names) always fire regardless of these thresholds.
+
 ### `ignore`
 
 **Type:** list of strings  

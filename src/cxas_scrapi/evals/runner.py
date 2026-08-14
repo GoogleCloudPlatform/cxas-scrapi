@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """High-level orchestration runner for CXAS evaluations."""
 
 import glob
 import json
 import os
 import time
+import typing
+from collections.abc import Callable
 
 from google.cloud.ces_v1beta.types import RunEvaluationOperationMetadata
 
@@ -25,13 +28,26 @@ from cxas_scrapi.core.evaluations import Evaluations
 from cxas_scrapi.evals.callback_evals import CallbackEvals
 from cxas_scrapi.evals.simulation_evals import SimulationEvals
 from cxas_scrapi.evals.tool_evals import ToolEvals
-from cxas_scrapi.utils.eval_utils import EvalUtils
+from cxas_scrapi.utils.eval_utils import (
+    CALLBACK_RESULTS_FILENAME,
+    SIM_RESULTS_FILENAME,
+    TOOL_RESULTS_FILENAME,
+    EvalUtils,
+    add_timestamp_suffix,
+)
 from cxas_scrapi.utils.rate_limiter import RateLimiter
+
+
+def _chunked(lst: typing.Any, n: typing.Any) -> typing.Any:
+    for i in range(0, len(lst), n):
+        yield lst[i : i + n]
 
 
 def run_all_evals(
     app_name: str,
     modality: str = "text",
+    sim_user_model: str | None = None,
+    eval_model: str | None = None,
     runs: int = 1,
     goldens_dir: str | None = None,
     tool_test_file: str | None = None,
@@ -40,14 +56,23 @@ def run_all_evals(
     output_dir: str | None = None,
     filter_files: list[str] | None = None,
     filter_tags: list[str] | None = None,
+    filter_names: list[str] | None = None,
     parallel: int = 1,
+    golden_parallel: int = 1,
     golden_timeout: int = 600,
     include: list[str] | None = None,
     rate_limiter: RateLimiter | None = None,
     bg_noise_file: str | None = None,
     burst_noise_files: list[str] | None = None,
     use_tool_fakes: bool = False,
-):
+    timestamp: str | None = None,
+    expectations_only: bool = False,
+    deployment_id: str | None = None,
+    skip_playback_wait: bool = False,
+    single_bidi_stream: bool = False,
+    progress_callback: Callable[[str, int, int], None] | None = None,
+    capture_agent_audio: bool = False,
+) -> typing.Any:
     """Runs all 4 types of evaluations and returns aggregated results.
 
     This high-level orchestration function decouples execution logic from pure
@@ -55,7 +80,6 @@ def run_all_evals(
     """
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
         _load_sim_test_cases,
-        load_golden_results,
     )
 
     results = {"callback": [], "tool": [], "golden": [], "simulation": []}
@@ -64,7 +88,6 @@ def run_all_evals(
 
     # 1. Platform goldens (Trigger async)
     evaluations_to_run = []
-    run_name = None
     if "goldens" in include:
         if not goldens_dir:
             goldens_dir = "evals/goldens/"
@@ -98,34 +121,13 @@ def run_all_evals(
                         tags = eval_dict.get("tags", [])
                         if not any(t in filter_tags for t in tags):
                             continue
+                    if filter_names:  # noqa: SIM102
+                        if eval_dict.get("displayName") not in filter_names:
+                            continue
                     res = eval_client.update_evaluation(
                         evaluation=eval_dict, app_name=app_name
                     )
                     evaluations_to_run.append(res.name)
-
-            if evaluations_to_run:
-                print(f"Running evaluations: {evaluations_to_run}")
-                operation = eval_client.run_evaluation(
-                    evaluations=evaluations_to_run,
-                    app_name=app_name,
-                    modality=modality,
-                    run_count=runs,
-                )
-
-                print(
-                    "  Waiting for evaluation run name to appear in operation "
-                    "metadata..."
-                )
-                for i in range(12):
-                    time.sleep(10)
-                    refreshed = operation._refresh(None)
-                    meta = RunEvaluationOperationMetadata()
-                    meta._pb.ParseFromString(refreshed.metadata.value)
-                    if meta.evaluation_run:
-                        run_name = meta.evaluation_run
-                        print(f"  Run name resolved: {run_name}")
-                        break
-                    print(f"  Waiting... ({(i + 1) * 10}s)")
 
     # 2. Callback tests
     if "callbacks" in include:
@@ -133,12 +135,21 @@ def run_all_evals(
             app_dir = f"cxas_app/{app_name.rsplit('/', 1)[-1]}"
         if app_dir and os.path.exists(app_dir):
             print(f"Running callback tests in {app_dir}")
+            if progress_callback:
+                progress_callback("callbacks", 0, 1)
             callback_evals = CallbackEvals()
             df = callback_evals.test_all_callbacks_in_app_dir(app_dir=app_dir)
             results["callback"] = df.to_dict(orient="records")
+            if progress_callback:
+                progress_callback("callbacks", 1, 1)
             if output_dir:
                 df.to_csv(
-                    os.path.join(output_dir, "callback_results.csv"),
+                    os.path.join(
+                        output_dir,
+                        add_timestamp_suffix(
+                            CALLBACK_RESULTS_FILENAME, timestamp
+                        ),
+                    ),
                     index=False,
                 )
 
@@ -189,11 +200,20 @@ def run_all_evals(
 
             if test_cases:
                 print(f"Running {len(test_cases)} tool tests")
+                if progress_callback:
+                    progress_callback("tools", 0, 1)
                 df = tool_evals.run_tool_tests(test_cases)
                 results["tool"] = df.to_dict(orient="records")
+                if progress_callback:
+                    progress_callback("tools", 1, 1)
                 if output_dir:
                     df.to_csv(
-                        os.path.join(output_dir, "tool_results.csv"),
+                        os.path.join(
+                            output_dir,
+                            add_timestamp_suffix(
+                                TOOL_RESULTS_FILENAME, timestamp
+                            ),
+                        ),
                         index=False,
                     )
 
@@ -215,7 +235,10 @@ def run_all_evals(
 
             if sim_files:
                 sim_evals = SimulationEvals(
-                    app_name=app_name, rate_limiter=rate_limiter
+                    app_name=app_name,
+                    rate_limiter=rate_limiter,
+                    expectations_only=expectations_only,
+                    deployment_id=deployment_id,
                 )
                 test_cases = []
                 for sf in sim_files:
@@ -229,6 +252,12 @@ def run_all_evals(
                                     t in filter_tags for t in c.get("tags", [])
                                 )
                             ]
+                        if filter_names:
+                            cases = [
+                                c
+                                for c in cases
+                                if c.get("name") in filter_names
+                            ]
                         test_cases.extend(cases)
                 if test_cases:
                     print(
@@ -239,24 +268,86 @@ def run_all_evals(
                         test_cases,
                         runs=runs,
                         parallel=parallel,
+                        sim_user_model=sim_user_model,
+                        eval_model=eval_model,
                         modality=modality,
                         background_noise_file=bg_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
+                        skip_playback_wait=skip_playback_wait,
+                        single_bidi_stream=single_bidi_stream,
+                        progress_callback=lambda c, t: (
+                            progress_callback("simulations", c, t)
+                            if progress_callback
+                            else None
+                        ),
+                        capture_agent_audio=capture_agent_audio,
                     )
                     results["simulation"] = sim_results
                     if output_dir:
-                        save_path = os.path.join(output_dir, "sim_results.json")
+                        save_path = os.path.join(
+                            output_dir,
+                            add_timestamp_suffix(
+                                SIM_RESULTS_FILENAME, timestamp
+                            ),
+                        )
                         with open(save_path, "w") as f:
                             json.dump(sim_results, f, indent=2)
 
-    # 5. Platform goldens (Wait for results)
-    if "goldens" in include and run_name:
-        print(f"Waiting for evaluation run {run_name} to complete...")
-        utils = EvalUtils(app_name=app_name)
-        utils.wait_for_run_and_get_results(
-            run_name=run_name, timeout_seconds=golden_timeout
+    # 5. Platform goldens (Run and Wait in Batches)
+    if "goldens" in include and evaluations_to_run:
+        print(
+            f"Running {len(evaluations_to_run)} evaluations in batches of "
+            f"size {golden_parallel}..."
         )
-        results["golden"] = load_golden_results(run_name, app_name)
+        utils = EvalUtils(app_name=app_name)
+
+        batches = list(_chunked(evaluations_to_run, golden_parallel))
+        if progress_callback:
+            progress_callback("goldens", 0, len(batches))
+        for idx, batch in enumerate(batches):
+            print(
+                f"\n  [Batch {idx + 1}/{len(batches)}] "
+                f"Triggering evaluations: {batch}"
+            )
+            operation = eval_client.run_evaluation(
+                evaluations=batch,
+                app_name=app_name,
+                modality=modality,
+                run_count=runs,
+            )
+
+            # Resolve run name
+            batch_run_name = None
+            print("    Waiting for evaluation run name to resolve...")
+            for i in range(12):
+                time.sleep(10)
+                refreshed = operation._refresh(None)
+                meta = RunEvaluationOperationMetadata()
+                meta._pb.ParseFromString(refreshed.metadata.value)
+                if meta.evaluation_run:
+                    batch_run_name = meta.evaluation_run
+                    print(f"    Run name resolved: {batch_run_name}")
+                    break
+                print(f"    Waiting... ({(i + 1) * 10}s)")
+
+            if batch_run_name:
+                print(f"    Waiting for run {batch_run_name} to complete...")
+                utils.wait_for_run_and_get_results(
+                    run_name=batch_run_name, timeout_seconds=golden_timeout
+                )
+                from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
+                    load_golden_results,
+                )
+
+                batch_results = load_golden_results(batch_run_name, app_name)
+                results["golden"].extend(batch_results)
+                if progress_callback:
+                    progress_callback("goldens", idx + 1, len(batches))
+            else:
+                print(
+                    f"    ERROR: Failed to resolve run name for batch "
+                    f"{idx + 1}. Skipping."
+                )
 
     return results

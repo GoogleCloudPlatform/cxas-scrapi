@@ -61,7 +61,7 @@ deterministic, auditable, and testable.
 
 If you're new to SCRAPI, start with the [Slot Filling](slot-filling.md) pattern
 and the [Restaurant Reservation Tutorial](../tutorials/restaurant-reservation.md).
-The [`examples/bella_notte/`](../examples/bella_notte/) directory contains a
+The [`examples/bella_notte/`](https://github.com/GoogleCloudPlatform/cxas-scrapi/tree/main/examples/bella_notte/) directory contains a
 complete reference implementation.
 
 ---

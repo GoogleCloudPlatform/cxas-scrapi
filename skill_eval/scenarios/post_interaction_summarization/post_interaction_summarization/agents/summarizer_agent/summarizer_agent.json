@@ -1,0 +1,7 @@
+{
+  "displayName": "summarizer_agent",
+  "instruction": "agents/summarizer_agent/instruction.txt",
+  "tools": [
+    "end_session"
+  ]
+}

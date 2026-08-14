@@ -21,7 +21,7 @@ from cxas_scrapi.migration.dfcx_parameter_extractor import (
 )
 
 
-def test_infer_schema_from_value():
+def test_infer_schema_from_value() -> None:
     assert DFCXParameterExtractor.infer_schema_from_value(True) == {
         "type": "BOOLEAN"
     }
@@ -42,7 +42,7 @@ def test_infer_schema_from_value():
     }
 
 
-def test_register_param_new():
+def test_register_param_new() -> None:
     unified_parameters = {}
     parameter_name_map = {}
     DFCXParameterExtractor.register_param(
@@ -60,7 +60,7 @@ def test_register_param_new():
     assert parameter_name_map["session.params.var1"] == "var1"
 
 
-def test_register_param_upgrade_type():
+def test_register_param_upgrade_type() -> None:
     unified_parameters = {
         "var1": {
             "name": "var1",
@@ -83,7 +83,7 @@ def test_register_param_upgrade_type():
     assert unified_parameters["var1"]["_confidence"] == 2
 
 
-def test_deep_scan_for_variables():
+def test_deep_scan_for_variables() -> None:
     obj = {
         "setParameterActions": [{"parameter": "var1", "value": 123}],
         "text": "Hello $var2",
@@ -104,7 +104,7 @@ def test_deep_scan_for_variables():
     assert unified_parameters["var2"]["schema"] == {"type": "STRING"}
 
 
-def test_migrate_parameters():
+def test_migrate_parameters() -> None:
     source_agent_data = {
         "name": "projects/p1/locations/l1/agents/a1",
         "display_name": "Test Agent",

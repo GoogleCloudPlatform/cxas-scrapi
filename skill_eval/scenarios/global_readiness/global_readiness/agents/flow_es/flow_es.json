@@ -1,0 +1,5 @@
+{
+  "displayName": "flow_es",
+  "instruction": "agents/flow_es/instruction.txt",
+  "tools": []
+}

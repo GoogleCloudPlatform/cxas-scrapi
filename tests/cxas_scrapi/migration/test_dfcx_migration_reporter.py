@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,11 +22,13 @@ from cxas_scrapi.utils.gemini import GeminiGenerate
 
 
 @pytest.fixture
-def mock_gemini():
+def mock_gemini() -> typing.Any:
 
     client = MagicMock(spec=GeminiGenerate)
 
-    def mock_generate(prompt, system_prompt=None):
+    def mock_generate(
+        prompt: typing.Any, system_prompt: typing.Any = None
+    ) -> str:
         if "customer user journeys" in prompt:
             return "Mocked User Journeys:\n1. Journey A\n2. Journey B"
         elif "detailed description" in prompt:
@@ -37,7 +40,7 @@ def mock_gemini():
     return client
 
 
-def test_initialization(mock_gemini):
+def test_initialization(mock_gemini: typing.Any) -> None:
     reporter = DFCXMigrationReporter(gemini_client=mock_gemini)
     assert reporter.gemini_client == mock_gemini
     assert reporter.app_info == {}
@@ -46,7 +49,7 @@ def test_initialization(mock_gemini):
     assert reporter.agents == []
 
 
-def test_set_app_info(mock_gemini):
+def test_set_app_info(mock_gemini: typing.Any) -> None:
     reporter = DFCXMigrationReporter(gemini_client=mock_gemini)
     reporter.set_app_info("dfcx-123", "cxas-app", "cxas-456")
     assert reporter.app_info == {
@@ -56,7 +59,7 @@ def test_set_app_info(mock_gemini):
     }
 
 
-def test_log_variable(mock_gemini):
+def test_log_variable(mock_gemini: typing.Any) -> None:
     reporter = DFCXMigrationReporter(gemini_client=mock_gemini)
     reporter.log_variable("orig_var", "new_var", "STRING")
     assert len(reporter.variables) == 1
@@ -68,7 +71,7 @@ def test_log_variable(mock_gemini):
 
 
 @pytest.mark.asyncio
-async def test_generate_cxas_augmented_details(mock_gemini):
+async def test_generate_cxas_augmented_details(mock_gemini: typing.Any) -> None:
     reporter = DFCXMigrationReporter(gemini_client=mock_gemini)
     mock_config = {
         "display_name": "Test Agent",
@@ -87,7 +90,7 @@ async def test_generate_cxas_augmented_details(mock_gemini):
 
 
 @pytest.mark.asyncio
-async def test_generate_markdown(mock_gemini):
+async def test_generate_markdown(mock_gemini: typing.Any) -> None:
     reporter = DFCXMigrationReporter(gemini_client=mock_gemini)
     reporter.set_app_info("dfcx-123", "cxas-app", "cxas-456")
 
@@ -99,7 +102,7 @@ async def test_generate_markdown(mock_gemini):
 
     markdown = reporter.generate_markdown()
 
-    assert "# Polysynth Migration Audit Report" in markdown
+    assert "# CXAS Migration Audit Report" in markdown
     assert "dfcx-123" in markdown
     assert "cxas-app" in markdown
     assert "Mocked detailed description." in markdown

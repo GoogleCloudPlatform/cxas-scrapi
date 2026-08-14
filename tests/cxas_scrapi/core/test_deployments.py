@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +22,7 @@ from cxas_scrapi.core.deployments import Deployments
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_list_deployments(mock_client_cls):
+def test_list_deployments(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_dep = MagicMock()
     mock_dep.name = "dep1"
@@ -34,7 +35,7 @@ def test_list_deployments(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_get_deployments_map(mock_client_cls):
+def test_get_deployments_map(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_dep1 = MagicMock()
     mock_dep1.name = "d1"
@@ -55,7 +56,7 @@ def test_get_deployments_map(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_get_deployment(mock_client_cls):
+def test_get_deployment(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_dep = MagicMock()
     mock_dep.name = "projects/p/locations/l/apps/A/deployments/dep_id"
@@ -68,7 +69,7 @@ def test_get_deployment(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_create_deployment(mock_client_cls):
+def test_create_deployment(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.create_deployment.return_value = MagicMock()
 
@@ -81,7 +82,7 @@ def test_create_deployment(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_create_deployment_with_options(mock_client_cls):
+def test_create_deployment_with_options(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.create_deployment.return_value = MagicMock()
 
@@ -107,7 +108,7 @@ def test_create_deployment_with_options(mock_client_cls):
 
     dep = args.deployment
     assert dep.display_name == "my_dep"
-    assert dep.app_version == "v1"
+    assert dep.app_version == "projects/p/locations/l/apps/A/versions/v1"
 
     cp = dep.channel_profile
     assert cp.disable_dtmf is True
@@ -122,7 +123,7 @@ def test_create_deployment_with_options(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_update_deployment(mock_client_cls):
+def test_update_deployment(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.update_deployment.return_value = MagicMock()
 
@@ -141,12 +142,14 @@ def test_update_deployment(mock_client_cls):
 @patch("cxas_scrapi.core.deployments.types.UpdateDeploymentRequest")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
 def test_update_deployment_with_options(
-    mock_client_cls, mock_req_cls, mock_dep_cls
-):
+    mock_client_cls: typing.Any,
+    mock_req_cls: typing.Any,
+    mock_dep_cls: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.update_deployment.return_value = MagicMock()
 
-    def side_effect(**kwargs):
+    def side_effect(**kwargs: typing.Any) -> typing.Any:
         m = MagicMock()
         for k, v in kwargs.items():
             setattr(m, k, v)
@@ -184,7 +187,7 @@ def test_update_deployment_with_options(
     assert "channel_profile.web_widget_config.theme" in mask.paths
 
 
-def test_build_web_widget_config():
+def test_build_web_widget_config() -> None:
     kwargs = {
         "modality": "CHAT_ONLY",
         "theme": "DARK",
@@ -213,7 +216,7 @@ def test_build_web_widget_config():
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_create_deployment_with_strings(mock_client_cls):
+def test_create_deployment_with_strings(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.create_deployment.return_value = MagicMock()
 
@@ -240,7 +243,7 @@ def test_create_deployment_with_strings(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_update_deployment_all_options(mock_client_cls):
+def test_update_deployment_all_options(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.update_deployment.return_value = MagicMock()
 
@@ -268,7 +271,7 @@ def test_update_deployment_all_options(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_delete_deployment(mock_client_cls):
+def test_delete_deployment(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
 
     deps = Deployments("projects/p/locations/l/apps/A")
@@ -279,7 +282,7 @@ def test_delete_deployment(mock_client_cls):
 
 
 @pytest.mark.parametrize(
-    "channel_type_enum, expected_proto_value",
+    ("channel_type_enum", "expected_proto_value"),
     [
         (
             Deployments.ChannelType.GOOGLE_TELEPHONY_PLATFORM,
@@ -309,8 +312,10 @@ def test_delete_deployment(mock_client_cls):
 )
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
 def test_create_deployment_different_channels(
-    mock_client_cls, channel_type_enum, expected_proto_value
-):
+    mock_client_cls: typing.Any,
+    channel_type_enum: typing.Any,
+    expected_proto_value: typing.Any,
+) -> None:
     mock_client = mock_client_cls.return_value
     mock_client.create_deployment.return_value = MagicMock()
 
@@ -324,3 +329,139 @@ def test_create_deployment_different_channels(
     mock_client.create_deployment.assert_called_once()
     args = mock_client.create_deployment.call_args[1]["request"]
     assert args.deployment.channel_profile.channel_type == expected_proto_value
+
+
+@pytest.mark.skipif(
+    not hasattr(types, "ExperimentConfig"),
+    reason="ExperimentConfig missing in ces_v1beta",
+)
+@patch("cxas_scrapi.core.deployments.Versions")
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_create_deployment_traffic_split_valid(
+    mock_client_cls: typing.Any, mock_versions_cls: typing.Any
+) -> None:
+    mock_client = mock_client_cls.return_value
+    mock_client.create_deployment.return_value = MagicMock()
+
+    mock_versions = mock_versions_cls.return_value
+    v1 = MagicMock()
+    v1.name = "projects/p/locations/l/apps/A/versions/v1"
+    v2 = MagicMock()
+    v2.name = "projects/p/locations/l/apps/A/versions/v2"
+    mock_versions.list_versions.return_value = [v1, v2]
+
+    deps = Deployments("projects/p/locations/l/apps/A")
+    deps.create_deployment(
+        "dep_id", "my_dep", "v1", traffic_split={"v1": 90, "v2": 10}
+    )
+
+    args = mock_client.create_deployment.call_args[1]["request"]
+    dep = args.deployment
+    assert dep.experiment_config is not None
+    expected_state = types.ExperimentConfig.State.RUNNING
+    assert dep.experiment_config.version_release.state == expected_state
+    allocations = dep.experiment_config.version_release.traffic_allocations
+    assert len(allocations) == 2
+    assert allocations[0].app_version == (
+        "projects/p/locations/l/apps/A/versions/v1"
+    )
+    assert allocations[0].traffic_percentage == 90
+    assert allocations[1].app_version == (
+        "projects/p/locations/l/apps/A/versions/v2"
+    )
+    assert allocations[1].traffic_percentage == 10
+
+
+@patch("cxas_scrapi.core.deployments.Versions")
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_create_deployment_traffic_split_invalid_len(
+    mock_client_cls: typing.Any, mock_versions_cls: typing.Any
+) -> None:
+    deps = Deployments("projects/p/locations/l/apps/A")
+    with pytest.raises(
+        ValueError, match="Traffic split requires at least two versions"
+    ):
+        deps.create_deployment(
+            "dep_id", "my_dep", "v1", traffic_split={"v1": 100}
+        )
+
+
+@pytest.mark.skipif(
+    not hasattr(types, "ExperimentConfig"),
+    reason="ExperimentConfig missing in ces_v1beta",
+)
+@patch("cxas_scrapi.core.deployments.Versions")
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_create_deployment_traffic_split_invalid_version(
+    mock_client_cls: typing.Any, mock_versions_cls: typing.Any
+) -> None:
+    mock_versions = mock_versions_cls.return_value
+    v1 = MagicMock()
+    v1.name = "projects/p/locations/l/apps/A/versions/v1"
+    mock_versions.list_versions.return_value = [v1]
+
+    deps = Deployments("projects/p/locations/l/apps/A")
+    expected_msg = (
+        "Version projects/p/locations/l/apps/A/versions/v2 does not exist"
+    )
+    with pytest.raises(ValueError, match=expected_msg):
+        deps.create_deployment(
+            "dep_id", "my_dep", "v1", traffic_split={"v1": 90, "v2": 10}
+        )
+
+
+@pytest.mark.skipif(
+    not hasattr(types, "ExperimentConfig"),
+    reason="ExperimentConfig missing in ces_v1beta",
+)
+@patch("cxas_scrapi.core.deployments.Versions")
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_update_deployment_traffic_split_valid(
+    mock_client_cls: typing.Any, mock_versions_cls: typing.Any
+) -> None:
+    mock_client = mock_client_cls.return_value
+    mock_client.update_deployment.return_value = MagicMock()
+
+    mock_versions = mock_versions_cls.return_value
+    v1 = MagicMock()
+    v1.name = "projects/p/locations/l/apps/A/versions/v1"
+    v2 = MagicMock()
+    v2.name = "projects/p/locations/l/apps/A/versions/v2"
+    mock_versions.list_versions.return_value = [v1, v2]
+
+    deps = Deployments("projects/p/locations/l/apps/A")
+    deps.update_deployment("dep_id", traffic_split={"v1": 50, "v2": 50})
+
+    args = mock_client.update_deployment.call_args[1]["request"]
+    dep = args.deployment
+    assert "experiment_config" in args.update_mask.paths
+    expected_state = types.ExperimentConfig.State.RUNNING
+    assert dep.experiment_config.version_release.state == expected_state
+    allocations = dep.experiment_config.version_release.traffic_allocations
+    assert len(allocations) == 2
+    assert allocations[0].traffic_percentage == 50
+    assert allocations[1].traffic_percentage == 50
+
+
+@pytest.mark.skipif(
+    not hasattr(types, "ExperimentConfig"),
+    reason="ExperimentConfig missing in ces_v1beta",
+)
+@patch("cxas_scrapi.core.deployments.Versions")
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_update_deployment_traffic_split_clear(
+    mock_client_cls: typing.Any, mock_versions_cls: typing.Any
+) -> None:
+    mock_client = mock_client_cls.return_value
+    mock_client.update_deployment.return_value = MagicMock()
+
+    deps = Deployments("projects/p/locations/l/apps/A")
+    deps.update_deployment("dep_id", app_version="v2")
+
+    args = mock_client.update_deployment.call_args[1]["request"]
+    dep = args.deployment
+    assert "experiment_config" in args.update_mask.paths
+    assert "app_version" in args.update_mask.paths
+    assert dep.app_version == "projects/p/locations/l/apps/A/versions/v2"
+    # The experiment_config should be empty
+    assert len(dep.experiment_config.version_release.traffic_allocations) == 0

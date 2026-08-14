@@ -1,8 +1,9 @@
+import typing
 import os
 import zipfile
 
 
-def setup():
+def setup() -> typing.Any:
     inputs_dir = "testdir"
     zip_files = [f for f in os.listdir(inputs_dir) if f.endswith(".zip")]
     if not zip_files:

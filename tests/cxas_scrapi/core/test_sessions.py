@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import queue
 import sys
 import time
+import typing
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +25,7 @@ from google.protobuf import json_format
 
 from cxas_scrapi.core.sessions import (
     AgentTurnManager,
+    BidiInteractiveSession,
     BidiSessionHandler,
     Modality,
     Sessions,
@@ -32,15 +35,17 @@ from cxas_scrapi.core.sessions import (
 class FakeRunSessionResponse:
     __hash__ = None
 
-    def __init__(self, outputs=None, **kwargs):
+    def __init__(
+        self, outputs: typing.Any = None, **kwargs: typing.Any
+    ) -> None:
         self.outputs = outputs or []
 
-    def __eq__(self, other):
+    def __eq__(self, other: typing.Any) -> typing.Any:
         return self.outputs == other.outputs
 
 
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_sessions_init(mock_client_cls):
+def test_sessions_init(mock_client_cls: typing.Any) -> None:
     """Test Sessions initialization."""
     sessions = Sessions(
         app_name="projects/p/locations/l/apps/a",
@@ -50,7 +55,7 @@ def test_sessions_init(mock_client_cls):
     assert sessions.deployment_id == "d1"
 
 
-def test_get_file_data(tmp_path):
+def test_get_file_data(tmp_path: typing.Any) -> None:
     """Test static method get_file_data."""
     test_file = tmp_path / "test.txt"
     test_file.write_text("hello world")
@@ -65,7 +70,9 @@ def test_get_file_data(tmp_path):
 
 @patch("cxas_scrapi.core.sessions.types")
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_run_session_basic(mock_client_cls, mock_types):
+def test_run_session_basic(
+    mock_client_cls: typing.Any, mock_types: typing.Any
+) -> None:
     """Test Sessions.run basic functionality."""
     mock_client = mock_client_cls.return_value
     # Use FakeRunSessionResponse for mock response
@@ -93,7 +100,7 @@ def test_run_session_basic(mock_client_cls, mock_types):
 
 
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_run_session_advanced(mock_client_cls):
+def test_run_session_advanced(mock_client_cls: typing.Any) -> None:
     """Test Sessions.run with multiple parameters."""
     mock_client = mock_client_cls.return_value
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
@@ -112,7 +119,7 @@ def test_run_session_advanced(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_send_event(mock_client_cls):
+def test_send_event(mock_client_cls: typing.Any) -> None:
     """Test Sessions.send_event."""
     mock_client = mock_client_cls.return_value
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
@@ -130,7 +137,7 @@ def test_send_event(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_parse_result_with_diagnostic_info(mock_client_cls):
+def test_parse_result_with_diagnostic_info(mock_client_cls: typing.Any) -> None:
     """Test parse_result with a full diagnostic trace ensures no crash."""
     mock_display = MagicMock()
     mock_html = MagicMock(side_effect=lambda x: x)
@@ -173,7 +180,7 @@ def test_parse_result_with_diagnostic_info(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_parse_result_fallback(mock_client_cls):
+def test_parse_result_fallback(mock_client_cls: typing.Any) -> None:
     """Test parse_result without diagnostic info but
     with basic and tool responses ensures no crash."""
     mock_display = MagicMock()
@@ -209,8 +216,10 @@ def test_parse_result_fallback(mock_client_cls):
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
 @patch("cxas_scrapi.core.sessions.Sessions.async_bidi_run_session")
 def test_run_session_audio_modality_text_inputs(
-    mock_async_run, mock_client_cls, mock_check_reqs
-):
+    mock_async_run: typing.Any,
+    mock_client_cls: typing.Any,
+    mock_check_reqs: typing.Any,
+) -> None:
     """Test Sessions.run handles text inputs for audio modality (TTS)."""
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
 
@@ -243,7 +252,9 @@ def test_run_session_audio_modality_text_inputs(
 
 @patch("cxas_scrapi.core.sessions.types")
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_run_session_text_multi_inputs_aggregation(mock_client_cls, mock_types):
+def test_run_session_text_multi_inputs_aggregation(
+    mock_client_cls: typing.Any, mock_types: typing.Any
+) -> None:
     """Test Sessions.run aggregates outputs from multiple text inputs."""
     mock_client = mock_client_cls.return_value
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
@@ -277,12 +288,12 @@ def test_run_session_text_multi_inputs_aggregation(mock_client_cls, mock_types):
     assert res.outputs[1].text == "Response 2"
 
 
-def test_agent_turn_manager_basic():
+def test_agent_turn_manager_basic() -> None:
     manager = AgentTurnManager(sample_rate=16000, sample_width=2)
     assert not manager.is_agent_done_talking()
 
     # 1 second of audio (16000 * 2 = 32000 bytes)
-    manager.add_audio(b"\x00" * 32000)
+    manager.add_audio(b"\x01" * 32000)
     manager.mark_turn_completed()
 
     # Just completed, current time is roughly 0 seconds since start
@@ -293,16 +304,66 @@ def test_agent_turn_manager_basic():
     assert manager.is_agent_done_talking()
 
 
-def test_agent_turn_manager_no_audio():
+def test_agent_turn_manager_no_audio() -> None:
     manager = AgentTurnManager()
     manager.mark_turn_completed()
     # If no audio was ever received, it should be done immediately
     assert manager.is_agent_done_talking()
 
 
+def test_agent_turn_manager_multi_stream_keeps_all_audio() -> None:
+    manager = AgentTurnManager(sample_rate=16000, sample_width=2)
+
+    # Multi-stream (default) mode performs no RMS/VAD filtering, so even
+    # all-zero audio counts toward playback time.
+    manager.add_audio(b"\x00" * 32000)
+    assert manager.len_audio_bytes_received == 32000
+
+
+def test_bidi_session_handler_mode_selection() -> None:
+    config = {"session": "s"}
+    handler = BidiSessionHandler(
+        location="us", token="fake", config=config, inputs=[]
+    )
+    assert handler.interactive is False
+    assert handler.agent_turn_manager.interactive is False
+
+    interactive_handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config=config,
+        input_queue=queue.Queue(),
+        response_queue=queue.Queue(),
+    )
+    assert interactive_handler.interactive is True
+    assert interactive_handler.agent_turn_manager.interactive is True
+
+
+def test_agent_turn_manager_silence_filtering() -> None:
+    manager = AgentTurnManager(
+        sample_rate=16000, sample_width=2, interactive=True
+    )
+
+    # Add low energy silence / comfort noise (all zeroes)
+    manager.add_audio(b"\x00" * 32000)
+    assert manager.len_audio_bytes_received == 0  # Discarded due to low RMS
+
+    # Add high energy speech (value 4095)
+    manager.add_audio(b"\xff\x0f" * 16000)
+    assert manager.len_audio_bytes_received == 32000  # Kept
+
+    # Mark turn completed and try to add more speech
+    manager.mark_turn_completed()
+    manager.add_audio(b"\xff\x0f" * 16000)
+    # Ignored because turn completed
+    assert manager.len_audio_bytes_received == 32000
+
+
 @patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
 @patch("cxas_scrapi.core.sessions.threading.Thread")
-def test_bidi_session_handler_run(mock_thread, mock_ws_app):
+def test_bidi_session_handler_run(
+    mock_thread: typing.Any, mock_ws_app: typing.Any
+) -> None:
     # Configure mock thread so is_alive() returns False (no timeout)
     mock_thread.return_value.is_alive.return_value = False
 
@@ -320,7 +381,7 @@ def test_bidi_session_handler_run(mock_thread, mock_ws_app):
     assert handler.outputs == []
 
 
-def test_bidi_session_handler_on_message():
+def test_bidi_session_handler_on_message() -> None:
     config = {"session": "s"}
     handler = BidiSessionHandler(
         location="us", token="fake", config=config, inputs=[]
@@ -344,7 +405,7 @@ def test_bidi_session_handler_on_message():
 
 
 @patch("cxas_scrapi.core.sessions.time.sleep")
-def test_bidi_session_handler_send_inputs(mock_sleep):
+def test_bidi_session_handler_send_inputs(mock_sleep: typing.Any) -> None:
     config = {"session": "session_123"}
     audio_msg = {"audio": b"fake_audio", "text": "Hello"}
     inputs = [{"audio": audio_msg}]
@@ -366,7 +427,7 @@ def test_bidi_session_handler_send_inputs(mock_sleep):
 
 
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_create_session_id(mock_client_cls):
+def test_create_session_id(mock_client_cls: typing.Any) -> None:
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
     sess_id = sessions.create_session_id()
     assert sess_id is not None
@@ -376,8 +437,8 @@ def test_create_session_id(mock_client_cls):
 @patch("cxas_scrapi.core.sessions.json_format.MessageToJson")
 @patch("cxas_scrapi.core.sessions.time.sleep")
 def test_bidi_session_handler_send_audio_message_with_variables(
-    mock_sleep, mock_to_json
-):
+    mock_sleep: typing.Any, mock_to_json: typing.Any
+) -> None:
     mock_to_json.return_value = "{}"
     config = {"session": "session_123"}
     audio_msg = {
@@ -419,8 +480,10 @@ def test_bidi_session_handler_send_audio_message_with_variables(
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
 @patch("cxas_scrapi.core.sessions.Sessions.async_bidi_run_session")
 def test_run_session_audio_modality_variables_all_turns(
-    mock_async_run, mock_client_cls, mock_check_reqs
-):
+    mock_async_run: typing.Any,
+    mock_client_cls: typing.Any,
+    mock_check_reqs: typing.Any,
+) -> None:
     """Test Sessions.run attaches variables to all turns in audio modality."""
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
 
@@ -452,9 +515,55 @@ def test_run_session_audio_modality_variables_all_turns(
 @patch("cxas_scrapi.core.sessions.Sessions._check_audio_requirements")
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
 @patch("cxas_scrapi.core.sessions.Sessions.async_bidi_run_session")
+def test_run_session_audio_modality_voice_config(
+    mock_async_run: typing.Any,
+    mock_client_cls: typing.Any,
+    mock_check_reqs: typing.Any,
+) -> None:
+    """Test Sessions.run propagates voice_config to AudioTransformer."""
+    sessions = Sessions(app_name="projects/p/locations/l/apps/a")
+
+    with patch("cxas_scrapi.core.sessions.AudioTransformer") as MockTransformer:
+        mock_transformer = MockTransformer.return_value
+        mock_transformer.text_to_speech_bytes.side_effect = (
+            lambda text, **kwargs: {
+                "audio_bytes": b"tts_" + text.encode(),
+                "text": text,
+            }
+        )
+
+        custom_voice = {
+            "language_code": "fr-FR",
+            "voice_name": "fr-FR-Standard-G",
+        }
+        sessions.run(
+            session_id="s1",
+            text=["Bonjour"],
+            modality=Modality.AUDIO,
+            voice_config=custom_voice,
+        )
+
+        mock_async_run.assert_called_once()
+
+        # Verify AudioTransformer was called with correct voice_config
+        mock_transformer.text_to_speech_bytes.assert_called_once_with(
+            text="Bonjour",
+            credentials=sessions.creds,
+            project_id=sessions.project_id,
+            voice_config=custom_voice,
+            background_noise_file=None,
+            burst_noise_files=None,
+        )
+
+
+@patch("cxas_scrapi.core.sessions.Sessions._check_audio_requirements")
+@patch("cxas_scrapi.core.sessions.SessionServiceClient")
+@patch("cxas_scrapi.core.sessions.Sessions.async_bidi_run_session")
 def test_run_session_audio_modality_variables_with_event(
-    mock_async_run, mock_client_cls, mock_check_reqs
-):
+    mock_async_run: typing.Any,
+    mock_client_cls: typing.Any,
+    mock_check_reqs: typing.Any,
+) -> None:
     """Test Sessions.run attaches variables to inputs on event turns
     in audio modality.
     """
@@ -479,8 +588,8 @@ def test_run_session_audio_modality_variables_with_event(
 @patch("cxas_scrapi.core.sessions.time.sleep")
 @patch("cxas_scrapi.core.sessions.json_format.MessageToJson")
 def test_bidi_session_handler_send_inputs_with_historical_contexts(
-    mock_message_to_json, mock_sleep
-):
+    mock_message_to_json: typing.Any, mock_sleep: typing.Any
+) -> None:
     mock_message_to_json.return_value = '{"mocked": "json"}'
 
     config = {
@@ -523,7 +632,9 @@ def test_bidi_session_handler_send_inputs_with_historical_contexts(
 
 @patch("cxas_scrapi.core.sessions.types.RunSessionRequest")
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_run_session_use_tool_fakes(mock_client_cls, mock_run_session_request):
+def test_run_session_use_tool_fakes(
+    mock_client_cls: typing.Any, mock_run_session_request: typing.Any
+) -> None:
     """Test Sessions.run with use_tool_fakes=True."""
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
 
@@ -541,8 +652,8 @@ def test_run_session_use_tool_fakes(mock_client_cls, mock_run_session_request):
 @patch("cxas_scrapi.core.sessions.time.sleep")
 @patch("cxas_scrapi.core.sessions.json_format.MessageToJson")
 def test_bidi_session_handler_send_inputs_use_tool_fakes(
-    mock_message_to_json, mock_sleep
-):
+    mock_message_to_json: typing.Any, mock_sleep: typing.Any
+) -> None:
     """Test BidiSessionHandler sends use_tool_fakes in config."""
     mock_message_to_json.return_value = "{}"
 
@@ -567,7 +678,7 @@ def test_bidi_session_handler_send_inputs_use_tool_fakes(
 
 
 @patch("cxas_scrapi.core.sessions.requests.get")
-def test_check_audio_requirements_success(mock_get):
+def test_check_audio_requirements_success(mock_get: typing.Any) -> None:
     """Test _check_audio_requirements success case."""
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
     sessions.project_id = "test-project"
@@ -583,7 +694,7 @@ def test_check_audio_requirements_success(mock_get):
 
 
 @patch("cxas_scrapi.core.sessions.requests.get")
-def test_check_audio_requirements_api_disabled(mock_get):
+def test_check_audio_requirements_api_disabled(mock_get: typing.Any) -> None:
     """Test _check_audio_requirements when an API is disabled."""
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
     sessions.project_id = "test-project"
@@ -600,7 +711,9 @@ def test_check_audio_requirements_api_disabled(mock_get):
 
 
 @patch("cxas_scrapi.core.sessions.requests.get")
-def test_check_audio_requirements_permission_denied(mock_get):
+def test_check_audio_requirements_permission_denied(
+    mock_get: typing.Any,
+) -> None:
     """Test _check_audio_requirements when permission is denied (403)."""
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
     sessions.project_id = "test-project"
@@ -616,7 +729,9 @@ def test_check_audio_requirements_permission_denied(mock_get):
 
 
 @patch("cxas_scrapi.core.sessions.requests.get")
-def test_check_audio_requirements_api_check_failed(mock_get):
+def test_check_audio_requirements_api_check_failed(
+    mock_get: typing.Any,
+) -> None:
     """Test _check_audio_requirements when API check fails (e.g., 500)."""
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
     sessions.project_id = "test-project"
@@ -631,18 +746,163 @@ def test_check_audio_requirements_api_check_failed(mock_get):
     assert "Failed to check service" in str(exc_info.value)
 
 
-def test_check_audio_requirements_no_project_id_raises_error():
+def test_check_audio_requirements_no_project_id_raises_error() -> None:
     """Test _check_audio_requirements raises error when no project_id."""
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
     sessions.project_id = None
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:  # noqa: PT011
         sessions._check_audio_requirements()
     assert "Project ID could not be determined" in str(exc_info.value)
 
 
+@patch("cxas_scrapi.core.sessions.wave.open")
+@patch("cxas_scrapi.core.sessions.os.makedirs")
+def test_bidi_session_handler_audio_writing_enabled(
+    mock_makedirs: typing.Any, mock_wave_open: typing.Any
+) -> None:
+    """Test BidiSessionHandler writes audio WAV.
+
+    Triggered when capture_agent_audio is True.
+    """
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config=config,
+        inputs=[],
+        capture_agent_audio=True,
+    )
+
+    # Receive some audio bytes first
+    msg_audio = types.BidiSessionServerMessage(
+        session_output=types.SessionOutput(audio=b"audio_bytes")
+    )
+    json_audio = json_format.MessageToJson(
+        msg_audio._pb, preserving_proto_field_name=False
+    )
+    handler._on_message(MagicMock(), json_audio)
+
+    # Now trigger turn completed
+    msg_complete = types.BidiSessionServerMessage(
+        session_output=types.SessionOutput(turn_completed=True)
+    )
+    json_complete = json_format.MessageToJson(
+        msg_complete._pb, preserving_proto_field_name=False
+    )
+
+    handler._on_message(MagicMock(), json_complete)
+    handler._save_and_increment_agent_audio()
+
+    # Verify audio file was written
+    mock_makedirs.assert_called_once_with("/tmp/scrapi_evals/s1", exist_ok=True)
+    mock_wave_open.assert_called_once_with(
+        "/tmp/scrapi_evals/s1/turn_0_agent.wav", "wb"
+    )
+
+    # Verify turn_audio_paths was populated
+    assert handler.turn_audio_paths == {
+        0: "/tmp/scrapi_evals/s1/turn_0_agent.wav"
+    }
+
+
+@patch("cxas_scrapi.core.sessions.wave.open")
+@patch("cxas_scrapi.core.sessions.os.makedirs")
+def test_bidi_session_handler_multipart_turn_writes_single_wav(
+    mock_makedirs: typing.Any, mock_wave_open: typing.Any
+) -> None:
+    """Test that a multi-part agent turn produces a single WAV file.
+
+    Intermediate turn_completed signals (e.g. around a mid-turn tool
+    call) must not split the turn's audio across multiple files.
+    """
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config=config,
+        inputs=[],
+        capture_agent_audio=True,
+    )
+
+    def receive(session_output: typing.Any) -> None:
+        msg = types.BidiSessionServerMessage(session_output=session_output)
+        handler._on_message(
+            MagicMock(),
+            json_format.MessageToJson(
+                msg._pb, preserving_proto_field_name=False
+            ),
+        )
+
+    # Part 1 audio, then a premature turn_completed (mid-turn tool call)
+    receive(types.SessionOutput(audio=b"part_one"))
+    receive(types.SessionOutput(turn_completed=True))
+    # Part 2 audio, then the final turn_completed
+    receive(types.SessionOutput(audio=b"part_two"))
+    receive(types.SessionOutput(turn_completed=True))
+
+    # No file is written until the sender thread saves the finished turn
+    mock_wave_open.assert_not_called()
+
+    handler._save_and_increment_agent_audio()
+
+    # Exactly one WAV containing the full turn audio
+    mock_wave_open.assert_called_once_with(
+        "/tmp/scrapi_evals/s1/turn_0_agent.wav", "wb"
+    )
+    wav_file = mock_wave_open.return_value.__enter__.return_value
+    wav_file.writeframes.assert_called_once_with(b"part_onepart_two")
+    assert handler.turn_audio_paths == {
+        0: "/tmp/scrapi_evals/s1/turn_0_agent.wav"
+    }
+    assert handler.current_agent_turn_idx == 1
+
+
+@patch("cxas_scrapi.core.sessions.wave.open")
+@patch("cxas_scrapi.core.sessions.os.makedirs")
+def test_bidi_session_handler_audio_writing_disabled(
+    mock_makedirs: typing.Any, mock_wave_open: typing.Any
+) -> None:
+    """Test BidiSessionHandler skips audio WAV.
+
+    Triggered when capture_agent_audio is False.
+    """
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config=config,
+        inputs=[],
+        capture_agent_audio=False,
+    )
+
+    # Receive some audio bytes first
+    msg_audio = types.BidiSessionServerMessage(
+        session_output=types.SessionOutput(audio=b"audio_bytes")
+    )
+    json_audio = json_format.MessageToJson(
+        msg_audio._pb, preserving_proto_field_name=False
+    )
+    handler._on_message(MagicMock(), json_audio)
+
+    # Now trigger turn completed
+    msg_complete = types.BidiSessionServerMessage(
+        session_output=types.SessionOutput(turn_completed=True)
+    )
+    json_complete = json_format.MessageToJson(
+        msg_complete._pb, preserving_proto_field_name=False
+    )
+
+    handler._on_message(MagicMock(), json_complete)
+
+    # Verify audio file was NOT written
+    mock_makedirs.assert_not_called()
+    mock_wave_open.assert_not_called()
+    assert handler.turn_audio_paths == {}
+
+
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_sessions_rate_limiting(mock_client_cls):
+def test_sessions_rate_limiting(mock_client_cls: typing.Any) -> None:
     """Test Sessions.run with rate limiting."""
     mock_rate_limiter = MagicMock()
 
@@ -658,7 +918,7 @@ def test_sessions_rate_limiting(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.sessions.SessionServiceClient")
-def test_sessions_rate_limiting_multi_turn(mock_client_cls):
+def test_sessions_rate_limiting_multi_turn(mock_client_cls: typing.Any) -> None:
     """Test Sessions.run with rate limiting for multiple turns."""
     mock_rate_limiter = MagicMock()
 
@@ -673,7 +933,7 @@ def test_sessions_rate_limiting_multi_turn(mock_client_cls):
     assert mock_rate_limiter.wait_and_consume.call_count == 2
 
 
-def test_bidi_session_handler_pydub_missing_raises_error():
+def test_bidi_session_handler_pydub_missing_raises_error() -> None:
     """Test BidiSessionHandler raises ImportError when pydub is missing."""
     config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
 
@@ -689,3 +949,194 @@ def test_bidi_session_handler_pydub_missing_raises_error():
         assert "pydub is not installed or failed to import" in str(
             exc_info.value
         )
+
+
+@patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
+@patch("cxas_scrapi.core.sessions.threading.Thread")
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_interactive_session_start_and_close(
+    mock_sleep: typing.Any, mock_thread: typing.Any, mock_ws_app: typing.Any
+) -> None:
+    """Test starting and closing a BidiInteractiveSession hermetically."""
+    mock_sessions_client = MagicMock()
+    mock_sessions_client.location = "us"
+    mock_sessions_client.token = "fake_token"
+
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    session = BidiInteractiveSession(
+        sessions_client=mock_sessions_client,
+        session_id="s1",
+        config=config,
+    )
+
+    session.start()
+    assert session.wst is not None
+    mock_thread.assert_called_once()
+
+    session.close()
+    assert session.input_queue.get() is None
+
+
+@patch("cxas_scrapi.core.sessions.AudioTransformer")
+@patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
+@patch("cxas_scrapi.core.sessions.threading.Thread")
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_interactive_session_send_turn(
+    mock_sleep: typing.Any,
+    mock_thread: typing.Any,
+    mock_ws_app: typing.Any,
+    mock_audio_transformer_cls: typing.Any,
+) -> None:
+    """Test send_turn on BidiInteractiveSession."""
+    mock_transformer = mock_audio_transformer_cls.return_value
+    mock_transformer.text_to_speech_bytes.return_value = {
+        "audio_bytes": b"fake_audio",
+        "text": "Hello",
+    }
+
+    mock_sessions_client = MagicMock()
+    mock_sessions_client.location = "us"
+    mock_sessions_client.token = "fake_token"
+    mock_sessions_client.rate_limiter = None
+    mock_sessions_client.creds = MagicMock()
+    mock_sessions_client.project_id = "p"
+
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    session = BidiInteractiveSession(
+        sessions_client=mock_sessions_client,
+        session_id="s1",
+        config=config,
+    )
+
+    mock_response = MagicMock()
+    session.response_queue.put(mock_response)
+
+    res = session.send_turn("Hello")
+    assert res == mock_response
+
+    item = session.input_queue.get()
+    assert item["audio"]["text"] == "Hello"
+
+
+@patch("cxas_scrapi.core.sessions.AudioTransformer")
+@patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
+@patch("cxas_scrapi.core.sessions.threading.Thread")
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_interactive_session_send_turn_event(
+    mock_sleep: typing.Any,
+    mock_thread: typing.Any,
+    mock_ws_app: typing.Any,
+    mock_audio_transformer_cls: typing.Any,
+) -> None:
+    """Test send_turn with event on BidiInteractiveSession."""
+    mock_sessions_client = MagicMock()
+    mock_sessions_client.location = "us"
+    mock_sessions_client.token = "fake_token"
+    mock_sessions_client.rate_limiter = None
+
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    session = BidiInteractiveSession(
+        sessions_client=mock_sessions_client,
+        session_id="s1",
+        config=config,
+    )
+
+    mock_response = MagicMock()
+    session.response_queue.put(mock_response)
+
+    res = session.send_turn("event:WELCOME", variables={"var1": "val1"})
+    assert res == mock_response
+
+    var_item = session.input_queue.get()
+    assert var_item == {"variables": {"var1": "val1"}}
+
+    event_item = session.input_queue.get()
+    assert event_item == {"event": {"event": "WELCOME"}}
+
+
+@patch("cxas_scrapi.core.sessions.AudioTransformer")
+@patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
+@patch("cxas_scrapi.core.sessions.threading.Thread")
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_session_timeout(
+    mock_sleep: typing.Any,
+    mock_thread: typing.Any,
+    mock_ws_app: typing.Any,
+    mock_audio_transformer_cls: typing.Any,
+) -> None:
+    """Test TimeoutError when response_queue times out in
+    BidiInteractiveSession.
+    """
+    mock_transformer = mock_audio_transformer_cls.return_value
+    mock_transformer.text_to_speech_bytes.return_value = {
+        "audio_bytes": b"fake_audio",
+        "text": "Hello",
+    }
+
+    mock_sessions_client = MagicMock()
+    mock_sessions_client.location = "us"
+    mock_sessions_client.token = "fake_token"
+    mock_sessions_client.rate_limiter = None
+    mock_sessions_client.creds = MagicMock()
+    mock_sessions_client.project_id = "p"
+
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    session = BidiInteractiveSession(
+        sessions_client=mock_sessions_client,
+        session_id="s1",
+        config=config,
+    )
+
+    with patch.object(session.response_queue, "get", side_effect=queue.Empty):
+        with pytest.raises(TimeoutError) as exc_info:
+            session.send_turn("Hello")
+        assert "Timeout waiting for agent response via WebSocket" in str(
+            exc_info.value
+        )
+
+
+@patch("cxas_scrapi.core.sessions.Sessions._check_audio_requirements")
+@patch("cxas_scrapi.core.sessions.SessionServiceClient")
+def test_create_interactive_session(
+    mock_client_cls: typing.Any, mock_check_reqs: typing.Any
+) -> None:
+    """Test Sessions.create_interactive_session."""
+    sessions = Sessions(
+        app_name="projects/p/locations/l/apps/a", deployment_id="d1"
+    )
+    interactive_session = sessions.create_interactive_session(
+        session_id="s1",
+        capture_agent_audio=True,
+    )
+    assert isinstance(interactive_session, BidiInteractiveSession)
+    assert interactive_session.session_id == "s1"
+    assert interactive_session.capture_agent_audio is True
+    assert (
+        interactive_session.config["deployment"]
+        == "projects/p/locations/l/apps/a/deployments/d1"
+    )
+
+
+@patch("cxas_scrapi.core.sessions.time.sleep")
+@patch("cxas_scrapi.core.sessions.json_format.MessageToJson")
+def test_bidi_session_handler_with_proto_session_config(
+    mock_message_to_json: typing.Any, mock_sleep: typing.Any
+) -> None:
+    """Test BidiSessionHandler when config is a types.SessionConfig proto
+    instance.
+    """
+    mock_message_to_json.return_value = "{}"
+
+    proto_config = types.SessionConfig(
+        session="projects/p/locations/us/apps/a/sessions/s1",
+        use_tool_fakes=True,
+    )
+
+    handler = BidiSessionHandler(
+        location="us", token="fake", config=proto_config, inputs=[]
+    )
+    handler.ws_app = MagicMock()
+
+    handler._send_inputs()
+
+    assert mock_message_to_json.call_count >= 1

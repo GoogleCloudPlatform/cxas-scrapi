@@ -16,6 +16,7 @@ import asyncio
 import logging
 import random
 import threading
+import typing
 from typing import Any
 
 from google import genai
@@ -30,10 +31,10 @@ class GeminiGenerate:
         self,
         project_id: str,
         location: str = "global",
-        credentials=None,
+        credentials: typing.Any = None,
         model_name: str = "gemini-3.1-pro-preview",
         max_concurrent_requests: int = 3,
-    ):
+    ) -> None:
         """Initializes the GeminiGenerate client.
 
         Args:
@@ -68,6 +69,34 @@ class GeminiGenerate:
             )
         return self._thread_local.client
 
+    def _build_contents(
+        self,
+        prompt: str | list[Any],
+        audio_path: str | None = None,
+        audio_bytes: bytes | None = None,
+    ) -> list[Any]:
+        """Helper to construct contents for the model including audio."""
+        contents = []
+        if isinstance(prompt, list):
+            contents.extend(prompt)
+        else:
+            contents.append(prompt)
+
+        if audio_bytes:
+            contents.append(
+                genai.types.Part.from_bytes(
+                    data=audio_bytes, mime_type="audio/wav"
+                )
+            )
+        elif audio_path:
+            with open(audio_path, "rb") as f:
+                contents.append(
+                    genai.types.Part.from_bytes(
+                        data=f.read(), mime_type="audio/wav"
+                    )
+                )
+        return contents
+
     def _build_generation_config(
         self,
         system_prompt: str | None = None,
@@ -97,18 +126,20 @@ class GeminiGenerate:
 
     def generate(
         self,
-        prompt: str,
+        prompt: str | list[Any],
         system_prompt: str | None = None,
         model_name: str | None = None,
         response_mime_type: str | None = None,
         response_schema: Any | None = None,
         temperature: float | None = 1.0,
         thinking_level: str | None = None,
+        audio_path: str | None = None,
+        audio_bytes: bytes | None = None,
     ) -> Any | None:
         """Generates content using the Gemini model.
 
         Args:
-            prompt: The user prompt.
+            prompt: The user prompt (can be a list for multi-part contents).
             system_prompt: Optional system prompt/instruction.
             model_name: Optional override for the model name.
             response_mime_type: Optional MIME type for the response (e.g.,
@@ -118,6 +149,8 @@ class GeminiGenerate:
             temperature: Optional temperature setting. Defaults to 1.0.
             thinking_level: Optional Vertex `ThinkingConfig` budget; one of
               "low" / "medium" / "high". `None` disables thinking entirely.
+            audio_path: Optional path to an audio file.
+            audio_bytes: Optional raw audio bytes.
 
         Returns:
             The generated text response or parsed object, or None on failure.
@@ -132,16 +165,18 @@ class GeminiGenerate:
             thinking_level=thinking_level,
         )
 
+        contents = self._build_contents(prompt, audio_path, audio_bytes)
+
         try:
             response = self.client.models.generate_content(
-                model=target_model, contents=prompt, config=config
+                model=target_model, contents=contents, config=config
             )
 
             if response_mime_type == "application/json" and response_schema:
                 return response.parsed
             return response.text
-        except Exception as e:
-            logger.error(f"Gemini generation failed: {e}")
+        except Exception:
+            logger.exception("Gemini generation failed")
             return None
 
     def generate_with_parts(
@@ -196,13 +231,57 @@ class GeminiGenerate:
             if response_mime_type == "application/json" and response_schema:
                 return response.parsed
             return response.text
-        except Exception as e:
-            logger.error(f"Gemini multimodal generation failed: {e}")
+        except Exception:
+            logger.exception("Gemini multimodal generation failed")
             return None
+
+    async def create_cache(
+        self,
+        system_prompt: str,
+        shared_content: str,
+        ttl_seconds: int = 300,
+    ) -> str | None:
+        """Creates a Gemini context cache for shared prompt content.
+
+        Returns the cache resource name on success, or None if the API call
+        fails (e.g. content below the minimum token threshold). Callers should
+        treat None as a signal to fall back to uncached generation.
+        """
+        try:
+            cache = await self.client.aio.caches.create(
+                model=self.model_name,
+                config={
+                    "system_instruction": system_prompt,
+                    "contents": [
+                        genai.types.Content(
+                            role="user",
+                            parts=[
+                                genai.types.Part.from_text(text=shared_content)
+                            ],
+                        )
+                    ],
+                    "ttl": f"{ttl_seconds}s",
+                },
+            )
+            logger.info("Created Gemini context cache: %s", cache.name)
+            return cache.name
+        except Exception as exc:
+            logger.warning(
+                "Cache creation failed (will proceed uncached): %s", exc
+            )
+            return None
+
+    async def delete_cache(self, cache_name: str) -> None:
+        """Deletes a Gemini context cache by resource name."""
+        try:
+            await self.client.aio.caches.delete(name=cache_name)
+            logger.info("Deleted Gemini context cache: %s", cache_name)
+        except Exception as exc:
+            logger.warning("Cache deletion failed for %s: %s", cache_name, exc)
 
     async def generate_async(
         self,
-        prompt: str,
+        prompt: str | list[Any],
         system_prompt: str | None = None,
         model_name: str | None = None,
         response_mime_type: str | None = None,
@@ -210,12 +289,16 @@ class GeminiGenerate:
         max_retries: int = 5,
         base_delay_seconds: int = 10,
         temperature: float | None = 1.0,
+        audio_path: str | None = None,
+        audio_bytes: bytes | None = None,
+        cached_content_name: str | None = None,
     ) -> Any | None:
         """Generates content asynchronously using the Gemini model.
 
         Args:
-            prompt: The user prompt.
-            system_prompt: Optional system prompt/instruction.
+            prompt: The user prompt (per-call content only when using a cache).
+            system_prompt: Optional system prompt/instruction. Ignored when
+              cached_content_name is provided (system prompt lives in cache).
             model_name: Optional override for the model name.
             response_mime_type: Optional MIME type for the response (e.g.,
               'application/json').
@@ -224,25 +307,38 @@ class GeminiGenerate:
             max_retries: Maximum number of retries for transient errors.
             base_delay_seconds: Base delay for exponential backoff.
             temperature: Optional temperature setting. Defaults to 1.0.
+            audio_path: Optional path to an audio file.
+            audio_bytes: Optional raw audio bytes.
+            cached_content_name: Optional resource name returned by
+              create_cache(). When provided, system_prompt is ignored and the
+              generation config references the cache instead.
 
         Returns:
             The generated text response or parsed object, or None on failure.
         """
         target_model = model_name or self.model_name
 
-        config = self._build_generation_config(
-            system_prompt=system_prompt,
-            response_mime_type=response_mime_type,
-            response_schema=response_schema,
-            temperature=temperature,
-        )
+        if cached_content_name:
+            config_args: dict = {"cached_content": cached_content_name}
+            if temperature is not None:
+                config_args["temperature"] = temperature
+            config = genai.types.GenerateContentConfig(**config_args)
+        else:
+            config = self._build_generation_config(
+                system_prompt=system_prompt,
+                response_mime_type=response_mime_type,
+                response_schema=response_schema,
+                temperature=temperature,
+            )
+
+        contents = self._build_contents(prompt, audio_path, audio_bytes)
 
         for attempt in range(max_retries):
             try:
                 # ACQUIRE SEMAPHORE: Wait if too many requests are running
                 async with self.semaphore:
                     response = await self.client.aio.models.generate_content(
-                        model=target_model, contents=prompt, config=config
+                        model=target_model, contents=contents, config=config
                     )
 
                 if response_mime_type == "application/json" and response_schema:
@@ -260,7 +356,7 @@ class GeminiGenerate:
                 logger.warning(f"  Attempt {attempt + 1} failed: {err_msg}")
 
                 if attempt == max_retries - 1:
-                    logger.error(
+                    logger.exception(
                         "  ❌ All retry attempts failed. Check GCP quota."
                     )
                     return None
@@ -296,6 +392,7 @@ class GeminiGenerate:
             )
             if response.embeddings is not None:
                 return [embedding.values for embedding in response.embeddings]
-        except Exception as e:
-            logger.error(f"Gemini embedding generation failed: {e}")
-        return []
+            return []
+        except Exception:
+            logger.exception("Gemini embedding generation failed")
+            return []

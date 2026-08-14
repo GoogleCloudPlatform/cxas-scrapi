@@ -1,0 +1,989 @@
+<!-- Agent xprs (express) Designer Tab Panel Component -->
+<div style="display: flex; gap: 20px; margin-top: 14px;">
+  <!-- Left Side: Utterance Bank -->
+  <div style="width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px;">
+    <div class="kpi-card" style="padding: 12px; border-style: dashed; background: var(--bg);">
+      <div class="label" style="font-size: 10px;">Bank Instructions</div>
+      <div style="font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.4;">
+        Drag utterances from the bank below onto the Canvas to build the simulator transcript, or click "Add Bubble" to write custom lines.
+      </div>
+    </div>
+
+    <div class="panel" class="active" style="display: flex; flex-direction: column; gap: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; max-height: calc(100vh - 220px); overflow-y: auto;">
+      <h3 style="margin: 0 0 10px 0; font-size: 14px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+        <span>Utterance Bank</span>
+        <span class="tab-badge" id="bank-total-count" style="font-size: 9px; padding: 1px 5px;">0</span>
+      </h3>
+
+      <!-- Categories Accordion -->
+      <div id="xprs-bank-categories" style="display: flex; flex-direction: column; gap: 8px;">
+        <!-- Categories will be rendered here dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Center/Right: Conversational Simulator Canvas -->
+  <div style="flex: 1; display: flex; flex-direction: column; gap: 16px;">
+    <!-- Canvas Toolbar -->
+    <div id="xprs-canvas-toolbar" style="display: flex; justify-content: space-between; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-weight: 600; font-size: 14px; color: var(--ink);">Conversational Simulator Canvas</span>
+        <span class="gr-status-pill awaiting" id="xprs-status" style="font-size: 10px; padding: 1px 6px;">Draft</span>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn" id="xprs-add-agent-btn" style="border-color: var(--group); color: var(--group); font-size: 12px; padding: 4px 10px;">+ Agent Bubble</button>
+        <button class="btn" id="xprs-add-user-btn" style="border-color: var(--accent); color: var(--accent); font-size: 12px; padding: 4px 10px;">+ User Bubble</button>
+        <button class="btn" id="xprs-clear-btn" style="font-size: 12px; padding: 4px 10px;">Clear All</button>
+        <button class="btn btn-primary" id="xprs-save-btn" style="font-size: 12px; padding: 4px 10px;">Save &amp; Compile</button>
+      </div>
+    </div>
+
+    <!-- Scenario Tabs Navigation -->
+    <div id="xprs-scenarios-nav" style="display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--border); margin-bottom: -17px; z-index: 2;">
+      <button class="btn" id="xprs-add-scenario-btn" style="font-size: 11px; padding: 2px 8px; margin-bottom: 4px;">+ New Scenario</button>
+    </div>
+
+    <!-- Interactive Transcript Simulator Canvas Area -->
+    <div id="xprs-canvas" style="flex: 1; min-height: 480px; background: #f1f5f9; border: 2px dashed var(--border); border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; max-height: calc(100vh - 280px); border-top-left-radius: 0;">
+      <!-- Conversation bubbles rendered here dynamically -->
+      <div id="xprs-canvas-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; margin: auto; color: var(--muted); text-align: center; max-width: 320px;">
+        <div style="font-size: 36px;" id="xprs-placeholder-icon">💬</div>
+        <div style="font-weight: 600; font-size: 13.5px; color: var(--ink);" id="xprs-placeholder-title">Transcript Simulator is Empty</div>
+        <div style="font-size: 11.5px; line-height: 1.4;" id="xprs-placeholder-desc">Drag utterances from the left bank here, or click the buttons above to manually add Agent/User dialog bubbles.</div>
+      </div>
+    </div>
+
+    <!-- Output preview collapsible -->
+    <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px;">
+      <h4 style="margin: 0 0 8px 0; font-size: 12px; display: flex; justify-content: space-between; align-items: center;">
+        <span>Compiled Conversation Graph YAML Schema</span>
+        <button class="btn" id="xprs-copy-yaml-btn" style="font-size: 10px; padding: 2px 6px;">Copy to Clipboard</button>
+      </h4>
+      <pre id="xprs-compiled-yaml" style="margin: 0; font-size: 11px; max-height: 240px;"># Add bubbles to compile conversation graph</pre>
+    </div>
+  </div>
+</div>
+
+<!-- Modal / Toast Notification -->
+<div id="xprs-toast" style="position: fixed; bottom: 20px; right: 20px; background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 12.5px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; z-index: 999; align-items: center; gap: 8px;">
+  <span id="xprs-toast-icon">✓</span>
+  <span id="xprs-toast-text">Success!</span>
+</div>
+
+<style>
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  /* Categories Accordion Style */
+  .category-header {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+    transition: background 0.15s;
+  }
+  .category-header:hover {
+    background: var(--border);
+  }
+  .category-content {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 4px 2px;
+  }
+  .category-content.open {
+    display: flex;
+  }
+  .category-item {
+    font-size: 11.5px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    cursor: grab;
+    user-select: none;
+    word-break: break-word;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .category-item:hover {
+    border-color: var(--accent);
+    background: var(--panel2);
+  }
+  .category-item:active {
+    cursor: grabbing;
+  }
+
+  /* Bubble Styling */
+  .bubble-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 55%;
+    min-width: 50%;
+    max-width: 65%;
+    position: relative;
+    group: hover;
+    transition: opacity 0.15s;
+  }
+  .bubble-wrap.inactive {
+    opacity: 0.45;
+  }
+  .bubble-wrap.agent {
+    align-self: flex-start;
+  }
+  .bubble-wrap.user {
+    align-self: flex-end;
+  }
+
+  .bubble-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .bubble-wrap.agent .bubble-header {
+    color: var(--group);
+  }
+  .bubble-wrap.user .bubble-header {
+    color: var(--accent);
+    flex-direction: row-reverse;
+  }
+
+  .bubble-body {
+    position: relative;
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 14px;
+    line-height: 1.45;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+    min-height: 46px;
+    min-width: 160px;
+  }
+  .bubble-wrap.agent .bubble-body {
+    background: #ede9fe;
+    color: #312e81;
+    border: 1px solid #c084fc;
+    border-top-left-radius: 2px;
+  }
+  .bubble-wrap.user .bubble-body {
+    background: #e0f2fe;
+    color: #0c4a6e;
+    border: 1px solid #7dd3fc;
+    border-top-right-radius: 2px;
+  }
+
+  /* Bubble text edit container */
+  .bubble-text-input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    resize: none;
+    outline: none;
+    padding: 0;
+    margin: 0;
+    overflow-y: hidden;
+  }
+
+  /* Bubble floating controls toolbar */
+  .bubble-controls {
+    position: absolute;
+    top: -12px;
+    right: 10px;
+    background: var(--ink);
+    border-radius: 6px;
+    display: none;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    z-index: 10;
+  }
+  .bubble-wrap.user .bubble-controls {
+    left: 10px;
+    right: auto;
+  }
+  .bubble-wrap:hover .bubble-controls {
+    display: flex;
+  }
+
+  .bubble-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    transition: color 0.1s, background 0.1s;
+  }
+  .bubble-btn:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.15);
+  }
+  .bubble-btn.active-toggle {
+    font-weight: bold;
+  }
+  .bubble-wrap.inactive .bubble-btn.active-toggle {
+    color: #ef4444;
+  }
+
+  /* Scenario Tabs styling */
+  .scenario-tab {
+    padding: 6px 14px;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.1s, color 0.1s;
+    user-select: none;
+    margin-bottom: -1px;
+  }
+  .scenario-tab.active {
+    background: #f1f5f9; /* Match canvas bg */
+    color: var(--ink);
+    font-weight: 600;
+    border-bottom: 1px solid #f1f5f9;
+  }
+  .scenario-tab .close-btn {
+    font-size: 11px;
+    color: var(--muted);
+    border-radius: 50%;
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .scenario-tab .close-btn:hover {
+    background: rgba(15,23,42,0.15);
+    color: var(--critical);
+  }
+</style>
+
+<script type="text/javascript">
+(function() {
+  const $ = selector => document.querySelector(selector);
+  const $$ = (selector, parent = document) => parent.querySelectorAll(selector);
+
+  // Loaded from script data tag of report-data
+  let utteranceData = {
+    raw: [],
+    categorized: {},
+    rationales: {},
+    scenarios: []
+  };
+
+  // Live state of multiple scenario canvases
+  let scenariosState = [
+    { id: 'sc_1', name: 'Scenario 1', bubbles: [] }
+  ];
+  let activeScenarioId = 'sc_1';
+  let bubblesState = scenariosState[0].bubbles;
+  let xprsInitialized = false;
+
+
+  function initXprsDesigner() {
+    // Attempt to parse existing harvested data
+    if (typeof DATA !== "undefined" && DATA.xprs_designer_data) {
+      utteranceData = DATA.xprs_designer_data;
+    } else {
+      const rawDataStr = $('#report-data')?.textContent;
+      if (rawDataStr) {
+        try {
+          const fullData = JSON.parse(rawDataStr);
+          if (fullData.xprs_designer_data) {
+            utteranceData = fullData.xprs_designer_data;
+          }
+        } catch (e) {
+          console.warn("Failed to load xprs_designer_data:", e);
+        }
+      }
+    }
+
+    const tabEl = document.getElementById('tab-xprs');
+    if (!utteranceData) {
+      if (tabEl) tabEl.style.display = 'none';
+      return;
+    }
+    if (tabEl) tabEl.style.display = '';
+
+    const isGenerating = !utteranceData || (!utteranceData.raw || utteranceData.raw.length === 0) || (!utteranceData.scenarios || utteranceData.scenarios.length === 0);
+    const iconEl = $('#xprs-placeholder-icon');
+    const titleEl = $('#xprs-placeholder-title');
+    const descEl = $('#xprs-placeholder-desc');
+
+    if (isGenerating) {
+      if (iconEl) iconEl.innerHTML = '<span class="spinner" style="display:inline-block; width: 32px; height: 32px; border: 4px solid var(--border); border-radius: 50%; border-top-color: var(--blue); animation: spin 1s linear infinite;"></span>';
+      if (titleEl) titleEl.textContent = 'Generating predicted scenarios...';
+      if (descEl) descEl.textContent = 'Early utterance harvesting and conversational path prediction using Gemini is currently in progress. The canvas will load automatically once ready.';
+      $$('#xprs-canvas-toolbar button, #xprs-copy-yaml-btn').forEach(btn => btn.disabled = true);
+    } else {
+      if (iconEl) iconEl.textContent = '💬';
+      if (titleEl) titleEl.textContent = 'Transcript Simulator is Empty';
+      if (descEl) descEl.textContent = 'Drag utterances from the left bank here, or click the buttons above to manually add Agent/User dialog bubbles.';
+      $$('#xprs-canvas-toolbar button, #xprs-copy-yaml-btn').forEach(btn => btn.disabled = false);
+    }
+
+    if (utteranceData.scenarios && utteranceData.scenarios.length > 0 && (!window.__xprs_scenarios_loaded__ || window.__last_sc_count__ !== utteranceData.scenarios.length)) {
+      window.__xprs_scenarios_loaded__ = true;
+      window.__last_sc_count__ = utteranceData.scenarios.length;
+      scenariosState = utteranceData.scenarios.map((sc, idx) => {
+        const bubbles = (sc.nodes || []).map(node => {
+          const text = node.type === "AGENT" ? node.utterance : (node.intent_description || node.utterance || "User action");
+          return {
+            id: 'b_' + Math.random().toString(36).substr(2, 9),
+            text: text,
+            speaker: node.type === "AGENT" ? "agent" : "user",
+            mode: (node.mode || "generative").toLowerCase(),
+            active: true
+          };
+        });
+        return {
+          id: sc.graph_id || 'sc_' + idx,
+          name: sc.graph_id ? sc.graph_id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : `Scenario ${idx + 1}`,
+          bubbles: bubbles
+        };
+      });
+      activeScenarioId = scenariosState[0].id;
+      bubblesState = scenariosState[0].bubbles;
+    }
+
+    if (xprsInitialized) {
+      renderScenarioTabs();
+      renderCanvas();
+      renderUtteranceBank();
+      return;
+    }
+
+
+    renderUtteranceBank();
+    setupCanvasDragAndDrop();
+    setupCanvasToolbar();
+    setupScenarioNav();
+
+    // Render initial sample bubbles ONLY if we didn't load any predicted scenarios
+    if (isGenerating) {
+      // Keep xprsInitialized = false, wait for completed data
+    } else if (!utteranceData.scenarios || utteranceData.scenarios.length === 0) {
+      loadInitialSample();
+      xprsInitialized = true;
+    } else {
+      renderScenarioTabs();
+      renderCanvas();
+      xprsInitialized = true;
+    }
+  }
+
+
+
+  function renderUtteranceBank() {
+    const categoriesDiv = $('#xprs-bank-categories');
+    if (!categoriesDiv) return;
+
+    categoriesDiv.innerHTML = '';
+    const cats = utteranceData.categorized || {};
+    let totalCount = 0;
+
+    function normStr(s) {
+      if (!s) return '';
+      return s.replace(/^(user|agent|system|bot):\s*/i, '')
+              .replace(/^["']|["']$/g, '')
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, '');
+    }
+    function getWords(s) {
+      if (!s) return [];
+      const matches = s.toLowerCase().match(/\b[a-z]{4,}\b/g);
+      return matches ? Array.from(new Set(matches)) : [];
+    }
+
+    const rawMeta = utteranceData.raw_metadata || [];
+    function findSourcesForUtterance(utText) {
+      const nk = normStr(utText);
+      const utWords = getWords(utText);
+      const exactMatches = [];
+      const fuzzyMatches = [];
+
+      rawMeta.forEach(m => {
+        if (!m || !m.text) return;
+        const mt = m.text;
+        const nm = normStr(mt);
+        const label = `${(m.source_type || '').replace(/_/g, ' ')} (${m.source_name || ''})`;
+
+        if (mt === utText || nm === nk) {
+          if (!exactMatches.includes(label)) exactMatches.push(label);
+        } else if (exactMatches.length === 0) {
+          if (nk.length >= 8 && (nk.includes(nm) || nm.includes(nk))) {
+            if (!fuzzyMatches.includes(label)) fuzzyMatches.push(label);
+          } else if (utWords.length > 0) {
+            const mWords = getWords(mt);
+            const overlap = utWords.filter(w => mWords.includes(w)).length;
+            if (overlap >= 2 && (overlap / utWords.length) >= 0.5) {
+              if (!fuzzyMatches.includes(label)) fuzzyMatches.push(label);
+            }
+          }
+        }
+      });
+      return exactMatches.length > 0 ? exactMatches : fuzzyMatches;
+    }
+
+    Object.keys(cats).forEach((catName, index) => {
+      const items = cats[catName] || [];
+      if (items.length === 0) return;
+      totalCount += items.length;
+
+      // Create Accordion Category Header
+      const header = document.createElement('div');
+      header.className = 'category-header';
+      header.innerHTML = `
+        <span>${escapeHtml(catName)} (${items.length})</span>
+        <span class="arrow">▼</span>
+      `;
+
+      // Create Accordion Category Content container
+      const content = document.createElement('div');
+      content.className = 'category-content';
+      if (index === 0) {
+        content.classList.add('open');
+        header.querySelector('.arrow').textContent = '▲';
+      }
+
+      // Toggle Open/Close
+      header.addEventListener('click', () => {
+        const isOpen = content.classList.toggle('open');
+        header.querySelector('.arrow').textContent = isOpen ? '▲' : '▼';
+      });
+
+      items.forEach(utText => {
+        const item = document.createElement('div');
+        item.className = 'category-item';
+        item.style.display = 'flex';
+        item.style.flexDirection = 'column';
+        item.draggable = true;
+        item.title = utteranceData.rationales?.[utText] || '';
+
+        const sources = findSourcesForUtterance(utText);
+        const sourcesHtml = sources.length > 0
+          ? `<div style="font-size: 9.5px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">📍 ${escapeHtml(sources[0])}${sources.length > 1 ? ` (+${sources.length - 1} more)` : ''}</div>`
+          : '';
+
+        item.innerHTML = `
+          <div style="font-weight: 500; line-height: 1.3;">${escapeHtml(utText)}</div>
+          ${sourcesHtml}
+        `;
+
+        // Drag start handler
+        item.addEventListener('dragstart', e => {
+          e.dataTransfer.setData('text/plain', JSON.stringify({
+            text: utText,
+            category: catName
+          }));
+        });
+
+        content.appendChild(item);
+      });
+
+      categoriesDiv.appendChild(header);
+      categoriesDiv.appendChild(content);
+    });
+
+    const totalBadge = $('#bank-total-count');
+    if (totalBadge) totalBadge.textContent = totalCount;
+  }
+
+  function setupCanvasDragAndDrop() {
+    const canvas = $('#xprs-canvas');
+    if (!canvas) return;
+
+    canvas.addEventListener('dragover', e => {
+      e.preventDefault();
+      canvas.style.backgroundColor = '#e2e8f0';
+    });
+
+    canvas.addEventListener('dragleave', () => {
+      canvas.style.backgroundColor = '';
+    });
+
+    canvas.addEventListener('drop', e => {
+      e.preventDefault();
+      canvas.style.backgroundColor = '';
+
+      let dragData;
+      try {
+        dragData = JSON.parse(e.dataTransfer.getData('text/plain'));
+      } catch (err) {
+        return;
+      }
+
+      if (dragData && dragData.text) {
+        // Map category default roles: User speakers are disambiguation/data collection and security replies.
+        let defaultSpeaker = 'agent';
+        if (['disambiguation_data_collection', 'authentication_authorization_security'].includes(dragData.category)) {
+          const lowered = dragData.text.toLowerCase();
+          // If keywords indicate agent asking, make it agent. Otherwise default to user speaker.
+          if (lowered.includes("please") || lowered.includes("enter") || lowered.includes("provide") || 
+              lowered.includes("tell") || lowered.includes("say") || lowered.includes("?") || 
+              lowered.includes("what is") || lowered.includes("can you")) {
+            defaultSpeaker = 'agent';
+          } else {
+            defaultSpeaker = 'user';
+          }
+        }
+        addBubbleToCanvas(dragData.text, defaultSpeaker);
+      }
+
+    });
+  }
+
+  function setupCanvasToolbar() {
+    $('#xprs-add-agent-btn')?.addEventListener('click', () => {
+      addBubbleToCanvas("Enter agent message...", "agent");
+    });
+
+    $('#xprs-add-user-btn')?.addEventListener('click', () => {
+      addBubbleToCanvas("Enter user message...", "user");
+    });
+
+    $('#xprs-clear-btn')?.addEventListener('click', () => {
+      if (confirm("Clear all bubbles from the transcript canvas?")) {
+        bubblesState = [];
+        renderCanvas();
+      }
+    });
+
+    $('#xprs-copy-yaml-btn')?.addEventListener('click', () => {
+      const yamlEl = $('#xprs-compiled-yaml');
+      if (!yamlEl) return;
+      navigator.clipboard.writeText(yamlEl.textContent);
+      showToast("✓ Copied YAML to clipboard!");
+    });
+
+    // Wire live server POST save endpoint
+    const saveBtn = $('#xprs-save-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving…';
+        try {
+          const yamlContent = compileYamlSchema();
+          // Fallback download if no live backend server, else POST
+          const response = await fetch('/api/xprs/save', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              yaml: yamlContent,
+              bubbles: bubblesState
+            }),
+          });
+          const body = await response.json();
+          if (response.ok && body.ok) {
+            $('#xprs-status').className = 'gr-status-pill confirmed';
+            $('#xprs-status').textContent = 'Saved';
+            showToast("✓ Saved and compiled successfully!");
+          } else {
+            // If API not active, download as yaml attachment
+            downloadYamlFile(yamlContent);
+          }
+        } catch (err) {
+          // Fallback download
+          downloadYamlFile(compileYamlSchema());
+        } finally {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save & Compile';
+        }
+      });
+    }
+  }
+
+  function downloadYamlFile(content) {
+    const blob = new Blob([content], {type: 'text/yaml'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'agent_xprs_config.yaml';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("✓ Downloaded agent_xprs_config.yaml file.");
+  }
+
+  function addBubbleToCanvas(text, speaker) {
+    bubblesState.push({
+      id: 'b_' + Math.random().toString(36).substr(2, 9),
+      text: text,
+      speaker: speaker, // 'agent' | 'user'
+      mode: speaker === 'agent' ? 'verbatim' : undefined,
+      active: true
+    });
+    renderCanvas();
+  }
+
+  function renderCanvas() {
+    const canvas = $('#xprs-canvas');
+    if (!canvas) return;
+
+    // Remove old bubble nodes
+    const placeholder = $('#xprs-canvas-placeholder');
+    $$('.bubble-wrap', canvas).forEach(b => b.remove());
+
+    if (bubblesState.length === 0) {
+      if (placeholder) placeholder.style.display = 'flex';
+      updateYamlOutput("");
+      return;
+    }
+
+    if (placeholder) placeholder.style.display = 'none';
+
+    bubblesState.forEach((bubble, idx) => {
+      const wrap = document.createElement('div');
+      wrap.className = `bubble-wrap ${bubble.speaker} ${bubble.active ? '' : 'inactive'}`;
+      wrap.dataset.id = bubble.id;
+
+      // Bubble Header / Metadata Label
+      const header = document.createElement('div');
+      header.className = 'bubble-header';
+      const modePill = bubble.speaker === 'agent' ? 
+        `<span class="pill" style="font-size: 8px; margin-left: 6px; padding: 1px 4px; border-radius: 3px; font-weight: bold; background-color: ${bubble.mode === 'generative' ? '#f3e8ff' : '#dbeafe'}; color: ${bubble.mode === 'generative' ? '#6b21a8' : '#1e40af'}">${bubble.mode || 'verbatim'}</span>` : '';
+      header.innerHTML = `
+        <span>${bubble.speaker === 'agent' ? '🤖 Agent' : '👤 User'}</span>
+        ${modePill}
+        ${bubble.active ? '' : '<span style="color:var(--critical); font-size:9px; margin-left: 5px;">(Disabled)</span>'}
+      `;
+
+
+      // Bubble Body Content Box
+      const body = document.createElement('div');
+      body.className = 'bubble-body';
+
+      // Inline editable text area
+      const textInput = document.createElement('textarea');
+      textInput.className = 'bubble-text-input';
+      textInput.value = bubble.text || '';
+
+      function updateTaRows() {
+        const lines = (textInput.value || "").split('\n');
+        let r = 0;
+        lines.forEach(l => r += Math.max(1, Math.ceil(l.length / 55)));
+        textInput.rows = Math.max(1, r);
+        textInput.style.height = 'auto';
+        textInput.style.height = textInput.scrollHeight + 'px';
+      }
+      updateTaRows();
+      setTimeout(updateTaRows, 0);
+
+      textInput.addEventListener('input', () => {
+        bubble.text = textInput.value;
+        updateTaRows();
+        updateYamlOutput(compileYamlSchema());
+        $('#xprs-status').className = 'gr-status-pill awaiting';
+        $('#xprs-status').textContent = 'Draft';
+      });
+
+      body.appendChild(textInput);
+
+      // Bubble Hover controls toolbar
+      const controls = document.createElement('div');
+      controls.className = 'bubble-controls';
+
+      // Reorder Up button
+      const upBtn = document.createElement('button');
+      upBtn.className = 'bubble-btn';
+      upBtn.innerHTML = '▲';
+      upBtn.title = 'Move Up';
+      upBtn.disabled = (idx === 0);
+      upBtn.addEventListener('click', () => {
+        if (idx > 0) {
+          const temp = bubblesState[idx - 1];
+          bubblesState[idx - 1] = bubblesState[idx];
+          bubblesState[idx] = temp;
+          renderCanvas();
+        }
+      });
+
+      // Reorder Down button
+      const downBtn = document.createElement('button');
+      downBtn.className = 'bubble-btn';
+      downBtn.innerHTML = '▼';
+      downBtn.title = 'Move Down';
+      downBtn.disabled = (idx === bubblesState.length - 1);
+      downBtn.addEventListener('click', () => {
+        if (idx < bubblesState.length - 1) {
+          const temp = bubblesState[idx + 1];
+          bubblesState[idx + 1] = bubblesState[idx];
+          bubblesState[idx] = temp;
+          renderCanvas();
+        }
+      });
+
+      // Switch Speaker role toggle
+      const roleBtn = document.createElement('button');
+      roleBtn.className = 'bubble-btn';
+      roleBtn.innerHTML = '⇄';
+      roleBtn.title = 'Toggle Speaker (Agent/User)';
+      roleBtn.addEventListener('click', () => {
+        bubble.speaker = bubble.speaker === 'agent' ? 'user' : 'agent';
+        // Enforce mode attribute reset/init
+        if (bubble.speaker === 'agent') {
+          bubble.mode = bubble.mode || 'verbatim';
+        } else {
+          bubble.mode = undefined;
+        }
+        renderCanvas();
+      });
+
+      // Mode toggle (Verbatim/Generative) for Agent bubbles
+      let modeBtn = null;
+      if (bubble.speaker === 'agent') {
+        modeBtn = document.createElement('button');
+        modeBtn.className = 'bubble-btn';
+        const isVerbatim = bubble.mode !== 'generative';
+        modeBtn.innerHTML = isVerbatim ? '📝 Verb' : '🧠 Gen';
+        modeBtn.title = isVerbatim ? 'Set to Generative' : 'Set to Verbatim';
+        modeBtn.addEventListener('click', () => {
+          bubble.mode = bubble.mode === 'generative' ? 'verbatim' : 'generative';
+          renderCanvas();
+        });
+      }
+
+      // Enable/Disable toggle
+      const activeBtn = document.createElement('button');
+      activeBtn.className = 'bubble-btn active-toggle';
+      activeBtn.innerHTML = bubble.active ? '👁' : '🚫';
+      activeBtn.title = bubble.active ? 'Disable Bubble' : 'Enable Bubble';
+      activeBtn.addEventListener('click', () => {
+        bubble.active = !bubble.active;
+        renderCanvas();
+      });
+
+      // Delete bubble
+      const delBtn = document.createElement('button');
+      delBtn.className = 'bubble-btn';
+      delBtn.innerHTML = '🗑';
+      delBtn.title = 'Delete Bubble';
+      delBtn.addEventListener('click', () => {
+        bubblesState.splice(idx, 1);
+        renderCanvas();
+      });
+
+      controls.appendChild(upBtn);
+      controls.appendChild(downBtn);
+      controls.appendChild(roleBtn);
+      if (modeBtn) {
+        controls.appendChild(modeBtn);
+      }
+      controls.appendChild(activeBtn);
+      controls.appendChild(delBtn);
+
+      wrap.appendChild(header);
+      wrap.appendChild(body);
+      wrap.appendChild(controls);
+
+      canvas.appendChild(wrap);
+
+    });
+
+    updateYamlOutput(compileYamlSchema());
+  }
+
+  function compileYamlSchema() {
+    const activeBubbles = bubblesState.filter(b => b.active);
+    if (activeBubbles.length === 0) return "# No active conversation bubbles on the canvas.";
+
+    // Compile into serialized Direct Conversational Graph YAML Schema
+    let yaml = "# Agent xprs compiled Conversational Graph\n";
+    yaml += "xprs_version: 1.0\n";
+    yaml += "conversation_transcript:\n";
+
+    activeBubbles.forEach((b, idx) => {
+      const escapedText = b.text.replace(/"/g, '\\"');
+      yaml += `  - turn: ${idx + 1}\n`;
+      yaml += `    speaker: ${b.speaker}\n`;
+      if (b.speaker === 'agent') {
+        yaml += `    mode: ${b.mode || 'verbatim'}\n`;
+      }
+      yaml += `    utterance: "${escapedText}"\n`;
+      if (b.speaker === 'agent' && idx < activeBubbles.length - 1) {
+        // Implicitly link next user turn
+        const nextUser = activeBubbles.slice(idx + 1).find(next => next.speaker === 'user');
+        if (nextUser) {
+          yaml += `    expected_next_user: "${nextUser.text.replace(/"/g, '\\"')}"\n`;
+        }
+      }
+    });
+
+
+    return yaml;
+  }
+
+  function updateYamlOutput(yaml) {
+    const yamlEl = $('#xprs-compiled-yaml');
+    if (yamlEl) {
+      yamlEl.textContent = yaml || "# Add bubbles to compile conversation graph";
+    }
+  }
+
+  function setupScenarioNav() {
+    const addBtn = $('#xprs-add-scenario-btn');
+    if (addBtn) {
+      addBtn.addEventListener('click', addScenario);
+    }
+    renderScenarioTabs();
+  }
+
+  function renderScenarioTabs() {
+    const nav = $('#xprs-scenarios-nav');
+    if (!nav) return;
+
+    // Remove existing tab elements
+    $$('.scenario-tab', nav).forEach(t => t.remove());
+
+    scenariosState.forEach((sc, idx) => {
+      const tab = document.createElement('div');
+      tab.className = 'scenario-tab' + (sc.id === activeScenarioId ? ' active' : '');
+
+      const titleSpan = document.createElement('span');
+      titleSpan.textContent = sc.name;
+      titleSpan.title = "Double-click to rename";
+      titleSpan.addEventListener('dblclick', () => {
+        const newName = prompt("Rename Scenario:", sc.name);
+        if (newName && newName.trim()) {
+          sc.name = newName.trim();
+          renderScenarioTabs();
+        }
+      });
+      tab.appendChild(titleSpan);
+
+      // Show close button only if there are multiple scenarios
+      if (scenariosState.length > 1) {
+        const close = document.createElement('span');
+        close.className = 'close-btn';
+        close.innerHTML = '×';
+        close.addEventListener('click', e => {
+          e.stopPropagation();
+          if (confirm(`Delete scenario "${sc.name}"?`)) {
+            deleteScenario(sc.id);
+          }
+        });
+        tab.appendChild(close);
+      }
+
+      tab.addEventListener('click', () => {
+        switchScenario(sc.id);
+      });
+
+      // Insert tab before the "+ New Scenario" button
+      nav.insertBefore(tab, $('#xprs-add-scenario-btn'));
+    });
+  }
+
+  function switchScenario(scenarioId) {
+    const sc = scenariosState.find(s => s.id === scenarioId);
+    if (!sc) return;
+    activeScenarioId = scenarioId;
+    bubblesState = sc.bubbles;
+    renderScenarioTabs();
+    renderCanvas();
+  }
+
+  function addScenario() {
+    const id = 'sc_' + Math.random().toString(36).substr(2, 9);
+    const newSc = {
+      id: id,
+      name: 'Scenario ' + (scenariosState.length + 1),
+      bubbles: []
+    };
+    scenariosState.push(newSc);
+    switchScenario(id);
+  }
+
+  function deleteScenario(id) {
+    const idx = scenariosState.findIndex(s => s.id === id);
+    if (idx === -1) return;
+    scenariosState.splice(idx, 1);
+    if (activeScenarioId === id) {
+      const nextActive = scenariosState[Math.max(0, idx - 1)];
+      switchScenario(nextActive.id);
+    } else {
+      renderScenarioTabs();
+    }
+  }
+
+  function loadInitialSample() {
+    if (bubblesState.length > 0) return;
+
+    // Load initial context greeting and response
+    const greetings = utteranceData.categorized?.greeting_onboarding || [];
+    const general = utteranceData.categorized?.information_delivery_task_execution || [];
+
+    const welcomeMsg = greetings[0] || "Hello! Welcome to our virtual service. How can I help you today?";
+    
+    // Find a message that looks like a user request (excludes typical agent keywords)
+    const responseMsg = general.find(m => {
+      const low = m.toLowerCase();
+      return !low.includes("please") && !low.includes("select") && !low.includes("welcome") && 
+             !low.includes("thank") && !low.includes("sorry") && !low.includes("?");
+    }) || "I would like to look up my booking details.";
+
+    addBubbleToCanvas(welcomeMsg, "agent");
+    addBubbleToCanvas(responseMsg, "user");
+  }
+
+
+
+  function showToast(text) {
+    const toast = $('#xprs-toast');
+    const toastText = $('#xprs-toast-text');
+    if (!toast || !toastText) return;
+    toastText.textContent = text;
+    toast.style.display = 'flex';
+    setTimeout(() => {
+      toast.style.display = 'none';
+    }, 3000);
+  }
+
+  function escapeHtml(str) {
+    return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // Wire tab click activation listener
+  const tabs = $('#tabs');
+  if (tabs) {
+    tabs.addEventListener('click', e => {
+      const activeTab = e.target.closest('.tab');
+      if (activeTab && activeTab.dataset.tab === 'xprs') {
+        initXprsDesigner();
+      }
+    });
+  }
+
+  window.renderXprsTab = function() {
+    initXprsDesigner();
+  };
+})();
+</script>
