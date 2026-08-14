@@ -89,9 +89,7 @@ def _resolve_paths(
         if not resolved and extra_prefixes:
             # Normalize separators so prefix matching works on Windows,
             # where base_path contains backslashes but references use "/".
-            base_norm = (
-                str(base_path).replace("\\", "/") if base_path else ""
-            )
+            base_norm = str(base_path).replace("\\", "/") if base_path else ""
             for prefix in extra_prefixes:
                 if (
                     data.startswith(prefix)

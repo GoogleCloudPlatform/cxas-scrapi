@@ -3155,9 +3155,7 @@ def test_resolve_paths_windows_base_path(agent_tree: typing.Any) -> None:
     from cxas_scrapi.utils.lint_rules.schema import _resolve_paths  # noqa: PLC0415,I001
 
     root, content = agent_tree
-    windows_base_path = (
-        str(root / "agents" / "My_Agent").replace("/", "\\")
-    )
+    windows_base_path = str(root / "agents" / "My_Agent").replace("/", "\\")
 
     result = _resolve_paths(
         "agents/My_Agent/instruction.txt",
@@ -3172,9 +3170,7 @@ def test_resolve_paths_nested_structure(agent_tree: typing.Any) -> None:
     from cxas_scrapi.utils.lint_rules.schema import _resolve_paths  # noqa: PLC0415,I001
 
     root, content = agent_tree
-    windows_base_path = (
-        str(root / "agents" / "My_Agent").replace("/", "\\")
-    )
+    windows_base_path = str(root / "agents" / "My_Agent").replace("/", "\\")
 
     result = _resolve_paths(
         {"instruction": "agents/My_Agent/instruction.txt", "name": "x"},
