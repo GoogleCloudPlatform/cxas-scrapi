@@ -1,98 +1,85 @@
 ---
 name: coverage-analyst
-description: Generate the eval coverage report for a GECX agent — cross-reference every distinct behavior in the agent (instructions, tools, callbacks) against existing evals to surface gaps with severity. Use when the user wants to know what's covered, what's missing, and where to invest next.
+description: >-
+  Calculates and generates static coverage reports for Gemini Enterprise for Customer Experience (GECX) conversational agents by mapping evaluations against tools, callbacks, agent transfers and instructions.
+  Use when analyzing unit test / evaluation coverage of a conversational agent or identifying gap areas (un-tested code or commands) in GECX agent workspace evaluations.
+  Don't use for generic python code coverage (use standard coverage tools) or running execution-level/simulation evaluations themselves.
 ---
 
-# Coverage-Analyst Agent
+# Coverage Analyst Agent
 
-**Role:** Eval coverage analyst for a GECX agent. You cross-reference behaviors documented in the agent against existing evals and produce a structured gap report with severity. You identify gaps; you don't write the missing evals (eval-writer does that).
+Use this agent to assess how comprehensively existing evaluations cover the
+agent's capabilities, specifically its tools, callbacks, agent transfers and
+instructions.
 
-**Reasoning intensity: MEDIUM.** Mostly cross-referencing — list agent behaviors, list existing evals, find the gaps. The reasoning load is in deciding what counts as a distinct CUJ vs. a variant of an existing one, and in calling gaps with appropriate severity.
+## Core Workflow Steps
 
-Generate the eval coverage report for a GECX agent. This is the report described in `references/generating-reports.md` → "Detailed Coverage Report Template" — the section that previously said "no script — generate manually."
+1. **Define Workspace Paths**: Identify the location of:
 
-## Inputs
+   - The agent project root folder
+   - The tools folder (`tools/`)
+   - The evaluations folders (note that you may not find all these folders or
+     find other folders containing evals, identify which folders to ingest
+     based on whether or not their content is evals):
+     - `evaluations/`
+     - `evaluationDatasets/`
+     - `evaluationExpectations/`
+     - `evals/`
+   - The output directory for the coverage report, if there is no folder
+     named `coverage_reports`, then create one at the root of the agent
+     directory and output the coverage report there.
 
-- `app_dir`: absolute path to `cxas_app/<AppName>/`
-- `evals_dir`: absolute path to the project's `evals/` directory
-- `output_path`: where to write the markdown report
+1. **Run the Coverage Analysis Script**: Execute the `calculate_coverage.py`
+   script to perform a static analysis of the agent's configuration files and
+   evaluation sets. The script will always generate a JSON file including
+   detailed information on the coverage metrics. Use `--output-file` to specify
+   the JSON file path. If there are existing coverage report(s) in
+   `coverage_reports`, then add a numbered suffix to the name of the new report
+   (e.g. `coverage_report_1.json`). The script automatically walks up parent
+   directories to parse `gecx-config.json` for a `gcs_report_path` to publish
+   to GCS, or you can manually override it via `--gcs-report-path`.
 
-Optional:
-- `app_name`: full resource path of the deployed app (so you can also fetch platform-side guardrails / scheduled runs / datasets via SCRAPI). If omitted, skip the platform-side sections and note them as "not analyzed."
+1. **Review the Coverage Report**: Examine the generated JSON report to
+   identify gap areas, such as uncovered tools or un-tested instruction
+   sections. Output the coverage metrics in a concise format in the terminal,
+   pulling from the JSON.
 
-## What to read first
+1. **Generate HTML Report (Optional)**: If the user explicitly asks for a
+   detailed HTML report, pass the `--html-report /path/to/coverage_report.html`
+   flag to `calculate_coverage.py` to generate it alongside the JSON report.
 
-1. `references/generating-reports.md` — the "Detailed Coverage Report Template" section is your spec. Match its structure exactly.
-2. `app_dir/<AppName>/app.json` — to find the root agent, variables, system tools.
-3. Every `agents/<name>/<name>.json` and `agents/<name>/instruction.txt` under `app_dir`.
-4. Every `tools/<name>/<name>.json` and the corresponding `python_function/python_code.py` under `app_dir`.
-5. Every callback `python_code.py`.
-6. Every eval YAML in `evals_dir` (goldens, simulations, tool_tests).
-7. `references/api-reference.md` → "Diagnostic REST Commands" if `app_name` was provided and you need platform state.
+   ## Automation Scripts
 
-## Process
+### Calculate Coverage
 
-### Step 1 — Inventory
+`scripts/calculate_coverage.py`
 
-Build inventories first. Don't analyze coverage until you have a complete list of:
-- Agents (from app.json + agent dirs)
-- Tools (from tools/ dir, plus system tools `end_session`, `customize_response`, `transfer_to_agent`)
-- Transfers (from each agent's `childAgents` array)
-- Callbacks (per agent, by type)
-- Variables (from `variableDeclarations` in app.json)
+Computes evaluation coverage percentages and generates a comprehensive report.
 
-### Step 2 — Eval inventory
+Usage:
 
-For each eval in `evals_dir`, record: name, type (golden/sim/tool/callback), tags, which tools are referenced, which agents are exercised, which expectations exist.
-
-### Step 3 — Cross-reference
-
-For each item in the inventory, find the evals that exercise it. An item is "covered" only if at least one eval triggers the relevant behavior AND has an expectation that verifies the outcome (per the rules in `references/generating-reports.md` → "How to Determine if a Directive is Covered").
-
-### Step 4 — Decompose instructions into directives
-
-This is the most valuable section. For each agent, parse its instruction.txt and extract every distinct directive into the categories listed in `references/generating-reports.md` → "How to Decompose Agent Instructions" (Persona, Conversation Flow, Tool Usage, Conditional Behavior, Guardrails, Escalation, Response Format, Edge Cases, State Management, Transfer Rules).
-
-Quote the exact instruction text for each directive — the user needs to be able to trace it back.
-
-### Step 5 — Identify gaps
-
-For each uncovered item, note why it matters. Skip nitpicky gaps — surface the ones that would actually cause a regression to ship.
-
-## Output Format
-
-A markdown file at `output_path`. The first line MUST be a status header so the main thread can detect partial reports without parsing the full markdown:
-
+```bash
+uv run python .agents/skills/cxas-eval-coverage/scripts/calculate_coverage.py \
+    --agent_dir /path/to/agent \
+    --output_file /path/to/coverage_reports/coverage_report.json \
+    --html_report /path/to/coverage_reports/coverage_report.html \
+    --project_id project_id \
+    --location location \
+    --gcs_report_path gs://my-cxas-evals-reports/<deployed_app_id>/coverage-reports/
+    --concurrency 2
 ```
-**Status:** complete | incomplete | stuck
-```
 
-- `complete` — every required section was filled, no fatal blockers.
-- `incomplete` — analysis ran, but some sections were skipped (e.g., `app_name` not provided so platform-side sections show `_Not analyzed_`). The report is still useful; the caller should know which sections are missing.
-- `stuck` — the analysis could not produce a useful report. Use this for: `app_dir` doesn't contain a GECX agent (no `app.json`), `evals_dir` is missing or unreadable, or the agent JSONs are malformed enough that inventory can't be built. Below the status line, write a `**Reason:** <one sentence>` and stop — do not write a partial report.
+*Note: The `--model` flag allows you to choose the Gemini model (default is
+`gemini-2.5-flash`, but `gemini-3.1-pro` can be used for higher reasoning
+accuracy).*
 
-After the status header, follow exactly the structure in `references/generating-reports.md` → "Detailed Coverage Report Template". Include all required tables:
+Supported Coverage Metrics:
 
-- Agent Architecture
-- Coverage Summary (with the 5-row table: Agents, Tools, Transfers, Guardrails, Instruction Intents)
-- Evaluation Inventory
-- Tool Coverage
-- Agent Transfer Coverage
-- Instruction Coverage Analysis (per agent — the directive table is the heart of the report)
-- Coverage Summary Per Agent
-- Python Code / Callback Coverage
-- Guardrail Coverage (if `app_name` provided)
-- Custom LLM Judges
-- Scheduled Runs (if `app_name` provided)
-- Evaluation Datasets
-- Gaps & Recommendations
-
-If a section can't be filled because `app_name` wasn't provided, write `_Not analyzed: requires deployed app access._` rather than skipping the heading. When this happens, the status header MUST be `incomplete` — not `complete`.
-
-## Guidelines
-
-- **Quote instruction text verbatim.** "Be polite" is not a directive — `<persona>You are a friendly virtual assistant. Speak in a warm, conversational tone.</persona>` is.
-- **Coverage is binary per directive.** If you're tempted to say "partially covered," explain what's covered and what's not as separate rows.
-- **Flag invalid evals.** Goldens with `invalid: true` reference deleted/changed tools — surface these prominently in Gaps & Recommendations.
-- **Don't suggest fixes.** This is a coverage report, not a fix plan. Gaps & Recommendations should describe *what's missing*, not *what to write*.
-- **Stay concise per row.** Long-form analysis belongs in Gaps & Recommendations; the tables should be scannable.
+- **Tool Coverage**: Scans the `tools/` directory and marks a tool as covered
+  if and only if it has an associated unit test (using `ToolEvals` via a
+  `tests:` block in YAML/JSON test files).
+- **Callback Coverage**: Checks for unit tests associated with each callback.
+- **Instruction Segment Coverage**: Uses an XML tag fallback structure
+  combined with an **LLM categorization pass** to filter out non-testable
+  conversational fillers (maintaining line-by-line traceability) before
+  performing vector-similarity-driven coverage analysis.
