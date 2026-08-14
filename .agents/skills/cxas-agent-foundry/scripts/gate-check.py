@@ -123,7 +123,10 @@ def gate1_pull_lint_push(config: typing.Any, app_name: typing.Any, skip_push: ty
                 {
                     "step": label,
                     "stdout": "",
-                    "stderr": f"Error: '{cmd[0]}' command not found. Ensure it is in your PATH or virtualenv.",
+                    "stderr": (
+                        f"Error: '{cmd[0]}' command not found. "
+                        "Ensure it is in your PATH or virtualenv."
+                    ),
                 }
             )
             return False

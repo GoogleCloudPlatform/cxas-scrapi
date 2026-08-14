@@ -76,7 +76,10 @@ async def run_post_deploy_lint(
                 console.print(f"[red]cxas pull failed:[/]\n{err}")
                 return False, err
         except FileNotFoundError:
-            msg = f"Error: '{cxas_bin}' command not found. Ensure it is in your PATH or virtualenv."
+            msg = (
+                f"Error: '{cxas_bin}' command not found. "
+                "Ensure it is in your PATH or virtualenv."
+            )
             console.print(f"[red]{msg}[/]")
             return False, msg
 
@@ -100,7 +103,10 @@ async def run_post_deploy_lint(
             output = lint_out.decode(errors="replace")
             console.print(output)
         except FileNotFoundError:
-            msg = f"Error: '{cxas_bin}' command not found. Ensure it is in your PATH or virtualenv."
+            msg = (
+                f"Error: '{cxas_bin}' command not found. "
+                "Ensure it is in your PATH or virtualenv."
+            )
             console.print(f"[red]{msg}[/]")
             return False, msg
 
