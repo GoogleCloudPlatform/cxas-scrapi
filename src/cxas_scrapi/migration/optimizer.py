@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import typing
 from typing import Any
 
 from cxas_scrapi.migration.data_models import (
@@ -9,10 +10,28 @@ from cxas_scrapi.migration.data_models import (
     MigrationIR,
     MigrationStatus,
 )
+from cxas_scrapi.migration.instruction_lint import lint_instruction_text
 from cxas_scrapi.migration.prompts import Prompts
 from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.linter import LintResult
 
 logger = logging.getLogger(__name__)
+
+
+def _format_diagnostic(d: LintResult) -> str:
+    return f"[{d.rule_id}] {d.message}"
+
+
+def _build_validator_feedback(diagnostics: list[LintResult]) -> str:
+    diag_block = "\n".join(f"- {_format_diagnostic(d)}" for d in diagnostics)
+    return (
+        "### YOUR PREVIOUS RESPONSE FAILED CANONICAL-XML VALIDATION\n\n"
+        "Diagnostics:\n"
+        f"{diag_block}\n\n"
+        "CORRECT THESE ISSUES AND REGENERATE THE FULL INSTRUCTION SET. "
+        "Do not abbreviate. Do not include the original response in your "
+        "reply. Emit only the corrected XML."
+    )
 
 
 class CXASOptimizer:
@@ -22,24 +41,24 @@ class CXASOptimizer:
     enforce CXAS best practices, and dynamically repair instructions.
     """
 
-    def __init__(self, ir: MigrationIR, gemini_client: GeminiGenerate):
+    def __init__(self, ir: MigrationIR, gemini_client: GeminiGenerate) -> None:
         self.ir = ir
         self.gemini = gemini_client
         self.dependency_map: dict[str, list[dict[str, str]]] = {}
         self.optimization_logs: list[dict[str, Any]] = []
 
-    def log_action(self, stage: str, action: str, details: str):
+    def log_action(self, stage: str, action: str, details: str) -> None:
         """Logs an optimization action for the post-migration report."""
         log_entry = {"stage": stage, "action": action, "details": details}
         self.optimization_logs.append(log_entry)
         logger.info(f"[{stage}] {action}: {details}")
 
-    async def optimize_stage_1(self):
+    async def optimize_stage_1(self) -> None:
         """Executes Stage 1 Variable Optimization."""
         logger.info("Starting Stage 1 Variable Optimization...")
         await self._stage_1_variable_optimization()
 
-    async def optimize_stage_2(self):
+    async def optimize_stage_2(self) -> None:
         """Executes Stage 2 Instructions and Tool Mocks Optimization
         in parallel.
         """
@@ -47,10 +66,14 @@ class CXASOptimizer:
             "Executing Stage 2 Parallelized Playbook Instruction & "
             "Tool Mock Optimization..."
         )
+        # 1. Parallel first pass for both instructions and tool mocks
         await asyncio.gather(
             self._stage_2_instruction_optimization(),
             self._stage_2_tool_mock_optimization(),
         )
+
+        # 2. Run the Unified Self-Healing Gate
+        await self._self_heal_instructions()
 
     @staticmethod
     def _sanitize_variable_name(name: str) -> str:
@@ -65,7 +88,7 @@ class CXASOptimizer:
             clean = "_" + clean
         return clean or "_var"
 
-    async def _stage_1_variable_optimization(self):
+    async def _stage_1_variable_optimization(self) -> None:
         """
         Stage 1: Granular Variable Deduplication
         Scans all instructions, tools, and callbacks to build a dependency map.
@@ -238,15 +261,24 @@ class CXASOptimizer:
                 print(f"  [Optimizer] Merging {old_v} -> {new_v}")
 
             if old_v in self.ir.parameters:
-                # Copy the old parameter definition and update its name
                 param_def = self.ir.parameters[old_v].copy()
-                param_def["name"] = new_v
-                new_parameters[new_v] = param_def
-            elif new_v not in new_parameters:
-                new_parameters[new_v] = {
-                    "name": new_v,
+            else:
+                param_def = {
                     "schema": {"type": "STRING"},
                 }
+
+            param_def["name"] = new_v
+
+            # Resolve description (carry over existing, merge, or use fallback)
+            existing_desc = new_parameters.get(new_v, {}).get("description", "")
+            incoming_desc = param_def.get("description", "")
+            param_def["description"] = (
+                existing_desc
+                or incoming_desc
+                or f"Optimized parameter: {new_v}"
+            )
+
+            new_parameters[new_v] = param_def
         self.ir.parameters = new_parameters
 
         # Helper to replace full word matches
@@ -358,7 +390,7 @@ class CXASOptimizer:
             "Global Variable Deduplication finished successfully.",
         )
 
-    async def _stage_2_instruction_optimization(self):
+    async def _stage_2_instruction_optimization(self) -> None:
         """
         Stage 2 Instructions: Playbook State Machine Optimizer.
         Restructures instructions into structured XML State Machines.
@@ -400,12 +432,33 @@ class CXASOptimizer:
             )
             return
 
-        async def optimize_single_agent(agent):
+        xprs_config = getattr(self.ir, "xprs_designer_data", None) or {}
+        designed_transcript = xprs_config.get(
+            "compiled_yaml", "No designed transcript provided."
+        )
+
+        async def optimize_single_agent(agent: typing.Any) -> None:
             logger.info(
                 f"  Optimizing instructions for sub-agent: "
                 f"'{agent.display_name}'..."
             )
-            all_tools = list(agent.tools)
+            reverse_tool_map = {}
+            for tool_id, tool in self.ir.tools.items():
+                display_name = (
+                    tool.payload.get("displayName")
+                    or tool.payload.get("display_name")
+                    or tool_id
+                )
+                if tool.name:
+                    reverse_tool_map[tool.name] = display_name
+                reverse_tool_map[tool_id] = display_name
+            all_tools = []
+            for t in agent.tools:
+                if t in reverse_tool_map:
+                    all_tools.append(reverse_tool_map[t])
+                else:
+                    all_tools.append(t.split("/")[-1])
+
             for gt in ["set_session_variables"]:
                 if gt not in all_tools:
                     all_tools.append(gt)
@@ -416,8 +469,10 @@ class CXASOptimizer:
                 agent_name=agent.display_name,
                 instruction=agent.instruction,
                 tools=", ".join(all_tools),
+                designed_transcript=designed_transcript,
             )
             system_prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION["system"]
+
             try:
                 response = await self.gemini.generate_async(
                     prompt=prompt,
@@ -427,8 +482,6 @@ class CXASOptimizer:
                 if not response:
                     raise ValueError("LLM returned empty instruction response.")
 
-                # Strip conversational fluff if LLM ignored constraints
-                # Harmonization clean-up pass for malformed markdown formatting
                 response_clean = re.sub(
                     r"^```(?:xml)?", "", response, flags=re.MULTILINE
                 )
@@ -473,7 +526,7 @@ class CXASOptimizer:
             f"successfully.",
         )
 
-    async def _stage_2_tool_mock_optimization(self):
+    async def _stage_2_tool_mock_optimization(self) -> None:
         """
         Stage 2 Tool Mocks: Tool Mock Optimizer.
         Concurrently injects highly realistic happy-path mock_mode return paths.
@@ -498,7 +551,7 @@ class CXASOptimizer:
             )
             return
 
-        async def optimize_single_tool(tool):
+        async def optimize_single_tool(tool: typing.Any) -> None:
             tool_name = tool.payload.get("displayName", tool.id)
             python_code = tool.payload["pythonFunction"].get("python_code", "")
             if not python_code:
@@ -585,7 +638,7 @@ class CXASOptimizer:
             f"Injected native mock_mode into {len(python_tools)} Python tools.",
         )
 
-    def _register_set_session_variables_tool(self):
+    def _register_set_session_variables_tool(self) -> None:
         """Helper to dynamically read and register set_session_variables."""
         if "set_session_variables" in self.ir.tools:
             return
@@ -632,3 +685,143 @@ class CXASOptimizer:
             logger.error(
                 f"Failed to register 'set_session_variables' tool: {e}"
             )
+
+    async def _self_heal_instructions(self) -> None:
+        """
+        Tier 2 Quality Gate: Self-heals agent instructions in-memory.
+        Validates all optimized playbook/flow instructions and re-prompts
+        Gemini once if they fail canonical-XML schema rules.
+        """
+        from cxas_scrapi.migration.data_models import IRAgent  # noqa: PLC0415
+
+        failed_agents = []
+        for agent_name, agent in self.ir.agents.items():
+            if agent.type in ("PLAYBOOK", "FLOW"):
+                diagnostics = lint_instruction_text(
+                    agent.instruction, agent_name
+                )
+                if diagnostics:
+                    failed_agents.append((agent_name, agent, diagnostics))
+
+        if not failed_agents:
+            self.log_action(
+                "Stage 2 Instructions",
+                "Self-Healing Gate",
+                "All optimized playbooks passed canonical-schema validation. "
+                "No healing required.",
+            )
+            return
+
+        self.log_action(
+            "Stage 2 Instructions",
+            "Self-Healing Engaged",
+            f"Found {len(failed_agents)} agent(s) failing schema. "
+            "Starting parallel retries.",
+        )
+
+        async def _heal_one(
+            agent_name: str, agent: IRAgent, diagnostics: list[LintResult]
+        ) -> None:
+            diag_block = "\n".join(
+                f"  - {_format_diagnostic(d)}" for d in diagnostics
+            )
+            logger.warning(
+                "Optimized XML for %s failed canonical-schema validation "
+                "(%d issue(s)):\n%s\nRe-prompting Gemini once for repair...",
+                agent_name,
+                len(diagnostics),
+                diag_block,
+            )
+            feedback = _build_validator_feedback(diagnostics)
+
+            # Re-construct the Stage 2 prompt with the feedback
+            reverse_tool_map = {}
+            for tool_id, tool in self.ir.tools.items():
+                display_name = (
+                    tool.payload.get("displayName")
+                    or tool.payload.get("display_name")
+                    or tool_id
+                )
+                if tool.name:
+                    reverse_tool_map[tool.name] = display_name
+                reverse_tool_map[tool_id] = display_name
+            all_tools = []
+            for t in agent.tools:
+                if t in reverse_tool_map:
+                    all_tools.append(reverse_tool_map[t])
+                else:
+                    all_tools.append(t.split("/")[-1])
+            for gt in ["set_session_variables"]:
+                if gt not in all_tools:
+                    all_tools.append(gt)
+
+            prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION[
+                "template"
+            ].format(
+                agent_name=agent_name,
+                instruction=agent.instruction,
+                tools=", ".join(all_tools),
+            )
+
+            # Append feedback for propagation
+            prompt = f"{prompt}\n\n{feedback}"
+            system_prompt = Prompts.STAGE_2_INSTRUCTION_OPTIMIZATION["system"]
+
+            try:
+                response = await self.gemini.generate_async(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    temperature=1.0,
+                )
+                if not response:
+                    raise ValueError(
+                        "LLM returned empty instruction response during retry."
+                    )
+
+                response_clean = re.sub(
+                    r"^```(?:xml)?", "", response, flags=re.MULTILINE
+                )
+                response_clean = re.sub(
+                    r"```$", "", response_clean, flags=re.MULTILINE
+                )
+                response_clean = response_clean.strip()
+
+                # Second-Pass Validation (Warning Only)
+                final_diagnostics = lint_instruction_text(
+                    response_clean, agent_name
+                )
+                if final_diagnostics:
+                    diag_block = "\n".join(
+                        f"  - {_format_diagnostic(d)}"
+                        for d in final_diagnostics
+                    )
+                    logger.warning(
+                        "Optimized XML for %s still fails schema validation "
+                        "after retry (%d issue(s)). Proceeding anyway.\n%s",
+                        agent_name,
+                        len(final_diagnostics),
+                        diag_block,
+                    )
+
+                # Save the corrected instruction
+                agent.instruction = response_clean
+                agent.status = MigrationStatus.COMPILED
+                logger.info(
+                    "Successfully healed agent instructions for '%s'.",
+                    agent_name,
+                )
+
+            except Exception as e:
+                logger.error(
+                    "Failed to self-heal agent instructions for '%s': %s",
+                    agent_name,
+                    e,
+                )
+
+        # Run all self-healing tasks concurrently
+        await asyncio.gather(
+            *(
+                _heal_one(name, agent, diags)
+                for name, agent, diags in failed_agents
+            )
+        )

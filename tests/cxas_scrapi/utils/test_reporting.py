@@ -1,3 +1,4 @@
+# ruff: noqa: PLR0917
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,12 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
+import importlib.util
 import json
 import os
-from unittest.mock import mock_open, patch
+import sys
+import typing
+from unittest.mock import ANY, mock_open, patch
 
 import pandas as pd
+import pytest
 
+from cxas_scrapi.utils.eval_utils import (
+    COMBINED_REPORT_FILENAME,
+    COMBINED_REPORT_JSON_FILENAME,
+    add_timestamp_suffix,
+)
 from cxas_scrapi.utils.reporting import (
     _escape,
     _fmt_duration,
@@ -26,6 +37,7 @@ from cxas_scrapi.utils.reporting import (
     _resolve_tool_name,
     _upload_to_gcs,
     generate_combined_html_report,
+    generate_combined_json_report,
     generate_combined_report_from_dir,
     generate_html_report,
     run_all_evals,
@@ -33,7 +45,7 @@ from cxas_scrapi.utils.reporting import (
 
 
 @patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils")
-def test_upload_to_gcs_success(mock_gcs_cls):
+def test_upload_to_gcs_success(mock_gcs_cls: typing.Any) -> None:
     mock_gcs = mock_gcs_cls.return_value
     mock_gcs.upload_string.return_value = (
         "https://storage.mtls.cloud.google.com/bucket/report.html"
@@ -44,7 +56,7 @@ def test_upload_to_gcs_success(mock_gcs_cls):
 
 
 @patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils")
-def test_upload_to_gcs_failure(mock_gcs_cls):
+def test_upload_to_gcs_failure(mock_gcs_cls: typing.Any) -> None:
     mock_gcs = mock_gcs_cls.return_value
     mock_gcs.upload_string.side_effect = Exception("error")
 
@@ -56,8 +68,10 @@ def test_upload_to_gcs_failure(mock_gcs_cls):
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_gcs_success(
-    mock_file, mock_upload, mock_get_html_head
-):
+    mock_file: typing.Any,
+    mock_upload: typing.Any,
+    mock_get_html_head: typing.Any,
+) -> None:
     mock_get_html_head.return_value = "<html><head></head><body>"
     mock_upload.return_value = "https://url"
     results = [{"name": "test", "passed": True, "run": 1}]
@@ -72,8 +86,10 @@ def test_generate_html_report_gcs_success(
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_gcs_fallback_with_extension(
-    mock_file, mock_upload, mock_get_html_head
-):
+    mock_file: typing.Any,
+    mock_upload: typing.Any,
+    mock_get_html_head: typing.Any,
+) -> None:
     mock_get_html_head.return_value = "<html><head></head><body>"
     mock_upload.return_value = None
     results = [{"name": "test", "passed": True, "run": 1}]
@@ -90,8 +106,10 @@ def test_generate_html_report_gcs_fallback_with_extension(
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_gcs_fallback_no_extension(
-    mock_file, mock_upload, mock_get_html_head
-):
+    mock_file: typing.Any,
+    mock_upload: typing.Any,
+    mock_get_html_head: typing.Any,
+) -> None:
     mock_get_html_head.return_value = "<html><head></head><body>"
     mock_upload.return_value = None
     results = [{"name": "test", "passed": True, "run": 1}]
@@ -107,8 +125,10 @@ def test_generate_html_report_gcs_fallback_no_extension(
 @patch("cxas_scrapi.utils.reporting.tools.Tools")
 @patch("builtins.open", new_callable=mock_open)
 def test_generate_html_report_tools_failure(
-    mock_file, mock_tools_cls, mock_get_html_head
-):
+    mock_file: typing.Any,
+    mock_tools_cls: typing.Any,
+    mock_get_html_head: typing.Any,
+) -> None:
     mock_get_html_head.return_value = "<html><head></head><body>"
     # Simulate Tools(app_name).get_tools_map() failing
     mock_tools_cls.return_value.get_tools_map.side_effect = Exception(
@@ -125,7 +145,9 @@ def test_generate_html_report_tools_failure(
 
 @patch("cxas_scrapi.utils.reporting._get_html_head")
 @patch("builtins.open", new_callable=mock_open)
-def test_generate_html_report_local(mock_file, mock_get_html_head):
+def test_generate_html_report_local(
+    mock_file: typing.Any, mock_get_html_head: typing.Any
+) -> None:
     mock_get_html_head.return_value = "<html><head></head><body>"
     results = [
         {
@@ -171,31 +193,31 @@ def test_generate_html_report_local(mock_file, mock_get_html_head):
     assert "sess123" in content
 
 
-def test_fmt_duration():
+def test_fmt_duration() -> None:
     assert _fmt_duration(None) == ""
     assert _fmt_duration(30) == "30.0s"
     assert _fmt_duration(90) == "1.5m"
 
 
-def test_escape():
+def test_escape() -> None:
     assert _escape('<script>&"') == "&lt;script&gt;&amp;&quot;"
 
 
-def test_resolve_tool_name():
+def test_resolve_tool_name() -> None:
     tools_map = {"projects/p/tools/t1": "MyTool"}
     assert _resolve_tool_name("projects/p/tools/t1", tools_map) == "MyTool"
     assert _resolve_tool_name("projects/p/tools/t2", tools_map) == "t2"
     assert _resolve_tool_name(None, tools_map) is None
 
 
-def test_format_trace_line():
+def test_format_trace_line() -> None:
     tools_map = {"path/to/tool": "GreatTool"}
     line = "Tool Call: path/to/tool with args {}"
     assert "GreatTool" in _format_trace_line(line, tools_map)
     assert "Unrelated" in _format_trace_line("Unrelated", tools_map)
 
 
-def test_generate_combined_html_report(tmp_path):
+def test_generate_combined_html_report(tmp_path: typing.Any) -> None:
     output_path = os.path.join(tmp_path, "report.html")
 
     golden_results = [
@@ -289,10 +311,12 @@ def test_generate_combined_html_report(tmp_path):
 
 
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
-def test_generate_combined_html_report_gcs_success(mock_upload):
+def test_generate_combined_html_report_gcs_success(
+    mock_upload: typing.Any,
+) -> None:
     mock_upload.return_value = "https://url"
 
-    generate_combined_html_report(
+    resolved_path = generate_combined_html_report(
         golden_results=[],
         sim_results=[],
         tool_results=[],
@@ -301,10 +325,31 @@ def test_generate_combined_html_report_gcs_success(mock_upload):
         app_name="projects/test-proj",
     )
 
+    assert resolved_path == "https://url"
     mock_upload.assert_called_once()
 
 
-def test_generate_combined_report_from_dir(tmp_path):
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_combined_html_report_gcs_fallback(
+    mock_file: typing.Any, mock_upload: typing.Any
+) -> None:
+    mock_upload.return_value = None
+
+    resolved_path = generate_combined_html_report(
+        golden_results=[],
+        sim_results=[],
+        tool_results=[],
+        callback_results=[],
+        output_path="gs://bucket/report.html",
+        app_name="projects/test-proj",
+    )
+
+    assert resolved_path == "report.html"
+    mock_file.assert_any_call("report.html", "w")
+
+
+def test_generate_combined_report_from_dir(tmp_path: typing.Any) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
@@ -340,7 +385,7 @@ def test_generate_combined_report_from_dir(tmp_path):
     )
     df_callback.to_csv(callback_file, index=False)
 
-    output_path = evals_dir / "combined_report.html"
+    output_path = evals_dir / COMBINED_REPORT_FILENAME
 
     generate_combined_report_from_dir(
         output_dir=str(evals_dir), output_path=str(output_path)
@@ -355,7 +400,9 @@ def test_generate_combined_report_from_dir(tmp_path):
         assert "test_callback" in content
 
 
-def test_generate_combined_report_from_dir_include_all(tmp_path):
+def test_generate_combined_report_from_dir_include_all(
+    tmp_path: typing.Any,
+) -> None:
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
 
@@ -377,7 +424,7 @@ def test_generate_combined_report_from_dir_include_all(tmp_path):
     )
     df_tool.to_csv(tool_file, index=False)
 
-    output_path = evals_dir / "combined_report.html"
+    output_path = evals_dir / COMBINED_REPORT_FILENAME
 
     generate_combined_report_from_dir(
         output_dir=str(evals_dir), output_path=str(output_path), include=["all"]
@@ -390,6 +437,263 @@ def test_generate_combined_report_from_dir_include_all(tmp_path):
         assert "test_tool" in content
 
 
+def test_generate_combined_json_report_local(tmp_path: typing.Any) -> None:
+    output_path = tmp_path / COMBINED_REPORT_JSON_FILENAME
+
+    sim_results = [
+        {
+            "name": "test_sim",
+            "passed": True,
+            "detailed_trace": ["User: hi\nAgent Text: hello"],
+            "_processed_trace": [("user", "hi")],
+        },
+        {"name": "test_sim", "passed": False},
+    ]
+    golden_results = [
+        {
+            "name": "test_golden",
+            "passed": True,
+            "turns": [{"semantic_score": 3.5}],
+        }
+    ]
+    tool_results = [
+        {
+            "name": "test_tool",
+            "tool": "my_tool",
+            "passed": True,
+            "status": "PASSED",
+            "latency_ms": 50,
+            "errors": "",
+        }
+    ]
+    callback_results = [
+        {
+            "name": "test_callback",
+            "agent": "my_agent",
+            "callback_type": "my_callback",
+            "passed": False,
+            "status": "FAILED",
+            "error": "boom",
+        }
+    ]
+
+    resolved_path = generate_combined_json_report(
+        golden_results=golden_results,
+        sim_results=sim_results,
+        tool_results=tool_results,
+        callback_results=callback_results,
+        output_path=str(output_path),
+        app_name="projects/p/locations/l/apps/a",
+        sim_wall_clock_s=12.5,
+    )
+
+    assert resolved_path == str(output_path)
+    with open(output_path) as f:
+        report = json.load(f)
+
+    assert report["schema_version"] == 1
+    assert report["app_name"] == "projects/p/locations/l/apps/a"
+    assert report["sim_wall_clock_s"] == 12.5
+
+    summary = report["summary"]
+    assert summary["total"] == 5
+    assert summary["passed"] == 3
+    assert summary["pass_rate_pct"] == 60.0
+    assert summary["simulation"] == {"total": 2, "passed": 1}
+    assert summary["golden"] == {"total": 1, "passed": 1}
+    assert summary["tool"] == {"total": 1, "passed": 1}
+    assert summary["callback"] == {"total": 1, "passed": 0}
+
+    results = report["results"]
+    assert results["simulation"][0]["name"] == "test_sim"
+    assert results["simulation"][0]["detailed_trace"] == [
+        "User: hi\nAgent Text: hello"
+    ]
+    # Internal keys are stripped from the JSON output.
+    assert "_processed_trace" not in results["simulation"][0]
+    assert results["golden"][0]["turns"] == [{"semantic_score": 3.5}]
+    assert results["tool"][0]["latency_ms"] == 50
+    assert results["callback"][0]["error"] == "boom"
+
+
+def test_generate_combined_json_report_serializes_non_json_values(
+    tmp_path: typing.Any,
+) -> None:
+    output_path = tmp_path / "report.json"
+
+    generate_combined_json_report(
+        sim_results=[
+            {
+                "name": "test_sim",
+                "passed": True,
+                "started_at": datetime.datetime(2026, 7, 16, 12, 0, 0),
+            }
+        ],
+        output_path=str(output_path),
+    )
+
+    with open(output_path) as f:
+        report = json.load(f)
+    assert "2026-07-16" in report["results"]["simulation"][0]["started_at"]
+
+
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_combined_json_report_gcs_success(
+    mock_file: typing.Any, mock_upload: typing.Any
+) -> None:
+    mock_upload.return_value = "https://url"
+
+    resolved_path = generate_combined_json_report(
+        sim_results=[{"name": "test_sim", "passed": True}],
+        output_path="gs://bucket/report.json",
+    )
+
+    assert resolved_path == "https://url"
+    mock_upload.assert_called_once_with(
+        "gs://bucket/report.json", ANY, content_type="application/json"
+    )
+    mock_file.assert_not_called()
+
+
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_combined_json_report_gcs_fallback(
+    mock_file: typing.Any, mock_upload: typing.Any
+) -> None:
+    mock_upload.return_value = None
+
+    resolved_path = generate_combined_json_report(
+        sim_results=[{"name": "test_sim", "passed": True}],
+        output_path="gs://bucket/report.json",
+    )
+
+    assert resolved_path == "report.json"
+    mock_file.assert_any_call("report.json", "w")
+
+
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_combined_json_report_gcs_fallback_no_extension(
+    mock_file: typing.Any, mock_upload: typing.Any
+) -> None:
+    mock_upload.return_value = None
+
+    resolved_path = generate_combined_json_report(
+        sim_results=[{"name": "test_sim", "passed": True}],
+        output_path="gs://bucket/no_ext",
+    )
+
+    assert resolved_path == "report_fallback.json"
+    mock_file.assert_any_call("report_fallback.json", "w")
+
+
+def test_generate_combined_report_from_dir_json(tmp_path: typing.Any) -> None:
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    sim_file = evals_dir / "sim_results.json"
+    sim_file.write_text(json.dumps([{"name": "test_sim", "passed": True}]))
+
+    tool_file = evals_dir / "tool_results.csv"
+    df_tool = pd.DataFrame(
+        [
+            {
+                "test_name": "test_tool",
+                "tool": "my_tool",
+                "status": "PASSED",
+                "latency (ms)": 50,
+                "errors": "",
+            }
+        ]
+    )
+    df_tool.to_csv(tool_file, index=False)
+
+    callback_file = evals_dir / "callback_results.csv"
+    df_callback = pd.DataFrame(
+        [
+            {
+                "test_name": "test_callback",
+                "agent_name": "my_agent",
+                "callback_type": "my_callback",
+                "status": "FAILED",
+                "error_message": "boom",
+            }
+        ]
+    )
+    df_callback.to_csv(callback_file, index=False)
+
+    resolved_path = generate_combined_report_from_dir(
+        output_dir=str(evals_dir), report_format="json"
+    )
+
+    # Defaults to combined_report.json in the output directory.
+    assert resolved_path == str(evals_dir / COMBINED_REPORT_JSON_FILENAME)
+    assert os.path.exists(resolved_path)
+
+    with open(resolved_path) as f:
+        report = json.load(f)
+
+    assert report["summary"]["total"] == 3
+    assert report["summary"]["passed"] == 2
+    assert report["results"]["simulation"][0]["name"] == "test_sim"
+    assert report["results"]["tool"][0]["name"] == "test_tool"
+    assert report["results"]["tool"][0]["passed"] is True
+    assert report["results"]["callback"][0]["name"] == "test_callback"
+    assert report["results"]["callback"][0]["passed"] is False
+
+
+def test_generate_combined_report_from_dir_json_explicit_output(
+    tmp_path: typing.Any,
+) -> None:
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    sim_file = evals_dir / "sim_results.json"
+    sim_file.write_text(json.dumps([{"name": "test_sim", "passed": True}]))
+
+    output_path = tmp_path / "custom_report.json"
+
+    resolved_path = generate_combined_report_from_dir(
+        output_dir=str(evals_dir),
+        output_path=str(output_path),
+        report_format="json",
+    )
+
+    assert resolved_path == str(output_path)
+    with open(output_path) as f:
+        report = json.load(f)
+    assert report["summary"]["total"] == 1
+
+
+def test_generate_combined_report_from_dir_invalid_format(
+    tmp_path: typing.Any,
+) -> None:
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    with pytest.raises(ValueError, match="Unsupported report format"):
+        generate_combined_report_from_dir(
+            output_dir=str(evals_dir), report_format="xml"
+        )
+
+
+def test_generate_combined_report_from_dir_html_default_unchanged(
+    tmp_path: typing.Any,
+) -> None:
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    sim_file = evals_dir / "sim_results.json"
+    sim_file.write_text(json.dumps([{"name": "test_sim", "passed": True}]))
+
+    resolved_path = generate_combined_report_from_dir(output_dir=str(evals_dir))
+
+    assert resolved_path == str(evals_dir / COMBINED_REPORT_FILENAME)
+    with open(resolved_path) as f:
+        assert "Combined Eval Report" in f.read()
+
+
 @patch("cxas_scrapi.evals.runner.Evaluations")
 @patch("cxas_scrapi.evals.runner.ToolEvals")
 @patch("cxas_scrapi.evals.runner.SimulationEvals")
@@ -399,15 +703,15 @@ def test_generate_combined_report_from_dir_include_all(tmp_path):
 @patch("os.path.exists")
 @patch("os.path.isdir")
 def test_run_all_evals_filtering(
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -441,15 +745,15 @@ def test_run_all_evals_filtering(
 @patch("os.path.exists")
 @patch("os.path.isdir")
 def test_run_all_evals_substring_filtering(
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -487,19 +791,19 @@ def test_run_all_evals_substring_filtering(
 @patch("yaml.safe_load")
 @patch("builtins.open", new_callable=mock_open)
 def test_run_all_evals_tag_filtering(
-    mock_open_file,
-    mock_yaml_load,
-    mock_load_golden,
-    mock_proto,
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_open_file: typing.Any,
+    mock_yaml_load: typing.Any,
+    mock_load_golden: typing.Any,
+    mock_proto: typing.Any,
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -548,17 +852,17 @@ def test_run_all_evals_tag_filtering(
 @patch("yaml.safe_load")
 @patch("builtins.open", new_callable=mock_open)
 def test_run_all_evals_include_filtering(
-    mock_open_file,
-    mock_yaml_load,
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_open_file: typing.Any,
+    mock_yaml_load: typing.Any,
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -577,7 +881,10 @@ def test_run_all_evals_include_filtering(
 
     # Assert SimulationEvals was instantiated and run
     mock_sim_evals.assert_called_once_with(
-        app_name="projects/p", rate_limiter=None
+        app_name="projects/p",
+        rate_limiter=None,
+        expectations_only=False,
+        deployment_id=None,
     )
     mock_sim_evals.return_value.run_simulations.assert_called_once()
 
@@ -596,15 +903,15 @@ def test_run_all_evals_include_filtering(
 @patch("os.path.exists")
 @patch("os.path.isdir")
 def test_run_all_evals_include_tools(
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -642,15 +949,15 @@ def test_run_all_evals_include_tools(
 @patch("os.path.exists")
 @patch("os.path.isdir")
 def test_run_all_evals_include_callbacks(
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
 
@@ -687,16 +994,16 @@ def test_run_all_evals_include_callbacks(
     read_data="evals:\n  - name: sim1\n    tags: [P0]",
 )
 def test_run_all_evals_dict_based_simulations(
-    mock_file,
-    mock_isdir,
-    mock_exists,
-    mock_glob,
-    mock_eval_utils,
-    mock_callback_evals,
-    mock_sim_evals,
-    mock_tool_evals,
-    mock_evaluations,
-):
+    mock_file: typing.Any,
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
     mock_exists.return_value = True
     mock_isdir.return_value = True
     mock_glob.side_effect = [
@@ -711,7 +1018,10 @@ def test_run_all_evals_dict_based_simulations(
 
     # Verify SimulationEvals was instantiated and run
     mock_sim_evals.assert_called_once_with(
-        app_name="projects/p", rate_limiter=None
+        app_name="projects/p",
+        rate_limiter=None,
+        expectations_only=False,
+        deployment_id=None,
     )
     mock_sim_evals.return_value.run_simulations.assert_called_once_with(
         [
@@ -724,14 +1034,64 @@ def test_run_all_evals_dict_based_simulations(
         ],
         runs=1,
         parallel=1,
+        sim_user_model=None,
+        eval_model=None,
         modality="text",
         background_noise_file=None,
         burst_noise_files=None,
         use_tool_fakes=False,
+        skip_playback_wait=False,
+        single_bidi_stream=False,
+        progress_callback=ANY,
+        capture_agent_audio=False,
     )
 
 
-def test_load_sim_test_cases_merges_common_parameters():
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
+@patch("glob.glob")
+@patch("os.path.exists")
+@patch("os.path.isdir")
+@patch("yaml.safe_load")
+@patch("builtins.open", new_callable=mock_open)
+def test_run_all_evals_with_deployment_id(
+    mock_open_file: typing.Any,
+    mock_yaml_load: typing.Any,
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
+    mock_exists.return_value = True
+    mock_isdir.return_value = True
+    mock_glob.side_effect = [
+        ["evals/simulations/sim1.yaml"],
+    ]
+    mock_yaml_load.return_value = [{"name": "sim1"}]
+
+    run_all_evals(
+        app_name="projects/p",
+        include=["sims"],
+        simulation_dir="evals/simulations/",
+        deployment_id="dep123",
+    )
+
+    mock_sim_evals.assert_called_once_with(
+        app_name="projects/p",
+        rate_limiter=None,
+        expectations_only=False,
+        deployment_id="dep123",
+    )
+
+
+def test_load_sim_test_cases_merges_common_parameters() -> None:
     yaml_data = """
 common_session_parameters:
   disable_disclaimer: true
@@ -759,7 +1119,7 @@ evals:
         }
 
 
-def test_load_sim_test_cases_merges_common_expectations():
+def test_load_sim_test_cases_merges_common_expectations() -> None:
     yaml_data = """
 common_expectations:
   - "The agent welcomes the user"
@@ -785,3 +1145,247 @@ evals:
             "The agent welcomes the user",
             "The agent behaves politely",
         ]
+
+
+def test_generate_combined_report_from_dir_timestamped(
+    tmp_path: typing.Any,
+) -> None:
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    # Create dummy files with timestamp
+    timestamp = "20260622_171403"
+    sim_file = evals_dir / f"sim_results_{timestamp}.json"
+    sim_file.write_text(json.dumps([{"name": "test_sim", "passed": True}]))
+
+    tool_file = evals_dir / f"tool_results_{timestamp}.csv"
+    df_tool = pd.DataFrame(
+        [
+            {
+                "test_name": "test_tool",
+                "tool": "my_tool",
+                "status": "PASSED",
+                "latency (ms)": 50,
+                "errors": "",
+            }
+        ]
+    )
+    df_tool.to_csv(tool_file, index=False)
+
+    callback_file = evals_dir / f"callback_results_{timestamp}.csv"
+    df_callback = pd.DataFrame(
+        [
+            {
+                "test_name": "test_callback",
+                "agent_name": "my_agent",
+                "callback_type": "my_callback",
+                "status": "PASSED",
+                "error_message": "",
+            }
+        ]
+    )
+    df_callback.to_csv(callback_file, index=False)
+
+    # Call generate_combined_report_from_dir without output_path (so it
+    # resolves it) and with run=False (so it loads from files)
+    resolved_path = generate_combined_report_from_dir(
+        output_dir=str(evals_dir),
+        run=False,
+    )
+
+    expected_output_path = os.path.join(
+        str(evals_dir),
+        add_timestamp_suffix(COMBINED_REPORT_FILENAME, timestamp),
+    )
+    assert resolved_path == expected_output_path
+    assert os.path.exists(expected_output_path)
+
+    with open(expected_output_path) as f:
+        content = f.read()
+        assert "Combined Eval Report" in content
+        assert "test_sim" in content
+        assert "test_tool" in content
+        assert "test_callback" in content
+
+
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
+def test_run_all_evals_writes_timestamped_files(
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    # Set up real files in tmp_path
+    sims_dir = tmp_path / "simulations"
+    sims_dir.mkdir()
+    sim_yaml = sims_dir / "sims.yaml"
+    sim_yaml.write_text("evals:\n  - name: sim1\n    tags: [P0]")
+
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    # Mock SimulationEvals.run_simulations to return dummy results
+    mock_sim_evals.return_value.run_simulations.return_value = [
+        {"name": "sim1", "passed": True}
+    ]
+
+    timestamp = "20260622_171403"
+
+    run_all_evals(
+        app_name="projects/p",
+        include=["sims"],
+        simulation_dir=str(sims_dir),
+        output_dir=str(output_dir),
+        timestamp=timestamp,
+    )
+
+    # Verify file was written with timestamp
+    expected_file = output_dir / f"sim_results_{timestamp}.json"
+    assert expected_file.exists()
+
+    with open(expected_file) as f:
+        data = json.load(f)
+        assert len(data) == 1
+        assert data[0]["name"] == "sim1"
+        assert data[0]["passed"] is True
+
+
+@patch("cxas_scrapi.utils.reporting.evals_runner.run_all_evals")
+def test_run_all_evals_expectations_only(
+    mock_run_all_evals: typing.Any,
+) -> None:
+    run_all_evals(
+        app_name="projects/p",
+        expectations_only=True,
+    )
+    mock_run_all_evals.assert_called_once_with(
+        app_name="projects/p",
+        modality="text",
+        sim_user_model=None,
+        eval_model=None,
+        runs=1,
+        goldens_dir=None,
+        tool_test_file=None,
+        simulation_dir=None,
+        app_dir=None,
+        output_dir=None,
+        filter_files=None,
+        filter_tags=None,
+        filter_names=None,
+        parallel=1,
+        golden_parallel=1,
+        golden_timeout=600,
+        include=None,
+        bg_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
+        timestamp=None,
+        expectations_only=True,
+        deployment_id=None,
+        skip_playback_wait=False,
+        single_bidi_stream=False,
+        progress_callback=None,
+        capture_agent_audio=False,
+    )
+
+
+@pytest.fixture
+def sim_runner() -> typing.Any:
+    scripts_dir = os.path.abspath(".agents/skills/cxas-agent-foundry/scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+
+    resolve_patch = patch(
+        "config.resolve_project_dir", return_value="/dummy/project"
+    )
+    path_patch = patch(
+        "config.get_project_path",
+        side_effect=lambda *parts: os.path.join("/dummy/project", *parts),
+    )
+    with resolve_patch, path_patch:
+        spec = importlib.util.spec_from_file_location(
+            "scrapi_sim_runner",
+            os.path.join(scripts_dir, "scrapi-sim-runner.py"),
+        )
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules["scrapi_sim_runner"] = runner
+        spec.loader.exec_module(runner)
+    return runner
+
+
+def test_sim_runner_load_sim_templates_merges_common_expectations(
+    sim_runner: typing.Any,
+) -> None:
+    yaml_data = """
+common_expectations:
+  - "Common expectation 1"
+  - "Common expectation 2"
+evals:
+  - name: sim1
+    expectations:
+      - "Specific expectation 1"
+  - name: sim2
+"""
+    with patch("os.path.exists", return_value=True):  # noqa: SIM117
+        with patch("builtins.open", mock_open(read_data=yaml_data)):
+            templates = sim_runner.load_sim_templates()
+
+            assert len(templates) == 2
+            assert templates["sim1"]["expectations"] == [
+                "Specific expectation 1",
+                "Common expectation 1",
+                "Common expectation 2",
+            ]
+            assert templates["sim2"]["expectations"] == [
+                "Common expectation 1",
+                "Common expectation 2",
+            ]
+
+
+def test_sim_runner_load_sim_templates_handles_missing_common_expectations(
+    sim_runner: typing.Any,
+) -> None:
+    yaml_data = """
+evals:
+  - name: sim1
+    expectations:
+      - "Specific expectation 1"
+"""
+    with patch("os.path.exists", return_value=True):  # noqa: SIM117
+        with patch("builtins.open", mock_open(read_data=yaml_data)):
+            templates = sim_runner.load_sim_templates()
+
+            assert len(templates) == 1
+            assert templates["sim1"]["expectations"] == [
+                "Specific expectation 1"
+            ]
+
+
+def test_sim_runner_load_sim_templates_backward_compatibility_with_list(
+    sim_runner: typing.Any,
+) -> None:
+    yaml_data = """
+- name: sim1
+  expectations:
+    - "Specific expectation 1"
+- name: sim2
+  expectations:
+    - "Specific expectation 2"
+"""
+    with patch("os.path.exists", return_value=True):  # noqa: SIM117
+        with patch("builtins.open", mock_open(read_data=yaml_data)):
+            templates = sim_runner.load_sim_templates()
+
+            assert len(templates) == 2
+            assert templates["sim1"]["expectations"] == [
+                "Specific expectation 1"
+            ]
+            assert templates["sim2"]["expectations"] == [
+                "Specific expectation 2"
+            ]

@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 from cxas_scrapi.core.changelogs import Changelogs
 
 
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
-def test_list_changelogs(mock_client_cls):
+def test_list_changelogs(mock_client_cls: typing.Any) -> None:
     """Test Changelogs.list_changelogs."""
     mock_client = mock_client_cls.return_value
 
@@ -35,7 +36,7 @@ def test_list_changelogs(mock_client_cls):
 
 
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
-def test_get_changelog(mock_client_cls):
+def test_get_changelog(mock_client_cls: typing.Any) -> None:
     """Test Changelogs.get_changelog."""
     mock_client = mock_client_cls.return_value
     mock_cl = MagicMock()

@@ -18,8 +18,6 @@ repos:
     hooks:
     -   id: trailing-whitespace
     -   id: end-of-file-fixer
-#    -   id: check-yaml
-#    -   id: check-added-large-files
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.12
@@ -30,15 +28,20 @@ repos:
 
 -   repo: local
     hooks:
+    # Ensure SKILL.md files adhere to mdformat standards for optimal markdown
+    # consumption by agents without degraded structure.
+    -   id: mdformat
+        name: mdformat
+        entry: uv run mdformat
+        language: system
+        files: SKILL\.md$
+
+    # Run pytest only on modified test files.
     -   id: pytest
         name: pytest
         entry: .venv/bin/pytest
         language: system
-        types: [python]
-        args:
-            - tests/
-        always_run: true
-        pass_filenames: false
+        files: ^tests/.*test_.*\.py$
 
     # Block third-party brand / company names in added diff lines.
     # Implemented via a Gemini call in scripts/check_brands.py — only

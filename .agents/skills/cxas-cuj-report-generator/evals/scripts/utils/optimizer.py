@@ -1,8 +1,9 @@
+import typing
 import os
 import time
 
 
-def request_skill_optimization(current_skill, failures):
+def request_skill_optimization(current_skill: typing.Any, failures: typing.Any) -> typing.Any:
     failure_log = ""
     for f in failures:
         failure_log += f"- Case {f['case']}: {f['rationale']}\n"

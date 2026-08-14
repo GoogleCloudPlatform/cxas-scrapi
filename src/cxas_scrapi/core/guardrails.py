@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Guardrails class for CXAS Scrapi."""
 
+import typing
 from typing import Any
 
 from google.cloud.ces_v1beta import types
 from google.protobuf import field_mask_pb2
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.common import Common
 
 
 class Guardrails(Apps):
@@ -32,11 +35,17 @@ class Guardrails(Apps):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Guardrails client."""
-        project_id = app_name.split("/")[1]
-        location = app_name.split("/")[3]
+        project_id = Common._get_project_id(app_name)
+        location = Common._get_location(app_name)
+        if not project_id or not location:
+            raise ValueError(
+                f"Invalid app_name format: {app_name}. "
+                "Expected format: "
+                "projects/<project>/locations/<location>/apps/<app>"
+            )
 
         super().__init__(
             project_id=project_id,
@@ -116,7 +125,9 @@ class Guardrails(Apps):
         )
         return self.client.create_guardrail(request=request)
 
-    def update_guardrail(self, guardrail_id: str, **kwargs) -> types.Guardrail:
+    def update_guardrail(
+        self, guardrail_id: str, **kwargs: typing.Any
+    ) -> types.Guardrail:
         """Updates specific fields of an existing Guardrail."""
         guardrail = types.Guardrail(
             name=f"{self.app_name}/guardrails/{guardrail_id}"

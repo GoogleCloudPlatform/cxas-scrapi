@@ -16,7 +16,9 @@ import io
 import logging
 import random
 import threading
+import typing
 import wave
+from typing import Any
 
 try:
     from pydub import AudioSegment
@@ -38,18 +40,19 @@ class AudioTransformer:
     _client = None
     _lock = threading.Lock()
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     def text_to_speech_bytes(
         self,
         text: str,
-        credentials,
+        credentials: typing.Any,
         project_id: str,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
         burst_noise_snr: float = 5.0,
+        voice_config: dict[str, Any] | None = None,
     ) -> dict:
         """Converts text to speech and returns a dictionary with text and
         audio bytes without saving to disk. Background and burst noise can
@@ -65,8 +68,12 @@ class AudioTransformer:
 
         client = AudioTransformer._client
         synthesis_input = texttospeech.SynthesisInput(text=text)
+        voice_config = voice_config or {}
+        language_code = voice_config.get("language_code", "en-US")
+        voice_name = voice_config.get("voice_name", "en-US-Standard-A")
+
         voice = texttospeech.VoiceSelectionParams(
-            language_code="en-US", name="en-US-Standard-A"
+            language_code=language_code, name=voice_name
         )
         audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.LINEAR16,
@@ -142,7 +149,7 @@ class AudioTransformer:
 
             # The response.audio_content is a WAV file (RIFF header + data)
             # We need to strip the header to get raw PCM bytes.
-            with io.BytesIO(response.audio_content) as wav_io:
+            with io.BytesIO(response.audio_content) as wav_io:  # noqa: SIM117
                 with wave.open(wav_io, "rb") as wav_file:
                     # Verify format if needed, but for now just read all frames
                     audio_bytes = wav_file.readframes(wav_file.getnframes())

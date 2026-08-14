@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for code_block_migrator.py."""
 
+import typing
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,12 +27,12 @@ from cxas_scrapi.migration.data_models import IRTool, MigrationStatus
 
 
 @pytest.fixture
-def migrator():
+def migrator() -> typing.Any:
     mock_tools = MagicMock()
     return CodeBlockMigrator(ps_tools_client=mock_tools, ai_augment_client=None)
 
 
-def test_get_typing_imports_for_function(migrator):
+def test_get_typing_imports_for_function(migrator: typing.Any) -> None:
     code = """def my_func(arg1: Dict[str, Any]) -> List[str]:
     return []
 """
@@ -40,7 +42,7 @@ def test_get_typing_imports_for_function(migrator):
     assert "from typing import List" in imports
 
 
-def test_parse_code_block_with_ast(migrator):
+def test_parse_code_block_with_ast(migrator: typing.Any) -> None:
     code = """import os
 from datetime import datetime
 
@@ -60,7 +62,7 @@ def func2():
     assert functions[1][0] == "func2"
 
 
-def test_extract_functions_to_ir(migrator):
+def test_extract_functions_to_ir(migrator: typing.Any) -> None:
     code = """@Action
 def transfer_to_agent(arg1):
     pass

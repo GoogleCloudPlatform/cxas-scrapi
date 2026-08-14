@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class AIAugment:
     """Handles AI-powered augmentation tasks for the migration service."""
 
-    def __init__(self, gemini_client: GeminiGenerate):
+    def __init__(self, gemini_client: GeminiGenerate) -> None:
         """Initializes the AIAugment service.
 
         Args:
@@ -37,7 +37,7 @@ class AIAugment:
     async def generate_agent_description(
         self, playbook_data: dict[str, Any]
     ) -> str | None:
-        """Generates a concise, one-sentence description for a Polysynth agent
+        """Generates a concise, one-sentence description for a CXAS agent
 
         based on its source DFCX Playbook's goal and instructions.
 

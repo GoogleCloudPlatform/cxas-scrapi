@@ -41,7 +41,7 @@ class CXASAsyncArtifactBuilder:
     migration/agent building tasks.
     """
 
-    def __init__(self, gemini_client: Any, determinism: float = 0.0):
+    def __init__(self, gemini_client: Any, determinism: float = 0.0) -> None:
         self.gemini = gemini_client
         self.determinism = determinism
         self.output_dir = str(
@@ -84,7 +84,7 @@ class CXASAsyncArtifactBuilder:
         filename: str,
         content: Any,
         is_dataframe: bool = False,
-    ):
+    ) -> None:
         """Saves artifacts locally immediately after generation for easy
         inspection."""
         safe_flow_name = "".join(

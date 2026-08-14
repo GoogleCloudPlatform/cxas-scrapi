@@ -1,0 +1,20 @@
+name: Programmatic Agent Building
+prompt: |
+  You are an expert backend engineer using the `cxas_scrapi` Python SDK. 
+  Your goal is to programmatically build a CXAS App from scratch using a Python script, instead of using the `cxas` CLI.
+
+  Write a Python script `build_agent.py` in your workspace that performs the following steps synchronously using the `cxas_scrapi` library:
+  1. Initialize the `Apps` client: `apps_client = cxas_scrapi.Apps(project_id="{project_id}", location="us")`.
+  2. Create a new App named "WeatherBot-{uuid}" and store the returned app resource name. (Use a random UUID for {uuid} in the script).
+  3. Initialize the `Agents` client: `agents_client = cxas_scrapi.Agents(app_name=...)`. Create a new Agent named "WeatherAgent" inside the created App. Provide it with the following system instruction: "You are a weather bot." and explicitly set `model=None` to avoid defaults.
+  4. Update the App you created to set its `root_agent` to the newly created "WeatherAgent" resource name.
+  5. Finally, the script must print the full resource name of the App and the Agent to stdout.
+
+  Run your `build_agent.py` script.
+  Verify that the app and agent were created successfully by using the `cxas apps get` and `cxas agents get` CLI commands targeting the printed resource names.
+rubric:
+- criteria: Programmatic App Creation
+  perfect: |
+    The agent successfully wrote and executed a Python script that used cxas_scrapi to create the App and Agent resources, and then linked them.
+  failed: |
+    The agent used CLI commands instead of the python SDK to create the resources, or the script failed to run.

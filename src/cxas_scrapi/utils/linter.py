@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """CXAS Agent Linter — framework, configuration, discovery, and runner.
 
 Rule-based linting engine for validating CXAS agent apps against best
@@ -24,6 +25,7 @@ Configuration lives in ``cxaslint.yaml``.
 
 import fnmatch
 import json
+import typing
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -42,7 +44,7 @@ class Severity(Enum):
     OFF = "off"
 
     @classmethod
-    def from_str(cls, s) -> "Severity":
+    def from_str(cls, s: typing.Any) -> "Severity":
         # YAML parses bare ``off`` as boolean False
         if isinstance(s, bool):
             return cls.OFF if not s else cls.ERROR
@@ -77,7 +79,7 @@ class LintResult:
     line: int | None = None
     fix_suggestion: str = ""
 
-    def __str__(self):
+    def __str__(self) -> typing.Any:
         prefix = {"error": "E", "warning": "W", "info": "I"}[
             self.severity.value
         ]
@@ -105,20 +107,20 @@ class LintReport:
     results: list = field(default_factory=list)
 
     @property
-    def errors(self):
+    def errors(self) -> typing.Any:
         return [r for r in self.results if r.severity == Severity.ERROR]
 
     @property
-    def warnings(self):
+    def warnings(self) -> typing.Any:
         return [r for r in self.results if r.severity == Severity.WARNING]
 
-    def add(self, result: LintResult):
+    def add(self, result: LintResult) -> None:
         self.results.append(result)
 
-    def add_all(self, results: list):
+    def add_all(self, results: list) -> None:
         self.results.extend(results)
 
-    def print_summary(self, show_fixes=False):
+    def print_summary(self, show_fixes: typing.Any = False) -> None:
         if not self.results:
             print("\n  All checks passed.")
             return
@@ -214,14 +216,19 @@ class Rule(ABC):
 # ── Decorator-Based Auto-Registration ───────────────────────────────────
 
 _RULE_REGISTRY: dict[str, list[Rule]] = defaultdict(list)
-_REGISTERED_IDS: set[str] = set()
+# Dedup key is (rule_id, category) so the same id may register under
+# multiple categories (e.g. V100 across callbacks/tools/evals) while
+# repeated imports of the same rule still no-op.
+_REGISTERED_IDS: set[tuple[str, str]] = set()
 
 
-def rule(category: str):
+def rule(category: str) -> typing.Any:
     """Class decorator that auto-registers a Rule into its category.
 
-    Duplicate rule IDs are silently ignored so that repeated imports
-    (or test-time ``@rule`` usage) never produce duplicates.
+    Duplicate ``(rule_id, category)`` pairs are silently ignored so
+    that repeated imports (or test-time ``@rule`` usage) never produce
+    duplicates. The same ``rule_id`` MAY register under different
+    categories — useful for cross-surface rules.
 
     Usage::
 
@@ -231,11 +238,12 @@ def rule(category: str):
             ...
     """
 
-    def decorator(cls):
+    def decorator(cls) -> typing.Any:  # noqa: ANN001
         cls.category = category
         instance = cls()
-        if instance.id not in _REGISTERED_IDS:
-            _REGISTERED_IDS.add(instance.id)
+        key = (instance.id, category)
+        if key not in _REGISTERED_IDS:
+            _REGISTERED_IDS.add(key)
             _RULE_REGISTRY[category].append(instance)
         return cls
 
@@ -272,6 +280,10 @@ class LintContext:
     )
     options: dict = field(default_factory=dict)
     bypass_tool_prefixes: set = field(default_factory=set)
+    app_root: Path | None = None
+    agent_to_parents: dict[str, set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
 
     @property
     def all_known_tools(self) -> set:
@@ -282,28 +294,37 @@ class LintContext:
 
 
 class RuleRegistry:
-    """Holds all registered rules and applies config overrides."""
+    """Holds all registered rules and applies config overrides.
 
-    def __init__(self):
-        self._rules: dict[str, Rule] = {}
+    Internally keyed by ``(rule_id, category)`` so the same id may
+    appear under multiple categories. ``get(rule_id)`` returns the
+    first match by id for back-compat with callers that expect
+    unique ids (V001-V007 single-resource validation).
+    """
 
-    def register(self, rule_obj: Rule):
-        self._rules[rule_obj.id] = rule_obj
+    def __init__(self) -> None:
+        self._rules: dict[tuple[str, str], Rule] = {}
 
-    def register_all(self, rules: list[Rule]):
+    def register(self, rule_obj: Rule) -> None:
+        self._rules[(rule_obj.id, rule_obj.category)] = rule_obj
+
+    def register_all(self, rules: list[Rule]) -> None:
         for r in rules:
             self.register(r)
 
     def get(self, rule_id: str) -> Rule | None:
-        return self._rules.get(rule_id)
+        for (rid, _cat), r in self._rules.items():
+            if rid == rule_id:
+                return r
+        return None
 
     def all_rules(self) -> list[Rule]:
-        return sorted(self._rules.values(), key=lambda r: r.id)
+        return sorted(self._rules.values(), key=lambda r: (r.id, r.category))
 
     def rules_for_category(self, category: str) -> list[Rule]:
         return [r for r in self.all_rules() if r.category == category]
 
-    def list_rules(self):
+    def list_rules(self) -> None:
         """Print all registered rules."""
         current_cat = ""
         for r in self.all_rules():
@@ -363,7 +384,7 @@ class LintConfig:
         Considers per-file overrides.
         """
         for pattern, overrides in self.per_file.items():
-            if fnmatch.fnmatch(file_path, pattern):
+            if fnmatch.fnmatch(file_path, pattern):  # noqa: SIM102
                 if rule_obj.id in overrides:
                     return Severity.from_str(overrides[rule_obj.id])
 
@@ -396,7 +417,7 @@ class Discovery:
         evals_dir: Path,
         limit_agents: set[str] | None = None,
         limit_tools: set[str] | None = None,
-    ):
+    ) -> None:
         self.app_dir = app_dir
         self.evals_dir = evals_dir
         self.limit_agents = limit_agents
@@ -417,7 +438,7 @@ class Discovery:
         ).exists():
             return self.app_dir
         for d in self.app_dir.iterdir():
-            if d.is_dir() and not d.name.startswith("."):
+            if d.is_dir() and not d.name.startswith("."):  # noqa: SIM102
                 if (d / "app.json").exists() or (d / "app.yaml").exists():
                     return d
         return None
@@ -689,6 +710,31 @@ def build_context(
             elif res.tools:
                 all_tool_names.update(res.tools)
 
+    # Discover agent configs to build parent-child map
+    agent_configs = discovery.discover_agent_configs()
+    display_to_agent = {
+        discovery.dir_name_to_display(name): name for name in agents
+    }
+    agent_to_parents = defaultdict(set)
+
+    for parent_name, config_path in agent_configs.items():
+        try:
+            content = config_path.read_text()
+            agent_config = json.loads(content)
+            child_agents = agent_config.get("childAgents", [])
+            for child_ref in child_agents:
+                # Resolve child_ref to agent_name
+                child_name = None
+                if child_ref in agents:
+                    child_name = child_ref
+                elif child_ref in display_to_agent:
+                    child_name = display_to_agent[child_ref]
+
+                if child_name:
+                    agent_to_parents[child_name].add(parent_name)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
     return LintContext(
         project_root=project_root,
         app_dir=discovery.app_dir,
@@ -701,6 +747,8 @@ def build_context(
         all_tool_dirs={name: path.parent for name, path in tools.items()},
         options=config.options,
         bypass_tool_prefixes=bypass_tool_prefixes,
+        app_root=app_root,
+        agent_to_parents=agent_to_parents,
     )
 
 
@@ -712,21 +760,19 @@ def run_rules(
     report: LintReport,
     categories: list[str] | None = None,
     specific_rules: set[str] | None = None,
-):
+) -> None:
     """Run lint rules against discovered files."""
 
-    def should_run(rule_obj):
+    def should_run(rule_obj: typing.Any) -> bool:
         if specific_rules and rule_obj.id not in specific_rules:
             return False
-        if categories and rule_obj.category not in categories:
-            return False
-        return True
+        return not (categories and rule_obj.category not in categories)
 
-    def _get_severity(rule_obj, file_rel):
+    def _get_severity(rule_obj: typing.Any, file_rel: typing.Any) -> typing.Any:
         sev = config.get_severity(rule_obj, file_rel)
         return sev if sev != Severity.OFF else None
 
-    def _lint_files(rules: list[Rule], files: dict[str, Path]):
+    def _lint_files(rules: list[Rule], files: dict[str, Path]) -> None:
         """Apply rules to a set of discovered files or directories."""
         for _name, file_path in files.items():
             rel = str(file_path.relative_to(context.project_root))

@@ -1,0 +1,31 @@
+openapi: 3.0.0
+info:
+  title: CRM API
+  version: 1.0.0
+servers:
+  - url: https://crm-mock.example.com/api
+paths:
+  /retrieve_account:
+    get:
+      operationId: retrieve_account
+      parameters:
+        - name: email
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: order_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Account details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account_status:
+                    type: string

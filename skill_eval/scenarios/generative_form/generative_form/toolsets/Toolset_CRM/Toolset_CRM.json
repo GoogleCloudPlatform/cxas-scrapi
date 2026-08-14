@@ -1,0 +1,7 @@
+{
+  "displayName": "Toolset_CRM",
+  "openApiToolset": {
+    "openApiSchema": "toolsets/Toolset_CRM/open_api_toolset/open_api_schema.yaml"
+  },
+  "description": "CRM Toolset for account retrieval"
+}

@@ -1,3 +1,4 @@
+import typing
 import json
 import os
 import shutil
@@ -10,7 +11,7 @@ from ingestor_supervisor import (
 import yaml
 
 
-def test_ingestor_supervisor_dry_run():
+def test_ingestor_supervisor_dry_run() -> typing.Any:
     print("=== Starting Ingestor Supervisor Dry-Run Verification ===")
 
     # 1. Cleanup previous state

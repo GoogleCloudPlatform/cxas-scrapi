@@ -21,7 +21,7 @@ from cxas_scrapi.migration.dfcx_playbook_converter import (
 )
 
 
-def test_sanitize_display_name():
+def test_sanitize_display_name() -> None:
     assert (
         DFCXPlaybookConverter.sanitize_display_name("Valid Name")
         == "Valid Name"
@@ -33,7 +33,7 @@ def test_sanitize_display_name():
     assert DFCXPlaybookConverter.sanitize_display_name("a" * 100) == "a" * 85
 
 
-def test_recursively_extract_instructions():
+def test_recursively_extract_instructions() -> None:
     steps = [
         {"text": "Step 1"},
         {"text": "Step 2", "steps": [{"text": "Substep 2.1"}]},
@@ -45,7 +45,7 @@ def test_recursively_extract_instructions():
     assert lines[2] == "    - Substep 2.1"
 
 
-def test_var_replacer():
+def test_var_replacer() -> None:
     mock_reporter = MagicMock()
     parameter_name_map = {"var1": "sanitized_var1"}
     pattern = re.compile(r"\$([a-zA-Z_][a-zA-Z0-9_-]*)")
@@ -58,7 +58,7 @@ def test_var_replacer():
     assert mock_reporter.log_transformation.call_count == 1
 
 
-def test_replace_tool_reference():
+def test_replace_tool_reference() -> None:
     mock_reporter = MagicMock()
     cx_tool_display_name_to_id_map = {"Test Tool": "tool-123"}
     tool_map = {
@@ -79,7 +79,7 @@ def test_replace_tool_reference():
     assert mock_reporter.log_transformation.call_count == 1
 
 
-def test_replace_routing_ref():
+def test_replace_routing_ref() -> None:
     mock_reporter = MagicMock()
     pattern = re.compile(
         r"\$\{\s*(agent|flow|playbook)\s*:\s*([^}]+)\}", flags=re.IGNORECASE
@@ -91,7 +91,7 @@ def test_replace_routing_ref():
     assert mock_reporter.log_transformation.call_count == 1
 
 
-def test_convert_cx_playbook_to_ps_agent():
+def test_convert_cx_playbook_to_ps_agent() -> None:
     mock_reporter = MagicMock()
     converter = DFCXPlaybookConverter(mock_reporter)
 

@@ -29,7 +29,7 @@ class RateLimiter:
     library.
     """
 
-    def __init__(self, requests_per_minute: float):
+    def __init__(self, requests_per_minute: float) -> None:
         """Initializes the RateLimiter.
 
         Args:
@@ -46,7 +46,7 @@ class RateLimiter:
 
         # Define a dummy pacing function wrapped with limits decorator
         @self._limiter
-        def _pace():
+        def _pace() -> None:
             pass
 
         self._pace_immediate = _pace

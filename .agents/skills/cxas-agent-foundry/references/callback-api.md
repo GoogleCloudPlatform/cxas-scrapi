@@ -47,12 +47,22 @@ content.role     # str -- "model" or "user"
 **Creating responses** (in before_model callbacks):
 
 ```python
-# Return a deterministic response with text + tool calls
+# 1. Deterministic Preemption (Bypasses LLM completely, speaks text, waits for user):
 LlmResponse.from_parts(parts=[
-    Part.from_text(text="Let me connect you with someone."),
-    Part.from_function_call(name="end_session", args={"session_escalated": True}),
+    Part.from_text(text="What is your account number?"),
+])
+
+# 2. Tool Delegation with Audio Filler (Runs tool, feeds toolResponse to LLM, triggers LLM reasoning):
+LlmResponse.from_parts(parts=[
+    Part.from_text(text="Let me look that up for you.", partial=True),
+    Part.from_function_call(name="lookup_account", args={"id": "123"}),
 ])
 ```
+
+**LLM Lifecycle Decision Matrix:**
+- **Text-Only Parts (`Part.from_text`)**: CXAS sends speech to user and closes bot turn. **LLM is bypassed.**
+- **FunctionCall Parts (`Part.from_function_call`)**: CXAS executes tool and feeds `toolResponse` back to LLM. **LLM is invoked.**
+- **Gotcha (`EMPTY_RESPONSE`)**: If you need to speak a prompt deterministically and wait for user speech, do NOT return a `FunctionCall` part in the same response. Execute the tool synchronously via `tools.<tool_name>()` in Python and return only `Part.from_text(...)`.
 
 **Reading responses** (in after_model callbacks):
 

@@ -14,13 +14,14 @@
 
 import glob
 import os
+import typing
 
 import pytest
 
 from cxas_scrapi.utils.eval_utils import EvalUtils
 
 
-def pytest_generate_tests(metafunc):
+def pytest_generate_tests(metafunc: typing.Any) -> None:
     """
     Dynamically generates tests based on the --eval-dir command-line argument.
     """
@@ -42,7 +43,9 @@ def pytest_generate_tests(metafunc):
 
 
 @pytest.mark.online
-def test_evaluation_from_yaml(yaml_path, request):
+def test_evaluation_from_yaml(
+    yaml_path: typing.Any, request: typing.Any
+) -> None:
     """
     Test case that runs a single CXAS evaluation from a YAML file.
     Creates the evaluation, triggers a run, waits for completion,

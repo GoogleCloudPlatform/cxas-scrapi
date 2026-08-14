@@ -17,7 +17,7 @@ from cxas_scrapi.migration.data_models import IRTool
 from cxas_scrapi.migration.dfcx_example_converter import DFCXExampleConverter
 
 
-def test_convert_cx_example_to_ps_example():
+def test_convert_cx_example_to_ps_example() -> None:
     cx_example = {
         "displayName": "Test Example",
         "description": "Test Description",
@@ -70,7 +70,7 @@ def test_convert_cx_example_to_ps_example():
     assert "tool_call" in res["messages"][2]["chunks"][0]
 
 
-def test_convert_cx_example_to_ps_example_inline_action():
+def test_convert_cx_example_to_ps_example_inline_action() -> None:
     cx_example = {
         "displayName": "Test Example",
         "actions": [

@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for artifacts_builder.py."""
 
+import typing
 from unittest.mock import AsyncMock, MagicMock
 
 import pandas as pd
@@ -23,19 +25,21 @@ from cxas_scrapi.migration.artifacts_builder import CXASAsyncArtifactBuilder
 
 
 @pytest.fixture
-def mock_gemini_client():
+def mock_gemini_client() -> typing.Any:
     client = MagicMock()
     client.generate_async = AsyncMock()
     return client
 
 
 @pytest.fixture
-def builder(mock_gemini_client):
+def builder(mock_gemini_client: typing.Any) -> typing.Any:
     return CXASAsyncArtifactBuilder(gemini_client=mock_gemini_client)
 
 
 @pytest.mark.asyncio
-async def test_run_step_1a_success(builder, mock_gemini_client):
+async def test_run_step_1a_success(
+    builder: typing.Any, mock_gemini_client: typing.Any
+) -> None:
     """Test successful generation of inventory."""
     mock_gemini_client.generate_async.return_value = "Inventory Report"
 
@@ -48,7 +52,9 @@ async def test_run_step_1a_success(builder, mock_gemini_client):
 
 
 @pytest.mark.asyncio
-async def test_run_step_1b_success(builder, mock_gemini_client):
+async def test_run_step_1b_success(
+    builder: typing.Any, mock_gemini_client: typing.Any
+) -> None:
     """Test successful generation of business logic."""
     mock_gemini_client.generate_async.return_value = "Business Logic"
 
@@ -61,7 +67,9 @@ async def test_run_step_1b_success(builder, mock_gemini_client):
 
 
 @pytest.mark.asyncio
-async def test_run_step_1c_success(builder, mock_gemini_client):
+async def test_run_step_1c_success(
+    builder: typing.Any, mock_gemini_client: typing.Any
+) -> None:
     """Test successful generation of requirements."""
     mock_gemini_client.generate_async.return_value = (
         "Requirement_ID,Priority,Category,Description,Expected_Behavior\n"
@@ -79,7 +87,9 @@ async def test_run_step_1c_success(builder, mock_gemini_client):
 
 
 @pytest.mark.asyncio
-async def test_run_step_1d_success(builder, mock_gemini_client):
+async def test_run_step_1d_success(
+    builder: typing.Any, mock_gemini_client: typing.Any
+) -> None:
     """Test successful generation of tests."""
     mock_gemini_client.generate_async.return_value = (
         '```json\n[{"name": "Scenario 1"}]\n```'
@@ -98,7 +108,9 @@ async def test_run_step_1d_success(builder, mock_gemini_client):
 
 
 @pytest.mark.asyncio
-async def test_run_step_1_success(builder, mock_gemini_client):
+async def test_run_step_1_success(
+    builder: typing.Any, mock_gemini_client: typing.Any
+) -> None:
     """Test full step 1 analysis."""
     # We need to set return values for multiple calls!
     mock_gemini_client.generate_async.side_effect = [

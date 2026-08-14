@@ -1,0 +1,84 @@
+name: Mock Integration Testing
+setup:
+  commands:
+  - "cxas delete --project-id {project_id} --location us --display-name mock-integration-testing-{uuid} --force || true"
+  - "cxas create --project-id {project_id} --location us mock-integration-testing-{uuid}"
+  - "cxas pull --project-id {project_id} --location us mock-integration-testing-{uuid} --target-dir mock-integration-testing-app-{uuid}"
+prompt: |
+  You are a senior software engineer. Your goal is to implement and verify a Mock Integration Testing scenario using CXAS and SCRAPI.
+
+  A basic CXAS app shell has been pulled in `mock-integration-testing-app-{uuid}/mock-integration-testing-{uuid}`.
+
+  **CRITICAL RUN RULE**: Ensure you use non-interactive commands to avoid hanging. When running `cxas push`, ALWAYS run it from INSIDE the app folder (`mock-integration-testing-app-{uuid}/mock-integration-testing-{uuid}`) so it finds `app.json`. If it prompts for confirmation, use this Python snippet:
+  `python3 -c "import subprocess; subprocess.run(['cxas', 'push', '--project-id', '{project_id}', '--location', 'us'], cwd='mock-integration-testing-app-{uuid}/mock-integration-testing-{uuid}', input='y\n', text=True)"`
+  Always execute `run_command` tools with `WaitMsBeforeAsync` set to at least `30000` (30 seconds) if running locally, or trust the system's background task handling if using a managed environment.
+
+  Your task:
+  1.  **Configure the Agent**:
+      - The app root is `mock-integration-testing-app-{uuid}/mock-integration-testing-{uuid}`.
+      - Create `agents/root_agent/` directory and `root_agent.json` + `instruction.txt`.
+      - Root agent should be named `root_agent`.
+      - Instruction: |
+          Provide the instruction in the exact CXAS XML format required by the linter:
+          <role>You are a payment assistant.</role>
+          <persona>Helpful and concise.</persona>
+          <taskflow>
+            <subtask name="Process_Payment">
+              <step>Use process_payment tool from Toolset_Payment when user wants to pay. Confirm status and tx_id.</step>
+            </subtask>
+          </taskflow>
+  2.  **Configure the Toolset**:
+      - Create `toolsets/Toolset_Payment/Toolset_Payment.json` and its OpenAPI schema at `toolsets/Toolset_Payment/open_api_toolset/open_api_schema.yaml`.
+      - Define `process_payment` operation with `amount` and `currency` inputs, and `status`, `tx_id` outputs.
+      - Ensure `root_agent.json` specifies `toolIds: ["process_payment"]` inside the `toolsets` array (e.g. `{"toolset": "Toolset_Payment", "toolIds": ["process_payment"]}`).
+  3.  **Define Golden Mock**:
+      - Create `evals/goldens/payment_test.yaml`.
+      - Define a conversation where user says "I'd like to pay 100 dollars", and the agent calls `process_payment`.
+      - **CRITICAL**: The golden must include a mock `output` for the `process_payment` tool call.
+      - **FORMAT HINT**: In the YAML, a turn with a tool mock looks like:
+        ```yaml
+        - user: ...
+          tool_calls:
+          - action: process_payment
+            args: {amount: 100, currency: USD}
+            output: {"status": "SUCCESS", "tx_id": "TX-100"}
+          agent: ...
+        ```
+  4.  **Deploy & Upload**:
+      - Push the app using `cxas push --project-id {project_id} --location us`.
+      - Upload the golden evaluation using `cxas push-eval --app-name <app_resource_name> --file evals/goldens/payment_test.yaml`.
+  5.  **Verify**:
+      - Run the evaluation using `cxas run-eval --app-name <app_resource_name> --evaluation-id <eval_resource_name> --wait --filter-auto-metrics`.
+      - Ensure the evaluation passes, verifying that the mock response was correctly injected and used by the agent to confirm the transaction.
+
+rubric:
+- criteria: Toolset Configuration
+  perfect: |
+    The execution trace shows the agent successfully created the Toolset_Payment configuration and the OpenAPI schema with the process_payment operation correctly defined.
+  good: |
+    The toolset was created but had minor schema issues that were later fixed.
+  failed: |
+    The agent failed to create the toolset or the OpenAPI schema.
+- criteria: Golden Mock Definition
+  perfect: |
+    The execution trace shows the agent created evals/goldens/payment_test.yaml with a tool_call mock containing the specified output payload: {"status": "SUCCESS", "tx_id": "TX-100"}.
+  good: |
+    The golden was created but the mock payload was slightly different or missing some fields.
+  failed: |
+    The agent failed to define a mock output in the golden evaluation.
+- criteria: Deployment & Upload
+  perfect: |
+    The execution trace shows the agent successfully pushed the app to the platform and uploaded the golden evaluation using cxas push and cxas push-eval.
+  good: |
+    The deployment succeeded but required multiple attempts due to configuration errors.
+  failed: |
+    The agent failed to push the app or upload the evaluation.
+- criteria: Faked Execution Verification
+  perfect: |
+    The execution trace shows the agent ran the evaluation, and it passed, confirming that the mock tool response was correctly "faked" and the agent's response matched the expected confirmation of the transaction ID.
+  good: |
+    The evaluation was run but the agent had to manually verify some parts of the trace.
+  failed: |
+    The agent failed to run the evaluation or the evaluation failed because the mock was not correctly faked.
+assets:
+- mock_integration_testing

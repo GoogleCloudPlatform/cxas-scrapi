@@ -1,3 +1,4 @@
+import typing
 import json
 import os
 import time
@@ -6,7 +7,7 @@ STATE_FILE = "/tmp/ingestor/state.json"
 SPEC_FILE = "/tmp/ingestor/batch_spec.json"
 
 
-def simulate_single_item(file_path, output_file):
+def simulate_single_item(file_path: typing.Any, output_file: typing.Any) -> typing.Any:
     name = os.path.basename(file_path)
     passing_yaml = f"""
 subintent_id: "ingested_{name.replace(".", "_")}"
@@ -36,7 +37,7 @@ turns:
         f.write(passing_yaml.strip())
 
 
-def run_autonomous_closed_loop_daemon():
+def run_autonomous_closed_loop_daemon() -> typing.Any:
     print("=== Starting Autonomous Closed-Loop Ingestor Daemon ===")
     print(
         "Polling /tmp/ingestor/batch_spec.json for supervisor spawn directives..."

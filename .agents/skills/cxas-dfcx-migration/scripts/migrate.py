@@ -7,6 +7,7 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+
 """Pure 1:1 DFCX → CXAS migration.
 
 This script is the first of three in the cxas-dfcx-migration skill:
@@ -25,30 +26,38 @@ Replaces rich.Prompt with InquirerPy and asks project + location upfront
 (default location is `us`).
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: E402, F404
 
-import argparse
-import asyncio
-import json
-import logging
-import os
-import sys
+import argparse  # noqa: E402
+import asyncio  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import sys  # noqa: E402
+import typing
 
-from rich.console import Console
-from rich.logging import RichHandler
+from rich.console import Console  # noqa: E402
+from rich.logging import RichHandler  # noqa: E402
 
 # Skill-local helpers
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _prompts  # noqa: E402
 import _shared  # noqa: E402
 
-from cxas_scrapi.migration import html_preview, phase_tracker
-from cxas_scrapi.migration.config import AGENT_MODELS
-from cxas_scrapi.migration.data_models import IRBundle, MigrationConfig
-from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
-from cxas_scrapi.migration.eval_generator import DeterministicEvalGenerator
-from cxas_scrapi.migration.main_visualizer import MainVisualizer
-from cxas_scrapi.migration.service import MigrationService
+from cxas_scrapi.migration import html_preview, phase_tracker  # noqa: E402
+from cxas_scrapi.migration.config import AGENT_MODELS  # noqa: E402
+from cxas_scrapi.migration.data_models import (  # noqa: E402
+    IRBundle,
+    MigrationConfig,
+)
+from cxas_scrapi.migration.dfcx_dep_analyzer import (  # noqa: E402
+    DependencyAnalyzer,  # noqa: E402
+)
+from cxas_scrapi.migration.eval_generator import (  # noqa: E402
+    DeterministicEvalGenerator,  # noqa: E402
+)
+from cxas_scrapi.migration.main_visualizer import MainVisualizer  # noqa: E402
+from cxas_scrapi.migration.service import MigrationService  # noqa: E402
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -138,6 +147,17 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Non-interactive; accept all defaults.",
     )
+    p.add_argument(
+        "--no-consolidate",
+        action="store_true",
+        help=(
+            "Push the full 1:1 agent set to CXAS now instead of deferring "
+            "agent deployment to stage_1.py. WARNING: sources with >100 "
+            "flows/playbooks will exceed the CXAS 100-agent cap. By default "
+            "agents are NOT deployed here — stage_1.py pushes the "
+            "consolidated (N->M) set."
+        ),
+    )
     return p
 
 
@@ -146,11 +166,11 @@ def _build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-async def _run(args) -> None:
+async def _run(args: typing.Any) -> None:
     tracker = phase_tracker.PhaseTracker(console)
 
     # Phase 0: auth
-    if not _shared.auth_check(console):
+    if not _shared.auth_check(console):  # noqa: SIM102
         if not args.yes and not _prompts.prompt_yes_no(
             "Proceed anyway? (will likely fail)", default=False
         ):
@@ -215,6 +235,10 @@ async def _run(args) -> None:
         migration_version=inputs["migration_version"],
         # Stage 1 / Stage 2 are separate scripts; never inline-optimize here.
         optimize_for_cxas=False,
+        # Default: defer the agent push to stage_1.py (consolidated N->M set)
+        # so large sources don't exceed the CXAS 100-agent cap. --no-consolidate
+        # restores the immediate 1:1 push.
+        no_consolidate=args.no_consolidate,
         source_agent_data_override=filtered_data,
     )
 
@@ -313,10 +337,29 @@ async def _run(args) -> None:
         console.print(f"  • Unit tests:       {test_path}")
     if bundle.app_url:
         console.print(f"  • App console:      {bundle.app_url}")
-    console.print(
-        "\n[dim]Next:[/] [cyan]stage_1.py --target-name "
-        f"{inputs['target_name']}[/] for variable dedup + consolidation."
-    )
+
+    if config.consolidate:
+        console.print(
+            f"\n[yellow]Agent deployment DEFERRED:[/] the "
+            f"{len(service.ir.agents)} agents are compiled into the IR bundle "
+            "but NOT yet pushed to CXAS (app, variables and tools were "
+            "deployed). This keeps large sources under the CXAS 100-agent "
+            "cap. Run stage_1.py to push the consolidated (N->M) agents."
+        )
+        console.print(
+            "\n[dim]Next:[/] [cyan]stage_1.py --target-name "
+            f"{inputs['target_name']}[/] for variable dedup + consolidation "
+            "(this is the first agent push to CXAS)."
+        )
+    else:
+        console.print(
+            f"\n[green]Deployed {len(service.ir.agents)} agents 1:1 to CXAS[/] "
+            "(--no-consolidate)."
+        )
+        console.print(
+            "\n[dim]Next:[/] [cyan]stage_1.py --target-name "
+            f"{inputs['target_name']}[/] for variable dedup + consolidation."
+        )
 
 
 def main() -> None:

@@ -50,7 +50,7 @@ class MainVisualizer:
     interactive zoom UI (designed for Jupyter / Colab environments).
     """
 
-    def __init__(self, selected_data: dict[str, Any]):
+    def __init__(self, selected_data: dict[str, Any]) -> None:
         self.data = selected_data
         self.console = Console(force_terminal=False, width=120)
 
@@ -132,7 +132,7 @@ class MainVisualizer:
 
         return root
 
-    def visualize_topology(self):
+    def visualize_topology(self) -> None:
         """Build and display the interactive High-Level Topology Graph."""
         dot_standard = HighLevelGraphVisualizer(self.data).build(
             show_code_blocks=False
@@ -277,7 +277,7 @@ class MainVisualizer:
                     "Use export_visualizations() to save as SVG."
                 )
 
-    def visualize_details(self):
+    def visualize_details(self) -> None:
         """Build and display Rich Trees for Playbooks, Flows, and Tools."""
         if HAS_IPYTHON:
             display(HTML("<h3>🛠️ Agent Tools &amp; Webhooks</h3>"))
@@ -322,7 +322,7 @@ class MainVisualizer:
                     )
                 )
 
-    def export_visualizations(self, prefix: str = "agent"):
+    def export_visualizations(self, prefix: str = "agent") -> None:
         """Export the topology graph as SVG and detailed trees as Markdown.
 
         Files are saved locally as ``{prefix}_topology.svg`` and

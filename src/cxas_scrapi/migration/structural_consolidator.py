@@ -22,7 +22,7 @@ import io
 import json
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 
@@ -37,7 +37,11 @@ from cxas_scrapi.migration.flow_visualizer import (
     FlowDependencyResolver,
     FlowTreeVisualizer,
 )
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.migration.instruction_lint import lint_instruction_text
+
+if TYPE_CHECKING:
+    from cxas_scrapi.utils.gemini import GeminiGenerate
+    from cxas_scrapi.utils.linter import LintResult
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +50,24 @@ GROUP_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{2,84}$")
 AGENT_REF_RE = re.compile(r"{@AGENT:\s*([^}]+)}")
 SENTINEL_REFS = {"END_SESSION", "END_FLOW"}
 DEFAULT_PER_GROUP_TIMEOUT_S = 600
+
+
+def _format_diagnostic(r: LintResult) -> str:
+    """Single-line render of a LintResult for prompts / errors."""
+    return f"[{r.rule_id}] {r.message}"
+
+
+def _build_validator_feedback(diagnostics: list[LintResult]) -> str:
+    """Render lint diagnostics into the re-prompt feedback block."""
+    diag_block = "\n".join(f"- {_format_diagnostic(d)}" for d in diagnostics)
+    return (
+        "### YOUR PREVIOUS RESPONSE FAILED CANONICAL-XML VALIDATION\n\n"
+        "Diagnostics:\n"
+        f"{diag_block}\n\n"
+        "CORRECT THESE ISSUES AND REGENERATE THE FULL INSTRUCTION SET. "
+        "Do not abbreviate. Do not include the original response in your "
+        "reply. Emit only the corrected XML."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -123,8 +145,17 @@ def heal_tool_refs(ir: MigrationIR) -> tuple[dict[str, str], list[str]]:
     sentinels = {"end_session", "set_session_variables"}
     known = available_ids | available_short | sentinels
 
+    # Map original display names to their truncated CXAS IDs
+    known_name_map = {}
+    for t_id, t in ir.tools.items():
+        if isinstance(t.payload, dict) and "displayName" in t.payload:
+            known_name_map[t.payload["displayName"]] = t_id
+
     def _candidate(ref: str) -> str | None:
         """Return a safe rewrite for ``ref``, or None."""
+        if ref in known_name_map and ref not in known:
+            return known_name_map[ref]
+
         for suffix in _HEAL_SUFFIX_STRIPS:
             if ref.endswith(suffix):
                 base = ref[: -len(suffix)]
@@ -132,9 +163,14 @@ def heal_tool_refs(ir: MigrationIR) -> tuple[dict[str, str], list[str]]:
                     return base
 
         # Prefix match check for truncated completion cutoffs (length >= 15
-        # to avoid generic collisions)
+        # to avoid generic collisions), or CXAS backend truncations where the
+        # full display name in the prompt starts with the truncated ID.
         if len(ref) >= 15:
-            prefix_matches = [k for k in known if k.startswith(ref)]
+            prefix_matches = [
+                k
+                for k in known
+                if k.startswith(ref) or (len(k) >= 30 and ref.startswith(k))
+            ]
             if len(prefix_matches) == 1:
                 return prefix_matches[0]
 
@@ -339,7 +375,7 @@ def rewrite_agent_refs(
             return ""
 
         # 1. Exact group-name match (Gemini emitted the consolidated name).
-        if raw in group_names:
+        if raw in group_names:  # noqa: SIM108
             target_group = raw
         else:
             # 2. Exact IR-key match.
@@ -519,13 +555,37 @@ def _parse_grouping_response(response: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _normalize_agent_lookup_key(s: str) -> str:
+    """Normalize names by removing non-alphanumeric chars for robust lookup."""
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+
 def validate_groupings(
     ir: MigrationIR, groupings: dict, root_key: str | None
 ) -> None:
-    if not (1 <= len(groupings) <= 12):
+    max_groups = max(25, len(ir.agents))
+    if not (1 <= len(groupings) <= max_groups):
         raise ValueError(
-            f"Group count {len(groupings)} outside allowed range [1, 12]."
+            f"Group count {len(groupings)} "
+            f"outside allowed range [1, {max_groups}]."
         )
+
+    # Key resolution map: internal key -> internal key, display -> internal
+    # Also register the original DFCX source flow name (raw_data["displayName"])
+    # and maintain a normalized fallback map for spacing/punctuation variations.
+    key_map: dict[str, str] = {}
+    norm_map: dict[str, str] = {}
+    for k, a in ir.agents.items():
+        key_map[k] = k
+        norm_map[_normalize_agent_lookup_key(k)] = k
+        if a.display_name:
+            key_map[a.display_name] = k
+            norm_map[_normalize_agent_lookup_key(a.display_name)] = k
+        if a.raw_data and isinstance(a.raw_data, dict):
+            orig_name = a.raw_data.get("displayName")
+            if orig_name:
+                key_map[orig_name] = k
+                norm_map[_normalize_agent_lookup_key(orig_name)] = k
 
     seen: set[str] = set()
     for group_name, payload in groupings.items():
@@ -534,27 +594,45 @@ def validate_groupings(
         members = payload.get("agents") or []
         if not members:
             raise ValueError(f"Group {group_name!r} has no agents.")
+
+        canonical_members = []
         for m in members:
-            if m in seen:
-                raise ValueError(f"IR agent {m!r} assigned to multiple groups.")
-            if m not in ir.agents:
+            canonical_k = key_map.get(m)
+            if not canonical_k:
+                canonical_k = norm_map.get(_normalize_agent_lookup_key(m))
+            if not canonical_k:
                 raise ValueError(
                     f"Group {group_name!r} references unknown IR agent {m!r}."
                 )
-            seen.add(m)
+            if canonical_k in seen:
+                raise ValueError(f"IR agent {m!r} assigned to multiple groups.")
+            seen.add(canonical_k)
+            canonical_members.append(canonical_k)
+        payload["agents"] = canonical_members
 
     missing = set(ir.agents.keys()) - seen
     if missing:
-        raise ValueError(
-            f"IR agents not assigned to any group: {sorted(missing)}"
+        # Auto-assign unallocated flows to the Root group or the first group
+        target_root = next(
+            (g for g, p in groupings.items() if p.get("is_root")),
+            next(iter(groupings.keys())),
+        )
+        groupings[target_root].setdefault("agents", []).extend(
+            sorted(list(missing))
+        )
+        logger.info(
+            "Auto-assigned %d unallocated flows to root group %r",
+            len(missing),
+            target_root,
         )
 
     if root_key:
+        canonical_root = key_map.get(root_key, root_key)
         root_groups = [
             name
             for name, payload in groupings.items()
             if payload.get("is_root")
-            or root_key in (payload.get("agents") or [])
+            or canonical_root in (payload.get("agents") or [])
         ]
         if not root_groups:
             raise ValueError(
@@ -566,6 +644,43 @@ def validate_groupings(
 # ---------------------------------------------------------------------------
 # Consolidation
 # ---------------------------------------------------------------------------
+
+
+def _rewrite_code_agent_refs(code: str, replacements: dict[str, str]) -> str:
+    """Scans Python code/callbacks and replaces occurrences of legacy agent
+    names with their consolidated group display names ONLY when used as
+    transfer or override targets. Protects parameter values.
+    """
+    if not code:
+        return code
+
+    rewritten = code
+
+    # 1. Surgical Match: Part.from_agent_transfer(agent='...') or
+    # Part.from_agent_transfer('...')
+    def _sub_transfer(match: re.Match) -> str:
+        prefix, quote, name, suffix = match.groups()
+        new_name = replacements.get(name, name)
+        return f"{prefix}{quote}{new_name}{suffix}"
+
+    transfer_re = re.compile(
+        r"(Part\.from_agent_transfer\(\s*(?:agent\s*=)?\s*)(['\"])([^'\"]+)(['\"]\s*\))"
+    )
+    rewritten = transfer_re.sub(_sub_transfer, rewritten)
+
+    # 2. Surgical Match: 'target': '...' or "target": "..." (inside dicts or
+    # JSON)
+    def _sub_target(match: re.Match) -> str:
+        prefix, quote, name, close_quote = match.groups()
+        new_name = replacements.get(name, name)
+        return f"{prefix}{quote}{new_name}{close_quote}"
+
+    target_re = re.compile(
+        r"((?:['\"]target['\"])\s*:\s*)(['\"])([^'\"]+)(['\"])"
+    )
+    rewritten = target_re.sub(_sub_target, rewritten)
+
+    return rewritten
 
 
 def consolidate(ir: MigrationIR, groupings: dict) -> MigrationIR:
@@ -583,6 +698,17 @@ def consolidate(ir: MigrationIR, groupings: dict) -> MigrationIR:
     member_display_to_group = {
         ir.agents[k].display_name: g for k, g in m2g.items() if k in ir.agents
     }
+
+    # Build a comprehensive replacement map for legacy agent/flow names
+    replacements = {}
+    for group_name, payload in groupings.items():
+        group_display = _sanitize_display_name(group_name)
+        for member in payload.get("agents") or []:
+            replacements[member] = group_display
+            if member in ir.agents:
+                original_display = ir.agents[member].display_name
+                if original_display:
+                    replacements[original_display] = group_display
 
     for group_name, payload in groupings.items():
         members = payload.get("agents") or []
@@ -621,10 +747,12 @@ def consolidate(ir: MigrationIR, groupings: dict) -> MigrationIR:
             for cb_type, cb_code in (agent.callbacks or {}).items():
                 if not cb_code:
                     continue
+                # Rewrite references in the callback code before merging
+                rewritten_cb = _rewrite_code_agent_refs(cb_code, replacements)
                 callbacks[cb_type] = (
                     callbacks.get(cb_type, "")
                     + ("\n\n" if callbacks.get(cb_type) else "")
-                    + cb_code
+                    + rewritten_cb
                 )
 
             types.add(agent.type)
@@ -644,7 +772,21 @@ def consolidate(ir: MigrationIR, groupings: dict) -> MigrationIR:
             toolsets=toolsets,
             callbacks=callbacks or None,
             status=MigrationStatus.COMPILED,
+            is_source_root=bool(
+                payload.get("is_root") or payload.get("is_source_root")
+            ),
         )
+
+    # Rewrite references in Python tool codes inside the consolidated IR
+    for tool in new_ir.tools.values():
+        if tool.type == "PYTHON" and tool.payload:
+            py_func = tool.payload.get("pythonFunction")
+            if py_func and "python_code" in py_func:
+                original_code = py_func["python_code"]
+                rewritten_code = _rewrite_code_agent_refs(
+                    original_code, replacements
+                )
+                py_func["python_code"] = rewritten_code
 
     return new_ir
 
@@ -730,7 +872,7 @@ class StructuralConsolidator:
         ir: MigrationIR,
         gemini_client: GeminiGenerate,
         source_data: DFCXAgentIR | None = None,
-    ):
+    ) -> None:
         self.ir = ir
         self.gemini = gemini_client
         self.source_data = source_data
@@ -809,6 +951,17 @@ class StructuralConsolidator:
             groupings
         )
 
+        # Pre-create context caches for the shared prompt prefixes so that
+        # inputs 2-4 (global vars / toolsets / tools) for 2A and input 3
+        # (available tools) for 2B are not re-sent on every per-group call.
+        # Cache creation may return None if the content is below the minimum
+        # token threshold; the designer falls back to uncached generation.
+        sys_2a, shared_2a = AsyncAgentDesigner.build_2a_shared_context(self.ir)
+        cache_2a = await self.gemini.create_cache(sys_2a, shared_2a)
+
+        sys_2b, shared_2b = AsyncAgentDesigner.build_2b_shared_context(self.ir)
+        cache_2b = await self.gemini.create_cache(sys_2b, shared_2b)
+
         async def _one(group_name: str, members: list[str]) -> str:
             combined_tree = _build_combined_tree_view(
                 members, self.source_data, self.ir
@@ -828,6 +981,7 @@ class StructuralConsolidator:
                         target_ir=self.ir,
                         available_groups=available_groups_context,
                         self_group=group_name,
+                        cached_content_name=cache_2a,
                     ),
                     timeout=per_group_timeout_s,
                 )
@@ -858,6 +1012,7 @@ class StructuralConsolidator:
                         target_ir=self.ir,
                         available_groups=available_groups_context,
                         self_group=group_name,
+                        cached_content_name=cache_2b,
                     ),
                     timeout=per_group_timeout_s,
                 )
@@ -875,6 +1030,22 @@ class StructuralConsolidator:
             if not xml_instructions:
                 return "empty-response"
 
+            diagnostics = lint_instruction_text(xml_instructions, group_name)
+            final_status = "ok"
+            if diagnostics:
+                diag_block = "\n".join(
+                    f"  - [{d.rule_id}] {d.message}" for d in diagnostics
+                )
+                logger.warning(
+                    "Synthesized XML for %s failed canonical-schema "
+                    "validation (%d issue(s)). "
+                    "Proceeding to Stage 2 optimization.\n%s",
+                    group_name,
+                    len(diagnostics),
+                    diag_block,
+                )
+                final_status = "warning"
+
             xml_instructions = rewrite_agent_refs(
                 xml_instructions,
                 m2g,
@@ -886,18 +1057,23 @@ class StructuralConsolidator:
                 group_names=set(groupings.keys()),
             )
             consolidated_ir.agents[group_name].instruction = xml_instructions
-            return "ok"
+            return final_status
 
-        statuses: dict[str, str] = {}
-        results = await asyncio.gather(
-            *(
-                _one(group_name, payload.get("agents", []))
-                for group_name, payload in groupings.items()
-            ),
-            return_exceptions=False,
-        )
-        for (group_name, _), status in zip(
-            groupings.items(), results, strict=True
-        ):
-            statuses[group_name] = status
-        return statuses
+        try:
+            results = await asyncio.gather(
+                *(
+                    _one(group_name, payload.get("agents", []))
+                    for group_name, payload in groupings.items()
+                ),
+                return_exceptions=False,
+            )
+        finally:
+            for cache_name in filter(None, [cache_2a, cache_2b]):
+                await self.gemini.delete_cache(cache_name)
+
+        return {
+            group_name: status
+            for (group_name, _), status in zip(
+                groupings.items(), results, strict=True
+            )
+        }

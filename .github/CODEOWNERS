@@ -1,0 +1,7 @@
+# The root allowlist gates additions to the repository root: any PR that
+# introduces a new top-level file or directory must also add it to the
+# allowlist, and that change requires approval from an owner below.
+# CODEOWNERS owns itself so the gate cannot be edited away without approval.
+
+/.github/root-allowlist.txt @kmaphoenix @ygupta89
+/.github/CODEOWNERS @kmaphoenix @ygupta89

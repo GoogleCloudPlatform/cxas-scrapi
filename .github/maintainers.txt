@@ -1,0 +1,9 @@
+# Add GitHub handles of reviewers here (one per line, no @ symbol)
+# The auto-assign workflow will randomly pick a reviewer from this list.
+
+kmaphoenix
+ygupta89
+AlexanderKYu
+kranthikiran01
+deniscalin
+vishalghor

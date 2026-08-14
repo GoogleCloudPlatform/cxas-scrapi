@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """MigrationAnalysisBuilder: emits a self-contained, tabbed HTML report
 that captures the state of a DFCX→CXAS migration as it runs.
 
@@ -41,14 +42,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from jinja2 import Template
+from cxas_scrapi.migration.data_models import (
+    DFCXAgentIR,
+    IRBundle,
+    MigrationIR,
+)
 
 if TYPE_CHECKING:
-    from cxas_scrapi.migration.data_models import (
-        DFCXAgentIR,
-        IRBundle,
-        MigrationIR,
-    )
+    from jinja2 import Template
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,9 @@ class MigrationAnalysisSnapshot:
     #   "session_id": str,
     # }
     pending_grouping: dict[str, Any] | None = None
+    xprs_designer_data: dict[str, Any] | None = None
+    experimental_agent_xprs: bool = False
+    mermaid_chart: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -117,7 +121,9 @@ class MigrationAnalysisBuilder:
     ) -> None:
         self.target_name = target_name
         self.app_name = app_name
-        self.output_dir = Path(output_dir) if output_dir else Path.cwd()
+        self.output_dir = (
+            Path(output_dir).resolve() if output_dir else Path.cwd().resolve()
+        )
         self.snapshot = MigrationAnalysisSnapshot(
             app_name=app_name, target_name=target_name
         )
@@ -160,8 +166,11 @@ class MigrationAnalysisBuilder:
         """
         try:
             ir = getattr(service, "ir", None)
+            if ir is not None and not isinstance(ir, MigrationIR):
+                ir = None
             source = getattr(service, "source_agent_data", None)
             bundle = getattr(service, "_analysis_bundle", None)
+
             grouping = (
                 getattr(bundle, "grouping", None)
                 if bundle is not None
@@ -169,7 +178,7 @@ class MigrationAnalysisBuilder:
             )
 
             self.snapshot.generated_at = datetime.now().isoformat(
-                timespec="seconds"
+                timespec="milliseconds"
             )
             self.snapshot.kpis = self._derive_kpis(ir, source, bundle)
             self.snapshot.tools, self.snapshot.toolsets = self._derive_tools(ir)
@@ -177,7 +186,19 @@ class MigrationAnalysisBuilder:
             self.snapshot.variables = self._derive_variables(ir)
             self.snapshot.flows = self._derive_flows(source, grouping)
             self.snapshot.grouping = self._derive_grouping(grouping)
+            if getattr(service, "config", None) is not None:
+                self.snapshot.experimental_agent_xprs = getattr(
+                    service.config, "experimental_agent_xprs", False
+                )
+            if (
+                ir is not None
+                and getattr(ir, "xprs_designer_data", None) is not None
+            ):
+                self.snapshot.xprs_designer_data = ir.xprs_designer_data
+                self.snapshot.experimental_agent_xprs = True
+            self.snapshot.mermaid_chart = self._build_mermaid_chart()
             self._wire_callers()
+
             self.snapshot.references = self._derive_references(ir, bundle)
         except Exception as exc:
             logger.warning("analysis snapshot refresh failed: %s", exc)
@@ -205,7 +226,28 @@ class MigrationAnalysisBuilder:
         source: DFCXAgentIR | None,
         bundle: IRBundle | None,
     ) -> dict[str, Any]:
-        kpis: dict[str, Any] = {}
+        kpis: dict[str, Any] = {
+            "dfcx_flows": 0,
+            "dfcx_pages_total": 0,
+            "dfcx_intents": 0,
+            "dfcx_entity_types": 0,
+            "dfcx_webhooks": 0,
+            "dfcx_testcases": 0,
+            "dfcx_playbooks": 0,
+            "cxas_agents": 0,
+            "cxas_tools": 0,
+            "cxas_toolsets": 0,
+            "cxas_variables": 0,
+            "app_resource": "",
+            "stage_1_variables_before": "—",
+            "stage_1_variables_after": "—",
+            "stage_1_orphans_deleted": 0,
+            "tools_wired_post_consolidation": 0,
+            "stage_2_lint_baseline": "—",
+            "stage_2_lint_final": "—",
+            "fix_lint_baseline": "—",
+            "fix_lint_final": "—",
+        }
         if source is not None:
             kpis["dfcx_flows"] = len(getattr(source, "flows", []) or [])
             kpis["dfcx_pages_total"] = sum(
@@ -238,15 +280,18 @@ class MigrationAnalysisBuilder:
             stage_1 = (opt.get("stages") or {}).get("stage_1") or {}
             stage_2 = (opt.get("stages") or {}).get("stage_2") or {}
             if isinstance(stage_1, dict):
-                kpis["stage_1_variables_before"] = stage_1.get(
-                    "parameters_before"
+                kpis["stage_1_variables_before"] = (
+                    stage_1.get("parameters_before") or "—"
                 )
-                kpis["stage_1_variables_after"] = stage_1.get(
-                    "parameters_after"
+                kpis["stage_1_variables_after"] = (
+                    stage_1.get("parameters_after") or "—"
                 )
-            if isinstance(stage_2, dict):
-                kpis["stage_2_lint_baseline"] = stage_2.get("lint_baseline")
-                kpis["stage_2_lint_final"] = stage_2.get("lint_final")
+                kpis["stage_2_lint_baseline"] = (
+                    stage_2.get("lint_baseline") or "—"
+                )
+                kpis["stage_2_lint_final"] = stage_2.get("lint_final") or "—"
+                kpis["fix_lint_baseline"] = stage_2.get("lint_baseline") or "—"
+                kpis["fix_lint_final"] = stage_2.get("lint_final") or "—"
         return kpis
 
     def _derive_tools(
@@ -534,9 +579,11 @@ class MigrationAnalysisBuilder:
 
     def _render_html(self, data: dict[str, Any]) -> str:
         if self._template is None:
-            self._template = Template(
-                _TEMPLATE_PATH.read_text(encoding="utf-8")
-            )
+            from jinja2 import Environment, FileSystemLoader  # noqa: PLC0415
+
+            env = Environment(loader=FileSystemLoader(_TEMPLATE_PATH.parent))
+            self._template = env.get_template("analysis_report_template.html")
+
         data_json = json.dumps(data, default=str, separators=(",", ":"))
         return self._template.render(
             app_name=self.app_name,
@@ -544,6 +591,8 @@ class MigrationAnalysisBuilder:
             generated_at=self.snapshot.generated_at,
             data_json=data_json,
             mermaid_chart=self._build_mermaid_chart(),
+            experimental_agent_xprs=self.snapshot.experimental_agent_xprs,
+            html_path=str(self.html_path),
         )
 
     def _build_mermaid_chart(self) -> str:
@@ -588,6 +637,7 @@ class MigrationAnalysisBuilder:
 
     @staticmethod
     def _atomic_write(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(content, encoding="utf-8")
         os.replace(tmp, path)

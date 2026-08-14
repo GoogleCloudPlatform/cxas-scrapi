@@ -12,13 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Eval conversation classes for CXAS Scrapi."""
 
 import enum
+import functools
+import inspect
 import json
 import re
+import shutil
 import time
+import typing
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -30,7 +36,7 @@ from rich.progress import Progress
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
-from cxas_scrapi.core.sessions import Sessions
+from cxas_scrapi.core.sessions import BidiSessionError, Sessions
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.prompts import llm_user_prompts
 from cxas_scrapi.utils.eval_utils import (
@@ -64,7 +70,7 @@ class Step(pydantic.BaseModel):
     # Variable injects are only supported for the first step
     inject_variables: dict[str, Any] = {}
 
-    def model_dump(self, **kwargs):
+    def model_dump(self, **kwargs: typing.Any) -> typing.Any:
         kwargs.setdefault("exclude_defaults", True)
         return super().model_dump(**kwargs)
 
@@ -80,7 +86,7 @@ class StepProgress(pydantic.BaseModel):
     status: StepStatus = StepStatus.NOT_STARTED
     justification: str = ""
 
-    def model_dump(self, **kwargs):
+    def model_dump(self, **kwargs: typing.Any) -> typing.Any:
         kwargs.setdefault("exclude_defaults", True)
         return super().model_dump(**kwargs)
 
@@ -92,11 +98,11 @@ class SimulationReport:
         self,
         goals_df: pd.DataFrame,
         expectations_df: pd.DataFrame | None = None,
-    ):
+    ) -> None:
         self.goals_df = goals_df
         self.expectations_df = expectations_df
 
-    def __str__(self):
+    def __str__(self) -> typing.Any:
         green = "\033[1;32m"
         red = "\033[1;31m"
         reset = "\033[0m"
@@ -119,7 +125,7 @@ class SimulationReport:
 
         return res
 
-    def _repr_html_(self):
+    def _repr_html_(self) -> typing.Any:
         html = "<h3>Goal Progress</h3>" + self.goals_df._repr_html_()
         if self.expectations_df is not None:
             html += "<h3>Expectations</h3>" + self.expectations_df._repr_html_()
@@ -129,7 +135,7 @@ class SimulationReport:
 class Conversation:
     """Base class for users."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.current_turn = 0
         self.utterance_turn = 0
         self.transcript = []
@@ -145,6 +151,13 @@ class Conversation:
     def _add_agent_response(self, agent_response: str) -> None:
         """Adds an agent response to the transcript."""
         self.transcript.append(f"Agent: {agent_response}")
+
+    def _add_agent_tool_calls(self, tool_calls: list[Any]) -> None:
+        """Adds agent tool calls to the transcript."""
+        for tc in tool_calls:
+            self.transcript.append(
+                f"Agent Action: Call Tool {tc.name} with args {tc.args}"
+            )
 
     def _add_user_utterance(self, user_utterance: str) -> None:
         """Adds a user utterance to the transcript."""
@@ -176,11 +189,13 @@ class LLMUserConversation(Conversation):
         genai_model: str,
         test_case: dict[str, Any],
         max_turns: int = _MAX_TURNS,
-    ):
+        initial_utterance: str = _FIRST_UTTERANCE,
+    ) -> None:
         super().__init__()
         self.genai_client = genai_client
         self.genai_model = genai_model
         self.test_case = test_case
+        self.initial_utterance = initial_utterance
         self.max_turns = max_turns
         self.steps_progress = []
         for step in test_case["steps"]:
@@ -198,6 +213,23 @@ class LLMUserConversation(Conversation):
                 )
             )
         self.expectations = test_case.get("expectations", [])
+        audio_exps = test_case.get("audio_expectations", [])
+        self.audio_expectations = []
+        # The 'requires_audio_paths' flag informs the evaluation engine
+        # (evaluate_expectations) that it must retrieve and attach the raw
+        # agent output WAV file for this specific expectation turn. This
+        # enables multimodal audio audits while avoiding the latency/cost of
+        # uploading audio files for standard text-only expectations.
+        for exp in audio_exps:
+            if isinstance(exp, dict):
+                exp_dict = dict(exp)
+                exp_dict["requires_audio_paths"] = True
+            else:
+                exp_dict = {
+                    "expectation": str(exp),
+                    "requires_audio_paths": True,
+                }
+            self.audio_expectations.append(exp_dict)
         self.expectation_results: list[ExpectationResult] = []
 
     def _check_conversation_status(self) -> bool:
@@ -206,12 +238,9 @@ class LLMUserConversation(Conversation):
             return False
 
         # If all steps are completed, then the conversation is complete.
-        if all(
+        return not all(
             item.status == StepStatus.COMPLETED for item in self.steps_progress
-        ):
-            return False
-
-        return True
+        )
 
     def _get_active_step_index(self) -> int | None:
         """Finds the index of the first step that is not completed."""
@@ -259,6 +288,10 @@ class LLMUserConversation(Conversation):
         if not self._check_conversation_status():
             return "", {}
 
+        if self.current_turn == 0:
+            session_params = self.test_case.get("session_parameters", {})
+            return self.initial_utterance, session_params
+
         active_idx = self._get_active_step_index()
         if active_idx is not None:
             active_step_prog = self.steps_progress[active_idx]
@@ -276,10 +309,6 @@ class LLMUserConversation(Conversation):
                 )
                 merged_vars = {**session_params, **inject_vars}
                 return utterance, merged_vars
-
-        if self.current_turn == 0:
-            session_params = self.test_case.get("session_parameters", {})
-            return _FIRST_UTTERANCE, session_params
 
         prompt = self._prepare_llm_prompt()
 
@@ -340,6 +369,28 @@ class LLMUserConversation(Conversation):
         return SimulationReport(goals_df, expectations_df)
 
 
+def cleanup_session_dir(func: typing.Any) -> typing.Any:
+    """Decorator to ensure session temporary directory is deleted on exit."""
+    sig = inspect.signature(func)
+
+    @functools.wraps(func)
+    def wrapper(self, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:  # noqa: ANN001
+        bound = sig.bind(self, *args, **kwargs)
+        bound.apply_defaults()
+
+        session_id = bound.arguments.get("session_id")
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+            bound.arguments["session_id"] = session_id
+
+        try:
+            return func(*bound.args, **bound.kwargs)
+        finally:
+            shutil.rmtree(f"/tmp/scrapi_evals/{session_id}", ignore_errors=True)
+
+    return wrapper
+
+
 class SimulationEvals(Apps):
     """Wrapper class to simulate entire multi-turn conversations with a
     CXAS Agent."""
@@ -351,14 +402,20 @@ class SimulationEvals(Apps):
         self,
         app_name: str,
         rate_limiter: RateLimiter | None = None,
-        **kwargs,
-    ):
+        expectations_only: bool = False,
+        deployment_id: str | None = None,
+        **kwargs: typing.Any,
+    ) -> None:
         self.app_name = app_name
+        self.expectations_only = expectations_only
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
         self.sessions_client = Sessions(
-            app_name, rate_limiter=rate_limiter, **kwargs
+            app_name,
+            deployment_id=deployment_id,
+            rate_limiter=rate_limiter,
+            **kwargs,
         )
         self.tools_map = Tools(app_name=app_name, **kwargs).get_tools_map()
 
@@ -374,17 +431,18 @@ class SimulationEvals(Apps):
 
     def _parse_agent_response(
         self, response: Any
-    ) -> tuple[str, list[str], bool]:
+    ) -> tuple[str, list[str], bool, list[Any]]:
         """Parses the agent response to extract text and trace information.
 
         Returns:
-            A tuple of (agent_text, trace_chunks, session_ended)
+            A tuple of (agent_text, trace_chunks, session_ended, tool_calls)
         """
         parsed = ParsedSessionResponse(response, tools_map=self.tools_map)
         return (
             parsed.consolidated_agent_text,
             parsed.detailed_trace,
             parsed.session_ended,
+            parsed.tool_calls,
         )
 
     def _evaluate_expectations(
@@ -393,12 +451,28 @@ class SimulationEvals(Apps):
         detailed_trace: list[str],
         model: str,
         console_logging: bool,
+        capture_agent_audio: bool = False,
     ) -> None:
         """Evaluates expectations against the conversation trace.
 
         Modifies `eval_conv.expectation_results` in place.
         """
-        if eval_conv.expectations and isinstance(eval_conv.expectations, list):
+        audio_paths = (
+            getattr(eval_conv, "agent_audio_paths", None)
+            if capture_agent_audio
+            else None
+        )
+
+        all_expectations = []
+        if eval_conv.expectations:
+            all_expectations.extend(eval_conv.expectations)
+        if (
+            hasattr(eval_conv, "audio_expectations")
+            and eval_conv.audio_expectations
+        ):
+            all_expectations.extend(eval_conv.audio_expectations)
+
+        if all_expectations:
             if console_logging:
                 print("\nEvaluating Expectations...")
 
@@ -406,7 +480,8 @@ class SimulationEvals(Apps):
                 gemini_client=self.genai_client,
                 model_name=model,
                 trace=detailed_trace,
-                expectations=eval_conv.expectations,
+                expectations=all_expectations,
+                audio_paths=audio_paths,
             )
 
     def _send_request_with_retry(
@@ -416,45 +491,46 @@ class SimulationEvals(Apps):
         variables: dict[str, Any],
         modality: str,
         console_logging: bool,
+        turn_num: int | None = None,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        voice_config: dict[str, Any] | None = None,
     ) -> Any:
         """Sends a request to the CES Agent with exponential backoff for
         transient errors.
         """
+        run_kwargs = {
+            "session_id": session_id,
+            "variables": variables,
+            "modality": modality,
+            "turn_num": turn_num,
+            "capture_agent_audio": capture_agent_audio,
+            "background_noise_file": background_noise_file,
+            "burst_noise_files": burst_noise_files,
+            "use_tool_fakes": use_tool_fakes,
+        }
+        if voice_config is not None:
+            run_kwargs["voice_config"] = voice_config
+
         response = None
         for attempt in range(self.max_retries):
             try:
                 if user_utterance.startswith("event:"):
                     response = self.sessions_client.run(
-                        session_id=session_id,
                         event=user_utterance.removeprefix("event:").strip(),
-                        variables=variables,
-                        modality=modality,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
-                        use_tool_fakes=use_tool_fakes,
+                        **run_kwargs,
                     )
                 elif user_utterance.startswith("dtmf:"):
                     response = self.sessions_client.run(
-                        session_id=session_id,
                         dtmf=user_utterance.removeprefix("dtmf:").strip(),
-                        variables=variables,
-                        modality=modality,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
-                        use_tool_fakes=use_tool_fakes,
+                        **run_kwargs,
                     )
                 else:
                     response = self.sessions_client.run(
-                        session_id=session_id,
                         text=user_utterance,
-                        variables=variables,
-                        modality=modality,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
-                        use_tool_fakes=use_tool_fakes,
+                        **run_kwargs,
                     )
                 break
             except Exception as e:
@@ -481,100 +557,191 @@ class SimulationEvals(Apps):
             if step_prog.justification:
                 print(f"  Justification: {step_prog.justification}")
 
+    @cleanup_session_dir
     def simulate_conversation(
         self,
         test_case: dict[str, Any],
-        model: str = _DEFAULT_GEMINI_MODEL,
+        sim_user_model: str | None = _DEFAULT_GEMINI_MODEL,
+        eval_model: str | None = _DEFAULT_GEMINI_MODEL,
         session_id: str | None = None,
         console_logging: bool = True,
         modality: str = "text",
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        voice_config: dict[str, Any] | None = None,
+        initial_utterance: str = _FIRST_UTTERANCE,
+        skip_playback_wait: bool = False,
+        single_bidi_stream: bool = False,
+        **kwargs: Any,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
 
         Args:
             test_case: The test case dictionary defining evaluation steps.
-            model: The Gemini model used for evaluating turns.
+            sim_user_model: The Gemini model used for the simulated user.
+            eval_model: The Gemini model used for evaluating expectations.
             console_logging: Whether to print interaction transcript to
                 the console.
+            single_bidi_stream: For audio modality, keep one persistent
+                bidi WebSocket open for the whole conversation instead of
+                opening a new connection per turn (the default).
         """
+        sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
+        eval_model = eval_model or _DEFAULT_GEMINI_MODEL
         if session_id is None:
             session_id = str(uuid.uuid4())
+        voice_config = voice_config or test_case.get("voice_config")
         eval_conv = LLMUserConversation(
             genai_client=self.genai_client,
-            genai_model=model,
+            genai_model=sim_user_model,
             test_case=test_case,
+            initial_utterance=initial_utterance,
         )
 
-        if console_logging:
-            print(
-                f"Starting simulated conversation with session ID: {session_id}"
-            )
+        # Initialize audio paths tracking
+        eval_conv.agent_audio_paths = {}
+        current_sim_turn = 0
 
-        # Initialize the first turn manually
-        user_utterance, variables = eval_conv.next_user_utterance()
-        accumulated_variables = {}
-        if variables:
-            accumulated_variables.update(variables)
-
-        detailed_trace = []
-        detailed_trace.append(f"User: {user_utterance}")
-
-        while user_utterance:
-            response = self._send_request_with_retry(
-                session_id,
-                user_utterance,
-                accumulated_variables,
-                modality,
-                console_logging,
-                background_noise_file,
-                burst_noise_files,
+        interactive_session = None
+        if modality == "audio" and single_bidi_stream:
+            client = self.sessions_client
+            interactive_session = client.create_interactive_session(
+                session_id=session_id,
+                capture_agent_audio=capture_agent_audio,
+                background_noise_file=background_noise_file,
                 use_tool_fakes=use_tool_fakes,
+                skip_playback_wait=skip_playback_wait,
+                voice_config=voice_config,
             )
-            if not response:
-                break
+            interactive_session.start()
 
+        try:
             if console_logging:
-                self.sessions_client.parse_result(response)
+                print(
+                    f"Starting simulated conversation with session ID: "
+                    f"{session_id}"
+                )
 
-            agent_text, trace_chunks, session_ended = (
-                self._parse_agent_response(response)
-            )
-            detailed_trace.append("\n".join(trace_chunks))
-
-            if session_ended:
-                if agent_text:
-                    eval_conv._add_agent_response(agent_text)
-                # Ensure the final agent response is evaluated
-                # so that steps_progress is updated on session end.
-                eval_conv._next_user_utterance()
-                if console_logging:
-                    print(
-                        "\nSession has been closed by the Agent via "
-                        "end_session tool."
-                    )
-                break
-
-            # Get the next simulated user utterance based on the agent's
-            # response
-            user_utterance, variables = eval_conv.next_user_utterance(
-                agent_text
-            )
+            # Initialize the first turn manually
+            user_utterance, variables = eval_conv.next_user_utterance()
+            accumulated_variables = {}
             if variables:
                 accumulated_variables.update(variables)
-            if user_utterance:
-                detailed_trace.append(f"User: {user_utterance}")
 
-        if console_logging:
-            self._print_completion_status(eval_conv)
+            detailed_trace = []
+            detailed_trace.append(f"User: {user_utterance}")
 
-        self._evaluate_expectations(
-            eval_conv, detailed_trace, model, console_logging
-        )
-        eval_conv.detailed_trace = detailed_trace
-        return eval_conv
+            while user_utterance:
+                if modality == "audio" and interactive_session:
+                    response = interactive_session.send_turn(
+                        user_utterance,
+                        accumulated_variables,
+                    )
+                    # Check if session ended via WebSocket endSession
+                    if isinstance(response, dict) and response.get(
+                        "session_ended"
+                    ):
+                        if response.get("connection_error"):
+                            err_msg = (
+                                f"Interactive session WebSocket error: "
+                                f"{response['connection_error']}"
+                            )
+                            raise BidiSessionError(err_msg)
+                        break
+                else:
+                    response = self._send_request_with_retry(
+                        session_id=session_id,
+                        user_utterance=user_utterance,
+                        variables=accumulated_variables,
+                        modality=modality,
+                        console_logging=console_logging,
+                        turn_num=current_sim_turn,
+                        capture_agent_audio=capture_agent_audio,
+                        background_noise_file=background_noise_file,
+                        burst_noise_files=burst_noise_files,
+                        use_tool_fakes=use_tool_fakes,
+                        voice_config=voice_config,
+                    )
+                if not response:
+                    break
+
+                # Extract and save the agent turn audio WAV if present
+                # in response.
+                if response and getattr(response, "agent_audio_paths", None):
+                    audio_path = response.agent_audio_paths.get(0)
+                    if audio_path:
+                        paths = eval_conv.agent_audio_paths
+                        paths[current_sim_turn] = audio_path
+
+                if console_logging:
+                    self.sessions_client.parse_result(response)
+
+                agent_text, trace_chunks, session_ended, tool_calls = (
+                    self._parse_agent_response(response)
+                )
+                detailed_trace.append("\n".join(trace_chunks))
+
+                if session_ended:
+                    if agent_text:
+                        eval_conv._add_agent_response(agent_text)
+                    eval_conv._add_agent_tool_calls(tool_calls)
+                    # Ensure the final agent response is evaluated
+                    # so that steps_progress is updated on session end.
+                    eval_conv._next_user_utterance()
+                    if console_logging:
+                        print(
+                            "\nSession has been closed by the Agent via "
+                            "end_session tool."
+                        )
+                    # Mark current step as completed if the session ending
+                    # is a valid success (escalation evals)
+                    for prog in eval_conv.steps_progress:
+                        criteria = prog.step.success_criteria.lower()
+                        if prog.status != StepStatus.COMPLETED and (
+                            "escalat" in criteria
+                            or "transfer" in criteria
+                            or "being transferred" in criteria
+                        ):
+                            prog.status = StepStatus.COMPLETED
+                            prog.justification = (
+                                "Agent ended session via escalation/transfer — "
+                                "matches success criteria."
+                            )
+                    break
+
+                # Get the next simulated user utterance based on the agent's
+                # response
+                eval_conv._add_agent_tool_calls(tool_calls)
+                user_utterance, variables = eval_conv.next_user_utterance(
+                    agent_text
+                )
+                if variables:
+                    accumulated_variables.update(variables)
+                if user_utterance:
+                    detailed_trace.append(f"User: {user_utterance}")
+
+                current_sim_turn += 1
+
+            if console_logging:
+                self._print_completion_status(eval_conv)
+
+            self._evaluate_expectations(
+                eval_conv,
+                detailed_trace,
+                eval_model,
+                console_logging,
+                capture_agent_audio=capture_agent_audio,
+            )
+            eval_conv._session_id = session_id
+            eval_conv.session_id = session_id
+            eval_conv._detailed_trace = detailed_trace
+            eval_conv.detailed_trace = detailed_trace
+            return eval_conv
+        finally:
+            if interactive_session:
+                interactive_session.close()
 
     def _prepare_simulation_jobs(
         self, test_cases: list[dict[str, Any]], runs: int
@@ -591,13 +758,17 @@ class SimulationEvals(Apps):
         tc: dict[str, Any],
         run_idx: int,
         runs: int,
-        model: str,
+        sim_user_model: str,
+        eval_model: str,
         modality: str,
         verbose: bool,
         parallel: int,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        skip_playback_wait: bool = False,
+        single_bidi_stream: bool = False,
     ) -> dict[str, Any]:
         """Runs a single simulation job and returns the results."""
         name = tc["name"]
@@ -608,13 +779,17 @@ class SimulationEvals(Apps):
 
             conv = self.simulate_conversation(
                 test_case=tc,
-                model=model,
+                sim_user_model=sim_user_model,
+                eval_model=eval_model,
                 session_id=session_id,
                 console_logging=verbose and parallel <= 1,
                 modality=modality,
+                capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
                 burst_noise_files=burst_noise_files,
                 use_tool_fakes=use_tool_fakes,
+                skip_playback_wait=skip_playback_wait,
+                single_bidi_stream=single_bidi_stream,
             )
             duration_s = round(time.time() - _start, 1)
 
@@ -632,7 +807,9 @@ class SimulationEvals(Apps):
             total_exp = len(conv.expectation_results)
 
             passed = goals_completed == total_goals
-            if total_exp > 0:
+            if getattr(self, "expectations_only", False) and total_exp > 0:
+                passed = expectations_met == total_exp
+            elif total_exp > 0:
                 passed = passed and (expectations_met == total_exp)
 
             status = "PASS" if passed else "FAIL"
@@ -692,12 +869,17 @@ class SimulationEvals(Apps):
         jobs: list[tuple[dict[str, Any], int]],
         runs: int,
         parallel: int,
-        model: str,
+        sim_user_model: str,
+        eval_model: str,
         modality: str,
         verbose: bool,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        skip_playback_wait: bool = False,
+        single_bidi_stream: bool = False,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[dict[str, Any]]:
         """Aggregates results from multiple simulation jobs."""
         results = []
@@ -711,16 +893,22 @@ class SimulationEvals(Apps):
                             tc,
                             run_idx,
                             runs,
-                            model,
+                            sim_user_model,
+                            eval_model,
                             modality,
                             verbose,
                             parallel,
-                            background_noise_file,
-                            burst_noise_files,
+                            capture_agent_audio=capture_agent_audio,
+                            background_noise_file=background_noise_file,
+                            burst_noise_files=burst_noise_files,
                             use_tool_fakes=use_tool_fakes,
+                            skip_playback_wait=skip_playback_wait,
+                            single_bidi_stream=single_bidi_stream,
                         )
                     )
                     progress.update(task_id, advance=1)
+                    if progress_callback:
+                        progress_callback(len(results), len(jobs))
             else:
                 max_workers = min(parallel, 25)
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -730,19 +918,25 @@ class SimulationEvals(Apps):
                             tc,
                             run_idx,
                             runs,
-                            model,
+                            sim_user_model,
+                            eval_model,
                             modality,
                             verbose,
                             parallel,
-                            background_noise_file,
-                            burst_noise_files,
+                            capture_agent_audio=capture_agent_audio,
+                            background_noise_file=background_noise_file,
+                            burst_noise_files=burst_noise_files,
                             use_tool_fakes=use_tool_fakes,
+                            skip_playback_wait=skip_playback_wait,
+                            single_bidi_stream=single_bidi_stream,
                         ): (tc["name"], run_idx)
                         for tc, run_idx in jobs
                     }
                     for future in as_completed(futures):
                         results.append(future.result())
                         progress.update(task_id, advance=1)
+                        if progress_callback:
+                            progress_callback(len(results), len(jobs))
 
         return results
 
@@ -751,35 +945,52 @@ class SimulationEvals(Apps):
         test_cases: list[dict[str, Any]],
         runs: int = 1,
         parallel: int = 1,
-        model: str = _DEFAULT_GEMINI_MODEL,
+        sim_user_model: str | None = _DEFAULT_GEMINI_MODEL,
+        eval_model: str | None = _DEFAULT_GEMINI_MODEL,
         modality: str = "text",
         verbose: bool = False,
+        capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         burst_noise_files: list[str] | None = None,
         use_tool_fakes: bool = False,
+        expectations_only: bool | None = None,
+        skip_playback_wait: bool = False,
+        single_bidi_stream: bool = False,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[dict[str, Any]]:
+        if expectations_only is not None:
+            self.expectations_only = expectations_only
         """Runs multiple simulations, optionally in parallel.
 
         Args:
             test_cases: List of test case dictionaries.
             runs: Number of runs per test case.
             parallel: Number of parallel workers (capped at 25).
-            model: Gemini model to use.
+            sim_user_model: Gemini model to use for simulated user.
+            eval_model: Gemini model to use for evaluating expectations.
             modality: 'text' or 'audio'.
             verbose: Whether to log to console (only active if parallel=1).
             use_tool_fakes: Use fake tools for the session if available.
+            capture_agent_audio: If True, capture real-time agent audio WAVs.
         """
+        sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
+        eval_model = eval_model or _DEFAULT_GEMINI_MODEL
         jobs = self._prepare_simulation_jobs(test_cases, runs)
         return self._aggregate_simulation_results(
             jobs,
             runs,
             parallel,
-            model,
+            sim_user_model,
+            eval_model,
             modality,
             verbose,
-            background_noise_file,
-            burst_noise_files,
+            capture_agent_audio=capture_agent_audio,
+            background_noise_file=background_noise_file,
+            burst_noise_files=burst_noise_files,
             use_tool_fakes=use_tool_fakes,
+            skip_playback_wait=skip_playback_wait,
+            single_bidi_stream=single_bidi_stream,
+            progress_callback=progress_callback,
         )
 
     def _add_agent_text(self, turn: Turn, text: str) -> None:

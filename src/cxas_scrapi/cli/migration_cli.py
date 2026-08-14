@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """CLI for DFCX→CXAS migration.
 
 Two entry points:
@@ -30,6 +31,7 @@ import logging
 import os
 import re
 import sys
+import typing
 from typing import Any
 
 from google.cloud.dialogflowcx_v3beta1 import services as cx_services
@@ -54,34 +56,44 @@ from cxas_scrapi.migration.service import MigrationService
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_input(text: str) -> str:
+    if not text:
+        return text
+    # Strip ANSI escape sequences (like \x1b[A, \x1b[B, etc.)
+    text = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", text)
+    # Strip any other raw control characters
+    text = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", text)
+    return text.strip()
+
+
 class Tee:
     """Duplicates stdout/stderr to a file, preserving all raw formatting
     and ANSI escape colors.
     """
 
-    def __init__(self, filepath: str):
-        self.file = open(filepath, "a", encoding="utf-8")
+    def __init__(self, filepath: str) -> None:
+        self.file = open(filepath, "a", encoding="utf-8")  # noqa: SIM115
         self.stdout = sys.stdout
         self.stderr = sys.stderr
         sys.stdout = self
         sys.stderr = self
 
-    def write(self, data):
+    def write(self, data: typing.Any) -> None:
         self.stdout.write(data)
         self.file.write(data)
         self.file.flush()
 
-    def flush(self):
+    def flush(self) -> None:
         self.stdout.flush()
         self.file.flush()
 
     def isatty(self) -> bool:
         return self.stdout.isatty()
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: typing.Any) -> typing.Any:
         return getattr(self.stdout, name)
 
-    def close(self):
+    def close(self) -> None:
         if sys.stdout is self:
             sys.stdout = self.stdout
         if sys.stderr is self:
@@ -94,7 +106,7 @@ _current_tee = None
 _current_log_handler = None
 
 
-def start_tee_logging(target_name: str):
+def start_tee_logging(target_name: str) -> None:
     """Starts duplicating standard stdout/stderr outputs to the target
     log file.
     """
@@ -124,7 +136,7 @@ def start_tee_logging(target_name: str):
     )
 
 
-def close_tee_logging():
+def close_tee_logging() -> None:
     """Stops duplicating stdout/stderr and closes the active Tee file
     and dynamic logger handlers.
     """
@@ -147,7 +159,7 @@ def close_tee_logging():
 class MigrationCLI:
     """Handles interactive CLI prompts and status reporting."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.console = Console()
         # Setup Rich logging
 
@@ -191,10 +203,12 @@ class MigrationCLI:
         """Prompt user for configuration and return a MigrationConfig object."""
         self.console.print("\n[bold blue]=== Migration Configuration ===[/]\n")
 
-        project_id = Prompt.ask("Enter Google Cloud Project ID")
+        project_id = _sanitize_input(
+            Prompt.ask("Enter Google Cloud Project ID")
+        )
 
-        target_name = Prompt.ask(
-            "Enter Target Agent Name", default=default_agent_name
+        target_name = _sanitize_input(
+            Prompt.ask("Enter Target Agent Name", default=default_agent_name)
         )
 
         raw_env_choice = (
@@ -208,10 +222,7 @@ class MigrationCLI:
             .upper()
         )
 
-        if raw_env_choice == "P":
-            env = "PROD"
-        else:
-            env = "AUTOPUSH"
+        env = "PROD" if raw_env_choice == "P" else "AUTOPUSH"
 
         model = Prompt.ask(
             "Enter Global App Model",
@@ -245,12 +256,18 @@ class MigrationCLI:
             profile = "standard"
             optimize_for_cxas = True
             persist_bundle = True
+            web_confirm_grouping = True
             gen_report = True
             architecture = "hub-and-spoke"
 
             # Ask subsequent conditional options (defaulting to standard
             # best practices)
             gen_unit_tests = Confirm.ask("Generate Unit Tests?", default=True)
+            experimental_agent_xprs = Confirm.ask(
+                "Enable Experimental Agent xprs Designer? "
+                "[yellow]*in progress, not fully connected*[/]",
+                default=False,
+            )
             gen_hillclimbing_evals = Confirm.ask(
                 "Generate Hillclimbing Evals? [yellow]*feature coming*[/]",
                 default=False,
@@ -277,11 +294,13 @@ class MigrationCLI:
             profile = "direct"
             optimize_for_cxas = False
             persist_bundle = False
+            web_confirm_grouping = False
             gen_report = True
             architecture = "hub-and-spoke"
 
             # Skip subsequent questions and use safe direct defaults
             gen_unit_tests = False
+            experimental_agent_xprs = False
             gen_hillclimbing_evals = False
             eval_runner_target = "Custom API Runner"
 
@@ -299,17 +318,27 @@ class MigrationCLI:
                     "Persist IR bundle for stage-resume?",
                     default=True,
                 )
+                web_confirm_grouping = Confirm.ask(
+                    "Review groupings in a web browser tab?",
+                    default=True,
+                )
             else:
                 architecture = "hub-and-spoke"
                 persist_bundle = Confirm.ask(
                     "Persist IR bundle for stage-resume?",
                     default=False,
                 )
+                web_confirm_grouping = False
 
             gen_report = Confirm.ask("Generate Migration Report?", default=True)
 
             # Subsequent questions are shown for Custom too
             gen_unit_tests = Confirm.ask("Generate Unit Tests?", default=True)
+            experimental_agent_xprs = Confirm.ask(
+                "Enable Experimental Agent xprs Designer? "
+                "[yellow]*in progress, not fully connected*[/]",
+                default=False,
+            )
             gen_hillclimbing_evals = Confirm.ask(
                 "Generate Hillclimbing Evals? [yellow]*feature coming*[/]",
                 default=False,
@@ -335,6 +364,8 @@ class MigrationCLI:
             interactive=True,
             optimize_for_cxas=optimize_for_cxas,
             persist_bundle=persist_bundle,
+            web_confirm_grouping=web_confirm_grouping,
+            experimental_agent_xprs=experimental_agent_xprs,
         )
 
     def select_resources(self, agent_data: DFCXAgentIR) -> DFCXAgentIR:
@@ -441,7 +472,7 @@ class MigrationCLI:
 
     def run_dependency_analysis(
         self, agent_data: DFCXAgentIR, filtered_data: DFCXAgentIR
-    ):
+    ) -> None:
         """Run dependency analysis and show results."""
         self.console.print("\n[bold blue]=== Dependency Analysis ===[/]\n")
 
@@ -477,7 +508,7 @@ class MigrationCLI:
                 det = analyzer.get_details(rid)
                 self.console.print(f"  - [{det['type']}] {det['name']}")
 
-    def display_status(self, ir: MigrationIR):
+    def display_status(self, ir: MigrationIR) -> None:
         """Display the status of resources in the IR."""
         self.console.print("\n[bold blue]=== Migration Status ===[/]\n")
 
@@ -494,7 +525,7 @@ class MigrationCLI:
 
         self.console.print(table)
 
-    def show_visualizations(self, prefix: str = "agent"):
+    def show_visualizations(self, prefix: str = "agent") -> None:
         """Print links to visualizations."""
         self.console.print("\n[bold blue]=== Visualizations ===[/]\n")
         self.console.print(
@@ -518,17 +549,23 @@ class MigrationCLI:
         )
         return match.group(0) if match else raw_input
 
-    def run(self, default_agent_name: str, cx_api: Any):
+    def run(self, default_agent_name: str, cx_api: Any) -> None:
         """Runs the full interactive CLI dashboard."""
+        if not sys.stdin.isatty():
+            self.console.print(
+                "[red]ERROR: Migration dashboard requires an interactive "
+                "terminal.[/]"
+            )
+            sys.exit(1)
+
         self.console.print(
             "[bold green]Welcome to the CXAS Migration Tool![/bold green]"
         )
 
-        if not self.check_auth():
-            if not Confirm.ask(
-                "Do you want to proceed anyway? (May fail later)", default=False
-            ):
-                return
+        if not self.check_auth() and not Confirm.ask(
+            "Do you want to proceed anyway? (May fail later)", default=False
+        ):
+            return
 
         self.console.print(
             "This tool performs optimized best-practices DFCX to CXAS agents "
@@ -556,16 +593,18 @@ class MigrationCLI:
                 "projects/my-project-123/locations/global/agents/"
                 "a4371f49-5982-4293-801b-551cf940ab65\n"
             )
-            raw_input = Prompt.ask("Enter Source Agent ID")
+            raw_input = _sanitize_input(Prompt.ask("Enter Source Agent ID"))
             agent_id = self._parse_agent_id(raw_input)
             self.console.print(f"Loading Agent ID: {agent_id} ...")
             agent_data = cx_api.fetch_full_agent_details(
                 agent_id, use_export=True
             )
         else:
-            zip_path = Prompt.ask(
-                "Enter path to local agent export (.zip)",
-                default="~/Desktop/agent-examples/exported_agent_name.zip",
+            zip_path = _sanitize_input(
+                Prompt.ask(
+                    "Enter path to local agent export (.zip)",
+                    default="~/Desktop/agent-examples/exported_agent_name.zip",
+                )
             )
             zip_path = os.path.expanduser(zip_path)
             self.console.print(f"Loading agent from {zip_path}...")
@@ -628,7 +667,7 @@ class MigrationCLI:
         if Confirm.ask("START MIGRATION?", default=True):
             config.source_agent_data_override = filtered_data
 
-            async def _run():
+            async def _run() -> None:
                 await migration_service.run_migration(
                     source_cx_agent_id=agent_id,
                     config=config,
@@ -700,8 +739,12 @@ class MigrationCLI:
             try:
 
                 async def _tui_callback(
-                    ir, groupings, consolidator, root_key, dep_summary
-                ):
+                    ir: typing.Any,
+                    groupings: typing.Any,
+                    consolidator: typing.Any,
+                    root_key: typing.Any,
+                    dep_summary: typing.Any,
+                ) -> typing.Any:
                     return await grouping_review.interactive_review(
                         ir=ir,
                         groupings=groupings,
@@ -713,7 +756,9 @@ class MigrationCLI:
 
                 await migration_service.run_stage_1(
                     bundle=bundle,
-                    grouping_callback=_tui_callback,
+                    grouping_callback=(
+                        None if config.web_confirm_grouping else _tui_callback
+                    ),
                     version_label="0.0.3",
                     dedup_version_label="0.0.2",
                     persist_bundle_path=(
@@ -729,7 +774,7 @@ class MigrationCLI:
                 return
 
         # 2.5 Instruction state machines & tool mocks generation (Stage 2).
-        if config.optimize_for_cxas:
+        if config.consolidate:
             try:
                 await migration_service.run_stage_2(
                     version_label="0.0.4",
@@ -879,6 +924,9 @@ def run_end_to_end(args: argparse.Namespace) -> None:
             args, "eval_runner_target", "Custom API Runner"
         )
     elif profile == "direct":
+        # Phase 5 alignment: --profile direct must map to no_consolidate
+        # so the always-on default doesn't silently re-shape the app
+        # under this profile. Stage 1/2/3 stay skipped; no grouping gate.
         optimize_for_cxas = False
         persist_bundle = False
         gen_report = True
@@ -887,7 +935,19 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         gen_hillclimbing_evals = False
         eval_runner_target = "Custom API Runner"
     else:  # "custom"
-        optimize_for_cxas = not getattr(args, "no_optimize", False)
+        # Phase 5: --no-consolidate is the canonical opt-out; --no-optimize
+        # is a deprecated alias.
+        no_consolidate = getattr(args, "no_consolidate", False) or getattr(
+            args, "no_optimize", False
+        )
+        if getattr(args, "no_optimize", False) and not getattr(
+            args, "no_consolidate", False
+        ):
+            _sub_console.print(
+                "[yellow]warning: --no-optimize is deprecated; use"
+                " --no-consolidate instead.[/]"
+            )
+        optimize_for_cxas = not no_consolidate
         persist_bundle = getattr(args, "persist_bundle", False)
         gen_report = not getattr(args, "no_report", False)
         architecture = getattr(args, "architecture", "hub-and-spoke")
@@ -897,6 +957,20 @@ def run_end_to_end(args: argparse.Namespace) -> None:
             args, "eval_runner_target", "Custom API Runner"
         )
 
+    # Phase 5: HTML grouping confirmation gate is the default. Opt-out
+    # via --no-web-confirm. Always off when consolidation is skipped.
+    # --profile direct implies no_consolidate so the always-on flip
+    # doesn't silently re-shape apps under that profile.
+    no_consolidate_flag = (
+        getattr(args, "no_consolidate", False)
+        or getattr(args, "no_optimize", False)
+        or profile == "direct"
+    )
+    web_confirm_grouping = not no_consolidate_flag and not getattr(
+        args, "no_web_confirm", False
+    )
+    auto_confirm_grouping = getattr(args, "auto_confirm_grouping", False)
+
     config = MigrationConfig(
         project_id=args.project_id,
         target_name=args.target_name,
@@ -905,12 +979,21 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         profile=profile,
         architecture=architecture,
         optimize_for_cxas=optimize_for_cxas,
+        no_consolidate=no_consolidate_flag,
         persist_bundle=persist_bundle,
         gen_report=gen_report,
         gen_unit_tests=gen_unit_tests,
         gen_hillclimbing_evals=gen_hillclimbing_evals,
         eval_runner_target=eval_runner_target,
         source_agent_data_override=agent_data,
+        web_confirm_grouping=web_confirm_grouping,
+        web_confirm_host=getattr(args, "web_confirm_host", "127.0.0.1"),
+        web_confirm_port=getattr(args, "web_confirm_port", 0),
+        web_confirm_timeout_s=getattr(args, "web_confirm_timeout", 1800),
+        auto_confirm_grouping=auto_confirm_grouping,
+        experimental_agent_xprs=getattr(args, "experimental_agent_xprs", False)
+        or os.environ.get("CXAS_EXPERIMENTAL_XPRS", "").lower()
+        in ("1", "true", "yes"),
     )
 
     service = MigrationService(
@@ -919,7 +1002,7 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         default_model=args.model,
     )
 
-    async def _main():
+    async def _main() -> None:
         await service.run_migration(
             source_cx_agent_id=args.source_agent_id or "uploaded-agent",
             config=config,
@@ -943,7 +1026,19 @@ def run_stage_1(args: argparse.Namespace) -> None:
     service, bundle, bundle_path = _restore_service_and_bundle(args)
     persist_path = None if args.no_persist else bundle_path
 
-    async def _main():
+    # Apply CLI overrides to the restored configuration
+    if hasattr(args, "no_web_confirm"):
+        bundle.config.web_confirm_grouping = not args.no_web_confirm
+    if getattr(args, "web_confirm_host", None):
+        bundle.config.web_confirm_host = args.web_confirm_host
+    if getattr(args, "web_confirm_port", None) is not None:
+        bundle.config.web_confirm_port = args.web_confirm_port
+    if getattr(args, "web_confirm_timeout", None) is not None:
+        bundle.config.web_confirm_timeout_s = args.web_confirm_timeout
+    if hasattr(args, "auto_confirm_grouping"):
+        bundle.config.auto_confirm_grouping = args.auto_confirm_grouping
+
+    async def _main() -> typing.Any:
         return await service.run_stage_1(
             bundle=bundle,
             grouping_json_path=args.grouping_json,
@@ -968,7 +1063,7 @@ def run_stage_2(args: argparse.Namespace) -> None:
     persist_path = None if args.no_persist else bundle_path
     target_name = bundle.config.target_name
 
-    async def _main():
+    async def _main() -> None:
         await service.run_stage_2(
             version_label=args.version_label,
             generate_unit_tests=not args.no_unit_tests,
@@ -1008,7 +1103,7 @@ def run_stage_3(args: argparse.Namespace) -> None:
         else "hierarchy"
     )
 
-    async def _main():
+    async def _main() -> typing.Any:
         return await service.run_stage_3(
             bundle=bundle,
             mode=mode,
@@ -1034,6 +1129,15 @@ def run_resume(args: argparse.Namespace) -> None:
     bundle picker and stage menu. If ``--target-name`` or ``--ir-bundle``
     is given, skips the picker and goes straight to the stage menu.
     """
+    if (
+        not sys.stdin.isatty()
+        or getattr(args, "yes", False)
+        or getattr(args, "no_input", False)
+    ):
+        _sub_console.print(
+            "[red]ERROR: 'resume' requires an interactive terminal.[/]"
+        )
+        sys.exit(1)
     if args.target_name or args.ir_bundle:
         bundle_path = _resolve_bundle_path(args)
     else:

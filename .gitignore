@@ -6,6 +6,7 @@ z_adhoc/
 *scratch.py
 .agent/
 *.tar
+.active-project
 
 # `cxas trace` workspace — local audio downloads, smoke-test outputs,
 # and per-developer trace.yaml. Users create their own.
@@ -166,8 +167,10 @@ bin/
 /evals/
 /scratch/
 /temp_sims/
+/skill_eval/reports/
 
 # Per-migration analysis report (auto-written next to <target>_ir.json by
 # `cxas migrate`; never checked in)
 *_migration_analysis.html
 *_migration_analysis.json
+*_insights_dashboard.html

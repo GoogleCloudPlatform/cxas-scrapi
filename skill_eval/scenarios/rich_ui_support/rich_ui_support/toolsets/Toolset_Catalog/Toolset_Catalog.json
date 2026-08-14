@@ -1,0 +1,8 @@
+{
+  "name": "Toolset_Catalog",
+  "displayName": "Toolset_Catalog",
+  "description": "A toolset for product catalog operations.",
+  "openApiToolset": {
+    "openApiSchema": "toolsets/Toolset_Catalog/open_api_toolset/open_api_schema.yaml"
+  }
+}

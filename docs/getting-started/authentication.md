@@ -205,7 +205,7 @@ This is particularly useful in GitHub Actions or other CI systems where you gene
 :   SCRAPI couldn't find any credentials. Make sure you've run `gcloud auth application-default login`, or that you're providing credentials explicitly. Check that the `CXAS_OAUTH_TOKEN` env var is set if you intend to use it.
 
 **`403 Permission Denied` or `google.api_core.exceptions.PermissionDenied`**
-:   Your credentials are valid but don't have the required IAM permissions on the target project. Check the [Required IAM roles](#required-iam-roles) section above and make sure the right role is granted.
+:   Your credentials are valid but don't have the required IAM permissions on the target project. Check the [Required IAM roles](#required-iam-roles) section above, or see the detailed [IAM Permissions Guide](iam-permissions.md) for fine-grained permissions, and make sure the right role is granted.
 
 **`google.auth.exceptions.TransportError`**
 :   SCRAPI can't reach the Google Cloud API — usually a network issue. Check your internet connection, proxy settings, and firewall rules.

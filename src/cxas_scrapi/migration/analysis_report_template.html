@@ -220,6 +220,7 @@
   .timeline-step .step-kind { display: inline-block; font-size: 9px; padding: 1px 6px;
     border-radius: 4px; font-weight: 700; margin-bottom: 4px; }
   .timeline-step .step-kind.skill { background: #ede9fe; color: #6d28d9; }
+  .timeline-step .step-kind.core { background: #e0f2fe; color: #0284c7; }
   .timeline-step .step-kind.custom { background: var(--det-bg); color: var(--det); }
 
   /* Tables */
@@ -366,16 +367,41 @@
   </div>
   <nav class="tabs" id="tabs">
     <div class="tab active" data-tab="overview">Overview</div>
+    {% if experimental_agent_xprs %}
+    <div class="tab" data-tab="xprs" id="tab-xprs" style="display:none;">Agent xprs <span class="tab-badge" id="xprs-count"></span></div>
+    {% endif %}
     <div class="tab" data-tab="agents">CXAS Agents <span class="tab-badge" id="agents-count"></span></div>
     <div class="tab" data-tab="tools">Tools &amp; Variables <span class="tab-badge" id="tv-count"></span></div>
     <div class="tab" data-tab="evals">Evals <span class="tab-badge" id="evals-count"></span></div>
     <div class="tab" data-tab="dfcx">DFCX Source <span class="tab-badge" id="dfcx-count"></span></div>
+
+
     <div class="tab" data-tab="pipeline">Pipeline <span class="tab-badge" id="pipe-count"></span></div>
     <div class="tab" data-tab="grouping" id="tab-grouping" style="display:none;">Grouping Review <span class="tab-badge" id="grouping-status-pill"></span></div>
   </nav>
 </header>
 
 <main>
+  <div id="final-report-banner" style="display:none; background: #e0f2fe; border-bottom: 1px solid #7dd3fc; color: #0369a1; padding: 12px 24px; font-weight: 500; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 201; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.15);">
+    <span style="font-size: 18px;">💾</span>
+    <span style="flex:1;"><strong>Migration Resuming!</strong> This live review server will shut down at the end of the migration run. The final static version of this report is being saved to: <a href="file://{{ html_path | safe }}" target="_blank" style="color:#0284c7; text-decoration:underline;"><code>{{ html_path }}</code></a></span>
+  </div>
+  {% if experimental_agent_xprs %}
+  <div id="migration-update-banner" style="display:none; background: #eff6ff; border-bottom: 1px solid #93c5fd; color: #1e40af; padding: 12px 24px; font-weight: 500; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 200; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);">
+    <span style="display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 18px;" id="xprs-placeholder-icon">✨</span>
+      <span><strong id="xprs-placeholder-title">Agent xprs Ready:</strong> <span id="xprs-placeholder-desc">Early harvested utterances and predicted CUJs are now available!</span></span>
+    </span>
+    <button onclick="window.location.reload()" style="background: #2563eb; color: #fff; border: none; padding: 6px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">🔄 Reload Page to View</button>
+  </div>
+  {% endif %}
+  <div id="grouping-update-banner" style="display:none; background: #f0fdf4; border-bottom: 1px solid #86efac; color: #166534; padding: 12px 24px; font-weight: 500; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 200; box-shadow: 0 4px 12px rgba(22, 101, 52, 0.15);">
+    <span style="display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 18px;">📋</span>
+      <span><strong>Grouping Review Ready:</strong> Proposed multi-agent groupings are ready for your review and confirmation!</span>
+    </span>
+    <button id="grouping-banner-btn" style="background: #16a34a; color: #fff; border: none; padding: 6px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">📋 Open Grouping Review</button>
+  </div>
 
   <!-- ===================== OVERVIEW ===================== -->
   <section class="panel active" id="panel-overview">
@@ -488,7 +514,15 @@
     </div>
   </section>
 
+  <!-- ===================== AGENT XPRS DESIGNER ===================== -->
+  {% if experimental_agent_xprs %}
+  <section class="panel" id="panel-xprs">
+    {% include 'xprs_designer_template.html' %}
+  </section>
+  {% endif %}
+
   <!-- ===================== DFCX SOURCE ===================== -->
+
   <section class="panel" id="panel-dfcx">
     <h1>DFCX Source Flows <div class="sub">sorted by page count · click to see absorption mapping</div></h1>
     <div class="filter-row">
@@ -500,10 +534,10 @@
 
   <!-- ===================== PIPELINE ===================== -->
   <section class="panel" id="panel-pipeline">
-    <h1>Migration Pipeline <div class="sub">skill scripts + custom post-fix scripts that produced the final state</div></h1>
+    <h1>Migration Pipeline <div class="sub">core algorithms + custom post-fix scripts that produced the final state</div></h1>
     <p style="font-size: 13px; color: var(--muted);">
       Click any step to see what it changed, its duration, and outputs.
-      Skill scripts come from <code>.agents/skills/cxas-dfcx-migration/scripts/</code>; custom scripts live at the repo root.
+      Core algorithms process the intermediate representations; custom scripts live at the repo root.
     </p>
     <h2>Timeline</h2>
     <div class="timeline" id="timeline"></div>
@@ -864,7 +898,7 @@
       find: name => findPipelineStep(name),
       render: p => `
         <div class="drawer-title">${esc(p.name)}</div>
-        <div class="drawer-subtitle"><span class="badge ${p.kind === 'skill' ? 'mock-fn' : 'mock-server'}">${esc(p.kind)}</span> · ${esc(p.duration)}</div>
+        <div class="drawer-subtitle"><span class="badge ${['skill', 'core'].includes(p.kind) ? 'mock-fn' : 'mock-server'}">${esc(p.kind)}</span> · ${esc(p.duration)}</div>
         <div class="drawer-section">
           <div class="drawer-row"><span class="k">Script path</span><span class="v"><code>${esc(p.script_path)}</code></span></div>
           <div class="drawer-row"><span class="k">What it changed</span><span class="v">${esc(p.what_changed)}</span></div>
@@ -942,6 +976,35 @@
     // sync hash (preserving entity if present)
     const ent = (location.hash || '').match(/#(?:tab\/[^/]+\/)?(tool|agent|toolset|var|flow|pipe|eval)\/(.+)$/);
     history.replaceState(null, '', '#tab/' + name + (ent ? '/' + ent[1] + '/' + ent[2] : ''));
+
+    // Trigger tab-specific renderers so all grids paint immediately
+    if (name === 'overview') {
+      if (typeof renderKpis === 'function') renderKpis();
+      if (typeof renderRefs === 'function') renderRefs();
+      if (typeof renderSankey === 'function') renderSankey();
+    } else if (name === 'agents') {
+      if (typeof renderAgentGrid === 'function') renderAgentGrid();
+      if (typeof renderSankey === 'function') renderSankey();
+    } else if (name === 'tools') {
+      const activeSub = $('#subtabs-tv .subtab.active')?.dataset?.sub || 'tools';
+      if (activeSub === 'tools' && typeof renderToolsGrid === 'function') renderToolsGrid($('#filter-tools')?.value || '');
+      if (activeSub === 'toolsets' && typeof renderToolsetsGrid === 'function') renderToolsetsGrid($('#filter-toolsets')?.value || '');
+      if (activeSub === 'vars' && typeof renderVarsGrid === 'function') renderVarsGrid($('#filter-vars')?.value || '');
+    } else if (name === 'dfcx') {
+      if (typeof renderFlowsGrid === 'function') renderFlowsGrid($('#filter-flows')?.value || '');
+    } else if (name === 'evals') {
+      if (typeof renderEvalKpis === 'function') renderEvalKpis();
+      if (typeof renderEvalsGrid === 'function') renderEvalsGrid($('#filter-evals')?.value || '', $('#filter-eval-pass')?.value || '', $('#filter-eval-agent')?.value || '');
+    } else if (name === 'pipeline') {
+      if (typeof renderPipeline === 'function') renderPipeline();
+    } else if (name === 'xprs') {
+      if (typeof window.renderXprsTab === 'function') window.renderXprsTab();
+    } else if (name === 'grouping') {
+      if (typeof renderGroupingReview === 'function') renderGroupingReview();
+      const grpBanner = $('#grouping-update-banner');
+      if (grpBanner) grpBanner.style.display = 'none';
+    }
+
     // render mermaid in this panel if not yet
     if (!rendered[name] && window.__mermaid__) {
       const panel = $('#panel-' + name);
@@ -959,6 +1022,9 @@
     const target = t.dataset.sub;
     $$('#subtabs-tv .subtab').forEach(s => s.classList.toggle('active', s === t));
     $$('#sub-tools, #sub-toolsets, #sub-vars').forEach(p => p.classList.toggle('active', p.id === 'sub-' + target));
+    if (target === 'tools') renderToolsGrid($('#filter-tools')?.value || '');
+    if (target === 'toolsets') renderToolsetsGrid($('#filter-toolsets')?.value || '');
+    if (target === 'vars') renderVarsGrid($('#filter-vars')?.value || '');
   }));
 
   // ----------- KPIS
@@ -970,19 +1036,26 @@
       <div class="kpi-card"><div class="label">Python tools</div><div class="value">${k.cxas_tools}</div><div class="sub">generated by stage 2C</div></div>
       <div class="kpi-card"><div class="label">OpenAPI toolsets</div><div class="value">${k.cxas_toolsets}</div><div class="sub">1:1 from DFCX webhooks</div></div>
     `;
+    const vBefore = k.stage_1_variables_before ?? '—';
+    const vAfter = k.stage_1_variables_after ?? '—';
+    const oDel = k.stage_1_orphans_deleted ?? 0;
+    const tWired = k.tools_wired_post_consolidation ?? 0;
+    const lBase = k.fix_lint_baseline ?? '—';
+    const lFin = k.fix_lint_final ?? '—';
     $('#kpi-grid-2').innerHTML = `
-      <div class="kpi-card"><div class="label">Variables: dedup</div><div class="value">${k.stage_1_variables_before} → ${k.stage_1_variables_after}</div><div class="sub">Gemini semantic dedup</div></div>
-      <div class="kpi-card"><div class="label">Orphans cleaned</div><div class="value">${k.stage_1_orphans_deleted}</div><div class="sub">absorbed 1:1 agents removed</div></div>
-      <div class="kpi-card"><div class="label">Tools auto-wired</div><div class="value">${k.tools_wired_post_consolidation}</div><div class="sub">missing post-consolidation refs</div></div>
-      <div class="kpi-card"><div class="label">Lint findings</div><div class="value">${k.fix_lint_baseline} → ${k.fix_lint_final}</div><div class="sub">0 errors after fix-pass</div></div>
+      <div class="kpi-card"><div class="label">Variables: dedup</div><div class="value">${vBefore} → ${vAfter}</div><div class="sub">Gemini semantic dedup</div></div>
+      <div class="kpi-card"><div class="label">Orphans cleaned</div><div class="value">${oDel}</div><div class="sub">absorbed 1:1 agents removed</div></div>
+      <div class="kpi-card"><div class="label">Tools auto-wired</div><div class="value">${tWired}</div><div class="sub">missing post-consolidation refs</div></div>
+      <div class="kpi-card"><div class="label">Lint findings</div><div class="value">${lBase} → ${lFin}</div><div class="sub">0 errors after fix-pass</div></div>
     `;
-    $('#agents-count').textContent = Object.keys(DATA.agents).length;
-    $('#tv-count').textContent = (Object.keys(DATA.tools).length + Object.keys(DATA.toolsets).length + DATA.variables.length);
-    $('#dfcx-count').textContent = DATA.flows.length;
-    $('#pipe-count').textContent = DATA.pipeline.length;
-    $('#sub-tools-count').textContent = Object.keys(DATA.tools).length;
-    $('#sub-toolsets-count').textContent = Object.keys(DATA.toolsets).length;
-    $('#sub-vars-count').textContent = DATA.variables.length;
+    if ($('#agents-count')) $('#agents-count').textContent = Object.keys(DATA.agents).length;
+    if ($('#tv-count')) $('#tv-count').textContent = (Object.keys(DATA.tools).length + Object.keys(DATA.toolsets).length + DATA.variables.length);
+    if ($('#dfcx-count')) $('#dfcx-count').textContent = DATA.flows.length;
+    if ($('#pipe-count')) $('#pipe-count').textContent = DATA.pipeline.length;
+    if ($('#xprs-count')) $('#xprs-count').textContent = DATA.xprs_designer_data?.raw?.length || 0;
+    if ($('#sub-tools-count')) $('#sub-tools-count').textContent = Object.keys(DATA.tools).length;
+    if ($('#sub-toolsets-count')) $('#sub-toolsets-count').textContent = Object.keys(DATA.toolsets).length;
+    if ($('#sub-vars-count')) $('#sub-vars-count').textContent = DATA.variables.length;
   }
 
   function renderRefs() {
@@ -1234,7 +1307,7 @@
     bindCardClicks($('#timeline'));
     $('#grid-pipeline').innerHTML = DATA.pipeline.map(p => `
       <div class="entity-card" data-entity-type="pipe" data-entity-key="${esc(p.name)}">
-        <div class="name">${esc(p.name)} <span class="badge ${p.kind === 'skill' ? 'mock-fn' : 'mock-server'}">${esc(p.kind)}</span></div>
+        <div class="name">${esc(p.name)} <span class="badge ${['skill', 'core'].includes(p.kind) ? 'mock-fn' : 'mock-server'}">${esc(p.kind)}</span></div>
         <div class="desc">${esc(p.what_changed)}</div>
         <div class="meta"><span style="font-size:11px; color:var(--muted);">${esc(p.duration)}</span></div>
       </div>
@@ -1347,6 +1420,14 @@
   $('#filter-evals').addEventListener('input', reRenderEvals);
   $('#filter-eval-pass').addEventListener('change', reRenderEvals);
   $('#filter-eval-agent').addEventListener('change', reRenderEvals);
+  if ($('#grouping-banner-btn')) {
+    $('#grouping-banner-btn').addEventListener('click', () => {
+      setActiveTab('grouping');
+      const b = $('#grouping-update-banner'); 
+      if (b) b.style.display = 'none';
+      window.scrollTo(0, 0);
+    });
+  }
 
   // ----------- GROUPING REVIEW
   // Single source of truth for the live edit state. Mutated in place by
@@ -1361,19 +1442,34 @@
     return window.__REVIEW_ENDPOINT__ || null;
   }
 
+  function normKey(s) {
+    if (!s) return '';
+    return String(s).replace(/[\[\]]/g, '').replace(/[\s\-_]+/g, '').toLowerCase();
+  }
+
   function validateGrouping(state) {
     // Returns {errors: [{code, msg}], warnings: [{code, msg}], orphanFlows: Set}
     const errors = [];
     const warnings = [];
     const groupings = state.groupings || {};
     const allFlows = state.all_flow_names || [];
+    const assigned = {};  // flow → Set of group names
+    const uniqueNorm = new Set();
+    allFlows.forEach(af => uniqueNorm.add(normKey(af)));
+    const totalFlows = uniqueNorm.size;
+
     const groupNames = Object.keys(groupings);
-    const assigned = {};  // flow → list of groups
-    let totalAssigned = 0;
     groupNames.forEach(g => {
       (groupings[g].agents || []).forEach(f => {
-        assigned[f] = (assigned[f] || []).concat([g]);
-        totalAssigned++;
+        if (!assigned[f]) assigned[f] = new Set();
+        assigned[f].add(g);
+        allFlows.forEach(af => {
+          if (af === f || normKey(af) === normKey(f) || af.endsWith('/' + f) || f.endsWith('/' + af)) {
+            if (!assigned[af]) assigned[af] = new Set();
+            assigned[af].add(g);
+            assigned[f].add(g);
+          }
+        });
       });
       if (!GROUP_NAME_RE.test(g)) {
         errors.push({code: 'E_INVALID_GROUP_NAME', msg: `Group name "${g}" invalid (letters/digits/space/_/-; 3-84 chars)`});
@@ -1382,11 +1478,16 @@
         errors.push({code: 'E_EMPTY_GROUP', msg: `Group "${g}" is empty — delete it or move flows in`});
       }
     });
-    const orphans = new Set(allFlows.filter(f => !assigned[f]));
-    if (orphans.size > 0) {
-      errors.push({code: 'E_ORPHAN_FLOWS', msg: `${orphans.size} orphan flow(s): ${[...orphans].slice(0,5).join(', ')}${orphans.size > 5 ? '…' : ''}`});
+    const orphans = new Set(allFlows.filter(f => !assigned[f] || assigned[f].size === 0));
+    const orphanNormKeys = new Set(Array.from(orphans).map(normKey));
+    const realOrphanCount = orphanNormKeys.size;
+    const totalAssigned = totalFlows - realOrphanCount;
+
+    if (realOrphanCount > 0) {
+      errors.push({code: 'E_ORPHAN_FLOWS', msg: `${realOrphanCount} unassigned flow(s)`});
     }
-    Object.entries(assigned).forEach(([flow, groups]) => {
+    Object.entries(assigned).forEach(([flow, groupsSet]) => {
+      const groups = Array.from(groupsSet);
       if (groups.length > 1) {
         errors.push({code: 'E_DUPLICATE_FLOWS', msg: `Flow "${flow}" appears in ${groups.length} groups`});
       }
@@ -1411,7 +1512,7 @@
         }
       });
     }
-    return {errors, warnings, orphanFlows: orphans, totalAssigned, totalFlows: allFlows.length, groupCount: groupNames.length, rootCount: roots.length};
+    return {errors, warnings, orphanFlows: orphans, totalAssigned, totalFlows, groupCount: groupNames.length, rootCount: roots.length};
   }
 
   function renderGroupingValidation(result) {
@@ -1592,6 +1693,11 @@
     groupingState = JSON.parse(JSON.stringify(pending));
     renderGroupingBanner(groupingState);
     renderGroupingCards(groupingState);
+
+    const grpBanner = $('#grouping-update-banner');
+    if (grpBanner && (pending.status === 'awaiting_confirmation' || !pending.status)) {
+      grpBanner.style.display = 'flex';
+    }
   }
 
   function wireGroupingToolbar() {
@@ -1616,27 +1722,188 @@
       groupingState = JSON.parse(JSON.stringify(DATA.pending_grouping || {}));
       renderGroupingCards(groupingState);
     });
+
+
+    // Server-backed actions: Confirm, Abort, Re-propose. Only wire when
+    // the live server endpoint is set; otherwise leave disabled.
+    const endpoint = liveEndpoint();
+    if (!endpoint) return;
+
+    const confirmBtn = $('#gr-confirm');
+    if (confirmBtn) {
+      confirmBtn.title = '';
+      confirmBtn.addEventListener('click', async () => {
+        if (!groupingState) return;
+        const result = validateGrouping(groupingState);
+        if (result.errors.length) return;
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Confirming…';
+        try {
+          const resp = await fetch('/api/grouping', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({groupings: groupingState.groupings}),
+          });
+          const body = await resp.json();
+          if (resp.ok && body.ok) {
+            renderGroupingBanner({...groupingState, status: 'confirmed'});
+            const footer = $('#gr-validation');
+            if (footer) footer.innerHTML = '<span class="gr-validation-ok">✓ Confirmed — consolidation resuming. You can close this tab.</span>';
+            document.querySelectorAll('#grouping-toolbar button, .gr-pill, .gr-card-title, .gr-delete, input[name="gr-root"], #gr-abort, #gr-confirm').forEach(el => el.disabled = true);
+            const finalBanner = $('#final-report-banner');
+            if (finalBanner) {
+              finalBanner.style.display = 'flex';
+              window.scrollTo(0, 0);
+            }
+          } else {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Confirm';
+            alert('Server rejected: ' + ((body.errors||[]).join('; ') || body.error || resp.status));
+          }
+        } catch (err) {
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Confirm';
+          alert('Network error: ' + err.message);
+        }
+      });
+    }
+
+    const abortBtn = $('#gr-abort');
+    if (abortBtn) {
+      abortBtn.disabled = false;
+      abortBtn.title = '';
+      abortBtn.addEventListener('click', async () => {
+        if (!confirm('Abort grouping review? Consolidation will be skipped.')) return;
+        try {
+          await fetch('/api/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+          renderGroupingBanner({status: 'aborted'});
+          const footer = $('#gr-validation');
+          if (footer) footer.innerHTML = '<span class="gr-validation-error">✗ Aborted — consolidation skipped. You can close this tab.</span>';
+          document.querySelectorAll('#grouping-toolbar button, .gr-pill, .gr-card-title, .gr-delete, input[name="gr-root"], #gr-abort, #gr-confirm').forEach(el => el.disabled = true);
+        } catch (err) {
+          alert('Network error: ' + err.message);
+        }
+      });
+    }
+
+    const reproposeBtn = $('#gr-repropose');
+    if (reproposeBtn) {
+      reproposeBtn.disabled = false;
+      reproposeBtn.title = '';
+      reproposeBtn.addEventListener('click', async () => {
+        const feedback = prompt('Tell Gemini what to change (optional, e.g. "split authentication into its own group"):');
+        if (feedback === null) return;
+        reproposeBtn.disabled = true;
+        reproposeBtn.textContent = 'Re-proposing…';
+        try {
+          const resp = await fetch('/api/repropose', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({feedback: feedback || ''}),
+          });
+          const body = await resp.json();
+          if (resp.ok && body.ok && body.pending) {
+            groupingState = JSON.parse(JSON.stringify(body.pending));
+            renderGroupingBanner(groupingState);
+            renderGroupingCards(groupingState);
+          } else {
+            alert('Re-propose failed: ' + (body.error || resp.status));
+          }
+        } catch (err) {
+          alert('Network error: ' + err.message);
+        } finally {
+          reproposeBtn.disabled = false;
+          reproposeBtn.textContent = 'Re-propose…';
+        }
+      });
+    }
     // Confirm/Abort/Re-propose are wired by the server when liveEndpoint() is set
     // (Phase 4). Until then they stay disabled per the title tooltip.
   }
 
   // ----------- BOOT
-  renderKpis();
-  renderRefs();
-  renderSankey();
-  renderAgentGrid();
-  renderToolsGrid('');
-  renderToolsetsGrid('');
-  renderVarsGrid('');
-  renderFlowsGrid('');
-  renderPipeline();
-  renderEvalKpis();
-  renderEvalsGrid('', '', '');
+  function renderAll() {
+    renderKpis();
+    renderRefs();
+    renderSankey();
+    renderAgentGrid();
+    renderToolsGrid('');
+    renderToolsetsGrid('');
+    renderVarsGrid('');
+    renderFlowsGrid('');
+    renderPipeline();
+    renderEvalKpis();
+    renderEvalsGrid('', '', '');
+    if (typeof window.renderXprsTab === "function") {
+      window.renderXprsTab();
+    }
+    const tabXprs = document.getElementById('tab-xprs');
+    if (tabXprs && DATA.xprs_designer_data) tabXprs.style.display = '';
+    const tabGrp = document.getElementById('tab-grouping');
+    if (tabGrp && DATA.pending_grouping?.groupings && Object.keys(DATA.pending_grouping.groupings).length > 0) tabGrp.style.display = '';
+    const mDiv = document.getElementById('overview-mermaid');
+    if (mDiv && DATA.mermaid_chart && mDiv.textContent !== DATA.mermaid_chart) {
+      mDiv.textContent = DATA.mermaid_chart;
+      mDiv.removeAttribute('data-processed');
+    }
+  }
+
+  renderAll();
   wireGroupingToolbar();
   renderGroupingReview();
 
   // If mermaid is already loaded (cached) just kick it
   if (window.__mermaid__) setActiveTab('overview');
+
+  // Live polling for updates when running in a local server environment
+  if (window.location.protocol.startsWith('http')) {
+    const jsonUrl = window.__REVIEW_ENDPOINT__ ? '/api/report_data' : window.location.pathname.replace(/\.html$/, '.json');
+    let lastGeneratedAt = DATA.generated_at;
+
+    async function checkForUpdates() {
+      try {
+        const response = await fetch(jsonUrl, { cache: 'no-store' });
+        if (response.ok) {
+          const freshData = await response.json();
+          const freshUtteranceCount = freshData.xprs_designer_data?.raw?.length || 0;
+          const currentUtteranceCount = DATA.xprs_designer_data?.raw?.length || 0;
+          const freshScenarioCount = freshData.xprs_designer_data?.scenarios?.length || 0;
+          const currentScenarioCount = DATA.xprs_designer_data?.scenarios?.length || 0;
+          const freshGroupingCount = freshData.pending_grouping?.groupings ? Object.keys(freshData.pending_grouping.groupings).length : 0;
+          const currentGroupingCount = DATA.pending_grouping?.groupings ? Object.keys(DATA.pending_grouping.groupings).length : 0;
+          if (freshData.generated_at !== lastGeneratedAt || freshUtteranceCount !== currentUtteranceCount || freshScenarioCount !== currentScenarioCount || freshGroupingCount !== currentGroupingCount) {
+            console.log("Found fresh migration update: " + freshData.generated_at);
+            const xprsJustReady = (freshUtteranceCount > 0 && currentUtteranceCount === 0) || (freshScenarioCount > 0 && currentScenarioCount === 0);
+            const groupingJustReady = (freshGroupingCount > 0 && currentGroupingCount === 0);
+            lastGeneratedAt = freshData.generated_at;
+            Object.assign(DATA, freshData);
+            renderAll();
+            const tabXprs = document.getElementById('tab-xprs');
+            if (tabXprs && freshData.xprs_designer_data) tabXprs.style.display = '';
+            if (xprsJustReady) {
+              const banner = document.getElementById('migration-update-banner');
+              if (banner) banner.style.display = 'flex';
+              const iconEl = document.getElementById('xprs-placeholder-icon');
+              const titleEl = document.getElementById('xprs-placeholder-title');
+              const descEl = document.getElementById('xprs-placeholder-desc');
+              if (iconEl) iconEl.textContent = '✨';
+              if (titleEl) titleEl.textContent = 'Agent xprs Harvesting Complete!';
+              if (descEl) descEl.innerHTML = '<span style="color:#2563eb; font-weight:600;">Early harvested utterances and predicted CUJs are now ready.</span><br><button onclick="window.location.reload()" class="btn" style="margin-top:12px; background:#2563eb; color:#fff; border:none; padding:6px 16px; border-radius:6px; font-weight:600; cursor:pointer;">🔄 Reload Page to Open Designer</button>';
+            }
+            if (groupingJustReady) {
+              renderGroupingReview();
+              const grpBanner = document.getElementById('grouping-update-banner');
+              if (grpBanner) grpBanner.style.display = 'flex';
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Could not poll for updates: ", e);
+      }
+    }
+    // Poll every 3 seconds
+    setInterval(checkForUpdates, 3000);
+  }
 })();
 </script>
 </body>

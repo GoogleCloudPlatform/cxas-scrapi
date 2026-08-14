@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Agents class for CXAS Scrapi."""
 
+import typing
 from typing import Any
 
 from google.cloud.ces_v1beta import AgentServiceClient, types
 from google.protobuf import field_mask_pb2
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.common import Common
 
 
 class Agents(Apps):
@@ -32,11 +35,17 @@ class Agents(Apps):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Agents client."""
-        project_id = app_name.split("/")[1]
-        location = app_name.split("/")[3]
+        project_id = Common._get_project_id(app_name)
+        location = Common._get_location(app_name)
+        if not project_id or not location:
+            raise ValueError(
+                f"Invalid app_name format: {app_name}. "
+                "Expected format: "
+                "projects/<project>/locations/<location>/apps/<app>"
+            )
 
         super().__init__(
             project_id=project_id,
@@ -157,7 +166,7 @@ class Agents(Apps):
         request = types.UpdateAgentRequest(agent=agent_data, update_mask=mask)
         return self.client.update_agent(request=request)
 
-    def delete_agent(self, agent_name: str):
+    def delete_agent(self, agent_name: str) -> None:
         """Deletes an agent."""
         request = types.DeleteAgentRequest(name=agent_name)
         self.client.delete_agent(request=request)

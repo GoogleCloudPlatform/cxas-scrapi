@@ -14,9 +14,14 @@
 
 import os
 import sys
-from unittest.mock import MagicMock
+import typing
+import webbrowser
+from unittest.mock import MagicMock, create_autospec
 
 import google.cloud.ces_v1beta as real_ces
+import google.cloud.dialogflowcx_v3beta1 as real_dfcx
+import google.cloud.dialogflowcx_v3beta1.services as real_dfcx_services
+import google.cloud.dialogflowcx_v3beta1.types as real_dfcx_types
 import pytest
 
 # Global Test Constants
@@ -26,8 +31,63 @@ TEST_APP_NAME = "projects/mock-project/locations/mock-location/apps/mock-app-id"
 # invoke Application Default Credentials
 os.environ["CXAS_OAUTH_TOKEN"] = "mock_token_for_tests"
 
+# ==============================================================================
+# Mocks setup: must run BEFORE importing any cxas_scrapi modules
+# ==============================================================================
+if "--run-online" not in sys.argv:
+    mock_ces = create_autospec(real_ces)
 
-def pytest_addoption(parser):
+    def enforce_transport(client_class: typing.Any) -> typing.Any:
+        def _enforce(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+            if "transport" not in kwargs:
+                raise ValueError(
+                    "Client must be initialized with a transport from "
+                    "get_grpc_transport to ensure correct telemetry."
+                )
+            return create_autospec(client_class, instance=True)
+
+        return _enforce
+
+    mock_ces.AgentServiceClient.side_effect = enforce_transport(
+        real_ces.AgentServiceClient
+    )
+    mock_ces.AgentServiceClient.get_transport_class = MagicMock()
+
+    mock_ces.EvaluationServiceClient.side_effect = enforce_transport(
+        real_ces.EvaluationServiceClient
+    )
+    mock_ces.EvaluationServiceClient.get_transport_class = MagicMock()
+
+    mock_ces.SessionServiceClient.side_effect = enforce_transport(
+        real_ces.SessionServiceClient
+    )
+    mock_ces.SessionServiceClient.get_transport_class = MagicMock()
+
+    mock_ces.ToolServiceClient.side_effect = enforce_transport(
+        real_ces.ToolServiceClient
+    )
+    mock_ces.ToolServiceClient.get_transport_class = MagicMock()
+
+    mock_ces.types = real_ces.types
+    sys.modules["google.cloud.ces_v1beta"] = mock_ces
+
+    # Mock google.cloud.dialogflowcx_v3beta1 for dfcx_exporter offline tests
+    # using autospec
+    mock_dfcx = create_autospec(real_dfcx)
+    mock_dfcx_services = create_autospec(real_dfcx_services)
+    mock_dfcx_types = create_autospec(real_dfcx_types)
+
+    sys.modules["google.cloud.dialogflowcx_v3beta1"] = mock_dfcx
+    sys.modules["google.cloud.dialogflowcx_v3beta1.services"] = (
+        mock_dfcx_services
+    )
+    sys.modules["google.cloud.dialogflowcx_v3beta1.types"] = mock_dfcx_types
+
+# Now safe to import GeminiGenerate (which triggers other cxas_scrapi imports)
+from cxas_scrapi.utils.gemini import GeminiGenerate  # noqa: E402
+
+
+def pytest_addoption(parser: typing.Any) -> None:
     parser.addoption(
         "--app-id",
         action="store",
@@ -54,13 +114,15 @@ def pytest_addoption(parser):
     )
 
 
-def pytest_configure(config):
+def pytest_configure(config: typing.Any) -> None:
     config.addinivalue_line(
         "markers", "online: mark test as requiring live API access"
     )
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(
+    config: typing.Any, items: typing.Any
+) -> None:
     if config.getoption("--run-online"):
         # --run-online given in cli: do not skip online tests
         return
@@ -71,45 +133,49 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture
-def app_id():
+def app_id() -> typing.Any:
     return TEST_APP_NAME
 
 
-# Create a mock module structure for google.cloud.ces_v1beta if not
-# running online
-if "--run-online" not in sys.argv:
-    mock_ces = MagicMock()
+@pytest.fixture(autouse=True)
+def mock_gemini_generate(
+    request: typing.Any, monkeypatch: typing.Any
+) -> typing.Any:
+    """Centrally mock GeminiGenerate calls for all tests except test_gemini.py.
 
-    def enforce_transport(*args, **kwargs):
-        if "transport" not in kwargs:
-            raise ValueError(
-                "Client must be initialized with a transport from "
-                "get_grpc_transport to ensure correct telemetry."
-            )
-        return MagicMock()
+    This prevents unit tests from attempting real network calls to Gemini APIs,
+    which results in long timeouts.
+    """
+    # Skip mocking for test_gemini.py so we can test the wrapper itself
+    if "test_gemini" in request.module.__name__:
+        yield
+        return
 
-    mock_ces.AgentServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.AgentServiceClient.get_transport_class.return_value = MagicMock()
+    async def mock_generate_async(
+        self: typing.Any,
+        prompt: typing.Any,
+        **kwargs: typing.Any,  # noqa: ANN001
+    ) -> str:
+        response_mime_type = kwargs.get("response_mime_type")
+        if response_mime_type == "application/json":
+            return "{}"
+        return "mock_response"
 
-    mock_ces.EvaluationServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.EvaluationServiceClient.get_transport_class.return_value = (
-        MagicMock()
+    def mock_generate(self, prompt: typing.Any, **kwargs: typing.Any) -> str:  # noqa: ANN001
+        response_mime_type = kwargs.get("response_mime_type")
+        if response_mime_type == "application/json":
+            return "{}"
+        return "mock_response"
+
+    monkeypatch.setattr(GeminiGenerate, "generate_async", mock_generate_async)
+    monkeypatch.setattr(GeminiGenerate, "generate", mock_generate)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def mock_webbrowser(monkeypatch: typing.Any) -> None:
+    """Globally mock webbrowser to prevent opening browsers during tests."""
+    monkeypatch.setattr(webbrowser, "open", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        webbrowser, "open_new_tab", lambda *args, **kwargs: True
     )
-
-    mock_ces.SessionServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.SessionServiceClient.get_transport_class.return_value = MagicMock()
-
-    mock_ces.ToolServiceClient = MagicMock(side_effect=enforce_transport)
-    mock_ces.ToolServiceClient.get_transport_class.return_value = MagicMock()
-    mock_ces.types = real_ces.types
-    sys.modules["google.cloud.ces_v1beta"] = mock_ces
-
-    # Mock google.cloud.dialogflowcx_v3beta1 for dfcx_exporter offline tests
-    mock_dfcx = MagicMock()
-    mock_dfcx_services = MagicMock()
-    mock_dfcx_types = MagicMock()
-    sys.modules["google.cloud.dialogflowcx_v3beta1"] = mock_dfcx
-    sys.modules["google.cloud.dialogflowcx_v3beta1.services"] = (
-        mock_dfcx_services
-    )
-    sys.modules["google.cloud.dialogflowcx_v3beta1.types"] = mock_dfcx_types

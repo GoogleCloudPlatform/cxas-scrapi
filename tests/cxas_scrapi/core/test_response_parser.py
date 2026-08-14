@@ -19,7 +19,7 @@ from google.cloud.ces_v1beta import types
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
 
 
-def test_parser_basic_text():
+def test_parser_basic_text() -> None:
     """Test parsing basic top-level text responses."""
     response = types.RunSessionResponse(
         outputs=[
@@ -38,7 +38,7 @@ def test_parser_basic_text():
     assert len(parsed.tool_responses) == 0
 
 
-def test_parser_top_level_end_session():
+def test_parser_top_level_end_session() -> None:
     """Test parsing top-level end_session flag."""
     response = types.RunSessionResponse(
         outputs=[
@@ -52,7 +52,7 @@ def test_parser_top_level_end_session():
     assert parsed.session_ended is True
 
 
-def test_parser_top_level_tool_calls():
+def test_parser_top_level_tool_calls() -> None:
     """Test parsing top-level tool calls."""
     response = types.RunSessionResponse(
         outputs=[
@@ -74,7 +74,7 @@ def test_parser_top_level_tool_calls():
     assert parsed.session_ended is False
 
 
-def test_parser_diagnostic_info_chunks():
+def test_parser_diagnostic_info_chunks() -> None:
     """Test parsing diagnostic_info messages and chunks."""
     response = types.RunSessionResponse(
         outputs=[
@@ -149,7 +149,7 @@ def test_parser_diagnostic_info_chunks():
     assert parsed.custom_payloads[0] == {"custom_key": "custom_value"}
 
 
-def test_parser_legacy_naming_compatibility():
+def test_parser_legacy_naming_compatibility() -> None:
     """Test parser handles legacy function_call / function_response naming."""
     # Mock chunk with function_call/function_response attribute values
     chunk1 = SimpleNamespace(
@@ -183,7 +183,7 @@ def test_parser_legacy_naming_compatibility():
     assert parsed.tool_responses[0].response == {"ok": True}
 
 
-def test_parser_guardrail_triggers():
+def test_parser_guardrail_triggers() -> None:
     """Test parsing guardrail triggers from diagnostic_info.root_span."""
     response = types.RunSessionResponse(
         outputs=[
@@ -224,7 +224,7 @@ def test_parser_guardrail_triggers():
     assert parsed.guardrail_trigger.reason == "Triggered by policy violation."
 
 
-def test_parser_detailed_trace_chunks():
+def test_parser_detailed_trace_chunks() -> None:
     """Test that detailed_trace matches formatting requirements."""
     response = types.RunSessionResponse(
         outputs=[
@@ -277,7 +277,7 @@ def test_parser_detailed_trace_chunks():
     assert "Custom Payload: {'p': 3.0}" in parsed.detailed_trace
 
 
-def test_parser_top_level_citations_and_payload():
+def test_parser_top_level_citations_and_payload() -> None:
     """Test parsing top-level citations and payload."""
     chunk = SimpleNamespace(
         uri="gs://my-bucket/doc.pdf",

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class SecretManagerUtils:
     """Utility Class for Creating and Retrieving Secret Manager Secrets."""
 
-    def __init__(self, project_id: str):
+    def __init__(self, project_id: str) -> None:
         self.project_id = project_id
         self.client = secretmanager.SecretManagerServiceClient()
 
