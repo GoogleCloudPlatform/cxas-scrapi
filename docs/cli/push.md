@@ -7,6 +7,8 @@
 ```
 cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
           [--app-name APP] [--display-name NAME]
+          [--create-version] [--version-name NAME] [--version-description DESC]
+          [--overwrite]
           --project-id PROJECT --location LOCATION
 ```
 
@@ -19,6 +21,10 @@ cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
 | `--env-file FILE` | No | — | Path to a JSON environment file to inject as `environment.json` before uploading. Useful for supplying environment-specific secrets or variables without committing them. |
 | `--app-name APP` | No | — | Explicit app resource name to push to (v1beta API). Use this when you want to overwrite a specific app and already know its full ID. |
 | `--display-name NAME` | No | `"Pushed Agent"` | Display name for the new app when no target is specified and a new app will be created. |
+| `--create-version` | No | `false` | Automatically create a version snapshot after a successful push. |
+| `--version-name NAME` | No | `import-TIMESTAMP` | Custom display name for the created version snapshot (used with `--create-version`). |
+| `--version-description DESC` | No | — | Description text for the created version snapshot (used with `--create-version`). |
+| `--overwrite` | No | `false` | Overwrite existing resources with imported data. Unmatched existing resources will be deleted. |
 | `--project-id PROJECT` | Yes | — | GCP project ID. |
 | `--location LOCATION` | Yes | — | GCP location (e.g., `global`, `us-central1`). |
 
@@ -52,6 +58,18 @@ cxas push \
 cxas push \
   --app-dir ./my-agent \
   --display-name "My Support Agent (Staging)" \
+  --project-id my-gcp-project \
+  --location us-central1
+```
+
+**Push current directory and create a version snapshot with a custom name:**
+
+```bash
+cxas push \
+  --to "My Support Agent" \
+  --create-version \
+  --version-name "v1.2.0" \
+  --version-description "Release candidate v1.2.0" \
   --project-id my-gcp-project \
   --location us-central1
 ```
