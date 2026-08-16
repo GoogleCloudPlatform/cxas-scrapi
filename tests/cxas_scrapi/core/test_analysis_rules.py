@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,7 +21,7 @@ from cxas_scrapi.core.analysis_rules import AnalysisRules
 
 
 @pytest.fixture
-def mock_google_auth():
+def mock_google_auth() -> typing.Any:
     with patch("google.auth.default") as mock_auth:
         mock_creds = MagicMock()
         mock_creds.token = "fake_token"
@@ -30,7 +31,9 @@ def mock_google_auth():
 
 
 @patch("requests.Session.request")
-def test_create_rule_for_app(mock_request, mock_google_auth):
+def test_create_rule_for_app(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.json.return_value = {
@@ -69,7 +72,9 @@ def test_create_rule_for_app(mock_request, mock_google_auth):
 
 
 @patch("requests.Session.request")
-def test_activate_and_delete_rule(mock_request, mock_google_auth):
+def test_activate_and_delete_rule(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.json.return_value = {"active": False}

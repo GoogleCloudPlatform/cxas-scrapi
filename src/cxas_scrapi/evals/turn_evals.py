@@ -15,11 +15,13 @@
 # limitations under the License.
 """
 
+import contextlib
 import enum
 import json
 import logging
 import os
 import re
+import typing
 import uuid
 from typing import Any
 
@@ -51,7 +53,7 @@ class HistoricalContextConfig(BaseModel):
     utterances: list[dict[str, Any]] | None = None
 
     @model_validator(mode="after")
-    def check_mutually_exclusive(self):
+    def check_mutually_exclusive(self) -> typing.Any:
         fields = [self.session_id, self.test_name, self.utterances]
         non_none = [f for f in fields if f is not None]
         if len(non_none) > 1:
@@ -69,8 +71,10 @@ class TurnOperator(str, enum.Enum):
     """Operators for testing single-turn expectations."""
 
     CONTAINS = "contains"
+    NOT_CONTAINS = "not_contains"
     EQUALS = "equals"
     TOOL_CALLED = "tool_called"
+    TOOL_NOT_CALLED = "tool_not_called"
     TOOL_INPUT = "tool_input"
     TOOL_OUTPUT = "tool_output"
     NO_TOOLS_CALLED = "no_tools_called"
@@ -114,7 +118,7 @@ class TurnTestCase(BaseModel):
 class DependencyResolutionError(Exception):
     """Exception raised when a test dependency cannot be resolved."""
 
-    def __init__(self, message: str, skip_result: dict[str, Any]):
+    def __init__(self, message: str, skip_result: dict[str, Any]) -> None:
         self.message = message
         self.skip_result = skip_result
         super().__init__(self.message)
@@ -126,9 +130,9 @@ class TurnEvals:
     def __init__(
         self,
         app_name: str,
-        creds=None,
+        creds: typing.Any = None,
         rate_limiter: RateLimiter | None = None,
-    ):
+    ) -> None:
         """Initializes the TurnEvals class.
 
         Args:
@@ -237,18 +241,15 @@ class TurnEvals:
             # If expected is a dict but actual is a JSON string, try to parse
             # the actual
             if isinstance(v, dict) and isinstance(super_val, str):
-                try:
+                with contextlib.suppress(json.JSONDecodeError):
                     super_val = json.loads(super_val)
-                except json.JSONDecodeError:
-                    pass
 
             # Recursive check if both are dicts
             if isinstance(v, dict) and isinstance(super_val, dict):
                 if not self._check_dict_subset(v, super_val):
                     return False
-            elif super_val != v:
-                if str(super_val) != str(v):
-                    return False
+            elif super_val != v and str(super_val) != str(v):
+                return False
         return True
 
     def _extract_tools_from_span(
@@ -257,7 +258,7 @@ class TurnEvals:
         called_tools: list[str],
         tool_inputs: dict[str, Any],
         tool_outputs: dict[str, Any],
-    ):
+    ) -> None:
         """Recursively extract tool calls from a span and its children."""
         if span.get("name") == "Tool":
             attrs = span.get("attributes", {})
@@ -310,7 +311,7 @@ class TurnEvals:
                 if tool_name not in tool_inputs:
                     tool_inputs[tool_name] = tc.get("args", {})
 
-        def add_snippet(snippet: str):
+        def add_snippet(snippet: str) -> None:
             nonlocal full_text
             snippet = str(snippet).strip()
             if not snippet:
@@ -436,7 +437,9 @@ class TurnEvals:
 
         return None
 
-    def validate_turn_test(self, test_case: Any, turn_response: Any):
+    def validate_turn_test(
+        self, test_case: Any, turn_response: Any
+    ) -> typing.Any:
         """Validates the turn response against defined expectations."""
 
         signals = self._extract_signals(turn_response)
@@ -474,6 +477,14 @@ class TurnEvals:
                     status = "FAILURE"
                     justification = (
                         f"CONTAINS failed: '{expected}' not found in '{actual}'"
+                    )
+            elif op == TurnOperator.NOT_CONTAINS:
+                actual = full_text.strip()
+                if str(expected).lower() in actual.lower():
+                    status = "FAILURE"
+                    justification = (
+                        f"NOT_CONTAINS failed: '{expected}' "
+                        f"unexpectedly found in '{actual}'"
                     )
             elif op == TurnOperator.FUZZY_MATCH:
                 import numpy as np  # noqa: PLC0415
@@ -521,6 +532,18 @@ class TurnEvals:
                     justification = (
                         f"TOOL_CALLED failed: Expected tool '{expected}' was "
                         f"not called. Tools called: {called_tools}"
+                    )
+            elif op == TurnOperator.TOOL_NOT_CALLED:
+                actual = str(called_tools)
+                found = any(
+                    expected == t or t.endswith(expected) for t in called_tools
+                )
+                if found:
+                    status = "FAILURE"
+                    justification = (
+                        f"TOOL_NOT_CALLED failed: Unexpected tool "
+                        f"'{expected}' was called. "
+                        f"Tools called: {called_tools}"
                     )
             elif op == TurnOperator.NO_TOOLS_CALLED:
                 actual = str(called_tools)
@@ -675,7 +698,7 @@ class TurnEvals:
         visited = {name: 0 for name in name_to_case}
         result = []
 
-        def dfs(u):
+        def dfs(u: typing.Any) -> None:
             visited[u] = 1
             for v in adj[u]:
                 if visited[v] == 1:

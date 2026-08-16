@@ -15,6 +15,7 @@
 import asyncio
 import os
 import shutil
+import typing
 import unittest
 from unittest import mock
 
@@ -22,28 +23,28 @@ from skill_eval import agent_heads
 
 
 class ScaffoldingTestAgentTest(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
         self.head = agent_heads.ScaffoldingTestAgent(scenario_name="test_scen")
 
-    def test_send_message_increments_turns(self):
-        self.assertEqual(self.head.get_tool_calls_count_last_turn(), 0)
+    def test_send_message_increments_turns(self) -> None:
+        assert self.head.get_tool_calls_count_last_turn() == 0
         res1 = asyncio.run(self.head.send_message("hello"))
-        self.assertIn("Turn 1", res1)
-        self.assertEqual(self.head.get_tool_calls_count_last_turn(), 0)
+        assert "Turn 1" in res1
+        assert self.head.get_tool_calls_count_last_turn() == 0
 
         res2 = asyncio.run(self.head.send_message("again"))
-        self.assertIn("Turn 2", res2)
-        self.assertEqual(self.head.get_tool_calls_count_last_turn(), 1)
-        self.assertEqual(len(self.head.get_tool_interactions_last_turn()), 1)
-        self.assertEqual(
-            self.head.get_tool_interactions_last_turn()[0].name,
-            "mock_tool_call",
+        assert "Turn 2" in res2
+        assert self.head.get_tool_calls_count_last_turn() == 1
+        assert len(self.head.get_tool_interactions_last_turn()) == 1
+        assert (
+            self.head.get_tool_interactions_last_turn()[0].name
+            == "mock_tool_call"
         )
 
 
 class AntigravityAgentHeadTest(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
 
     @mock.patch.dict(os.environ, {}, clear=True)
@@ -62,16 +63,16 @@ class AntigravityAgentHeadTest(unittest.TestCase):
     @mock.patch("pathlib.Path.exists", return_value=True)
     def test_initialize_copies_assets_and_starts_agent(
         self,
-        mock_path_exists,
-        mock_copytree,
-        mock_os_exists,
-        mock_agent_cls,
-        mock_chmod,
-        mock_run_subprocess,
-        mock_makedirs,
-        mock_copy,
-        mock_get_asset_path,
-    ):
+        mock_path_exists: typing.Any,
+        mock_copytree: typing.Any,
+        mock_os_exists: typing.Any,
+        mock_agent_cls: typing.Any,
+        mock_chmod: typing.Any,
+        mock_run_subprocess: typing.Any,
+        mock_makedirs: typing.Any,
+        mock_copy: typing.Any,
+        mock_get_asset_path: typing.Any,
+    ) -> None:
         # Mock Agent class to act as async context manager
         mock_agent_instance = mock_agent_cls.return_value
         mock_agent_instance.__aenter__ = mock.AsyncMock(
@@ -110,7 +111,7 @@ class AntigravityAgentHeadTest(unittest.TestCase):
             ".agents",
             "skills",
         )
-        self.assertEqual(config_passed.skills_paths, [expected_skills_path])
+        assert config_passed.skills_paths == [expected_skills_path]
 
         # Assert clean uv venv and pip install are executed
         mock_run_subprocess.assert_has_calls(
@@ -146,18 +147,18 @@ class AntigravityAgentHeadTest(unittest.TestCase):
     )
     def test_initialize_propagates_project_env_variables(
         self,
-        mock_get_uv_env_vars,
-        mock_auth_default,
-        mock_path_exists,
-        mock_copytree,
-        mock_os_exists,
-        mock_agent_cls,
-        mock_chmod,
-        mock_run_subprocess,
-        mock_makedirs,
-        mock_copy,
-        mock_get_asset_path,
-    ):
+        mock_get_uv_env_vars: typing.Any,
+        mock_auth_default: typing.Any,
+        mock_path_exists: typing.Any,
+        mock_copytree: typing.Any,
+        mock_os_exists: typing.Any,
+        mock_agent_cls: typing.Any,
+        mock_chmod: typing.Any,
+        mock_run_subprocess: typing.Any,
+        mock_makedirs: typing.Any,
+        mock_copy: typing.Any,
+        mock_get_asset_path: typing.Any,
+    ) -> None:
         # Mock Agent class to act as async context manager
         mock_agent_instance = mock_agent_cls.return_value
         mock_agent_instance.__aenter__ = mock.AsyncMock(
@@ -195,31 +196,27 @@ class AntigravityAgentHeadTest(unittest.TestCase):
         )
 
         # Hook into __aenter__ to assert active variables
-        def assert_env_variables(*args, **kwargs):
-            self.assertEqual(os.environ.get("GCLOUD_PROJECT"), mock_project)
-            self.assertEqual(
-                os.environ.get("GOOGLE_CLOUD_PROJECT"), mock_project
-            )
-            self.assertNotIn("CLOUDSDK_CONFIG", os.environ)
+        def assert_env_variables(
+            *args: typing.Any, **kwargs: typing.Any
+        ) -> typing.Any:
+            assert os.environ.get("GCLOUD_PROJECT") == mock_project
+            assert os.environ.get("GOOGLE_CLOUD_PROJECT") == mock_project
+            assert "CLOUDSDK_CONFIG" not in os.environ
 
             # Verify active child virtual environment in os.environ
             expected_venv = os.path.join(head._workspace_dir, ".venv")
-            self.assertEqual(os.environ.get("VIRTUAL_ENV"), expected_venv)
-            self.assertTrue(
-                os.environ.get("PATH").startswith(
-                    os.path.join(expected_venv, "bin")
-                )
+            assert os.environ.get("VIRTUAL_ENV") == expected_venv
+            assert os.environ.get("PATH").startswith(
+                os.path.join(expected_venv, "bin")
             )
-            self.assertEqual(
-                os.environ.get("UV_KEYRING_PROVIDER"), "subprocess"
+            assert os.environ.get("UV_KEYRING_PROVIDER") == "subprocess"
+            assert (
+                os.environ.get("UV_INDEX_PRIVATE_DEFAULT_USERNAME")
+                == "oauth2accesstoken"
             )
-            self.assertEqual(
-                os.environ.get("UV_INDEX_PRIVATE_DEFAULT_USERNAME"),
-                "oauth2accesstoken",
-            )
-            self.assertEqual(
-                os.environ.get("UV_INDEX_PRIVATE_DEFAULT_PASSWORD"),
-                "mock-gcp-token",
+            assert (
+                os.environ.get("UV_INDEX_PRIVATE_DEFAULT_PASSWORD")
+                == "mock-gcp-token"
             )
             return mock_agent_instance
 
@@ -229,22 +226,18 @@ class AntigravityAgentHeadTest(unittest.TestCase):
         asyncio.run(head.close())
 
         # Verify restoration
-        self.assertEqual(os.environ.get("PATH"), "/usr/bin")
-        self.assertEqual(os.environ.get("VIRTUAL_ENV"), "/parent/venv")
-        self.assertEqual(os.environ.get("GCLOUD_PROJECT"), "original-project")
-        self.assertEqual(
-            os.environ.get("GOOGLE_CLOUD_PROJECT"), "original-project"
+        assert os.environ.get("PATH") == "/usr/bin"
+        assert os.environ.get("VIRTUAL_ENV") == "/parent/venv"
+        assert os.environ.get("GCLOUD_PROJECT") == "original-project"
+        assert os.environ.get("GOOGLE_CLOUD_PROJECT") == "original-project"
+        assert os.environ.get("UV_KEYRING_PROVIDER") == "original-provider"
+        assert (
+            os.environ.get("UV_INDEX_PRIVATE_DEFAULT_USERNAME")
+            == "original-username"
         )
-        self.assertEqual(
-            os.environ.get("UV_KEYRING_PROVIDER"), "original-provider"
-        )
-        self.assertEqual(
-            os.environ.get("UV_INDEX_PRIVATE_DEFAULT_USERNAME"),
-            "original-username",
-        )
-        self.assertEqual(
-            os.environ.get("UV_INDEX_PRIVATE_DEFAULT_PASSWORD"),
-            "original-password",
+        assert (
+            os.environ.get("UV_INDEX_PRIVATE_DEFAULT_PASSWORD")
+            == "original-password"
         )
 
     # Deleting obsolete workspace cleanup tests because directory cleanup was completely reverted.
@@ -259,7 +252,9 @@ name = "custom-index-name"
 url = "https://example.com/simple"
 """,
     )
-    def test_get_uv_index_env_vars_parses_toml(self, mock_file, mock_exists):
+    def test_get_uv_index_env_vars_parses_toml(
+        self, mock_file: typing.Any, mock_exists: typing.Any
+    ) -> None:
         mock_exists.return_value = True
         head = agent_heads.AntigravityAgentHead(
             scenario_name="test-scenario",
@@ -268,13 +263,10 @@ url = "https://example.com/simple"
             location="test-location",
         )
         env_vars = head._get_uv_index_env_vars("test-token")
-        self.assertEqual(
-            env_vars,
-            {
-                "UV_INDEX_CUSTOM_INDEX_NAME_USERNAME": "oauth2accesstoken",
-                "UV_INDEX_CUSTOM_INDEX_NAME_PASSWORD": "test-token",
-            },
-        )
+        assert env_vars == {
+            "UV_INDEX_CUSTOM_INDEX_NAME_USERNAME": "oauth2accesstoken",
+            "UV_INDEX_CUSTOM_INDEX_NAME_PASSWORD": "test-token",
+        }
 
 
 if __name__ == "__main__":

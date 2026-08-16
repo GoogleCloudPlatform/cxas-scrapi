@@ -1,3 +1,4 @@
+import typing
 import argparse
 import json
 import os
@@ -30,17 +31,17 @@ MAX_ITERATIONS = 100
 TARGET_PASS_RATE = 1.0
 
 
-def load_skill_content():
+def load_skill_content() -> typing.Any:
     with open(skill_file, "r") as f:
         return f.read()
 
 
-def write_skill_content(content):
+def write_skill_content(content: typing.Any) -> typing.Any:
     with open(skill_file, "w") as f:
         f.write(content)
 
 
-def load_climb_history():
+def load_climb_history() -> typing.Any:
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r") as f:
@@ -50,12 +51,12 @@ def load_climb_history():
     return []
 
 
-def save_climb_history(history):
+def save_climb_history(history: typing.Any) -> typing.Any:
     with open(HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=2)
 
 
-def request_optimization(current_skill, failures):
+def request_optimization(current_skill: typing.Any, failures: typing.Any) -> typing.Any:
     failure_log = ""
     for f in failures:
         failure_log += f"- File: {f['file']}\n  Error: {f['error']}\n"
@@ -94,7 +95,7 @@ Output the complete, optimized SKILL.md content directly in your response with a
     return new_content
 
 
-def run_hill_climb():
+def run_hill_climb() -> typing.Any:
     parser = argparse.ArgumentParser()
     parser.add_argument("--iterations", type=int, default=100)
     args = parser.parse_args()

@@ -15,18 +15,22 @@ optimization is running. The markers also feed the final summary table.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from rich.console import Console
 from rich.table import Table
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from rich.console import Console
 
 
 class PhaseTracker:
     """Records phase start/end with wall-clock timings."""
 
-    def __init__(self, console: Console):
+    def __init__(self, console: Console) -> None:
         self.console = console
         self._records: list[dict] = []
         self._stack: list[dict] = []

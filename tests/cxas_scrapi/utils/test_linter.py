@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for the linter framework, configuration, discovery, and runner."""
 
 import json
+import typing
 
 import pytest
 
@@ -36,22 +38,22 @@ from cxas_scrapi.utils.linter import (
 # ── Severity ─────────────────────────────────────────────────────────────
 
 
-def test_severity_from_str():
+def test_severity_from_str() -> None:
     assert Severity.from_str("error") == Severity.ERROR
     assert Severity.from_str("WARNING") == Severity.WARNING
     assert Severity.from_str("Info") == Severity.INFO
     assert Severity.from_str("off") == Severity.OFF
 
 
-def test_severity_from_str_invalid():
-    with pytest.raises(ValueError):
+def test_severity_from_str_invalid() -> None:
+    with pytest.raises(ValueError):  # noqa: PT011
         Severity.from_str("invalid")
 
 
 # ── LintResult ───────────────────────────────────────────────────────────
 
 
-def test_lint_result_str_format():
+def test_lint_result_str_format() -> None:
     result = LintResult(
         file="agents/root/instruction.txt",
         rule_id="I001",
@@ -64,7 +66,7 @@ def test_lint_result_str_format():
     assert "Missing required XML tag" in output
 
 
-def test_lint_result_str_with_line():
+def test_lint_result_str_with_line() -> None:
     result = LintResult(
         file="agents/root/instruction.txt",
         rule_id="I004",
@@ -77,7 +79,7 @@ def test_lint_result_str_with_line():
     assert ":42" in output
 
 
-def test_lint_result_to_dict():
+def test_lint_result_to_dict() -> None:
     result = LintResult(
         file="app.json",
         rule_id="A001",
@@ -97,7 +99,7 @@ def test_lint_result_to_dict():
 # ── LintReport ───────────────────────────────────────────────────────────
 
 
-def test_lint_report_add_and_counts():
+def test_lint_report_add_and_counts() -> None:
     report = LintReport()
     report.add(LintResult("a.txt", "I001", Severity.ERROR, "err"))
     report.add(LintResult("b.txt", "I002", Severity.WARNING, "warn"))
@@ -108,7 +110,7 @@ def test_lint_report_add_and_counts():
     assert len(report.results) == 3
 
 
-def test_lint_report_to_json():
+def test_lint_report_to_json() -> None:
     report = LintReport()
     report.add(LintResult("a.txt", "I001", Severity.ERROR, "err"))
 
@@ -118,7 +120,7 @@ def test_lint_report_to_json():
     assert parsed[0]["severity"] == "error"
 
 
-def test_lint_report_empty(capsys):
+def test_lint_report_empty(capsys: typing.Any) -> None:
     report = LintReport()
     report.print_summary()
     captured = capsys.readouterr()
@@ -128,7 +130,7 @@ def test_lint_report_empty(capsys):
 # ── RuleRegistry ─────────────────────────────────────────────────────────
 
 
-def test_rule_registry_lookup():
+def test_rule_registry_lookup() -> None:
     registry = RuleRegistry()
 
     class DummyRule(Rule):
@@ -137,7 +139,12 @@ def test_rule_registry_lookup():
         category = "test"
         default_severity = Severity.WARNING
 
-        def check(self, file_path, content, context):
+        def check(
+            self,
+            file_path: typing.Any,
+            content: typing.Any,
+            context: typing.Any,
+        ) -> typing.Any:
             return []
 
     r = DummyRule()
@@ -149,7 +156,7 @@ def test_rule_registry_lookup():
     assert len(registry.rules_for_category("nonexistent")) == 0
 
 
-def test_rule_decorator_deduplication():
+def test_rule_decorator_deduplication() -> None:
     """@rule with same ID twice should not create duplicates."""
     from cxas_scrapi.utils.linter import _RULE_REGISTRY  # noqa: PLC0415
 
@@ -163,7 +170,9 @@ def test_rule_decorator_deduplication():
         description = "test"
         default_severity = Severity.INFO
 
-        def check(self, fp, content, ctx):
+        def check(
+            self, fp: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
             return []
 
     after_first = sum(len(v) for v in _RULE_REGISTRY.values())
@@ -177,7 +186,9 @@ def test_rule_decorator_deduplication():
         description = "test"
         default_severity = Severity.INFO
 
-        def check(self, fp, content, ctx):
+        def check(
+            self, fp: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
             return []
 
     after_second = sum(len(v) for v in _RULE_REGISTRY.values())
@@ -190,7 +201,7 @@ def test_rule_decorator_deduplication():
     _REGISTERED_IDS.discard(("XDUP001", "test_dedup"))
 
 
-def test_reset_registry():
+def test_reset_registry() -> None:
     """reset_registry() clears all registered rules."""
     from cxas_scrapi.utils.linter import (  # noqa: PLC0415
         _REGISTERED_IDS,
@@ -230,15 +241,15 @@ def test_reset_registry():
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    # 68 baseline + 11 cross-surface V100-V104 registrations
+    # 69 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
-    assert len(registry_restored.all_rules()) == 80  # noqa: PLR2004
+    assert len(registry_restored.all_rules()) == 81  # noqa: PLR2004
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
 
 
-def test_lint_config_load_defaults(tmp_path):
+def test_lint_config_load_defaults(tmp_path: typing.Any) -> None:
     config = LintConfig.load(tmp_path)
     assert config.app_dir == "."
     assert config.evals_dir == "evals/"
@@ -246,7 +257,7 @@ def test_lint_config_load_defaults(tmp_path):
     assert config.ignore == []
 
 
-def test_lint_config_load_from_yaml(tmp_path):
+def test_lint_config_load_from_yaml(tmp_path: typing.Any) -> None:
     (tmp_path / "cxaslint.yaml").write_text(
         "app_dir: my_app/\n"
         "evals_dir: my_evals/\n"
@@ -264,7 +275,7 @@ def test_lint_config_load_from_yaml(tmp_path):
     assert "**/__pycache__/**" in config.ignore
 
 
-def test_lint_config_gecx_config_fallback(tmp_path):
+def test_lint_config_gecx_config_fallback(tmp_path: typing.Any) -> None:
     """LintConfig falls back to gecx-config.json for app_dir."""
     (tmp_path / "gecx-config.json").write_text(
         '{"app_dir": "cxas_app/", "gcp_project_id": "test"}'
@@ -273,7 +284,7 @@ def test_lint_config_gecx_config_fallback(tmp_path):
     assert config.app_dir == "cxas_app/"
 
 
-def test_lint_config_cxaslint_overrides_gecx(tmp_path):
+def test_lint_config_cxaslint_overrides_gecx(tmp_path: typing.Any) -> None:
     """cxaslint.yaml app_dir takes precedence over gecx-config.json."""
     (tmp_path / "gecx-config.json").write_text('{"app_dir": "from_gecx/"}')
     (tmp_path / "cxaslint.yaml").write_text("app_dir: from_lint/\n")
@@ -281,7 +292,7 @@ def test_lint_config_cxaslint_overrides_gecx(tmp_path):
     assert config.app_dir == "from_lint/"
 
 
-def test_lint_config_severity_override():
+def test_lint_config_severity_override() -> None:
     config = LintConfig()
     config.rules["I001"] = Severity.OFF
 
@@ -289,14 +300,19 @@ def test_lint_config_severity_override():
         id = "I001"
         default_severity = Severity.ERROR
 
-        def check(self, file_path, content, context):
+        def check(
+            self,
+            file_path: typing.Any,
+            content: typing.Any,
+            context: typing.Any,
+        ) -> typing.Any:
             return []
 
     r = DummyRule()
     assert config.get_severity(r) == Severity.OFF
 
 
-def test_lint_config_per_file_override():
+def test_lint_config_per_file_override() -> None:
     config = LintConfig()
     config.per_file = {"**/root_agent/**": {"I007": "off"}}
 
@@ -304,7 +320,12 @@ def test_lint_config_per_file_override():
         id = "I007"
         default_severity = Severity.INFO
 
-        def check(self, file_path, content, context):
+        def check(
+            self,
+            file_path: typing.Any,
+            content: typing.Any,
+            context: typing.Any,
+        ) -> typing.Any:
             return []
 
     r = DummyRule()
@@ -314,7 +335,7 @@ def test_lint_config_per_file_override():
     assert config.get_severity(r, billing_path) == Severity.INFO
 
 
-def test_lint_config_is_ignored():
+def test_lint_config_is_ignored() -> None:
     config = LintConfig()
     config.ignore = ["**/__pycache__/**", "**/test_*.py"]
 
@@ -326,7 +347,9 @@ def test_lint_config_is_ignored():
 # ── Discovery ────────────────────────────────────────────────────────────
 
 
-def _make_app(tmp_path, agents=None, tools=None):
+def _make_app(
+    tmp_path: typing.Any, agents: typing.Any = None, tools: typing.Any = None
+) -> None:
     """Helper to create a minimal app directory structure."""
     (tmp_path / "app.json").write_text(
         '{"name": "test", "displayName": "Test"}'
@@ -345,7 +368,7 @@ def _make_app(tmp_path, agents=None, tools=None):
             (tool_dir / "python_code.py").write_text(f"def {name}(): pass")
 
 
-def test_discovery_direct_app_root(tmp_path):
+def test_discovery_direct_app_root(tmp_path: typing.Any) -> None:
     _make_app(tmp_path, agents=["root_agent"])
     evals_dir = tmp_path / "evals"
     evals_dir.mkdir()
@@ -354,7 +377,7 @@ def test_discovery_direct_app_root(tmp_path):
     assert discovery.app_root == tmp_path
 
 
-def test_discovery_nested_app_root(tmp_path):
+def test_discovery_nested_app_root(tmp_path: typing.Any) -> None:
     nested = tmp_path / "my_app"
     nested.mkdir()
     _make_app(nested, agents=["root_agent"])
@@ -365,7 +388,7 @@ def test_discovery_nested_app_root(tmp_path):
     assert discovery.app_root == nested
 
 
-def test_discovery_agents(tmp_path):
+def test_discovery_agents(tmp_path: typing.Any) -> None:
     _make_app(tmp_path, agents=["root_agent", "billing_agent"])
     discovery = Discovery(tmp_path, tmp_path / "evals")
 
@@ -375,7 +398,7 @@ def test_discovery_agents(tmp_path):
     assert agents["root_agent"].name == "instruction.txt"
 
 
-def test_discovery_tools(tmp_path):
+def test_discovery_tools(tmp_path: typing.Any) -> None:
     _make_app(tmp_path, tools=["get_balance", "transfer_funds"])
     discovery = Discovery(tmp_path, tmp_path / "evals")
 
@@ -384,7 +407,7 @@ def test_discovery_tools(tmp_path):
     assert "transfer_funds" in tools
 
 
-def test_discovery_callbacks(tmp_path):
+def test_discovery_callbacks(tmp_path: typing.Any) -> None:
     _make_app(tmp_path, agents=["root_agent"])
     cb_dir = (
         tmp_path
@@ -405,7 +428,7 @@ def test_discovery_callbacks(tmp_path):
     assert callbacks[0][1] == "before_model_callbacks"
 
 
-def test_discovery_no_app(tmp_path):
+def test_discovery_no_app(tmp_path: typing.Any) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
     discovery = Discovery(empty, tmp_path / "evals")
@@ -413,20 +436,20 @@ def test_discovery_no_app(tmp_path):
     assert discovery.discover_agents() == {}
 
 
-def test_discovery_app_config(tmp_path):
+def test_discovery_app_config(tmp_path: typing.Any) -> None:
     _make_app(tmp_path)
     discovery = Discovery(tmp_path, tmp_path / "evals")
     assert discovery.discover_app_config().name == "app.json"
 
 
-def test_discovery_agent_configs(tmp_path):
+def test_discovery_agent_configs(tmp_path: typing.Any) -> None:
     _make_app(tmp_path, agents=["root_agent"])
     discovery = Discovery(tmp_path, tmp_path / "evals")
     configs = discovery.discover_agent_configs()
     assert "root_agent" in configs
 
 
-def test_discovery_nested_via_gecx_config(tmp_path):
+def test_discovery_nested_via_gecx_config(tmp_path: typing.Any) -> None:
     """gecx-config.json app_dir points to cxas_app/ which has a nested app."""
     cxas_app = tmp_path / "cxas_app" / "my-agent"
     cxas_app.mkdir(parents=True)
@@ -439,7 +462,7 @@ def test_discovery_nested_via_gecx_config(tmp_path):
     assert discovery.app_root == cxas_app
 
 
-def test_discovery_toolsets_guardrails(tmp_path):
+def test_discovery_toolsets_guardrails(tmp_path: typing.Any) -> None:
     _make_app(tmp_path)
     (tmp_path / "toolsets" / "crm_service").mkdir(parents=True)
     (tmp_path / "guardrails" / "profanity").mkdir(parents=True)
@@ -449,7 +472,7 @@ def test_discovery_toolsets_guardrails(tmp_path):
     assert "profanity" in discovery.discover_guardrails()
 
 
-def test_discovery_tool_callbacks(tmp_path):
+def test_discovery_tool_callbacks(tmp_path: typing.Any) -> None:
     """before_tool_callbacks and after_tool_callbacks are discovered."""
     _make_app(tmp_path, agents=["root_agent"])
     cb_dir = (
@@ -466,7 +489,7 @@ def test_discovery_tool_callbacks(tmp_path):
     assert len(tool_cbs) == 1
 
 
-def test_discovery_filtering(tmp_path):
+def test_discovery_filtering(tmp_path: typing.Any) -> None:
     """Discovery filters agents, tools, callbacks, and configs if limited."""
     _make_app(
         tmp_path,
@@ -519,15 +542,15 @@ def test_discovery_filtering(tmp_path):
 # ── Runner ───────────────────────────────────────────────────────────────
 
 
-def test_build_registry_all_rules():
+def test_build_registry_all_rules() -> None:
     registry = build_registry()
     all_rules = registry.all_rules()
-    # 68 baseline + 11 cross-surface V100-V104 registrations
+    # 69 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
-    assert len(all_rules) == 80  # noqa: PLR2004
+    assert len(all_rules) == 81  # noqa: PLR2004
 
 
-def test_build_context(tmp_path):
+def test_build_context(tmp_path: typing.Any) -> None:
     _make_app(tmp_path, agents=["root_agent"], tools=["get_info"])
     config = LintConfig()
     discovery = Discovery(tmp_path, tmp_path / "evals")
@@ -538,7 +561,7 @@ def test_build_context(tmp_path):
     assert "end_session" in context.platform_tools
 
 
-def test_build_context_agent_to_parents(tmp_path):
+def test_build_context_agent_to_parents(tmp_path: typing.Any) -> None:
     _make_app(
         tmp_path,
         agents=["parent_a", "parent_b", "shared_child", "sole_child"],
@@ -566,7 +589,9 @@ def test_build_context_agent_to_parents(tmp_path):
     assert "parent_b" not in context.agent_to_parents
 
 
-def test_build_context_agent_to_parents_resolution(tmp_path):
+def test_build_context_agent_to_parents_resolution(
+    tmp_path: typing.Any,
+) -> None:
     _make_app(tmp_path, agents=["parent_a", "shared_child"])
 
     parent_a_dir = tmp_path / "agents" / "parent_a"
@@ -582,7 +607,7 @@ def test_build_context_agent_to_parents_resolution(tmp_path):
     assert context.agent_to_parents["shared_child"] == {"parent_a"}
 
 
-def test_run_rules_categories_filter(tmp_path):
+def test_run_rules_categories_filter(tmp_path: typing.Any) -> None:
     _make_app(tmp_path, agents=["root_agent"])
     config = LintConfig()
     discovery = Discovery(tmp_path, tmp_path / "evals")
@@ -600,7 +625,7 @@ def test_run_rules_categories_filter(tmp_path):
         assert r.rule_id.startswith("A"), f"Expected A-rule, got {r.rule_id}"
 
 
-def test_run_rules_specific_rules_filter(tmp_path):
+def test_run_rules_specific_rules_filter(tmp_path: typing.Any) -> None:
     _make_app(tmp_path, agents=["root_agent"])
     config = LintConfig()
     discovery = Discovery(tmp_path, tmp_path / "evals")
@@ -616,7 +641,7 @@ def test_run_rules_specific_rules_filter(tmp_path):
         assert r.rule_id == "I001", f"Expected I001, got {r.rule_id}"
 
 
-def test_run_rules_handles_directory_targets(tmp_path):
+def test_run_rules_handles_directory_targets(tmp_path: typing.Any) -> None:
     """Schema rules receive directory paths (not files).
     The runner must not crash on read_text() for directories."""
     _make_app(tmp_path, agents=["root_agent"], tools=["my_tool"])
@@ -646,7 +671,7 @@ def test_run_rules_handles_directory_targets(tmp_path):
     assert isinstance(report.results, list)
 
 
-def test_run_rules_with_gecx_nested_layout(tmp_path):
+def test_run_rules_with_gecx_nested_layout(tmp_path: typing.Any) -> None:
     """Full lint on gecx-style nested layout."""
     app_root = tmp_path / "cxas_app" / "my-agent"
     app_root.mkdir(parents=True)
@@ -678,7 +703,7 @@ def test_run_rules_with_gecx_nested_layout(tmp_path):
     assert any(r.rule_id == "I001" for r in report.results)
 
 
-def test_structure_rules_dispatched_by_target(tmp_path):
+def test_structure_rules_dispatched_by_target(tmp_path: typing.Any) -> None:
     """Structure rules are dispatched by target property."""
     from cxas_scrapi.utils.linter import (  # noqa: PLC0415
         _REGISTERED_IDS,
@@ -699,7 +724,9 @@ def test_structure_rules_dispatched_by_target(tmp_path):
         default_severity = Severity.WARNING
         target = "agent_config"
 
-        def check(self, file_path, content, ctx):
+        def check(
+            self, file_path: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
             return [
                 self.make_result(
                     str(file_path), "S999 was dispatched correctly"

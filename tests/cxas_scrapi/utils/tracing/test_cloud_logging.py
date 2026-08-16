@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import datetime
+import typing
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -21,7 +22,12 @@ import pytest
 from cxas_scrapi.utils.tracing import cloud_logging as cl_mod
 
 
-def _entry(ts, severity="WARNING", payload="hi", labels=None):
+def _entry(
+    ts: typing.Any,
+    severity: typing.Any = "WARNING",
+    payload: typing.Any = "hi",
+    labels: typing.Any = None,
+) -> typing.Any:
     return SimpleNamespace(
         payload=payload,
         timestamp=ts,
@@ -34,14 +40,14 @@ def _entry(ts, severity="WARNING", payload="hi", labels=None):
 
 
 @patch.object(cl_mod, "logging_v2")
-def test_init_requires_dependency(mock_lv2):
-    with patch.object(cl_mod, "logging_v2", None):
+def test_init_requires_dependency(mock_lv2: typing.Any) -> None:
+    with patch.object(cl_mod, "logging_v2", None):  # noqa: SIM117
         with pytest.raises(ImportError, match="google-cloud-logging"):
             cl_mod.CloudLogsClient(project_id="p", filter_template="severity")
 
 
 @patch.object(cl_mod, "logging_v2")
-def test_fetch_with_explicit_times(mock_lv2):
+def test_fetch_with_explicit_times(mock_lv2: typing.Any) -> None:
     mock_client = MagicMock()
     mock_lv2.Client.return_value = mock_client
     e = _entry(datetime.datetime(2026, 5, 10, 12, 0, 0))
@@ -72,7 +78,7 @@ def test_fetch_with_explicit_times(mock_lv2):
 
 
 @patch.object(cl_mod, "logging_v2")
-def test_fetch_defaults_when_no_times_given(mock_lv2):
+def test_fetch_defaults_when_no_times_given(mock_lv2: typing.Any) -> None:
     mock_client = MagicMock()
     mock_lv2.Client.return_value = mock_client
     mock_client.list_entries.return_value = []
@@ -89,7 +95,7 @@ def test_fetch_defaults_when_no_times_given(mock_lv2):
 
 
 @patch.object(cl_mod, "logging_v2")
-def test_fetch_swallows_exception(mock_lv2):
+def test_fetch_swallows_exception(mock_lv2: typing.Any) -> None:
     mock_client = MagicMock()
     mock_lv2.Client.return_value = mock_client
     mock_client.list_entries.side_effect = RuntimeError("boom")
@@ -111,7 +117,7 @@ def test_fetch_swallows_exception(mock_lv2):
 
 
 @patch.object(cl_mod, "logging_v2")
-def test_entry_to_row_with_dict_payload(mock_lv2):
+def test_entry_to_row_with_dict_payload(mock_lv2: typing.Any) -> None:
     mock_client = MagicMock()
     mock_lv2.Client.return_value = mock_client
     e = SimpleNamespace(
@@ -141,7 +147,7 @@ def test_entry_to_row_with_dict_payload(mock_lv2):
 
 
 @patch.object(cl_mod, "logging_v2")
-def test_entry_to_row_no_resource_no_timestamp(mock_lv2):
+def test_entry_to_row_no_resource_no_timestamp(mock_lv2: typing.Any) -> None:
     mock_client = MagicMock()
     mock_lv2.Client.return_value = mock_client
     e = SimpleNamespace(
@@ -172,7 +178,7 @@ def test_entry_to_row_no_resource_no_timestamp(mock_lv2):
 
 
 @patch.object(cl_mod, "logging_v2")
-def test_batch_fetch_groups_by_conversation_id(mock_lv2):
+def test_batch_fetch_groups_by_conversation_id(mock_lv2: typing.Any) -> None:
     mock_client = MagicMock()
     mock_lv2.Client.return_value = mock_client
     e1 = SimpleNamespace(
@@ -209,7 +215,8 @@ def test_batch_fetch_groups_by_conversation_id(mock_lv2):
         end_time=datetime.datetime(2026, 5, 2),
     )
     assert set(out.keys()) == {"c-1", "c-2", "c-3"}
-    assert len(out["c-1"]) == 1 and out["c-1"][0]["message"] == "hi"
+    assert len(out["c-1"]) == 1
+    assert out["c-1"][0]["message"] == "hi"
     assert len(out["c-2"]) == 1
     assert out["c-3"] == []
     # Verify the OR-combined filter went through
@@ -218,7 +225,7 @@ def test_batch_fetch_groups_by_conversation_id(mock_lv2):
 
 
 @patch.object(cl_mod, "logging_v2")
-def test_batch_fetch_empty_input(mock_lv2):
+def test_batch_fetch_empty_input(mock_lv2: typing.Any) -> None:
     mock_client = MagicMock()
     mock_lv2.Client.return_value = mock_client
     client = cl_mod.CloudLogsClient(
@@ -241,7 +248,7 @@ def test_batch_fetch_empty_input(mock_lv2):
 
 
 @patch.object(cl_mod, "logging_v2")
-def test_batch_fetch_handles_exception(mock_lv2):
+def test_batch_fetch_handles_exception(mock_lv2: typing.Any) -> None:
     mock_client = MagicMock()
     mock_lv2.Client.return_value = mock_client
     mock_client.list_entries.side_effect = RuntimeError("boom")
@@ -261,34 +268,34 @@ def test_batch_fetch_handles_exception(mock_lv2):
     assert out == {"a": [], "b": []}
 
 
-def test_row_conversation_id_from_labels():
+def test_row_conversation_id_from_labels() -> None:
     assert (
         cl_mod._row_conversation_id({"labels": {"conversation_id": "c-7"}})
         == "c-7"
     )
 
 
-def test_row_conversation_id_from_message_text():
+def test_row_conversation_id_from_message_text() -> None:
     msg = 'jsonPayload.conversation_id="abcd-1234-5678"'
     assert cl_mod._row_conversation_id({"message": msg}) == "abcd-1234-5678"
 
 
-def test_row_conversation_id_returns_none_when_missing():
+def test_row_conversation_id_returns_none_when_missing() -> None:
     assert cl_mod._row_conversation_id({}) is None
     assert cl_mod._row_conversation_id({"message": "no id here"}) is None
     assert cl_mod._row_conversation_id({"labels": "not-a-dict"}) is None
 
 
-def test_stringify_paths():
+def test_stringify_paths() -> None:
     assert cl_mod._stringify(None) == ""
     assert cl_mod._stringify("hi") == "hi"
     assert cl_mod._stringify({"a": 1}) == '{"a": 1}'
 
     class NotJsonable:
-        def __repr__(self):
+        def __repr__(self) -> typing.Any:
             return "NotJsonable()"
 
-        def __str__(self):
+        def __str__(self) -> typing.Any:
             return "stringified"
 
     # Force json.dumps to fail by passing an object via patch.

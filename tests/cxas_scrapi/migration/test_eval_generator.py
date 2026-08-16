@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for eval_generator.py."""
+
+import typing
 
 import pytest
 
@@ -22,7 +25,7 @@ from cxas_scrapi.migration.eval_generator import DeterministicEvalGenerator
 
 
 @pytest.fixture
-def sample_ir():
+def sample_ir() -> typing.Any:
     metadata = IRMetadata(app_name="Test App")
     agent = IRAgent(
         type="PLAYBOOK",
@@ -35,7 +38,7 @@ def sample_ir():
     return MigrationIR(metadata=metadata, agents={"Test Agent": agent})
 
 
-def test_generate_tests_for_agent(sample_ir):
+def test_generate_tests_for_agent(sample_ir: typing.Any) -> None:
     """Test successful generation of tests."""
     generator = DeterministicEvalGenerator(ir_state=sample_ir)
 
@@ -62,7 +65,7 @@ def test_generate_tests_for_agent(sample_ir):
     assert tests[2].turns[0].expectations[0].value == "other_agent"
 
 
-def test_generate_tests_for_agent_missing(sample_ir):
+def test_generate_tests_for_agent_missing(sample_ir: typing.Any) -> None:
     """Test handling of missing agent."""
     generator = DeterministicEvalGenerator(ir_state=sample_ir)
 

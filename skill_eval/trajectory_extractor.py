@@ -22,7 +22,7 @@ from skill_eval import benchmark
 class TrajectoryExtractor:
     """Extracts trajectory events from public Antigravity SDK Step history."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._last_index = 0
         self._emitted_calls = set()
 

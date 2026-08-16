@@ -163,7 +163,7 @@ def _app_pull(
                             root_item = parts[0]
                             # Only remove if it belongs to a folder that WAS in
                             # the export
-                            if root_item in export_root_items:
+                            if root_item in export_root_items:  # noqa: SIM102
                                 if local_rel_path not in export_set:
                                     file_path = os.path.join(root, name)
                                     print(
@@ -181,7 +181,7 @@ def _app_pull(
 
                         if len(parts) > 1:
                             root_item = parts[0]
-                            if root_item in export_root_items:
+                            if root_item in export_root_items:  # noqa: SIM102
                                 if (
                                     local_rel_path not in export_set
                                     and (local_rel_path + "/") not in export_set
@@ -340,16 +340,19 @@ def _app_push(
                 app_name=app_name,
                 creds=apps_client.creds,
             )
-            display_name = f"import-{time.strftime('%Y%m%d%H%M%S')}"
+            version_display_name = (
+                getattr(args, "version_name", None)
+                or f"import-{time.strftime('%Y%m%d%H%M%S')}"
+            )
             description = getattr(args, "version_description", None)
             version = versions_client.create_version(
-                display_name=display_name,
+                display_name=version_display_name,
                 description=description,
             )
             version_name = version.name
             print(
                 f"Created app version: {version_name} "
-                f"with display name {display_name}"
+                f"with display name {version_display_name}"
             )
             args.created_version_name = version_name
 

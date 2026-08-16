@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """MigrationAnalysisBuilder: emits a self-contained, tabbed HTML report
 that captures the state of a DFCX→CXAS migration as it runs.
 
@@ -39,15 +40,16 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
-
-from jinja2 import Template
+from typing import TYPE_CHECKING, Any
 
 from cxas_scrapi.migration.data_models import (
     DFCXAgentIR,
     IRBundle,
     MigrationIR,
 )
+
+if TYPE_CHECKING:
+    from jinja2 import Template
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +101,7 @@ class MigrationAnalysisSnapshot:
     pending_grouping: dict[str, Any] | None = None
     xprs_designer_data: dict[str, Any] | None = None
     experimental_agent_xprs: bool = False
+    mermaid_chart: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -193,6 +196,7 @@ class MigrationAnalysisBuilder:
             ):
                 self.snapshot.xprs_designer_data = ir.xprs_designer_data
                 self.snapshot.experimental_agent_xprs = True
+            self.snapshot.mermaid_chart = self._build_mermaid_chart()
             self._wire_callers()
 
             self.snapshot.references = self._derive_references(ir, bundle)
@@ -276,17 +280,18 @@ class MigrationAnalysisBuilder:
             stage_1 = (opt.get("stages") or {}).get("stage_1") or {}
             stage_2 = (opt.get("stages") or {}).get("stage_2") or {}
             if isinstance(stage_1, dict):
-                kpis["stage_1_variables_before"] = stage_1.get(
-                    "parameters_before"
+                kpis["stage_1_variables_before"] = (
+                    stage_1.get("parameters_before") or "—"
                 )
-                kpis["stage_1_variables_after"] = stage_1.get(
-                    "parameters_after"
+                kpis["stage_1_variables_after"] = (
+                    stage_1.get("parameters_after") or "—"
                 )
-            if isinstance(stage_2, dict):
-                kpis["stage_2_lint_baseline"] = stage_2.get("lint_baseline")
-                kpis["stage_2_lint_final"] = stage_2.get("lint_final")
-                kpis["fix_lint_baseline"] = stage_2.get("lint_baseline")
-                kpis["fix_lint_final"] = stage_2.get("lint_final")
+                kpis["stage_2_lint_baseline"] = (
+                    stage_2.get("lint_baseline") or "—"
+                )
+                kpis["stage_2_lint_final"] = stage_2.get("lint_final") or "—"
+                kpis["fix_lint_baseline"] = stage_2.get("lint_baseline") or "—"
+                kpis["fix_lint_final"] = stage_2.get("lint_final") or "—"
         return kpis
 
     def _derive_tools(
@@ -587,6 +592,7 @@ class MigrationAnalysisBuilder:
             data_json=data_json,
             mermaid_chart=self._build_mermaid_chart(),
             experimental_agent_xprs=self.snapshot.experimental_agent_xprs,
+            html_path=str(self.html_path),
         )
 
     def _build_mermaid_chart(self) -> str:

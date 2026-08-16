@@ -43,7 +43,7 @@ class AppConfig:
         env_data: dict[str, Any] | None,
         app_dir: str,
         env_path: str | None,
-    ):
+    ) -> None:
         self._app = app_data or {}
         self._env = env_data or {}
         self.app_dir = app_dir

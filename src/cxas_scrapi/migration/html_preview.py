@@ -6,6 +6,7 @@
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 
+
 """Pre-migration HTML preview + multi-stage HTML report aggregator.
 
 Inspects a freshly loaded :class:`DFCXAgentIR` and emits a self-contained
@@ -35,14 +36,13 @@ import html
 import io
 import json
 import re
+import typing
 from collections import Counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.tree import Tree
 
-from cxas_scrapi.migration.data_models import DFCXAgentIR
 from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
 from cxas_scrapi.migration.flow_visualizer import (
     FlowDependencyResolver,
@@ -50,6 +50,11 @@ from cxas_scrapi.migration.flow_visualizer import (
 )
 from cxas_scrapi.migration.graph_visualizer import HighLevelGraphVisualizer
 from cxas_scrapi.migration.playbook_visualizer import PlaybookTreeVisualizer
+
+if TYPE_CHECKING:
+    from rich.tree import Tree
+
+    from cxas_scrapi.migration.data_models import DFCXAgentIR
 
 __all__ = [
     "StageReport",
@@ -99,7 +104,7 @@ def _mermaid_label(text: str, max_len: int = 60) -> str:
     return cleaned
 
 
-def rich_to_html(renderable, width: int = 140) -> str:
+def rich_to_html(renderable: typing.Any, width: int = 140) -> str:
     """Capture a Rich renderable as HTML using Rich's exporter. Output is
     routed to an in-memory buffer so calling this is silent."""
     buf_console = Console(
@@ -512,11 +517,11 @@ def _render_tool_inner(tool_dict: dict[str, Any] | None, ref: str) -> str:
         or ""
     )
     if not schema:
-        toolset = (
-            tool_dict.get("openApiToolset")
-            or tool_dict.get("open_api_toolset")
-            or {}
+        toolset = tool_dict.get("openApiToolset") or tool_dict.get(
+            "open_api_toolset"
         )
+        if toolset is None:
+            toolset = {}
         schema = toolset.get("open_api_schema") or toolset.get("textSchema", "")
     if schema:
         parts.append(
@@ -804,7 +809,7 @@ def _render_flow_page(page_data: dict[str, Any]) -> str:
     return "".join(parts) or "<em class='dim'>(empty page)</em>"
 
 
-def _render_flow_content(flow_wrapper) -> str:
+def _render_flow_content(flow_wrapper: typing.Any) -> str:
     """Return flow-specific content: description, transition routes,
     event handlers, and per-page nested dropdowns."""
     parts: list[str] = []
@@ -1314,7 +1319,7 @@ class StageReport:
     Each ``add_*`` call appends a ``<details open>`` block; the table of
     contents links to all sections by anchor."""
 
-    def __init__(self, title: str, subtitle: str = ""):
+    def __init__(self, title: str, subtitle: str = "") -> None:
         self.title = title
         self.subtitle = subtitle
         self._stages: list[tuple[str, str, str]] = []

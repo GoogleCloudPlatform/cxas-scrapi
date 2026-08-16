@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for rubric scorer."""
 
 import asyncio
+import typing
 from unittest import mock
 
 from absl.testing import absltest
@@ -24,7 +26,9 @@ from skill_eval import scenario, scorer
 
 class ScorerTest(absltest.TestCase):
     @mock.patch("google.genai.Client")
-    def test_score_calls_gemini_and_parses_json(self, mock_client_class):
+    def test_score_calls_gemini_and_parses_json(
+        self, mock_client_class: typing.Any
+    ) -> None:
         mock_client = mock_client_class.return_value
         mock_response = mock.MagicMock()
         mock_response.text = (
@@ -59,9 +63,9 @@ class ScorerTest(absltest.TestCase):
             )
         )
 
-        self.assertEqual(result.total_score, 2)
-        self.assertEqual(result.scores[0].criteria, "C1")
-        self.assertEqual(result.summary, "s")
+        assert result.total_score == 2
+        assert result.scores[0].criteria == "C1"
+        assert result.summary == "s"
 
 
 if __name__ == "__main__":

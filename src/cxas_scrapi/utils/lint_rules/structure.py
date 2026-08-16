@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Structure validation rules (S001-S004).
+"""Structure validation rules (S001-S008).
 
 Validates app structure and cross-references using the existing
 ``cxas_scrapi.utils.validator.Validator`` for structural checks, plus
@@ -441,3 +441,83 @@ class SubAgentSingleParent(Rule):
                 )
             ]
         return []
+
+
+# Guardrail types the platform allows at most one of per app, mapped to
+# the config keys (camelCase and snake_case) that identify each type.
+_SINGLETON_GUARDRAIL_TYPES = {
+    "llmPromptSecurity": ("llmPromptSecurity", "llm_prompt_security"),
+}
+
+
+def _load_guardrail_config(guardrail_dir: Path) -> dict | None:
+    """Load ``<name>.yaml`` or ``<name>.json`` from a guardrail directory."""
+    for file_name, loader in (
+        (f"{guardrail_dir.name}.yaml", yaml.safe_load),
+        (f"{guardrail_dir.name}.json", json.loads),
+    ):
+        config_path = guardrail_dir / file_name
+        if config_path.exists():
+            try:
+                data = loader(config_path.read_text())
+            except Exception:
+                return None
+            return data if isinstance(data, dict) else None
+    return None
+
+
+@rule("structure")
+class SingletonGuardrailTypes(Rule):
+    """At most one guardrail of each singleton type exists per app.
+
+    The platform allows only one guardrail of certain types (currently
+    ``llmPromptSecurity``) per app. The console UI enforces the limit,
+    but the App Import API used by ``cxas push`` does not — importing
+    duplicates leaves the app un-editable in the console ("Too many llm
+    prompt security guardrails, the limit is 1").
+    """
+
+    id = "S008"
+    name = "singleton-guardrail-types"
+    description = (
+        "At most one guardrail of each singleton type (llmPromptSecurity)"
+    )
+    default_severity = Severity.ERROR
+    target = "guardrail_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        guardrail_dir = file_path if file_path.is_dir() else file_path.parent
+        config = _load_guardrail_config(guardrail_dir)
+        if config is None:
+            return []
+
+        results = []
+        for type_name, keys in _SINGLETON_GUARDRAIL_TYPES.items():
+            if not any(k in config for k in keys):
+                continue
+            duplicates = []
+            for sibling in sorted(guardrail_dir.parent.iterdir()):
+                if not sibling.is_dir() or sibling.name == guardrail_dir.name:
+                    continue
+                sibling_config = _load_guardrail_config(sibling)
+                if sibling_config and any(k in sibling_config for k in keys):
+                    duplicates.append(sibling.name)
+            if duplicates:
+                results.append(
+                    self.make_result(
+                        str(guardrail_dir),
+                        (
+                            f"Guardrail '{guardrail_dir.name}' has type "
+                            f"'{type_name}', but so do: {duplicates}. "
+                            "The platform allows at most one guardrail "
+                            "of this type per app."
+                        ),
+                        fix=(
+                            f"Keep a single '{type_name}' guardrail and "
+                            "remove the others."
+                        ),
+                    )
+                )
+        return results

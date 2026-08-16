@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import json
 import logging
@@ -32,7 +33,10 @@ from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
-from cxas_scrapi.utils.eval_utils import COMBINED_REPORT_FILENAME
+from cxas_scrapi.utils.eval_utils import (
+    COMBINED_REPORT_FILENAME,
+    COMBINED_REPORT_JSON_FILENAME,
+)
 
 DEFAULT_MODEL = "gemini-3.1-flash-live"
 
@@ -424,7 +428,7 @@ def run_eval(args: argparse.Namespace) -> None:
             # Assuming tags are accessible as a
             # list/repeated field on the Evaluation
             # object
-            if args.tags and hasattr(eval_obj, "tags"):
+            if args.tags and hasattr(eval_obj, "tags"):  # noqa: SIM102
                 # intersection of CLI tags and agent tags
                 if any(t in eval_obj.tags for t in args.tags):
                     match = True
@@ -475,7 +479,7 @@ def run_eval(args: argparse.Namespace) -> None:
             # Assuming tags are accessible as a
             # list/repeated field on the Evaluation
             # object
-            if args.tags and hasattr(eval_obj, "tags"):
+            if args.tags and hasattr(eval_obj, "tags"):  # noqa: SIM102
                 # intersection of CLI tags and agent tags
                 if any(t in eval_obj.tags for t in args.tags):
                     match = True
@@ -612,7 +616,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     progress_callback = None
     if getattr(args, "json_progress", False):
 
-        def progress_callback(stage: str, current: int, total: int):
+        def progress_callback(stage: str, current: int, total: int) -> None:
             import json
             import sys
 
@@ -660,6 +664,8 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         deployment_id=getattr(args, "deployment_id", None),
         progress_callback=progress_callback,
         capture_agent_audio=getattr(args, "capture_agent_audio", False),
+        single_bidi_stream=getattr(args, "single_bidi_stream", False),
+        report_format=getattr(args, "format", "html") or "html",
     )
     print(f"Combined report generated at {actual_output_path}")
 
@@ -1253,10 +1259,8 @@ def cmd_help(args: argparse.Namespace) -> None:
     """Handles the 'help' command."""
     parser = get_parser()
     if getattr(args, "help_command", None):
-        try:
+        with contextlib.suppress(SystemExit):
             parser.parse_args([args.help_command, "--help"])
-        except SystemExit:
-            pass
     else:
         parser.print_help()
 
@@ -1682,7 +1686,19 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_report.add_argument(
         "--output",
-        help=f"Output path. Defaults to <evals-dir>/{COMBINED_REPORT_FILENAME}",
+        help=(
+            f"Output path. Defaults to <evals-dir>/{COMBINED_REPORT_FILENAME} "
+            f"(or {COMBINED_REPORT_JSON_FILENAME} with --format json)."
+        ),
+    )
+    parser_report.add_argument(
+        "--format",
+        choices=["html", "json"],
+        default="html",
+        help=(
+            "Output format for the combined report: 'html' (default) or "
+            "'json' for a machine-readable report with the same data."
+        ),
     )
     parser_report.add_argument(
         "--golden-run",
@@ -1831,6 +1847,11 @@ def get_parser() -> argparse.ArgumentParser:
         "--capture-agent-audio",
         action="store_true",
         help="Capture real-time agent output audio as WAV files",
+    )
+    parser_report.add_argument(
+        "--single-bidi-stream",
+        action="store_true",
+        help="Keep one persistent bidi WebSocket open per audio simulation instead of one connection per turn.",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
@@ -2191,6 +2212,12 @@ def get_parser() -> argparse.ArgumentParser:
         "--create-version",
         action="store_true",
         help="Create a version after successful push.",
+    )
+    parser_push.add_argument(
+        "--version-name",
+        help=(
+            "Display name for the created version (used with --create-version)."
+        ),
     )
     parser_push.add_argument(
         "--version-description",

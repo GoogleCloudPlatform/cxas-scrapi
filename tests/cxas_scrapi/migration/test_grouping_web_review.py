@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for the HTML grouping confirmation gate.
 
 Exercises the full coroutine end-to-end with the live stdlib HTTP server
@@ -25,10 +26,10 @@ import json
 import os
 import threading
 import time
+import typing
 import urllib.error
 import urllib.request
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, NoReturn
 from unittest.mock import MagicMock
 
 from cxas_scrapi.migration import grouping_web_review
@@ -38,6 +39,9 @@ from cxas_scrapi.migration.data_models import (
     IRMetadata,
     MigrationIR,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _ir() -> MigrationIR:
@@ -82,8 +86,11 @@ class _FakeConsolidator:
         self.repropose_calls: list[str | None] = []
 
     async def propose_groupings(
-        self, root_key=None, dep_summary=None, feedback=None
-    ):
+        self,
+        root_key: typing.Any = None,
+        dep_summary: typing.Any = None,
+        feedback: typing.Any = None,
+    ) -> typing.Any:
         self.repropose_calls.append(feedback)
         # Simulate a new proposal where every flow goes to AllInOne.
         return {
@@ -151,12 +158,12 @@ def _start_web_review(
     'result' populated when the coroutine completes."""
     shared: dict[str, Any] = {"result": None, "exc": None}
 
-    def _run():
+    def _run() -> None:
         loop = asyncio.new_event_loop()
         shared["loop"] = loop
         asyncio.set_event_loop(loop)
 
-        async def _go():
+        async def _go() -> None:
             try:
                 shared["result"] = await grouping_web_review.web_review(
                     ir=_ir(),
@@ -198,7 +205,9 @@ def _discover_port(builder: MigrationAnalysisBuilder, shared: dict) -> int:
 # --- Integration tests -------------------------------------------------------
 
 
-def test_apply_grouping_confirms_and_writes_plan(tmp_path, monkeypatch):
+def test_apply_grouping_confirms_and_writes_plan(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     """Happy path: POST a valid grouping → server returns ok, plan file
     written, coroutine returns the edited groupings."""
     # Force a known port so we can talk to the server without sniffing.
@@ -226,7 +235,8 @@ def test_apply_grouping_confirms_and_writes_plan(tmp_path, monkeypatch):
         }
     }
     status, body = _http_post(f"{base}/api/grouping", {"groupings": edited})
-    assert status == 200 and body == {"ok": True}
+    assert status == 200
+    assert body == {"ok": True}
 
     thread.join(timeout=5)
     assert shared["exc"] is None
@@ -236,16 +246,18 @@ def test_apply_grouping_confirms_and_writes_plan(tmp_path, monkeypatch):
     assert json.loads(plan_path.read_text())["RootAgent"]["is_root"] is True
 
 
-def test_apply_grouping_rejects_invalid(tmp_path, monkeypatch):
-    """POST with orphan flows → 400 + errors list; coroutine still waiting."""
+def test_apply_grouping_auto_allocates_orphans(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
+    """POST unassigned flows -> auto-allocates orphans to root group."""
     fixed_port = 18746
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
     _, _, thread, shared = _start_web_review(builder=b)
     base = _wait_for_server("127.0.0.1", fixed_port)
 
-    # Missing FlowC → orphan; validate_groupings should reject.
-    bad = {
+    # Missing FlowC → auto-assigned to RootAgent by validate_groupings.
+    partial = {
         "RootAgent": {
             "agents": ["FlowA", "FlowB"],
             "is_root": True,
@@ -253,20 +265,20 @@ def test_apply_grouping_rejects_invalid(tmp_path, monkeypatch):
             "journey": "",
         }
     }
-    status, body = _http_post(f"{base}/api/grouping", {"groupings": bad})
-    assert status == 400
-    assert body["ok"] is False
-    assert body["errors"]
-    assert thread.is_alive()  # coroutine still waiting
-
-    # Abort to let the coroutine return.
-    status, body = _http_post(f"{base}/api/abort", {})
-    assert status == 200 and body == {"ok": True}
+    status, body = _http_post(f"{base}/api/grouping", {"groupings": partial})
+    assert status == 200
+    assert body == {"ok": True}
     thread.join(timeout=5)
-    assert shared["result"] is None
+    assert shared["result"]["RootAgent"]["agents"] == [
+        "FlowA",
+        "FlowB",
+        "FlowC",
+    ]
 
 
-def test_abort_returns_none(tmp_path, monkeypatch):
+def test_abort_returns_none(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     fixed_port = 18747
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
@@ -274,13 +286,16 @@ def test_abort_returns_none(tmp_path, monkeypatch):
     base = _wait_for_server("127.0.0.1", fixed_port)
 
     status, body = _http_post(f"{base}/api/abort", {})
-    assert status == 200 and body == {"ok": True}
+    assert status == 200
+    assert body == {"ok": True}
     thread.join(timeout=5)
     assert shared["result"] is None
     assert b.snapshot.pending_grouping["status"] == "aborted"
 
 
-def test_repropose_returns_new_proposal(tmp_path, monkeypatch):
+def test_repropose_returns_new_proposal(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     fixed_port = 18748
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
@@ -308,7 +323,9 @@ def test_repropose_returns_new_proposal(tmp_path, monkeypatch):
     assert shared["result"] == new_groupings
 
 
-def test_get_review_serves_html_with_injected_endpoint(tmp_path, monkeypatch):
+def test_get_review_serves_html_with_injected_endpoint(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     fixed_port = 18749
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
@@ -325,18 +342,20 @@ def test_get_review_serves_html_with_injected_endpoint(tmp_path, monkeypatch):
     thread.join(timeout=5)
 
 
-def test_timeout_returns_none_when_no_user_action(tmp_path, monkeypatch):
+def test_timeout_auto_confirms_proposal(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     fixed_port = 18750
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
     b = _make_builder(tmp_path)
     # Very short timeout so the test completes quickly.
     shared: dict[str, Any] = {"result": "sentinel", "exc": None}
 
-    def _run():
+    def _run() -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-        async def _go():
+        async def _go() -> None:
             try:
                 shared["result"] = await grouping_web_review.web_review(
                     ir=_ir(),
@@ -360,11 +379,13 @@ def test_timeout_returns_none_when_no_user_action(tmp_path, monkeypatch):
     thread.start()
     thread.join(timeout=10)
     assert shared["exc"] is None
-    assert shared["result"] is None
-    assert b.snapshot.pending_grouping["status"] == "aborted"
+    assert shared["result"] == _initial_groupings()
+    assert b.snapshot.pending_grouping["status"] == "auto_confirmed_timeout"
 
 
-def test_save_xprs_config_writes_yaml_file(tmp_path, monkeypatch):
+def test_save_xprs_config_writes_yaml_file(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     fixed_port = 18753
 
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
@@ -389,7 +410,9 @@ def test_save_xprs_config_writes_yaml_file(tmp_path, monkeypatch):
     thread.join(timeout=5)
 
 
-def test_get_root_redirects_to_review(tmp_path, monkeypatch):
+def test_get_root_redirects_to_review(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     fixed_port = 18751
 
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
@@ -409,7 +432,9 @@ def test_get_root_redirects_to_review(tmp_path, monkeypatch):
 # --- Phase 6: file-watch fallback -------------------------------------------
 
 
-def test_file_watch_applies_valid_edits(tmp_path, monkeypatch):
+def test_file_watch_applies_valid_edits(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     """Editing <target>_grouping_plan.json and saving resolves the gate
     via the same code path as POST /api/grouping."""
     fixed_port = 18752
@@ -446,7 +471,9 @@ def test_file_watch_applies_valid_edits(tmp_path, monkeypatch):
     assert shared["result"] == edited
 
 
-def test_file_watch_ignores_invalid_json(tmp_path, monkeypatch):
+def test_file_watch_ignores_invalid_json(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     """Invalid JSON written to the plan file does NOT resolve the gate."""
     fixed_port = 18765
     monkeypatch.setattr(grouping_web_review, "_free_port", lambda: fixed_port)
@@ -472,7 +499,9 @@ def test_file_watch_ignores_invalid_json(tmp_path, monkeypatch):
     assert _shared["result"] is None
 
 
-def test_apply_grouping_noop_if_already_resolved(tmp_path, monkeypatch):
+def test_apply_grouping_noop_if_already_resolved(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
     """If the gate is already resolved (event is set), apply_grouping should
     exit immediately as a no-op without running validations or file I/O."""
     ir = MagicMock()
@@ -500,7 +529,7 @@ def test_apply_grouping_noop_if_already_resolved(tmp_path, monkeypatch):
     )
 
     # Mock validate_groupings to raise an exception if it gets called
-    def fail_if_called(*args, **kwargs):
+    def fail_if_called(*args: typing.Any, **kwargs: typing.Any) -> NoReturn:
         raise AssertionError("validate_groupings should not have been called!")
 
     monkeypatch.setattr(
@@ -520,3 +549,21 @@ def test_apply_grouping_noop_if_already_resolved(tmp_path, monkeypatch):
     ctx.resolved = True
     errors2 = ctx.apply_grouping(groupings)
     assert errors2 == []
+
+
+def test_all_flow_names_includes_bracketed_names() -> None:
+    """_all_flow_names returns both IRAgent dict key and display_name."""
+    ir = MigrationIR(
+        metadata=IRMetadata(app_name="t"),
+        tools={},
+        agents={
+            "[Core] Conf Routing": IRAgent(
+                type="FLOW",
+                display_name="Core Conf Routing",
+                instruction="",
+            ),
+        },
+    )
+    names = grouping_web_review._all_flow_names(ir)
+    assert "[Core] Conf Routing" in names
+    assert "Core Conf Routing" in names

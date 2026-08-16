@@ -14,6 +14,7 @@
 
 import json
 import logging
+import typing
 from datetime import datetime, timezone
 from typing import Any
 
@@ -29,7 +30,7 @@ migration process,
     augmented with CXAS agent details and generative AI content.
     """
 
-    def __init__(self, gemini_client: GeminiGenerate):
+    def __init__(self, gemini_client: GeminiGenerate) -> None:
         """Initializes the reporter.
 
         Args:
@@ -52,7 +53,9 @@ migration process,
         self.generated_features: str = ""
         self.generated_description: str = ""
 
-    def set_app_info(self, source_id: str, target_name: str, target_id: str):
+    def set_app_info(
+        self, source_id: str, target_name: str, target_id: str
+    ) -> None:
         self.app_info = {
             "source": source_id,
             "target_name": target_name,
@@ -61,7 +64,7 @@ migration process,
 
     def log_variable(
         self, original_name: str, sanitized_name: str, var_type: str
-    ):
+    ) -> None:
         self.variables.append(
             {
                 "original": original_name,
@@ -76,7 +79,7 @@ migration process,
         original_name: str,
         new_id: str,
         ops: list[str] | None = None,
-    ):
+    ) -> None:
         entry = {"type": tool_type, "original": original_name, "new_id": new_id}
         if ops:
             entry["ops"] = ", ".join(ops)
@@ -88,7 +91,7 @@ migration process,
         new_id: str,
         description: str = "",
         model: str = "",
-    ):
+    ) -> None:
         self.agents.append(
             {
                 "original": original_name,
@@ -98,20 +101,22 @@ migration process,
             }
         )
 
-    def log_agent_dependency(self, agent_name: str, dependency_name: str):
+    def log_agent_dependency(
+        self, agent_name: str, dependency_name: str
+    ) -> None:
         self.dependencies.append(
             {"agent": agent_name, "dependency": dependency_name}
         )
 
-    def log_example(self, agent_name: str, example_name: str):
+    def log_example(self, agent_name: str, example_name: str) -> None:
         self.examples.append({"agent": agent_name, "example": example_name})
 
-    def log_action(self, category: str, description: str):
+    def log_action(self, category: str, description: str) -> None:
         self.actions.append({"category": category, "description": description})
 
     def log_transformation(
         self, category: str, original: str, migrated: str, notes: str = ""
-    ):
+    ) -> None:
         self.transformations.append(
             {
                 "category": category,
@@ -121,14 +126,14 @@ migration process,
             }
         )
 
-    def log_skipped(self, category: str, name: str, reason: str):
+    def log_skipped(self, category: str, name: str, reason: str) -> None:
         self.skipped.append(
             {"category": category, "name": name, "reason": reason}
         )
 
     async def generate_cxas_augmented_details(
         self, agent_config: dict[str, Any]
-    ):
+    ) -> None:
         """Uses Gemini to generate user journeys and analyze instructions,
         tools, and callbacks based on the provided CXAS agent configuration.
 
@@ -313,7 +318,9 @@ migration process,
 
         return "\n".join(md)
 
-    def export_and_download(self, filename="migration_report.md"):
+    def export_and_download(
+        self, filename: typing.Any = "migration_report.md"
+    ) -> None:
         md_content = self.generate_markdown()
         with open(filename, "w") as f:
             f.write(md_content)

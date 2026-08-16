@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """CES schema validation rules (V001-V007).
 
 Validates that resource configs (app, agent, tool, toolset, guardrail,
@@ -22,6 +23,7 @@ validation tool.
 
 import json
 import re
+import typing
 from pathlib import Path
 
 import proto
@@ -57,7 +59,11 @@ def _load_json_or_yaml(directory: Path, file_name: str) -> dict:
         )
 
 
-def _resolve_paths(data, extra_prefixes=(), base_path=None):
+def _resolve_paths(
+    data: typing.Any,
+    extra_prefixes: typing.Any = (),
+    base_path: typing.Any = None,
+) -> typing.Any:
     """Recursively replace file-path strings with their contents."""
     if isinstance(data, dict):
         return {
@@ -108,7 +114,7 @@ def _to_camel_case(snake_str: str) -> str:
     return components[0] + "".join(x.title() for x in components[1:])
 
 
-def _get_required_fields(cls) -> list[str]:
+def _get_required_fields(cls) -> list[str]:  # noqa: ANN001
     """Parse the docstring of a proto class to find required fields."""
     doc = cls.__doc__
     if not doc:
@@ -117,13 +123,13 @@ def _get_required_fields(cls) -> list[str]:
     required = []
     for i, line in enumerate(lines):
         match = re.match(r"^\s+(\w+)\s+\([^)]+\):$", line)
-        if match and i + 1 < len(lines):
-            if lines[i + 1].strip().startswith("Required."):
+        if match and i + 1 < len(lines):  # noqa: SIM102
+            if "REQUIRED" in lines[i + 1].upper():
                 required.append(match.group(1))
     return required
 
 
-def _validate_fields(data: dict, cls, path: str = "") -> None:
+def _validate_fields(data: dict, cls, path: str = "") -> None:  # noqa: ANN001
     """Validate required fields and recurse into nested proto messages."""
     required = _get_required_fields(cls)
     missing = [
@@ -242,15 +248,15 @@ class SchemaValid(Rule):
 
     def __init__(
         self,
-        rule_id,
-        rule_name,
-        desc,
-        rule_target,
-        proto_type,
-        config_name,
-        extra_prefixes,
-        do_resolve,
-    ):
+        rule_id: typing.Any,
+        rule_name: typing.Any,
+        desc: typing.Any,
+        rule_target: typing.Any,
+        proto_type: typing.Any,
+        config_name: typing.Any,
+        extra_prefixes: typing.Any,
+        do_resolve: typing.Any,
+    ) -> None:
         self.id = rule_id
         self.name = rule_name
         self.description = desc
@@ -291,7 +297,7 @@ class SchemaValid(Rule):
                 data.pop(key)
 
         if self.target == "evaluation_config":
-            lower_keys = {k.lower() for k in data.keys()}
+            lower_keys = {k.lower() for k in data}
             if "turns" in lower_keys or "expectations" in lower_keys:
                 # TODO: Deprecate this block of logic if the backend no longer
                 # supports these legacy root-level keys (turns/expectations).
@@ -341,8 +347,17 @@ for (
     _resolve,
 ) in _RESOURCE_SCHEMAS:
 
-    def _make_init(rid, rn, rd, rt, rp, rc, rpfx, rr):
-        def __init__(self):
+    def _make_init(
+        rid: typing.Any,
+        rn: typing.Any,
+        rd: typing.Any,
+        rt: typing.Any,
+        rp: typing.Any,
+        rc: typing.Any,
+        rpfx: typing.Any,
+        rr: typing.Any,
+    ) -> typing.Any:
+        def __init__(self) -> None:  # noqa: ANN001
             SchemaValid.__init__(
                 self,
                 rid,

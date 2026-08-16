@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for the main CLI entry point."""
 
 import argparse
 import subprocess
 import sys
+import typing
 from unittest import mock
 
 import pytest
@@ -25,7 +27,7 @@ from cxas_scrapi.cli import main as main_cli
 from cxas_scrapi.cli.main import get_parser, run_session
 
 
-def test_get_parser():
+def test_get_parser() -> None:
     """Test that the parser can be initialized and parses help correctly."""
     parser = get_parser()
     assert parser is not None
@@ -39,7 +41,7 @@ def test_get_parser():
     assert args.location == "us"
 
 
-def test_get_parser_llm_lint():
+def test_get_parser_llm_lint() -> None:
     """Test that the parser can parse the llm-lint command."""
     parser = get_parser()
     args = parser.parse_args(
@@ -65,7 +67,7 @@ def test_get_parser_llm_lint():
     assert args.output == "/path/to/output.md"
 
 
-def test_get_parser_evals_report():
+def test_get_parser_evals_report() -> None:
     """Test that the parser can parse the evals report command with new model
     flags.
     """
@@ -92,7 +94,7 @@ def test_get_parser_evals_report():
     assert args.timestamped is False
 
 
-def test_get_parser_evals_report_timestamped():
+def test_get_parser_evals_report_timestamped() -> None:
     """Test parser parses evals report command with --timestamped."""
     parser = get_parser()
     args = parser.parse_args(
@@ -110,7 +112,7 @@ def test_get_parser_evals_report_timestamped():
     assert args.timestamped is True
 
 
-def test_cli_installed_help():
+def test_cli_installed_help() -> None:
     """Test that the 'cxas' command is installed and executable (verifies
     setup.py)."""
     # This tests the installation of the wheel we just built and installed.
@@ -147,7 +149,9 @@ def test_cli_installed_help():
 @mock.patch(
     "cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True
 )
-def test_conversations_list(mock_ch_cls, mock_apps_cls):
+def test_conversations_list(
+    mock_ch_cls: typing.Any, mock_apps_cls: typing.Any
+) -> None:
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app"
     )
@@ -169,7 +173,7 @@ def test_conversations_list(mock_ch_cls, mock_apps_cls):
     mock_ch_inst.list_conversations.assert_called_once()
 
 
-def test_conversations_list_invalid_app_name(capsys):
+def test_conversations_list_invalid_app_name(capsys: typing.Any) -> None:
     args = argparse.Namespace(app_name="malformed-app-name")
     with pytest.raises(SystemExit) as excinfo:
         main_cli.conversations_list(args)
@@ -182,7 +186,9 @@ def test_conversations_list_invalid_app_name(capsys):
 @mock.patch(
     "cxas_scrapi.core.conversation_history.ConversationHistory", autospec=True
 )
-def test_conversations_get(mock_ch_cls, mock_apps_cls):
+def test_conversations_get(
+    mock_ch_cls: typing.Any, mock_apps_cls: typing.Any
+) -> None:
     args = argparse.Namespace(
         conversation_resource_name="projects/test-project/locations/global/apps/test-app/conversations/test-conv"
     )
@@ -209,7 +215,9 @@ def test_conversations_get(mock_ch_cls, mock_apps_cls):
     )
 
 
-def test_conversations_get_invalid_conversation_name(capsys):
+def test_conversations_get_invalid_conversation_name(
+    capsys: typing.Any,
+) -> None:
     args = argparse.Namespace(conversation_resource_name="malformed-conv-name")
     with pytest.raises(SystemExit) as excinfo:
         main_cli.conversations_get(args)
@@ -219,7 +227,7 @@ def test_conversations_get_invalid_conversation_name(capsys):
 
 
 @mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
-def test_deployments_list(mock_deps_cls):
+def test_deployments_list(mock_deps_cls: typing.Any) -> None:
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app"
     )
@@ -235,7 +243,7 @@ def test_deployments_list(mock_deps_cls):
 
 
 @mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
-def test_deployments_create(mock_deps_cls):
+def test_deployments_create(mock_deps_cls: typing.Any) -> None:
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app",
         deployment_id="test-dep",
@@ -259,14 +267,16 @@ def test_deployments_create(mock_deps_cls):
 
 @mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
 @mock.patch("cxas_scrapi.cli.app.app_push", autospec=True)
-def test_deployments_promote(mock_app_push, mock_deps_cls):
+def test_deployments_promote(
+    mock_app_push: typing.Any, mock_deps_cls: typing.Any
+) -> None:
     args = argparse.Namespace(
         app_resource_name="projects/test-project/locations/global/apps/test-app",
         app_dir="/dummy/path",
         live_deployment_resource_name="projects/test-project/locations/global/apps/test-app/deployments/live-dep",
     )
 
-    def push_side_effect(push_args):
+    def push_side_effect(push_args: typing.Any) -> str:
         push_args.created_version_name = (
             "projects/test-project/locations/global/apps/test-app/versions/v1"
         )
@@ -300,7 +310,7 @@ def test_deployments_promote(mock_app_push, mock_deps_cls):
     )
 
 
-def test_get_parser_run_session_use_tool_fakes():
+def test_get_parser_run_session_use_tool_fakes() -> None:
     """Test that the parser parses run-session with --use-tool-fakes."""
     parser = get_parser()
     args = parser.parse_args(
@@ -319,7 +329,7 @@ def test_get_parser_run_session_use_tool_fakes():
 
 
 @mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
-def test_deployments_create_with_split(mock_deps_cls):
+def test_deployments_create_with_split(mock_deps_cls: typing.Any) -> None:
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app",
         deployment_id="test-dep",
@@ -344,7 +354,7 @@ def test_deployments_create_with_split(mock_deps_cls):
 
 
 @mock.patch("cxas_scrapi.core.deployments.Deployments", autospec=True)
-def test_deployments_promote_with_split(mock_deps_cls):
+def test_deployments_promote_with_split(mock_deps_cls: typing.Any) -> None:
     args = argparse.Namespace(
         app_resource_name=None,
         app_dir=None,
@@ -372,7 +382,9 @@ def test_deployments_promote_with_split(mock_deps_cls):
 
 @mock.patch("cxas_scrapi.core.evaluations.Evaluations", autospec=True)
 @mock.patch("cxas_scrapi.utils.eval_utils.EvalUtils", autospec=True)
-def test_run_eval_modality(mock_eval_utils_cls, mock_eval_cls):
+def test_run_eval_modality(
+    mock_eval_utils_cls: typing.Any, mock_eval_cls: typing.Any
+) -> None:
     """Test that run_eval forwards the modality argument to run_evaluation."""
     args = argparse.Namespace(
         app_name="projects/test-project/locations/global/apps/test-app",
@@ -398,7 +410,9 @@ def test_run_eval_modality(mock_eval_utils_cls, mock_eval_cls):
     )
 
 
-def test_run_session_headless_failure(monkeypatch, capsys):
+def test_run_session_headless_failure(
+    monkeypatch: typing.Any, capsys: typing.Any
+) -> None:
     # Mock isatty to return False (headless environment)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
 
@@ -411,3 +425,29 @@ def test_run_session_headless_failure(monkeypatch, capsys):
     captured = capsys.readouterr()
     expected_msg = "ERROR: 'run-session' requires an interactive terminal."
     assert expected_msg in captured.err
+
+
+def test_parser_push_version_name() -> None:
+    """Test that the push parser correctly handles --version-name."""
+    test_args = [
+        "cxas",
+        "push",
+        "--to",
+        "my-app",
+        "--create-version",
+        "--version-name",
+        "v1.2.0",
+        "--version-description",
+        "Release 1.2.0",
+    ]
+    with (
+        mock.patch.object(sys, "argv", test_args),
+        mock.patch("cxas_scrapi.cli.main.app_push") as mock_app_push,
+    ):
+        main_cli.main()
+        mock_app_push.assert_called_once()
+        parsed_args = mock_app_push.call_args[0][0]
+        assert parsed_args.to == "my-app"
+        assert parsed_args.create_version is True
+        assert parsed_args.version_name == "v1.2.0"
+        assert parsed_args.version_description == "Release 1.2.0"

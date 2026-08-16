@@ -15,6 +15,7 @@
 import json
 import os
 import sys
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,7 +33,7 @@ sys.path.append(
 import fetch_losses
 
 
-def test_ccai_to_cxas_dict():
+def test_ccai_to_cxas_dict() -> None:
     ccai_conv = {
         "transcript": {
             "transcriptSegments": [
@@ -61,7 +62,7 @@ def test_ccai_to_cxas_dict():
     )
 
 
-def test_extract_transcript():
+def test_extract_transcript() -> None:
     conv = {
         "name": "projects/p/locations/l/conversations/conv_123",
         "transcript": {
@@ -82,7 +83,9 @@ def test_extract_transcript():
 
 @patch("fetch_losses.Insights")
 @patch("sys.argv")
-def test_main_end_to_end(mock_argv, mock_insights_class, tmp_path):
+def test_main_end_to_end(
+    mock_argv: typing.Any, mock_insights_class: typing.Any, tmp_path: typing.Any
+) -> None:
     mock_insights = MagicMock()
     mock_insights_class.return_value = mock_insights
 
@@ -181,7 +184,9 @@ def test_main_end_to_end(mock_argv, mock_insights_class, tmp_path):
 
 @patch("fetch_losses.Insights")
 @patch("sys.argv")
-def test_main_with_time_filters(mock_argv, mock_insights_class, tmp_path):
+def test_main_with_time_filters(
+    mock_argv: typing.Any, mock_insights_class: typing.Any, tmp_path: typing.Any
+) -> None:
     mock_insights = MagicMock()
     mock_insights_class.return_value = mock_insights
 
@@ -229,7 +234,9 @@ def test_main_with_time_filters(mock_argv, mock_insights_class, tmp_path):
 
 @patch("fetch_losses.Insights")
 @patch("sys.argv")
-def test_main_with_custom_filter(mock_argv, mock_insights_class, tmp_path):
+def test_main_with_custom_filter(
+    mock_argv: typing.Any, mock_insights_class: typing.Any, tmp_path: typing.Any
+) -> None:
     mock_insights = MagicMock()
     mock_insights_class.return_value = mock_insights
 

@@ -1,5 +1,6 @@
+# pytype: disable=invalid-function-definition
+
 # Copyright 2026 Google LLC
-#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -12,13 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Utility functions for processing and exporting CXAS Evaluation Results."""
 
+import contextlib
 import enum
 import json
 import logging
 import os
 import time
+import typing
 import uuid
 from typing import Any
 
@@ -41,6 +45,7 @@ SIM_RESULTS_FILENAME = "sim_results.json"
 TOOL_RESULTS_FILENAME = "tool_results.csv"
 CALLBACK_RESULTS_FILENAME = "callback_results.csv"
 COMBINED_REPORT_FILENAME = "combined_report.html"
+COMBINED_REPORT_JSON_FILENAME = "combined_report.json"
 TIMESTAMP_PATTERN = r"\d{8}_\d{6}"
 
 logger = logging.getLogger(__name__)
@@ -73,10 +78,25 @@ class Conversations(BaseModel):
     conversations: list[Conversation]
 
 
+class ExpectationStatus(str, enum.Enum):
+    MET = "Met"
+    NOT_MET = "Not Met"
+
+
+class ExpectationResult(pydantic.BaseModel):
+    expectation: str
+    status: ExpectationStatus = ExpectationStatus.NOT_MET
+    justification: str = ""
+
+
+class ExpectationOutput(pydantic.BaseModel):
+    results: list[ExpectationResult] = []
+
+
 class EvalUtils(Evaluations):
     """Utility class for processing and exporting CXAS Evaluation Results."""
 
-    def __init__(self, app_name: str, env: str = "PROD", **kwargs: Any):
+    def __init__(self, app_name: str, env: str = "PROD", **kwargs: Any) -> None:
         """Initializes the EvalUtils class for processing Evaluation Results.
 
         Args:
@@ -136,14 +156,14 @@ class EvalUtils(Evaluations):
         return {}
 
     @staticmethod
-    def _map_outcome(val):
+    def _map_outcome(val: typing.Any) -> typing.Any:
         if isinstance(val, int):
             outcome_map = {0: "UNSPECIFIED", 1: "PASS", 2: "FAIL"}
             return outcome_map.get(val, f"UNKNOWN_{val}")
         return str(val) if val is not None else None
 
     @staticmethod
-    def score_result_audio(result) -> bool:
+    def score_result_audio(result: typing.Any) -> bool:
         """Score a single result using audio-correct method.
         In audio mode, taskCompleted is broken (always False).
         Use goalScore AND allExpectationsSatisfied instead.
@@ -165,6 +185,70 @@ class EvalUtils(Evaluations):
             if key in tool_call:
                 return tool_call[key]
         return {}
+
+    @staticmethod
+    def _get_exp_act(outcome_obj: dict[str, Any]) -> tuple[str, str, str]:
+        e_text = ""
+        a_text = "(None / Missed)"
+        f_type = "Turn Expectation"
+        e_dict = outcome_obj.get("expectation", {})
+
+        if "agent_response" in e_dict:
+            chunks = e_dict["agent_response"].get("chunks", [])
+            e_text = "agent_response"
+            if chunks:
+                e_text = chunks[0].get("text", "agent_response")
+            f_type = "Semantic Similarity"
+        elif "tool_call" in e_dict:
+            e_text = e_dict["tool_call"].get(
+                "display_name",
+                e_dict["tool_call"].get("id", "tool_call"),
+            )
+            f_type = "Tool Call"
+        elif "tool_response" in e_dict:
+            e_text = e_dict["tool_response"].get(
+                "display_name", "tool_response"
+            )
+            f_type = "Tool Response"
+        elif "agent_transfer" in e_dict:
+            e_text = e_dict["agent_transfer"].get(
+                "display_name",
+                e_dict["agent_transfer"].get("target_agent", "agent_transfer"),
+            )
+            f_type = "Routing / Agent"
+
+        if "observed_agent_response" in outcome_obj:
+            chunks = outcome_obj["observed_agent_response"].get("chunks", [])
+            a_text = chunks[0].get("text", "") if chunks else ""
+        elif "observed_tool_call" in outcome_obj:
+            a_text = outcome_obj["observed_tool_call"].get(
+                "display_name",
+                outcome_obj["observed_tool_call"].get("id", ""),
+            )
+        elif "observed_tool_response" in outcome_obj:
+            a_text = outcome_obj["observed_tool_response"].get(
+                "display_name",
+                outcome_obj["observed_tool_response"].get("id", ""),
+            )
+        elif "observed_agent_transfer" in outcome_obj:
+            a_text = outcome_obj["observed_agent_transfer"].get(
+                "display_name",
+                outcome_obj["observed_agent_transfer"].get("target_agent", ""),
+            )
+
+        return e_text, a_text, f_type
+
+    @staticmethod
+    def _aggregate(arr: list[Any]) -> dict[str, int]:
+        if not arr:
+            return {"Average": 0, "p50": 0, "p90": 0, "p99": 0}
+        ser = pd.Series(arr)
+        return {
+            "Average": int(ser.mean()),
+            "p50": int(ser.quantile(0.50)),
+            "p90": int(ser.quantile(0.90)),
+            "p99": int(ser.quantile(0.99)),
+        }
 
     def _process_dataset_turn(
         self,
@@ -566,74 +650,15 @@ class EvalUtils(Evaluations):
         for turn in turns:
             outcomes_str = turn.get("expectation_outcomes", "[]")
             outcomes = []
-            try:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
                 outcomes = json.loads(outcomes_str)
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-            def _get_exp_act(outcome_obj):
-                e_text = ""
-                a_text = "(None / Missed)"
-                f_type = "Turn Expectation"
-                e_dict = outcome_obj.get("expectation", {})
-
-                if "agent_response" in e_dict:
-                    chunks = e_dict["agent_response"].get("chunks", [])
-                    e_text = "agent_response"
-                    if chunks:
-                        e_text = chunks[0].get("text", "agent_response")
-                    f_type = "Semantic Similarity"
-                elif "tool_call" in e_dict:
-                    e_text = e_dict["tool_call"].get(
-                        "display_name",
-                        e_dict["tool_call"].get("id", "tool_call"),
-                    )
-                    f_type = "Tool Call"
-                elif "tool_response" in e_dict:
-                    e_text = e_dict["tool_response"].get(
-                        "display_name", "tool_response"
-                    )
-                    f_type = "Tool Response"
-                elif "agent_transfer" in e_dict:
-                    e_text = e_dict["agent_transfer"].get(
-                        "display_name",
-                        e_dict["agent_transfer"].get(
-                            "target_agent", "agent_transfer"
-                        ),
-                    )
-                    f_type = "Routing / Agent"
-
-                if "observed_agent_response" in outcome_obj:
-                    chunks = outcome_obj["observed_agent_response"].get(
-                        "chunks", []
-                    )
-                    a_text = chunks[0].get("text", "") if chunks else ""
-                elif "observed_tool_call" in outcome_obj:
-                    a_text = outcome_obj["observed_tool_call"].get(
-                        "display_name",
-                        outcome_obj["observed_tool_call"].get("id", ""),
-                    )
-                elif "observed_tool_response" in outcome_obj:
-                    a_text = outcome_obj["observed_tool_response"].get(
-                        "display_name",
-                        outcome_obj["observed_tool_response"].get("id", ""),
-                    )
-                elif "observed_agent_transfer" in outcome_obj:
-                    a_text = outcome_obj["observed_agent_transfer"].get(
-                        "display_name",
-                        outcome_obj["observed_agent_transfer"].get(
-                            "target_agent", ""
-                        ),
-                    )
-
-                return e_text, a_text, f_type
 
             sem_handled = False
             tool_handled = False
 
             # Process individual explicit expectation failures
             for outcome_obj in outcomes:
-                e, a, f = _get_exp_act(outcome_obj)
+                e, a, f = self._get_exp_act(outcome_obj)
                 if f == "Tool Response":
                     continue
                 raw_outcome = outcome_obj.get("outcome")
@@ -701,7 +726,7 @@ class EvalUtils(Evaluations):
                 e_text, a_text = "", ""
                 for outcome_obj in outcomes:
                     if "agent_response" in outcome_obj.get("expectation", {}):
-                        e_text, a_text, _ = _get_exp_act(outcome_obj)
+                        e_text, a_text, _ = self._get_exp_act(outcome_obj)
                         break
                 raw_score = turn.get("semantic_score")
                 if isinstance(raw_score, (int, float)):
@@ -734,7 +759,7 @@ class EvalUtils(Evaluations):
                 e_text, a_text = "", ""
                 for outcome_obj in outcomes:
                     if "tool_call" in outcome_obj.get("expectation", {}):
-                        e_text, a_text, _ = _get_exp_act(outcome_obj)
+                        e_text, a_text, _ = self._get_exp_act(outcome_obj)
                         break
                 failures.append(
                     {
@@ -955,22 +980,11 @@ class EvalUtils(Evaluations):
                 )
 
             # Compute run summary aggregations
-            def _aggregate(arr):
-                if not arr:
-                    return {"Average": 0, "p50": 0, "p90": 0, "p99": 0}
-                ser = pd.Series(arr)
-                return {
-                    "Average": int(ser.mean()),
-                    "p50": int(ser.quantile(0.50)),
-                    "p90": int(ser.quantile(0.90)),
-                    "p99": int(ser.quantile(0.99)),
-                }
-
-            t_agg = _aggregate(run_total_turn_latencies)
-            tc_agg = _aggregate(run_tool_latencies)
-            llm_agg = _aggregate(run_llm_latencies)
-            gr_agg = _aggregate(run_guardrail_latencies)
-            cb_agg = _aggregate(run_callback_latencies)
+            t_agg = self._aggregate(run_total_turn_latencies)
+            tc_agg = self._aggregate(run_tool_latencies)
+            llm_agg = self._aggregate(run_llm_latencies)
+            gr_agg = self._aggregate(run_guardrail_latencies)
+            cb_agg = self._aggregate(run_callback_latencies)
 
             t_p50, t_p90, t_p99 = t_agg["p50"], t_agg["p90"], t_agg["p99"]
             llm_p50, llm_p90, llm_p99 = (
@@ -1040,7 +1054,7 @@ class EvalUtils(Evaluations):
         dataset_table: str,
         project_id: str | None = None,
         if_exists: str = "append",
-    ):
+    ) -> None:
         """Exports a pandas DataFrame to a Google BigQuery table."""
         target_project = project_id or self._get_project_id(self.app_name)
         df.to_gbq(
@@ -1391,21 +1405,6 @@ class EvalUtils(Evaluations):
             "evaluation": evaluation_obj,
             "run": run_response,
         }
-
-
-class ExpectationStatus(str, enum.Enum):
-    MET = "Met"
-    NOT_MET = "Not Met"
-
-
-class ExpectationResult(pydantic.BaseModel):
-    expectation: str
-    status: ExpectationStatus = ExpectationStatus.NOT_MET
-    justification: str = ""
-
-
-class ExpectationOutput(pydantic.BaseModel):
-    results: list[ExpectationResult] = []
 
 
 def evaluate_expectations(

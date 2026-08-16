@@ -17,9 +17,12 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from cxas_scrapi.utils import base_components
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class BaseShell(base_components.Component):
@@ -199,7 +202,7 @@ class CallbackCard(base_components.Component):
 class AffectedItem(base_components.Component):
     template = "failure_patterns/affected_item.html"
 
-    def __init__(self, type_cls: str, name: str):
+    def __init__(self, type_cls: str, name: str) -> None:
         super().__init__()
         self.type_cls = type_cls
         self.name = name
@@ -220,7 +223,7 @@ class FailureGroup(base_components.Component):
         reason: str,
         affected_count: int,
         affected_items: list[base_components.Component],
-    ):
+    ) -> None:
         super().__init__()
         self.reason = reason
         self.affected_count = affected_count
@@ -244,7 +247,7 @@ class FailurePatterns(base_components.Component):
 
     template = "failure_patterns/failure_patterns.html"
 
-    def __init__(self, failure_groups: dict):
+    def __init__(self, failure_groups: dict) -> None:
         super().__init__()
         self.failure_groups = failure_groups
 

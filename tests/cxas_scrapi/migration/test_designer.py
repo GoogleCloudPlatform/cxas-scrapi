@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for designer.py."""
 
+import typing
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -27,45 +29,49 @@ from cxas_scrapi.migration.designer import AsyncAgentDesigner
 
 
 @pytest.fixture
-def mock_gemini_client():
+def mock_gemini_client() -> typing.Any:
     client = MagicMock()
     client.generate_async = AsyncMock()
     return client
 
 
 @pytest.fixture
-def designer(mock_gemini_client):
+def designer(mock_gemini_client: typing.Any) -> typing.Any:
     return AsyncAgentDesigner(gemini_client=mock_gemini_client)
 
 
 @pytest.fixture
-def sample_ir():
+def sample_ir() -> typing.Any:
     metadata = IRMetadata(app_name="Test App")
     return MigrationIR(metadata=metadata)
 
 
 @pytest.mark.asyncio
-async def test_run_step_2a_missing_tree_view(designer, sample_ir):
+async def test_run_step_2a_missing_tree_view(
+    designer: typing.Any, sample_ir: typing.Any
+) -> None:
     """Test that run_step_2a raises ValueError when tree_view is missing."""
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:  # noqa: PT011
         await designer.run_step_2a("Test Flow", "", sample_ir)
     assert "tree_view is required" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
-async def test_run_step_2b_missing_tree_view(designer):
+async def test_run_step_2b_missing_tree_view(designer: typing.Any) -> None:
     """Test that run_step_2b_instructions raises ValueError when tree_view is
     missing."""
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:  # noqa: PT011
         await designer.run_step_2b_instructions("Test Flow", {}, "")
     assert "tree_view is required" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
-async def test_run_step_2c_missing_tree_view(designer, sample_ir):
+async def test_run_step_2c_missing_tree_view(
+    designer: typing.Any, sample_ir: typing.Any
+) -> None:
     """Test that run_step_2c_tools_and_callbacks raises ValueError when
     tree_view is missing."""
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:  # noqa: PT011
         await designer.run_step_2c_tools_and_callbacks(
             "Test Flow", {}, "", sample_ir
         )
@@ -73,7 +79,9 @@ async def test_run_step_2c_missing_tree_view(designer, sample_ir):
 
 
 @pytest.mark.asyncio
-async def test_run_step_2a_success(designer, mock_gemini_client, sample_ir):
+async def test_run_step_2a_success(
+    designer: typing.Any, mock_gemini_client: typing.Any, sample_ir: typing.Any
+) -> None:
     """Test successful generation of blueprint."""
     mock_gemini_client.generate_async.return_value = (
         '```json\n{"agent_metadata": {"name": "Test Flow"}}\n```'
@@ -88,7 +96,9 @@ async def test_run_step_2a_success(designer, mock_gemini_client, sample_ir):
 
 
 @pytest.mark.asyncio
-async def test_run_step_2b_success(designer, mock_gemini_client):
+async def test_run_step_2b_success(
+    designer: typing.Any, mock_gemini_client: typing.Any
+) -> None:
     """Test successful generation of instructions."""
     mock_gemini_client.generate_async.return_value = (
         "```xml\n<Agent><Name>Test Flow</Name></Agent>\n```"
@@ -103,7 +113,9 @@ async def test_run_step_2b_success(designer, mock_gemini_client):
 
 
 @pytest.mark.asyncio
-async def test_run_step_2c_success(designer, mock_gemini_client, sample_ir):
+async def test_run_step_2c_success(
+    designer: typing.Any, mock_gemini_client: typing.Any, sample_ir: typing.Any
+) -> None:
     """Test successful generation of tools and callbacks."""
     mock_gemini_client.generate_async.return_value = (
         '```json\n{"tools": [{"name": "test_tool"}]}\n```'
@@ -122,7 +134,7 @@ async def test_run_step_2c_success(designer, mock_gemini_client, sample_ir):
 # ---------------------------------------------------------------------------
 
 
-def test_get_available_tools_context_lists_all_types_with_sentinel():
+def test_get_available_tools_context_lists_all_types_with_sentinel() -> None:
     """The new helper emits TOOLSET + PYTHON + TOOL with exact IDs and
     the ``end_session`` sentinel — unlike the older toolsets-only
     helper which skipped Python tools entirely."""
@@ -161,7 +173,7 @@ def test_get_available_tools_context_lists_all_types_with_sentinel():
     assert "- end_session" in context
 
 
-def test_get_available_tools_context_handles_empty_registry():
+def test_get_available_tools_context_handles_empty_registry() -> None:
     context = AsyncAgentDesigner._get_available_tools_context({})
     # Empty per-type sections are omitted, but the sentinel block remains.
     assert "### SYSTEM tools" in context
@@ -175,8 +187,8 @@ def test_get_available_tools_context_handles_empty_registry():
 
 @pytest.mark.asyncio
 async def test_run_step_3a_consolidation_renders_available_tools_and_groups(
-    designer, mock_gemini_client
-):
+    designer: typing.Any, mock_gemini_client: typing.Any
+) -> None:
     """When running step 2a under consolidation context (available_groups is
     passed), the STEP_3A template is used and must include the exact tool list
     and sibling groups.
@@ -212,8 +224,8 @@ async def test_run_step_3a_consolidation_renders_available_tools_and_groups(
 
 @pytest.mark.asyncio
 async def test_run_step_3b_consolidation_renders_available_tools_and_groups(
-    designer, mock_gemini_client
-):
+    designer: typing.Any, mock_gemini_client: typing.Any
+) -> None:
     """When running step 2b under consolidation context, the STEP_3B template
     is used and must include the available tools list and sibling groups.
     """
@@ -248,8 +260,8 @@ async def test_run_step_3b_consolidation_renders_available_tools_and_groups(
 
 @pytest.mark.asyncio
 async def test_run_step_2b_standard_renders_no_tools_block(
-    designer, mock_gemini_client
-):
+    designer: typing.Any, mock_gemini_client: typing.Any
+) -> None:
     """Standard 1:1 Step 2B prompt contains the basic tree visualization but
     no available tools or groups blocks."""
     mock_gemini_client.generate_async.return_value = "<Agent/>"

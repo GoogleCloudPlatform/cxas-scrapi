@@ -22,7 +22,7 @@ from skill_eval import benchmark, reporting, scorer
 
 
 class ReportingTest(absltest.TestCase):
-    def test_generate_json_report_handles_enum(self):
+    def test_generate_json_report_handles_enum(self) -> None:
         res = benchmark.ConversationResult(
             scenario_name="test.yaml",
             scenario_text="# My Scenario",
@@ -35,9 +35,9 @@ class ReportingTest(absltest.TestCase):
         )
         json_str = reporting.generate_json_report(res)
         data = json.loads(json_str)
-        self.assertEqual(data["status"], "RUNNING")
+        assert data["status"] == "RUNNING"
 
-    def test_generate_index_html_shows_running_status(self):
+    def test_generate_index_html_shows_running_status(self) -> None:
         res = benchmark.ConversationResult(
             scenario_name="test.yaml",
             scenario_text="# My Scenario",
@@ -49,10 +49,10 @@ class ReportingTest(absltest.TestCase):
             status=benchmark.ExecutionStatus.RUNNING,
         )
         html = reporting.generate_index_html([res])
-        self.assertIn("RUNNING", html)
-        self.assertIn("status-running", html)
+        assert "RUNNING" in html
+        assert "status-running" in html
 
-    def test_generate_index_html_sanitizes_scenario_name_in_links(self):
+    def test_generate_index_html_sanitizes_scenario_name_in_links(self) -> None:
         res = benchmark.ConversationResult(
             scenario_name="p/t/m.c.s.yaml",
             scenario_text="# My Scenario",
@@ -66,10 +66,10 @@ class ReportingTest(absltest.TestCase):
         )
         html = reporting.generate_index_html([res])
         expected_link = "detail_p_t_m_c_s_yaml_TestHead.html"
-        self.assertIn(expected_link, html)
-        self.assertNotIn('href="detail_p/t/m.c.s.yaml_TestHead.html"', html)
+        assert expected_link in html
+        assert 'href="detail_p/t/m.c.s.yaml_TestHead.html"' not in html
 
-    def test_generate_detail_html_renders_rubric_and_thoughts(self):
+    def test_generate_detail_html_renders_rubric_and_thoughts(self) -> None:
         rubric_res = scorer.ScoreResult(
             scores=[scorer.RubricCriterion("C1", 2, "Reason 1")],
             total_score=2,
@@ -108,20 +108,22 @@ class ReportingTest(absltest.TestCase):
         html = reporting.generate_detail_html(res)
 
         # Check table format
-        self.assertIn("Criterion", html)
-        self.assertIn("Reasoning", html)
-        self.assertIn("Overall summary", html)
-        self.assertIn("Reason 1", html)
+        assert "Criterion" in html
+        assert "Reasoning" in html
+        assert "Overall summary" in html
+        assert "Reason 1" in html
 
         # Check scenario intro
-        self.assertIn("scenario-intro", html)
-        self.assertIn("Goal context", html)
+        assert "scenario-intro" in html
+        assert "Goal context" in html
 
         # Check thoughts
-        self.assertIn("I am thinking", html)
-        self.assertIn("Thought:", html)
+        assert "I am thinking" in html
+        assert "Thought:" in html
 
-    def test_generate_detail_html_shows_incomplete_turns_on_failure(self):
+    def test_generate_detail_html_shows_incomplete_turns_on_failure(
+        self,
+    ) -> None:
         res = benchmark.ConversationResult(
             scenario_name="test.yaml",
             scenario_text="# My Scenario",
@@ -138,12 +140,12 @@ class ReportingTest(absltest.TestCase):
         )
         html = reporting.generate_detail_html(res)
 
-        self.assertIn("Termination Signal:", html)
-        self.assertIn("Language server timeout", html)
-        self.assertIn("What is the capital of France?", html)
-        self.assertIn("[FAILED]", html)
+        assert "Termination Signal:" in html
+        assert "Language server timeout" in html
+        assert "What is the capital of France?" in html
+        assert "[FAILED]" in html
 
-    def test_generate_detail_html_renders_log_files(self):
+    def test_generate_detail_html_renders_log_files(self) -> None:
         res = benchmark.ConversationResult(
             scenario_name="test.yaml",
             scenario_text="# My Scenario",
@@ -158,17 +160,15 @@ class ReportingTest(absltest.TestCase):
         )
         # Case 1: report_dir is None (fallback to absolute file:// URI)
         html_no_dir = reporting.generate_detail_html(res)
-        self.assertIn(
-            'href="file:///absolute/path/to/logs/agent.log"', html_no_dir
-        )
-        self.assertIn("/absolute/path/to/logs/agent.log", html_no_dir)
+        assert 'href="file:///absolute/path/to/logs/agent.log"' in html_no_dir
+        assert "/absolute/path/to/logs/agent.log" in html_no_dir
 
         # Case 2: report_dir is provided (relative path resolution)
         html_with_dir = reporting.generate_detail_html(
             res, report_dir="/absolute/path/to"
         )
-        self.assertIn('href="logs/agent.log"', html_with_dir)
-        self.assertIn("logs/agent.log", html_with_dir)
+        assert 'href="logs/agent.log"' in html_with_dir
+        assert "logs/agent.log" in html_with_dir
 
 
 if __name__ == "__main__":

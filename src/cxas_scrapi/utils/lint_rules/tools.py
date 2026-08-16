@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tool lint rules (T001-T008).
 
 Validates agent tool Python files against CXAS conventions.
@@ -19,6 +20,7 @@ Validates agent tool Python files against CXAS conventions.
 
 import json
 import re
+import typing
 from pathlib import Path
 
 from cxas_scrapi.utils.linter import (
@@ -482,7 +484,7 @@ class NoneDefaultValue(Rule):
         args_str = fn_match.group(2)
         line = content[: fn_match.start()].count("\n") + 1
 
-        def _param_name(p):
+        def _param_name(p: typing.Any) -> typing.Any:
             return p.split(":")[0].strip()
 
         return [
@@ -547,7 +549,7 @@ class MissingToolDescriptionInJSON(Rule):
                 active_tool_type = t
                 break
 
-        if not description or not str(description).strip():
+        if not description or not str(description).strip():  # noqa: SIM102
             if active_tool_type is not None:
                 tool_obj = tool_config.get(active_tool_type)
                 if isinstance(tool_obj, dict):

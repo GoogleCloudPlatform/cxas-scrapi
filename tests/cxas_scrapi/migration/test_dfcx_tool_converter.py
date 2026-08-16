@@ -17,14 +17,14 @@ from unittest.mock import MagicMock
 from cxas_scrapi.migration.dfcx_tool_converter import DFCXToolConverter
 
 
-def test_sanitize_resource_id():
+def test_sanitize_resource_id() -> None:
     assert DFCXToolConverter.sanitize_resource_id("valid_id") == "valid_id"
     assert DFCXToolConverter.sanitize_resource_id("invalid id") == "invalid_id"
     assert DFCXToolConverter.sanitize_resource_id("a" * 50) == "a" * 36
     assert DFCXToolConverter.sanitize_resource_id("abc") == "abc__"
 
 
-def test_convert_cx_tool_to_ps_resource_openapi():
+def test_convert_cx_tool_to_ps_resource_openapi() -> None:
     mock_secret_manager = MagicMock()
     mock_reporter = MagicMock()
     converter = DFCXToolConverter(mock_secret_manager, mock_reporter)
@@ -53,7 +53,7 @@ def test_convert_cx_tool_to_ps_resource_openapi():
     assert res["operation_ids"] == ["getTest"]
 
 
-def test_convert_cx_tool_to_ps_resource_datastore():
+def test_convert_cx_tool_to_ps_resource_datastore() -> None:
     mock_secret_manager = MagicMock()
     mock_reporter = MagicMock()
     converter = DFCXToolConverter(mock_secret_manager, mock_reporter)
@@ -79,7 +79,7 @@ def test_convert_cx_tool_to_ps_resource_datastore():
     assert "data_store_tool" in res["payload"]
 
 
-def test_convert_webhook_to_openapi_toolset():
+def test_convert_webhook_to_openapi_toolset() -> None:
     mock_secret_manager = MagicMock()
     mock_reporter = MagicMock()
     converter = DFCXToolConverter(mock_secret_manager, mock_reporter)

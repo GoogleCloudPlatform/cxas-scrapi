@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Deployments class for CXAS Scrapi."""
 
+import typing
 from enum import Enum
 from typing import Any
 
@@ -54,8 +56,8 @@ class Deployments(Apps):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Deployments client."""
         project_id = Common._get_project_id(app_name)
         location = Common._get_location(app_name)
@@ -210,34 +212,39 @@ class Deployments(Apps):
                 raise ValueError(
                     "Traffic split requires at least two versions."
                 )
-
-            versions_client = Versions(app_name=self.app_name, creds=self.creds)
-            existing_versions = versions_client.list_versions()
-            existing_version_names = [v.name for v in existing_versions]
-
-            experiment_config = types.ExperimentConfig()
-            version_release = types.ExperimentConfig.VersionRelease()
-            version_release.state = types.ExperimentConfig.State.RUNNING
-            for version, split in traffic_split.items():
-                v_name = version
-                if not v_name.startswith("projects/"):
-                    v_name = f"{self.app_name}/versions/{version}"
-
-                if v_name not in existing_version_names:
-                    raise ValueError(
-                        f"Version {v_name} does not exist. Valid versions: "
-                        f"{[v.split('/')[-1] for v in existing_version_names]}"
-                    )
-
-                allocation = (
-                    types.ExperimentConfig.VersionRelease.TrafficAllocation()
+            if hasattr(types, "ExperimentConfig"):
+                versions_client = Versions(
+                    app_name=self.app_name, creds=self.creds
                 )
-                allocation.app_version = v_name
-                allocation.traffic_percentage = split
-                version_release.traffic_allocations.append(allocation)
+                existing_versions = versions_client.list_versions()
+                existing_version_names = [v.name for v in existing_versions]
 
-            experiment_config.version_release = version_release
-            deployment.experiment_config = experiment_config
+                experiment_config = types.ExperimentConfig()
+                version_release = types.ExperimentConfig.VersionRelease()
+                version_release.state = types.ExperimentConfig.State.RUNNING
+                for version, split in traffic_split.items():
+                    v_name = version
+                    if not v_name.startswith("projects/"):
+                        v_name = f"{self.app_name}/versions/{version}"
+
+                    if v_name not in existing_version_names:
+                        raise ValueError(
+                            f"Version {v_name} does not exist. Valid versions: "
+                            f"{[v.split('/')[-1] for v in existing_version_names]}"  # noqa: E501
+                        )
+
+                    allocation = types.ExperimentConfig.VersionRelease.TrafficAllocation()  # noqa: E501
+                    allocation.app_version = v_name
+                    allocation.traffic_percentage = split
+                    version_release.traffic_allocations.append(allocation)
+
+                experiment_config.version_release = version_release
+                deployment.experiment_config = experiment_config
+            else:
+                raise NotImplementedError(
+                    "traffic_split requires ExperimentConfig which is "
+                    "not available in the current API schema."
+                )
 
         request = types.CreateDeploymentRequest(
             parent=self.app_name,
@@ -247,7 +254,7 @@ class Deployments(Apps):
         return self.client.create_deployment(request=request)
 
     def update_deployment(
-        self, deployment_id: str, **kwargs
+        self, deployment_id: str, **kwargs: typing.Any
     ) -> types.Deployment:
         """Updates specific fields of an existing Deployment."""
         deployment = types.Deployment(
@@ -302,35 +309,40 @@ class Deployments(Apps):
                 raise ValueError(
                     "Traffic split requires at least two versions."
                 )
-
-            versions_client = Versions(app_name=self.app_name, creds=self.creds)
-            existing_versions = versions_client.list_versions()
-            existing_version_names = [v.name for v in existing_versions]
-
-            experiment_config = types.ExperimentConfig()
-            version_release = types.ExperimentConfig.VersionRelease()
-            version_release.state = types.ExperimentConfig.State.RUNNING
-            for version, split in traffic_split.items():
-                v_name = version
-                if not v_name.startswith("projects/"):
-                    v_name = f"{self.app_name}/versions/{version}"
-
-                if v_name not in existing_version_names:
-                    raise ValueError(
-                        f"Version {v_name} does not exist. Valid versions: "
-                        f"{[v.split('/')[-1] for v in existing_version_names]}"
-                    )
-
-                allocation = (
-                    types.ExperimentConfig.VersionRelease.TrafficAllocation()
+            if hasattr(types, "ExperimentConfig"):
+                versions_client = Versions(
+                    app_name=self.app_name, creds=self.creds
                 )
-                allocation.app_version = v_name
-                allocation.traffic_percentage = split
-                version_release.traffic_allocations.append(allocation)
+                existing_versions = versions_client.list_versions()
+                existing_version_names = [v.name for v in existing_versions]
 
-            experiment_config.version_release = version_release
-            deployment.experiment_config = experiment_config
-            mask_paths.append("experiment_config")
+                experiment_config = types.ExperimentConfig()
+                version_release = types.ExperimentConfig.VersionRelease()
+                version_release.state = types.ExperimentConfig.State.RUNNING
+                for version, split in traffic_split.items():
+                    v_name = version
+                    if not v_name.startswith("projects/"):
+                        v_name = f"{self.app_name}/versions/{version}"
+
+                    if v_name not in existing_version_names:
+                        raise ValueError(
+                            f"Version {v_name} does not exist. Valid versions: "
+                            f"{[v.split('/')[-1] for v in existing_version_names]}"  # noqa: E501
+                        )
+
+                    allocation = types.ExperimentConfig.VersionRelease.TrafficAllocation()  # noqa: E501
+                    allocation.app_version = v_name
+                    allocation.traffic_percentage = split
+                    version_release.traffic_allocations.append(allocation)
+
+                experiment_config.version_release = version_release
+                deployment.experiment_config = experiment_config
+                mask_paths.append("experiment_config")
+            else:
+                raise NotImplementedError(
+                    "traffic_split requires ExperimentConfig which is "
+                    "not available in the current API schema."
+                )
         elif "app_version" in kwargs:
             # If promoting a new version without a traffic split,
             # clear any existing experiment

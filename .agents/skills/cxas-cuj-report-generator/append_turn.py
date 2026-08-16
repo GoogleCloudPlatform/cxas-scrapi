@@ -3,7 +3,6 @@
 Typical usage example:
     python append_turn.py --transcript_file=p.yml --input_file=t.yml
 """
-
 from __future__ import annotations
 
 import contextlib
@@ -20,7 +19,7 @@ from absl import app, flags, logging
 
 
 @contextlib.contextmanager
-def file_lock(lock_file_path: pathlib.Path):
+def file_lock(lock_file_path: pathlib.Path) -> Any:
     lock_file_path.parent.mkdir(parents=True, exist_ok=True)
     f = open(lock_file_path, "w")
     try:

@@ -35,8 +35,10 @@ def test_step_3b_prompt_has_system_and_template_keys() -> None:
     # extra cache-variant keys are allowed.
     p = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS
     assert {"system", "template"} <= set(p.keys())
-    assert isinstance(p["system"], str) and p["system"]
-    assert isinstance(p["template"], str) and p["template"]
+    assert isinstance(p["system"], str)
+    assert p["system"]
+    assert isinstance(p["template"], str)
+    assert p["template"]
 
 
 def test_step_3b_system_lists_canonical_tag_vocabulary() -> None:

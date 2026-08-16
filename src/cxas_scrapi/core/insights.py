@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import http
+import typing
 from typing import Any
 
 import requests
@@ -37,8 +38,8 @@ class Insights(Common):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Insights API base client."""
         super().__init__(
             creds_path=creds_path,

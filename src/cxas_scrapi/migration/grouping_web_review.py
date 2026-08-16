@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """HTML-driven grouping confirmation gate.
 
 Boots a local HTTP server in a daemon thread that serves the migration
@@ -36,6 +37,7 @@ import json
 import logging
 import socket
 import threading
+import typing
 import uuid
 import webbrowser
 from pathlib import Path
@@ -60,7 +62,9 @@ logger = logging.getLogger(__name__)
 def _all_flow_names(ir: MigrationIR) -> list[str]:
     """Stable list of the source flow / member display names visible to
     the consolidator. Used to drive client-side orphan detection."""
-    return sorted({a.display_name for a in ir.agents.values()})
+    return sorted(
+        set(ir.agents.keys()) | {a.display_name for a in ir.agents.values()}
+    )
 
 
 def _build_pending(
@@ -230,7 +234,7 @@ class _ReviewContext:
         payload or raises on failure."""
         self.set_status("reproposing")
 
-        async def _ask():
+        async def _ask() -> typing.Any:
             return await self.consolidator.propose_groupings(
                 root_key=self.root_key,
                 dep_summary=self.dep_summary,
@@ -257,12 +261,12 @@ def _make_handler(
     ctx: _ReviewContext,
     *,
     review_url: str,
-):
+) -> typing.Any:
     """Build a BaseHTTPRequestHandler class bound to ``ctx``."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         # Quiet the noisy default access log; route through our logger.
-        def log_message(self, format, *args) -> None:  # noqa: A002
+        def log_message(self, format: typing.Any, *args: typing.Any) -> None:  # noqa: A002
             logger.debug("[grouping-review] %s", format % args)
 
         # ----- helpers ---------------------------------------------------
@@ -665,17 +669,32 @@ async def web_review(
         except Exception as exc:  # noqa: BLE001
             logger.debug("could not auto-open browser: %s", exc)
 
+    # Dynamic timeout calculation for large agents
+    if timeout_s == 300 and len(ir.agents) > 20:
+        timeout_s = max(600, min(3600, len(ir.agents) * 15))
+
     watcher_task = asyncio.create_task(_watch_plan_file(ctx))
     try:
         await asyncio.wait_for(event.wait(), timeout=timeout_s)
     except asyncio.TimeoutError:
         console.print(
-            "[yellow][grouping-review] timed out; aborting consolidation[/]"
+            f"[yellow][grouping-review] Timed out after {timeout_s}s. "
+            f"Auto-applying proposed grouping to preserve "
+            f"consolidated architecture.[/]"
         )
-        ctx.abort()
+        with ctx._lock:
+            ctx.resolved = True
+            ctx.pending["status"] = "auto_confirmed_timeout"
+            if ctx.builder and ctx.builder.snapshot:
+                ctx.builder.snapshot.pending_grouping["status"] = (
+                    "auto_confirmed_timeout"
+                )
+            result["groupings"] = ctx.pending.get("groupings") or groupings
+            result["aborted"] = False
+        event.set()
     finally:
         watcher_task.cancel()
-        try:
+        try:  # noqa: SIM105
             await watcher_task
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass

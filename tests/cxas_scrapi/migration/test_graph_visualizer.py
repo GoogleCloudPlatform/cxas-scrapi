@@ -121,31 +121,31 @@ DATA_WITH_PLAYBOOK_TO_FLOW = {
 
 
 class TestHighLevelGraphVisualizer:
-    def test_build_returns_digraph(self):
+    def test_build_returns_digraph(self) -> None:
         dot = HighLevelGraphVisualizer(DFCXAgentIR(**MINIMAL_DATA)).build()
         assert isinstance(dot, graphviz.Digraph)
 
-    def test_empty_data_builds_without_error(self):
+    def test_empty_data_builds_without_error(self) -> None:
         dot = HighLevelGraphVisualizer(DFCXAgentIR(**MINIMAL_DATA)).build()
         src = dot.source
         assert "ENTRY_MARKER" in src
 
-    def test_playbook_node_in_source(self):
+    def test_playbook_node_in_source(self) -> None:
         dot = HighLevelGraphVisualizer(
             DFCXAgentIR(**DATA_WITH_PLAYBOOK)
         ).build()
         assert "Welcome Playbook" in dot.source
 
-    def test_flow_node_in_source(self):
+    def test_flow_node_in_source(self) -> None:
         dot = HighLevelGraphVisualizer(DFCXAgentIR(**DATA_WITH_FLOW)).build()
         assert "Main Flow" in dot.source
 
-    def test_entry_marker_always_present(self):
+    def test_entry_marker_always_present(self) -> None:
         for data in [MINIMAL_DATA, DATA_WITH_PLAYBOOK, DATA_WITH_FLOW]:
             dot = HighLevelGraphVisualizer(DFCXAgentIR(**data)).build()
             assert "ENTRY POINT" in dot.source
 
-    def test_entry_point_edge_connects_to_start_node(self):
+    def test_entry_point_edge_connects_to_start_node(self) -> None:
         dot = HighLevelGraphVisualizer(
             DFCXAgentIR(**DATA_WITH_PLAYBOOK)
         ).build()
@@ -154,7 +154,7 @@ class TestHighLevelGraphVisualizer:
         assert "ENTRY_MARKER" in src
         assert PB_UUID in src
 
-    def test_flow_route_creates_edge(self):
+    def test_flow_route_creates_edge(self) -> None:
         dot = HighLevelGraphVisualizer(
             DFCXAgentIR(**DATA_WITH_PLAYBOOK_TO_FLOW)
         ).build()
@@ -163,7 +163,7 @@ class TestHighLevelGraphVisualizer:
         assert PB_UUID in src
         assert FLOW_UUID in src
 
-    def test_tool_node_rendered_as_dashed(self):
+    def test_tool_node_rendered_as_dashed(self) -> None:
         data = {
             "name": "projects/p/locations/l/agents/a",
             "display_name": "Test Agent",
@@ -195,7 +195,7 @@ class TestHighLevelGraphVisualizer:
         assert "dashed" in dot.source
         assert "MyTool" in dot.source
 
-    def test_end_session_node_added_when_referenced(self):
+    def test_end_session_node_added_when_referenced(self) -> None:
         data = {
             "name": "projects/p/locations/l/agents/a",
             "display_name": "Test Agent",
@@ -228,7 +228,7 @@ class TestHighLevelGraphVisualizer:
         dot = HighLevelGraphVisualizer(DFCXAgentIR(**data)).build()
         assert "END SESSION" in dot.source
 
-    def test_show_code_blocks_adds_inline_functions(self):
+    def test_show_code_blocks_adds_inline_functions(self) -> None:
         data = {
             "name": "projects/p/locations/l/agents/a",
             "display_name": "Test Agent",
@@ -259,7 +259,7 @@ class TestHighLevelGraphVisualizer:
         assert "my_helper" not in dot_no_blocks.source
         assert "my_helper" in dot_with_blocks.source
 
-    def test_edge_condition_deduplication(self):
+    def test_edge_condition_deduplication(self) -> None:
         """Multiple routes to the same target should accumulate conditions."""
         viz = HighLevelGraphVisualizer(DFCXAgentIR(**MINIMAL_DATA))
         viz.edges_accumulator = {}
@@ -269,16 +269,16 @@ class TestHighLevelGraphVisualizer:
         key = ("A", "B", "routes to", False)
         assert viz.edges_accumulator[key] == ["cond1", "cond2"]
 
-    def test_resolve_to_uuid_handles_end_session_variants(self):
+    def test_resolve_to_uuid_handles_end_session_variants(self) -> None:
         viz = HighLevelGraphVisualizer(DFCXAgentIR(**MINIMAL_DATA))
         assert viz._resolve_to_uuid("END SESSION") == "END_SESSION"
         assert viz._resolve_to_uuid("END_FLOW") == "END_SESSION"
 
-    def test_resolve_to_uuid_by_display_name(self):
+    def test_resolve_to_uuid_by_display_name(self) -> None:
         viz = HighLevelGraphVisualizer(DFCXAgentIR(**DATA_WITH_PLAYBOOK))
         assert viz._resolve_to_uuid("Welcome Playbook") == PB_UUID
 
-    def test_webhook_in_flow_fulfillment_rendered(self):
+    def test_webhook_in_flow_fulfillment_rendered(self) -> None:
         data = {
             "name": "projects/p/locations/l/agents/a",
             "display_name": "Test Agent",

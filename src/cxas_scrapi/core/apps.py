@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import typing
 from typing import Any
 
 from google.cloud.ces_v1beta import AgentServiceClient, types
@@ -34,8 +35,8 @@ class Apps(Common):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         super().__init__(
             creds_path=creds_path,
             creds_dict=creds_dict,
@@ -103,9 +104,9 @@ class Apps(Common):
         for app in apps_list:
             if app.display_name == display_name and not matched_app:
                 matched_app = app
-            elif app.display_name == display_name and matched_app:
-                possible_app = app
-            elif app.display_name.lower() == display_name.lower():
+            elif (
+                app.display_name == display_name and matched_app
+            ) or app.display_name.lower() == display_name.lower():
                 possible_app = app
 
         if possible_app and not matched_app:
@@ -128,7 +129,7 @@ class Apps(Common):
         display_name: str,
         description: str | None = None,
         root_agent: str | None = None,
-        **kwargs,
+        **kwargs: typing.Any,
     ) -> types.App:
         """Creates a new app."""
         app = types.App(display_name=display_name)
@@ -146,7 +147,7 @@ class Apps(Common):
         operation = self.client.create_app(request=request)
         return operation.result()
 
-    def update_app(self, app_name: str, **kwargs) -> types.App:
+    def update_app(self, app_name: str, **kwargs: typing.Any) -> types.App:
         """Updates specific fields of an existing App."""
         app = types.App(name=app_name)
         mask_paths = []

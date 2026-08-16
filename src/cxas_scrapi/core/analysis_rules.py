@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
 from typing import Any
 
 from cxas_scrapi.core.insights import Insights
@@ -25,8 +26,11 @@ class AnalysisRules(Insights):
     """Core Class for managing CCAI Insights Analysis Rules."""
 
     def __init__(
-        self, project_id: str, location: str = "us-central1", **kwargs
-    ):
+        self,
+        project_id: str,
+        location: str = "us-central1",
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the AnalysisRules client."""
         super().__init__(project_id=project_id, location=location, **kwargs)
 

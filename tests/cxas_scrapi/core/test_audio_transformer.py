@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import io
+import typing
 import wave
 from unittest.mock import MagicMock, patch
 
@@ -20,12 +21,12 @@ from cxas_scrapi.core.audio_transformer import AudioTransformer
 
 
 class TestAudioTransformer:
-    def setup_method(self):
+    def setup_method(self) -> None:
         AudioTransformer._client = None
         self.transformer = AudioTransformer()
 
     @patch("cxas_scrapi.core.audio_transformer.texttospeech")
-    def test_text_to_speech_bytes_success(self, mock_tts):
+    def test_text_to_speech_bytes_success(self, mock_tts: typing.Any) -> None:
         # Mock dependencies
         mock_client = MagicMock()
         mock_tts.TextToSpeechClient.return_value = mock_client
@@ -55,7 +56,7 @@ class TestAudioTransformer:
         mock_client.synthesize_speech.assert_called_once()
 
     @patch("cxas_scrapi.core.audio_transformer.texttospeech")
-    def test_text_to_speech_bytes_api_error(self, mock_tts):
+    def test_text_to_speech_bytes_api_error(self, mock_tts: typing.Any) -> None:
         # Mock dependencies
         mock_client = MagicMock()
         mock_tts.TextToSpeechClient.return_value = mock_client
@@ -73,7 +74,9 @@ class TestAudioTransformer:
         assert result["audio_bytes"] is None
 
     @patch("cxas_scrapi.core.audio_transformer.texttospeech")
-    def test_text_to_speech_bytes_invalid_wav(self, mock_tts):
+    def test_text_to_speech_bytes_invalid_wav(
+        self, mock_tts: typing.Any
+    ) -> None:
         # Mock dependencies
         mock_client = MagicMock()
         mock_tts.TextToSpeechClient.return_value = mock_client
@@ -93,7 +96,9 @@ class TestAudioTransformer:
         assert result["audio_bytes"] is None
 
     @patch("cxas_scrapi.core.audio_transformer.texttospeech")
-    def test_text_to_speech_bytes_custom_voice(self, mock_tts):
+    def test_text_to_speech_bytes_custom_voice(
+        self, mock_tts: typing.Any
+    ) -> None:
         # Mock dependencies
         mock_client = MagicMock()
         mock_tts.TextToSpeechClient.return_value = mock_client
@@ -137,8 +142,8 @@ class TestAudioTransformer:
     @patch("cxas_scrapi.core.audio_transformer.AudioSegment")
     @patch("cxas_scrapi.core.audio_transformer.texttospeech")
     def test_text_to_speech_bytes_with_burst_noise_success(
-        self, mock_tts, mock_audio_segment
-    ):
+        self, mock_tts: typing.Any, mock_audio_segment: typing.Any
+    ) -> None:
         # Setup TTS mock
         mock_client = MagicMock()
         mock_tts.TextToSpeechClient.return_value = mock_client
@@ -184,7 +189,7 @@ class TestAudioTransformer:
             f.writeframes(b"mixed_data_burst")
         mock_export_bytes = mock_export_io.getvalue()
 
-        def fake_export(out_f, format="wav"):
+        def fake_export(out_f: typing.Any, format: typing.Any = "wav") -> None:
             out_f.write(mock_export_bytes)
 
         mock_speech.export.side_effect = fake_export
@@ -209,8 +214,8 @@ class TestAudioTransformer:
     @patch("cxas_scrapi.core.audio_transformer.AudioSegment")
     @patch("cxas_scrapi.core.audio_transformer.texttospeech")
     def test_text_to_speech_bytes_noise_failure_fallback(
-        self, mock_tts, mock_audio_segment
-    ):
+        self, mock_tts: typing.Any, mock_audio_segment: typing.Any
+    ) -> None:
         # Setup TTS mock
         mock_client = MagicMock()
         mock_tts.TextToSpeechClient.return_value = mock_client

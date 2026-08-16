@@ -1,6 +1,66 @@
 # Changelog
 
 
+## [1.8.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.7.0...v1.8.0) (2026-07-30)
+
+
+### Features
+
+* **cli:** expose --single-bidi-stream flag to evals report CLI ([e81878b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e81878bad503b021622cd6d85c0fad62de27d0cc))
+* **cli:** expose --single-bidi-stream flag to evals report CLI ([93e8b7d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/93e8b7d047c79278e7ec4afff3413d7dd99cecd5))
+* **evals:** add JSON output format for combined eval reports ([a857351](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a8573511f43c3b587b325921013ffcb4ebf5180f))
+
+
+### Bug Fixes
+
+* address runtime NameErrors and callback eval failures in CI ([32b5cf7](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/32b5cf79ce7fb8e34976ab9eec43ea0f21c027e9))
+* **copybara:** address code review feedback ([c49b6f0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c49b6f006f54104ed029661dc71f2954ec38719e))
+* **copybara:** resolve pytype, testing, and struct issues for upstrea… ([17aff2a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/17aff2a67d9dd0635262bec99a66db38f1df2ab3))
+* **copybara:** resolve pytype, testing, and struct issues for upstream 1.7.0 sync ([50379a4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/50379a4e0c1d1dc6ebc7257eb551ffd16ec87561))
+* **cuj-report:** restore __future__ import ordering in skill scripts ([d6cf5a9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d6cf5a98854d532c734a1295e66662fcf6927d79))
+* Defer 1:1 agent push out of migrate.py to respect CXAS 100-agent cap ([838c140](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/838c1400dcf7e56bff0fe361c793d9715043ee0e))
+* **deployments:** restore two-version minimum for traffic splits ([293337e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/293337ef0bb2c3425c4d8ffd45882a1f92ed0865))
+* **evals:** apply CL 953545678 fix for turn 0 initial utterance in simulation evals ([7d60f9d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7d60f9d1ec8a7ff4c5205b92808b46ca7829fe23))
+* **evals:** move EvalUtils static helpers back into class scope ([7159ca9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7159ca90c0e284ed36d90445f2b8ca6721059556))
+* **migration:** dynamically strip unimported DFCX triggers while preserving standard Python decorators ([4a1c209](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4a1c2092e92ccb797307b078872f337ba67bd9b8))
+* **migration:** dynamically strip unimported DFCX triggers while preserving standard Python decorators ([53270bd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/53270bdb7fd7750f8974ead43a5a3bd6611f05cc))
+* **migration:** runtime NameError (DFCXFlowModel is not defined) when cxas CLI initializes ([3297ac1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3297ac18c04a58dbffdf240570333cf17c368b18))
+* **migration:** strip all DFCX trigger decorators and preserve original function names for Python tools ([5c11aa8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5c11aa806f16d0c5293269e129bffde60f067784))
+* **migration:** strip all DFCX trigger decorators and preserve original function names for Python tools ([510ddc1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/510ddc1f5e17fa874fe378c6960a487404c8482e))
+* resolve trailing ruff lint checks and CI failures ([266b882](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/266b882fd53b420b288f0092d50d96de15cb82f3))
+* **test:** hermetic bidi session mocks & PyType signature compatibility ([1b9f9da](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1b9f9dabf34dc0726f70f06f6804f7c4aa474220))
+* **test:** hermetic bidi session mocks & PyType signature compatibility ([6d235a2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6d235a2c03a51f592085494fcb102b264e58beef))
+* **tests:** add missing return type annotation to test_session_id_extraction ([bcc041d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bcc041d7151b9a4da4f68bd438f1933ba35f2806))
+* **typing:** manually upstream copybara type ignores and overrides ([c737fcd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c737fcd7689426c952c231f0bd4ed42faebc01bd))
+* **typing:** remove unused List import in traces.py ([4841bc1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4841bc130ca76cca4e0dc00855723a8e3df9027d))
+
+## [1.7.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.6.0...v1.7.0) (2026-07-17)
+
+
+### Features
+
+* **linter:** add S008 rule enforcing single llmPromptSecurity guardrail per app ([ca377ae](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ca377ae361ad7a98624f9ea89bb0b153217319ed))
+* **migration:** convert DFCX test cases to CXAS TurnTestCase simulations ([667e8cf](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/667e8cf7a18eef02173c82b7d08d5e55b77b0b01))
+
+
+### Bug Fixes
+
+* **deps:** update junit-framework monorepo to v6.1.2 ([bccb88e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bccb88ec22f1fd370f5738f5940f870bb85fa010))
+* **deps:** update junit-framework monorepo to v6.1.2 ([7d36d4b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7d36d4bf8b0cf6094d49519661fad28cdf4edba4))
+* **evals:** prevent agent audio output file chopping in audio files ([5e6a4c8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5e6a4c89d47ade5553510ae8f5c47e806a6f03bd))
+* **evals:** prevent agent audio output file chopping in audio simulations ([ac6f18f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ac6f18fec872262d974bc036b45d949a2fb78fac))
+* **migration:** prevent browser launch in headless context during tests ([4da8715](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4da87152bf33c388582a13604387ce1800e737ca))
+* **migration:** prevent browser launch in headless context during tests ([d2b6fb9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d2b6fb9a5c3dad16b2a8e9ae97013d0bb7a6090d))
+* persist bidi websocket for audio simulations behind opt-in flag ([6682a83](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6682a837ad9e69a09cdbb758a5867aabbbba3258))
+* persist bidi websocket for audio simulations behind opt-in flag ([6fa0399](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6fa0399399e1691411b48884630311fef8a03988))
+* **setup:** Fix skill setup issue ([ed79706](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ed797063a33404d9bd000958dd73c394d9d6c1c9))
+
+
+### Documentation
+
+* **agent-foundry:** fix setup.sh comment to reference pyproject.toml ([5c03cc7](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5c03cc7b1f0e9609ddbaa02f00296b7dd2941fb0))
+* **agent-foundry:** fix setup.sh comment to reference pyproject.toml ([f4f5caa](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f4f5caa01dda9ee6532530b78d28d157b974b601))
+
 ## [1.6.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.5.0...v1.6.0) (2026-07-10)
 
 

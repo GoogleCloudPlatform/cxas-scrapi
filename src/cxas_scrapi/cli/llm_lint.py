@@ -73,12 +73,12 @@ def extract_dynamic_instructions(file_path: Path) -> dict[str, str]:
                 target = node.targets[0]
                 if isinstance(target, ast.Name):
                     var_name = target.id
-                    if "instruction" in var_name.lower():
+                    if "instruction" in var_name.lower():  # noqa: SIM102
                         if isinstance(node.value, ast.Dict):
                             keys = node.value.keys
                             values = node.value.values
                             for k, v in zip(keys, values, strict=True):
-                                if isinstance(k, ast.Constant) and isinstance(
+                                if isinstance(k, ast.Constant) and isinstance(  # noqa: SIM102
                                     v, ast.Constant
                                 ):
                                     if isinstance(k.value, str) and isinstance(

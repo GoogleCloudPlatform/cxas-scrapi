@@ -29,11 +29,11 @@ class AsyncAgentDesigner:
     """Handles Step 2: Architecture Planning, Tool Generation, and
     Instruction Formatting."""
 
-    def __init__(self, gemini_client: Any):
+    def __init__(self, gemini_client: Any) -> None:
         self.gemini = gemini_client
 
     @staticmethod
-    def _validate_tree_view(tree_view: str):
+    def _validate_tree_view(tree_view: str) -> None:
         """Validates that tree_view is provided."""
         if not tree_view or not tree_view.strip():
             raise ValueError(

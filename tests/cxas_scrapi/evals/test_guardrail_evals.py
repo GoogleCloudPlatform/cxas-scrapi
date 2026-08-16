@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for GuardrailEvals class in cxas_scrapi."""
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -23,12 +25,12 @@ from cxas_scrapi.evals.guardrail_evals import GuardrailEvals
 
 
 @pytest.fixture
-def dummy_app_name():
+def dummy_app_name() -> str:
     return "projects/test-project/locations/us-central1/apps/test-app"
 
 
 @pytest.fixture
-def mock_df():
+def mock_df() -> typing.Any:
     data = {
         "user_input": ["test query 1", "test query 2"],
         "expected_guardrail_name": ["Profanity", None],
@@ -41,12 +43,12 @@ def mock_df():
 @patch("cxas_scrapi.evals.guardrail_evals.Apps")
 @patch("cxas_scrapi.evals.guardrail_evals.Agents")
 def test_guardrail_execution_flow(
-    mock_agents_class,
-    mock_apps_class,
-    mock_sessions_class,
-    dummy_app_name,
-    mock_df,
-):
+    mock_agents_class: typing.Any,
+    mock_apps_class: typing.Any,
+    mock_sessions_class: typing.Any,
+    dummy_app_name: typing.Any,
+    mock_df: typing.Any,
+) -> None:
     """
     Tests the end-to-end execution flow of GuardrailEvals similar to the
     Google Sheets/Notebook workflow without making live GCP API calls.

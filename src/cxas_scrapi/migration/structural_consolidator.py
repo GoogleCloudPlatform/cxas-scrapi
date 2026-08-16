@@ -22,7 +22,7 @@ import io
 import json
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 
@@ -38,8 +38,10 @@ from cxas_scrapi.migration.flow_visualizer import (
     FlowTreeVisualizer,
 )
 from cxas_scrapi.migration.instruction_lint import lint_instruction_text
-from cxas_scrapi.utils.gemini import GeminiGenerate
-from cxas_scrapi.utils.linter import LintResult
+
+if TYPE_CHECKING:
+    from cxas_scrapi.utils.gemini import GeminiGenerate
+    from cxas_scrapi.utils.linter import LintResult
 
 logger = logging.getLogger(__name__)
 
@@ -143,8 +145,17 @@ def heal_tool_refs(ir: MigrationIR) -> tuple[dict[str, str], list[str]]:
     sentinels = {"end_session", "set_session_variables"}
     known = available_ids | available_short | sentinels
 
+    # Map original display names to their truncated CXAS IDs
+    known_name_map = {}
+    for t_id, t in ir.tools.items():
+        if isinstance(t.payload, dict) and "displayName" in t.payload:
+            known_name_map[t.payload["displayName"]] = t_id
+
     def _candidate(ref: str) -> str | None:
         """Return a safe rewrite for ``ref``, or None."""
+        if ref in known_name_map and ref not in known:
+            return known_name_map[ref]
+
         for suffix in _HEAL_SUFFIX_STRIPS:
             if ref.endswith(suffix):
                 base = ref[: -len(suffix)]
@@ -152,9 +163,14 @@ def heal_tool_refs(ir: MigrationIR) -> tuple[dict[str, str], list[str]]:
                     return base
 
         # Prefix match check for truncated completion cutoffs (length >= 15
-        # to avoid generic collisions)
+        # to avoid generic collisions), or CXAS backend truncations where the
+        # full display name in the prompt starts with the truncated ID.
         if len(ref) >= 15:
-            prefix_matches = [k for k in known if k.startswith(ref)]
+            prefix_matches = [
+                k
+                for k in known
+                if k.startswith(ref) or (len(k) >= 30 and ref.startswith(k))
+            ]
             if len(prefix_matches) == 1:
                 return prefix_matches[0]
 
@@ -359,7 +375,7 @@ def rewrite_agent_refs(
             return ""
 
         # 1. Exact group-name match (Gemini emitted the consolidated name).
-        if raw in group_names:
+        if raw in group_names:  # noqa: SIM108
             target_group = raw
         else:
             # 2. Exact IR-key match.
@@ -539,13 +555,37 @@ def _parse_grouping_response(response: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _normalize_agent_lookup_key(s: str) -> str:
+    """Normalize names by removing non-alphanumeric chars for robust lookup."""
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+
 def validate_groupings(
     ir: MigrationIR, groupings: dict, root_key: str | None
 ) -> None:
-    if not (1 <= len(groupings) <= 12):
+    max_groups = max(25, len(ir.agents))
+    if not (1 <= len(groupings) <= max_groups):
         raise ValueError(
-            f"Group count {len(groupings)} outside allowed range [1, 12]."
+            f"Group count {len(groupings)} "
+            f"outside allowed range [1, {max_groups}]."
         )
+
+    # Key resolution map: internal key -> internal key, display -> internal
+    # Also register the original DFCX source flow name (raw_data["displayName"])
+    # and maintain a normalized fallback map for spacing/punctuation variations.
+    key_map: dict[str, str] = {}
+    norm_map: dict[str, str] = {}
+    for k, a in ir.agents.items():
+        key_map[k] = k
+        norm_map[_normalize_agent_lookup_key(k)] = k
+        if a.display_name:
+            key_map[a.display_name] = k
+            norm_map[_normalize_agent_lookup_key(a.display_name)] = k
+        if a.raw_data and isinstance(a.raw_data, dict):
+            orig_name = a.raw_data.get("displayName")
+            if orig_name:
+                key_map[orig_name] = k
+                norm_map[_normalize_agent_lookup_key(orig_name)] = k
 
     seen: set[str] = set()
     for group_name, payload in groupings.items():
@@ -554,27 +594,45 @@ def validate_groupings(
         members = payload.get("agents") or []
         if not members:
             raise ValueError(f"Group {group_name!r} has no agents.")
+
+        canonical_members = []
         for m in members:
-            if m in seen:
-                raise ValueError(f"IR agent {m!r} assigned to multiple groups.")
-            if m not in ir.agents:
+            canonical_k = key_map.get(m)
+            if not canonical_k:
+                canonical_k = norm_map.get(_normalize_agent_lookup_key(m))
+            if not canonical_k:
                 raise ValueError(
                     f"Group {group_name!r} references unknown IR agent {m!r}."
                 )
-            seen.add(m)
+            if canonical_k in seen:
+                raise ValueError(f"IR agent {m!r} assigned to multiple groups.")
+            seen.add(canonical_k)
+            canonical_members.append(canonical_k)
+        payload["agents"] = canonical_members
 
     missing = set(ir.agents.keys()) - seen
     if missing:
-        raise ValueError(
-            f"IR agents not assigned to any group: {sorted(missing)}"
+        # Auto-assign unallocated flows to the Root group or the first group
+        target_root = next(
+            (g for g, p in groupings.items() if p.get("is_root")),
+            next(iter(groupings.keys())),
+        )
+        groupings[target_root].setdefault("agents", []).extend(
+            sorted(list(missing))
+        )
+        logger.info(
+            "Auto-assigned %d unallocated flows to root group %r",
+            len(missing),
+            target_root,
         )
 
     if root_key:
+        canonical_root = key_map.get(root_key, root_key)
         root_groups = [
             name
             for name, payload in groupings.items()
             if payload.get("is_root")
-            or root_key in (payload.get("agents") or [])
+            or canonical_root in (payload.get("agents") or [])
         ]
         if not root_groups:
             raise ValueError(
@@ -714,6 +772,9 @@ def consolidate(ir: MigrationIR, groupings: dict) -> MigrationIR:
             toolsets=toolsets,
             callbacks=callbacks or None,
             status=MigrationStatus.COMPILED,
+            is_source_root=bool(
+                payload.get("is_root") or payload.get("is_source_root")
+            ),
         )
 
     # Rewrite references in Python tool codes inside the consolidated IR
@@ -811,7 +872,7 @@ class StructuralConsolidator:
         ir: MigrationIR,
         gemini_client: GeminiGenerate,
         source_data: DFCXAgentIR | None = None,
-    ):
+    ) -> None:
         self.ir = ir
         self.gemini = gemini_client
         self.source_data = source_data

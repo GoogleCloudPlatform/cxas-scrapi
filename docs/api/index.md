@@ -41,6 +41,7 @@ Every core class ultimately inherits from `Common`, which takes care of authenti
 | [`Changelogs`](core/changelogs.md) | Read the audit changelog for an app. |
 | [`Callbacks`](core/callbacks.md) | Manage before/after model, agent, and tool Python callbacks. |
 | [`ConversationHistory`](core/conversation-history.md) | Browse and retrieve recorded conversation logs. |
+| [`Traces`](core/traces.md) | Trace observability, audio transcription with Gemini, WER metrics, and BigQuery reprocessing. |
 | [`Insights`](core/insights.md) | CCAI Insights API operations including scorecard management. |
 
 ### Evals

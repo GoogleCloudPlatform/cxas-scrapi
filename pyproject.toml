@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cxas-scrapi"
-version = "1.6.0"
+version = "1.8.0"
 description = "A high level scripting API for CX Agent Studio developers."
 readme = "README.md"
 authors = [
@@ -107,7 +107,7 @@ packages = ["src/cxas_scrapi"]
 [tool.ruff]
 line-length = 80
 target-version = "py310"
-extend-exclude = ["*.ipynb", ".agents/skills/cxas-agent-foundry/assets/project-template/", ".agents/skills/cxas-agent-foundry/scripts", ".agents/skills/cxas-sim-eval/scripts", ".agents/skills/cxas-cuj-report-generator/", ".agents/skills/cxas-insights-sim-eval/scripts", "examples/", "skill_eval/scratch/"]
+extend-exclude = ["*.ipynb", ".agents/skills/cxas-agent-foundry/assets/project-template/", ".agents/skills/cxas-agent-foundry/scripts", ".agents/skills/cxas-sim-eval/scripts", ".agents/skills/cxas-cuj-report-generator/", ".agents/skills/cxas-insights-sim-eval/scripts", ".agents/skills/cxas-eval-coverage/scripts", "examples/"]
 
 [tool.ruff.lint]
 select = [
@@ -119,6 +119,10 @@ select = [
     "PL", # pylint
     "RUF", # Ruff rules
     "UP",  # pyupgrade rules
+    "ANN", # flake8-annotations
+    "TCH", # flake8-type-checking
+    "SIM", # flake8-simplify
+    "PT",  # flake8-pytest-style
 ]
 ignore = [
     "E203",  # extend-ignore = E203 from flake8
@@ -134,11 +138,15 @@ ignore = [
     "RUF006",  # allow fire-and-forget create_task
     "RUF100",  # preserve unused noqa comments for external linter compatibility
     "RUF012",  # mutable class attributes (constants are fine)
+    "ANN401",  # dynamically typed Any
+
+    "ANN204",  # missing return type for __init__
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "src/cxas_scrapi/cli/**" = ["PLC0415", "E501"]
 "src/cxas_scrapi/migration/prompts.py" = ["E501"]
+".agents/skills/cxas-eval-coverage/scripts/*.py" = ["E501"]
 "src/cxas_scrapi/prompts/llm_lint_prompts.py" = ["E501"]
 # html_preview is dominated by HTML/CSS template strings; wrapping them would
 # hurt readability of the templates themselves. The Python code in this file

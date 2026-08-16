@@ -12,17 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Code Block Migrator for transforming legacy DFCX Python code blocks."""
 
 import ast
 import logging
 import re
+import typing
 from typing import Any
 
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.migration.ai_augment import AIAugment
 
 logger = logging.getLogger(__name__)
+
+
+BUILTIN_DECORATORS = {"staticmethod", "classmethod", "property"}
+
+
+def _is_dfcx_trigger(
+    dec: ast.expr, explicit_imports: set[str] | None = None
+) -> bool:
+    """Returns True if the decorator is an unimported DFCX framework trigger."""
+    dec_name = ""
+    if isinstance(dec, ast.Name):
+        dec_name = dec.id
+    elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
+        dec_name = dec.func.id
+
+    if not dec_name:
+        return True
+    if dec_name in BUILTIN_DECORATORS:
+        return False
+    if explicit_imports:
+        for imp in explicit_imports:
+            if dec_name in imp:
+                return False
+    return True
 
 
 class ToolCallTransformer(ast.NodeTransformer):
@@ -37,11 +63,15 @@ class ToolCallTransformer(ast.NodeTransformer):
     """
 
     def __init__(
-        self, tool_map: dict[str, Any], tool_display_name_map: dict[str, str]
-    ):
+        self,
+        tool_map: dict[str, Any],
+        tool_display_name_map: dict[str, str],
+        explicit_imports: set[str] | None = None,
+    ) -> None:
         super().__init__()
         self.tool_map = tool_map
         self.tool_display_name_map = tool_display_name_map
+        self.explicit_imports = explicit_imports or set()
         self.dependencies = (
             set()
         )  # Stores full resource names of referenced toolsets
@@ -52,7 +82,7 @@ class ToolCallTransformer(ast.NodeTransformer):
         self.uses_system_directives = False
         self.discovered_parameters = set()
 
-    def _get_system_directive_node(self, call_node):
+    def _get_system_directive_node(self, call_node: typing.Any) -> typing.Any:
         """Helper to create an AST node appending the system function call
         to our directives list.
         """
@@ -112,7 +142,7 @@ class ToolCallTransformer(ast.NodeTransformer):
         )
         return ast.Expr(value=append_call)
 
-    def _is_system_function(self, call_node):
+    def _is_system_function(self, call_node: typing.Any) -> typing.Any:
         """Checks if a Call node represents a DFCX system function to be
         commented out.
         """
@@ -125,7 +155,7 @@ class ToolCallTransformer(ast.NodeTransformer):
 
         # Case 2: Attribute calls like playbooks.PlaybookTransfer()
         # OR agents.agentTransfer()
-        if isinstance(call_node.func, ast.Attribute):
+        if isinstance(call_node.func, ast.Attribute):  # noqa: SIM102
             if isinstance(call_node.func.value, ast.Name):
                 module_name = call_node.func.value.id
                 func_name = call_node.func.attr
@@ -143,12 +173,12 @@ class ToolCallTransformer(ast.NodeTransformer):
 
         return False
 
-    def visit_Expr(self, node):
+    def visit_Expr(self, node: typing.Any) -> typing.Any:
         if self._is_system_function(node.value):
             return self._get_system_directive_node(node.value)
         return self.generic_visit(node)
 
-    def visit_Return(self, node):
+    def visit_Return(self, node: typing.Any) -> typing.Any:
         self.generic_visit(node)
         if node.value and self._is_system_function(node.value):
             append_node = self._get_system_directive_node(node.value)
@@ -165,7 +195,7 @@ class ToolCallTransformer(ast.NodeTransformer):
             return [append_node, ret_node]
         return node
 
-    def visit_Call(self, node):
+    def visit_Call(self, node: typing.Any) -> typing.Any:
         # Check for structure: tools.A.B(...)
         if (
             isinstance(node.func, ast.Attribute)
@@ -218,28 +248,15 @@ class ToolCallTransformer(ast.NodeTransformer):
 
         return self.generic_visit(node)
 
-    def visit_FunctionDef(self, node):
+    def visit_FunctionDef(self, node: typing.Any) -> typing.Any:
         self.uses_system_directives = False
         # 1. Visit children FIRST
         self.generic_visit(node)
 
-        # Strip DFCX-specific decorators
+        # Strip unimported DFCX-specific trigger decorators
         new_decorators = []
         for dec in node.decorator_list:
-            if isinstance(dec, ast.Name) and dec.id in [
-                "Action",
-                "Handler",
-                "system",
-                "action",
-                "handler",
-            ]:
-                continue
-            elif (
-                isinstance(dec, ast.Call)
-                and isinstance(dec.func, ast.Name)
-                and dec.func.id
-                in ["Action", "Handler", "system", "action", "handler"]
-            ):
+            if _is_dfcx_trigger(dec, self.explicit_imports):
                 continue
             new_decorators.append(dec)
         node.decorator_list = new_decorators
@@ -326,19 +343,19 @@ class GlobalStateTransformer(ast.NodeTransformer):
     set_variable.
     """
 
-    def __init__(self, known_parameters):
+    def __init__(self, known_parameters: typing.Any) -> None:
         super().__init__()
         self.known_parameters = known_parameters
         self.discovered_parameters = set()
 
-    def _create_get_variable(self, var_name):
+    def _create_get_variable(self, var_name: typing.Any) -> typing.Any:
         return ast.Call(
             func=ast.Name(id="get_variable", ctx=ast.Load()),
             args=[ast.Constant(value=var_name)],
             keywords=[],
         )
 
-    def visit_Assign(self, node):
+    def visit_Assign(self, node: typing.Any) -> typing.Any:
         self.generic_visit(node)
         if len(node.targets) == 1:
             target = node.targets[0]
@@ -381,22 +398,21 @@ class GlobalStateTransformer(ast.NodeTransformer):
                 )
         return node
 
-    def visit_Attribute(self, node):
+    def visit_Attribute(self, node: typing.Any) -> typing.Any:
         self.generic_visit(node)
-        if isinstance(node.ctx, ast.Load):
-            if (
-                isinstance(node.value, ast.Attribute)
-                and getattr(node.value.value, "id", "") == "session"
-                and node.value.attr == "params"
-            ):
-                self.discovered_parameters.add(node.attr)
-                return self._create_get_variable(node.attr)
+        if isinstance(node.ctx, ast.Load) and (
+            isinstance(node.value, ast.Attribute)
+            and getattr(node.value.value, "id", "") == "session"
+            and node.value.attr == "params"
+        ):
+            self.discovered_parameters.add(node.attr)
+            return self._create_get_variable(node.attr)
         return node
 
-    def visit_Subscript(self, node):
+    def visit_Subscript(self, node: typing.Any) -> typing.Any:
         self.generic_visit(node)
-        if isinstance(node.ctx, ast.Load):
-            if getattr(node.value, "id", "") == "state":
+        if isinstance(node.ctx, ast.Load):  # noqa: SIM102
+            if getattr(node.value, "id", "") == "state":  # noqa: SIM102
                 if hasattr(node.slice, "value") and isinstance(
                     node.slice.value, str
                 ):
@@ -405,9 +421,9 @@ class GlobalStateTransformer(ast.NodeTransformer):
                     return self._create_get_variable(var_name)
         return node
 
-    def visit_Name(self, node):
+    def visit_Name(self, node: typing.Any) -> typing.Any:
         self.generic_visit(node)
-        if isinstance(node.ctx, ast.Load):
+        if isinstance(node.ctx, ast.Load):  # noqa: SIM102
             if node.id in self.known_parameters:
                 return self._create_get_variable(node.id)
         return node
@@ -428,7 +444,7 @@ class CodeBlockMigrator:
 
     def __init__(
         self, ps_tools_client: Tools, ai_augment_client: AIAugment | None
-    ):
+    ) -> None:
         self.ps_tools = ps_tools_client
         self.ai_augment = ai_augment_client
         logger.info("CodeBlockMigrator initialized.")
@@ -440,7 +456,7 @@ class CodeBlockMigrator:
             tree = ast.parse(function_code)
             func_node = tree.body[0]
 
-            def find_type_names(annotation_node):
+            def find_type_names(annotation_node: typing.Any) -> typing.Any:
                 names = set()
                 if isinstance(annotation_node, ast.Name):
                     names.add(annotation_node.id)
@@ -479,47 +495,83 @@ class CodeBlockMigrator:
     @staticmethod
     def _parse_code_block_with_ast(
         code_string: str,
+        protected_tool_names: set[str] | None = None,
     ) -> tuple[set[str], list[tuple[str, str]], list[str]]:
         explicit_imports = set()
         entry_functions = []
         helper_functions = []
+        if protected_tool_names is None:
+            protected_tool_names = set()
         try:
             tree = ast.parse(code_string)
+
+            # --- Priority 2: AST Call Graph Analysis ---
+            # Collect function names called inside any function body in file
+            callee_names: set[str] = set()
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for child in ast.walk(node):
+                        if isinstance(child, ast.Call):
+                            if isinstance(child.func, ast.Name):
+                                callee_names.add(child.func.id)
+                            elif isinstance(child.func, ast.Attribute):
+                                callee_names.add(child.func.attr)
+
             for node in tree.body:
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
                     explicit_imports.add(ast.unparse(node))
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     func_text = ast.unparse(node)
                     if func_text:
-                        is_entry = False
-                        for dec in node.decorator_list:
-                            dec_name = ""
-                            if isinstance(dec, ast.Name):
-                                dec_name = dec.id
-                            elif isinstance(dec, ast.Call) and isinstance(
-                                dec.func, ast.Name
-                            ):
-                                dec_name = dec.func.id
-                            if dec_name in [
-                                "Action",
-                                "Handler",
-                                "system",
-                                "action",
-                                "handler",
-                                "BeforeActionTrigger",
-                                "BeforeModelTrigger",
-                                "PlaybookStartHandler",
-                                "EventTrigger",
-                            ]:
-                                is_entry = True
-                                break
+                        # Priority 1: Protected names (instructions/manifests)
+                        is_protected = (
+                            node.name in protected_tool_names
+                            or f"usr_{node.name}" in protected_tool_names
+                        )
+                        # Priority 2: AST Call Graph - called by other functions
+                        is_callee_helper = (
+                            node.name in callee_names and not is_protected
+                        )
+                        is_internal_helper = (
+                            (node.name.startswith("_") and not is_protected)
+                            or is_callee_helper
+                            or any(
+                                pat in node.name.lower()
+                                for pat in (
+                                    "handle_no_input",
+                                    "handle_no_match",
+                                    "handle_webhook",
+                                    "no_input_",
+                                    "no_match_",
+                                    "webhook_error",
+                                    "webhook_timeout",
+                                    "webhook_bad_request",
+                                    "webhook_rejected",
+                                    "webhook_unavailable",
+                                    "webhook_not_found",
+                                    "malicious_user",
+                                    "blocked_by_safety",
+                                    "tool_error",
+                                )
+                            )
+                        )
+                        is_entry = is_protected or (
+                            not is_internal_helper
+                            and any(
+                                _is_dfcx_trigger(dec, explicit_imports)
+                                for dec in node.decorator_list
+                            )
+                        )
                         if is_entry:
                             entry_functions.append((node.name, func_text))
                         else:
-                            helper_functions.append(func_text)
+                            helper_functions.append((node.name, func_text))
 
             if not entry_functions and helper_functions:
-                entry_functions.append(("main", helper_functions.pop()))
+                func_name, func_text = helper_functions.pop()
+                entry_functions.append((func_name, func_text))
+
+            helper_functions = [code for _, code in helper_functions]
 
             return explicit_imports, entry_functions, helper_functions
         except SyntaxError as e:
@@ -586,8 +638,13 @@ class CodeBlockMigrator:
             "customize_response",
         }
 
+        protected_names = set(tool_display_name_map.keys()).union(
+            set(tool_map.keys())
+        )
         shared_imports, extracted_functions, helper_functions = (
-            self._parse_code_block_with_ast(code)
+            self._parse_code_block_with_ast(
+                code, protected_tool_names=protected_names
+            )
         )
 
         if not extracted_functions:
@@ -605,7 +662,7 @@ class CodeBlockMigrator:
                 )
 
                 tool_transformer = ToolCallTransformer(
-                    tool_map, tool_display_name_map
+                    tool_map, tool_display_name_map, shared_imports
                 )
                 helper_tree = tool_transformer.visit(helper_tree)
                 ast.fix_missing_locations(helper_tree)
@@ -648,7 +705,7 @@ class CodeBlockMigrator:
                 )
 
                 transformer = ToolCallTransformer(
-                    tool_map, tool_display_name_map
+                    tool_map, tool_display_name_map, shared_imports
                 )
                 transformed_tree = transformer.visit(transformed_tree)
                 routing_parameters.update(transformer.discovered_parameters)

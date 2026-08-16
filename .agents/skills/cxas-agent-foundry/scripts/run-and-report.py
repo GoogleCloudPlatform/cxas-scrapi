@@ -25,6 +25,7 @@ Usage:
   python run-and-report.py --message "Edited agent only" --no-push-goldens
   python run-and-report.py --message "Testing" --dry-run
 """
+import typing
 
 import argparse
 import os
@@ -51,7 +52,7 @@ def _run(cmd: list[str], description: str, dry_run: bool = False) -> subprocess.
     return result
 
 
-def _ensure_eval_reports_dir():
+def _ensure_eval_reports_dir() -> typing.Any:
     """Create <project>/eval-reports/ if missing.
 
     Defensive — `setup-project.py` already creates this at bootstrap, but a
@@ -70,7 +71,7 @@ def _ensure_eval_reports_dir():
         os.makedirs(os.path.join(project, "eval-reports"), exist_ok=True)
 
 
-def _resolve_project_dir():
+def _resolve_project_dir() -> typing.Any:
     """Return the project root, or None when no project marker is found.
 
     Walks up from cwd looking for `.active-project` (whose contents name the
@@ -95,7 +96,7 @@ def _resolve_project_dir():
     return None
 
 
-def main():
+def main() -> typing.Any:
     _ensure_eval_reports_dir()
     parser = argparse.ArgumentParser(
         description="Single-command iteration step: snapshot + evals + triage + report"
@@ -132,6 +133,14 @@ def main():
     parser.add_argument(
         "--dry-run", action="store_true", default=False,
         help="Print what would be done without running anything"
+    )
+    parser.add_argument(
+        "--skip-playback-wait", action="store_true", default=False,
+        help="Skip waiting for agent audio playback to finish before sending the next turn (speeds up audio simulations but may cause barge-in/cut-offs)."
+    )
+    parser.add_argument(
+        "--single-bidi-stream", action="store_true", default=False,
+        help="Keep one persistent bidi WebSocket open per audio simulation instead of one connection per turn (the default)."
     )
 
     args = parser.parse_args()
@@ -178,6 +187,10 @@ def main():
         eval_cmd.extend(["--runs", str(args.runs)])
     if args.priority is not None:
         eval_cmd.extend(["--priority", args.priority])
+    if args.skip_playback_wait:
+        eval_cmd.append("--skip-playback-wait")
+    if args.single_bidi_stream:
+        eval_cmd.append("--single-bidi-stream")
     result = _run(eval_cmd, "Step 3/5: Run all evals", dry_run=args.dry_run)
     if result.returncode != 0:
         print("\nEval run failed. Continuing to triage and report with available results...")

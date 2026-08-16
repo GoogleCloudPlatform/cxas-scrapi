@@ -60,6 +60,27 @@ jobs:
         run: |
           uv run pytest tests/ -n auto
 
+  root-check:
+    name: Repo Root Hygiene
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Check for unapproved root-level entries
+        run: |
+          allowlist=$(grep -vE '^[[:space:]]*(#|$)' .github/root-allowlist.txt | sort -u)
+          actual=$(git ls-tree --name-only HEAD | sort -u)
+          new_entries=$(comm -13 <(echo "$allowlist") <(echo "$actual"))
+          if [[ -n "$new_entries" ]]; then
+            echo "::error::New root-level files or directories are not allowed. Move these into the existing directory structure (src/, tests/, docs/, scripts/, ...):"
+            echo "$new_entries" | sed 's/^/  - /'
+            echo ""
+            echo "If a new root entry is genuinely required, add it to .github/root-allowlist.txt in this PR (that file requires code-owner approval)."
+            exit 1
+          fi
+          echo "Repository root matches the allowlist."
+
   changelog-check:
     name: Prevent Manual CHANGELOG Edits
     runs-on: ubuntu-latest

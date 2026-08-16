@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Tests for dependency analyzer."""
+
+import typing
 
 import pytest
 
@@ -21,7 +24,7 @@ from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
 
 
 @pytest.fixture
-def sample_agent_data():
+def sample_agent_data() -> typing.Any:
     return DFCXAgentIR(
         **{
             "name": "projects/p1/locations/l1/agents/a1",
@@ -70,7 +73,7 @@ def sample_agent_data():
     )
 
 
-def test_analyzer_init(sample_agent_data):
+def test_analyzer_init(sample_agent_data: typing.Any) -> None:
     analyzer = DependencyAnalyzer(sample_agent_data)
     assert "Playbook 1" in analyzer.id_map
     assert (
@@ -78,7 +81,7 @@ def test_analyzer_init(sample_agent_data):
     )
 
 
-def test_analyzer_graph(sample_agent_data):
+def test_analyzer_graph(sample_agent_data: typing.Any) -> None:
     analyzer = DependencyAnalyzer(sample_agent_data)
     pb1_id = "projects/p1/locations/l1/agents/a1/playbooks/pb1"
     pb2_id = "projects/p1/locations/l1/agents/a1/playbooks/pb2"
@@ -90,7 +93,7 @@ def test_analyzer_graph(sample_agent_data):
     assert f2_id in analyzer.graph[f1_id]
 
 
-def test_get_impact(sample_agent_data):
+def test_get_impact(sample_agent_data: typing.Any) -> None:
     analyzer = DependencyAnalyzer(sample_agent_data)
     pb1_id = "projects/p1/locations/l1/agents/a1/playbooks/pb1"
     pb2_id = "projects/p1/locations/l1/agents/a1/playbooks/pb2"

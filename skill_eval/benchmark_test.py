@@ -19,14 +19,14 @@ from unittest import mock
 from skill_eval.benchmark import Timer
 
 
-def test_timer_initial_state():
+def test_timer_initial_state() -> None:
     timer = Timer()
     assert timer.elapsed == datetime.timedelta()
     assert timer.duration == datetime.timedelta()
     assert timer._start_time is None
 
 
-def test_timer_active_running():
+def test_timer_active_running() -> None:
     timer = Timer()
     with mock.patch.object(time, "perf_counter", side_effect=[10.0, 12.5]):
         timer.__enter__()
@@ -34,7 +34,7 @@ def test_timer_active_running():
         assert timer._start_time == 10.0
 
 
-def test_timer_completed_zero_seconds():
+def test_timer_completed_zero_seconds() -> None:
     """Verifies that a timer finishing in 0.0 seconds reliably returns duration."""
     timer = Timer()
     with mock.patch.object(
@@ -49,7 +49,7 @@ def test_timer_completed_zero_seconds():
         assert timer.elapsed == datetime.timedelta(0)
 
 
-def test_timer_completed_nonzero_seconds():
+def test_timer_completed_nonzero_seconds() -> None:
     timer = Timer()
     with mock.patch.object(
         time, "perf_counter", side_effect=[50.0, 55.2, 100.0]

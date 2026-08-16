@@ -14,7 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import datetime
+import typing
 from typing import Any
 
 from cxas_scrapi.core.insights import Insights
@@ -51,8 +53,11 @@ class InsightsAnalytics:
     """Aggregates metrics and generates dashboards from CCAI Insights conversation data."""
 
     def __init__(
-        self, project_id: str, location: str = "us-central1", **kwargs
-    ):
+        self,
+        project_id: str,
+        location: str = "us-central1",
+        **kwargs: typing.Any,
+    ) -> None:
         self.project_id = project_id
         self.location = location
         self.insights_client = Insights(
@@ -104,10 +109,8 @@ class InsightsAnalytics:
 
             duration = conv.get("duration", "0s")
             if isinstance(duration, str) and duration.endswith("s"):
-                try:
+                with contextlib.suppress(ValueError):
                     total_duration += float(duration[:-1])
-                except ValueError:
-                    pass
 
             sentiment = conv.get("sentiment", {})
             # check user sentiment

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """CLI for DFCX→CXAS migration.
 
 Two entry points:
@@ -30,6 +31,7 @@ import logging
 import os
 import re
 import sys
+import typing
 from typing import Any
 
 from google.cloud.dialogflowcx_v3beta1 import services as cx_services
@@ -69,29 +71,29 @@ class Tee:
     and ANSI escape colors.
     """
 
-    def __init__(self, filepath: str):
-        self.file = open(filepath, "a", encoding="utf-8")
+    def __init__(self, filepath: str) -> None:
+        self.file = open(filepath, "a", encoding="utf-8")  # noqa: SIM115
         self.stdout = sys.stdout
         self.stderr = sys.stderr
         sys.stdout = self
         sys.stderr = self
 
-    def write(self, data):
+    def write(self, data: typing.Any) -> None:
         self.stdout.write(data)
         self.file.write(data)
         self.file.flush()
 
-    def flush(self):
+    def flush(self) -> None:
         self.stdout.flush()
         self.file.flush()
 
     def isatty(self) -> bool:
         return self.stdout.isatty()
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: typing.Any) -> typing.Any:
         return getattr(self.stdout, name)
 
-    def close(self):
+    def close(self) -> None:
         if sys.stdout is self:
             sys.stdout = self.stdout
         if sys.stderr is self:
@@ -104,7 +106,7 @@ _current_tee = None
 _current_log_handler = None
 
 
-def start_tee_logging(target_name: str):
+def start_tee_logging(target_name: str) -> None:
     """Starts duplicating standard stdout/stderr outputs to the target
     log file.
     """
@@ -134,7 +136,7 @@ def start_tee_logging(target_name: str):
     )
 
 
-def close_tee_logging():
+def close_tee_logging() -> None:
     """Stops duplicating stdout/stderr and closes the active Tee file
     and dynamic logger handlers.
     """
@@ -157,7 +159,7 @@ def close_tee_logging():
 class MigrationCLI:
     """Handles interactive CLI prompts and status reporting."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.console = Console()
         # Setup Rich logging
 
@@ -220,10 +222,7 @@ class MigrationCLI:
             .upper()
         )
 
-        if raw_env_choice == "P":
-            env = "PROD"
-        else:
-            env = "AUTOPUSH"
+        env = "PROD" if raw_env_choice == "P" else "AUTOPUSH"
 
         model = Prompt.ask(
             "Enter Global App Model",
@@ -473,7 +472,7 @@ class MigrationCLI:
 
     def run_dependency_analysis(
         self, agent_data: DFCXAgentIR, filtered_data: DFCXAgentIR
-    ):
+    ) -> None:
         """Run dependency analysis and show results."""
         self.console.print("\n[bold blue]=== Dependency Analysis ===[/]\n")
 
@@ -509,7 +508,7 @@ class MigrationCLI:
                 det = analyzer.get_details(rid)
                 self.console.print(f"  - [{det['type']}] {det['name']}")
 
-    def display_status(self, ir: MigrationIR):
+    def display_status(self, ir: MigrationIR) -> None:
         """Display the status of resources in the IR."""
         self.console.print("\n[bold blue]=== Migration Status ===[/]\n")
 
@@ -526,7 +525,7 @@ class MigrationCLI:
 
         self.console.print(table)
 
-    def show_visualizations(self, prefix: str = "agent"):
+    def show_visualizations(self, prefix: str = "agent") -> None:
         """Print links to visualizations."""
         self.console.print("\n[bold blue]=== Visualizations ===[/]\n")
         self.console.print(
@@ -550,7 +549,7 @@ class MigrationCLI:
         )
         return match.group(0) if match else raw_input
 
-    def run(self, default_agent_name: str, cx_api: Any):
+    def run(self, default_agent_name: str, cx_api: Any) -> None:
         """Runs the full interactive CLI dashboard."""
         if not sys.stdin.isatty():
             self.console.print(
@@ -563,11 +562,10 @@ class MigrationCLI:
             "[bold green]Welcome to the CXAS Migration Tool![/bold green]"
         )
 
-        if not self.check_auth():
-            if not Confirm.ask(
-                "Do you want to proceed anyway? (May fail later)", default=False
-            ):
-                return
+        if not self.check_auth() and not Confirm.ask(
+            "Do you want to proceed anyway? (May fail later)", default=False
+        ):
+            return
 
         self.console.print(
             "This tool performs optimized best-practices DFCX to CXAS agents "
@@ -669,7 +667,7 @@ class MigrationCLI:
         if Confirm.ask("START MIGRATION?", default=True):
             config.source_agent_data_override = filtered_data
 
-            async def _run():
+            async def _run() -> None:
                 await migration_service.run_migration(
                     source_cx_agent_id=agent_id,
                     config=config,
@@ -741,8 +739,12 @@ class MigrationCLI:
             try:
 
                 async def _tui_callback(
-                    ir, groupings, consolidator, root_key, dep_summary
-                ):
+                    ir: typing.Any,
+                    groupings: typing.Any,
+                    consolidator: typing.Any,
+                    root_key: typing.Any,
+                    dep_summary: typing.Any,
+                ) -> typing.Any:
                     return await grouping_review.interactive_review(
                         ir=ir,
                         groupings=groupings,
@@ -1000,7 +1002,7 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         default_model=args.model,
     )
 
-    async def _main():
+    async def _main() -> None:
         await service.run_migration(
             source_cx_agent_id=args.source_agent_id or "uploaded-agent",
             config=config,
@@ -1036,7 +1038,7 @@ def run_stage_1(args: argparse.Namespace) -> None:
     if hasattr(args, "auto_confirm_grouping"):
         bundle.config.auto_confirm_grouping = args.auto_confirm_grouping
 
-    async def _main():
+    async def _main() -> typing.Any:
         return await service.run_stage_1(
             bundle=bundle,
             grouping_json_path=args.grouping_json,
@@ -1061,7 +1063,7 @@ def run_stage_2(args: argparse.Namespace) -> None:
     persist_path = None if args.no_persist else bundle_path
     target_name = bundle.config.target_name
 
-    async def _main():
+    async def _main() -> None:
         await service.run_stage_2(
             version_label=args.version_label,
             generate_unit_tests=not args.no_unit_tests,
@@ -1101,7 +1103,7 @@ def run_stage_3(args: argparse.Namespace) -> None:
         else "hierarchy"
     )
 
-    async def _main():
+    async def _main() -> typing.Any:
         return await service.run_stage_3(
             bundle=bundle,
             mode=mode,

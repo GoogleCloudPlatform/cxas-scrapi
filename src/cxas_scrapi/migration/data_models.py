@@ -21,7 +21,10 @@ import os
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+import pydantic
+
+BaseModel = pydantic.BaseModel
+Field = pydantic.Field
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +129,7 @@ class IRAgent(BaseModel):
     callbacks: dict[str, Any] | None = None  # Used by Flows
     status: MigrationStatus = MigrationStatus.COMPILED
     resource_name: str | None = None  # Populated after deployment
+    is_source_root: bool = False
 
 
 class MigrationIR(BaseModel):

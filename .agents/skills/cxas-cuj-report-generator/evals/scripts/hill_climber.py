@@ -1,3 +1,4 @@
+import typing
 import argparse
 import json
 import os
@@ -33,17 +34,17 @@ TARGET_PASS_RATE = 1.0
 BATCH_SIZE = 14
 
 
-def load_skill_content():
+def load_skill_content() -> typing.Any:
     with open(skill_file, "r") as f:
         return f.read()
 
 
-def write_skill_content(content):
+def write_skill_content(content: typing.Any) -> typing.Any:
     with open(skill_file, "w") as f:
         f.write(content)
 
 
-def prepare_evaluation_prompt(case_name, iteration):
+def prepare_evaluation_prompt(case_name: typing.Any, iteration: typing.Any) -> typing.Any:
     case_path = os.path.join(cases_dir, case_name)
     case_results_dir = os.path.join(results_dir, case_name, str(iteration))
     testdir = os.path.join(case_results_dir, "testdir")
@@ -92,7 +93,7 @@ def prepare_evaluation_prompt(case_name, iteration):
     return prompt, expectations, case_results_dir
 
 
-def process_evaluation_batch(batch, iteration):
+def process_evaluation_batch(batch: typing.Any, iteration: typing.Any) -> typing.Any:
     batch_spec = []
     expectations_map = {}
     out_dir_map = {}
@@ -176,7 +177,7 @@ def process_evaluation_batch(batch, iteration):
     return batch_spec, expectations_map, out_dir_map
 
 
-def grade_evaluation_batch(batch_spec, expectations_map, out_dir_map):
+def grade_evaluation_batch(batch_spec: typing.Any, expectations_map: typing.Any, out_dir_map: typing.Any) -> typing.Any:
     passes = 0
     failures = []
 
@@ -228,8 +229,8 @@ def grade_evaluation_batch(batch_spec, expectations_map, out_dir_map):
 
 
 def save_iteration_results(
-    iteration, passes, all_cases, failures, climb_history
-):
+    iteration: typing.Any, passes: typing.Any, all_cases: typing.Any, failures: typing.Any, climb_history: typing.Any
+) -> typing.Any:
     pass_rate = passes / len(all_cases)
     print(
         f"Iteration {iteration} Complete. Passes: {passes}/{len(all_cases)}"
@@ -281,7 +282,7 @@ def save_iteration_results(
     return pass_rate
 
 
-def load_all_cases():
+def load_all_cases() -> typing.Any:
     return sorted(
         [
             d
@@ -291,7 +292,7 @@ def load_all_cases():
     )
 
 
-def load_climb_history():
+def load_climb_history() -> typing.Any:
     climb_history = []
     if os.path.exists(history_file):
         try:
@@ -308,19 +309,19 @@ def load_climb_history():
 STATE_FILE = "/tmp/evals/state.json"
 
 
-def load_state():
+def load_state() -> typing.Any:
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
             return json.load(f)
     return None
 
 
-def save_state(state):
+def save_state(state: typing.Any) -> typing.Any:
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
 
 
-def prepare(state, iteration, all_cases, args):
+def prepare(state: typing.Any, iteration: typing.Any, all_cases: typing.Any, args: typing.Any) -> typing.Any:
     print(
         f"\n=== STARTING ITERATION {iteration}/{args.iterations} (Batch"
         f" starting at index {state['batch_start']}) ==="
@@ -338,7 +339,7 @@ def prepare(state, iteration, all_cases, args):
     save_state(state)
 
 
-def grade(state, iteration, all_cases, climb_history, args):
+def grade(state: typing.Any, iteration: typing.Any, all_cases: typing.Any, climb_history: typing.Any, args: typing.Any) -> typing.Any:
     print("Resuming execution... Initiating batch grading pipeline.")
     batch_spec = state["batch_spec"]
     expectations_map = state["expectations_map"]
@@ -393,7 +394,7 @@ def grade(state, iteration, all_cases, climb_history, args):
     orchestrate_evaluations()
 
 
-def optimize(state):
+def optimize(state: typing.Any) -> typing.Any:
     current_skill = load_skill_content()
 
     from utils.optimizer import request_skill_optimization
@@ -411,7 +412,7 @@ def optimize(state):
     )
 
 
-def apply_optimization(state):
+def apply_optimization(state: typing.Any) -> typing.Any:
     print("Resuming execution... Processing Optimization updates.")
     response_path = "/tmp/optimizer_response.txt"
     if not os.path.exists(response_path):
@@ -445,7 +446,7 @@ def apply_optimization(state):
     )
 
 
-def orchestrate_evaluations():
+def orchestrate_evaluations() -> typing.Any:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--iterations",

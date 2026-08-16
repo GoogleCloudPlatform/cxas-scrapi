@@ -57,73 +57,73 @@ FULL_PB = {
 
 
 class TestPlaybookTreeVisualizer:
-    def test_build_tree_returns_tree_instance(self):
+    def test_build_tree_returns_tree_instance(self) -> None:
         tree = PlaybookTreeVisualizer(MINIMAL_PB).build_tree()
         assert isinstance(tree, Tree)
 
-    def test_root_contains_playbook_name(self):
+    def test_root_contains_playbook_name(self) -> None:
         rendered = _render(PlaybookTreeVisualizer(MINIMAL_PB).build_tree())
         assert "My Playbook" in rendered
 
-    def test_goal_rendered(self):
+    def test_goal_rendered(self) -> None:
         rendered = _render(PlaybookTreeVisualizer(FULL_PB).build_tree())
         assert "Help the user complete their request" in rendered
 
-    def test_input_parameter_rendered(self):
+    def test_input_parameter_rendered(self) -> None:
         rendered = _render(PlaybookTreeVisualizer(FULL_PB).build_tree())
         assert "user_id" in rendered
 
-    def test_output_parameter_rendered(self):
+    def test_output_parameter_rendered(self) -> None:
         rendered = _render(PlaybookTreeVisualizer(FULL_PB).build_tree())
         assert "result" in rendered
 
-    def test_parameter_types_rendered(self):
+    def test_parameter_types_rendered(self) -> None:
         rendered = _render(PlaybookTreeVisualizer(FULL_PB).build_tree())
         assert "STRING" in rendered
         assert "BOOLEAN" in rendered
 
-    def test_instruction_step_text_rendered(self):
+    def test_instruction_step_text_rendered(self) -> None:
         rendered = _render(PlaybookTreeVisualizer(FULL_PB).build_tree())
         assert "Greet the user" in rendered
 
-    def test_nested_step_rendered(self):
+    def test_nested_step_rendered(self) -> None:
         rendered = _render(PlaybookTreeVisualizer(FULL_PB).build_tree())
         assert "If billing" in rendered
 
-    def test_flow_reference_in_step(self):
+    def test_flow_reference_in_step(self) -> None:
         rendered = _render(PlaybookTreeVisualizer(FULL_PB).build_tree())
         assert "Billing Flow" in rendered
 
-    def test_tool_reference_in_step(self):
+    def test_tool_reference_in_step(self) -> None:
         rendered = _render(PlaybookTreeVisualizer(FULL_PB).build_tree())
         assert "BillingTool" in rendered
 
-    def test_code_block_rendered(self):
+    def test_code_block_rendered(self) -> None:
         rendered = _render(PlaybookTreeVisualizer(FULL_PB).build_tree())
         assert "helper" in rendered
 
-    def test_no_goal_skips_goal_node(self):
+    def test_no_goal_skips_goal_node(self) -> None:
         pb = {"displayName": "No Goal PB", "instruction": {"steps": []}}
         rendered = _render(PlaybookTreeVisualizer(pb).build_tree())
         # The section label is "Goal:" — ensure it is absent when no goal key
         assert "Goal:" not in rendered
 
-    def test_no_code_block_skips_code_node(self):
+    def test_no_code_block_skips_code_node(self) -> None:
         pb = {"displayName": "No Code PB"}
         rendered = _render(PlaybookTreeVisualizer(pb).build_tree())
         assert "Code Block" not in rendered
 
-    def test_empty_code_block_skips_code_node(self):
+    def test_empty_code_block_skips_code_node(self) -> None:
         pb = {"displayName": "Empty Code PB", "codeBlock": {"code": ""}}
         rendered = _render(PlaybookTreeVisualizer(pb).build_tree())
         assert "Code Block" not in rendered
 
-    def test_playbook_with_no_params_skips_params_node(self):
+    def test_playbook_with_no_params_skips_params_node(self) -> None:
         pb = {"displayName": "No Params PB"}
         rendered = _render(PlaybookTreeVisualizer(pb).build_tree())
         assert "Parameters" not in rendered
 
-    def test_session_param_reference_highlighted(self):
+    def test_session_param_reference_highlighted(self) -> None:
         pb = {
             "displayName": "Session PB",
             "instruction": {

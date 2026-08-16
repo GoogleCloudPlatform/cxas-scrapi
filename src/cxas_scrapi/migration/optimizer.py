@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import typing
 from typing import Any
 
 from cxas_scrapi.migration.data_models import (
@@ -40,24 +41,24 @@ class CXASOptimizer:
     enforce CXAS best practices, and dynamically repair instructions.
     """
 
-    def __init__(self, ir: MigrationIR, gemini_client: GeminiGenerate):
+    def __init__(self, ir: MigrationIR, gemini_client: GeminiGenerate) -> None:
         self.ir = ir
         self.gemini = gemini_client
         self.dependency_map: dict[str, list[dict[str, str]]] = {}
         self.optimization_logs: list[dict[str, Any]] = []
 
-    def log_action(self, stage: str, action: str, details: str):
+    def log_action(self, stage: str, action: str, details: str) -> None:
         """Logs an optimization action for the post-migration report."""
         log_entry = {"stage": stage, "action": action, "details": details}
         self.optimization_logs.append(log_entry)
         logger.info(f"[{stage}] {action}: {details}")
 
-    async def optimize_stage_1(self):
+    async def optimize_stage_1(self) -> None:
         """Executes Stage 1 Variable Optimization."""
         logger.info("Starting Stage 1 Variable Optimization...")
         await self._stage_1_variable_optimization()
 
-    async def optimize_stage_2(self):
+    async def optimize_stage_2(self) -> None:
         """Executes Stage 2 Instructions and Tool Mocks Optimization
         in parallel.
         """
@@ -87,7 +88,7 @@ class CXASOptimizer:
             clean = "_" + clean
         return clean or "_var"
 
-    async def _stage_1_variable_optimization(self):
+    async def _stage_1_variable_optimization(self) -> None:
         """
         Stage 1: Granular Variable Deduplication
         Scans all instructions, tools, and callbacks to build a dependency map.
@@ -389,7 +390,7 @@ class CXASOptimizer:
             "Global Variable Deduplication finished successfully.",
         )
 
-    async def _stage_2_instruction_optimization(self):
+    async def _stage_2_instruction_optimization(self) -> None:
         """
         Stage 2 Instructions: Playbook State Machine Optimizer.
         Restructures instructions into structured XML State Machines.
@@ -436,7 +437,7 @@ class CXASOptimizer:
             "compiled_yaml", "No designed transcript provided."
         )
 
-        async def optimize_single_agent(agent):
+        async def optimize_single_agent(agent: typing.Any) -> None:
             logger.info(
                 f"  Optimizing instructions for sub-agent: "
                 f"'{agent.display_name}'..."
@@ -525,7 +526,7 @@ class CXASOptimizer:
             f"successfully.",
         )
 
-    async def _stage_2_tool_mock_optimization(self):
+    async def _stage_2_tool_mock_optimization(self) -> None:
         """
         Stage 2 Tool Mocks: Tool Mock Optimizer.
         Concurrently injects highly realistic happy-path mock_mode return paths.
@@ -550,7 +551,7 @@ class CXASOptimizer:
             )
             return
 
-        async def optimize_single_tool(tool):
+        async def optimize_single_tool(tool: typing.Any) -> None:
             tool_name = tool.payload.get("displayName", tool.id)
             python_code = tool.payload["pythonFunction"].get("python_code", "")
             if not python_code:
@@ -637,7 +638,7 @@ class CXASOptimizer:
             f"Injected native mock_mode into {len(python_tools)} Python tools.",
         )
 
-    def _register_set_session_variables_tool(self):
+    def _register_set_session_variables_tool(self) -> None:
         """Helper to dynamically read and register set_session_variables."""
         if "set_session_variables" in self.ir.tools:
             return
@@ -685,7 +686,7 @@ class CXASOptimizer:
                 f"Failed to register 'set_session_variables' tool: {e}"
             )
 
-    async def _self_heal_instructions(self):
+    async def _self_heal_instructions(self) -> None:
         """
         Tier 2 Quality Gate: Self-heals agent instructions in-memory.
         Validates all optimized playbook/flow instructions and re-prompts
@@ -720,7 +721,7 @@ class CXASOptimizer:
 
         async def _heal_one(
             agent_name: str, agent: IRAgent, diagnostics: list[LintResult]
-        ):
+        ) -> None:
             diag_block = "\n".join(
                 f"  - {_format_diagnostic(d)}" for d in diagnostics
             )

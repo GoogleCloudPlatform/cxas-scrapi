@@ -3,7 +3,7 @@ import sys
 from cxas_scrapi import Sessions
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: python verify_personalization.py [APP_NAME]")
         sys.exit(1)

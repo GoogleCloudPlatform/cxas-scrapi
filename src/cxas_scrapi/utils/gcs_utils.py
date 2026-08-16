@@ -14,9 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import os
 from typing import Any
 
+from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
 
 from cxas_scrapi.core.common import Common
@@ -31,7 +33,7 @@ class GCSUtils(Common):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-    ):
+    ) -> None:
         """Initializes GCSUtils with common auth logic.
 
         Args:
@@ -46,11 +48,20 @@ class GCSUtils(Common):
             creds=creds,
             scope=scope,
         )
-        self.client = storage.Client(
-            credentials=self.creds,
-            project=self.project_id,
-            client_info=self.client_info,
-        )
+        authed_session = None
+        if self.creds:
+            with contextlib.suppress(Exception):
+                authed_session = AuthorizedSession(self.creds)
+
+        client_kwargs: dict[str, Any] = {
+            "credentials": self.creds,
+            "project": self.project_id,
+            "client_info": self.client_info,
+        }
+        if authed_session is not None:
+            client_kwargs["_http"] = authed_session
+
+        self.client = storage.Client(**client_kwargs)
 
     def upload_string(
         self,

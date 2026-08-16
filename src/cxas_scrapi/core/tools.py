@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core Tools class for CXAS Scrapi."""
 
+import typing
 from typing import Any
 
 import requests
@@ -42,8 +44,8 @@ class Tools(Apps):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
         """Initializes the Tools client."""
         project_id = Common._get_project_id(app_name)
         location = Common._get_location(app_name)
@@ -294,7 +296,7 @@ class Tools(Apps):
             )
             return self.client.create_tool(request=request)
 
-    def update_tool(self, tool_name: str, **kwargs) -> Any:
+    def update_tool(self, tool_name: str, **kwargs: typing.Any) -> Any:
         """Updates specific fields of an existing Tool or Toolset."""
         mask_paths = list(kwargs.keys())
 

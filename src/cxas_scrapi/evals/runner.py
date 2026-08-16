@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """High-level orchestration runner for CXAS evaluations."""
 
 import glob
 import json
 import os
 import time
+import typing
 from collections.abc import Callable
 
 from google.cloud.ces_v1beta.types import RunEvaluationOperationMetadata
@@ -36,7 +38,7 @@ from cxas_scrapi.utils.eval_utils import (
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 
-def _chunked(lst, n):
+def _chunked(lst: typing.Any, n: typing.Any) -> typing.Any:
     for i in range(0, len(lst), n):
         yield lst[i : i + n]
 
@@ -66,9 +68,11 @@ def run_all_evals(
     timestamp: str | None = None,
     expectations_only: bool = False,
     deployment_id: str | None = None,
+    skip_playback_wait: bool = False,
+    single_bidi_stream: bool = False,
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
-):
+) -> typing.Any:
     """Runs all 4 types of evaluations and returns aggregated results.
 
     This high-level orchestration function decouples execution logic from pure
@@ -117,7 +121,7 @@ def run_all_evals(
                         tags = eval_dict.get("tags", [])
                         if not any(t in filter_tags for t in tags):
                             continue
-                    if filter_names:
+                    if filter_names:  # noqa: SIM102
                         if eval_dict.get("displayName") not in filter_names:
                             continue
                     res = eval_client.update_evaluation(
@@ -270,6 +274,8 @@ def run_all_evals(
                         background_noise_file=bg_noise_file,
                         burst_noise_files=burst_noise_files,
                         use_tool_fakes=use_tool_fakes,
+                        skip_playback_wait=skip_playback_wait,
+                        single_bidi_stream=single_bidi_stream,
                         progress_callback=lambda c, t: (
                             progress_callback("simulations", c, t)
                             if progress_callback

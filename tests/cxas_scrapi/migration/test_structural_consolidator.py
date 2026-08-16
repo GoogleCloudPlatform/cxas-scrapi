@@ -27,6 +27,7 @@ from cxas_scrapi.migration.structural_consolidator import (
     consolidate,
     heal_tool_refs,
     rewrite_agent_refs,
+    validate_groupings,
 )
 
 MOCK_TOOL_CODE = (
@@ -88,7 +89,7 @@ def _make_ir(
     )
 
 
-def test_heal_strips_wrapper_suffix_when_base_exists():
+def test_heal_strips_wrapper_suffix_when_base_exists() -> None:
     ir = _make_ir(
         tools={"authenticate_user": "PYTHON"},
         agents={"A": "Call {@TOOL: authenticate_user_wrapper} please."},
@@ -103,7 +104,7 @@ def test_heal_strips_wrapper_suffix_when_base_exists():
     )
 
 
-def test_heal_strips_tool_suffix_when_base_exists():
+def test_heal_strips_tool_suffix_when_base_exists() -> None:
     ir = _make_ir(
         tools={"get_account": "PYTHON"},
         agents={"A": "Use {@TOOL: get_account_tool}."},
@@ -115,7 +116,7 @@ def test_heal_strips_tool_suffix_when_base_exists():
     assert "{@TOOL: get_account}" in ir.agents["A"].instruction
 
 
-def test_heal_no_rewrite_when_exact_match_exists():
+def test_heal_no_rewrite_when_exact_match_exists() -> None:
     """If the suffixed form ALSO exists, leave it alone — the wrapper
     might have been intentional."""
     ir = _make_ir(
@@ -133,7 +134,7 @@ def test_heal_no_rewrite_when_exact_match_exists():
     assert "{@TOOL: verify_pin_wrapper}" in ir.agents["A"].instruction
 
 
-def test_heal_leaves_genuine_hallucinations_for_integrity_check():
+def test_heal_leaves_genuine_hallucinations_for_integrity_check() -> None:
     """Refs with no near match are unhealed and surface as integrity
     errors downstream — heal_tool_refs does not invent rewrites."""
     ir = _make_ir(
@@ -154,7 +155,7 @@ def test_heal_leaves_genuine_hallucinations_for_integrity_check():
     assert "{@TOOL: execute_escalation_transfer}" in ir.agents["A"].instruction
 
 
-def test_heal_ignores_sentinel_refs():
+def test_heal_ignores_sentinel_refs() -> None:
     """``end_session`` and ``set_session_variables`` are auto-registered
     sentinels — never marked unhealed."""
     ir = _make_ir(
@@ -173,7 +174,7 @@ def test_heal_ignores_sentinel_refs():
     assert unhealed == []
 
 
-def test_heal_handles_short_id_resolution():
+def test_heal_handles_short_id_resolution() -> None:
     """Tool names in the registry are stored with a full resource name;
     refs use the short id. ``heal_tool_refs`` should consider both."""
     ir = MigrationIR(
@@ -203,7 +204,7 @@ def test_heal_handles_short_id_resolution():
     assert unhealed == []
 
 
-def test_heal_rewrites_across_multiple_agents_dedups_audit():
+def test_heal_rewrites_across_multiple_agents_dedups_audit() -> None:
     """Same ref appearing in multiple agents is rewritten in all of
     them; the returned rewrites dict is deduped."""
     ir = _make_ir(
@@ -222,14 +223,14 @@ def test_heal_rewrites_across_multiple_agents_dedups_audit():
     assert "{@TOOL: get_rate_plan}" in ir.agents["B"].instruction
 
 
-def test_heal_empty_ir_is_noop():
+def test_heal_empty_ir_is_noop() -> None:
     ir = _make_ir(tools={}, agents={})
     rewrites, unhealed = heal_tool_refs(ir)
     assert rewrites == {}
     assert unhealed == []
 
 
-def test_heal_skips_agents_with_no_instruction():
+def test_heal_skips_agents_with_no_instruction() -> None:
     ir = MigrationIR(
         metadata=IRMetadata(app_name="t"),
         tools={
@@ -244,7 +245,7 @@ def test_heal_skips_agents_with_no_instruction():
     assert unhealed == []
 
 
-def test_heal_strips_literal_ellipsis_placeholder():
+def test_heal_strips_literal_ellipsis_placeholder() -> None:
     """Gemini sometimes emits ``{@TOOL: ...}`` (literal ellipsis) as a
     placeholder in a tool list it didn't finish. The heal pass strips
     those directives entirely — they're never a valid tool ID."""
@@ -274,7 +275,7 @@ def test_heal_strips_literal_ellipsis_placeholder():
 # ---------------------------------------------------------------------------
 
 
-def test_normalize_agent_ref_handles_camelcase_with_noise_suffix():
+def test_normalize_agent_ref_handles_camelcase_with_noise_suffix() -> None:
     """``AgentEscalationTarget`` should normalize to something that
     matches ``Agent Escalation agent`` after stripping noise tokens."""
     # Both forms drop the trailing noise suffix (`Target` and trailing
@@ -284,7 +285,7 @@ def test_normalize_agent_ref_handles_camelcase_with_noise_suffix():
     assert a == b == "agent escalation"
 
 
-def test_normalize_agent_ref_matches_source_display():
+def test_normalize_agent_ref_matches_source_display() -> None:
     """The source display name ``Agent Escalation agent`` normalizes
     to the same string as ``AgentEscalationTarget`` so fuzzy matching
     can connect them."""
@@ -293,13 +294,13 @@ def test_normalize_agent_ref_matches_source_display():
     assert a == b
 
 
-def test_normalize_agent_ref_preserves_anything_else_punctuation():
+def test_normalize_agent_ref_preserves_anything_else_punctuation() -> None:
     """``Anything Else?`` → ``anything else`` (question mark stripped)."""
     assert _normalize_agent_ref("Anything Else?") == "anything else"
     assert _normalize_agent_ref("AnythingElseTarget") == "anything else"
 
 
-def test_normalize_agent_ref_keeps_root_tokens():
+def test_normalize_agent_ref_keeps_root_tokens() -> None:
     """Don't over-strip — the last surviving non-noise token must
     remain even if it happens to look generic."""
     assert _normalize_agent_ref("Subflows") == "subflows"
@@ -312,7 +313,7 @@ def test_normalize_agent_ref_keeps_root_tokens():
 # ---------------------------------------------------------------------------
 
 
-def test_rewrite_agent_refs_matches_camelcase_target_suffix():
+def test_rewrite_agent_refs_matches_camelcase_target_suffix() -> None:
     """``{@AGENT: AgentEscalationTarget}`` rewrites to the group
     containing ``Agent Escalation agent``."""
     member_display_to_group = {
@@ -330,7 +331,7 @@ def test_rewrite_agent_refs_matches_camelcase_target_suffix():
     assert "AgentEscalationTarget" not in result
 
 
-def test_rewrite_agent_refs_accepts_group_name_directly():
+def test_rewrite_agent_refs_accepts_group_name_directly() -> None:
     """Gemini may emit a consolidated group name verbatim (the new
     prompt advertises them). Treat as exact match — no rewrite needed."""
     result = rewrite_agent_refs(
@@ -343,7 +344,7 @@ def test_rewrite_agent_refs_accepts_group_name_directly():
     assert "{@AGENT: AddressManagementAgent}" in result
 
 
-def test_rewrite_agent_refs_prefix_match_fallback():
+def test_rewrite_agent_refs_prefix_match_fallback() -> None:
     """The prefix matcher catches refs whose normalized form is a
     prefix/substring of a known display_name (after normalization).
 
@@ -363,7 +364,7 @@ def test_rewrite_agent_refs_prefix_match_fallback():
     assert "{@AGENT: AccountProfileAgent}" in result
 
 
-def test_rewrite_agent_refs_strips_genuine_hallucinations():
+def test_rewrite_agent_refs_strips_genuine_hallucinations() -> None:
     """A ref with no plausible match still gets stripped (existing
     behavior preserved). Examples: ``MainIntentRouter``, ``LiveAgent``
     — Gemini-invented routing concepts that don't exist anywhere."""
@@ -380,7 +381,7 @@ def test_rewrite_agent_refs_strips_genuine_hallucinations():
     assert "{@AGENT:" not in result
 
 
-def test_rewrite_agent_refs_self_group_collapses_to_empty():
+def test_rewrite_agent_refs_self_group_collapses_to_empty() -> None:
     """Transfers to the agent's own group collapse to an empty
     string — the subtask completes naturally."""
     member_display_to_group = {
@@ -401,7 +402,7 @@ def test_rewrite_agent_refs_self_group_collapses_to_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_build_available_groups_context_lists_groups_with_members():
+def test_build_available_groups_context_lists_groups_with_members() -> None:
     groupings = {
         "RootAgent": {
             "agents": ["Default Start Flow", "Welcome Playbook"],
@@ -418,12 +419,12 @@ def test_build_available_groups_context_lists_groups_with_members():
     assert "Acct Mgmt Address Disambig" in context
 
 
-def test_build_available_groups_context_empty_groupings():
+def test_build_available_groups_context_empty_groupings() -> None:
     context = StructuralConsolidator._build_available_groups_context({})
     assert "no other consolidated groups" in context
 
 
-def test_consolidate_rewrites_code_agent_refs_surgically():
+def test_consolidate_rewrites_code_agent_refs_surgically() -> None:
     # 1. Build a mock IR containing a Python tool and callback with legacy refs
     ir = MigrationIR(
         metadata=IRMetadata(app_name="projects/p/locations/us/apps/X"),
@@ -498,3 +499,53 @@ def test_consolidate_rewrites_code_agent_refs_surgically():
     assert "Part.from_agent_transfer('SessionTerminationAgent')" in cb_code
     assert "Subflows" not in cb_code
     assert "Exits and Transfers" not in cb_code
+
+
+def test_validate_groupings_with_hyphen_and_punctuation_mismatches() -> None:
+    """Verifies that validate_groupings resolves member names across punctuation
+    differences between LLM proposals and IR agent keys."""
+    ir = _make_ir(
+        tools={},
+        agents={
+            "bell_sms_trigger - old": "instruction text",
+        },
+    )
+    # Simulate sanitized display name without hyphen
+    ir.agents["bell_sms_trigger - old"].display_name = "bell sms trigger old"
+
+    groupings = {
+        "RootGroup": {
+            "agents": ["bell sms trigger - old"],
+            "is_root": True,
+        }
+    }
+
+    validate_groupings(ir, groupings, None)
+    assert groupings["RootGroup"]["agents"] == ["bell_sms_trigger - old"]
+
+
+def test_validate_groupings_uses_deterministic_raw_data_alias_table() -> None:
+    """Verifies validate_groupings resolves DFCX source flow names via
+
+    raw_data['displayName'] alias registration in key_map.
+    """
+    ir = _make_ir(
+        tools={},
+        agents={
+            "bell_sms_trigger - old": "instruction text",
+        },
+    )
+    ir.agents["bell_sms_trigger - old"].display_name = "bell sms trigger old"
+    ir.agents["bell_sms_trigger - old"].raw_data = {
+        "displayName": "bell sms trigger - old"
+    }
+
+    groupings = {
+        "RootGroup": {
+            "agents": ["bell sms trigger - old"],
+            "is_root": True,
+        }
+    }
+
+    validate_groupings(ir, groupings, None)
+    assert groupings["RootGroup"]["agents"] == ["bell_sms_trigger - old"]

@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Flow-level visualizers: dependency resolution and Rich tree rendering."""
 
+import typing
 from typing import Any
 
 from rich.markup import escape
@@ -23,7 +25,7 @@ from rich.tree import Tree
 class FlowDependencyResolver:
     """Traverses a specific Flow wrapper to find all related dependencies."""
 
-    def __init__(self, full_agent_data: dict[str, Any]):
+    def __init__(self, full_agent_data: dict[str, Any]) -> None:
         self.full_data = full_agent_data
 
         self.intents = {
@@ -71,7 +73,7 @@ class FlowDependencyResolver:
             ] = flow_entry_data.get("displayName", "Unknown")
 
     @staticmethod
-    def _get_resource_id(resource_name_or_dict) -> str:
+    def _get_resource_id(resource_name_or_dict: typing.Any) -> str:
         """Extract the last path segment (UUID) from a resource name or dict."""
         if isinstance(resource_name_or_dict, dict):
             return resource_name_or_dict.get("name", "").split("/")[-1]
@@ -258,7 +260,7 @@ class FlowDependencyResolver:
 class FlowTreeVisualizer:
     """Generates a detailed Rich Tree for a single resolved Flow context."""
 
-    def __init__(self, context_data: dict[str, Any]):
+    def __init__(self, context_data: dict[str, Any]) -> None:
         self.context = context_data
         self.flow = context_data["flow"]
         self.page_names: dict[str, str] = {}
@@ -319,7 +321,12 @@ class FlowTreeVisualizer:
             return "[dim]Stay on Page[/]"
         return "[red]End Flow[/]"
 
-    def _render_fulfillment(self, node, fulfillment, label="Action"):
+    def _render_fulfillment(
+        self,
+        node: typing.Any,
+        fulfillment: typing.Any,
+        label: typing.Any = "Action",
+    ) -> None:
         if not fulfillment:
             return
         if "beforeTransition" in fulfillment:
@@ -396,7 +403,9 @@ class FlowTreeVisualizer:
                     f"{escape(str(action.get('value', '')))}"
                 )
 
-    def _render_routes(self, parent_node, routes):
+    def _render_routes(
+        self, parent_node: typing.Any, routes: typing.Any
+    ) -> None:
         if not routes:
             return
         for route in routes:
@@ -420,7 +429,12 @@ class FlowTreeVisualizer:
                 or route.get("transitionEventHandler"),
             )
 
-    def _render_events(self, parent_node, handlers, label="Event"):
+    def _render_events(
+        self,
+        parent_node: typing.Any,
+        handlers: typing.Any,
+        label: typing.Any = "Event",
+    ) -> None:
         if not handlers:
             return
         for handler in handlers:

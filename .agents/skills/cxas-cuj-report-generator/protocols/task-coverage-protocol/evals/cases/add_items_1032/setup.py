@@ -1,9 +1,10 @@
+import typing
 import os
 import shutil
 import zipfile
 
 
-def setup():
+def setup() -> typing.Any:
     src_zip = "../list_and_count_1032_files/testdir/files_1032.zip"
     dest_dir = "testdir"
 

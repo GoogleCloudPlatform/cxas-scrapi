@@ -12,18 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Utility functions and classes for the CLI."""
+
+import typing
 
 
 class LazyCallable:
     """A proxy wrapper that lazily imports and executes a callable."""
 
-    def __init__(self, module_path: str, func_name: str):
+    def __init__(self, module_path: str, func_name: str) -> None:
         self.module_path = module_path
         self.func_name = func_name
         self._func = None
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:  # noqa: F821
         if self._func is None:
             import importlib
 

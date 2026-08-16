@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Core benchmark definitions and runner logic."""
 
 import asyncio
@@ -20,6 +21,7 @@ import datetime
 import enum
 import logging
 import time
+import typing
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -29,15 +31,17 @@ from skill_eval import exceptions, scenario, scorer
 class Timer:
     """A context manager for timing blocks of code."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.duration = datetime.timedelta()
         self._start_time = None
 
-    def __enter__(self):
+    def __enter__(self) -> typing.Any:
         self._start_time = time.perf_counter()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self, exc_type: typing.Any, exc_val: typing.Any, exc_tb: typing.Any
+    ) -> typing.Any:
         if self._start_time is not None:
             elapsed = time.perf_counter() - self._start_time
             self.duration = datetime.timedelta(seconds=elapsed)
@@ -227,7 +231,7 @@ class BenchmarkRunner:
         self,
         scen: scenario.Scenario,
         scorer_instance: Any | None = None,
-    ):
+    ) -> None:
         self.scenario = scen
         self.scenario_name = scen.name
         self.scenario_text = scen.text
@@ -237,7 +241,7 @@ class BenchmarkRunner:
         self,
         callback: Callable[[ConversationResult], Any],
         result: ConversationResult,
-    ):
+    ) -> None:
         """Safely invokes the progress callback."""
         try:
             await callback(result)
@@ -302,7 +306,7 @@ class BenchmarkRunner:
         conversing_timer = Timer()
         scoring_timer = Timer()
 
-        async def _notify_state(status: ExecutionStatus):
+        async def _notify_state(status: ExecutionStatus) -> None:
             if on_turn_completed:
                 await self._notify_progress(
                     on_turn_completed,
