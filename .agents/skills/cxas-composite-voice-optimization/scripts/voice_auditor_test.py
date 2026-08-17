@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -188,7 +189,10 @@ class CXASVoiceAuditorTest(unittest.TestCase):
         "<context>user has overdue bill</context>\n"
         "<reasoning>check balance first</reasoning>\n"
         "<thought>verify account</thought>\n"
-        "<internal>system log</internal>\n",
+        "<internal>system log</internal>\n"
+        "<call_tool>x</call_tool>\n"
+        "<parameter_update>y</parameter_update>\n"
+        "<variable_update>z</variable_update>\n",
         encoding="utf-8",
     )
 
@@ -202,6 +206,9 @@ class CXASVoiceAuditorTest(unittest.TestCase):
     self.assertTrue(any("reasoning" in t for t in tags_found))
     self.assertTrue(any("thought" in t for t in tags_found))
     self.assertTrue(any("internal" in t for t in tags_found))
+    self.assertTrue(any("call_tool" in t for t in tags_found))
+    self.assertTrue(any("parameter_update" in t for t in tags_found))
+    self.assertTrue(any("variable_update" in t for t in tags_found))
 
   def test_audit_variable_setting_antipatterns_detection(self):
     """Verifies that text-based variable setting directives are flagged."""
@@ -228,10 +235,16 @@ class CXASVoiceAuditorTest(unittest.TestCase):
     agents_dir.mkdir(parents=True)
     instruction_file = agents_dir / "instruction.txt"
     original_text = (
-        "<role>Billing Agent</role>\n<state_update>\nuser_state ="
-        " active\nbalance = 50\n</state_update>\nPlease confirm your card"
-        " ending in <voice_output>4 8 2 1</voice_output>.\n<context>Account in"
-        " good standing</context>\n<thought>Lookup finished</thought>\n"
+        "<role>Billing Agent</role>\n"
+        "<state_update>\nuser_state = active\nbalance = 50\n</state_update>\n"
+        "Please confirm your card ending in <voice_output>4 8 2 1</voice_output>.\n"
+        "<context>Account in good standing</context>\n"
+        "<thought>Lookup finished</thought>\n"
+        "<call_tool>x</call_tool>\n"
+        "<parameter_update>y</parameter_update>\n"
+        "<variable_update>z</variable_update>\n"
+        "<language_detection>en-US</language_detection>\n"
+        "<voice_lock>strict</voice_lock>\n"
     )
     instruction_file.write_text(original_text, encoding="utf-8")
 
@@ -244,8 +257,13 @@ class CXASVoiceAuditorTest(unittest.TestCase):
     self.assertNotIn("user_state = active", cleaned_text)
     self.assertNotIn("Account in good standing", cleaned_text)
     self.assertNotIn("Lookup finished", cleaned_text)
+    self.assertNotIn("call_tool", cleaned_text)
+    self.assertNotIn("parameter_update", cleaned_text)
+    self.assertNotIn("variable_update", cleaned_text)
     self.assertIn("<role>Billing Agent</role>", cleaned_text)
     self.assertIn("<voice_output>4 8 2 1</voice_output>", cleaned_text)
+    self.assertIn("<language_detection>en-US</language_detection>", cleaned_text)
+    self.assertIn("<voice_lock>strict</voice_lock>", cleaned_text)
 
   def test_audit_inert_tags_detection(self):
     agents_dir = self.workspace / "agents" / "billing_agent"
@@ -1276,6 +1294,56 @@ class CXASVoiceAuditorTest(unittest.TestCase):
     self.assertEqual(get_default_voice("tr-TR"), "tr-TR-Chirp3-HD-Aoede")
     self.assertEqual(get_default_voice("ar"), "ar-XA-Chirp3-HD-Aoede")
     self.assertEqual(get_default_voice("ar-XA"), "ar-XA-Chirp3-HD-Aoede")
+
+  def test_cli_remediate_json_output_when_app_json_absent(self):
+    """Verifies --remediate --json-output emits valid JSON to stdout and warnings to stderr when app.json is missing."""
+    empty_dir = self.workspace / "empty_workspace"
+    empty_dir.mkdir(parents=True)
+    script_path = pathlib.Path(voice_auditor.__file__)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(script_path),
+            "--workspace",
+            str(empty_dir),
+            "--remediate",
+            "--json-output",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(proc.stdout)
+    self.assertIn("skipped", payload)
+    self.assertTrue(any("app.json" in msg for msg in payload["skipped"]))
+    self.assertIn("[WARNING]", proc.stderr)
+    self.assertIn("app.json", proc.stderr)
+
+  def test_variable_setting_apostrophes_and_single_quotes(self):
+    """Verifies possessive apostrophes do not hide violations, and single-quoted negatives are exempt."""
+    agents_dir = self.workspace / "agents" / "root_agent"
+    agents_dir.mkdir(parents=True)
+    inst_file = agents_dir / "instruction.txt"
+
+    # (a) Repro line with possessive apostrophes is flagged
+    inst_file.write_text(
+        "Never adopt the customer's tone. Then Set retry_count = 0 in the"
+        " caller's session.\n",
+        encoding="utf-8",
+    )
+    auditor = CXASVoiceAuditor(self.workspace)
+    res = auditor.audit_variable_setting_antipatterns()
+    self.assertFalse(res["passed"])
+    self.assertEqual(len(res["issues"]), 1)
+    self.assertIn("Set retry_count =", res["issues"][0]["match"])
+
+    # (b) Straight-single-quoted negative example on a DO NOT line is exempt
+    inst_file.write_text(
+        "DO NOT emit directives like 'Set user_lang = ES' in responses.\n",
+        encoding="utf-8",
+    )
+    res_exempt = auditor.audit_variable_setting_antipatterns()
+    self.assertTrue(res_exempt["passed"])
 
 
 if __name__ == "__main__":

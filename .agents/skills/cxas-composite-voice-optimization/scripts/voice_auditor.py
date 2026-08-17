@@ -225,6 +225,9 @@ PROHIBITED_XML_TAGS: List[str] = [
     "reasoning",
     "thought",
     "internal",
+    "call_tool",
+    "parameter_update",
+    "variable_update",
 ]
 
 # 43+ Inert / Ineffective Tags (31 abstract emotions, 8 pauses, 6 styles)
@@ -416,7 +419,7 @@ def _is_inside_quotes(text: str, start_idx: int, end_idx: int) -> bool:
   """Checks if a match span is enclosed within quotes."""
   quote_patterns = [
       r'"([^"\\]*(?:\\.[^"\\]*)*)"',
-      r"'([^'\\]*(?:\\.[^'\\]*)*)'",
+      r"(?<!\w)'([^'\\]*(?:\\.[^'\\]*)*)'(?!\w)",
       r'“([^“”]*)”',
       r'‘([^‘’]*)’',
   ]
@@ -877,6 +880,7 @@ class CXASVoiceAuditor:
         rf"{'|'.join(escaped_tags)}|\[prosody[^\]]*\]", re.IGNORECASE
     )
 
+    sample_working = f"[{WORKING_TAGS[2]}], [{WORKING_TAGS[4]}], [{WORKING_TAGS[9]}]"
     for target in targets:
       content = target.get_content()
       if content is None:
@@ -885,7 +889,6 @@ class CXASVoiceAuditor:
       for line_num, line in enumerate(content.splitlines(), start=1):
         for match in pattern.finditer(line):
           tag_found = match.group(0)
-          sample_working = f"[{WORKING_TAGS[2]}], [{WORKING_TAGS[4]}], [{WORKING_TAGS[9]}]"
           issues.append({
               "code": "INERT_TAG_FOUND",
               "file": target.rel_path,
@@ -1421,7 +1424,7 @@ def main() -> None:
     result = auditor.remediate(auto_fix=True)
     if result.get("skipped"):
       for msg in result["skipped"]:
-        print(f"[WARNING] {msg}")
+        print(f"[WARNING] {msg}", file=sys.stderr)
     if args.json_output:
       print(json.dumps(result, indent=2))
     else:
