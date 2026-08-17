@@ -101,6 +101,14 @@ DEFAULT_VOICES: Dict[str, str] = {
     "ko": "ko-KR-Chirp3-HD-Aoede",
     "nl": "nl-NL-Chirp3-HD-Aoede",
     "hi": "hi-IN-Chirp3-HD-Aoede",
+    "ar": "ar-XA-Chirp3-HD-Aoede",
+    "sv": "sv-SE-Chirp3-HD-Aoede",
+    "no": "nb-NO-Chirp3-HD-Aoede",
+    "nb": "nb-NO-Chirp3-HD-Aoede",
+    "da": "da-DK-Chirp3-HD-Aoede",
+    "fi": "fi-FI-Chirp3-HD-Aoede",
+    "pl": "pl-PL-Chirp3-HD-Aoede",
+    "tr": "tr-TR-Chirp3-HD-Aoede",
     # Regional BCP-47 locales
     "en-US": "en-US-Chirp3-HD-Aoede",
     "en-GB": "en-GB-Chirp3-HD-Aoede",
@@ -137,6 +145,13 @@ DEFAULT_VOICES: Dict[str, str] = {
     "nl-NL": "nl-NL-Chirp3-HD-Aoede",
     "nl-BE": "nl-NL-Chirp3-HD-Aoede",
     "hi-IN": "hi-IN-Chirp3-HD-Aoede",
+    "ar-XA": "ar-XA-Chirp3-HD-Aoede",
+    "sv-SE": "sv-SE-Chirp3-HD-Aoede",
+    "nb-NO": "nb-NO-Chirp3-HD-Aoede",
+    "da-DK": "da-DK-Chirp3-HD-Aoede",
+    "fi-FI": "fi-FI-Chirp3-HD-Aoede",
+    "pl-PL": "pl-PL-Chirp3-HD-Aoede",
+    "tr-TR": "tr-TR-Chirp3-HD-Aoede",
 }
 
 NORMALIZED_LOCALE_TO_ACCENT: Dict[str, str] = {
@@ -161,7 +176,7 @@ def get_locale_accent(locale: str) -> str:
       for kw in ["english", "spanish", "french", "german", "accent", "italian"]
   ):
     return locale.strip()
-  return LOCALE_TO_ACCENT.get(locale, f"{locale} accent")
+  return f"{locale.strip()} accent"
 
 
 def get_default_voice(locale: str) -> str:
@@ -212,7 +227,7 @@ PROHIBITED_XML_TAGS: List[str] = [
     "internal",
 ]
 
-# 43+ Inert / Ineffective Tags (31 abstract emotions, 6 pauses, 6 styles)
+# 43+ Inert / Ineffective Tags (31 abstract emotions, 8 pauses, 6 styles)
 INERT_TAGS: List[str] = [
     # Abstract emotions (31)
     "warm",
@@ -246,10 +261,12 @@ INERT_TAGS: List[str] = [
     "positive",
     "admiration",
     "disgusted",
-    # Prosody & pause bracket tags (6)
+    # Prosody & pause bracket tags
     "short pause",
     "long pause",
     "short_pause",
+    "long_pause",
+    "medium pause",
     "medium_pause",
     'prosody rate="85%"',
     'prosody rate="115%"',
@@ -262,7 +279,7 @@ INERT_TAGS: List[str] = [
     "panic",
 ]
 
-# 26 Empirically Verified Working Physical Acoustic Tags
+# 23 Empirically Verified Working Physical Acoustic Tags
 WORKING_TAGS: List[str] = [
     "whispers",
     "whispering",
@@ -295,7 +312,7 @@ def generate_golden_directors_note(locale: str) -> str:
   accent = get_locale_accent(locale)
   normalized_locale = locale.strip().lower().replace("_", "-")
 
-  if normalized_locale.startswith("es") or normalized_locale == "es-419":
+  if normalized_locale.startswith("es"):
     bridge_words = 'bridge words (like "eh," "ah," or "veamos")'
   elif normalized_locale.startswith("fr"):
     bridge_words = 'bridge words (like "euh," "bah," or "voyons")'
@@ -395,6 +412,21 @@ class InstructionTarget:
       return False
 
 
+def _is_inside_quotes(text: str, start_idx: int, end_idx: int) -> bool:
+  """Checks if a match span is enclosed within quotes."""
+  quote_patterns = [
+      r'"([^"\\]*(?:\\.[^"\\]*)*)"',
+      r"'([^'\\]*(?:\\.[^'\\]*)*)'",
+      r'“([^“”]*)”',
+      r'‘([^‘’]*)’',
+  ]
+  for q_pat in quote_patterns:
+    for q_match in re.finditer(q_pat, text):
+      if q_match.start() <= start_idx and end_idx <= q_match.end():
+        return True
+  return False
+
+
 class CXASVoiceAuditor:
   """Local workspace auditor and remediator for CXAS voice configurations."""
 
@@ -409,8 +441,9 @@ class CXASVoiceAuditor:
       return direct
 
     for p in self.workspace_path.glob("**/app.json"):
+      rel_parts = p.relative_to(self.workspace_path).parts
       if p.is_file() and not any(
-          part.startswith(".") or part == "build" for part in p.parts
+          part.startswith(".") or part == "build" for part in rel_parts
       ):
         return p
 
@@ -429,8 +462,9 @@ class CXASVoiceAuditor:
     ]
     for pattern in patterns:
       for p in sorted(self.workspace_path.glob(pattern)):
+        rel_parts = p.relative_to(self.workspace_path).parts
         if p.is_file() and not any(
-            part.startswith(".") or part == "build" for part in p.parts
+            part.startswith(".") or part == "build" for part in rel_parts
         ):
           if p not in seen_paths:
             seen_paths.add(p)
@@ -438,8 +472,9 @@ class CXASVoiceAuditor:
 
     # 2. agent.json files (only if they carry an inlined 'instruction' field)
     for p in sorted(self.workspace_path.glob("**/agent.json")):
+      rel_parts = p.relative_to(self.workspace_path).parts
       if p.is_file() and not any(
-          part.startswith(".") or part == "build" for part in p.parts
+          part.startswith(".") or part == "build" for part in rel_parts
       ):
         if p not in seen_paths:
           target = InstructionTarget(p, self.workspace_path)
@@ -586,7 +621,8 @@ class CXASVoiceAuditor:
       speech_configs = {}
 
     locale_code_pattern = re.compile(
-        r"Accent:\s*([a-z]{2}(?:[-_][a-z0-9]{2,3})?)\b", re.IGNORECASE
+        r"Accent:\s*([A-Za-z]{2}(?:[-_][A-Za-z0-9]{2,3})?)\s*$",
+        re.IGNORECASE | re.MULTILINE,
     )
 
     for locale, cfg in speech_configs.items():
@@ -595,9 +631,8 @@ class CXASVoiceAuditor:
       instruction = cfg.get("instruction")
       if not isinstance(instruction, str):
         continue
-      match = locale_code_pattern.search(instruction)
-      if match:
-        invalid_code = match.group(1)
+      for match in locale_code_pattern.finditer(instruction):
+        invalid_code = match.group(1).strip()
         recommended = get_locale_accent(invalid_code)
         if recommended.lower() != invalid_code.lower() and (
             "-" in invalid_code or "_" in invalid_code or len(invalid_code) == 2
@@ -605,7 +640,7 @@ class CXASVoiceAuditor:
           issues.append({
               "code": "LOCALE_CODE_IN_ACCENT",
               "locale": locale,
-              "found": match.group(0),
+              "found": match.group(0).strip(),
               "invalid_code": invalid_code,
               "recommended": f"Accent: {recommended}",
               "message": (
@@ -703,13 +738,17 @@ class CXASVoiceAuditor:
           )
           if accent_match:
             found_accent = accent_match.group(1).strip()
-            expected_accent = get_locale_accent(lang)
-            if (
-                found_accent.lower() != expected_accent.lower()
-                and found_accent.lower() != lang.lower()
-                and found_accent.lower().replace("_", "-")
-                != lang.lower().replace("_", "-")
-            ):
+            expected_accent = get_locale_accent(matched_key)
+            lang_accent = get_locale_accent(lang)
+            acceptable_accents = {
+                expected_accent.lower(),
+                lang_accent.lower(),
+                matched_key.lower(),
+                matched_key.lower().replace("_", "-"),
+                lang.lower(),
+                lang.lower().replace("_", "-"),
+            }
+            if found_accent.lower() not in acceptable_accents:
               issues.append({
                   "code": "A007_FAIL_ACCENT_MISMATCH",
                   "locale": lang,
@@ -797,7 +836,17 @@ class CXASVoiceAuditor:
         continue
 
       for line_num, line in enumerate(content.splitlines(), start=1):
+        has_negative_context = bool(
+            re.search(
+                r"(?i)\b(?:do not|don't|never|avoid|prohibited|anti-?pattern)\b",
+                line,
+            )
+        )
         for match in var_set_pattern.finditer(line):
+          if has_negative_context and _is_inside_quotes(
+              line, match.start(), match.end()
+          ):
+            continue
           matched_text = match.group(0)
           issues.append({
               "code": "VARIABLE_SETTING_ANTIPATTERN",
@@ -824,7 +873,9 @@ class CXASVoiceAuditor:
     targets = self._find_instruction_targets()
 
     escaped_tags = [re.escape(f"[{tag}]") for tag in INERT_TAGS]
-    pattern = re.compile("|".join(escaped_tags), re.IGNORECASE)
+    pattern = re.compile(
+        rf"{'|'.join(escaped_tags)}|\[prosody[^\]]*\]", re.IGNORECASE
+    )
 
     for target in targets:
       content = target.get_content()
@@ -834,6 +885,7 @@ class CXASVoiceAuditor:
       for line_num, line in enumerate(content.splitlines(), start=1):
         for match in pattern.finditer(line):
           tag_found = match.group(0)
+          sample_working = f"[{WORKING_TAGS[2]}], [{WORKING_TAGS[4]}], [{WORKING_TAGS[9]}]"
           issues.append({
               "code": "INERT_TAG_FOUND",
               "file": target.rel_path,
@@ -842,7 +894,9 @@ class CXASVoiceAuditor:
               "message": (
                   f"Inert acoustic tag '{tag_found}' found in"
                   f" {target.rel_path}:{line_num}. This tag produces zero"
-                  " acoustic effect and should be removed."
+                  " acoustic effect and should be removed. Replace with a"
+                  f" physical acoustic tag (e.g. {sample_working}) if"
+                  " emphasis is needed."
               ),
           })
 
@@ -907,7 +961,16 @@ class CXASVoiceAuditor:
     if not isinstance(model_settings, dict):
       model_settings = {}
     temp = model_settings.get("temperature")
-    if temp is not None and isinstance(temp, (int, float)) and temp < 0.9:
+    if temp is None or "temperature" not in model_settings:
+      issues.append({
+          "code": "MISSING_SAMPLING_TEMPERATURE",
+          "recommended": 1.0,
+          "message": (
+              "modelSettings.temperature is not configured in app.json. Set to"
+              " 1.0 to avoid deterministic acoustic repetition deadlocks."
+          ),
+      })
+    elif isinstance(temp, (int, float)) and temp < 0.9:
       issues.append({
           "code": "LOW_SAMPLING_TEMPERATURE",
           "found": temp,
@@ -922,7 +985,7 @@ class CXASVoiceAuditor:
     targets = self._find_instruction_targets()
     for target in targets:
       if (
-          "root_agent" in target.rel_path
+          "root_agent" in pathlib.PurePath(target.rel_path).parts
           or target.file_path.name == "global_instruction.txt"
       ):
         continue
@@ -1027,7 +1090,7 @@ class CXASVoiceAuditor:
       lang_settings["supportedLanguageCodes"] = supported_langs
 
     valid_supported = [l for l in supported_langs if isinstance(l, str)]
-    all_langs = set([default_lang] + valid_supported)
+    declared_langs = sorted(set([default_lang] + valid_supported))
 
     # Ensure synthesizeSpeechConfigs
     if not isinstance(app_data.get("audioProcessingConfig"), dict):
@@ -1040,30 +1103,12 @@ class CXASVoiceAuditor:
       changes.append("Initialized synthesizeSpeechConfigs dictionary.")
     speech_cfgs = audio_cfg["synthesizeSpeechConfigs"]
 
-    # Also include any languages already configured in synthesizeSpeechConfigs
-    for k in list(speech_cfgs.keys()):
-      if isinstance(k, str):
-        # Check if already present in all_langs case-insensitively
-        norm_k = k.strip().lower().replace("_", "-")
-        matching_declared = [
-            l for l in all_langs if l.strip().lower().replace("_", "-") == norm_k
-        ]
-        if not matching_declared:
-          all_langs.add(k)
-          if k != default_lang and k not in supported_langs:
-            supported_langs.append(k)
-            changes.append(
-                f"Added '{k}' to languageSettings.supportedLanguageCodes."
-            )
-
-    for lang in sorted(all_langs):
-      golden_note = generate_golden_directors_note(lang)
-      default_voice = get_default_voice(lang)
-      target_accent = get_locale_accent(lang)
-
+    # 1. Inject missing configs for any declared languages not currently served
+    for lang in declared_langs:
       match_res = _find_speech_config(speech_cfgs, lang)
-
       if not match_res:
+        golden_note = generate_golden_directors_note(lang)
+        default_voice = get_default_voice(lang)
         speech_cfgs[lang] = {
             "voice": default_voice,
             "speakingRate": 1.0,
@@ -1072,85 +1117,97 @@ class CXASVoiceAuditor:
         changes.append(
             f"Injected golden synthesizeSpeechConfigs for language '{lang}'."
         )
-      else:
-        matched_key, cfg = match_res
-        if not cfg.get("voice") or not isinstance(cfg.get("voice"), str):
-          cfg["voice"] = default_voice
+
+    # 2. Repair existing entries in synthesizeSpeechConfigs in place (each entry processed once)
+    for cfg_key in list(speech_cfgs.keys()):
+      if not isinstance(cfg_key, str):
+        continue
+      cfg = speech_cfgs[cfg_key]
+      if not isinstance(cfg, dict):
+        cfg = {}
+        speech_cfgs[cfg_key] = cfg
+
+      golden_note = generate_golden_directors_note(cfg_key)
+      default_voice = get_default_voice(cfg_key)
+      target_accent = get_locale_accent(cfg_key)
+
+      if not cfg.get("voice") or not isinstance(cfg.get("voice"), str):
+        cfg["voice"] = default_voice
+        changes.append(
+            f"Set default voice '{default_voice}' for '{cfg_key}'."
+        )
+      if "speakingRate" not in cfg or not isinstance(
+          cfg.get("speakingRate"), (int, float)
+      ):
+        cfg["speakingRate"] = 1.0
+        changes.append(f"Set speakingRate 1.0 for '{cfg_key}'.")
+
+      current_inst = cfg.get("instruction")
+      if not isinstance(current_inst, str):
+        current_inst = ""
+
+      # Normalize any existing Accent directive to the correct localized
+      # natural language accent derived from this config key.
+      if re.search(
+          r"\bAccent:\s*[^\n\r]+", current_inst, flags=re.IGNORECASE
+      ):
+        fixed_accent = re.sub(
+            r"\bAccent:\s*[^\n\r]+",
+            f"Accent: {target_accent}",
+            current_inst,
+            flags=re.IGNORECASE,
+        )
+        if fixed_accent != current_inst:
+          cfg["instruction"] = fixed_accent
           changes.append(
-              f"Set default voice '{default_voice}' for '{matched_key}'."
+              f"Normalized Accent directive to 'Accent: {target_accent}' for"
+              f" '{cfg_key}'."
           )
-        if "speakingRate" not in cfg or not isinstance(
-            cfg.get("speakingRate"), (int, float)
-        ):
-          cfg["speakingRate"] = 1.0
-          changes.append(f"Set speakingRate 1.0 for '{matched_key}'.")
+          current_inst = fixed_accent
 
-        current_inst = cfg.get("instruction")
-        if not isinstance(current_inst, str):
-          current_inst = ""
-
-        # Normalize any existing Accent directive to the correct localized
-        # natural language accent.
-        if re.search(
-            r"\bAccent:\s*[^\n\r]+", current_inst, flags=re.IGNORECASE
-        ):
-          fixed_accent = re.sub(
-              r"\bAccent:\s*[^\n\r]+",
-              f"Accent: {target_accent}",
+      # If instruction lacks Director's Note structure, inject golden template
+      has_directors_note = bool(
+          re.search(
+              r"^#+\s*director'?s\s*notes?",
               current_inst,
-              flags=re.IGNORECASE,
+              re.IGNORECASE | re.MULTILINE,
           )
-          if fixed_accent != current_inst:
-            cfg["instruction"] = fixed_accent
-            changes.append(
-                f"Normalized Accent directive to 'Accent: {target_accent}' for"
-                f" '{matched_key}'."
-            )
-            current_inst = fixed_accent
-
-        # If instruction lacks Director's Note structure, inject golden template
-        has_directors_note = bool(
-            re.search(
-                r"^#+\s*director'?s\s*notes?",
-                current_inst,
-                re.IGNORECASE | re.MULTILINE,
-            )
-        )
-        has_audio_profile = bool(
-            re.search(
-                r"^#+\s*audio\s*profile",
-                current_inst,
-                re.IGNORECASE | re.MULTILINE,
-            )
-        )
-        if not has_directors_note or not has_audio_profile:
-          cfg["instruction"] = golden_note
-          changes.append(
-              f"Updated '{matched_key}' instruction with complete Golden"
-              " Director's Note."
+      )
+      has_audio_profile = bool(
+          re.search(
+              r"^#+\s*audio\s*profile",
+              current_inst,
+              re.IGNORECASE | re.MULTILINE,
           )
-          current_inst = golden_note
-        elif (
-            "## Transcript:" not in current_inst
-            and "### TRANSCRIPT:" not in current_inst
+      )
+      if not has_directors_note or not has_audio_profile:
+        cfg["instruction"] = golden_note
+        changes.append(
+            f"Updated '{cfg_key}' instruction with complete Golden"
+            " Director's Note."
+        )
+        current_inst = golden_note
+      elif (
+          "## Transcript:" not in current_inst
+          and "### TRANSCRIPT:" not in current_inst
+      ):
+        # Cleanly repair malformed hook or append missing hook
+        if re.search(
+            r"(?i)\n*(?:#{1,3}\s*)?transcript\s*:?\s*$", current_inst
         ):
-          # Cleanly repair malformed hook or append missing hook
-          if re.search(
-              r"(?i)\n*(?:#{1,3}\s*)?transcript\s*:?\s*$", current_inst
-          ):
-            fixed_inst = re.sub(
-                r"(?i)\n*(?:#{1,3}\s*)?transcript\s*:?\s*$",
-                "\n\n## Transcript:\n",
-                current_inst,
-            )
-          else:
-            fixed_inst = current_inst.rstrip() + "\n\n## Transcript:\n"
-          cfg["instruction"] = fixed_inst
-          changes.append(
-              "Appended missing '## Transcript:' hook to"
-              f" '{matched_key}' instruction."
+          fixed_inst = re.sub(
+              r"(?i)\n*(?:#{1,3}\s*)?transcript\s*:?\s*$",
+              "\n\n## Transcript:\n",
+              current_inst,
           )
-          current_inst = fixed_inst
+        else:
+          fixed_inst = current_inst.rstrip() + "\n\n## Transcript:\n"
+        cfg["instruction"] = fixed_inst
+        changes.append(
+            "Appended missing '## Transcript:' hook to"
+            f" '{cfg_key}' instruction."
+        )
+        current_inst = fixed_inst
 
     # Ensure user_lang variable declaration
     if not isinstance(app_data.get("variableDeclarations"), list):
@@ -1197,16 +1254,18 @@ class CXASVoiceAuditor:
       if content is None:
         continue
 
-      cleaned = block_pattern.sub("", content)
-      cleaned = tag_pattern.sub("", cleaned)
-      # Clean up any leftover multiple consecutive empty lines
-      cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+      stripped = block_pattern.sub("", content)
+      stripped = tag_pattern.sub("", stripped)
+      if stripped == content:
+        continue
 
-      if cleaned != content:
-        if target.set_content(cleaned):
-          changes.append(
-              f"Stripped prohibited platform XML tags from {target.rel_path}."
-          )
+      # Clean up any leftover multiple consecutive empty lines
+      cleaned = re.sub(r"\n{3,}", "\n\n", stripped)
+
+      if target.set_content(cleaned):
+        changes.append(
+            f"Stripped prohibited platform XML tags from {target.rel_path}."
+        )
 
     return changes
 
@@ -1216,9 +1275,10 @@ class CXASVoiceAuditor:
     targets = self._find_instruction_targets()
 
     escaped_tags = [re.escape(tag) for tag in INERT_TAGS]
-    # Match [tag] optionally followed by spaces
+    # Match [tag] optionally followed by spaces, or [prosody ...] tags
     pattern = re.compile(
-        rf"\[(?:{'|'.join(escaped_tags)})\][ \t]*", re.IGNORECASE
+        rf"(?:\[(?:{'|'.join(escaped_tags)})\]|\[prosody[^\]]*\])[ \t]*",
+        re.IGNORECASE,
     )
 
     for target in targets:
@@ -1226,15 +1286,17 @@ class CXASVoiceAuditor:
       if content is None:
         continue
 
-      cleaned = pattern.sub("", content)
-      # Clean up any leftover double spaces
-      cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+      stripped = pattern.sub("", content)
+      if stripped == content:
+        continue
 
-      if cleaned != content:
-        if target.set_content(cleaned):
-          changes.append(
-              f"Stripped inert acoustic tags from {target.rel_path}."
-          )
+      # Clean up any leftover double spaces
+      cleaned = re.sub(r"(?<=\S)[ \t]{2,}(?=\S)", " ", stripped)
+
+      if target.set_content(cleaned):
+        changes.append(
+            f"Stripped inert acoustic tags from {target.rel_path}."
+        )
 
     return changes
 
@@ -1254,7 +1316,7 @@ class CXASVoiceAuditor:
 
     for target in targets:
       if (
-          "root_agent" in target.rel_path
+          "root_agent" in pathlib.PurePath(target.rel_path).parts
           or target.file_path.name == "global_instruction.txt"
       ):
         continue
@@ -1278,12 +1340,18 @@ class CXASVoiceAuditor:
       return {"status": "SKIPPED", "changes": []}
 
     all_changes: List[str] = []
+    skipped: List[str] = []
 
-    # 1. Remediate app.json
-    app_data, app_changes = self.remediate_audio_profile_and_rule_a007()
-    if app_changes:
-      self._write_app_json(app_data)
-      all_changes.extend(app_changes)
+    # 1. Remediate app.json (only if app.json exists)
+    if self.app_json_path.exists():
+      app_data, app_changes = self.remediate_audio_profile_and_rule_a007()
+      if app_changes:
+        self._write_app_json(app_data)
+        all_changes.extend(app_changes)
+    else:
+      skipped.append(
+          "app.json not found; skipped audio-profile/Rule-A007 remediation"
+      )
 
     # 2. Remediate prohibited XML tags
     prohibited_changes = self.remediate_prohibited_xml_tags()
@@ -1297,11 +1365,25 @@ class CXASVoiceAuditor:
     lock_changes = self.remediate_instruction_voice_locks()
     all_changes.extend(lock_changes)
 
-    return {
+    result: Dict[str, Any] = {
         "status": "REMEDIATED" if all_changes else "NO_CHANGES_NEEDED",
         "changes_applied": all_changes,
         "post_remediation_audit": self.audit(),
     }
+    if skipped:
+      result["skipped"] = skipped
+    return result
+
+
+def _print_audit_report(report: Dict[str, Any]) -> None:
+  """Prints formatted audit findings."""
+  print(f"=== CXAS Voice Audit: {report['overall_status']} ===")
+  print(f"Total Issues Found: {report['total_issues']}")
+  for pass_name, pass_data in report.get("passes", {}).items():
+    status = "PASS" if pass_data.get("passed") else "FAIL"
+    print(f"\n[{status}] {pass_name}:")
+    for issue in pass_data.get("issues", []):
+      print(f"  * {issue.get('message')}")
 
 
 def main() -> None:
@@ -1315,12 +1397,13 @@ def main() -> None:
       default=".",
       help="Path to CXAS workspace directory.",
   )
-  parser.add_argument(
+  mode_group = parser.add_mutually_exclusive_group()
+  mode_group.add_argument(
       "--audit-only",
       action="store_true",
       help="Perform audit without modifying files.",
   )
-  parser.add_argument(
+  mode_group.add_argument(
       "--remediate",
       action="store_true",
       help="Apply automated in-place remediation to local workspace files.",
@@ -1336,16 +1419,28 @@ def main() -> None:
 
   if args.remediate:
     result = auditor.remediate(auto_fix=True)
+    if result.get("skipped"):
+      for msg in result["skipped"]:
+        print(f"[WARNING] {msg}")
     if args.json_output:
       print(json.dumps(result, indent=2))
     else:
       print(f"=== Remediation Status: {result['status']} ===")
       for change in result["changes_applied"]:
         print(f" - {change}")
+      post_audit = result["post_remediation_audit"]
       print(
           "Post-remediation audit status:"
-          f" {result['post_remediation_audit']['overall_status']}"
+          f" {post_audit['overall_status']}"
       )
+      if post_audit["overall_status"] != "PASSED":
+        print("\n--- Remaining Unresolved Audit Issues ---")
+        _print_audit_report(post_audit)
+        print(
+            "\nNote: variable_setting_antipatterns and natural_speech_cues"
+            " findings require manual edits; re-run with --audit-only for"
+            " details."
+        )
     if result["post_remediation_audit"]["overall_status"] != "PASSED":
       sys.exit(1)
   else:
@@ -1353,13 +1448,7 @@ def main() -> None:
     if args.json_output:
       print(json.dumps(report, indent=2))
     else:
-      print(f"=== CXAS Voice Audit: {report['overall_status']} ===")
-      print(f"Total Issues Found: {report['total_issues']}")
-      for pass_name, pass_data in report["passes"].items():
-        status = "PASS" if pass_data["passed"] else "FAIL"
-        print(f"\n[{status}] {pass_name}:")
-        for issue in pass_data.get("issues", []):
-          print(f"  * {issue.get('message')}")
+      _print_audit_report(report)
 
     if report["overall_status"] != "PASSED":
       sys.exit(1)

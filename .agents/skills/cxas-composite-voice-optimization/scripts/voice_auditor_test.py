@@ -941,6 +941,341 @@ class CXASVoiceAuditorTest(unittest.TestCase):
     self.assertNotIn("<thought>", updated_instruction)
     self.assertNotIn("[empathetic]", updated_instruction)
     self.assertIn("<voice_lock>", updated_instruction)
+    self.assertFalse((self.workspace / "app.json").exists())
+
+  def test_remediation_does_not_rewrite_violation_free_files_or_destroy_indentation(
+      self,
+  ):
+    """Verifies that violation-free files retain formatting and indentation."""
+    agents_dir = self.workspace / "agents" / "billing_agent"
+    agents_dir.mkdir(parents=True)
+    inst_file = agents_dir / "instruction.txt"
+    original = (
+        "Steps:\n- Greet\n    - Verify identity\n\n\n\nDone.\n<voice_lock>x</voice_lock>\n"
+    )
+    inst_file.write_text(original, encoding="utf-8")
+
+    auditor = CXASVoiceAuditor(self.workspace)
+    inert_changes = auditor.remediate_inert_tags()
+    xml_changes = auditor.remediate_prohibited_xml_tags()
+    self.assertEqual(inert_changes, [])
+    self.assertEqual(xml_changes, [])
+    self.assertEqual(inst_file.read_text(encoding="utf-8"), original)
+
+    # Full remediate() also leaves it untouched
+    res = auditor.remediate(auto_fix=True)
+    self.assertNotIn("billing_agent", str(res["changes_applied"]))
+    self.assertEqual(inst_file.read_text(encoding="utf-8"), original)
+
+    # File with [empathetic] still gets stripped
+    inst_file.write_text("Hello [empathetic] world", encoding="utf-8")
+    stripped_changes = auditor.remediate_inert_tags()
+    self.assertGreater(len(stripped_changes), 0)
+    self.assertEqual(inst_file.read_text(encoding="utf-8"), "Hello world")
+
+  def test_hidden_directory_workspace_scanning(self):
+    """Verifies that workspaces inside dot-directories are properly scanned."""
+    dot_base = self.workspace / ".workspaces" / "nested_app"
+    agent_dir = dot_base / "agents" / "billing_agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "instruction.txt").write_text(
+        "<state_update>x=1</state_update> [empathetic] hi", encoding="utf-8"
+    )
+
+    # Subdirectory with .git inside workspace is skipped
+    git_dir = dot_base / ".git" / "hooks"
+    git_dir.mkdir(parents=True)
+    (git_dir / "instruction.txt").write_text(
+        "<state_update>bad</state_update>", encoding="utf-8"
+    )
+
+    auditor = CXASVoiceAuditor(dot_base)
+    r = auditor.audit_prohibited_xml_tags()
+    self.assertEqual(r["files_scanned"], 1)
+    self.assertFalse(r["passed"])
+    self.assertEqual(len(r["issues"]), 2)
+
+  def test_language_detection_doc_block_and_antipattern_negative_examples(
+      self,
+  ):
+    """Verifies variable setting audit handles doc blocks, valid exclusions, and real antipatterns."""
+    agents_dir = self.workspace / "agents" / "root_agent"
+    agents_dir.mkdir(parents=True)
+    inst_file = agents_dir / "instruction.txt"
+
+    # Updated doc block verbatim passes
+    updated_doc_block = (
+        "<language_detection>\n"
+        "- You must respond to the customer in the language specified by"
+        " {{user_lang}}.\n"
+        "- You may ONLY trigger a language switch if the customer explicitly"
+        ' requests it (e.g., "Can we speak in Spanish?", "Habla en espanol por'
+        " favor\").\n"
+        "- If the customer speaks an isolated phrase or sentence in another"
+        " language without an explicit request to change languages, continue"
+        " responding in {{user_lang}}.\n"
+        "- When an explicit switch is detected, invoke the update_language tool"
+        ' with the new target language code (e.g., "ES") and confirm the'
+        " switch in the new language.\n"
+        "- DO NOT emit text-based variable-setting directives that assign"
+        " user_lang in plain text; state updates must occur solely via tool"
+        " execution.\n"
+        "</language_detection>\n"
+    )
+    inst_file.write_text(updated_doc_block, encoding="utf-8")
+    app_data = {
+        "languageSettings": {"defaultLanguageCode": "en-US"},
+        "modelSettings": {"temperature": 1.0, "model": "gemini-composite-v1"},
+        "audioProcessingConfig": {
+            "synthesizeSpeechConfigs": {
+                "en-US": {
+                    "voice": "en-US-Chirp3-HD-Aoede",
+                    "instruction": generate_golden_directors_note("en-US"),
+                }
+            }
+        },
+        "variableDeclarations": [{"name": "user_lang"}],
+    }
+    (self.workspace / "app.json").write_text(
+        json.dumps(app_data), encoding="utf-8"
+    )
+
+    auditor = CXASVoiceAuditor(self.workspace)
+    var_audit = auditor.audit_variable_setting_antipatterns()
+    self.assertTrue(var_audit["passed"])
+    rem_res = auditor.remediate(auto_fix=True)
+    self.assertEqual(
+        rem_res["post_remediation_audit"]["overall_status"], "PASSED"
+    )
+
+    # Old-style doc block with negative example in quotes is also not flagged
+    old_style_block = (
+        "- DO NOT emit text-based variable setting directives (e.g. \"Set"
+        ' user_lang = ES"); state updates must occur solely via tool'
+        " execution.\n"
+    )
+    inst_file.write_text(old_style_block, encoding="utf-8")
+    self.assertTrue(auditor.audit_variable_setting_antipatterns()["passed"])
+
+    # Real anti-pattern is still flagged
+    bad_line = "If Spanish detected, Set user_lang = ES.\n"
+    inst_file.write_text(bad_line, encoding="utf-8")
+    bad_audit = auditor.audit_variable_setting_antipatterns()
+    self.assertFalse(bad_audit["passed"])
+    self.assertEqual(len(bad_audit["issues"]), 1)
+
+  def test_shared_root_language_config_idempotency_and_no_leak(self):
+    """Verifies shared root voice configs converge without language leak or oscillation."""
+    app = {
+        "languageSettings": {
+            "defaultLanguageCode": "es-419",
+            "supportedLanguageCodes": ["es-ES"],
+        },
+        "audioProcessingConfig": {
+            "synthesizeSpeechConfigs": {
+                "es": {
+                    "voice": "es-US-Chirp3-HD-Aoede",
+                    "speakingRate": 1.0,
+                    "instruction": generate_golden_directors_note("es-419"),
+                }
+            }
+        },
+        "variableDeclarations": [{"name": "user_lang"}],
+    }
+    (self.workspace / "app.json").write_text(json.dumps(app), encoding="utf-8")
+
+    auditor = CXASVoiceAuditor(self.workspace)
+    r1 = auditor.remediate(auto_fix=True)
+    self.assertEqual(r1["post_remediation_audit"]["overall_status"], "PASSED")
+
+    r2 = auditor.remediate(auto_fix=True)
+    self.assertEqual(r2["status"], "NO_CHANGES_NEEDED")
+    self.assertEqual(r2["changes_applied"], [])
+
+    saved_app = json.loads(
+        (self.workspace / "app.json").read_text(encoding="utf-8")
+    )
+    langs = saved_app["languageSettings"]["supportedLanguageCodes"]
+    self.assertNotIn("es", langs)
+    self.assertEqual(langs, ["es-ES"])
+
+  def test_accent_code_anchoring_and_descriptive_accents(self):
+    """Verifies that descriptive accents are not falsely flagged as locale codes."""
+    app_data = {
+        "audioProcessingConfig": {
+            "synthesizeSpeechConfigs": {
+                "en-US": {
+                    "voice": "en-US-Chirp3-HD-Aoede",
+                    "instruction": (
+                        "# Audio profile\nCustom profile.\n\n"
+                        "# Director's Note\n* Persona & Tone: Professional\n"
+                        "* Accent: no strong regional accent\n\n##"
+                        " Transcript:\n"
+                    ),
+                },
+                "en-IE": {
+                    "voice": "en-IE-Chirp3-HD-Aoede",
+                    "instruction": (
+                        "# Audio profile\nCustom profile.\n\n"
+                        "# Director's Note\n* Persona & Tone: Professional\n"
+                        "* Accent: an authentic Dublin accent\n\n##"
+                        " Transcript:\n"
+                    ),
+                },
+                "it-IT": {
+                    "voice": "it-IT-Chirp3-HD-Aoede",
+                    "instruction": (
+                        "# Audio profile\nCustom profile.\n\n"
+                        "# Director's Note\n* Persona & Tone: Professional\n"
+                        "* Accent: it depends on caller\n\n## Transcript:\n"
+                    ),
+                },
+            }
+        }
+    }
+    auditor = CXASVoiceAuditor(self.workspace)
+    result = auditor.audit_accent_specifications(app_data)
+    self.assertTrue(result["passed"])
+    self.assertEqual(len(result["issues"]), 0)
+
+    # Bare codes are flagged, and multiple occurrences in one instruction are all reported
+    bad_app_data = {
+        "audioProcessingConfig": {
+            "synthesizeSpeechConfigs": {
+                "multi-bad": {
+                    "voice": "en-US-Chirp3-HD-Aoede",
+                    "instruction": (
+                        "# Audio profile\nProfile.\n\n"
+                        "# Director's Note\n"
+                        "Accent: en-US\n"
+                        "Accent: es-419\n"
+                        "Accent: EN_us\n"
+                        "## Transcript:\n"
+                    ),
+                }
+            }
+        }
+    }
+    bad_result = auditor.audit_accent_specifications(bad_app_data)
+    self.assertFalse(bad_result["passed"])
+    self.assertEqual(len(bad_result["issues"]), 3)
+
+  def test_no_app_json_fabrication_on_empty_workspace(self):
+    """Verifies that remediate() does not create app.json when absent."""
+    auditor = CXASVoiceAuditor(self.workspace)
+    res = auditor.remediate(auto_fix=True)
+    self.assertEqual(res["status"], "NO_CHANGES_NEEDED")
+    self.assertFalse((self.workspace / "app.json").exists())
+    self.assertIn("skipped", res)
+    self.assertIn(
+        "app.json not found; skipped audio-profile/Rule-A007 remediation",
+        res["skipped"],
+    )
+
+  def test_missing_temperature_audit_and_remediation(self):
+    """Verifies that missing modelSettings.temperature is flagged and repaired."""
+    app_data = {
+        "languageSettings": {"defaultLanguageCode": "en-US"},
+        "modelSettings": {},
+        "audioProcessingConfig": {
+            "synthesizeSpeechConfigs": {
+                "en-US": {
+                    "voice": "en-US-Chirp3-HD-Aoede",
+                    "instruction": generate_golden_directors_note("en-US"),
+                }
+            }
+        },
+        "variableDeclarations": [{"name": "user_lang"}],
+    }
+    (self.workspace / "app.json").write_text(
+        json.dumps(app_data), encoding="utf-8"
+    )
+
+    auditor = CXASVoiceAuditor(self.workspace)
+    anti_loop = auditor.audit_anti_looping_and_stability(app_data)
+    self.assertFalse(anti_loop["passed"])
+    codes = [i["code"] for i in anti_loop["issues"]]
+    self.assertIn("MISSING_SAMPLING_TEMPERATURE", codes)
+
+    rem_res = auditor.remediate(auto_fix=True)
+    self.assertEqual(rem_res["status"], "REMEDIATED")
+    updated_app = json.loads(
+        (self.workspace / "app.json").read_text(encoding="utf-8")
+    )
+    self.assertEqual(updated_app["modelSettings"]["temperature"], 1.0)
+    post_audit = auditor.audit_anti_looping_and_stability(updated_app)
+    self.assertTrue(post_audit["passed"])
+
+  def test_root_agent_path_segment_matching(self):
+    """Verifies only exact root_agent path segments are exempt from voice lock."""
+    # root_agent/instruction.txt is exempt
+    root_dir = self.workspace / "agents" / "root_agent"
+    root_dir.mkdir(parents=True)
+    (root_dir / "instruction.txt").write_text(
+        "Root agent prompt", encoding="utf-8"
+    )
+
+    # root_agent_backup/instruction.txt is NOT exempt
+    backup_dir = self.workspace / "agents" / "root_agent_backup"
+    backup_dir.mkdir(parents=True)
+    backup_inst = backup_dir / "instruction.txt"
+    backup_inst.write_text("Backup agent prompt", encoding="utf-8")
+
+    auditor = CXASVoiceAuditor(self.workspace)
+    audit_res = auditor.audit_anti_looping_and_stability(
+        {"modelSettings": {"temperature": 1.0}}
+    )
+    self.assertFalse(audit_res["passed"])
+    flagged_files = [i["file"] for i in audit_res["issues"]]
+    self.assertIn("agents/root_agent_backup/instruction.txt", flagged_files)
+    self.assertNotIn("agents/root_agent/instruction.txt", flagged_files)
+
+    rem_changes = auditor.remediate_instruction_voice_locks()
+    self.assertEqual(len(rem_changes), 1)
+    self.assertIn("<voice_lock>", backup_inst.read_text(encoding="utf-8"))
+    self.assertNotIn(
+        "<voice_lock>", (root_dir / "instruction.txt").read_text(encoding="utf-8")
+    )
+
+  def test_pause_variants_and_prosody_detection_and_stripping(self):
+    """Verifies long_pause, medium pause, and arbitrary prosody tags are handled."""
+    agents_dir = self.workspace / "agents" / "billing_agent"
+    agents_dir.mkdir(parents=True)
+    inst_file = agents_dir / "instruction.txt"
+    inst_file.write_text(
+        'Wait [long_pause] and [medium pause] then [prosody rate="90%"] speak.',
+        encoding="utf-8",
+    )
+
+    auditor = CXASVoiceAuditor(self.workspace)
+    audit_res = auditor.audit_inert_tags()
+    self.assertFalse(audit_res["passed"])
+    tags = [i["tag"] for i in audit_res["issues"]]
+    self.assertIn("[long_pause]", tags)
+    self.assertIn("[medium pause]", tags)
+    self.assertIn('[prosody rate="90%"]', tags)
+
+    auditor.remediate_inert_tags()
+    self.assertEqual(
+        inst_file.read_text(encoding="utf-8"), "Wait and then speak."
+    )
+
+  def test_default_voice_fallbacks(self):
+    """Verifies get_default_voice handles bare and regional languages cleanly."""
+    self.assertEqual(get_default_voice("no"), "nb-NO-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("nb-NO"), "nb-NO-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("da"), "da-DK-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("da-DK"), "da-DK-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("sv"), "sv-SE-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("sv-SE"), "sv-SE-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("fi"), "fi-FI-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("fi-FI"), "fi-FI-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("pl"), "pl-PL-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("pl-PL"), "pl-PL-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("tr"), "tr-TR-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("tr-TR"), "tr-TR-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("ar"), "ar-XA-Chirp3-HD-Aoede")
+    self.assertEqual(get_default_voice("ar-XA"), "ar-XA-Chirp3-HD-Aoede")
 
 
 if __name__ == "__main__":

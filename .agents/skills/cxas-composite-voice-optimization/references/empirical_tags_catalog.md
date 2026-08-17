@@ -4,9 +4,9 @@ Empirical testing across **78 agent configurations** on Gemini Composite V1 and 
 
 --------------------------------------------------------------------------------
 
-## 1. ✅ Working Physical Acoustic Tags (26 Empirical Tags)
+## 1. ✅ Working Physical Acoustic Tags (23 Empirical Tags)
 
-These 26 tags produce measurable, reproducible changes in pitch, tempo, volume, duration, or vocal tract acoustic artifacts.
+These 23 tags produce measurable, reproducible changes in pitch, tempo, volume, duration, or vocal tract acoustic artifacts.
 
 | Category | Tag | Acoustic Measurement / Physical Effect | Recommended Use Case | Concrete Example |
 | :--- | :--- | :--- | :--- | :--- |
@@ -37,9 +37,9 @@ The following tags have been proven empirically to sit **within background contr
 
 `[warm]`, `[calm]`, `[clear]`, `[professional]`, `[empathetic]`, `[reassuring]`, `[sympathetic]`, `[hope]`, `[happy]`, `[crying]`, `[awe]`, `[fearful]`, `[surprised]`, `[cautious]`, `[alarm]`, `[anxiety]`, `[relief]`, `[tension]`, `[determination]`, `[enthusiasm]`, `[adoration]`, `[interest]`, `[curiosity]`, `[annoyance]`, `[aggression]`, `[nervousness]`, `[neutral]`, `[negative]`, `[positive]`, `[admiration]`, `[disgusted]`
 
-### 2.2 Prosody / Pause Bracket Tags (6 Tags)
+### 2.2 Prosody / Pause Bracket Tags
 
-`[short pause]`, `[long pause]`, `[short_pause]`, `[medium_pause]`, `[prosody rate="85%"]`, `[prosody rate="115%"]` \
+`[short pause]`, `[long pause]`, `[short_pause]`, `[long_pause]`, `[medium pause]`, `[medium_pause]`, `[prosody rate="..."]`, `[prosody ...]` \
 *Remediation:* Replace pause bracket tags with natural punctuation such as ellipses (`...`) or commas (`,`).
 
 ### 2.3 Delivery Style Tags (6 Tags)

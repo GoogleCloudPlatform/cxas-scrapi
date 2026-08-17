@@ -63,7 +63,7 @@ The discovery document for Customer Engagement Suite (`https://ces.googleapis.co
     -   `es` serves `es-US`, `es-419`, and `es-ES`.
     -   `EN-US` serves `en-us`.
     -   However, an `en-US` entry does NOT serve `es-US`.
--   **Rule A007:** SCRAPI linter rule `A007` (`config-language-voice-coverage`) verifies that every locale declared in `languageSettings.supportedLanguageCodes` and `languageSettings.defaultLanguageCode` is served by an entry in `synthesizeSpeechConfigs`, and that delivery keys (`voice`, `instruction`, `speakingRate`, `model`) do not drift across locales.
+-   **Rule A007:** this skill's audit rule (`rule_a007_multilang` pass in `voice_auditor.py`) verifies that every locale declared in `languageSettings.supportedLanguageCodes` and `languageSettings.defaultLanguageCode` is served by an entry in `synthesizeSpeechConfigs`, and that delivery keys (`voice`, `instruction`, `speakingRate`, `model`) do not drift across locales. (Note: not currently part of `cxas lint`.)
 
 ### 2.2 Symmetrical Locale Configuration Recipe
 
