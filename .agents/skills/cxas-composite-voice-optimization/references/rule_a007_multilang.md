@@ -21,28 +21,28 @@ When an application declares support for multiple languages in `languageSettings
 ## 2. Audit Algorithm
 
 ```text
-1. Collect Declared Languages:
+1. Collect Declared Languages [automated]:
    DeclaredLocales = { app.json.languageSettings.defaultLanguageCode }
                      ∪ app.json.languageSettings.supportedLanguageCodes
 
 2. For each Locale L in DeclaredLocales:
-   a. Verify app.json.audioProcessingConfig.synthesizeSpeechConfigs[L] exists.
-   b. Verify synthesizeSpeechConfigs[L].voice is non-empty (e.g., "es-US-Chirp3-HD-Aoede").
+   a. Verify app.json.audioProcessingConfig.synthesizeSpeechConfigs[L] exists. [automated]
+   b. Verify synthesizeSpeechConfigs[L].voice is non-empty (e.g., "es-US-Chirp3-HD-Aoede"). [automated]
    c. Verify synthesizeSpeechConfigs[L].instruction contains:
-      - Intro verbatim directive
-      - "# Audio Profile"
-      - "# Director's note"
-      - Matching localized natural language accent directive
-      - "## Transcript:\n"
-   d. Verify synthesizeSpeechConfigs[L].speakingRate is set (default: 1.0).
+      - Intro verbatim directive [manual]
+      - "# Audio Profile" [automated]
+      - "# Director's note" [automated]
+      - Matching localized natural language accent directive [automated]
+      - "## Transcript:\n" hook presence [automated] (strict trailing positioning [manual])
+   d. Verify synthesizeSpeechConfigs[L].speakingRate is set (default: 1.0). [manual]
 
 3. Verify Session Variables:
-   app.json.variableDeclarations contains entry with name="user_lang", schema.type="STRING", default="EN" (or default language code).
+   app.json.variableDeclarations contains entry with name="user_lang" [automated] (schema.type="STRING", default="EN" or default language code [manual]).
 
 4. Verify Agent Instructions:
-   a. Root Agent contains <language_detection> block with explicit switch rules.
-   b. Sub-agents contain language lock directives referencing {{user_lang}}.
-   c. Language mutations use dedicated tool calls (e.g. update_language); raw text mutations ("Set user_lang = ES") are strictly prohibited.
+   a. Root Agent contains <language_detection> block with explicit switch rules. [manual]
+   b. Sub-agents contain language lock directives referencing {{user_lang}}. [manual]
+   c. Language mutations use dedicated tool calls (e.g. update_language); raw text variable-setting antipatterns are strictly prohibited. [automated]
 ```
 
 --------------------------------------------------------------------------------
@@ -59,7 +59,7 @@ Place this block in `global_instruction.txt` or `root_agent/instruction.txt`:
 - You may ONLY trigger a language switch if the customer explicitly requests it (e.g., "Can we speak in Spanish?", "Habla en espanol por favor").
 - If the customer speaks an isolated phrase or sentence in another language without an explicit request to change languages, continue responding in {{user_lang}}.
 - When an explicit switch is detected, invoke the update_language tool with the new target language code (e.g., "ES") and confirm the switch in the new language.
-- DO NOT emit text-based variable setting directives (e.g. "Set user_lang = ES"); state updates must occur solely via tool execution.
+- DO NOT emit text-based variable-setting directives that assign user_lang in plain text; state updates must occur solely via tool execution.
 </language_detection>
 ```
 

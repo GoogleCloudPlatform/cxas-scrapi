@@ -95,20 +95,19 @@ python3 .agents/skills/cxas-composite-voice-optimization/scripts/voice_auditor.p
 
 1.  **Top-Level Audio Profile & Director's Note (`app_audio_profile`):**
     -   Verify `audioProcessingConfig.synthesizeSpeechConfigs` is defined in `app.json`.
-    -   Verify `instruction` contains verbatim intro directive, `# Audio Profile`, `# Director's note`, and `## Transcript:\n` hook.
-    -   Ensure style prompts are NOT passed dynamically per turn. *(Reference: `references/directors_notes_guide.md`)*
+    -   Verify each locale `instruction` contains `# Audio Profile`, `# Director's note`, and `## Transcript:\n` hook headers. *(Reference: `references/directors_notes_guide.md`)*
 
 2.  **Natural Language Accent Directives (`accent_specifications`):**
     -   Check that `Accent:` in Director's Notes uses descriptive natural language strings (`American English`, `Contemporary Irish English`, `Australian English`, `British English`, `Latin American Spanish`) rather than ISO locale codes (`en-US`, `es-US`). *(Reference: `references/directors_notes_guide.md`)*
 
 3.  **Rule A007 Multi-Language Voice Coverage (`rule_a007_multilang`):**
     -   Extract all languages in `languageSettings.defaultLanguageCode` and `languageSettings.supportedLanguageCodes`.
-    -   Verify every language has a complete entry in `synthesizeSpeechConfigs` with matching voice, speaking rate, and localized Director's Note.
-    -   Verify `user_lang` session variable is declared in `app.json.variableDeclarations`.
-    -   Verify root agent has `<language_detection>` XML block and sub-agents lock responses to `{{user_lang}}`. *(Reference: `references/rule_a007_multilang.md`)*
+    -   Verify every language has a complete entry in `synthesizeSpeechConfigs` with a voice identifier and Director's Note.
+    -   Check for cross-locale accent contradictions against expected language accents.
+    -   Verify `user_lang` session variable is declared in `app.json.variableDeclarations`. *(Reference: `references/rule_a007_multilang.md`)*
 
 4.  **Prohibited Platform XML Tags (`prohibited_xml_tags`):**
-    -   Scan all `instruction.txt` files for prohibited internal tags: `<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`.
+    -   Scan all `instruction.txt` and `agent.json` files for prohibited internal tags: `<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`, `<call_tool>`, `<parameter_update>`, `<variable_update>`.
     -   Custom XML tags trigger CXAS platform thought-leakage regex safety filters, causing tool abortions and generic fallback errors (*"Hmm, I'm having trouble with that right now..."*). *(Reference: `references/empirical_tags_catalog.md`)*
 
 5.  **Variable-Setting Anti-Patterns (`variable_setting_antipatterns`):**
@@ -116,20 +115,24 @@ python3 .agents/skills/cxas-composite-voice-optimization/scripts/voice_auditor.p
     -   State mutations cannot occur via raw output text; state changes must occur via tool calls (e.g. `update_language`). *(Reference: `references/empirical_tags_catalog.md`)*
 
 6.  **Inert Tag Removal & Physical Acoustic Tag Placement (`inert_tags`):**
-    -   Scan all `instruction.txt` files for 43+ inert tags (`[empathetic]`, `[warm]`, `[calm]`, `[short pause]`, `[formal]`).
-    -   Flag or strip inert tags; recommend the 26 empirical working physical acoustic tags (`[whispers]`, `[sigh]`, `[chuckles]`, `[slow]`, `[seriousness]`).
-    -   Ensure alphanumeric sequences, case markers, and acronyms are wrapped in `<voice_output>`. *(Reference: `references/empirical_tags_catalog.md`)*
+    -   Scan all instruction files for 43+ inert tags (`[empathetic]`, `[warm]`, `[calm]`, `[short pause]`, `[formal]`) and prosody tags.
+    -   Flag or strip inert tags; recommend the 23 empirical working physical acoustic tags (`[whispers]`, `[sigh]`, `[chuckles]`, `[slow]`, `[seriousness]`). *(Reference: `references/empirical_tags_catalog.md`)*
 
 7.  **Natural Speech Prompt Cues (`natural_speech_cues`):**
-    -   Verify prompt instructions mandate micro-pauses via ellipses (`...`), realistic bridge words (`"um"`, `"hmm"`, `"let's see..."`), and natural number/currency clustering.
-    -   Check that reflexive turn closings (*"Is there anything else?"*) are removed. *(Reference: `references/natural_speech_patterns.md`)*
+    -   Check that reflexive turn closings (*"Is there anything else I can help you with today?"*) are removed. *(Reference: `references/natural_speech_patterns.md`)*
 
 8.  **Anti-Looping & Long-Call Stability (`anti_looping_and_stability`):**
-    -   Verify empathy phrases are capped at a strict maximum of 1 per call.
-    -   Verify retry counters (`retry_count`) trigger clean human escalation after 2 strikes.
-    -   Verify spoken transfer announcements precede transfer tool calls.
     -   Verify `<voice_lock>` blocks are present in sub-agent instructions.
-    -   Verify `modelSettings.temperature` is set to `1.0` in `app.json`. *(Reference: `references/natural_speech_patterns.md`)*
+    -   Verify `modelSettings.temperature` in `app.json` is not missing and not below 0.9 (remediation sets 1.0). *(Reference: `references/natural_speech_patterns.md`)*
+
+##### Manual Review Checklist (not automated):
+-   **Intro Verbatim Directive:** Verify Director's Notes contain standard verbatim intro directive.
+-   **Hook Strict Trailing Position:** Ensure `## Transcript:\n` strictly concludes the Director's Note prompt.
+-   **Prompt Language Switching:** Verify root agent contains `<language_detection>` block with explicit switch rules, and sub-agents lock responses to `{{user_lang}}`.
+-   **Speaking Rate:** Verify `speakingRate` is configured across all locales (defaults to 1.0).
+-   **Voice Output Wrapping:** Verify alphanumeric sequences, case markers, and acronyms are wrapped in `<voice_output>`.
+-   **Natural Speech Mandates:** Verify prompt instructions mandate micro-pauses via ellipses (`...`), realistic bridge words (`"um"`, `"hmm"`), and natural number/currency clustering.
+-   **Stability Constraints:** Verify empathy phrases are capped at a strict maximum of 1 per call, retry counters (`retry_count`) trigger human escalation after 2 strikes, and spoken transfer announcements precede transfer tool calls.
 
 --------------------------------------------------------------------------------
 
@@ -141,6 +144,8 @@ Apply in-place remediation to `app.json` and agent instruction files:
 python3 .agents/skills/cxas-composite-voice-optimization/scripts/voice_auditor.py \
   --workspace=. --remediate
 ```
+
+If post-remediation audit status is `FAILED`, remaining issues (such as `variable_setting_antipatterns` and `natural_speech_cues` which require manual prompt edits) will be printed in detail.
 
 #### Step 4: SCRAPI (`cxas-scrapi`) End-to-End Workflow
 
@@ -155,7 +160,7 @@ cd ./workspace
 python3 ../.agents/skills/cxas-composite-voice-optimization/scripts/voice_auditor.py \
   --workspace=. --remediate
 
-# 3. Run SCRAPI structural linter (including Rule A007 check)
+# 3. Run SCRAPI structural linter
 cxas lint
 
 # 4. Deploy the optimized configuration back to CXAS
@@ -168,6 +173,6 @@ cxas push --app-dir . --to "<APP_RESOURCE_OR_ID>"
 
 -   **Composite Model Best Practices Guide & Checklist:** `references/composite_model_guide.md` (13-point quick checklist, generative model requirements, discovery schema properties)
 -   **Director's Notes & Audio Profile Guide:** `references/directors_notes_guide.md` (`app.json` schema, natural language accents & regional dialects `en-IE`/`es-419`/`en-AU`/`en-GB`, `## Transcript:\n` hook preservation, multilingual templates)
--   **Empirical Tag Catalog:** `references/empirical_tags_catalog.md` (26 working physical acoustic tags, 43+ inert tags, prohibited XML platform tags, text variable setting bans, `<voice_output>` syntax)
+-   **Empirical Tag Catalog:** `references/empirical_tags_catalog.md` (23 working physical acoustic tags, 43+ inert tags, prohibited XML platform tags, text variable setting bans, `<voice_output>` syntax)
 -   **Rule A007 Multi-Language Specification:** `references/rule_a007_multilang.md` (A007 validation algorithm, session tracking, parity checks, tool-based language switching)
 -   **Natural Speech & Anti-Looping Patterns:** `references/natural_speech_patterns.md` (Micro-pauses, bridge words, number clustering, state manipulation anti-patterns, `<voice_lock>`, platform thought leakage protection)
