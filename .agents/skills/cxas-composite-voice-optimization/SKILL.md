@@ -21,7 +21,7 @@ Activate this skill when:
 -   Auditing `app.json` for missing or malformed `synthesizeSpeechConfigs`, Audio Profiles, Director's Notes, or missing `## Transcript:\n` hooks.
 -   Fixing locale code anti-patterns (e.g. `Accent: en-US`) and replacing them with natural language accent specifications (`Accent: American English`, `Accent: Contemporary Irish English`, `Accent: Australian English`, `Accent: British English`, `Accent: Latin American Spanish`).
 -   Enforcing **Rule A007** multi-language voice coverage across all configured language codes.
--   Stripping prohibited internal platform XML tags (`<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`) and correcting text-based variable setting anti-patterns (`"Set XXX = YYY"`).
+-   Stripping prohibited internal platform XML tags (`<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`, `<call_tool>`, `<parameter_update>`, `<variable_update>`) and correcting text-based variable setting anti-patterns (`"Set XXX = YYY"`).
 -   Stripping ineffective / inert abstract emotion tags (`[empathetic]`, `[warm]`, `[calm]`) from agent instructions and replacing them with empirical working physical acoustic tags (`[whispers]`, `[sigh]`, `[chuckles]`, `[slow]`, `[seriousness]`).
 -   Injecting natural speech prompt cues (micro-pauses via ellipses `...`, bridge words, digit clustering) and anti-looping rules (`<voice_lock>` blocks, empathy capping).
 
@@ -66,7 +66,7 @@ When a user asks to make their agent emotive, natural, or styled for a specific 
 
 4.  **Sanitize & Run Automated Verification Audit:**
 
-    -   Strip all prohibited internal platform XML tags (`<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`).
+    -   Strip all prohibited internal platform XML tags (`<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`, `<call_tool>`, `<parameter_update>`, `<variable_update>`).
     -   Replace any text-based variable assignments (`"Set language = es"`) with tool calls (e.g. `update_language`).
     -   Run the 8-pass verification audit to confirm 100% compliance.
 

@@ -61,6 +61,9 @@ The following tags have been proven empirically to sit **within background contr
 | `<reasoning>`, `</reasoning>` | Internal chain-of-thought marker. Triggers thought-leakage suppression filter. | Keep reasoning implicit within internal model thinking; do not emit raw tags. |
 | `<thought>`, `</thought>` | Model deliberation delimiter. Triggers thought-leakage blocker. | Do not output thoughts or deliberation tags in text stream. Rely on platform thought protection. |
 | `<internal>`, `</internal>` | Reserved platform keyword. Triggers thought-leakage regex. | Remove tag entirely. |
+| `<call_tool>`, `</call_tool>` | Internal platform keyword. Intercepted by platform thought-leakage regex; aborts tool execution. | Remove tag entirely. Trigger tool execution through standard tool invocation definitions. |
+| `<parameter_update>`, `</parameter_update>` | Internal platform keyword. Intercepted by platform thought-leakage regex; aborts tool execution. | Strip tag entirely. Use backend tool calls or flow parameters for parameter updates. |
+| `<variable_update>`, `</variable_update>` | Internal platform keyword. Intercepted by platform thought-leakage regex; aborts tool execution. | Strip tag entirely. Mutate session state via dedicated tool calls. |
 
 --------------------------------------------------------------------------------
 
