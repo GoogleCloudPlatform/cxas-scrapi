@@ -21,7 +21,6 @@ Usage:
   python scripts/generate-iteration-report.py report --iteration 3
   python scripts/generate-iteration-report.py report --message "Fixed escalation by adding set_variables tool"
 """
-import typing
 
 import argparse
 import difflib
@@ -42,7 +41,7 @@ ITERATIONS_DIR = get_project_path("eval-reports", "iterations")
 DIFF_EXTENSIONS = {".txt", ".py"}
 
 
-def _load_triage_module() -> typing.Any:
+def _load_triage_module():
     """Load triage-results.py (hyphenated, can't be imported normally)."""
     try:
         import triage_results  # type: ignore
@@ -714,7 +713,7 @@ def _next_log_iteration() -> int:
     return max_iter + 1
 
 
-def _append_experiment_log(iteration: int, triage: Optional[Dict[str, Any]], message: Optional[str]) -> typing.Any:
+def _append_experiment_log(iteration: int, triage: Optional[Dict[str, Any]], message: Optional[str]):
     """Append a structured entry to <project>/experiment_log.md."""
     log_path = get_project_path("experiment_log.md")
     ts = datetime.now().strftime("%Y-%m-%d")
@@ -817,7 +816,7 @@ def _append_experiment_log(iteration: int, triage: Optional[Dict[str, Any]], mes
     print(f"Experiment log: {log_path}")
 
 
-def _append_results_tsv(iteration: int, triage: Optional[Dict[str, Any]], message: Optional[str]) -> typing.Any:
+def _append_results_tsv(iteration: int, triage: Optional[Dict[str, Any]], message: Optional[str]):
     """Append a row to <project>/results.tsv."""
     tsv_path = get_project_path("results.tsv")
     ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -840,7 +839,7 @@ def _append_results_tsv(iteration: int, triage: Optional[Dict[str, Any]], messag
     status, delta, _ = _compute_status(iteration, g_passed, g_total)
     msg = (message or "").replace("\t", " ").replace("\n", " ")
 
-    def _rate(passed: typing.Any, total: typing.Any) -> typing.Any:
+    def _rate(passed, total):
         return f"{passed}/{total}" if total else "-"
 
     # Create file with header if it doesn't exist
@@ -904,7 +903,7 @@ def _format_regressions(
     return ", ".join(parts) if parts else "(none)"
 
 
-def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any]]) -> typing.Any:
+def _do_auto_revert(config: dict, iteration: int, triage: Optional[Dict[str, Any]]):
     """Revert cxas_app/ to previous iteration snapshot if a REAL regression occurred.
 
     Triggers on ANY of these regressions (each gated independently):
@@ -1227,7 +1226,7 @@ def _build_run_summary(
     run_id = triage.get("run_short", "") if triage else ""
     flat_failures = []
 
-    def _accumulate(eval_type: str, per_eval_dict: Dict[str, Any]) -> typing.Any:
+    def _accumulate(eval_type: str, per_eval_dict: Dict[str, Any]):
         for eval_name, info in per_eval_dict.items():
             for category, _detail in info.get("failures", []):
                 flat_failures.append({
@@ -1254,7 +1253,7 @@ def _build_run_summary(
     # ones unconditionally, then sorts by cluster size within category.
     failure_clusters = []
 
-    def _accumulate_clusters(eval_type: str, raw_clusters: Dict[str, list]) -> typing.Any:
+    def _accumulate_clusters(eval_type: str, raw_clusters: Dict[str, list]):
         for category, clusters in raw_clusters.items():
             cat_pri = category_priority.get(category, 99)
             for c in clusters:
@@ -1329,7 +1328,7 @@ def _build_run_summary(
     }
 
 
-def do_report(config: dict, iteration: Optional[int] = None, message: Optional[str] = None, auto_revert: bool = False, json_summary: Optional[str] = None) -> typing.Any:
+def do_report(config: dict, iteration: Optional[int] = None, message: Optional[str] = None, auto_revert: bool = False, json_summary: Optional[str] = None):
     """Generate an iteration report, auto-snapshotting if needed."""
     app_dir = _get_app_dir(config)
 
@@ -1462,7 +1461,7 @@ def do_report(config: dict, iteration: Optional[int] = None, message: Optional[s
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> typing.Any:
+def main():
     parser = argparse.ArgumentParser(
         description="Snapshot agent state and generate iteration reports"
     )

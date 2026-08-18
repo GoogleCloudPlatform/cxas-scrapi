@@ -11,7 +11,6 @@
 Run from the project root or this directory:
     python -m pytest .agents/skills/cxas-agent-foundry/scripts/tests/test_cluster_failures.py
 """
-import typing
 
 import importlib.util
 import os
@@ -25,7 +24,7 @@ _SCRIPTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 @pytest.fixture(scope="module")
-def tr() -> typing.Any:
+def tr():
     """Load the triage-results module without triggering project lookup."""
     # `triage-results.py` imports `from config import load_app_name`. Stub config
     # so module import doesn't require a configured project.
@@ -56,13 +55,13 @@ def tr() -> typing.Any:
     ("expected auth_check_tool, not found. Called: [lookup_faq, end_session]", "auth_check_tool"),
     ("expected tools/auth_check_tool, not found", "auth_check_tool"),  # leading "tools/" stripped
 ])
-def test_tool_missing_extracts_tool(tr: typing.Any, detail: typing.Any, expected_tool: typing.Any) -> typing.Any:
+def test_tool_missing_extracts_tool(tr, detail, expected_tool):
     kind, value = tr._extract_discriminator(tr.TOOL_MISSING, detail, None)
     assert kind == "tool"
     assert value == expected_tool
 
 
-def test_tool_missing_unmatched_detail_falls_back_to_singleton(tr: typing.Any, capsys: typing.Any) -> typing.Any:
+def test_tool_missing_unmatched_detail_falls_back_to_singleton(tr, capsys):
     kind, value = tr._extract_discriminator(tr.TOOL_MISSING, "garbage", None)
     assert kind == "none"
     assert value is None
@@ -70,7 +69,7 @@ def test_tool_missing_unmatched_detail_falls_back_to_singleton(tr: typing.Any, c
     assert "TOOL_MISSING detail did not match" in err
 
 
-def test_hallucination_uses_hint_agent(tr: typing.Any) -> typing.Any:
+def test_hallucination_uses_hint_agent(tr):
     kind, value = tr._extract_discriminator(
         tr.HALLUCINATION, "Hallucination detected: ...", {"responsible_agent": "root_agent"}
     )
@@ -78,7 +77,7 @@ def test_hallucination_uses_hint_agent(tr: typing.Any) -> typing.Any:
     assert value == "root_agent"
 
 
-def test_hallucination_without_hint_falls_back_to_singleton(tr: typing.Any) -> typing.Any:
+def test_hallucination_without_hint_falls_back_to_singleton(tr):
     kind, value = tr._extract_discriminator(tr.HALLUCINATION, "Hallucination detected: ...", None)
     assert kind == "none"
     assert value is None
@@ -89,18 +88,18 @@ def test_hallucination_without_hint_falls_back_to_singleton(tr: typing.Any) -> t
     ('"check policy." — agent skipped', "check policy"),
     ('"Did the agent acknowledge frustration?" — no acknowledgement', "did the agent acknowledge frustration"),
 ])
-def test_expectation_fail_extracts_prompt_prefix(tr: typing.Any, detail: typing.Any, expected_key: typing.Any) -> typing.Any:
+def test_expectation_fail_extracts_prompt_prefix(tr, detail, expected_key):
     kind, value = tr._extract_discriminator(tr.EXPECTATION_FAIL, detail, None)
     assert kind == "prompt_prefix"
     assert value == expected_key
 
 
-def test_expectation_fail_no_quoted_prompt_falls_back(tr: typing.Any) -> typing.Any:
+def test_expectation_fail_no_quoted_prompt_falls_back(tr):
     kind, value = tr._extract_discriminator(tr.EXPECTATION_FAIL, "no quoted prompt", None)
     assert kind == "none"
 
 
-def test_eval_error_extracts_error_class(tr: typing.Any) -> typing.Any:
+def test_eval_error_extracts_error_class(tr):
     kind, value = tr._extract_discriminator(
         tr.EVAL_ERROR, "INVALID_ARGUMENT: missing required field", None
     )
@@ -108,7 +107,7 @@ def test_eval_error_extracts_error_class(tr: typing.Any) -> typing.Any:
     assert value == "INVALID_ARGUMENT"
 
 
-def test_eval_error_lowercase_fallback(tr: typing.Any) -> typing.Any:
+def test_eval_error_lowercase_fallback(tr):
     kind, value = tr._extract_discriminator(tr.EVAL_ERROR, "no error code prefix here", None)
     assert kind == "error_class"
     assert value == "no error code prefix here"[:30].lower().strip()
@@ -116,7 +115,7 @@ def test_eval_error_lowercase_fallback(tr: typing.Any) -> typing.Any:
 
 @pytest.mark.parametrize("category", ["TEXT_MISMATCH", "TIMEOUT", "EXTRA_TURNS",
                                        "SCORES_PASS_BUT_FAIL", "UNKNOWN"])
-def test_non_groupable_categories_return_none(tr: typing.Any, category: typing.Any) -> typing.Any:
+def test_non_groupable_categories_return_none(tr, category):
     kind, value = tr._extract_discriminator(category, "anything", {"responsible_agent": "x"})
     assert kind == "none"
     assert value is None
@@ -126,7 +125,7 @@ def test_non_groupable_categories_return_none(tr: typing.Any, category: typing.A
 # cluster_failures: end-to-end clustering behavior
 # ---------------------------------------------------------------------------
 
-def test_known_input_known_output(tr: typing.Any) -> typing.Any:
+def test_known_input_known_output(tr):
     """Synthetic mix → exact expected cluster shape."""
     raw = [
         ("TOOL_MISSING", "g_a", "expected auth_check_tool, not found", None),
@@ -158,11 +157,11 @@ def test_known_input_known_output(tr: typing.Any) -> typing.Any:
     assert tx[0]["discriminator_kind"] == "none"  # singleton — no discriminator
 
 
-def test_empty_input(tr: typing.Any) -> typing.Any:
+def test_empty_input(tr):
     assert tr.cluster_failures([]) == {}
 
 
-def test_hallucination_cluster_uses_agent(tr: typing.Any) -> typing.Any:
+def test_hallucination_cluster_uses_agent(tr):
     raw = [
         ("HALLUCINATION", "g_a", "Hallucination detected: foo", {"responsible_agent": "root_agent"}),
         ("HALLUCINATION", "g_b", "Hallucination detected: bar", {"responsible_agent": "root_agent"}),
@@ -177,7 +176,7 @@ def test_hallucination_cluster_uses_agent(tr: typing.Any) -> typing.Any:
     assert h[1]["eval_names"] == ["g_c"]
 
 
-def test_determinism_across_shuffled_input(tr: typing.Any) -> typing.Any:
+def test_determinism_across_shuffled_input(tr):
     raw = [
         ("TOOL_MISSING", f"g_{i}", "expected tool_x, not found", None) for i in range(10)
     ] + [
@@ -192,7 +191,7 @@ def test_determinism_across_shuffled_input(tr: typing.Any) -> typing.Any:
     assert out_a == out_b
 
 
-def test_hallucination_hint_extraction_from_turn(tr: typing.Any) -> typing.Any:
+def test_hallucination_hint_extraction_from_turn(tr):
     """_extract_hallucination_hint walks the candidate paths in the turn dict."""
     # Direct field
     assert tr._extract_hallucination_hint({"responsible_agent": "root_agent"}) == {
@@ -223,7 +222,7 @@ def test_hallucination_hint_extraction_from_turn(tr: typing.Any) -> typing.Any:
 # triage_results: clusters appear in returned dict
 # ---------------------------------------------------------------------------
 
-def test_triage_results_includes_failure_clusters(tr: typing.Any) -> typing.Any:
+def test_triage_results_includes_failure_clusters(tr):
     """End-to-end: triage_results() output dict carries failure_clusters."""
     # Minimal synthetic result with a TOOL_MISSING failure
     fake_result = {
@@ -260,7 +259,7 @@ def test_triage_results_includes_failure_clusters(tr: typing.Any) -> typing.Any:
 # Phase 2: per-type categorize functions
 # ---------------------------------------------------------------------------
 
-def test_categorize_sim_failure_runner_error(tr: typing.Any) -> typing.Any:
+def test_categorize_sim_failure_runner_error(tr):
     sim = {"name": "sim_a", "passed": False, "error": "subprocess crashed"}
     cat, det, hint = tr.categorize_sim_failure(sim)
     assert cat == tr.EVAL_ERROR
@@ -268,7 +267,7 @@ def test_categorize_sim_failure_runner_error(tr: typing.Any) -> typing.Any:
     assert hint is None
 
 
-def test_categorize_sim_failure_failed_expectation(tr: typing.Any) -> typing.Any:
+def test_categorize_sim_failure_failed_expectation(tr):
     sim = {
         "name": "sim_b", "passed": False, "turns": 5,
         "step_details": [],
@@ -283,7 +282,7 @@ def test_categorize_sim_failure_failed_expectation(tr: typing.Any) -> typing.Any
     assert "no acknowledgement was produced" in det
 
 
-def test_categorize_sim_failure_max_turns(tr: typing.Any) -> typing.Any:
+def test_categorize_sim_failure_max_turns(tr):
     sim = {
         "name": "sim_c", "passed": False, "turns": 12, "goals": "1/3",
         "step_details": [
@@ -299,7 +298,7 @@ def test_categorize_sim_failure_max_turns(tr: typing.Any) -> typing.Any:
     assert hint["turns"] == 12
 
 
-def test_categorize_sim_failure_off_script(tr: typing.Any) -> typing.Any:
+def test_categorize_sim_failure_off_script(tr):
     sim = {
         "name": "sim_d", "passed": False, "turns": 3, "goals": "0/2",
         "step_details": [
@@ -313,7 +312,7 @@ def test_categorize_sim_failure_off_script(tr: typing.Any) -> typing.Any:
     assert hint["step_goal"] == "login"
 
 
-def test_categorize_sim_failure_task_incomplete_fallback(tr: typing.Any) -> typing.Any:
+def test_categorize_sim_failure_task_incomplete_fallback(tr):
     sim = {
         "name": "sim_e", "passed": False, "turns": 4, "goals": "1/2",
         # Only Completed steps + no in-progress/not-started → no clear signal
@@ -327,7 +326,7 @@ def test_categorize_sim_failure_task_incomplete_fallback(tr: typing.Any) -> typi
     assert hint is None
 
 
-def test_categorize_tool_test_failure(tr: typing.Any) -> typing.Any:
+def test_categorize_tool_test_failure(tr):
     row = {"test": "auth_check_test", "tool": "auth_check_tool",
            "status": "FAILED", "errors": ["expected 200 got 500", "missing field"]}
     cat, det, hint = tr.categorize_tool_test_failure(row)
@@ -337,7 +336,7 @@ def test_categorize_tool_test_failure(tr: typing.Any) -> typing.Any:
     assert hint == {"tool": "auth_check_tool", "test": "auth_check_test"}
 
 
-def test_categorize_callback_test_failure(tr: typing.Any) -> typing.Any:
+def test_categorize_callback_test_failure(tr):
     row = {"agent_name": "root_agent", "callback_type": "before_model_callbacks",
            "test_name": "returns_dict", "status": "FAILED",
            "error_message": "AssertionError: expected dict got str"}
@@ -353,25 +352,25 @@ def test_categorize_callback_test_failure(tr: typing.Any) -> typing.Any:
 # Phase 2: discriminator rules for new categories
 # ---------------------------------------------------------------------------
 
-def test_tool_test_fail_collapses_to_super_cluster(tr: typing.Any) -> typing.Any:
+def test_tool_test_fail_collapses_to_super_cluster(tr):
     kind, value = tr._extract_discriminator(tr.TOOL_TEST_FAIL, "anything", {"tool": "x"})
     assert kind == "category"
     assert value == tr.TOOL_TEST_FAIL
 
 
-def test_callback_test_fail_collapses_to_super_cluster(tr: typing.Any) -> typing.Any:
+def test_callback_test_fail_collapses_to_super_cluster(tr):
     kind, value = tr._extract_discriminator(tr.CALLBACK_TEST_FAIL, "anything", None)
     assert kind == "category"
     assert value == tr.CALLBACK_TEST_FAIL
 
 
-def test_sim_max_turns_collapses_to_super_cluster(tr: typing.Any) -> typing.Any:
+def test_sim_max_turns_collapses_to_super_cluster(tr):
     kind, value = tr._extract_discriminator(tr.SIM_MAX_TURNS_EXCEEDED, "x", None)
     assert kind == "category"
     assert value == tr.SIM_MAX_TURNS_EXCEEDED
 
 
-def test_sim_user_off_script_groups_by_step_goal(tr: typing.Any) -> typing.Any:
+def test_sim_user_off_script_groups_by_step_goal(tr):
     kind, value = tr._extract_discriminator(
         tr.SIM_USER_OFF_SCRIPT, "any", {"step_goal": "login"}
     )
@@ -379,12 +378,12 @@ def test_sim_user_off_script_groups_by_step_goal(tr: typing.Any) -> typing.Any:
     assert value == "login"
 
 
-def test_sim_user_off_script_no_hint_falls_back_to_singleton(tr: typing.Any) -> typing.Any:
+def test_sim_user_off_script_no_hint_falls_back_to_singleton(tr):
     kind, value = tr._extract_discriminator(tr.SIM_USER_OFF_SCRIPT, "any", None)
     assert kind == "none"
 
 
-def test_sim_task_incomplete_always_singleton(tr: typing.Any) -> typing.Any:
+def test_sim_task_incomplete_always_singleton(tr):
     kind, value = tr._extract_discriminator(tr.SIM_TASK_INCOMPLETE, "any", {"x": "y"})
     assert kind == "none"
 
@@ -393,7 +392,7 @@ def test_sim_task_incomplete_always_singleton(tr: typing.Any) -> typing.Any:
 # Phase 2: cluster size dedup + eval_pass_rates surfacing
 # ---------------------------------------------------------------------------
 
-def test_dedup_same_eval_failing_multiple_runs(tr: typing.Any) -> typing.Any:
+def test_dedup_same_eval_failing_multiple_runs(tr):
     """3 runs of the same eval failing the same way → cluster size 1, not 3."""
     raw = [
         ("TOOL_MISSING", "g_a", "expected x, not found", None),
@@ -406,7 +405,7 @@ def test_dedup_same_eval_failing_multiple_runs(tr: typing.Any) -> typing.Any:
     assert len(cluster["details"]) == 1
 
 
-def test_dedup_singleton_category(tr: typing.Any) -> typing.Any:
+def test_dedup_singleton_category(tr):
     """Same eval failing TEXT_MISMATCH 3 times → 1 singleton cluster."""
     raw = [
         ("TEXT_MISMATCH", "g_a", "sem_score=2", None),
@@ -417,7 +416,7 @@ def test_dedup_singleton_category(tr: typing.Any) -> typing.Any:
     assert out["TEXT_MISMATCH"][0]["eval_names"] == ["g_a"]
 
 
-def test_eval_pass_rates_surfaced_when_provided(tr: typing.Any) -> typing.Any:
+def test_eval_pass_rates_surfaced_when_provided(tr):
     raw = [
         ("TOOL_MISSING", "g_a", "expected x, not found", None),
         ("TOOL_MISSING", "g_b", "expected x, got y", None),
@@ -430,7 +429,7 @@ def test_eval_pass_rates_surfaced_when_provided(tr: typing.Any) -> typing.Any:
     assert "g_c" not in cluster["eval_pass_rates"]
 
 
-def test_eval_pass_rates_omitted_when_not_provided(tr: typing.Any) -> typing.Any:
+def test_eval_pass_rates_omitted_when_not_provided(tr):
     raw = [("TOOL_MISSING", "g_a", "expected x, not found", None)]
     out = tr.cluster_failures(raw)
     assert "eval_pass_rates" not in out["TOOL_MISSING"][0]
@@ -440,7 +439,7 @@ def test_eval_pass_rates_omitted_when_not_provided(tr: typing.Any) -> typing.Any
 # Phase 2: per-type triage wrapper functions
 # ---------------------------------------------------------------------------
 
-def test_triage_tool_test_results_super_cluster(tr: typing.Any) -> typing.Any:
+def test_triage_tool_test_results_super_cluster(tr):
     rows = [
         {"test": "t_a", "tool": "auth", "status": "PASSED", "errors": []},
         {"test": "t_b", "tool": "auth", "status": "FAILED", "errors": ["bad output"]},
@@ -454,7 +453,7 @@ def test_triage_tool_test_results_super_cluster(tr: typing.Any) -> typing.Any:
     assert out["failure_clusters"]["TOOL_TEST_FAIL"][0]["eval_names"] == ["t_b", "t_c"]
 
 
-def test_triage_callback_test_results(tr: typing.Any) -> typing.Any:
+def test_triage_callback_test_results(tr):
     rows = [
         {"agent_name": "root", "callback_type": "before_model_callbacks", "test_name": "cb_a",
          "status": "PASSED", "error_message": None},
@@ -467,7 +466,7 @@ def test_triage_callback_test_results(tr: typing.Any) -> typing.Any:
     assert out["failure_clusters"]["CALLBACK_TEST_FAIL"][0]["eval_names"] == ["cb_b"]
 
 
-def test_triage_sim_results_routes_each_branch(tr: typing.Any) -> typing.Any:
+def test_triage_sim_results_routes_each_branch(tr):
     sims = [
         {"name": "sim_pass", "passed": True, "turns": 5, "step_details": [], "expectation_details": []},
         {"name": "sim_max_turns", "passed": False, "turns": 12,
@@ -489,7 +488,7 @@ def test_triage_sim_results_routes_each_branch(tr: typing.Any) -> typing.Any:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def gir(tr: typing.Any) -> typing.Any:
+def gir(tr):
     """Load generate-iteration-report.py with config stubbed out."""
     import types
     fake = types.ModuleType("config")
@@ -508,7 +507,7 @@ def gir(tr: typing.Any) -> typing.Any:
     return mod
 
 
-def test_unified_clustering_foundation_outranks_application(gir: typing.Any) -> typing.Any:
+def test_unified_clustering_foundation_outranks_application(gir):
     """1 failing tool test should outrank a 5-eval golden TOOL_MISSING cluster on priority_score."""
     gir._load_sim_rows = lambda: []
     gir._load_callback_test_rows = lambda: []
@@ -546,7 +545,7 @@ def test_unified_clustering_foundation_outranks_application(gir: typing.Any) -> 
 # Phase 3: regression detection (previously_passing tagging + auto-split)
 # ---------------------------------------------------------------------------
 
-def test_regression_baseline_iteration_no_tagging(gir: typing.Any) -> typing.Any:
+def test_regression_baseline_iteration_no_tagging(gir):
     """Iteration 1 has no prior — every cluster is `new`, no regression_context."""
     gir._load_sim_rows = lambda: []
     gir._load_tool_test_rows = lambda: []
@@ -564,7 +563,7 @@ def test_regression_baseline_iteration_no_tagging(gir: typing.Any) -> typing.Any
     assert "regression_context" not in cluster
 
 
-def test_regression_pure_regression_cluster(gir: typing.Any) -> typing.Any:
+def test_regression_pure_regression_cluster(gir):
     """Cluster where every member was passing prior → regression_status=regression + context."""
     gir._load_sim_rows = lambda: []
     gir._load_tool_test_rows = lambda: []
@@ -591,7 +590,7 @@ def test_regression_pure_regression_cluster(gir: typing.Any) -> typing.Any:
     assert cluster["priority_score"] >= 50_000
 
 
-def test_regression_mixed_cluster_auto_splits(gir: typing.Any) -> typing.Any:
+def test_regression_mixed_cluster_auto_splits(gir):
     """Mixed cluster (1 regression + 1 new) splits into 2 clusters w/ same discriminator."""
     gir._load_sim_rows = lambda: []
     gir._load_tool_test_rows = lambda: []
@@ -632,7 +631,7 @@ def test_regression_mixed_cluster_auto_splits(gir: typing.Any) -> typing.Any:
     assert by_status["regression"]["priority_score"] > by_status["new"]["priority_score"]
 
 
-def test_was_previously_passing(gir: typing.Any) -> typing.Any:
+def test_was_previously_passing(gir):
     """Helper: only 100% prior pass rate counts as 'previously passing'."""
     prev = {
         ("golden", "g_a"): {"pass": 5, "total": 5},   # all-pass → previously passing
@@ -646,7 +645,7 @@ def test_was_previously_passing(gir: typing.Any) -> typing.Any:
     assert gir._was_previously_passing({}, "golden", "g_a") is False
 
 
-def test_load_previous_per_eval_reads_per_eval_by_type(gir: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any) -> typing.Any:
+def test_load_previous_per_eval_reads_per_eval_by_type(gir, tmp_path, monkeypatch):
     """_load_previous_per_eval understands the per_eval_by_type schema we now write."""
     iter_dir = tmp_path / "eval-reports" / "iterations" / "iteration_3"
     iter_dir.mkdir(parents=True)
@@ -665,7 +664,7 @@ def test_load_previous_per_eval_reads_per_eval_by_type(gir: typing.Any, tmp_path
     assert out[("sim", "sim_a")] == {"pass": 0, "total": 5}
 
 
-def test_load_previous_per_eval_back_compat_legacy_per_eval_only(gir: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any) -> typing.Any:
+def test_load_previous_per_eval_back_compat_legacy_per_eval_only(gir, tmp_path, monkeypatch):
     """Older results.json without per_eval_by_type still works (assumes golden)."""
     iter_dir = tmp_path / "eval-reports" / "iterations" / "iteration_3"
     iter_dir.mkdir(parents=True)
@@ -678,7 +677,7 @@ def test_load_previous_per_eval_back_compat_legacy_per_eval_only(gir: typing.Any
     assert out[("golden", "g_legacy")] == {"pass": 5, "total": 5}
 
 
-def test_extract_iteration_message_pulls_change_line(gir: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any) -> typing.Any:
+def test_extract_iteration_message_pulls_change_line(gir, tmp_path, monkeypatch):
     """Message extraction reads the **Change:** line under the iteration header."""
     log_path = tmp_path / "experiment_log.md"
     log_path.write_text(
@@ -699,7 +698,7 @@ def test_extract_iteration_message_pulls_change_line(gir: typing.Any, tmp_path: 
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def revert_setup(gir: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any) -> typing.Any:
+def revert_setup(gir, tmp_path, monkeypatch):
     """Stub out filesystem + helpers around `_do_auto_revert`.
 
     Mocks `shutil.copytree` so we don't actually copy files — the tests
@@ -728,7 +727,7 @@ def revert_setup(gir: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any)
 
     config = {"app_dir": str(app_dir)}
 
-    def call_revert(triage: typing.Any, **overrides: typing.Any) -> typing.Any:
+    def call_revert(triage, **overrides):
         for name, value in overrides.items():
             monkeypatch.setattr(gir, name, value)
         return gir._do_auto_revert(config, iteration=2, triage=triage)
@@ -736,7 +735,7 @@ def revert_setup(gir: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any)
     return call_revert
 
 
-def test_auto_revert_triggers_on_tool_test_regression(revert_setup: typing.Any) -> typing.Any:
+def test_auto_revert_triggers_on_tool_test_regression(revert_setup):
     """Tool tests dropped from 5/5 → 4/5 should trigger revert (no goldens needed)."""
     triage = {"total": 5, "passed": 5, "failures": {}}  # goldens unchanged
     reverted = revert_setup(
@@ -747,7 +746,7 @@ def test_auto_revert_triggers_on_tool_test_regression(revert_setup: typing.Any) 
     assert reverted is True
 
 
-def test_auto_revert_triggers_on_callback_test_regression(revert_setup: typing.Any) -> typing.Any:
+def test_auto_revert_triggers_on_callback_test_regression(revert_setup):
     """Callback tests dropped from 3/3 → 2/3 should trigger revert."""
     triage = {"total": 5, "passed": 5, "failures": {}}
     reverted = revert_setup(
@@ -758,7 +757,7 @@ def test_auto_revert_triggers_on_callback_test_regression(revert_setup: typing.A
     assert reverted is True
 
 
-def test_auto_revert_skipped_when_sims_improve_while_tools_regress(revert_setup: typing.Any) -> typing.Any:
+def test_auto_revert_skipped_when_sims_improve_while_tools_regress(revert_setup):
     """Sim counter-signal applies to tool test regressions, not just goldens."""
     triage = {"total": 5, "passed": 5, "failures": {}}
     reverted = revert_setup(
@@ -780,7 +779,7 @@ def test_auto_revert_skipped_when_sims_improve_while_tools_regress(revert_setup:
     assert reverted is True
 
 
-def test_auto_revert_sim_counter_signal_blocks_revert_when_prev_sim_known(gir: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any) -> typing.Any:
+def test_auto_revert_sim_counter_signal_blocks_revert_when_prev_sim_known(gir, tmp_path, monkeypatch):
     """Explicit sim-counter-signal: prior sim 2/5, current sim 4/5 → don't revert."""
     snapshot = tmp_path / "snapshot"; snapshot.mkdir(); (snapshot / "x").write_text("s")
     app_dir = tmp_path / "cxas_app"; app_dir.mkdir()
@@ -803,7 +802,7 @@ def test_auto_revert_sim_counter_signal_blocks_revert_when_prev_sim_known(gir: t
     assert reverted is False  # mixed signal — hold the change
 
 
-def test_auto_revert_no_trigger_when_nothing_regressed(revert_setup: typing.Any) -> typing.Any:
+def test_auto_revert_no_trigger_when_nothing_regressed(revert_setup):
     """All types stable → no revert."""
     triage = {"total": 5, "passed": 5, "failures": {}}
     reverted = revert_setup(
@@ -815,7 +814,7 @@ def test_auto_revert_no_trigger_when_nothing_regressed(revert_setup: typing.Any)
     assert reverted is False
 
 
-def test_auto_revert_existing_golden_path_still_works(revert_setup: typing.Any) -> typing.Any:
+def test_auto_revert_existing_golden_path_still_works(revert_setup):
     """Pre-existing behavior: real golden agent failures + drop → revert."""
     triage = {
         "total": 5, "passed": 3,
@@ -826,7 +825,7 @@ def test_auto_revert_existing_golden_path_still_works(revert_setup: typing.Any) 
     assert reverted is True
 
 
-def test_auto_revert_skipped_when_golden_drop_is_platform_only(revert_setup: typing.Any) -> typing.Any:
+def test_auto_revert_skipped_when_golden_drop_is_platform_only(revert_setup):
     """Pre-existing behavior preserved: all platform failures → no revert."""
     triage = {
         "total": 5, "passed": 3,
@@ -836,7 +835,7 @@ def test_auto_revert_skipped_when_golden_drop_is_platform_only(revert_setup: typ
     assert reverted is False
 
 
-def test_load_previous_typed_pass_rates_sums_per_eval_by_type(gir: typing.Any, tmp_path: typing.Any, monkeypatch: typing.Any) -> typing.Any:
+def test_load_previous_typed_pass_rates_sums_per_eval_by_type(gir, tmp_path, monkeypatch):
     """Helper aggregates per-eval pass/total within each type."""
     iter_dir = tmp_path / "iter_3"; iter_dir.mkdir()
     (iter_dir / "results.json").write_text(__import__("json").dumps({
@@ -858,7 +857,7 @@ def test_load_previous_typed_pass_rates_sums_per_eval_by_type(gir: typing.Any, t
     assert "sim" not in out  # zero-total types omitted
 
 
-def test_unified_clustering_all_eval_types_present(gir: typing.Any) -> typing.Any:
+def test_unified_clustering_all_eval_types_present(gir):
     """All 4 eval types contribute to by_type and failure_clusters when failures exist."""
     gir._load_sim_rows = lambda: [
         {"name": "sim_a", "passed": False, "turns": 12,

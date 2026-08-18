@@ -76,11 +76,35 @@ For each agent in the TDD's Architecture:
 - `<app_dir>/agents/<name>/<name>.json` with `name`, `displayName`, `instruction` (path to instruction.txt), `childAgents`, `tools` (the subset this agent uses). **Crucial**: The `"instruction"` path must be relative to the app root and prefixed with `"agents/<name>/"` (e.g., `"agents/support_bot/instruction.txt"`).
 - `<app_dir>/agents/<name>/instruction.txt` — translate the TDD's Routing Logic + role description into the persona/taskflow format from the template. Include `{@TOOL: <tool_name>}` references for every tool the agent uses (per I012). Include the `current_date` variable reference (per I014). Don't copy template instructions verbatim — author from the TDD.
 
-### Step 4 — Write each tool
+### Step 4 — Write each tool and Toolset
 
-For each tool in the TDD's Tools section:
-- `<app_dir>/tools/<name>/<name>.json` with `name`, `displayName`, `pythonFunction.name`, `pythonFunction.pythonCode`, `pythonFunction.description` (required per T012), `executionType`. **Crucial**: The `"pythonFunction.pythonCode"` path must be relative to the app root and prefixed with `"tools/<name>/"` (e.g., `"tools/lookup_benefits/python_function/python_code.py"`).
-- `<app_dir>/tools/<name>/python_function/python_code.py` — implement the function with explicit named parameters (no `**kwargs`, no `None` defaults), realistic stub return value matching the TDD's described behavior.
+**CRITICAL RULE: OpenApiToolset vs. Python Function Tools**
+- **When given an OpenAPI YAML/JSON:** **DO NOT** create a standalone `OpenApiTool` (`tools/<name>/...` with `"openApiTool": {...}`). Standalone OpenAPI tools are **deprecated in CES runtime** and fail during conversational execution.
+  - **Always create an `OpenApiToolset`:**
+    - Place schema at `<app_dir>/toolsets/<toolset_name>/open_api_toolset/open_api_schema.yaml`.
+    - Create configuration at `<app_dir>/toolsets/<toolset_name>/<toolset_name>.json` with:
+      ```json
+      {
+        "name": "<toolset_name>",
+        "displayName": "<ToolsetDisplayName>",
+        "openApiToolset": {
+          "openApiSchema": "toolsets/<toolset_name>/open_api_toolset/open_api_schema.yaml"
+        }
+      }
+      ```
+    - In `agent.json`, reference under `"toolsets"` with explicit `"toolIds"` matching operation IDs:
+      ```json
+      "toolsets": [
+        {
+          "toolset": "<ToolsetDisplayName>",
+          "toolIds": ["<OperationId1>", "<OperationId2>"]
+        }
+      ]
+      ```
+    - When invoking from Python (callbacks or tool wrappers), use `tools.{ToolsetDisplayName}_{OperationId}(payload)` or `async_tools.{ToolsetDisplayName}_{OperationId}(payload)`.
+- **For Python Function Tools:**
+  - `<app_dir>/tools/<name>/<name>.json` with `name`, `displayName`, `pythonFunction.name`, `pythonFunction.pythonCode`, `pythonFunction.description` (required per T012), `executionType`. **Crucial**: The `"pythonFunction.pythonCode"` path must be relative to the app root and prefixed with `"tools/<name>/"` (e.g., `"tools/lookup_benefits/python_function/python_code.py"`).
+  - `<app_dir>/tools/<name>/python_function/python_code.py` — implement the function with explicit named parameters (no `**kwargs`, no `None` defaults), realistic stub return value matching the TDD's described behavior.
 
 ### Step 5 — Write each callback
 

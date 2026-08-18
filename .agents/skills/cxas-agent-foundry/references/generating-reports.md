@@ -36,29 +36,6 @@ Output: HTML report in `<project>/eval-reports/combined/`. Includes:
 ### 3. Coverage Analysis
 On-demand analysis of eval coverage against agent architecture. **Dispatch the `agents/coverage-analyst.md` sub-agent** with `app_dir`, `evals_dir`, and `output_path`. It reads every agent instruction, every eval, every tool, and every callback, then produces the markdown report following the template below. This is intentionally a sub-agent — doing it inline burns several thousand tokens per invocation.
 
-### 4. Interactive Diagnostic Dashboard
-Generates a responsive single-page HTML report from simulation results with **dynamic Gemini LLM failure clustering** and **universal session parameter cross-filtering**.
-
-```bash
-# Generate from existing simulation results JSON
-python .agents/skills/cxas-agent-foundry/scripts/generate_interactive_report.py \
-  --input <path_to_sim_results.json> \
-  --output <path_to_report.html> \
-  --title "Agent Simulation Evaluation Dashboard"
-
-# Or auto-run simulations first, then generate interactive report
-python .agents/skills/cxas-agent-foundry/scripts/generate_interactive_report.py \
-  --run \
-  --app-name <APP_NAME> \
-  --output <path_to_report.html>
-```
-
-Key features:
-- **Dynamic LLM Failure Clustering**: Uses Gemini to analyze failed test expectations and turn justifications, grouping failure modes into 3–8 concise diagnostic categories without rigid hardcoding.
-- **Universal Session Parameter Filtering**: Dynamically extracts every session parameter key found in `session_parameters` (e.g. `account_type`, `user_tier`, `region`) and provides interactive multi-select filters.
-- **Adjusted Pass Rate Metric**: Automatically computes Overall Pass Rate vs. Adjusted Pass Rate (excluding platform/sim infra glitches and timeouts).
-- **Direct CES Session Links**: Deep-links each simulation test case directly into the CES live conversation console.
-
 ## Interpreting Results
 
 ### Key Metrics

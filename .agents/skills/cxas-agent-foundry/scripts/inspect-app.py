@@ -21,7 +21,6 @@ Usage:
   python scripts/inspect-app.py --json            # Output as JSON
   python scripts/inspect-app.py --save report.md  # Save to file
 """
-import typing
 
 import argparse
 import json
@@ -34,7 +33,7 @@ from config import load_app_name
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/inspect-app"
 
 
-def inspect(app_name: typing.Any, verbose: typing.Any=False) -> typing.Any:
+def inspect(app_name, verbose=False):
     """Inspect app and return structured data."""
     from cxas_scrapi.core.apps import Apps
     from cxas_scrapi.core.agents import Agents
@@ -182,7 +181,7 @@ def inspect(app_name: typing.Any, verbose: typing.Any=False) -> typing.Any:
     return result
 
 
-def format_text(data: typing.Any) -> typing.Any:
+def format_text(data):
     """Format inspection data as readable text."""
     lines = []
     lines.append(f"App: {data['display_name']}")
@@ -261,7 +260,7 @@ def format_text(data: typing.Any) -> typing.Any:
     return "\n".join(lines)
 
 
-def main() -> typing.Any:
+def main():
     try:
         import cxas_scrapi
     except ImportError:

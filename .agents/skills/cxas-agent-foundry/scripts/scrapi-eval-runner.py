@@ -24,7 +24,6 @@ Usage:
   python scripts/scrapi-eval-runner.py status
   python scripts/scrapi-eval-runner.py report <run_id>
 """
-import typing
 
 import argparse
 import sys
@@ -51,33 +50,33 @@ GOLDEN_EVALS_DIR = get_project_path("evals", "goldens")
 REPORTS_DIR = get_project_path("eval-reports")
 
 
-def load_yaml() -> typing.Any:
+def load_yaml():
     if not os.path.exists(EVALS_YAML):
         return {"meta": {}, "evals": []}
     with open(EVALS_YAML, "r") as f:
         return yaml.safe_load(f) or {"meta": {}, "evals": []}
 
 
-def save_yaml(data: typing.Any) -> typing.Any:
+def save_yaml(data):
     os.makedirs(os.path.dirname(EVALS_YAML), exist_ok=True)
     with open(EVALS_YAML, "w") as f:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True,
                   sort_keys=False, width=200)
 
 
-def get_app_name() -> typing.Any:
+def get_app_name():
     return load_app_name()
 
 
-def get_evals_client() -> typing.Any:
+def get_evals_client():
     return Evaluations(app_name=load_app_name(), user_agent_extension=USER_AGENT_EXTENSION)
 
 
-def get_eval_utils() -> typing.Any:
+def get_eval_utils():
     return EvalUtils(app_name=load_app_name())
 
 
-def filter_evals(data: typing.Any, priority: typing.Any=None, tag: typing.Any=None) -> typing.Any:
+def filter_evals(data, priority=None, tag=None):
     evals = data.get("evals", []) if isinstance(data, dict) else data
     if priority:
         evals = [e for e in evals if e.get("priority", "").upper() == priority.upper()]
@@ -88,7 +87,7 @@ def filter_evals(data: typing.Any, priority: typing.Any=None, tag: typing.Any=No
 
 # --- Commands ---
 
-def cmd_status(args: typing.Any) -> typing.Any:
+def cmd_status(args):
     """Show sync status between YAML and platform."""
     data = load_yaml()
     client = get_evals_client()
@@ -121,7 +120,7 @@ def cmd_status(args: typing.Any) -> typing.Any:
             print(f"  {name:43s} {'No':6s} {'Yes':10s} {'-':8s} {'-':8s}")
 
 
-def cmd_push(args: typing.Any) -> typing.Any:
+def cmd_push(args):
     """Push YAML evals to platform (create or delete-and-recreate)."""
     data = load_yaml()
     client = get_evals_client()
@@ -197,7 +196,7 @@ def cmd_push(args: typing.Any) -> typing.Any:
     print(f"\nDone. YAML updated with new eval_ids.")
 
 
-def cmd_run(args: typing.Any) -> typing.Any:
+def cmd_run(args):
     """Trigger an eval run."""
     data = load_yaml()
     client = get_evals_client()
@@ -234,7 +233,7 @@ def cmd_run(args: typing.Any) -> typing.Any:
         print(f"Failed to trigger run: {e}")
 
 
-def _score_result_audio(result: typing.Any) -> bool:
+def _score_result_audio(result) -> bool:
     """Score a single result using audio-correct method.
 
     In audio mode, taskCompleted is broken (always False).
@@ -247,7 +246,7 @@ def _score_result_audio(result: typing.Any) -> bool:
     return (goal == 1) and all_exp
 
 
-def _is_error(result: typing.Any) -> bool:
+def _is_error(result) -> bool:
     res_dict = type(result).to_dict(result) if not isinstance(result, dict) else result
     exec_state = res_dict.get("execution_state", 0)
     if isinstance(exec_state, int):
@@ -255,7 +254,7 @@ def _is_error(result: typing.Any) -> bool:
     return str(exec_state).upper() in ("ERROR", "ERRORED")
 
 
-def cmd_results(args: typing.Any) -> typing.Any:
+def cmd_results(args):
     """Fetch and score results for a specific run."""
     data = load_yaml()
     utils = get_eval_utils()
@@ -348,7 +347,7 @@ def cmd_results(args: typing.Any) -> typing.Any:
     print(f"\nYAML updated with scores.")
 
 
-def cmd_report(args: typing.Any) -> typing.Any:
+def cmd_report(args):
     """Generate a markdown report for a run."""
     data = load_yaml()
     utils = get_eval_utils()
@@ -461,7 +460,7 @@ def cmd_report(args: typing.Any) -> typing.Any:
     print(f"\nReport written to: {report_path}")
 
 
-def _diff_golden(local_dict: typing.Any, remote_eval: typing.Any) -> typing.Any:
+def _diff_golden(local_dict, remote_eval):
     """Diff a local golden dict against the remote Evaluation proto.
 
     Returns a (needs_recreate, reason) tuple. recreates are required when
@@ -493,7 +492,7 @@ def _diff_golden(local_dict: typing.Any, remote_eval: typing.Any) -> typing.Any:
     return False, None
 
 
-def cmd_push_goldens(args: typing.Any) -> typing.Any:
+def cmd_push_goldens(args):
     """Push golden evals from YAML files to platform.
 
     Default: diff-aware upsert.
@@ -584,7 +583,7 @@ def cmd_push_goldens(args: typing.Any) -> typing.Any:
     )
 
 
-def cmd_run_goldens(args: typing.Any) -> typing.Any:
+def cmd_run_goldens(args):
     """Run all golden evals on the platform."""
     client = get_evals_client()
     app_name = get_app_name()
@@ -617,7 +616,7 @@ def cmd_run_goldens(args: typing.Any) -> typing.Any:
         print(f"Failed: {e}")
 
 
-def main() -> typing.Any:
+def main():
     try:
         import cxas_scrapi  # noqa: F401
     except ImportError:

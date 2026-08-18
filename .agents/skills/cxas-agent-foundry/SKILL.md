@@ -32,9 +32,6 @@ cxas pull projects/<project_id>/locations/<location>/apps/<app_id> \
 # Run evals + triage + report (single command)
 python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "what changed" --runs 5
 
-# Generate dynamic interactive HTML dashboard with Gemini LLM failure clustering and parameter filters
-python .agents/skills/cxas-agent-foundry/scripts/generate_interactive_report.py --input <path_to_sim_results.json> --output <path_to_report.html>
-
 # Inspect app architecture
 python .agents/skills/cxas-agent-foundry/scripts/inspect-app.py
 
@@ -105,7 +102,6 @@ Read what the user wants and load the appropriate sub-skill:
 | "Run evals", "push evals", "check results" | Run | `references/run.md` |
 | "Run tool tests", "test the callbacks" | Run | `references/run.md` |
 | "Generate a report" | Run | `references/run.md` |
-| "Generate interactive report", "cluster failures dashboard" | Run | `references/generating-reports.md` → "Interactive Diagnostic Dashboard" |
 | "Why is this eval failing", "get to 90%" | Debug | `references/debug.md` |
 | "Fix the failing evals", "debug the agent" | Debug | `references/debug.md` |
 | "Tool test is failing", "callback test broke" | Debug | `references/debug.md` |

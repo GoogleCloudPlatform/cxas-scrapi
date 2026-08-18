@@ -32,7 +32,6 @@ Usage:
     config = load_config()                         # full config dict
     evals_dir = get_project_path("evals", "goldens")  # /workspace/<project>/evals/goldens
 """
-import typing
 
 import json
 import os
@@ -42,7 +41,7 @@ import sys
 _project_dir = None
 
 
-def _find_workspace_root() -> typing.Any:
+def _find_workspace_root():
     """Find the workspace root by looking for .agents/, .claude/, or .gemini/ in ancestors."""
     path = os.getcwd()
     for _ in range(10):
@@ -57,7 +56,7 @@ def _find_workspace_root() -> typing.Any:
     return os.getcwd()
 
 
-def resolve_project_dir() -> typing.Any:
+def resolve_project_dir():
     """Find the active project directory.
 
     Search order:
@@ -121,7 +120,7 @@ def resolve_project_dir() -> typing.Any:
     sys.exit(1)
 
 
-def get_project_path(*parts: typing.Any) -> typing.Any:
+def get_project_path(*parts):
     """Join parts relative to the active project directory.
 
     Usage: get_project_path("evals", "goldens") → /workspace/<project>/evals/goldens
@@ -129,7 +128,7 @@ def get_project_path(*parts: typing.Any) -> typing.Any:
     return os.path.join(resolve_project_dir(), *parts)
 
 
-def load_config() -> typing.Any:
+def load_config():
     """Load gecx-config.json from the active project and return the full config dict.
 
     Required keys: gcp_project_id, deployed_app_id
@@ -155,7 +154,7 @@ def load_config() -> typing.Any:
     return config
 
 
-def load_app_name() -> typing.Any:
+def load_app_name():
     """Load the full app resource name from gecx-config.json.
 
     Returns: "projects/{project}/locations/{location}/apps/{app_id}"

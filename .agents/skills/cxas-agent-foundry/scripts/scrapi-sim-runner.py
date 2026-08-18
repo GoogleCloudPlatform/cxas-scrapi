@@ -24,7 +24,6 @@ Usage:
   python scripts/scrapi-sim-runner.py convert [--priority P0]
   python scripts/scrapi-sim-runner.py list
 """
-import typing
 
 import argparse
 import json
@@ -54,14 +53,14 @@ REPORTS_DIR = get_project_path("eval-reports")
 _DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
 
-def load_yaml() -> typing.Any:
+def load_yaml():
     if not os.path.exists(EVALS_YAML):
         return {"meta": {}, "evals": []}
     with open(EVALS_YAML) as f:
         return yaml.safe_load(f) or {"meta": {}, "evals": []}
 
 
-def load_sim_templates() -> typing.Any:
+def load_sim_templates():
     """Load sim eval templates from simulations.yaml."""
     if not os.path.exists(SIM_EVALS_YAML):
         return {}
@@ -78,7 +77,7 @@ def load_sim_templates() -> typing.Any:
     return {ev["name"]: ev for ev in evals}
 
 
-def get_app_name() -> typing.Any:
+def get_app_name():
     return load_app_name()
 
 
@@ -145,14 +144,14 @@ class EnhancedSimRunner(SimulationEvals):
         )
 
 
-def _parse_priorities(priority: typing.Any) -> typing.Any:
+def _parse_priorities(priority):
     """Parse a priority arg like 'P0' or 'P0,P1,P2' into an upper-cased set."""
     if not priority:
         return None
     return {p.strip().upper() for p in priority.split(",") if p.strip()}
 
 
-def filter_evals(evals: typing.Any, priority: typing.Any=None, tag: typing.Any=None) -> typing.Any:
+def filter_evals(evals, priority=None, tag=None):
     prios = _parse_priorities(priority)
     if prios:
         filtered = []
@@ -176,7 +175,7 @@ def filter_evals(evals: typing.Any, priority: typing.Any=None, tag: typing.Any=N
 # --- Commands ---
 
 
-def cmd_list(args: typing.Any) -> typing.Any:
+def cmd_list(args):
     """List available sim test cases."""
     data = load_yaml()
     templates = load_sim_templates()
@@ -194,7 +193,7 @@ def cmd_list(args: typing.Any) -> typing.Any:
     print(f"\n{covered}/{len(evals)} evals have sim templates")
 
 
-def cmd_convert(args: typing.Any) -> typing.Any:
+def cmd_convert(args):
     """Export sim test cases to JSON files."""
     data = load_yaml()
 
@@ -222,7 +221,7 @@ def cmd_convert(args: typing.Any) -> typing.Any:
     print(f"Wrote {len(all_tests)} test cases to {output_dir}/")
 
 
-def cmd_run(args: typing.Any) -> typing.Any:
+def cmd_run(args):
     """Run sim evals against the live agent."""
     data = load_yaml()
     app_name = get_app_name()
@@ -379,7 +378,7 @@ def cmd_run(args: typing.Any) -> typing.Any:
     print(f"Report:  {report_path}")
 
 
-def main() -> typing.Any:
+def main():
     try:
         import cxas_scrapi  # noqa: F401, PLC0415
     except ImportError:

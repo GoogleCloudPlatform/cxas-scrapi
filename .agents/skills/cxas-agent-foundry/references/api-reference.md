@@ -112,6 +112,9 @@ agents.update_agent(agent_name=root.name, child_agents=[sub.name])
 
 ### Toolsets (OpenAPI Toolsets)
 
+> [!CAUTION]
+> **Standalone `OpenApiTool` is Deprecated:** Do NOT create standalone OpenAPI tools under `tools/` with `"openApiTool": {...}`. Invoking standalone OpenAPI tools at runtime causes `Tool <Name> is deprecated and can no longer be run`. Always create **`OpenApiToolset`** under `toolsets/<toolset_name>/`.
+
 While standard Tools wrap a single function (like a Python sandboxed function), **Toolsets** allow you to expose multiple tools at once, typically by importing an external service specification like an OpenAPI schema.
 
 **Prefer `cxas push` over the `create_toolset` API.** Similar to tools, toolsets defined locally in the `toolsets/` directory are automatically pushed and managed.
@@ -130,7 +133,7 @@ toolsets/
 #### Toolset JSON Format (in `toolsets/<name>/<name>.json`):
 ```json
 {
-  "displayName": "<toolset_name>",
+  "displayName": "<ToolsetDisplayName>",
   "description": "Description of the toolset for the LLM.",
   "openApiToolset": {
     "openApiSchema": "toolsets/<toolset_name>/open_api_toolset/open_api_schema.yaml",
@@ -145,6 +148,20 @@ toolsets/
 }
 ```
 *(Note: `apiAuthentication` is optional and supports `apiKeyConfig`, `oauthConfig`, `serviceAccountAuthConfig`, or `serviceAgentIdTokenAuthConfig`.)*
+
+#### Environment Configuration (`environment.json`)
+In `environment.json`, configure toolset endpoint URLs and Secret Manager credentials using standard camelCase:
+```json
+{
+  "toolsets": {
+    "<ToolsetDisplayName>": {
+      "url": "https://api.example.com",
+      "keyName": "x-api-key",
+      "apiKeySecretVersion": "projects/my-project/secrets/my-key/versions/latest"
+    }
+  }
+}
+```
 
 #### Assigning Toolsets to an Agent (in Agent JSON)
 Unlike standard tools which are listed in the `tools` array, **toolsets are assigned to an agent using the `toolsets` array**.
@@ -166,12 +183,19 @@ To assign a toolset to an agent, add an entry to the `toolsets` array in the age
 *   **`toolset`**: The local display name/ID of the toolset (e.g., `"my_toolset"`).
 *   **`toolIds`**: Optional list of raw `operationId`s from the OpenAPI schema. If omitted, the agent has access to ALL operations defined in the toolset's schema.
 
-#### Calling Toolset Tools from Callbacks
-When invoking a toolset tool directly from Python callback code (e.g., in `before_model` or `after_model`), use the combined name as a method on the `tools` global:
+#### Calling Toolset Tools from Callbacks & Python Wrappers
+When invoking a toolset tool directly from Python code (in callbacks or custom Python function tool wrappers), use the combined `{ToolsetDisplayName}_{OperationId}` naming pattern:
 
 ```python
-# Call 'getProductDetails' from 'my_toolset'
-result = tools.my_toolset_getProductDetails(product_id="123")
+# 1. Synchronous Sequential Execution:
+result = tools.AccountsFulfillmentToolset_AgenticConfRoutingAuthenticationCheck(payload)
+
+# 2. Asynchronous Parallel Execution (via async_tools):
+import asyncio
+res1, res2 = await asyncio.gather(
+    async_tools.AccountsFulfillmentToolset_AgenticConfRoutingAuthenticationCheck(p1),
+    async_tools.GeneralFulfillmentToolset_AgenticAbTestingExperimentVariant(p2)
+)
 ```
 
 **IMPORTANT -- tool naming:** Agent JSON files reference tools by `displayName`. Use **snake_case** for both `name` and `displayName` (e.g., `"lookup_benefits"`, NOT `"Lookup Benefits"`). The `displayName` must exactly match the string in the agent's `tools` array. Mismatched names cause `Reference not found` errors on push.

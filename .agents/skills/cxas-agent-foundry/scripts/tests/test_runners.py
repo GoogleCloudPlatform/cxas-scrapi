@@ -18,7 +18,6 @@ Run from the project root:
     python -m pytest \
         .agents/skills/cxas-agent-foundry/scripts/tests/test_runners.py
 """
-import typing
 
 import importlib.util
 import os
@@ -32,7 +31,7 @@ _SCRIPTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 @pytest.fixture
-def config_mock() -> typing.Any:
+def config_mock():
     """Fixture providing a dynamic config dictionary."""
     return {
         "gcp_project_id": "test-proj",
@@ -45,7 +44,7 @@ def config_mock() -> typing.Any:
 
 
 @pytest.fixture(autouse=True)
-def setup_stubs(config_mock: typing.Any) -> typing.Any:
+def setup_stubs(config_mock):
     """Setup fake config module.
 
     Prevents script imports from triggering project lookups.
@@ -67,7 +66,7 @@ def setup_stubs(config_mock: typing.Any) -> typing.Any:
 
 
 @pytest.fixture
-def evals_runner() -> typing.Any:
+def evals_runner():
     """Import the run-evals module."""
     spec = importlib.util.spec_from_file_location(
         "run_evals", os.path.join(_SCRIPTS_DIR, "run-evals.py")
@@ -78,7 +77,7 @@ def evals_runner() -> typing.Any:
 
 
 @pytest.fixture
-def sim_runner() -> typing.Any:
+def sim_runner():
     """Import the scrapi-sim-runner module."""
     spec = importlib.util.spec_from_file_location(
         "scrapi_sim_runner", os.path.join(_SCRIPTS_DIR, "scrapi-sim-runner.py")
@@ -93,7 +92,7 @@ def sim_runner() -> typing.Any:
 # ---------------------------------------------------------------------------
 
 
-def test_sim_runner_cmd_run_delegation(sim_runner: typing.Any) -> typing.Any:
+def test_sim_runner_cmd_run_delegation(sim_runner):
     """Verify scrapi-sim-runner.py run command delegates to SimulationEvals."""
     mock_args = MagicMock()
     mock_args.eval = ["test_case_1"]
@@ -177,7 +176,7 @@ def test_sim_runner_cmd_run_delegation(sim_runner: typing.Any) -> typing.Any:
 # ---------------------------------------------------------------------------
 
 
-def test_run_evals_includes_all_by_default(evals_runner: typing.Any) -> typing.Any:
+def test_run_evals_includes_all_by_default(evals_runner):
     """Verify run-evals.py invokes combined report.
 
     It should include goldens, sims, and scenarios by default.
@@ -213,7 +212,7 @@ def test_run_evals_includes_all_by_default(evals_runner: typing.Any) -> typing.A
         assert call_kwargs["parallel"] == 4
 
 
-def test_run_evals_excludes_goldens_and_sims(evals_runner: typing.Any, config_mock: typing.Any) -> typing.Any:
+def test_run_evals_excludes_goldens_and_sims(evals_runner, config_mock):
     """Verify run-evals.py skips goldens and sims correctly.
 
     Based on CLI flags.
