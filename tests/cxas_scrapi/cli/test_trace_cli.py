@@ -844,3 +844,39 @@ def test_trace_transcribe_audio_failure(fake_traces: typing.Any) -> None:
     args = _ns(conversation_id="c1")
     with pytest.raises(SystemExit):
         trace_cli.trace_transcribe_audio(args)
+
+def test_trace_estimate_quota_json(fake_traces: typing.Any, capsys: typing.Any) -> None:
+    fake_traces.estimate_quota.return_value = {
+        "traffic_assumptions": {"peak_text_cpm": 10},
+        "averages_per_conversation": {"tool_calls": 2.0},
+        "estimated_quotas_per_minute": {"ExecuteTool_Quota": 20.0}
+    }
+    trace_cli.trace_estimate_quota(
+        _ns(
+            peak_text_cpm=10, peak_audio_cpm=0,
+            time_filter="7d",
+            source=None,
+            channel=None,
+            limit=200,
+            format="json",
+        )
+    )
+    out = capsys.readouterr().out
+    assert "ExecuteTool_Quota" in out
+    parsed = json.loads(out)
+    assert parsed["estimated_quotas_per_minute"]["ExecuteTool_Quota"] == 20.0
+
+
+def test_trace_estimate_quota_failure(fake_traces: typing.Any) -> None:
+    fake_traces.estimate_quota.side_effect = RuntimeError("boom")
+    with pytest.raises(SystemExit):
+        trace_cli.trace_estimate_quota(
+            _ns(
+                peak_text_cpm=10, peak_audio_cpm=0,
+                time_filter="7d",
+                source=None,
+                channel=None,
+                limit=200,
+                format="text",
+            )
+        )
