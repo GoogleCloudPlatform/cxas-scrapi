@@ -144,6 +144,7 @@ nav:
     - Installation: getting-started/installation.md
     - Authentication: getting-started/authentication.md
     - IAM Permissions: getting-started/iam-permissions.md
+    - Quotas & Limits: getting-started/quotas.md
     - Quick Start (Python): getting-started/quickstart-python.md
     - Quick Start (CLI): getting-started/quickstart-cli.md
     - Concepts: getting-started/concepts.md
