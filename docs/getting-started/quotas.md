@@ -1,19 +1,21 @@
 ---
 title: Quotas and Rate Limits
-description: Detailed Google Cloud quotas, capacity planning, and rate-limiting guidelines for CXAS SCRAPI development and automated evaluations.
+description: Detailed Google Cloud quotas, capacity planning, usage tiers, and rate-limiting guidelines for CXAS SCRAPI development and automated evaluations.
 ---
 
 # Quotas and Rate Limits Guide
 
-CXAS SCRAPI orchestrates conversational agent lifecycle management, real-time sessions, and high-throughput automated evaluations (such as parallel simulations). Because simulations act as interactive users communicating with agents in real-time, they generate significant traffic across both **CX Agent Studio (CES)** and **Vertex AI**.
+CXAS SCRAPI orchestrates conversational agent lifecycle management, real-time sessions, and high-throughput automated evaluations (such as parallel simulations). Because simulations act as interactive users communicating with agents in real-time, they generate significant traffic across both **CX Agent Studio (CES)** and **Vertex AI / Gemini Enterprise Agent Platform**.
 
-Default Google Cloud project quotas are often insufficient for active multi-developer teams or automated CI/CD pipelines. This guide details the specific quota metrics involved, provides capacity planning models, and explains how to prevent and troubleshoot quota exhaustion.
+Understanding how capacity is managed across these services is essential for planning multi-developer workflows and automated CI/CD test suites.
 
 ---
 
 ## 1. CX Agent Studio (ces.googleapis.com)
 
-These quotas regulate server-side conversational agent interactions, design-time management operations, and real-time streaming audio channels on the GECX platform.
+These are traditional, fixed Google Cloud project quotas that regulate server-side conversational agent interactions, design-time management operations, and real-time streaming audio channels on the GECX platform.
+
+For full platform limits, refer to the [Google Cloud Conversational Agents Quotas Documentation](https://docs.cloud.google.com/customer-engagement-ai/conversational-agents/quotas).
 
 ### Agent LLM Token Consumption (Runtime)
 *   **Metric:** `ces.googleapis.com/run_session_llm_token_consumption`
@@ -34,95 +36,106 @@ These quotas regulate server-side conversational agent interactions, design-time
 
 ---
 
-## 2. Vertex AI API (aiplatform.googleapis.com)
+## 2. Vertex AI / Gemini Enterprise Agent Platform (aiplatform.googleapis.com)
 
 SCRAPI’s automated simulation engine runs client-side, using Gemini models as the **simulated user** (generating realistic customer responses) and the **eval judge** (verifying behavioral expectations against transcripts).
 
-These quotas are enforced **per region** and **per base model** (e.g., `gemini-3.1-flash-lite`, `gemini-2.5-flash`):
+Unlike traditional static GCP quotas, generative Gemini models use **Standard PayGo Usage Tiers** governed by your organization’s rolling 30-day spend. For full details, see the [Gemini Standard PayGo Documentation](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/standard-paygo).
 
-### Inference Requests Per Minute (RPM)
-*   **Metric:** `aiplatform.googleapis.com/generate_content_requests_per_minute_per_project_per_base_model`
-*   **Description:** The number of generation requests sent per minute by the simulated user and expectation evaluation engine.
+### Standard PayGo Usage Tiers (Tokens Per Minute)
+Throughput is measured in **Tokens Per Minute (TPM)** at the organization level with automatic promotion based on spend:
 
-### Token Volume Per Minute (TPM)
-*   **Metric:** `aiplatform.googleapis.com/tokens_per_minute_per_base_model`
-*   **Description:** The combined volume of input (prompt + context) and output tokens processed per minute by the client-side Gemini models.
+| Model Family | Tier | 30-Day Org Spend | Baseline TPM (Org-Level) |
+| :--- | :--- | :--- | :--- |
+| **Gemini Flash & Flash-Lite**<br>(`gemini-3.7-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-flash`) | Tier 1 | \$10 – \$250 | **2,000,000** TPM |
+| | Tier 2 | \$250 – \$2,000 | **4,000,000** TPM |
+| | Tier 3 | > \$2,000 | **10,000,000** TPM |
+| **Gemini Pro**<br>(`gemini-2.5-pro`, `gemini-3.1-pro-preview`) | Tier 1 | \$10 – \$250 | **500,000** TPM |
+| | Tier 2 | \$250 – \$2,000 | **1,000,000** TPM |
+| | Tier 3 | > \$2,000 | **2,000,000** TPM |
 
----
-
-## 3. Supplementary Audio Services (Optional)
-
-If your test suites perform client-side voice synthesis or transcription audits during audio simulations, ensure the following quotas are active:
-
-### Text-to-Speech (texttospeech.googleapis.com)
-*   **Metric:** `texttospeech.googleapis.com/synthesize_requests`
-*   **Description:** Rate of TTS generation requests used to feed simulated customer speech into the bidirectional audio stream.
-
-### Cloud Speech-to-Text (speech.googleapis.com)
-*   **Metric:** `speech.googleapis.com/speech_recognition_requests`
-*   **Description:** Used to transcribe raw agent audio streams back to text for multimodal assertions and audit logs.
+*   **No Separate RPM Limits**: Standard PayGo does not enforce a separate requests-per-minute (RPM) ceiling per tier. Limits are based purely on token throughput.
+*   **Dynamic Bursting**: Traffic is allowed to burst beyond the baseline throughput limit on a best-effort basis.
+*   **Global Endpoint Routing**: By default, SCRAPI connects to the `global` location (`location = "global"`), dynamically routing requests to regions with the highest available capacity.
+*   **Guaranteed Throughput**: Workloads requiring dedicated, unshared throughput without latency variation should explore [Provisioned Throughput](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/provisioned-throughput) or [Priority PayGo](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/priority-paygo).
 
 ---
 
-## Capacity Planning & Quota Sizing
+## 3. Configuring Models in SCRAPI
 
-When multiple developers or CI/CD test jobs execute simulations simultaneously, token consumption spikes. Use the sizing benchmarks below to determine the appropriate quota requests for your project.
+You can configure which Gemini model to use for the simulated customer and the evaluation judge using CLI flags:
+
+```bash
+cxas evals report --run --include sims \
+  --sim-user-model gemini-3.7-flash \
+  --eval-model gemini-3.7-flash \
+  --output-dir eval-reports/
+```
+
+---
+
+## 4. Capacity Planning & Sizing Calculator
+
+When multiple developers or CI/CD test jobs execute simulations simultaneously, token consumption spikes. Use the sizing benchmarks below to determine the appropriate quota requests for your GECX project.
 
 ### Estimation Formulas
 
-210673\text{Sim Requests/Min (RPM)} = \frac{\text{Sims} \times \text{Average Turns}}{\text{Run Duration (Minutes)}} \times \text{Concurrency Factor}210673
+$$\text{Sim Requests/Min (RPM)} = \frac{\text{Sims} \times \text{Average Turns}}{\text{Run Duration (Minutes)}} \times \text{Concurrency Factor}$$
 
-210673\text{Agent TPM} = \text{Sim Requests/Min} \times (\text{Instruction Tokens} + \text{History Tokens})210673
+$$\text{Agent TPM} = \text{Sim Requests/Min} \times (\text{Instruction Tokens} + \text{History Tokens})$$
 
-### Recommended Targets by Scale
+### Recommended GECX Targets by Scale
 
-| Scale / Scenario | Concurrent Workers | GECX `run_session_llm_token_consumption` | GECX `ConcurrentBidiRunSession` | Vertex AI `generate_content_requests...` | Vertex AI `tokens_per_minute...` |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Solo Developer** (Interactive test + single eval runs) | 2–5 workers | **1,500,000** TPM | **15** streams | **150** RPM | **300,000** TPM |
-| **Small Team (4–5 Devs)** (Concurrent testing & branch pushes) | 15–20 workers | **4,000,000** TPM | **50** streams | **500** RPM | **1,000,000** TPM |
-| **Automated CI/CD** (Full regression suite on PRs) | 25+ workers | **8,000,000+** TPM | **100** streams | **1,000** RPM | **2,500,000** TPM |
+| Scale / Scenario | Concurrent Workers | GECX `run_session_llm_token_consumption` | GECX `ConcurrentBidiRunSession` | Minimum Gemini Spend Tier |
+| :--- | :--- | :--- | :--- | :--- |
+| **Solo Developer** (Interactive test + single eval runs) | 2–5 workers | **1,500,000** TPM | **15** streams | Tier 1 (2M TPM) |
+| **Small Team (4–5 Devs)** (Concurrent testing & branch pushes) | 15–20 workers | **4,000,000** TPM | **50** streams | Tier 2 (4M TPM) |
+| **Automated CI/CD** (Full regression suite on PRs) | 25+ workers | **8,000,000+** TPM | **100** streams | Tier 3 (10M TPM) |
 
 ---
 
-## Troubleshooting & Error Handling
+## 5. Troubleshooting & Error Handling
 
-### 1. GECX Agent Token Quota Exhausted
+### 1. GECX Agent Token Quota Exhausted (Fixed Quota)
 *   **Error Signature:**
     ```text
     WARNING - Rate limited by GECX server. ces.googleapis.com/run_session_llm_token_consumption quota exhausted.
     ```
-*   **Root Cause:** The agent's prompt size multiplied by the number of concurrent turns exceeded the per-minute platform ceiling.
+*   **Root Cause:** The agent's prompt size multiplied by the number of concurrent turns exceeded the project's per-minute platform ceiling.
 *   **Remediation:**
-    1. Request a quota increase for `run_session_llm_token_consumption` in the Google Cloud Console.
+    1. Request a quota increase for `run_session_llm_token_consumption` in the [Google Cloud Quotas Console](https://console.cloud.google.com/iam-admin/quotas).
     2. Reduce worker parallelism in your CLI call:
        ```bash
        cxas evals report --run --include sims --sim-parallel 2
        ```
-    3. Audit and optimize your agent's instructions (e.g., removing redundant examples or offloading static lookup tables into tool calls).
+    3. Optimize your agent's instruction set to reduce per-turn token overhead.
 
-### 2. Vertex AI Rate Limit (HTTP 429)
+### 2. Vertex AI Resource Exhaustion (HTTP 429)
 *   **Error Signature:**
     ```text
     google.genai.errors.ClientError: 429 RESOURCE_EXHAUSTED. Quota/Rate Limit Exhausted.
     ```
-*   **Root Cause:** The simulated user or LLM judge exceeded the Vertex AI RPM or TPM quota in the configured region (`us` / `us-central1`).
+*   **Root Cause:** A `429` error on Gemini **does not indicate a fixed project quota breach**. It indicates temporary resource contention on shared multi-tenant capacity or sharp, second-level traffic bursts. See [Understanding Error Code 429](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deploy/error-code-429) and [Reducing 429 Errors on Vertex AI](https://cloud.google.com/blog/products/ai-machine-learning/reduce-429-errors-on-vertex-ai).
 *   **Remediation:**
-    1. Request a quota increase for the specific model (e.g., `gemini-3.1-flash-lite` or `gemini-2.5-flash`).
-    2. In custom scripts, configure the SCRAPI client-side `RateLimiter`:
+    1. **Traffic Smoothing**: Avoid instantaneous second-level spikes by using SCRAPI's client-side `RateLimiter`:
        ```python
        from cxas_scrapi.utils.rate_limiter import RateLimiter
 
-       # Pace requests to 10 requests per second
+       # Pace requests smoothly
        rate_limiter = RateLimiter(requests_per_second=10)
        ```
+    2. **Exponential Backoff**: SCRAPI automatically implements exponential retries with jitter for transient `429` errors.
+    3. **Global Location**: Ensure client configuration references `location = "global"` to leverage multi-region dynamic load balancing.
 
 ---
 
-## How to Request Quota Increases
+## 6. How to Request GECX Quota Increases
 
-1. In the Google Cloud Console, navigate to **IAM & Admin > Quotas & System Limits**.
-2. Set the **Service** filter to **CX Agent Studio API** or **Vertex AI API**.
-3. Search for the target metric name (e.g., `run_session_llm_token_consumption` or `generate_content_requests`).
-4. Select the checkbox for your deployment region and model (e.g., `gemini-3.1-flash-lite`), then click **Edit Quotas** at the top of the table.
+To increase your GECX platform quotas (such as `run_session_llm_token_consumption`):
+
+1. Open the [Google Cloud Console Quotas Page](https://console.cloud.google.com/iam-admin/quotas).
+2. Set the **Service** filter to **CX Agent Studio API** (`ces.googleapis.com`).
+3. Search for the target metric name (e.g., `run_session_llm_token_consumption`).
+4. Select the checkbox for your deployment region and click **Edit Quotas**.
 5. Enter the target value and provide a clear business justification (e.g., *"Running automated conversational simulation testing suites for CXAS agent deployment"*).
-6. Submit the request. Standard tier increases are generally auto-approved within a few minutes.
+6. Submit the request. For more details on the quota request lifecycle, see [Viewing and Managing Quotas](https://cloud.google.com/docs/quotas/view-manage).
