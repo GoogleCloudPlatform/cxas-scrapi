@@ -1,6 +1,37 @@
 # Changelog
 
 
+## [1.9.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.8.0...v1.9.0) (2026-08-19)
+
+
+### Features
+
+* **cli:** add --version-name flag to cxas push ([6e1a38a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6e1a38a06656c011e77261c3f9fc4c498f0ba6a6))
+* **cli:** add --version-name flag to cxas push ([929d707](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/929d7078db95121b87dbc5d880a065703c01d073))
+* eval coverage ([4f7b43c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4f7b43ca6adda0acad95a7e3654eee4e2ed1438c))
+* **foundry:** add interactive evaluation reporter with LLM failure clustering to cxas-agent-foundry ([91997ea](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/91997eaad3c2fd65085c779a8b33b69cfa3de59b))
+* **foundry:** merge interactive evaluation reporter into cxas-agent-foundry ([147dcc2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/147dcc22154f830fed31ce275d464882aafceb4f))
+* **migration:** build autonomous tool consolidation pipeline with deterministic alias resolution, improved acyclic topology wiring, and critical improvements and fixes ([#404](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/404)) ([2bbf193](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2bbf1935c2e337a1a59a8fb3a2ace25f525c9ecb))
+* **tracing:** add audio transcription, WER calculation, and BigQuery table reprocessing ([536740a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/536740a584717aa071d58b78a279c861597cd63a))
+* **tracing:** write updated turns to append-only BigQuery updates table ([20f2fcd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/20f2fcd8d397ccabc005579d55d1a3fce19f9105))
+* Update turn evals for tool_not_called and not_contains ([2162038](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2162038d7f5e16ef187aca14090cfd0254e7d019))
+
+
+### Bug Fixes
+
+* **ci:** format code with ruff and isolate template file reads from mock_open ([3670138](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/36701388f6d0155f4ffd3bc156ba3e80668f923a))
+* **tracing:** update default transcription model to gemini-3.5-flash ([57c2225](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/57c2225c497d1d46d3e3520af4d89a4e2e4a1f89))
+
+
+### Documentation
+
+* add quotas and rate limits guide to getting-started ([3379e91](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3379e91a1c6eac9c902ac652dc386f3fed2294c4))
+* add quotas and rate limits guide to getting-started ([88bceba](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/88bceba059d907d32bb232bc94ab6acaa5ce40ad))
+* align quotas guide with Gemini Standard PayGo usage tiers and official documentation ([1a81dc3](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1a81dc30f7b61e6b01e0508ad554a1281a4e2bb1))
+* **callbacks:** document preemption vs LLM re-invocation lifecycle and EMPTY_RESPONSE prevention ([f3e6ccf](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f3e6ccf1c35f604ca54f5083c6668421ab756f25))
+* **cli:** document --version-name and versioning options for cxas push ([af98bc7](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/af98bc7c22f5b2b33818660680b230df7b59f5ad))
+* **tracing:** document audio transcription, WER evaluation, and BigQuery reprocessing ([fab7925](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/fab7925825c233d9d55ad08e9176cece0822e133))
+
 ## [1.8.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.7.0...v1.8.0) (2026-07-30)
 
 
