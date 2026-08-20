@@ -33,6 +33,7 @@ Requires Python 3.10+ and [astral-uv](https://docs.astral.sh/uv/getting-started/
 This workspace provides several specialized AI skills to assist with development. 
 
 - **`cxas-agent-foundry`**: The primary skill for the end-to-end GECX agent lifecycle. Use this for building agents from PRDs, generating and running evals, debugging failures, and syncing code.
+- **`cxas-composite-voice-optimization`**: Skill for optimizing Gemini Composite V1 voice naturalness, persona styling, empirical physical acoustic tagging, and Rule A007 multi-language parity.
 - **`cxas-sim-eval`**: A utility skill for converting CXAS golden evaluations to SCRAPI SimulationEvals test cases.
 
 ## CLI Features
