@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI Script to extract sample conversations from live CCAI Insights for building golden test datasets."""
+"""CLI Script to extract sample conversations from live CCAI Insights for building QA calibration datasets."""
 
 # Copyright 2026 Google LLC
 #
@@ -25,7 +25,7 @@ from cxas_scrapi.core.insights import Insights
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Sample conversation transcripts from CCAI Insights to build golden test datasets."
+        description="Sample conversation transcripts from CCAI Insights to build QA calibration datasets."
     )
     parser.add_argument(
         "--project-id",
@@ -50,8 +50,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default="golden_conversations.json",
-        help="Output JSON path to save sampled conversations (default: golden_conversations.json).",
+        default="qa_calibration_conversations.json",
+        help="Output JSON path to save sampled calibration conversations (default: qa_calibration_conversations.json).",
     )
 
     args = parser.parse_args()

@@ -49,22 +49,23 @@ answerInstructions: |
 
 ```mermaid
 graph TD
-    A[Draft Question Instructions] --> B[Run run_scorecard_eval.py on Goldens]
+    A[Draft Question Instructions] --> B[Run run_scorecard_eval.py on Calibration Set]
     B --> C{Review Discrepancies}
     C -->|Mismatches Identified| D[Inspect Rationale Diff]
     D --> E[Refine Rubric & Edge Cases]
     E --> B
-    C -->|Accuracy >= 95%| F[Ready for Declarative Apply]
+    C -->|Agreement >= 95%| F[Ready for Declarative Apply]
 ```
 
-1. **Start with 10-20 Golden Transcripts**: Include diverse cases (ideal conversations, edge cases, escalations, partial answers).
+1. **Start with 10-20 QA Calibration Transcripts**: Include diverse cases (ideal conversations, edge cases, escalations, partial answers).
 2. **Run Local Evaluation**:
    ```bash
    python .agents/skills/cxas-insights/scripts/run_scorecard_eval.py \
      --template scorecards/my_scorecard.yaml \
-     --goldens golden_dataset.json \
+     --calibration-set qa_calibration_set.json \
      --output eval_report.json
    ```
 3. **Analyze Discrepancies**:
    - If the model chose `no` instead of `yes`, did the model overlook a subtle phrasing? Add synonyms or acceptable phrasing to `answerInstructions`.
    - If the model chose `yes` instead of `no`, was the rubric too lenient? Add negative examples or stricter conditions.
+
