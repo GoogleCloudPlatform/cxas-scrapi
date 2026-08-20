@@ -99,7 +99,15 @@ def app_pull(args: argparse.Namespace) -> None:
         if "/" in version_id:
             app_version = version_id
         else:
-            app_version = f"{app_name}/versions/{version_id}"
+            try:
+                versions_client = Versions(app_name=app_name)
+                versions_map = versions_client.get_versions_map(reverse=True)
+                if version_id in versions_map:
+                    app_version = versions_map[version_id]
+                else:
+                    app_version = f"{app_name}/versions/{version_id}"
+            except Exception:
+                app_version = f"{app_name}/versions/{version_id}"
 
     _app_pull(
         apps_client=apps_client,
