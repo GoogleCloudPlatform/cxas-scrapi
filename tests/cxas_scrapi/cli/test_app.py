@@ -198,7 +198,9 @@ def test_app_pull(
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
 
+@mock.patch("cxas_scrapi.cli.app.Versions")
 def test_app_pull_with_bare_version_id(
+    mock_versions_cls: typing.Any,
     mock_apps_client: typing.Any,
     mock_common_get_project_id: typing.Any,
     mock_common_get_location: typing.Any,
@@ -216,6 +218,11 @@ def test_app_pull_with_bare_version_id(
     mock_app.name = "projects/test-project/locations/us/apps/123"
     mock_apps_client.get_app_by_display_name.return_value = mock_app
 
+    mock_v_inst = mock_versions_cls.return_value
+    mock_v_inst.resolve_version_name.return_value = (
+        "projects/test-project/locations/us/apps/123/versions/0.0.3"
+    )
+
     dummy_zip_io = io.BytesIO()
     with zipfile.ZipFile(dummy_zip_io, "w") as zf:
         zf.writestr("app.yaml", "name: Test App")
@@ -229,6 +236,7 @@ def test_app_pull_with_bare_version_id(
 
     cli_app.app_pull(args)
 
+    mock_v_inst.resolve_version_name.assert_called_once_with("0.0.3")
     mock_apps_client.export_app.assert_called_once_with(
         app_name="projects/test-project/locations/us/apps/123",
         app_version="projects/test-project/locations/us/apps/123/versions/0.0.3",
@@ -256,11 +264,10 @@ def test_app_pull_with_version_display_name(
     mock_app.name = "projects/test-project/locations/us/apps/123"
     mock_apps_client.get_app_by_display_name.return_value = mock_app
 
-    # Mock Versions mapping display name -> resource name
     mock_v_inst = mock_versions_cls.return_value
-    mock_v_inst.get_versions_map.return_value = {
-        "v1.0": "projects/test-project/locations/us/apps/123/versions/001"
-    }
+    mock_v_inst.resolve_version_name.return_value = (
+        "projects/test-project/locations/us/apps/123/versions/001"
+    )
 
     dummy_zip_io = io.BytesIO()
     with zipfile.ZipFile(dummy_zip_io, "w") as zf:
@@ -275,6 +282,7 @@ def test_app_pull_with_version_display_name(
 
     cli_app.app_pull(args)
 
+    mock_v_inst.resolve_version_name.assert_called_once_with("v1.0")
     mock_apps_client.export_app.assert_called_once_with(
         app_name="projects/test-project/locations/us/apps/123",
         app_version="projects/test-project/locations/us/apps/123/versions/001",
@@ -282,7 +290,9 @@ def test_app_pull_with_version_display_name(
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
 
+@mock.patch("cxas_scrapi.cli.app.Versions")
 def test_app_pull_with_full_version_resource_name(
+    mock_versions_cls: typing.Any,
     mock_apps_client: typing.Any,
     mock_common_get_project_id: typing.Any,
     mock_common_get_location: typing.Any,
@@ -297,6 +307,9 @@ def test_app_pull_with_full_version_resource_name(
         version_id=full_version,
     )
 
+    mock_v_inst = mock_versions_cls.return_value
+    mock_v_inst.resolve_version_name.return_value = full_version
+
     dummy_zip_io = io.BytesIO()
     with zipfile.ZipFile(dummy_zip_io, "w") as zf:
         zf.writestr("app.yaml", "name: Test App")
@@ -310,6 +323,7 @@ def test_app_pull_with_full_version_resource_name(
 
     cli_app.app_pull(args)
 
+    mock_v_inst.resolve_version_name.assert_called_once_with(full_version)
     mock_apps_client.export_app.assert_called_once_with(
         app_name="projects/test-project/locations/us/apps/123",
         app_version=full_version,

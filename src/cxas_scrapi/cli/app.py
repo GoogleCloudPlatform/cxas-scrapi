@@ -96,18 +96,12 @@ def app_pull(args: argparse.Namespace) -> None:
     version_id = getattr(args, "version_id", None)
     app_version = None
     if version_id:
-        if "/" in version_id:
-            app_version = version_id
-        else:
-            try:
-                versions_client = Versions(app_name=app_name)
-                versions_map = versions_client.get_versions_map(reverse=True)
-                if version_id in versions_map:
-                    app_version = versions_map[version_id]
-                else:
-                    app_version = f"{app_name}/versions/{version_id}"
-            except Exception:
-                app_version = f"{app_name}/versions/{version_id}"
+        versions_client = Versions(app_name=app_name)
+        try:
+            app_version = versions_client.resolve_version_name(version_id)
+        except ValueError as e:
+            print(f"Error resolving version: {e}")
+            sys.exit(1)
 
     _app_pull(
         apps_client=apps_client,

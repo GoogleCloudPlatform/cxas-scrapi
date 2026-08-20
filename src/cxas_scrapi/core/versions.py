@@ -97,11 +97,81 @@ class Versions(Apps):
         # Assuming generated client supports create_app_version natively
         return self.client.create_app_version(request=request)
 
+    def get_version_by_display_name(
+        self, display_name: str
+    ) -> types.AppVersion | None:
+        """Gets a specific version by its human-readable display name.
+
+        Args:
+            display_name: The human-readable display name of the version.
+
+        Returns:
+            The AppVersion resource object, or None if not found.
+        """
+        versions = self.list_versions()
+        for version in versions:
+            if version.display_name == display_name:
+                return version
+        return None
+
+    def resolve_version_name(self, version_identifier: str) -> str:
+        """Resolves a version identifier to canonical AppVersion resource name.
+
+        Matches against the app's live version list using full resource name,
+        version ID, or version display name.
+
+        Args:
+            version_identifier: Full resource name, version ID, or display name.
+
+        Returns:
+            The fully-qualified version resource name.
+
+        Raises:
+            ValueError: If the version cannot be found on the app.
+        """
+        if not version_identifier:
+            raise ValueError("Version identifier must not be empty.")
+
+        versions = self.list_versions()
+        if not versions:
+            raise ValueError(f"No versions found for app '{self.app_name}'.")
+
+        # 1. Match full resource name (e.g. projects/.../versions/001)
+        for v in versions:
+            if v.name == version_identifier:
+                return v.name
+
+        # 2. Match version ID (the last segment of the resource name)
+        for v in versions:
+            v_id = v.name.split("/")[-1] if v.name else ""
+            if v_id == version_identifier:
+                return v.name
+
+        # 3. Match display name (e.g. "v1.0")
+        for v in versions:
+            if v.display_name == version_identifier:
+                return v.name
+
+        available = [
+            f"'{v.name.split('/')[-1]}' ({v.display_name})"
+            if v.display_name
+            else f"'{v.name.split('/')[-1]}'"
+            for v in versions
+        ]
+        avail_str = ", ".join(available)
+        raise ValueError(
+            f"Version '{version_identifier}' not found for app "
+            f"'{self.app_name}'. Available versions: {avail_str}"
+        )
+
     def get_version(self, version_id: str) -> types.AppVersion:
         """Gets a specific version."""
-        request = types.GetAppVersionRequest(
-            name=f"{self.app_name}/versions/{version_id}"
+        name = (
+            version_id
+            if "projects/" in version_id
+            else f"{self.app_name}/versions/{version_id}"
         )
+        request = types.GetAppVersionRequest(name=name)
         return self.client.get_app_version(request=request)
 
     def delete_version(self, version_id: str) -> None:
