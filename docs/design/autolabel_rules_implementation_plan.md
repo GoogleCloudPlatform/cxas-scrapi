@@ -1,7 +1,7 @@
 # Implementation Plan: `cxas-autolabel-rules` Skill & Tooling
 
 * **Status:** Proposed
-* **Design Doc Reference:** [`docs/design/autolabel_rules_skill_design.md`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/docs/design/autolabel_rules_skill_design.md)
+* **Design Doc Reference:** `docs/design/autolabel_rules_skill_design.md`
 * **Target Package:** `cxas-scrapi`
 
 ---
@@ -17,9 +17,9 @@ graph LR
     P3 --> P4[Phase 4: Verification & Docs]
 ```
 
-1. **Phase 1 — Core SDK Operations**: Implement native `AutoLabelingRule` CRUD REST methods in [`src/cxas_scrapi/core/insights.py`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/src/cxas_scrapi/core/insights.py).
+1. **Phase 1 — Core SDK Operations**: Implement native `AutoLabelingRule` CRUD REST methods in `src/cxas_scrapi/core/insights.py`.
 2. **Phase 2 — Declarative YAML Engine & CLI**: Implement YAML serialization, diffing logic, and `cxas insights autolabel` CLI subcommands.
-3. **Phase 3 — AI Skill Scaffolding**: Create [`.agents/skills/cxas-autolabel-rules/`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/.agents/skills/cxas-autolabel-rules) with `SKILL.md`, CEL cookbook references, schema validation, and sync scripts.
+3. **Phase 3 — AI Skill Scaffolding**: Create `.agents/skills/cxas-autolabel-rules/` with `SKILL.md`, CEL cookbook references, schema validation, and sync scripts.
 4. **Phase 4 — Verification, Quality & Documentation**: Unit test coverage, formatters (`mdformat`, `ruff`), brand checks, and `AGENTS.md` registration.
 
 ---
@@ -28,8 +28,8 @@ graph LR
 
 ### Phase 1: Core SDK Extensions
 **Files to touch:**
-* [`src/cxas_scrapi/core/insights.py`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/src/cxas_scrapi/core/insights.py)
-* [`tests/cxas_scrapi/core/test_insights.py`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/tests/cxas_scrapi/core/test_insights.py)
+* `src/cxas_scrapi/core/insights.py`
+* `tests/cxas_scrapi/core/test_insights.py`
 
 **Tasks:**
 - [ ] Implement `list_autolabeling_rules(parent, page_size)` using `_list_paginated`.
@@ -43,9 +43,9 @@ graph LR
 
 ### Phase 2: Declarative YAML Engine & CLI
 **Files to touch:**
-* New module: [`src/cxas_scrapi/core/autolabel_sync.py`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/src/cxas_scrapi/core/autolabel_sync.py)
-* [`src/cxas_scrapi/cli/insights_cli.py`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/src/cxas_scrapi/cli/insights_cli.py)
-* [`tests/cxas_scrapi/cli/test_insights_cli.py`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/tests/cxas_scrapi/cli/test_insights_cli.py)
+* New module: `src/cxas_scrapi/core/autolabel_sync.py`
+* `src/cxas_scrapi/cli/insights_cli.py`
+* `tests/cxas_scrapi/cli/test_insights_cli.py`
 
 **Tasks:**
 - [ ] Build YAML serializer / parser:
@@ -65,10 +65,10 @@ graph LR
 
 ### Phase 3: AI Skill Scaffolding (`cxas-autolabel-rules`)
 **Files to create:**
-* [`.agents/skills/cxas-autolabel-rules/SKILL.md`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/.agents/skills/cxas-autolabel-rules/SKILL.md)
-* [`.agents/skills/cxas-autolabel-rules/scripts/sync_rules.py`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/.agents/skills/cxas-autolabel-rules/scripts/sync_rules.py)
-* [`.agents/skills/cxas-autolabel-rules/references/cel_cookbook.md`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/.agents/skills/cxas-autolabel-rules/references/cel_cookbook.md)
-* [`.agents/skills/cxas-autolabel-rules/references/schema.json`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/.agents/skills/cxas-autolabel-rules/references/schema.json)
+* `.agents/skills/cxas-autolabel-rules/SKILL.md`
+* `.agents/skills/cxas-autolabel-rules/scripts/sync_rules.py`
+* `.agents/skills/cxas-autolabel-rules/references/cel_cookbook.md`
+* `.agents/skills/cxas-autolabel-rules/references/schema.json`
 
 **Tasks:**
 - [ ] Author `SKILL.md` with:
@@ -87,8 +87,8 @@ graph LR
 
 ### Phase 4: Verification, Linting & Documentation
 **Files to touch:**
-* [`AGENTS.md`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/AGENTS.md)
-* [`docs/guides/skills/index.md`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/docs/guides/skills/index.md) (or mkdocs)
+* `AGENTS.md`
+* `docs/guides/skills/index.md` (or mkdocs)
 
 **Tasks:**
 - [ ] Register `cxas-autolabel-rules` in `AGENTS.md` under `## Available Skills`.

@@ -2,11 +2,11 @@
 
 * **Author:** Gokulnath Babu & Jetski
 * **Status:** Draft / Proposed
-* **Repository Path:** [`docs/design/autolabel_rules_skill_design.md`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/docs/design/autolabel_rules_skill_design.md)
+* **Repository Path:** `docs/design/autolabel_rules_skill_design.md`
 * **Target Components:** 
-  * Skill: [`.agents/skills/cxas-autolabel-rules/`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/.agents/skills/cxas-autolabel-rules)
-  * Core SDK: [`src/cxas_scrapi/core/insights.py`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/src/cxas_scrapi/core/insights.py)
-  * CLI: [`src/cxas_scrapi/cli/insights_cli.py`](file:///usr/local/google/home/gokulnathbabu/cxas-scrapi/src/cxas_scrapi/cli/insights_cli.py)
+  * Skill: `.agents/skills/cxas-autolabel-rules/`
+  * Core SDK: `src/cxas_scrapi/core/insights.py`
+  * CLI: `src/cxas_scrapi/cli/insights_cli.py`
 * **Reference Documentation:** [Customer Experience Insights Autolabeling Rules](https://docs.cloud.google.com/gemini-enterprise-cx/insights/autolabel-correlation-rules)
 
 ---
