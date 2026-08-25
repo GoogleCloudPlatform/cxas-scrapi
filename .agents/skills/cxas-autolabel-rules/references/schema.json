@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CCAI Insights AutoLabeling Rules Configuration",
+  "description": "Declarative YAML/JSON schema for configuring CCAI Insights AutoLabeling Rules.",
+  "type": "object",
+  "required": [
+    "version",
+    "project_id",
+    "location",
+    "autolabeling_rules"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Configuration schema version, e.g. '1.0'."
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Google Cloud Project ID hosting CCAI Insights."
+    },
+    "location": {
+      "type": "string",
+      "description": "Google Cloud Region / Location (e.g. 'us-central1', 'global')."
+    },
+    "autolabeling_rules": {
+      "type": "array",
+      "description": "List of autolabeling rule configurations.",
+      "items": {
+        "type": "object",
+        "required": [
+          "rule_id",
+          "label_key",
+          "conditions"
+        ],
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "description": "Unique identifier for the autolabeling rule."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Human-readable display name for the rule."
+          },
+          "label_key": {
+            "type": "string",
+            "description": "The metadata label key to write to conversation labels."
+          },
+          "label_key_type": {
+            "type": "string",
+            "enum": [
+              "LABEL_KEY_TYPE_UNSPECIFIED",
+              "LABEL_KEY_TYPE_CUSTOM",
+              "LABEL_KEY_TYPE_SYSTEM"
+            ],
+            "default": "LABEL_KEY_TYPE_CUSTOM",
+            "description": "The category type of the label key."
+          },
+          "active": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether the autolabeling rule is actively evaluated on incoming conversations."
+          },
+          "conditions": {
+            "type": "array",
+            "description": "Ordered list of CEL conditions evaluated top-to-bottom. The last condition should be '' for default fallback.",
+            "items": {
+              "type": "object",
+              "required": [
+                "condition",
+                "value"
+              ],
+              "properties": {
+                "condition": {
+                  "type": "string",
+                  "description": "CEL boolean expression (empty string '' matches anything as default fallback)."
+                },
+                "value": {
+                  "type": "string",
+                  "description": "CEL literal or expression representing the label value to set."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
