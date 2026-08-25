@@ -24,9 +24,8 @@ In CEL expressions, the root `conversation` variable provides direct access to t
 ```mermaid
 graph TD
     Conv["conversation (Conversation)"]
-    Conv --> Meta["Top-level Metadata<br/>agentId, languageCode, medium,<br/>duration, turnCount, startTime, labels"]
+    Conv --> Meta["Top-level Metadata<br/>agentId, languageCode, medium,<br/>duration, turnCount, startTime"]
     Conv --> CallMeta["callMetadata<br/>customerChannel, agentChannel"]
-    Conv --> QualMeta["qualityMetadata<br/>agentInfo, customerSatisfactionRating, waitDuration"]
     Conv --> Runtime["runtimeInputs / dialogflowRuntimeMetadata<br/>sessionParams, entrySubagentId, subagents, flows"]
     Conv --> Annotations["runtimeAnnotations[]<br/>cesTurnAnnotation.messages[].chunks[]<br/>(toolResponse, toolCall, text)"]
     Conv --> Transcript["transcript<br/>transcriptSegments[]<br/>(text, role, sentiment, words, channelTag)"]
@@ -35,38 +34,26 @@ graph TD
 
 ### 2.1 Top-Level Attributes
 
-| Field Path                  | Type                  | Description                                                   | CEL Example                                                              |
-| --------------------------- | --------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `conversation.name`         | `string`              | Full resource name (`projects/*/locations/*/conversations/*`) | `conversation.name.endsWith('/conv123')`                                 |
-| `conversation.agentId`      | `string`              | Identifier of virtual agent / CXAS app / bot                  | `conversation.agentId == 'billing_bot'`                                  |
-| `conversation.languageCode` | `string`              | BCP-47 language tag                                           | `conversation.languageCode == 'es-US'`                                   |
-| `conversation.medium`       | `enum` / `int`        | `1` (PHONE_CALL), `2` (CHAT), `0` (UNSPECIFIED)               | `conversation.medium == 1`                                               |
-| `conversation.duration`     | `duration` / `int`    | Total interaction duration (seconds)                          | `conversation.duration > 300`                                            |
-| `conversation.turnCount`    | `int`                 | Total number of conversational turns                          | `conversation.turnCount >= 10`                                           |
-| `conversation.startTime`    | `timestamp`           | Start timestamp of interaction                                | `conversation.startTime > timestamp('2026-01-01T00:00:00Z')`             |
-| `conversation.labels`       | `map[string, string]` | Key-value labels attached to conversation                     | `'tier' in conversation.labels && conversation.labels['tier'] == 'gold'` |
+| Field Path                  | Type               | Description                                                   | CEL Example                                                  |
+| --------------------------- | ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| `conversation.name`         | `string`           | Full resource name (`projects/*/locations/*/conversations/*`) | `conversation.name.endsWith('/conv123')`                     |
+| `conversation.agentId`      | `string`           | Identifier of virtual agent / CXAS app / bot                  | `conversation.agentId == 'billing_bot'`                      |
+| `conversation.languageCode` | `string`           | BCP-47 language tag                                           | `conversation.languageCode == 'es-US'`                       |
+| `conversation.medium`       | `enum` / `int`     | `1` (PHONE_CALL), `2` (CHAT), `0` (UNSPECIFIED)               | `conversation.medium == 1`                                   |
+| `conversation.duration`     | `duration` / `int` | Total interaction duration (seconds)                          | `conversation.duration > 300`                                |
+| `conversation.turnCount`    | `int`              | Total number of conversational turns                          | `conversation.turnCount >= 10`                               |
+| `conversation.startTime`    | `timestamp`        | Start timestamp of interaction                                | `conversation.startTime > timestamp('2026-01-01T00:00:00Z')` |
 
 ______________________________________________________________________
 
-### 2.2 Call & Quality Metadata (`callMetadata`, `qualityMetadata`)
+### 2.2 Call Metadata (`callMetadata`)
 
-Defined by `message CallMetadata` and `message QualityMetadata`:
+Defined by `message CallMetadata`:
 
-| Field Path                                                | Type              | Description                                         | CEL Example                                                                 |
-| --------------------------------------------------------- | ----------------- | --------------------------------------------------- | --------------------------------------------------------------------------- |
-| `conversation.callMetadata.customerChannel`               | `int`             | Audio channel tag for customer (typically 1 or 2)   | `conversation.callMetadata.customerChannel == 1`                            |
-| `conversation.callMetadata.agentChannel`                  | `int`             | Audio channel tag for agent                         | `conversation.callMetadata.agentChannel == 2`                               |
-| `conversation.qualityMetadata.customerSatisfactionRating` | `int`             | Customer satisfaction rating (CSAT score, e.g. 1-5) | `conversation.qualityMetadata.customerSatisfactionRating <= 2`              |
-| `conversation.qualityMetadata.waitDuration`               | `duration`        | Time spent waiting in queue before agent answered   | `conversation.qualityMetadata.waitDuration > 120`                           |
-| `conversation.qualityMetadata.menuPath`                   | `string`          | IVR menu path traversed by caller                   | `conversation.qualityMetadata.menuPath.contains('Billing')`                 |
-| `conversation.qualityMetadata.agentInfo`                  | `list[AgentInfo]` | List of human or virtual agents handling the call   | `conversation.qualityMetadata.agentInfo.exists(a, a.team == 'escalations')` |
-
-Each `AgentInfo` contains:
-
-- `agentId`: `string`
-- `displayName`: `string`
-- `team`: `string`
-- `teams`: `list[string]`
+| Field Path                                  | Type  | Description                                       | CEL Example                                      |
+| ------------------------------------------- | ----- | ------------------------------------------------- | ------------------------------------------------ |
+| `conversation.callMetadata.customerChannel` | `int` | Audio channel tag for customer (typically 1 or 2) | `conversation.callMetadata.customerChannel == 1` |
+| `conversation.callMetadata.agentChannel`    | `int` | Audio channel tag for agent                       | `conversation.callMetadata.agentChannel == 2`    |
 
 ______________________________________________________________________
 
@@ -349,7 +336,7 @@ ______________________________________________________________________
 
 ## 5. Authoring Best Practices
 
-1. **camelCase Identifiers**: Always use camelCase for protobuf message fields (e.g. `conversation.agentId`, `conversation.turnCount`, `conversation.startTime`, `conversation.qualityMetadata.waitDuration`).
+1. **camelCase Identifiers**: Always use camelCase for protobuf message fields (e.g. `conversation.agentId`, `conversation.turnCount`, `conversation.startTime`, `conversation.callMetadata.customerChannel`).
 1. **Defensive Guards**: Guard nested lookups with `'key' in object` (e.g., `'transcript' in conversation && 'transcriptSegments' in conversation.transcript`).
 1. **Regex Word Boundaries**: When using `.matches('(?i)...')`, escape backslashes appropriately (use `\\\\b` in string literals or YAML double-quoted strings).
 1. **List Transformation Pipelines**: Chain `.filter().map().flatten().exists()` to cleanly inspect deeply nested arrays like `runtimeAnnotations.cesTurnAnnotation.messages.chunks`.
