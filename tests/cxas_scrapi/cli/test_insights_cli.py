@@ -13,21 +13,29 @@
 # limitations under the License.
 
 import argparse
+import json
 import typing
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import yaml
 
 from cxas_scrapi.cli.insights_cli import (
     handle_add_question,
     handle_analyze_metrics,
+    handle_apply,
     handle_create_analysis_rule,
     handle_create_scorecard,
     handle_create_topic_model,
     handle_delete_autolabel_rule,
+    handle_diff,
     handle_diff_autolabel_rules,
+    handle_eval,
     handle_get_autolabel_rule,
     handle_list_autolabel_rules,
     handle_pull_autolabel_rules,
     handle_push_autolabel_rules,
+    handle_report,
     handle_smoke_test_scorecard,
     populate_insights_parser,
 )
@@ -226,6 +234,158 @@ def test_handle_analyze_metrics(
     handle_analyze_metrics(args)
     mock_inst.aggregate_metrics.assert_called_once()
     assert html_file.read_text() == "<html>Dashboard</html>"
+
+
+@patch("cxas_scrapi.utils.insights_reconciler.InsightsReconciler")
+@patch("cxas_scrapi.utils.insights_utils.InsightsUtils")
+def test_handle_apply(
+    mock_utils_cls: typing.Any,
+    mock_reconciler_cls: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    cfg_file = tmp_path / "config.yaml"
+    with open(cfg_file, "w", encoding="utf-8") as f:
+        yaml.dump(
+            {
+                "project_id": "test-p",
+                "location": "us-central1",
+                "scorecards": [],
+            },
+            f,
+        )
+
+    mock_rec_inst = mock_reconciler_cls.return_value
+    mock_rec_inst.apply.return_value = {"status": "APPLIED"}
+
+    args = argparse.Namespace(
+        config=str(cfg_file),
+        dry_run=False,
+        project_id=None,
+        location=None,
+    )
+    handle_apply(args)
+    mock_rec_inst.apply.assert_called_once_with(str(cfg_file), dry_run=False)
+
+
+@patch("cxas_scrapi.utils.insights_reconciler.InsightsReconciler")
+@patch("cxas_scrapi.utils.insights_utils.InsightsUtils")
+def test_handle_diff(
+    mock_utils_cls: typing.Any,
+    mock_reconciler_cls: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    cfg_file = tmp_path / "config.yaml"
+    with open(cfg_file, "w", encoding="utf-8") as f:
+        yaml.dump(
+            {
+                "project_id": "test-p",
+                "location": "us-central1",
+                "scorecards": [],
+            },
+            f,
+        )
+
+    mock_rec_inst = mock_reconciler_cls.return_value
+    mock_rec_inst.diff.return_value = {"project_id": "test-p", "scorecards": []}
+
+    args = argparse.Namespace(
+        config=str(cfg_file),
+        project_id=None,
+        location=None,
+    )
+    handle_diff(args)
+    mock_rec_inst.diff.assert_called_once_with(str(cfg_file))
+
+
+@patch("cxas_scrapi.utils.scorecard_eval_runner.ScorecardEvalRunner")
+def test_handle_eval(mock_runner_cls: typing.Any, tmp_path: typing.Any) -> None:
+    calib_file = tmp_path / "calibration.json"
+    with open(calib_file, "w", encoding="utf-8") as f:
+        json.dump([{"conversation_id": "c1", "transcript": "text"}], f)
+
+    template_file = tmp_path / "template.yaml"
+    template_file.write_text(
+        "qaScorecard:\n  displayName: Test\nqaQuestions: []\n"
+    )
+
+    mock_report = MagicMock()
+    mock_report.scorecard_display_name = "Test"
+    mock_report.total_conversations = 1
+    mock_report.total_evaluations = 1
+    mock_report.overall_accuracy = 1.0
+    mock_report.question_metrics = {}
+    mock_report.discrepancies = []
+    mock_report.to_dict.return_value = {"overall_accuracy": 1.0}
+
+    mock_runner_inst = mock_runner_cls.return_value
+    mock_runner_inst.evaluate_scorecard_on_calibration_set.return_value = (
+        mock_report
+    )
+
+    out_file = tmp_path / "eval_out.json"
+    args = argparse.Namespace(
+        template=str(template_file),
+        calibration_set=str(calib_file),
+        goldens=str(calib_file),
+        model="gemini-2.5-flash",
+        project_id="test-p",
+        location="global",
+        output=str(out_file),
+    )
+    handle_eval(args)
+    mock_runner_inst.evaluate_scorecard_on_calibration_set.assert_called_once()
+    assert out_file.exists()
+
+
+@patch("cxas_scrapi.utils.metrics_extractor.MetricsExtractor")
+@patch("cxas_scrapi.core.scorecards.Scorecards")
+def test_handle_report(
+    mock_sc_cls: typing.Any,
+    mock_extractor_cls: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    mock_ext_inst = mock_extractor_cls.return_value
+    mock_ext_inst.get_evaluation_results.return_value = pd.DataFrame(
+        [{"conversation_id": "c1", "question_id": "q1", "score": 1.0}]
+    )
+
+    csv_file = tmp_path / "report.csv"
+    args = argparse.Namespace(
+        parent="projects/p/locations/l",
+        filter="turn_count > 2",
+        scorecards="sc1,sc2",
+        output=str(csv_file),
+    )
+    handle_report(args)
+    mock_ext_inst.get_evaluation_results.assert_called_once_with(
+        filter_str="turn_count > 2",
+        scorecard_names=["sc1", "sc2"],
+    )
+    assert csv_file.exists()
+
+
+def test_populate_insights_parser_declarative_and_eval_commands() -> None:
+    parser = argparse.ArgumentParser()
+    populate_insights_parser(parser)
+
+    # apply
+    args = parser.parse_args(["apply", "--config", "insights_config.yaml"])
+    assert args.insights_command == "apply"
+    assert args.config == "insights_config.yaml"
+
+    # diff
+    args = parser.parse_args(["diff", "--config", "insights_config.yaml"])
+    assert args.insights_command == "diff"
+
+    # eval
+    args = parser.parse_args(
+        ["eval", "--template", "t.yaml", "--calibration-set", "calib.json"]
+    )
+    assert args.insights_command == "eval"
+
+    # report
+    args = parser.parse_args(["report", "--parent", "projects/p/locations/l"])
+    assert args.insights_command == "report"
 
 
 def test_populate_insights_parser_autolabel_commands() -> None:

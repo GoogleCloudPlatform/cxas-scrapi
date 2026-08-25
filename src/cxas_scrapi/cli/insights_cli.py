@@ -690,6 +690,192 @@ def handle_analyze_metrics(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def handle_apply(args: argparse.Namespace) -> None:
+    """Handles the 'insights apply' command for declarative reconciliation."""
+    print(f"Declaratively applying Insights configuration from: {args.config}")
+    import json
+
+    import yaml
+
+    from cxas_scrapi.utils.insights_reconciler import InsightsReconciler
+    from cxas_scrapi.utils.insights_utils import InsightsUtils
+
+    # Read config to get default project and location
+    with open(args.config, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    project_id = getattr(args, "project_id", None) or config.get("project_id")
+    location = getattr(args, "location", None) or config.get(
+        "location", "us-central1"
+    )
+
+    if not project_id:
+        print(
+            "Error: project_id must be specified in the config file or via --project_id."
+        )
+        sys.exit(1)
+
+    utils = InsightsUtils(project_id=project_id, location=location)
+    reconciler = InsightsReconciler(insights_utils=utils)
+
+    try:
+        result = reconciler.apply(args.config, dry_run=args.dry_run)
+        print("\n--- Insights Reconciliation Result ---")
+        print(json.dumps(result, indent=2, default=str))
+    except Exception as e:
+        print(f"Failed to apply configuration: {e}")
+        sys.exit(1)
+
+
+def handle_diff(args: argparse.Namespace) -> None:
+    """Handles the 'insights diff' command."""
+    print(f"Calculating diff for Insights configuration: {args.config}")
+    import json
+
+    import yaml
+
+    from cxas_scrapi.utils.insights_reconciler import InsightsReconciler
+    from cxas_scrapi.utils.insights_utils import InsightsUtils
+
+    with open(args.config, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    project_id = getattr(args, "project_id", None) or config.get("project_id")
+    location = getattr(args, "location", None) or config.get(
+        "location", "us-central1"
+    )
+
+    if not project_id:
+        print(
+            "Error: project_id must be specified in the config file or via --project_id."
+        )
+        sys.exit(1)
+
+    utils = InsightsUtils(project_id=project_id, location=location)
+    reconciler = InsightsReconciler(insights_utils=utils)
+
+    try:
+        diff_result = reconciler.diff(args.config)
+        print("\n--- Insights Declarative Diff ---")
+        print(json.dumps(diff_result, indent=2, default=str))
+    except Exception as e:
+        print(f"Failed to calculate diff: {e}")
+        sys.exit(1)
+
+
+def handle_eval(args: argparse.Namespace) -> None:
+    """Handles the 'insights eval' command for rapid scorecard prompt testing."""
+    calib_set = getattr(args, "calibration_set", None) or getattr(
+        args, "goldens", None
+    )
+    print(
+        f"Evaluating scorecard template {args.template} against calibration dataset {calib_set}..."
+    )
+    import json
+
+    from cxas_scrapi.utils.scorecard_eval_runner import ScorecardEvalRunner
+
+    try:
+        with open(calib_set, encoding="utf-8") as f:
+            if calib_set.endswith(".json") or calib_set.endswith(".json5"):
+                calibration_cases = json.load(f)
+            else:
+                import yaml
+
+                calibration_cases = yaml.safe_load(f)
+
+        if not isinstance(calibration_cases, list):
+            calibration_cases = [calibration_cases]
+
+        runner = ScorecardEvalRunner(
+            project_id=getattr(args, "project_id", "default-project")
+            or "default-project",
+            location=getattr(args, "location", "global") or "global",
+            model_name=getattr(args, "model", "gemini-2.5-flash")
+            or "gemini-2.5-flash",
+        )
+
+        report = runner.evaluate_scorecard_on_calibration_set(
+            scorecard_template=args.template,
+            calibration_dataset=calibration_cases,
+        )
+
+        print("\n--- Scorecard Evaluation Summary ---")
+        print(f"Scorecard Display Name : {report.scorecard_display_name}")
+        print(f"Conversations Evaluated: {report.total_conversations}")
+        print(f"Total Evaluations      : {report.total_evaluations}")
+        if report.overall_accuracy is not None:
+            print(
+                f"Overall Accuracy       : {report.overall_accuracy * 100:.1f}%"
+            )
+
+        print("\nPer-Question Breakdown:")
+        for q_id, q_m in report.question_metrics.items():
+            acc_str = (
+                f"{q_m['accuracy'] * 100:.1f}%"
+                if q_m["accuracy"] is not None
+                else "N/A"
+            )
+            print(
+                f"  [{q_id}] Accuracy: {acc_str} (Discrepancies: {q_m['discrepancies_count']})"
+            )
+
+        if report.discrepancies:
+            print(f"\n⚠️  Discrepancies Found ({len(report.discrepancies)}):")
+            for d in report.discrepancies[:5]:
+                print(
+                    f"  - Conv '{d.conversation_id}' on '{d.question_id}': Expected '{d.expected_answer}', Predicted '{d.predicted_answer}'"
+                )
+                print(f"    Rationale: {d.rationale}")
+
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump(report.to_dict(), f, indent=2)
+            print(f"\nSaved evaluation report to: {args.output}")
+
+    except Exception as e:
+        print(f"Failed during scorecard evaluation: {e}")
+        sys.exit(1)
+
+
+def handle_report(args: argparse.Namespace) -> None:
+    """Handles the 'insights report' command to export tidy DataFrames."""
+    print(f"Extracting evaluation results from {args.parent}...")
+    from cxas_scrapi.core.scorecards import Scorecards
+    from cxas_scrapi.utils.metrics_extractor import MetricsExtractor
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    scorecards_client = Scorecards(project_id=project_id, location=location)
+    extractor = MetricsExtractor(insights_client=scorecards_client)
+
+    sc_names = (
+        [s.strip() for s in args.scorecards.split(",")]
+        if getattr(args, "scorecards", None)
+        else None
+    )
+
+    try:
+        df = extractor.get_evaluation_results(
+            filter_str=getattr(args, "filter", None),
+            scorecard_names=sc_names,
+        )
+        print(f"\nRetrieved {len(df)} evaluation records.")
+        if not df.empty:
+            print(df.head(10).to_string())
+
+        output_path = getattr(args, "output", None)
+        if output_path:
+            if output_path.endswith(".csv"):
+                df.to_csv(output_path, index=False)
+            elif output_path.endswith(".json"):
+                df.to_json(output_path, orient="records", indent=2)
+            print(f"\nSaved extracted metrics to: {output_path}")
+
+    except Exception as e:
+        print(f"Failed to generate report: {e}")
+        sys.exit(1)
+
+
 def handle_pull_autolabel_rules(args: argparse.Namespace) -> None:
     """Handles the 'insights pull-autolabel-rules' command."""
     from cxas_scrapi.core.autolabel_sync import (
@@ -1240,8 +1426,116 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
         "--json-output", help="Optional output path for JSON metrics report."
     )
     parser_metrics.set_defaults(func=handle_analyze_metrics)
+    # 13. 'apply' subcommand for declarative reconciliation
+    parser_apply = insights_subparsers.add_parser(
+        "apply",
+        help="Declaratively reconcile scorecards, rules, and backfills from a config file.",
+    )
+    parser_apply.add_argument(
+        "--config",
+        required=True,
+        help="Path to the declarative YAML config file (e.g. insights_config.yaml).",
+    )
+    parser_apply.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without modifying live GCP resources.",
+    )
+    parser_apply.add_argument(
+        "--project-id",
+        dest="project_id",
+        help="Optional override for GCP project ID.",
+    )
+    parser_apply.add_argument(
+        "--location",
+        help="Optional override for location (defaults to us-central1).",
+    )
+    parser_apply.set_defaults(func=handle_apply)
 
-    # 13. AutoLabeling Rules subcommands
+    # 14. 'diff' subcommand
+    parser_diff = insights_subparsers.add_parser(
+        "diff",
+        help="Preview diff between local declarative config and live GCP state.",
+    )
+    parser_diff.add_argument(
+        "--config",
+        required=True,
+        help="Path to the declarative YAML config file.",
+    )
+    parser_diff.add_argument(
+        "--project-id",
+        dest="project_id",
+        help="Optional override for GCP project ID.",
+    )
+    parser_diff.add_argument(
+        "--location",
+        help="Optional override for location.",
+    )
+    parser_diff.set_defaults(func=handle_diff)
+
+    # 15. 'eval' subcommand for rapid prompt testing against calibration datasets
+    parser_eval = insights_subparsers.add_parser(
+        "eval",
+        help="Evaluate scorecard question prompts directly against QA calibration conversation datasets.",
+    )
+    parser_eval.add_argument(
+        "--template",
+        required=True,
+        help="Path to local scorecard YAML/JSON template.",
+    )
+    parser_eval.add_argument(
+        "--calibration-set",
+        "--goldens",
+        dest="calibration_set",
+        required=True,
+        help="Path to JSON/YAML file with QA calibration conversation cases.",
+    )
+    parser_eval.add_argument(
+        "--model",
+        default="gemini-2.5-flash",
+        help="Gemini model to use for evaluation (default: gemini-2.5-flash).",
+    )
+    parser_eval.add_argument(
+        "--project-id",
+        dest="project_id",
+        help="GCP Project ID for Vertex AI evaluation.",
+    )
+    parser_eval.add_argument(
+        "--location",
+        default="global",
+        help="Vertex AI location (default: global).",
+    )
+    parser_eval.add_argument(
+        "--output",
+        help="Optional path to save JSON evaluation report.",
+    )
+    parser_eval.set_defaults(func=handle_eval)
+
+    # 16. 'report' subcommand
+    parser_report = insights_subparsers.add_parser(
+        "report",
+        help="Extract and flatten evaluation results into a tidy DataFrame / CSV / JSON.",
+    )
+    parser_report.add_argument(
+        "--parent",
+        required=True,
+        help="Parent resource name (projects/*/locations/*).",
+    )
+    parser_report.add_argument(
+        "--filter",
+        help="Optional CEL conversation filter.",
+    )
+    parser_report.add_argument(
+        "--scorecards",
+        help="Optional comma-separated scorecard names to filter.",
+    )
+    parser_report.add_argument(
+        "--output",
+        help="Output file path (.csv or .json).",
+    )
+    parser_report.set_defaults(func=handle_report)
+
+    # 17. AutoLabeling Rules subcommands
     parser_pull_al = insights_subparsers.add_parser(
         "pull-autolabel-rules",
         help="Export all autolabeling rules from project to a declarative YAML file.",

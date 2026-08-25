@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import time
 import typing
 import uuid
 from typing import Any
@@ -373,10 +374,31 @@ class InsightsUtils:
         parent = parent or self.scorecards_client.parent
         results = []
         annotator_selector = {
+            "runQaAnnotator": True,
             "qaConfig": {
                 "scorecardList": {"qaScorecardRevisions": [scorecard_revision]}
-            }
+            },
         }
+
+        # Ensure revision is READY before running analysis
+        try:
+            r_obj = self.scorecards_client.get_revision(scorecard_revision)
+            state = r_obj.get("state")
+            if state == "EDITABLE":
+                logging.info(
+                    "Tuning revision %s to reach READY state...",
+                    scorecard_revision,
+                )
+                self.scorecards_client.tune_revision(scorecard_revision)
+                state = "TRAINING"
+            deadline = time.time() + 90
+            while state == "TRAINING" and time.time() < deadline:
+                time.sleep(3)
+                r_obj = self.scorecards_client.get_revision(scorecard_revision)
+                state = r_obj.get("state")
+        except Exception as e:
+            logging.debug("Revision state wait notice: %s", e)
+
         for idx, conv in enumerate(conversations):
             conv_name = None
             if isinstance(conv, dict):
@@ -419,17 +441,30 @@ class InsightsUtils:
                 full_conv = self.scorecards_client.get_conversation(
                     conv_name, view="FULL"
                 )
-                qa_answers = full_conv.get("qaAnswers", [])
+                qa_answers = list(full_conv.get("qaAnswers", []))
+                latest_analysis = full_conv.get("latestAnalysis", {})
+                qa_results = (
+                    latest_analysis.get("analysisResult", {})
+                    .get("callAnalysisMetadata", {})
+                    .get("qaScorecardResults", [])
+                )
+                if isinstance(qa_results, list):
+                    qa_answers.extend(qa_results)
+
                 matched_answer = None
-                if isinstance(qa_answers, list):
-                    for ans in qa_answers:
-                        if ans.get("qaScorecardRevision") == scorecard_revision:
-                            matched_answer = ans
-                            break
-                elif isinstance(qa_answers, dict):
-                    matched_answer = qa_answers.get(scorecard_revision) or next(
-                        iter(qa_answers.values()), None
+                for ans in qa_answers:
+                    rev_name = ans.get("qaScorecardRevision") or ans.get(
+                        "scorecardRevision"
                     )
+                    if rev_name == scorecard_revision or (
+                        rev_name
+                        and rev_name.split("/revisions/")[0]
+                        == scorecard_revision.split("/revisions/", maxsplit=1)[
+                            0
+                        ]
+                    ):
+                        matched_answer = ans
+                        break
 
                 results.append(
                     {
@@ -439,6 +474,7 @@ class InsightsUtils:
                         "turn_count": full_conv.get("turnCount"),
                     }
                 )
+
             except Exception as e:
                 results.append(
                     {

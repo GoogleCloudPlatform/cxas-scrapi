@@ -201,10 +201,11 @@ class Insights(Common):
         dry runs)."""
         if not name.startswith("projects/"):
             name = f"{self.parent}/conversations/{name}"
+
         payload = {}
         if annotator_selector:
             payload["annotatorSelector"] = annotator_selector
-        return self._request("POST", f"{name}:analyze", data=payload)
+        return self._request("POST", f"{name}/analyses", data=payload)
 
     def bulk_analyze_conversations(
         self,
