@@ -69,7 +69,7 @@ Refer to the [CEL Cookbook](references/cel_cookbook.md) for full syntax and func
   ```
 - **Turn & Duration Checks**:
   ```cel
-  conversation.duration > 300 && conversation.turn_count >= 10
+  conversation.duration > 300 && conversation.turnCount >= 10
   ```
 
 ______________________________________________________________________
