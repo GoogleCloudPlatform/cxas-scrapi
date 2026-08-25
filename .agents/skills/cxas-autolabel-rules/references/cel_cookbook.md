@@ -10,9 +10,10 @@ Autolabeling rules evaluate incoming conversations in real-time or during batch 
 
 - **Evaluation Order**: Conditions are evaluated sequentially from top to bottom (first-match-wins).
 - **Fallback Rules**: The last condition should always have an empty condition `condition: ""` to act as the default fallback tag.
-- **String Literals**: Values in CEL expressions or return values should be properly quoted (e.g. `'vip_tier'`, `"support"`).
-- **Return Value**: The matched `value` expression is assigned to the conversation's `labels[label_key]`.
+- **String Literals**: Values in CEL expressions or return values should be properly quoted (e.g. `'Yes'`, `'No'`, `'vip_tier'`).
+- **Return Value**: The matched `value` expression is assigned to the conversation's `labels[labelKey]`.
 - **Field Naming Convention**: In CEL expressions, all protobuf fields are accessed using **camelCase** identifiers.
+- **Defensive Property Access**: When traversing nested objects or maps that may be unset on some conversations, use `'fieldName' in object` guards (e.g., `'transcript' in conversation && 'transcriptSegments' in conversation.transcript`).
 
 ______________________________________________________________________
 
@@ -27,6 +28,7 @@ graph TD
     Conv --> CallMeta["callMetadata<br/>customerChannel, agentChannel"]
     Conv --> QualMeta["qualityMetadata<br/>agentInfo, customerSatisfactionRating, waitDuration"]
     Conv --> Runtime["runtimeInputs / dialogflowRuntimeMetadata<br/>sessionParams, entrySubagentId, subagents, flows"]
+    Conv --> Annotations["runtimeAnnotations[]<br/>cesTurnAnnotation.messages[].chunks[]<br/>(toolResponse, toolCall, text)"]
     Conv --> Transcript["transcript<br/>transcriptSegments[]<br/>(text, role, sentiment, words, channelTag)"]
     Conv --> Analysis["latestAnalysis<br/>analysisResult.callAnalysisMetadata<br/>(sentiments, silence, issueModelResult, qaScorecardResults)"]
 ```
@@ -85,36 +87,47 @@ ______________________________________________________________________
 
 Defined by `message Transcript` and `message TranscriptSegment`:
 
-| Field Path                                   | Type                      | Description                                              | CEL Example                                              |
-| -------------------------------------------- | ------------------------- | -------------------------------------------------------- | -------------------------------------------------------- |
-| `conversation.transcript.transcriptSegments` | `list[TranscriptSegment]` | Ordered sequence of conversation turns                   | `conversation.transcript.transcriptSegments.size() > 15` |
-| `segment.text`                               | `string`                  | Transcribed text spoken/typed in turn                    | `segment.text.contains('cancel my account')`             |
-| `segment.confidence`                         | `float`                   | ASR speech-to-text confidence score (0.0 to 1.0)         | `segment.confidence < 0.7`                               |
-| `segment.channelTag`                         | `int`                     | Channel index (1 or 2)                                   | `segment.channelTag == 1`                                |
-| `segment.participant.role`                   | `enum` / `int`            | `1` (HUMAN_AGENT), `2` (AUTOMATED_AGENT), `3` (END_USER) | `segment.participant.role == 3`                          |
-| `segment.participant.userId`                 | `string`                  | Unique identifier for the participant                    | `segment.participant.userId != ''`                       |
-| `segment.sentiment.score`                    | `float`                   | Sentiment score (-1.0 to +1.0)                           | `segment.sentiment.score < -0.5`                         |
-| `segment.sentiment.magnitude`                | `float`                   | Sentiment strength / magnitude (0.0 to +inf)             | `segment.sentiment.magnitude > 2.0`                      |
+| Field Path                                                     | Type                      | Description                                                               | CEL Example                                                                                  |
+| -------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `conversation.transcript.transcriptSegments`                   | `list[TranscriptSegment]` | Ordered sequence of conversation turns                                    | `conversation.transcript.transcriptSegments.size() > 15`                                     |
+| `segment.text`                                                 | `string`                  | Transcribed text spoken/typed in turn                                     | `segment.text.contains('cancel my account')`                                                 |
+| `segment.confidence`                                           | `float`                   | ASR speech-to-text confidence score (0.0 to 1.0)                          | `segment.confidence < 0.7`                                                                   |
+| `segment.channelTag`                                           | `int`                     | Channel index (1 or 2)                                                    | `segment.channelTag == 1`                                                                    |
+| `segment.segmentParticipant.role` / `segment.participant.role` | `enum` / `string` / `int` | `HUMAN_AGENT` (1), `AUTOMATED_AGENT` (2), `END_USER` (3), `ANY_AGENT` (4) | `segment.segmentParticipant.role == 'HUMAN_AGENT' \|\| segment.segmentParticipant.role == 1` |
+| `segment.participant.userId`                                   | `string`                  | Unique identifier for the participant                                     | `segment.participant.userId != ''`                                                           |
+| `segment.sentiment.score`                                      | `float`                   | Sentiment score (-1.0 to +1.0)                                            | `segment.sentiment.score < -0.5`                                                             |
+| `segment.sentiment.magnitude`                                  | `float`                   | Sentiment strength / magnitude (0.0 to +inf)                              | `segment.sentiment.magnitude > 2.0`                                                          |
 
-#### Transcript Segment Traversal Examples:
+______________________________________________________________________
+
+### 2.5 Runtime Annotations & CES Execution Traces (`runtimeAnnotations`)
+
+CCAI Insights captures deep diagnostic traces of agent execution within `conversation.runtimeAnnotations`. Each entry contains `cesTurnAnnotation` detailing the exact message payloads, agent chunk emissions, tool executions, and state transfers:
+
+- **`runtimeAnnotations`**: List of turn annotations.
+- **`cesTurnAnnotation.messages`**: List of messages exchanged during the turn.
+- **`message.chunks`**: List of action chunks emitted by the agent or runtime:
+  - **`toolResponse`**: Results returned from a tool/webhook execution (`displayName`, `response.result`, `name`, `status`).
+  - **`toolCall`**: Invocation request sent to a tool (`displayName`, `parameters`).
+  - **`agentTransfer`**: Routing action transferring between agents (`targetAgent`).
+
+#### CEL Transformation Pipeline for Tool Inspection:
 
 ```cel
-// Check if user uttered specific cancellation keywords
-conversation.transcript.transcriptSegments.exists(
-  s, s.participant.role == 3 && (s.text.contains('cancel') || s.text.contains('close account'))
-)
-```
-
-```cel
-// Check if customer had deeply negative sentiment on any turn
-conversation.transcript.transcriptSegments.exists(
-  s, s.participant.role == 3 && s.sentiment.score < -0.6
-)
+'runtimeAnnotations' in conversation &&
+conversation.runtimeAnnotations
+  .filter(a, 'cesTurnAnnotation' in a && 'messages' in a.cesTurnAnnotation)
+  .map(a, a.cesTurnAnnotation.messages)
+  .flatten()
+  .filter(m, 'chunks' in m)
+  .map(m, m.chunks)
+  .flatten()
+  .exists(c, 'toolResponse' in c && c.toolResponse.displayName == 'my_tool')
 ```
 
 ______________________________________________________________________
 
-### 2.5 Analysis Results & QA Scorecards (`latestAnalysis.analysisResult`)
+### 2.6 Analysis Results & QA Scorecards (`latestAnalysis.analysisResult`)
 
 Defined by `message Analysis`, `message AnalysisResult`, and `message CallAnalysisMetadata`:
 
@@ -185,16 +198,140 @@ hasIntent(conversation, "cancel_subscription")
 
 ______________________________________________________________________
 
-## 4. Common Recipes & Complete YAML Examples
+## 4. Production Rule Examples & Recipes
 
-### Recipe 1: Sub-Agent Routing & Containment
+### Example 1: Agent Inappropriate Language Detection (Regex & Role Matching)
+
+Labels conversation as `'Yes'` if the agent uttered inappropriate words (`idiot` or `dumb`), otherwise `'No'`.
+
+#### JSON Configuration:
+
+```json
+{
+  "displayName": "Agent Inappropriate Language Detection",
+  "description": "Labels conversation as Yes if agent used words 'idiot' or 'dumb', otherwise No",
+  "active": true,
+  "labelKeyType": "LABEL_KEY_TYPE_CUSTOM",
+  "labelKey": "AgentInappropriateLanguage",
+  "conditions": [
+    {
+      "condition": "'transcript' in conversation && 'transcriptSegments' in conversation.transcript && conversation.transcript.transcriptSegments.exists(s, 'text' in s && 'segmentParticipant' in s && 'role' in s.segmentParticipant && (s.segmentParticipant.role == 'HUMAN_AGENT' || s.segmentParticipant.role == 'AUTOMATED_AGENT' || s.segmentParticipant.role == 'ANY_AGENT' || s.segmentParticipant.role == 1 || s.segmentParticipant.role == 2 || s.segmentParticipant.role == 4) && s.text.matches('(?i).*\\\\b(idiot|dumb)\\\\b.*'))",
+      "value": "'Yes'"
+    },
+    {
+      "condition": "",
+      "value": "'No'"
+    }
+  ]
+}
+```
+
+#### YAML Declarative Format:
+
+```yaml
+- rule_id: "agent_inappropriate_language"
+  display_name: "Agent Inappropriate Language Detection"
+  label_key: "AgentInappropriateLanguage"
+  label_key_type: "LABEL_KEY_TYPE_CUSTOM"
+  active: true
+  conditions:
+    - condition: "'transcript' in conversation && 'transcriptSegments' in conversation.transcript && conversation.transcript.transcriptSegments.exists(s, 'text' in s && 'segmentParticipant' in s && 'role' in s.segmentParticipant && (s.segmentParticipant.role == 'HUMAN_AGENT' || s.segmentParticipant.role == 'AUTOMATED_AGENT' || s.segmentParticipant.role == 'ANY_AGENT' || s.segmentParticipant.role == 1 || s.segmentParticipant.role == 2 || s.segmentParticipant.role == 4) && s.text.matches('(?i).*\\\\b(idiot|dumb)\\\\b.*'))"
+      value: "'Yes'"
+    - condition: ""
+      value: "'No'"
+```
+
+______________________________________________________________________
+
+### Example 2: Active Flow & Tool Response Inspection
+
+Labels conversation as `'Yes'` if `set_active_flow` tool executed successfully with `RxRefill_Agent` and `refill` value.
+
+#### JSON Configuration:
+
+```json
+{
+  "displayName": "Rx Refill Active Flow Rule",
+  "description": "Labels conversation as Yes if set_active_flow was executed with RxRefill_Agent and refill value",
+  "active": true,
+  "labelKeyType": "LABEL_KEY_TYPE_CUSTOM",
+  "labelKey": "RxRefillActiveFlow",
+  "conditions": [
+    {
+      "condition": "'runtimeAnnotations' in conversation && conversation.runtimeAnnotations.filter(a, 'cesTurnAnnotation' in a && 'messages' in a.cesTurnAnnotation).map(a, a.cesTurnAnnotation.messages).flatten().filter(m, 'chunks' in m).map(m, m.chunks).flatten().exists(c, 'toolResponse' in c && 'displayName' in c.toolResponse && c.toolResponse.displayName == 'set_active_flow' && 'response' in c.toolResponse && 'result' in c.toolResponse.response && 'stored' in c.toolResponse.response.result && (c.toolResponse.response.result.stored == true || c.toolResponse.response.result.stored == 'true') && 'value' in c.toolResponse.response.result && c.toolResponse.response.result.value == 'refill' && (('target_agent' in c.toolResponse.response.result && c.toolResponse.response.result.target_agent == 'RxRefill_Agent') || ('targetAgent' in c.toolResponse.response.result && c.toolResponse.response.result.targetAgent == 'RxRefill_Agent')))",
+      "value": "'Yes'"
+    },
+    {
+      "condition": "",
+      "value": "'No'"
+    }
+  ]
+}
+```
+
+#### YAML Declarative Format:
+
+```yaml
+- rule_id: "rx_refill_active_flow"
+  display_name: "Rx Refill Active Flow Rule"
+  label_key: "RxRefillActiveFlow"
+  label_key_type: "LABEL_KEY_TYPE_CUSTOM"
+  active: true
+  conditions:
+    - condition: "'runtimeAnnotations' in conversation && conversation.runtimeAnnotations.filter(a, 'cesTurnAnnotation' in a && 'messages' in a.cesTurnAnnotation).map(a, a.cesTurnAnnotation.messages).flatten().filter(m, 'chunks' in m).map(m, m.chunks).flatten().exists(c, 'toolResponse' in c && 'displayName' in c.toolResponse && c.toolResponse.displayName == 'set_active_flow' && 'response' in c.toolResponse && 'result' in c.toolResponse.response && 'stored' in c.toolResponse.response.result && (c.toolResponse.response.result.stored == true || c.toolResponse.response.result.stored == 'true') && 'value' in c.toolResponse.response.result && c.toolResponse.response.result.value == 'refill' && (('target_agent' in c.toolResponse.response.result && c.toolResponse.response.result.target_agent == 'RxRefill_Agent') || ('targetAgent' in c.toolResponse.response.result && c.toolResponse.response.result.targetAgent == 'RxRefill_Agent')))"
+      value: "'Yes'"
+    - condition: ""
+      value: "'No'"
+```
+
+______________________________________________________________________
+
+### Example 3: Customer Escalation & Representative Demand Regex
+
+Labels conversation as `'Yes'` if the end-user explicitly demanded to speak with a human agent or supervisor.
+
+```yaml
+- rule_id: "human_escalation_requested"
+  display_name: "Human Escalation Requested"
+  label_key: "HumanEscalationRequested"
+  label_key_type: "LABEL_KEY_TYPE_CUSTOM"
+  active: true
+  conditions:
+    - condition: "'transcript' in conversation && 'transcriptSegments' in conversation.transcript && conversation.transcript.transcriptSegments.exists(s, 'text' in s && 'segmentParticipant' in s && 'role' in s.segmentParticipant && (s.segmentParticipant.role == 'END_USER' || s.segmentParticipant.role == 3) && s.text.matches('(?i).*\\\\b(speak to (a )?human|representative|supervisor|agent|manager|real person)\\\\b.*'))"
+      value: "'Yes'"
+    - condition: ""
+      value: "'No'"
+```
+
+______________________________________________________________________
+
+### Example 4: Tool Execution Failure / Error Detection
+
+Identifies interactions where any tool execution returned an error status or exception code.
+
+```yaml
+- rule_id: "tool_execution_failed"
+  display_name: "Tool Execution Failure Detection"
+  label_key: "ToolFailureDetected"
+  label_key_type: "LABEL_KEY_TYPE_CUSTOM"
+  active: true
+  conditions:
+    - condition: "'runtimeAnnotations' in conversation && conversation.runtimeAnnotations.filter(a, 'cesTurnAnnotation' in a && 'messages' in a.cesTurnAnnotation).map(a, a.cesTurnAnnotation.messages).flatten().filter(m, 'chunks' in m).map(m, m.chunks).flatten().exists(c, 'toolResponse' in c && 'response' in c.toolResponse && (('error' in c.toolResponse.response && c.toolResponse.response.error != '') || ('status' in c.toolResponse.response && c.toolResponse.response.status == 'ERROR')))"
+      value: "'Yes'"
+    - condition: ""
+      value: "'No'"
+```
+
+______________________________________________________________________
+
+### Example 5: Sub-Agent Routing & Containment Classifier
 
 Classifies conversation category based on the sub-agents traversed during the session.
 
 ```yaml
 - rule_id: "agent_domain"
   display_name: "Agent Domain Classifier"
-  label_key: "agent_domain"
+  label_key: "AgentDomain"
   label_key_type: "LABEL_KEY_TYPE_CUSTOM"
   active: true
   conditions:
@@ -210,72 +347,11 @@ Classifies conversation category based on the sub-agents traversed during the se
 
 ______________________________________________________________________
 
-### Recipe 2: Customer Frustration & Escalation Risk
-
-Flags conversations that exhibited negative caller sentiment, high turn count, or poor scorecard score.
-
-```yaml
-- rule_id: "escalation_risk"
-  display_name: "Escalation Risk Detector"
-  label_key: "escalation_risk"
-  active: true
-  conditions:
-    - condition: "hasCallerSentiment(conversation, 'NEGATIVE') && (conversation.turnCount > 12 || conversation.duration > 400)"
-      value: "'high_risk'"
-    - condition: "hasCallerSentiment(conversation, 'NEGATIVE') || conversation.turnCount > 15"
-      value: "'medium_risk'"
-    - condition: ""
-      value: "'low_risk'"
-```
-
-______________________________________________________________________
-
-### Recipe 3: User Authentication Status
-
-Tags whether the caller completed two-factor or PIN authentication during their journey.
-
-```yaml
-- rule_id: "auth_status"
-  display_name: "User Authentication Status"
-  label_key: "auth_status"
-  active: true
-  conditions:
-    - condition: "hasSessionParam(conversation, 'auth_level', '2fa_verified')"
-      value: "'authenticated_2fa'"
-    - condition: "hasSessionParam(conversation, 'auth_level', 'pin_verified')"
-      value: "'authenticated_pin'"
-    - condition: "hasSessionParam(conversation, 'auth_attempted', 'true')"
-      value: "'auth_failed'"
-    - condition: ""
-      value: "'unauthenticated'"
-```
-
-______________________________________________________________________
-
-### Recipe 4: Interaction Complexity (Duration & Silence)
-
-Buckets sessions by duration and excessive dead air/silence.
-
-```yaml
-- rule_id: "interaction_complexity"
-  display_name: "Interaction Complexity Tier"
-  label_key: "complexity"
-  active: true
-  conditions:
-    - condition: "conversation.duration > 600 || conversation.turnCount > 20 || conversation.latestAnalysis.analysisResult.callAnalysisMetadata.silence.silencePercentage > 30.0"
-      value: "'very_complex'"
-    - condition: "conversation.duration > 240 || conversation.turnCount > 8"
-      value: "'moderate'"
-    - condition: ""
-      value: "'simple_quick'"
-```
-
-______________________________________________________________________
-
 ## 5. Authoring Best Practices
 
 1. **camelCase Identifiers**: Always use camelCase for protobuf message fields (e.g. `conversation.agentId`, `conversation.turnCount`, `conversation.startTime`, `conversation.qualityMetadata.waitDuration`).
-1. **Explicit Fallback**: Always ensure the final condition in every rule is `condition: ""` to guarantee deterministic labeling.
-1. **Quoted Values**: Ensure all string literal values in the `value` field are quoted (e.g. `'billing'` instead of `billing`).
-1. **List Quantifiers**: Use `.exists(...)` or `.all(...)` when checking elements within repeated fields such as `transcript.transcriptSegments` or `qaScorecardResults`.
-1. **Test via Dry-Run**: Always review diffs before deploying (`cxas insights diff-autolabel-rules` or `push-autolabel-rules --dry-run`).
+1. **Defensive Guards**: Guard nested lookups with `'key' in object` (e.g., `'transcript' in conversation && 'transcriptSegments' in conversation.transcript`).
+1. **Regex Word Boundaries**: When using `.matches('(?i)...')`, escape backslashes appropriately (use `\\\\b` in string literals or YAML double-quoted strings).
+1. **List Transformation Pipelines**: Chain `.filter().map().flatten().exists()` to cleanly inspect deeply nested arrays like `runtimeAnnotations.cesTurnAnnotation.messages.chunks`.
+1. **Deterministic Fallback**: Always ensure the final condition in every rule is `condition: ""` to guarantee deterministic labeling.
+1. **Test via Dry-Run**: Always preview diffs before deploying (`cxas insights diff-autolabel-rules` or `push-autolabel-rules --dry-run`).
