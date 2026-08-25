@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import argparse
+import json
 import logging
 import sys
 import tempfile
@@ -689,6 +690,193 @@ def handle_analyze_metrics(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def handle_pull_autolabel_rules(args: argparse.Namespace) -> None:
+    """Handles the 'insights pull-autolabel-rules' command."""
+    from cxas_scrapi.core.autolabel_sync import (
+        dump_autolabel_rules_yaml,
+        export_remote_rules_to_yaml_dict,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    client = Insights(project_id=project_id, location=location)
+
+    out_path = (
+        getattr(args, "out", None)
+        or getattr(args, "file", None)
+        or "autolabel_rules.yaml"
+    )
+    print(f"Fetching autolabeling rules from {args.parent}...")
+    try:
+        rules = client.list_autolabeling_rules(parent=args.parent)
+        data = export_remote_rules_to_yaml_dict(rules, project_id, location)
+        dump_autolabel_rules_yaml(data, out_path)
+        print(
+            f"Successfully exported {len(rules)} autolabeling rule(s) to {out_path}"
+        )
+    except Exception as e:
+        print(f"Failed to pull autolabeling rules: {e}")
+        sys.exit(1)
+
+
+def handle_diff_autolabel_rules(args: argparse.Namespace) -> None:
+    """Handles the 'insights diff-autolabel-rules' command."""
+    from cxas_scrapi.core.autolabel_sync import (
+        diff_autolabel_rules,
+        load_autolabel_rules_yaml,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    file_path = getattr(args, "file", None) or "autolabel_rules.yaml"
+    try:
+        data = load_autolabel_rules_yaml(file_path)
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        sys.exit(1)
+
+    parent = getattr(args, "parent", None)
+    if parent:
+        project_id, location = _get_project_and_location_from_parent(parent)
+    else:
+        project_id = data.get("project_id")
+        location = data.get("location")
+        if not project_id or not location:
+            print(
+                "Error: Specify --parent or include project_id and location in YAML."
+            )
+            sys.exit(1)
+        parent = f"projects/{project_id}/locations/{location}"
+
+    client = Insights(project_id=project_id, location=location)
+    print(f"Comparing local rules in '{file_path}' against {parent}...")
+    try:
+        remote_rules = client.list_autolabeling_rules(parent=parent)
+        diff_res = diff_autolabel_rules(data, remote_rules)
+        print(diff_res["report"])
+    except Exception as e:
+        print(f"Failed to diff autolabeling rules: {e}")
+        sys.exit(1)
+
+
+def handle_push_autolabel_rules(args: argparse.Namespace) -> None:
+    """Handles the 'insights push-autolabel-rules' command."""
+    from cxas_scrapi.core.autolabel_sync import (
+        load_autolabel_rules_yaml,
+        sync_autolabel_rules,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    file_path = getattr(args, "file", None) or "autolabel_rules.yaml"
+    try:
+        data = load_autolabel_rules_yaml(file_path)
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        sys.exit(1)
+
+    parent = getattr(args, "parent", None)
+    if parent:
+        project_id, location = _get_project_and_location_from_parent(parent)
+    else:
+        project_id = data.get("project_id")
+        location = data.get("location")
+        if not project_id or not location:
+            print(
+                "Error: Specify --parent or include project_id and location in YAML."
+            )
+            sys.exit(1)
+        parent = f"projects/{project_id}/locations/{location}"
+
+    client = Insights(project_id=project_id, location=location)
+    dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
+
+    action_label = "Dry-run syncing" if dry_run else "Syncing"
+    print(f"{action_label} local rules in '{file_path}' to {parent}...")
+    try:
+        summary = sync_autolabel_rules(
+            client=client,
+            file_path=file_path,
+            parent=parent,
+            force=force,
+            dry_run=dry_run,
+        )
+        if not dry_run:
+            print("\n--- Sync Summary ---")
+            created_str = (
+                ", ".join(summary["created"]) if summary["created"] else "none"
+            )
+            updated_str = (
+                ", ".join(summary["updated"]) if summary["updated"] else "none"
+            )
+            deleted_str = (
+                ", ".join(summary["deleted"]) if summary["deleted"] else "none"
+            )
+            print(f"Created : {len(summary['created'])} ({created_str})")
+            print(f"Updated : {len(summary['updated'])} ({updated_str})")
+            print(f"Deleted : {len(summary['deleted'])} ({deleted_str})")
+            if summary.get("skipped_delete"):
+                print(
+                    f"Skipped Deletions (use --force to delete) : {len(summary['skipped_delete'])}"
+                )
+        else:
+            print(summary["diff_report"])
+    except Exception as e:
+        print(f"Failed to push autolabeling rules: {e}")
+        sys.exit(1)
+
+
+def handle_list_autolabel_rules(args: argparse.Namespace) -> None:
+    """Handles the 'insights list-autolabel-rules' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    client = Insights(project_id=project_id, location=location)
+
+    print(f"Listing autolabeling rules under {args.parent}...")
+    try:
+        rules = client.list_autolabeling_rules(parent=args.parent)
+        print(f"Found {len(rules)} rule(s):")
+        for r in rules:
+            rid = r.get("name", "").split("/")[-1]
+            status = "ACTIVE" if r.get("active", True) else "INACTIVE"
+            print(
+                f" - [{status}] {rid}: '{r.get('displayName', '')}' (Key: {r.get('labelKey')}, Conditions: {len(r.get('conditions', []))})"
+            )
+    except Exception as e:
+        print(f"Failed to list autolabeling rules: {e}")
+        sys.exit(1)
+
+
+def handle_get_autolabel_rule(args: argparse.Namespace) -> None:
+    """Handles the 'insights get-autolabel-rule' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.rule_name)
+    client = Insights(project_id=project_id, location=location)
+
+    try:
+        rule = client.get_autolabeling_rule(args.rule_name)
+        print(json.dumps(rule, indent=2))
+    except Exception as e:
+        print(f"Failed to get autolabeling rule: {e}")
+        sys.exit(1)
+
+
+def handle_delete_autolabel_rule(args: argparse.Namespace) -> None:
+    """Handles the 'insights delete-autolabel-rule' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.rule_name)
+    client = Insights(project_id=project_id, location=location)
+
+    try:
+        client.delete_autolabeling_rule(args.rule_name)
+        print(f"Successfully deleted autolabeling rule: {args.rule_name}")
+    except Exception as e:
+        print(f"Failed to delete autolabeling rule: {e}")
+        sys.exit(1)
+
+
 def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
     """Populates the provided insights parser with its subcommands."""
 
@@ -1052,3 +1240,95 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
         "--json-output", help="Optional output path for JSON metrics report."
     )
     parser_metrics.set_defaults(func=handle_analyze_metrics)
+
+    # 13. AutoLabeling Rules subcommands
+    parser_pull_al = insights_subparsers.add_parser(
+        "pull-autolabel-rules",
+        help="Export all autolabeling rules from project to a declarative YAML file.",
+    )
+    parser_pull_al.add_argument(
+        "--parent",
+        required=True,
+        help="Parent resource name (e.g. projects/*/locations/*).",
+    )
+    parser_pull_al.add_argument(
+        "--out",
+        "--file",
+        dest="out",
+        default="autolabel_rules.yaml",
+        help="Output YAML file path (default: autolabel_rules.yaml).",
+    )
+    parser_pull_al.set_defaults(func=handle_pull_autolabel_rules)
+
+    parser_diff_al = insights_subparsers.add_parser(
+        "diff-autolabel-rules",
+        help="Compare local autolabel_rules.yaml against active rules in GCP.",
+    )
+    parser_diff_al.add_argument(
+        "--file",
+        default="autolabel_rules.yaml",
+        help="Path to local autolabel_rules.yaml (default: autolabel_rules.yaml).",
+    )
+    parser_diff_al.add_argument(
+        "--parent",
+        help="Optional parent resource name override (e.g. projects/*/locations/*).",
+    )
+    parser_diff_al.set_defaults(func=handle_diff_autolabel_rules)
+
+    parser_push_al = insights_subparsers.add_parser(
+        "push-autolabel-rules",
+        help="Deploy and sync local autolabel_rules.yaml to GCP project.",
+    )
+    parser_push_al.add_argument(
+        "--file",
+        default="autolabel_rules.yaml",
+        help="Path to local autolabel_rules.yaml (default: autolabel_rules.yaml).",
+    )
+    parser_push_al.add_argument(
+        "--parent",
+        help="Optional parent resource name override (e.g. projects/*/locations/*).",
+    )
+    parser_push_al.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without creating, updating, or deleting remote rules.",
+    )
+    parser_push_al.add_argument(
+        "--force",
+        action="store_true",
+        help="Delete remote rules that are missing from local YAML.",
+    )
+    parser_push_al.set_defaults(func=handle_push_autolabel_rules)
+
+    parser_list_al = insights_subparsers.add_parser(
+        "list-autolabel-rules",
+        help="List autolabeling rules under a parent project/location.",
+    )
+    parser_list_al.add_argument(
+        "--parent",
+        required=True,
+        help="Parent resource name (e.g. projects/*/locations/*).",
+    )
+    parser_list_al.set_defaults(func=handle_list_autolabel_rules)
+
+    parser_get_al = insights_subparsers.add_parser(
+        "get-autolabel-rule",
+        help="Get full details of a specific autolabeling rule.",
+    )
+    parser_get_al.add_argument(
+        "--rule-name",
+        required=True,
+        help="Full resource name of the autolabeling rule.",
+    )
+    parser_get_al.set_defaults(func=handle_get_autolabel_rule)
+
+    parser_del_al = insights_subparsers.add_parser(
+        "delete-autolabel-rule",
+        help="Delete an autolabeling rule by resource name.",
+    )
+    parser_del_al.add_argument(
+        "--rule-name",
+        required=True,
+        help="Full resource name of the autolabeling rule to delete.",
+    )
+    parser_del_al.set_defaults(func=handle_delete_autolabel_rule)
