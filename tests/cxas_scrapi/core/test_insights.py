@@ -169,3 +169,155 @@ def test_insights_request_retry_on_failure(
 
     assert res == {"name": "test-resource"}
     assert mock_make_request.call_count == 3
+
+
+@patch("requests.Session.request")
+def test_list_autolabeling_rules(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
+    """Test Insights.list_autolabeling_rules."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "autoLabelingRules": [
+            {
+                "name": "projects/p/locations/l/autoLabelingRules/r1",
+                "displayName": "Rule 1",
+            }
+        ],
+        "nextPageToken": None,
+    }
+    mock_request.return_value = mock_response
+
+    client = Insights(project_id="p", location="l")
+    rules = client.list_autolabeling_rules()
+
+    assert len(rules) == 1
+    assert rules[0]["displayName"] == "Rule 1"
+    mock_request.assert_called_once()
+    called_args = mock_request.call_args
+    assert called_args[1]["method"] == "GET"
+    assert (
+        called_args[1]["url"]
+        == "https://l-contactcenterinsights.googleapis.com/v1/projects/p/locations/l/autoLabelingRules"
+    )
+
+
+@patch("requests.Session.request")
+def test_get_autolabeling_rule(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
+    """Test Insights.get_autolabeling_rule."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "name": "projects/p/locations/l/autoLabelingRules/r1",
+        "displayName": "Rule 1",
+    }
+    mock_request.return_value = mock_response
+
+    client = Insights(project_id="p", location="l")
+
+    # With relative ID
+    res1 = client.get_autolabeling_rule("r1")
+    assert res1["displayName"] == "Rule 1"
+    assert (
+        mock_request.call_args[1]["url"]
+        == "https://l-contactcenterinsights.googleapis.com/v1/projects/p/locations/l/autoLabelingRules/r1"
+    )
+
+    # With full resource name
+    res2 = client.get_autolabeling_rule(
+        "projects/p/locations/l/autoLabelingRules/r1"
+    )
+    assert res2["displayName"] == "Rule 1"
+
+
+@patch("requests.Session.request")
+def test_create_autolabeling_rule(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
+    """Test Insights.create_autolabeling_rule."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "name": "projects/p/locations/l/autoLabelingRules/r1",
+        "displayName": "Rule 1",
+    }
+    mock_request.return_value = mock_response
+
+    client = Insights(project_id="p", location="l")
+    payload = {
+        "displayName": "Rule 1",
+        "labelKey": "category",
+        "conditions": [{"condition": "", "value": "'default'"}],
+    }
+    rule = client.create_autolabeling_rule(payload, auto_labeling_rule_id="r1")
+
+    assert rule["name"] == "projects/p/locations/l/autoLabelingRules/r1"
+    mock_request.assert_called_once()
+    called_args = mock_request.call_args
+    assert called_args[1]["method"] == "POST"
+    assert (
+        called_args[1]["url"]
+        == "https://l-contactcenterinsights.googleapis.com/v1/projects/p/locations/l/autoLabelingRules"
+    )
+    assert called_args[1]["params"] == {"autoLabelingRuleId": "r1"}
+    assert called_args[1]["json"]["labelKey"] == "category"
+
+
+@patch("requests.Session.request")
+def test_update_autolabeling_rule(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
+    """Test Insights.update_autolabeling_rule."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "name": "projects/p/locations/l/autoLabelingRules/r1",
+        "displayName": "Updated Rule",
+    }
+    mock_request.return_value = mock_response
+
+    client = Insights(project_id="p", location="l")
+    payload = {"displayName": "Updated Rule"}
+
+    # With string mask
+    res1 = client.update_autolabeling_rule(
+        "r1", payload, update_mask="displayName"
+    )
+    assert res1["displayName"] == "Updated Rule"
+    assert mock_request.call_args[1]["params"] == {"updateMask": "displayName"}
+
+    # With list mask
+    res2 = client.update_autolabeling_rule(
+        "projects/p/locations/l/autoLabelingRules/r1",
+        payload,
+        update_mask=["displayName", "active"],
+    )
+    assert res2["displayName"] == "Updated Rule"
+    assert mock_request.call_args[1]["params"] == {
+        "updateMask": "displayName,active"
+    }
+
+
+@patch("requests.Session.request")
+def test_delete_autolabeling_rule(
+    mock_request: typing.Any, mock_google_auth: typing.Any
+) -> None:
+    """Test Insights.delete_autolabeling_rule."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {}
+    mock_request.return_value = mock_response
+
+    client = Insights(project_id="p", location="l")
+    client.delete_autolabeling_rule("r1")
+
+    mock_request.assert_called_once()
+    called_args = mock_request.call_args
+    assert called_args[1]["method"] == "DELETE"
+    assert (
+        called_args[1]["url"]
+        == "https://l-contactcenterinsights.googleapis.com/v1/projects/p/locations/l/autoLabelingRules/r1"
+    )
