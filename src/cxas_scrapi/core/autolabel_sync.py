@@ -116,13 +116,14 @@ def yaml_rule_to_api_payload(
     """
     rule_id = (
         rule_dict.get("rule_id")
-        or rule_dict.get("label_key")
-        or rule_dict.get("labelKey")
         or (
             rule_dict.get("name", "").split("/")[-1]
             if rule_dict.get("name")
-            else "rule"
+            else None
         )
+        or rule_dict.get("label_key")
+        or rule_dict.get("labelKey")
+        or "rule"
     )
 
     display_name = (
