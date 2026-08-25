@@ -376,3 +376,65 @@ class Insights(Common):
         if not name.startswith("projects/"):
             name = f"{self.parent}/analysisRules/{name}"
         self._request("DELETE", name)
+
+    # --- AutoLabeling Rules Operations ---
+
+    def list_autolabeling_rules(
+        self, parent: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Lists autolabeling rules in the specified parent."""
+        parent = parent or self.parent
+        return self._list_paginated(
+            f"{parent}/autoLabelingRules", "autoLabelingRules"
+        )
+
+    def get_autolabeling_rule(self, name: str) -> dict[str, Any]:
+        """Gets an autolabeling rule by name or ID."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/autoLabelingRules/{name}"
+        return self._request("GET", name)
+
+    def create_autolabeling_rule(
+        self,
+        auto_labeling_rule: dict[str, Any],
+        auto_labeling_rule_id: str | None = None,
+        parent: str | None = None,
+    ) -> dict[str, Any]:
+        """Creates a new autolabeling rule."""
+        parent = parent or self.parent
+        params = (
+            {"autoLabelingRuleId": auto_labeling_rule_id}
+            if auto_labeling_rule_id
+            else None
+        )
+        return self._request(
+            "POST",
+            f"{parent}/autoLabelingRules",
+            data=auto_labeling_rule,
+            params=params,
+        )
+
+    def update_autolabeling_rule(
+        self,
+        name: str,
+        auto_labeling_rule: dict[str, Any],
+        update_mask: str | list[str] = "*",
+    ) -> dict[str, Any]:
+        """Updates an autolabeling rule."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/autoLabelingRules/{name}"
+        mask_str = (
+            ",".join(update_mask)
+            if isinstance(update_mask, (list, tuple))
+            else update_mask
+        )
+        params = {"updateMask": mask_str}
+        return self._request(
+            "PATCH", name, data=auto_labeling_rule, params=params
+        )
+
+    def delete_autolabeling_rule(self, name: str) -> None:
+        """Deletes an autolabeling rule."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/autoLabelingRules/{name}"
+        self._request("DELETE", name)

@@ -17,6 +17,7 @@ import json
 import typing
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import yaml
 
 from cxas_scrapi.cli.insights_cli import (
@@ -26,11 +27,19 @@ from cxas_scrapi.cli.insights_cli import (
     handle_create_analysis_rule,
     handle_create_scorecard,
     handle_create_topic_model,
+    handle_delete_autolabel_rule,
     handle_diff,
+    handle_diff_autolabel_rules,
     handle_eval,
+    handle_get_autolabel_rule,
+    handle_list_autolabel_rules,
+    handle_pull_autolabel_rules,
+    handle_push_autolabel_rules,
+    handle_report,
     handle_smoke_test_scorecard,
     populate_insights_parser,
 )
+from cxas_scrapi.core.autolabel_sync import dump_autolabel_rules_yaml
 
 
 def test_populate_insights_parser() -> None:
@@ -290,8 +299,8 @@ def test_handle_diff(
 
 @patch("cxas_scrapi.utils.scorecard_eval_runner.ScorecardEvalRunner")
 def test_handle_eval(mock_runner_cls: typing.Any, tmp_path: typing.Any) -> None:
-    goldens_file = tmp_path / "goldens.json"
-    with open(goldens_file, "w", encoding="utf-8") as f:
+    calib_file = tmp_path / "calibration.json"
+    with open(calib_file, "w", encoding="utf-8") as f:
         json.dump([{"conversation_id": "c1", "transcript": "text"}], f)
 
     template_file = tmp_path / "template.yaml"
@@ -309,17 +318,255 @@ def test_handle_eval(mock_runner_cls: typing.Any, tmp_path: typing.Any) -> None:
     mock_report.to_dict.return_value = {"overall_accuracy": 1.0}
 
     mock_runner_inst = mock_runner_cls.return_value
-    mock_runner_inst.evaluate_scorecard_on_goldens.return_value = mock_report
+    mock_runner_inst.evaluate_scorecard_on_calibration_set.return_value = (
+        mock_report
+    )
 
     out_file = tmp_path / "eval_out.json"
     args = argparse.Namespace(
         template=str(template_file),
-        goldens=str(goldens_file),
+        calibration_set=str(calib_file),
+        goldens=str(calib_file),
         model="gemini-2.5-flash",
         project_id="test-p",
         location="global",
         output=str(out_file),
     )
     handle_eval(args)
-    mock_runner_inst.evaluate_scorecard_on_goldens.assert_called_once()
+    mock_runner_inst.evaluate_scorecard_on_calibration_set.assert_called_once()
     assert out_file.exists()
+
+
+@patch("cxas_scrapi.utils.metrics_extractor.MetricsExtractor")
+@patch("cxas_scrapi.core.scorecards.Scorecards")
+def test_handle_report(
+    mock_sc_cls: typing.Any,
+    mock_extractor_cls: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    mock_ext_inst = mock_extractor_cls.return_value
+    mock_ext_inst.get_evaluation_results.return_value = pd.DataFrame(
+        [{"conversation_id": "c1", "question_id": "q1", "score": 1.0}]
+    )
+
+    csv_file = tmp_path / "report.csv"
+    args = argparse.Namespace(
+        parent="projects/p/locations/l",
+        filter="turn_count > 2",
+        scorecards="sc1,sc2",
+        output=str(csv_file),
+    )
+    handle_report(args)
+    mock_ext_inst.get_evaluation_results.assert_called_once_with(
+        filter_str="turn_count > 2",
+        scorecard_names=["sc1", "sc2"],
+    )
+    assert csv_file.exists()
+
+
+def test_populate_insights_parser_declarative_and_eval_commands() -> None:
+    parser = argparse.ArgumentParser()
+    populate_insights_parser(parser)
+
+    # apply
+    args = parser.parse_args(["apply", "--config", "insights_config.yaml"])
+    assert args.insights_command == "apply"
+    assert args.config == "insights_config.yaml"
+
+    # diff
+    args = parser.parse_args(["diff", "--config", "insights_config.yaml"])
+    assert args.insights_command == "diff"
+
+    # eval
+    args = parser.parse_args(
+        ["eval", "--template", "t.yaml", "--calibration-set", "calib.json"]
+    )
+    assert args.insights_command == "eval"
+
+    # report
+    args = parser.parse_args(["report", "--parent", "projects/p/locations/l"])
+    assert args.insights_command == "report"
+
+
+def test_populate_insights_parser_autolabel_commands() -> None:
+    parser = argparse.ArgumentParser()
+    populate_insights_parser(parser)
+
+    # pull-autolabel-rules
+    args = parser.parse_args(
+        [
+            "pull-autolabel-rules",
+            "--parent",
+            "projects/p/locations/l",
+            "--out",
+            "rules.yaml",
+        ]
+    )
+    assert args.insights_command == "pull-autolabel-rules"
+    assert args.out == "rules.yaml"
+
+    # diff-autolabel-rules
+    args = parser.parse_args(["diff-autolabel-rules", "--file", "rules.yaml"])
+    assert args.insights_command == "diff-autolabel-rules"
+
+    # push-autolabel-rules
+    args = parser.parse_args(
+        ["push-autolabel-rules", "--file", "rules.yaml", "--dry-run", "--force"]
+    )
+    assert args.insights_command == "push-autolabel-rules"
+    assert args.dry_run is True
+    assert args.force is True
+
+    # list-autolabel-rules
+    args = parser.parse_args(
+        ["list-autolabel-rules", "--parent", "projects/p/locations/l"]
+    )
+    assert args.insights_command == "list-autolabel-rules"
+
+    # get-autolabel-rule
+    args = parser.parse_args(
+        [
+            "get-autolabel-rule",
+            "--rule-name",
+            "projects/p/locations/l/autoLabelingRules/r1",
+        ]
+    )
+    assert args.insights_command == "get-autolabel-rule"
+
+    # delete-autolabel-rule
+    args = parser.parse_args(
+        [
+            "delete-autolabel-rule",
+            "--rule-name",
+            "projects/p/locations/l/autoLabelingRules/r1",
+        ]
+    )
+    assert args.insights_command == "delete-autolabel-rule"
+
+
+@patch("cxas_scrapi.core.insights.Insights")
+def test_handle_pull_autolabel_rules(
+    mock_insights_cls: typing.Any, tmp_path: typing.Any
+) -> None:
+    mock_client = mock_insights_cls.return_value
+    mock_client.list_autolabeling_rules.return_value = [
+        {
+            "name": "projects/p/locations/l/autoLabelingRules/r1",
+            "displayName": "Rule 1",
+            "labelKey": "k1",
+            "conditions": [],
+        }
+    ]
+
+    out_file = tmp_path / "pulled_rules.yaml"
+    args = argparse.Namespace(
+        parent="projects/p/locations/l",
+        out=str(out_file),
+    )
+    handle_pull_autolabel_rules(args)
+    assert out_file.exists()
+    assert "Rule 1" in out_file.read_text()
+
+
+@patch("cxas_scrapi.core.insights.Insights")
+def test_handle_diff_autolabel_rules(
+    mock_insights_cls: typing.Any, tmp_path: typing.Any
+) -> None:
+    mock_client = mock_insights_cls.return_value
+    mock_client.list_autolabeling_rules.return_value = []
+
+    file_path = tmp_path / "rules.yaml"
+    dump_autolabel_rules_yaml(
+        {
+            "version": "1.0",
+            "project_id": "p",
+            "location": "l",
+            "autolabeling_rules": [
+                {
+                    "rule_id": "r1",
+                    "label_key": "k",
+                    "conditions": [{"condition": "", "value": "'v'"}],
+                }
+            ],
+        },
+        file_path,
+    )
+
+    args = argparse.Namespace(
+        file=str(file_path),
+        parent=None,
+    )
+    handle_diff_autolabel_rules(args)
+    mock_client.list_autolabeling_rules.assert_called_once()
+
+
+@patch("cxas_scrapi.core.insights.Insights")
+def test_handle_push_autolabel_rules(
+    mock_insights_cls: typing.Any, tmp_path: typing.Any
+) -> None:
+    mock_client = mock_insights_cls.return_value
+    mock_client.list_autolabeling_rules.return_value = []
+
+    file_path = tmp_path / "rules.yaml"
+    dump_autolabel_rules_yaml(
+        {
+            "version": "1.0",
+            "project_id": "p",
+            "location": "l",
+            "autolabeling_rules": [
+                {
+                    "rule_id": "r1",
+                    "label_key": "k",
+                    "conditions": [{"condition": "", "value": "'v'"}],
+                }
+            ],
+        },
+        file_path,
+    )
+
+    args = argparse.Namespace(
+        file=str(file_path),
+        parent="projects/p/locations/l",
+        dry_run=False,
+        force=False,
+    )
+    handle_push_autolabel_rules(args)
+    mock_client.create_autolabeling_rule.assert_called_once()
+
+
+@patch("cxas_scrapi.core.insights.Insights")
+def test_handle_list_and_get_and_delete_autolabel(
+    mock_insights_cls: typing.Any,
+) -> None:
+    mock_client = mock_insights_cls.return_value
+    mock_client.list_autolabeling_rules.return_value = [
+        {
+            "name": "projects/p/locations/l/autoLabelingRules/r1",
+            "displayName": "R1",
+        }
+    ]
+    mock_client.get_autolabeling_rule.return_value = {
+        "name": "projects/p/locations/l/autoLabelingRules/r1"
+    }
+
+    # list
+    handle_list_autolabel_rules(
+        argparse.Namespace(parent="projects/p/locations/l")
+    )
+    mock_client.list_autolabeling_rules.assert_called_once()
+
+    # get
+    handle_get_autolabel_rule(
+        argparse.Namespace(
+            rule_name="projects/p/locations/l/autoLabelingRules/r1"
+        )
+    )
+    mock_client.get_autolabeling_rule.assert_called_once()
+
+    # delete
+    handle_delete_autolabel_rule(
+        argparse.Namespace(
+            rule_name="projects/p/locations/l/autoLabelingRules/r1"
+        )
+    )
+    mock_client.delete_autolabeling_rule.assert_called_once()
