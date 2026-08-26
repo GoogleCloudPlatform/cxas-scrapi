@@ -1063,6 +1063,193 @@ def handle_delete_autolabel_rule(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def handle_pull_dashboards(args: argparse.Namespace) -> None:
+    """Handles the 'insights pull-dashboards' command."""
+    from cxas_scrapi.core.dashboard_sync import (
+        dump_dashboards_yaml,
+        export_remote_dashboards_to_yaml_dict,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    client = Insights(project_id=project_id, location=location)
+
+    out_file = getattr(args, "out", None) or "dashboards.yaml"
+    print(f"Fetching configurable dashboards from {args.parent}...")
+    try:
+        remote_dashboards = client.list_dashboards(parent=args.parent)
+        print(f"Found {len(remote_dashboards)} remote dashboard(s).")
+        yaml_data = export_remote_dashboards_to_yaml_dict(
+            remote_dashboards, project_id=project_id, location=location
+        )
+        dump_dashboards_yaml(yaml_data, out_file)
+        print(
+            f"Successfully exported {len(yaml_data.get('dashboards', []))} custom dashboard(s) to {out_file}"
+        )
+    except Exception as e:
+        print(f"Failed to pull dashboards: {e}")
+        sys.exit(1)
+
+
+def handle_diff_dashboards(args: argparse.Namespace) -> None:
+    """Handles the 'insights diff-dashboards' command."""
+    from cxas_scrapi.core.dashboard_sync import (
+        diff_dashboards,
+        load_dashboards_yaml,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    file_path = getattr(args, "file", None) or "dashboards.yaml"
+    try:
+        data = load_dashboards_yaml(file_path)
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        sys.exit(1)
+
+    parent = getattr(args, "parent", None)
+    if parent:
+        project_id, location = _get_project_and_location_from_parent(parent)
+    else:
+        project_id = data.get("project_id")
+        location = data.get("location")
+        if not project_id or not location:
+            print(
+                "Error: Specify --parent or include project_id and location in YAML."
+            )
+            sys.exit(1)
+        parent = f"projects/{project_id}/locations/{location}"
+
+    client = Insights(project_id=project_id, location=location)
+    print(f"Comparing local dashboards in '{file_path}' against {parent}...")
+    try:
+        remote_dashboards = client.list_dashboards(parent=parent)
+        diff_res = diff_dashboards(data, remote_dashboards)
+        print(diff_res["report"])
+    except Exception as e:
+        print(f"Failed to diff dashboards: {e}")
+        sys.exit(1)
+
+
+def handle_push_dashboards(args: argparse.Namespace) -> None:
+    """Handles the 'insights push-dashboards' command."""
+    from cxas_scrapi.core.dashboard_sync import (
+        load_dashboards_yaml,
+        sync_dashboards,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    file_path = getattr(args, "file", None) or "dashboards.yaml"
+    try:
+        data = load_dashboards_yaml(file_path)
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        sys.exit(1)
+
+    parent = getattr(args, "parent", None)
+    if parent:
+        project_id, location = _get_project_and_location_from_parent(parent)
+    else:
+        project_id = data.get("project_id")
+        location = data.get("location")
+        if not project_id or not location:
+            print(
+                "Error: Specify --parent or include project_id and location in YAML."
+            )
+            sys.exit(1)
+        parent = f"projects/{project_id}/locations/{location}"
+
+    client = Insights(project_id=project_id, location=location)
+    dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
+
+    action_label = "Dry-run syncing" if dry_run else "Syncing"
+    print(f"{action_label} local dashboards in '{file_path}' to {parent}...")
+    try:
+        summary = sync_dashboards(
+            client=client,
+            file_path=file_path,
+            parent=parent,
+            force=force,
+            dry_run=dry_run,
+        )
+        if not dry_run:
+            print("\n--- Sync Summary ---")
+            created_str = (
+                ", ".join(summary["created"]) if summary["created"] else "none"
+            )
+            updated_str = (
+                ", ".join(summary["updated"]) if summary["updated"] else "none"
+            )
+            deleted_str = (
+                ", ".join(summary["deleted"]) if summary["deleted"] else "none"
+            )
+            print(f"Created : {len(summary['created'])} ({created_str})")
+            print(f"Updated : {len(summary['updated'])} ({updated_str})")
+            print(f"Deleted : {len(summary['deleted'])} ({deleted_str})")
+            if summary.get("skipped_delete"):
+                print(
+                    f"Skipped Deletions (use --force to delete) : {len(summary['skipped_delete'])}"
+                )
+    except Exception as e:
+        print(f"Failed to push dashboards: {e}")
+        sys.exit(1)
+
+
+def handle_list_dashboards(args: argparse.Namespace) -> None:
+    """Handles the 'insights list-dashboards' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    client = Insights(project_id=project_id, location=location)
+
+    print(f"Listing dashboards under {args.parent}...")
+    try:
+        dashboards = client.list_dashboards(parent=args.parent)
+        print(f"Found {len(dashboards)} dashboard(s):")
+        for d in dashboards:
+            did = d.get("name", "").split("/")[-1]
+            read_only = "SYSTEM_READ_ONLY" if d.get("readOnly", False) else "CUSTOM"
+            num_tabs = len(
+                d.get("rootContainer", {}).get("widgets", [])
+            )
+            print(
+                f" - [{read_only}] {did}: '{d.get('displayName', '')}' (Tabs: {num_tabs})"
+            )
+    except Exception as e:
+        print(f"Failed to list dashboards: {e}")
+        sys.exit(1)
+
+
+def handle_get_dashboard(args: argparse.Namespace) -> None:
+    """Handles the 'insights get-dashboard' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.dashboard_name)
+    client = Insights(project_id=project_id, location=location)
+
+    try:
+        dashboard = client.get_dashboard(args.dashboard_name)
+        print(json.dumps(dashboard, indent=2))
+    except Exception as e:
+        print(f"Failed to get dashboard: {e}")
+        sys.exit(1)
+
+
+def handle_delete_dashboard(args: argparse.Namespace) -> None:
+    """Handles the 'insights delete-dashboard' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.dashboard_name)
+    client = Insights(project_id=project_id, location=location)
+
+    try:
+        client.delete_dashboard(args.dashboard_name)
+        print(f"Successfully deleted dashboard: {args.dashboard_name}")
+    except Exception as e:
+        print(f"Failed to delete dashboard: {e}")
+        sys.exit(1)
+
+
 def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
     """Populates the provided insights parser with its subcommands."""
 
@@ -1626,3 +1813,95 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
         help="Full resource name of the autolabeling rule to delete.",
     )
     parser_del_al.set_defaults(func=handle_delete_autolabel_rule)
+
+    # 14. Configurable Dashboard subcommands
+    parser_pull_dash = insights_subparsers.add_parser(
+        "pull-dashboards",
+        help="Export all custom configurable dashboards from project to a declarative YAML file.",
+    )
+    parser_pull_dash.add_argument(
+        "--parent",
+        required=True,
+        help="Parent resource name (e.g. projects/*/locations/*).",
+    )
+    parser_pull_dash.add_argument(
+        "--out",
+        "--file",
+        dest="out",
+        default="dashboards.yaml",
+        help="Output YAML file path (default: dashboards.yaml).",
+    )
+    parser_pull_dash.set_defaults(func=handle_pull_dashboards)
+
+    parser_diff_dash = insights_subparsers.add_parser(
+        "diff-dashboards",
+        help="Compare local dashboards.yaml against active dashboards in GCP.",
+    )
+    parser_diff_dash.add_argument(
+        "--file",
+        default="dashboards.yaml",
+        help="Path to local dashboards.yaml (default: dashboards.yaml).",
+    )
+    parser_diff_dash.add_argument(
+        "--parent",
+        help="Optional parent resource name override (e.g. projects/*/locations/*).",
+    )
+    parser_diff_dash.set_defaults(func=handle_diff_dashboards)
+
+    parser_push_dash = insights_subparsers.add_parser(
+        "push-dashboards",
+        help="Deploy and sync local dashboards.yaml to GCP project.",
+    )
+    parser_push_dash.add_argument(
+        "--file",
+        default="dashboards.yaml",
+        help="Path to local dashboards.yaml (default: dashboards.yaml).",
+    )
+    parser_push_dash.add_argument(
+        "--parent",
+        help="Optional parent resource name override (e.g. projects/*/locations/*).",
+    )
+    parser_push_dash.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without creating, updating, or deleting remote dashboards.",
+    )
+    parser_push_dash.add_argument(
+        "--force",
+        action="store_true",
+        help="Delete remote custom dashboards that are missing from local YAML.",
+    )
+    parser_push_dash.set_defaults(func=handle_push_dashboards)
+
+    parser_list_dash = insights_subparsers.add_parser(
+        "list-dashboards",
+        help="List configurable dashboards under a parent project/location.",
+    )
+    parser_list_dash.add_argument(
+        "--parent",
+        required=True,
+        help="Parent resource name (e.g. projects/*/locations/*).",
+    )
+    parser_list_dash.set_defaults(func=handle_list_dashboards)
+
+    parser_get_dash = insights_subparsers.add_parser(
+        "get-dashboard",
+        help="Get full details of a specific configurable dashboard.",
+    )
+    parser_get_dash.add_argument(
+        "--dashboard-name",
+        required=True,
+        help="Full resource name of the dashboard.",
+    )
+    parser_get_dash.set_defaults(func=handle_get_dashboard)
+
+    parser_del_dash = insights_subparsers.add_parser(
+        "delete-dashboard",
+        help="Delete a configurable dashboard by resource name.",
+    )
+    parser_del_dash.add_argument(
+        "--dashboard-name",
+        required=True,
+        help="Full resource name of the dashboard to delete.",
+    )
+    parser_del_dash.set_defaults(func=handle_delete_dashboard)

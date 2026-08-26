@@ -28,13 +28,19 @@ from cxas_scrapi.cli.insights_cli import (
     handle_create_scorecard,
     handle_create_topic_model,
     handle_delete_autolabel_rule,
+    handle_delete_dashboard,
     handle_diff,
     handle_diff_autolabel_rules,
+    handle_diff_dashboards,
     handle_eval,
     handle_get_autolabel_rule,
+    handle_get_dashboard,
     handle_list_autolabel_rules,
+    handle_list_dashboards,
     handle_pull_autolabel_rules,
+    handle_pull_dashboards,
     handle_push_autolabel_rules,
+    handle_push_dashboards,
     handle_report,
     handle_smoke_test_scorecard,
     populate_insights_parser,
@@ -570,3 +576,196 @@ def test_handle_list_and_get_and_delete_autolabel(
         )
     )
     mock_client.delete_autolabeling_rule.assert_called_once()
+
+
+# --- Dashboard CLI Tests ---
+
+
+def test_dashboard_cli_subparsers() -> None:
+    """Test dashboard CLI subparsers argument parsing."""
+    parser = argparse.ArgumentParser()
+    populate_insights_parser(parser)
+
+    # 1. pull-dashboards
+    args_pull = parser.parse_args(
+        ["pull-dashboards", "--parent", "projects/p/locations/l", "--out", "my_dashboards.yaml"]
+    )
+    assert args_pull.insights_command == "pull-dashboards"
+    assert args_pull.parent == "projects/p/locations/l"
+    assert args_pull.out == "my_dashboards.yaml"
+
+    # 2. diff-dashboards
+    args_diff = parser.parse_args(
+        ["diff-dashboards", "--file", "custom.yaml", "--parent", "projects/p/locations/l"]
+    )
+    assert args_diff.insights_command == "diff-dashboards"
+    assert args_diff.file == "custom.yaml"
+
+    # 3. push-dashboards
+    args_push = parser.parse_args(
+        ["push-dashboards", "--dry-run", "--force"]
+    )
+    assert args_push.insights_command == "push-dashboards"
+    assert args_push.dry_run is True
+    assert args_push.force is True
+
+    # 4. list-dashboards
+    args_list = parser.parse_args(
+        ["list-dashboards", "--parent", "projects/p/locations/l"]
+    )
+    assert args_list.insights_command == "list-dashboards"
+
+    # 5. get-dashboard
+    args_get = parser.parse_args(
+        ["get-dashboard", "--dashboard-name", "projects/p/locations/l/dashboards/d1"]
+    )
+    assert args_get.insights_command == "get-dashboard"
+    assert args_get.dashboard_name == "projects/p/locations/l/dashboards/d1"
+
+    # 6. delete-dashboard
+    args_del = parser.parse_args(
+        ["delete-dashboard", "--dashboard-name", "projects/p/locations/l/dashboards/d1"]
+    )
+    assert args_del.insights_command == "delete-dashboard"
+
+
+@patch("cxas_scrapi.core.insights.Insights")
+def test_handle_pull_dashboards(
+    mock_insights_cls: typing.Any, tmp_path: typing.Any
+) -> None:
+    """Test handle_pull_dashboards command."""
+    mock_client = mock_insights_cls.return_value
+    mock_client.list_dashboards.return_value = [
+        {
+            "name": "projects/p/locations/l/dashboards/d1",
+            "displayName": "Dashboard 1",
+            "rootContainer": {"widgets": []},
+            "readOnly": False,
+        }
+    ]
+
+    out_file = tmp_path / "pulled_dashboards.yaml"
+    args = argparse.Namespace(
+        parent="projects/p/locations/l",
+        out=str(out_file),
+    )
+    handle_pull_dashboards(args)
+    assert out_file.exists()
+    mock_client.list_dashboards.assert_called_once_with(
+        parent="projects/p/locations/l"
+    )
+
+
+@patch("cxas_scrapi.core.insights.Insights")
+def test_handle_diff_dashboards(
+    mock_insights_cls: typing.Any, tmp_path: typing.Any
+) -> None:
+    """Test handle_diff_dashboards command."""
+    from cxas_scrapi.core.dashboard_sync import dump_dashboards_yaml
+
+    mock_client = mock_insights_cls.return_value
+    mock_client.list_dashboards.return_value = []
+
+    file_path = tmp_path / "dashboards.yaml"
+    dump_dashboards_yaml(
+        {
+            "version": "1.0",
+            "project_id": "p",
+            "location": "l",
+            "dashboards": [
+                {
+                    "dashboard_id": "d1",
+                    "display_name": "Dash 1",
+                    "root_container": {"widgets": [{"container": {"display_name": "T"}}]},
+                }
+            ],
+        },
+        file_path,
+    )
+
+    args = argparse.Namespace(
+        file=str(file_path),
+        parent="projects/p/locations/l",
+    )
+    handle_diff_dashboards(args)
+    mock_client.list_dashboards.assert_called_once()
+
+
+@patch("cxas_scrapi.core.insights.Insights")
+def test_handle_push_dashboards(
+    mock_insights_cls: typing.Any, tmp_path: typing.Any
+) -> None:
+    """Test handle_push_dashboards command."""
+    from cxas_scrapi.core.dashboard_sync import dump_dashboards_yaml
+
+    mock_client = mock_insights_cls.return_value
+    mock_client.list_dashboards.return_value = []
+
+    file_path = tmp_path / "dashboards.yaml"
+    dump_dashboards_yaml(
+        {
+            "version": "1.0",
+            "project_id": "p",
+            "location": "l",
+            "dashboards": [
+                {
+                    "dashboard_id": "d1",
+                    "display_name": "Dash 1",
+                    "root_container": {"widgets": [{"container": {"display_name": "T"}}]},
+                }
+            ],
+        },
+        file_path,
+    )
+
+    args = argparse.Namespace(
+        file=str(file_path),
+        parent="projects/p/locations/l",
+        dry_run=False,
+        force=False,
+    )
+    handle_push_dashboards(args)
+    mock_client.create_dashboard.assert_called_once()
+
+
+@patch("cxas_scrapi.core.insights.Insights")
+def test_handle_list_and_get_and_delete_dashboards(
+    mock_insights_cls: typing.Any,
+) -> None:
+    """Test list, get, and delete dashboard CLI commands."""
+    mock_client = mock_insights_cls.return_value
+    mock_client.list_dashboards.return_value = [
+        {
+            "name": "projects/p/locations/l/dashboards/d1",
+            "displayName": "D1",
+            "readOnly": False,
+            "rootContainer": {"widgets": []},
+        }
+    ]
+    mock_client.get_dashboard.return_value = {
+        "name": "projects/p/locations/l/dashboards/d1",
+        "displayName": "D1",
+    }
+
+    # list
+    handle_list_dashboards(
+        argparse.Namespace(parent="projects/p/locations/l")
+    )
+    mock_client.list_dashboards.assert_called_once()
+
+    # get
+    handle_get_dashboard(
+        argparse.Namespace(
+            dashboard_name="projects/p/locations/l/dashboards/d1"
+        )
+    )
+    mock_client.get_dashboard.assert_called_once()
+
+    # delete
+    handle_delete_dashboard(
+        argparse.Namespace(
+            dashboard_name="projects/p/locations/l/dashboards/d1"
+        )
+    )
+    mock_client.delete_dashboard.assert_called_once()
+
