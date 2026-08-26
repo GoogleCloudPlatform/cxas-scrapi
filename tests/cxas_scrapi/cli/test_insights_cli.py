@@ -46,6 +46,7 @@ from cxas_scrapi.cli.insights_cli import (
     populate_insights_parser,
 )
 from cxas_scrapi.core.autolabel_sync import dump_autolabel_rules_yaml
+from cxas_scrapi.core.dashboard_sync import dump_dashboards_yaml
 
 
 def test_populate_insights_parser() -> None:
@@ -661,8 +662,6 @@ def test_handle_diff_dashboards(
     mock_insights_cls: typing.Any, tmp_path: typing.Any
 ) -> None:
     """Test handle_diff_dashboards command."""
-    from cxas_scrapi.core.dashboard_sync import dump_dashboards_yaml
-
     mock_client = mock_insights_cls.return_value
     mock_client.list_dashboards.return_value = []
 
@@ -696,8 +695,6 @@ def test_handle_push_dashboards(
     mock_insights_cls: typing.Any, tmp_path: typing.Any
 ) -> None:
     """Test handle_push_dashboards command."""
-    from cxas_scrapi.core.dashboard_sync import dump_dashboards_yaml
-
     mock_client = mock_insights_cls.return_value
     mock_client.list_dashboards.return_value = []
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Helper script to sync declarative configurable dashboards with CCAI Insights."""
+"""Sync declarative configurable dashboards with CCAI Insights."""
 
 # Copyright 2026 Google LLC
 #
@@ -30,7 +30,7 @@ from cxas_scrapi.core.insights import Insights
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sync declarative configurable dashboards with CCAI Insights."
+        description="Sync configurable dashboards with CCAI Insights."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -93,9 +93,8 @@ def main() -> None:
             dashboards, args.project_id, args.location
         )
         dump_dashboards_yaml(data, args.out)
-        print(
-            f"Successfully exported {len(data.get('dashboards', []))} custom dashboards to {args.out}"
-        )
+        count = len(data.get("dashboards", []))
+        print(f"Successfully exported {count} custom dashboards to {args.out}")
 
     elif args.command == "diff":
         data = load_dashboards_yaml(args.file)
@@ -133,10 +132,10 @@ def main() -> None:
             print(f"Updated : {len(summary['updated'])}")
             print(f"Deleted : {len(summary['deleted'])}")
             if summary.get("skipped_delete"):
-                print(
-                    f"Skipped Deletions (use --force): {len(summary['skipped_delete'])}"
-                )
+                skip_count = len(summary["skipped_delete"])
+                print(f"Skipped Deletions (use --force): {skip_count}")
 
 
 if __name__ == "__main__":
     main()
+

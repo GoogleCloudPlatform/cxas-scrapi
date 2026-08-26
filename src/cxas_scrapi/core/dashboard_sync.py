@@ -1,4 +1,4 @@
-"""Declarative YAML sync and diff engine for CCAI Insights configurable dashboards."""
+"""Declarative YAML sync and diff engine for CCAI dashboards."""
 
 # Copyright 2026 Google LLC
 #
@@ -66,13 +66,16 @@ def _validate_date_range(
 
     if not rel and not abs_range:
         errors.append(
-            f"{context}: 'date_range' must specify either 'relative' or 'absolute'."
+            f"{context}: 'date_range' must specify either 'relative' or "
+            "'absolute'."
         )
         return
 
     if rel:
         if not isinstance(rel, dict):
-            errors.append(f"{context}: 'relative' date range must be a dictionary.")
+            errors.append(
+                f"{context}: 'relative' date range must be a dictionary."
+            )
         else:
             unit = str(rel.get("unit", "")).upper()
             if unit and unit not in VALID_TIME_UNITS:
@@ -122,7 +125,11 @@ def _validate_container(
             f"{context}: Container displayName must not exceed 100 characters."
         )
 
-    date_range = container.get("date_range") if "date_range" in container else container.get("dateRangeConfig")
+    date_range = (
+        container.get("date_range")
+        if "date_range" in container
+        else container.get("dateRangeConfig")
+    )
     if date_range is not None:
         _validate_date_range(date_range, context, errors)
 
@@ -134,15 +141,18 @@ def _validate_container(
     if is_root:
         if not widgets:
             errors.append(
-                f"{context}: Root container must contain at least one tab/container widget."
+                f"{context}: Root container must contain at least one tab."
             )
             return
 
-        # CCAI Constraint: direct widgets in root container must all be Containers
+        # CCAI Constraint: direct widgets in root container must be Containers
         for idx, w in enumerate(widgets):
-            if not isinstance(w, dict) or ("container" not in w and "Container" not in w):
+            if not isinstance(w, dict) or (
+                "container" not in w and "Container" not in w
+            ):
                 errors.append(
-                    f"{context}: The widgets in the root container must be of type Container (widget #{idx})."
+                    f"{context}: The widgets in the root container must be of "
+                    f"type Container (widget #{idx})."
                 )
             else:
                 sub_c = w.get("container") or w.get("Container")
@@ -175,16 +185,18 @@ def _validate_container(
                 ref = w.get("chart_reference") or w.get("chartReference")
                 if not isinstance(ref, str) or not ref:
                     errors.append(
-                        f"{context}: Widget #{idx} 'chart_reference' must be a non-empty string."
+                        f"{context}: Widget #{idx} 'chart_reference' must be "
+                        "a non-empty string."
                     )
             else:
                 errors.append(
-                    f"{context}: Widget #{idx} must specify 'container', 'chart', or 'chart_reference'."
+                    f"{context}: Widget #{idx} must specify 'container', "
+                    "'chart', or 'chart_reference'."
                 )
 
 
 def validate_dashboards_dict(data: dict[str, Any]) -> list[str]:
-    """Validates dashboards YAML dictionary against CCAI Insights schema requirements.
+    """Validates dashboards YAML dict against CCAI Insights requirements.
 
     Args:
         data: The dictionary structure loaded from YAML.
@@ -199,10 +211,16 @@ def validate_dashboards_dict(data: dict[str, Any]) -> list[str]:
     dashboards = data.get("dashboards")
     # If no 'dashboards' key, check if root itself defines a single dashboard
     if dashboards is None:
-        if "root_container" in data or "rootContainer" in data or "display_name" in data:
+        if (
+            "root_container" in data
+            or "rootContainer" in data
+            or "display_name" in data
+        ):
             dashboards = [data]
         else:
-            return ["YAML must contain 'dashboards' list or a single dashboard definition."]
+            return [
+                "YAML must contain 'dashboards' list or a single dashboard."
+            ]
 
     if not isinstance(dashboards, list):
         return ["'dashboards' must be a list."]
@@ -235,10 +253,12 @@ def validate_dashboards_dict(data: dict[str, Any]) -> list[str]:
 
         display_name = dash.get("display_name") or dash.get("displayName")
         if not display_name:
-            errors.append(f"Dashboard '{dash_id}' is missing required 'display_name'.")
+            errors.append(
+                f"Dashboard '{dash_id}' is missing required 'display_name'."
+            )
         elif len(str(display_name)) > 100:
             errors.append(
-                f"Dashboard '{dash_id}' display_name must not exceed 100 characters."
+                f"Dashboard '{dash_id}' display_name must not exceed 100 chars."
             )
 
         date_range = dash.get("date_range") or dash.get("dateRangeConfig")
@@ -343,7 +363,10 @@ def _normalize_container(container_dict: dict[str, Any]) -> dict[str, Any]:
     """Recursively normalizes container dictionary to API camelCase."""
     payload: dict[str, Any] = {}
 
-    disp = container_dict.get("display_name") or container_dict.get("displayName")
+    disp = (
+        container_dict.get("display_name")
+        or container_dict.get("displayName")
+    )
     if disp:
         payload["displayName"] = disp
 
@@ -363,7 +386,10 @@ def _normalize_container(container_dict: dict[str, Any]) -> dict[str, Any]:
     if filt:
         payload["filter"] = filt
 
-    dr = container_dict.get("date_range") or container_dict.get("dateRangeConfig")
+    dr = (
+        container_dict.get("date_range")
+        or container_dict.get("dateRangeConfig")
+    )
     if dr:
         payload["dateRangeConfig"] = _normalize_date_range(dr)
 
@@ -382,7 +408,9 @@ def _normalize_container(container_dict: dict[str, Any]) -> dict[str, Any]:
             chart = w.get("chart") or w.get("Chart")
             w_payload["chart"] = _normalize_chart(chart)
         elif "chart_reference" in w or "chartReference" in w:
-            w_payload["chartReference"] = w.get("chart_reference") or w.get("chartReference")
+            w_payload["chartReference"] = (
+                w.get("chart_reference") or w.get("chartReference")
+            )
 
         w_filt = w.get("filter")
         if w_filt:
@@ -436,11 +464,17 @@ def yaml_dashboard_to_api_payload(
     if filt:
         payload["filter"] = filt
 
-    dr = dashboard_dict.get("date_range") or dashboard_dict.get("dateRangeConfig")
+    dr = (
+        dashboard_dict.get("date_range")
+        or dashboard_dict.get("dateRangeConfig")
+    )
     if dr:
         payload["dateRangeConfig"] = _normalize_date_range(dr)
 
-    root_c = dashboard_dict.get("root_container") or dashboard_dict.get("rootContainer")
+    root_c = (
+        dashboard_dict.get("root_container")
+        or dashboard_dict.get("rootContainer")
+    )
     if root_c and isinstance(root_c, dict):
         payload["rootContainer"] = _normalize_container(root_c)
 
@@ -459,7 +493,11 @@ def api_dashboard_to_yaml_dashboard(
         A formatted YAML dashboard dictionary.
     """
     name = api_dash.get("name", "")
-    dash_id = name.split("/")[-1] if name else api_dash.get("displayName", "dashboard")
+    dash_id = (
+        name.split("/")[-1]
+        if name
+        else api_dash.get("displayName", "dashboard")
+    )
 
     yaml_dash: dict[str, Any] = {
         "dashboard_id": dash_id,
@@ -629,7 +667,7 @@ def diff_dashboards(
             else:
                 unchanged.append(dash_id)
 
-    # Remote custom dashboards missing from local file (excluding system read-only dashboards)
+    # Remote custom dashboards missing from local file (excluding system)
     to_delete = [
         remote.get("name", "")
         for did, remote in remote_by_id.items()
@@ -667,7 +705,8 @@ def format_diff_report(
 
     if not to_create and not to_update and not to_delete:
         lines.append(
-            f"All {len(unchanged)} dashboard(s) are in sync with remote project."
+            f"All {len(unchanged)} dashboard(s) are in sync with remote "
+            "project."
         )
         return "\n".join(lines)
 
@@ -738,7 +777,8 @@ def sync_dashboards(
             - 'created': list of created dashboard IDs
             - 'updated': list of updated dashboard IDs
             - 'deleted': list of deleted dashboard names
-            - 'skipped_delete': list of remote dashboard names kept when force=False
+            - 'skipped_delete': list of remote dashboard names kept when
+              force=False
     """
     local_data = load_dashboards_yaml(file_path)
     target_parent = parent or client.parent
@@ -788,8 +828,8 @@ def sync_dashboards(
         else:
             skipped_delete = diff["to_delete"]
             print(
-                f"\n[Warning] {len(diff['to_delete'])} remote dashboard(s) not in local YAML "
-                "were NOT deleted. Pass --force to delete remote dashboards."
+                f"\n[Warning] {len(diff['to_delete'])} remote dashboard(s) "
+                "not in local YAML were NOT deleted. Pass --force to delete."
             )
 
     return {
@@ -798,3 +838,4 @@ def sync_dashboards(
         "deleted": deleted,
         "skipped_delete": skipped_delete,
     }
+

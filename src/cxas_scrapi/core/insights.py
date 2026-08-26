@@ -547,7 +547,7 @@ class Insights(Common):
     def get_chart(
         self, name: str, dashboard_id: str | None = None
     ) -> dict[str, Any]:
-        """Gets a chart by full resource name, or chart ID within a dashboard."""
+        """Gets a chart by resource name, or chart ID within a dashboard."""
         if not name.startswith("projects/"):
             if not dashboard_id:
                 raise ValueError(
