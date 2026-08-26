@@ -446,8 +446,6 @@ def test_diff_dashboards() -> None:
     assert diff["to_update"][0][0] == "dash_update"
     assert "displayName" in diff["to_update"][0][2]
     assert "description" in diff["to_update"][0][2]
-    assert "filter" in diff["to_update"][0][2]
-    assert "dateRangeConfig" in diff["to_update"][0][2]
     assert "rootContainer" in diff["to_update"][0][2]
 
     assert len(diff["to_delete"]) == 1

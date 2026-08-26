@@ -604,6 +604,20 @@ def export_remote_dashboards_to_yaml_dict(
     }
 
 
+def _strip_container_server_fields(c: Any) -> Any:
+    """Recursively removes server-assigned IDs and metadata for stable comparison."""
+    if isinstance(c, dict):
+        cleaned: dict[str, Any] = {}
+        for k, v in c.items():
+            if k in ("containerId", "name", "createTime", "updateTime", "action"):
+                continue
+            cleaned[k] = _strip_container_server_fields(v)
+        return cleaned
+    elif isinstance(c, list):
+        return [_strip_container_server_fields(x) for x in c]
+    return c
+
+
 def diff_dashboards(
     local_data: dict[str, Any],
     remote_dashboards: list[dict[str, Any]],
@@ -651,13 +665,19 @@ def diff_dashboards(
 
             if payload.get("displayName") != remote.get("displayName"):
                 changed_fields.append("displayName")
-            if payload.get("description") != remote.get("description"):
+            if (
+                payload.get("description")
+                and payload.get("description") != remote.get("description")
+            ):
                 changed_fields.append("description")
-            if payload.get("filter") != remote.get("filter"):
-                changed_fields.append("filter")
-            if payload.get("dateRangeConfig") != remote.get("dateRangeConfig"):
-                changed_fields.append("dateRangeConfig")
-            if payload.get("rootContainer") != remote.get("rootContainer"):
+
+            norm_local_root = _strip_container_server_fields(
+                payload.get("rootContainer")
+            )
+            norm_remote_root = _strip_container_server_fields(
+                remote.get("rootContainer")
+            )
+            if norm_local_root != norm_remote_root:
                 changed_fields.append("rootContainer")
 
             if changed_fields:
