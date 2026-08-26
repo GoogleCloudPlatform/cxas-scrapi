@@ -1,7 +1,7 @@
 # Design Document: `cxas-configurable-dashboards` Skill & Insights Configurable Dashboard Architecture
 
 * **Author:** Gokulnath Babu & Jetski
-* **Status:** Implemented / Merging
+* **Status:** Draft / Proposed
 * **Repository Path:** `.agents/skills/cxas-configurable-dashboards/references/design.md`
 * **Target Components:** 
   * Skill: `.agents/skills/cxas-configurable-dashboards/`
@@ -13,7 +13,7 @@
 
 ## 1. Executive Summary
 
-This document specifies the agent skill (`cxas-configurable-dashboards`) and corresponding Core SDK / CLI architecture in `cxas-scrapi` dedicated to **Contact Center AI (CCAI) Insights Configurable Dashboards**.
+This document specifies a new agent skill (`cxas-configurable-dashboards`) and corresponding Core SDK / CLI enhancements in `cxas-scrapi` dedicated to **Contact Center AI (CCAI) Insights Configurable Dashboards**.
 
 CCAI Insights introduces **Configurable Dashboards** (Next-Gen Visualizations), allowing users to build flexible multi-tab analytics dashboards with rich visual widgets (Score Cards, Bar/Line charts, Pie charts, Tables, Sankey diagrams) powered by Vega-Lite specifications and SQL queries against conversation metrics.
 
@@ -244,3 +244,64 @@ dashboards:
                           x: {field: "date", type: "temporal", title: "Date"}
                           y: {field: "average_score", type: "quantitative", title: "Avg QA Score"}
 ```
+
+---
+
+## 6. Implementation Plan & Phases
+
+### Phase 1: Core SDK Enhancements (`src/cxas_scrapi/core/insights.py`)
+Add direct CRUD operations for Dashboards and Charts:
+* `list_dashboards(parent, filter_str, page_size, max_pages) -> list[dict[str, Any]]`
+* `get_dashboard(name) -> dict[str, Any]`
+* `create_dashboard(dashboard, dashboard_id, parent) -> dict[str, Any]`
+* `update_dashboard(name, dashboard, update_mask="*") -> dict[str, Any]`
+* `delete_dashboard(name) -> None`
+* `list_charts(parent) -> list[dict[str, Any]]`
+* `get_chart(name) -> dict[str, Any]`
+* `create_chart(chart, chart_id, parent) -> dict[str, Any]`
+* `update_chart(name, chart, update_mask="*") -> dict[str, Any]`
+* `delete_chart(name) -> None`
+
+### Phase 2: Declarative Sync Engine (`src/cxas_scrapi/core/dashboard_sync.py`)
+Implement the declarative engine:
+1. **Validation (`validate_dashboards_dict`)**:
+   - Enforce root container existence and structure.
+   - Enforce that top-level widgets in `root_container` are of type `Container`.
+   - Validate visualization types against supported enum strings (`BAR`, `LINE`, `SCORE_CARD`, etc.).
+   - Verify presence of `data_source` and valid Vega-Lite chart specs.
+2. **Payload Normalization (`yaml_dashboard_to_api_payload`)**:
+   - Normalize `snake_case` fields to API camelCase.
+3. **Smart Diffing (`diff_dashboards`)**:
+   - Compute `to_create`, `to_update`, `to_delete`, `unchanged` sets with side-by-side terminal diffs.
+4. **Push Operations (`push_dashboards`)**:
+   - Support `--dry-run`, atomic upserts, and `--force` deletion protection.
+5. **Pull Operations (`pull_dashboards`)**:
+   - Export remote GCP dashboards to a clean, canonical YAML file.
+
+### Phase 3: CLI Subcommands (`src/cxas_scrapi/cli/insights_cli.py`)
+Register new CLI commands under `cxas insights`:
+* `cxas insights pull-dashboards --parent projects/.../locations/... [--out dashboards.yaml]`
+* `cxas insights diff-dashboards [--file dashboards.yaml] [--parent projects/.../locations/...]`
+* `cxas insights push-dashboards [--file dashboards.yaml] [--parent projects/.../locations/...] [--dry-run] [--force]`
+* `cxas insights list-dashboards --parent projects/.../locations/...`
+* `cxas insights get-dashboard --dashboard-name projects/.../locations/.../dashboards/...`
+* `cxas insights delete-dashboard --dashboard-name projects/.../locations/.../dashboards/...`
+
+### Phase 4: AI Skill & References (`cxas-configurable-dashboards`)
+Create the AI Skill repository package:
+* `.agents/skills/cxas-configurable-dashboards/SKILL.md`: Comprehensive skill instructions.
+* `.agents/skills/cxas-configurable-dashboards/references/schema.json`: Formal JSON Schema.
+* `.agents/skills/cxas-configurable-dashboards/references/vega_cookbook.md`: Guide to Vega-Lite marks, encodings, responsive layouts, and SQL patterns.
+* `.agents/skills/cxas-configurable-dashboards/scripts/sync_dashboards.py`: Standalone runner.
+* Register skill in root `AGENTS.md`.
+
+---
+
+## 7. Verification & Quality Plan
+
+1. **Unit Testing**:
+   - `tests/cxas_scrapi/core/test_insights.py`: Test all Dashboard/Chart CRUD methods on `Insights`.
+   - `tests/cxas_scrapi/core/test_dashboard_sync.py`: Test schema validation, structural constraints, diff generation, push dry-run, push apply, force deletions, and pull serialization (100% statement and branch coverage).
+   - `tests/cxas_scrapi/cli/test_insights_cli.py`: Test all CLI command handlers and argument parsers.
+2. **Markdown and Link Testing**:
+   - Run `uv run python tests/test_markdown_links.py` to ensure all cross-references are valid.
