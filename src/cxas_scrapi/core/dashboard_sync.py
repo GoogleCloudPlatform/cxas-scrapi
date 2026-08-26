@@ -343,11 +343,42 @@ def _normalize_chart(chart_dict: dict[str, Any]) -> dict[str, Any]:
         gen = ds.get("generative_insights") or ds.get("generativeInsights")
         if gen and isinstance(gen, dict):
             sql = gen.get("sql_query") or gen.get("sqlQuery", "")
-            spec = gen.get("chart_spec") or gen.get("chartSpec", {})
+            raw_spec = gen.get("chart_spec") or gen.get("chartSpec", {})
+            spec: dict[str, Any] = (
+                dict(raw_spec) if isinstance(raw_spec, dict) else {}
+            )
+
+            # Ensure valid Vega-Lite specification
+            if "$schema" not in spec:
+                spec["$schema"] = (
+                    "https://vega.github.io/schema/vega-lite/v5.json"
+                )
+            if "data" not in spec:
+                spec["data"] = {"values": []}
+
+            # Enhance default score card text styling if basic
+            if str(vis_type).upper() == "SCORE_CARD":
+                mark = spec.get("mark")
+                if mark == "text":
+                    spec["mark"] = {
+                        "type": "text",
+                        "fontSize": 28,
+                        "fontWeight": 400,
+                        "align": "center",
+                        "baseline": "middle",
+                        "font": "Google Sans",
+                    }
+
+            req_type = (
+                "type.googleapis.com/google.cloud.contactcenterinsights.v1."
+                "GenerativeInsightsRequest"
+            )
+            req = gen.get("request") or {"@type": req_type}
             payload["dataSource"] = {
                 "generativeInsights": {
                     "sqlQuery": sql,
                     "chartSpec": spec,
+                    "request": req,
                 }
             }
         elif "query_metrics" in ds or "queryMetrics" in ds:
@@ -605,11 +636,14 @@ def export_remote_dashboards_to_yaml_dict(
 
 
 def _strip_container_server_fields(c: Any) -> Any:
-    """Recursively removes server-assigned IDs and metadata for stable comparison."""
+    """Recursively removes server-assigned IDs and metadata for diffs."""
     if isinstance(c, dict):
         cleaned: dict[str, Any] = {}
+        server_fields = (
+            "containerId", "name", "createTime", "updateTime", "action"
+        )
         for k, v in c.items():
-            if k in ("containerId", "name", "createTime", "updateTime", "action"):
+            if k in server_fields:
                 continue
             cleaned[k] = _strip_container_server_fields(v)
         return cleaned
