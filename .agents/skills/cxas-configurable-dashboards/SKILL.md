@@ -90,7 +90,9 @@ ______________________________________________________________________
 
 ## 2. Vega-Lite & SQL Recipes
 
-Refer to the [Vega-Lite & SQL Cookbook](references/vega_cookbook.md) for full chart patterns, encodings, and BigQuery query templates.
+Refer to:
+- [Dashboard SQL Cookbook & Conversations Schema Reference](references/dashboard_sql_cookbook.md) for the complete BigQuery table schema column definitions, modes, descriptions, and SQL recipes.
+- [Vega-Lite Cookbook](references/vega_cookbook.md) for visualization marks, encodings, and chart templates.
 
 ### Common Patterns
 
