@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConfigurableDashboards",
+  "description": "Schema for CCAI Insights Configurable Dashboards as Code in cxas-scrapi",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema format version (e.g. '1.0' or 'v1')"
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Default Google Cloud project ID"
+    },
+    "location": {
+      "type": "string",
+      "description": "Default Google Cloud region (e.g. us-central1)"
+    },
+    "dashboards": {
+      "type": "array",
+      "description": "List of configurable dashboard definitions",
+      "items": {
+        "$ref": "#/$defs/dashboard"
+      }
+    }
+  },
+  "required": ["dashboards"],
+  "$defs": {
+    "dashboard": {
+      "type": "object",
+      "properties": {
+        "dashboard_id": {
+          "type": "string",
+          "description": "Unique identifier for the dashboard"
+        },
+        "display_name": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Human-readable title for the dashboard"
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional description of the dashboard's purpose"
+        },
+        "filter": {
+          "type": "string",
+          "description": "Optional conversation filter expression"
+        },
+        "date_range": {
+          "$ref": "#/$defs/date_range"
+        },
+        "root_container": {
+          "$ref": "#/$defs/root_container"
+        }
+      },
+      "required": ["display_name", "root_container"]
+    },
+    "date_range": {
+      "type": "object",
+      "properties": {
+        "relative": {
+          "type": "object",
+          "properties": {
+            "quantity": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "unit": {
+              "type": "string",
+              "enum": ["DAY", "WEEK", "MONTH", "QUARTER", "YEAR", "day", "week", "month", "quarter", "year"]
+            }
+          },
+          "required": ["quantity", "unit"]
+        },
+        "absolute": {
+          "type": "object",
+          "properties": {
+            "startTime": { "type": "string" },
+            "endTime": { "type": "string" }
+          }
+        }
+      }
+    },
+    "root_container": {
+      "type": "object",
+      "properties": {
+        "display_name": { "type": "string" },
+        "description": { "type": "string" },
+        "widgets": {
+          "type": "array",
+          "description": "Direct child widgets in root container must be Container tabs",
+          "items": {
+            "type": "object",
+            "properties": {
+              "container": {
+                "$ref": "#/$defs/container"
+              }
+            },
+            "required": ["container"]
+          }
+        }
+      },
+      "required": ["widgets"]
+    },
+    "container": {
+      "type": "object",
+      "properties": {
+        "display_name": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string" },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "filter": { "type": "string" },
+        "date_range": { "$ref": "#/$defs/date_range" },
+        "widgets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/widget"
+          }
+        }
+      }
+    },
+    "widget": {
+      "type": "object",
+      "properties": {
+        "container": { "$ref": "#/$defs/container" },
+        "chart": { "$ref": "#/$defs/chart" },
+        "chart_reference": { "type": "string" },
+        "filter": { "type": "string" }
+      }
+    },
+    "chart": {
+      "type": "object",
+      "properties": {
+        "display_name": { "type": "string" },
+        "description": { "type": "string" },
+        "chart_visualization_type": {
+          "type": "string",
+          "enum": [
+            "BAR", "LINE", "AREA", "PIE", "SCATTER", "TABLE",
+            "SCORE_CARD", "SUNBURST", "GAUGE", "SANKEY",
+            "bar", "line", "area", "pie", "scatter", "table",
+            "score_card", "sunburst", "gauge", "sankey"
+          ]
+        },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "filter": { "type": "string" },
+        "date_range": { "$ref": "#/$defs/date_range" },
+        "data_source": {
+          "type": "object",
+          "properties": {
+            "generative_insights": {
+              "type": "object",
+              "properties": {
+                "sql_query": { "type": "string" },
+                "chart_spec": { "type": "object" }
+              },
+              "required": ["sql_query", "chart_spec"]
+            },
+            "query_metrics": { "type": "object" }
+          }
+        }
+      }
+    }
+  }
+}
