@@ -1208,10 +1208,10 @@ def handle_list_dashboards(args: argparse.Namespace) -> None:
         print(f"Found {len(dashboards)} dashboard(s):")
         for d in dashboards:
             did = d.get("name", "").split("/")[-1]
-            read_only = "SYSTEM_READ_ONLY" if d.get("readOnly", False) else "CUSTOM"
-            num_tabs = len(
-                d.get("rootContainer", {}).get("widgets", [])
+            read_only = (
+                "SYSTEM_READ_ONLY" if d.get("readOnly", False) else "CUSTOM"
             )
+            num_tabs = len(d.get("rootContainer", {}).get("widgets", []))
             print(
                 f" - [{read_only}] {did}: '{d.get('displayName', '')}' (Tabs: {num_tabs})"
             )
@@ -1224,7 +1224,9 @@ def handle_get_dashboard(args: argparse.Namespace) -> None:
     """Handles the 'insights get-dashboard' command."""
     from cxas_scrapi.core.insights import Insights
 
-    project_id, location = _get_project_and_location_from_parent(args.dashboard_name)
+    project_id, location = _get_project_and_location_from_parent(
+        args.dashboard_name
+    )
     client = Insights(project_id=project_id, location=location)
 
     try:
@@ -1239,7 +1241,9 @@ def handle_delete_dashboard(args: argparse.Namespace) -> None:
     """Handles the 'insights delete-dashboard' command."""
     from cxas_scrapi.core.insights import Insights
 
-    project_id, location = _get_project_and_location_from_parent(args.dashboard_name)
+    project_id, location = _get_project_and_location_from_parent(
+        args.dashboard_name
+    )
     client = Insights(project_id=project_id, location=location)
 
     try:

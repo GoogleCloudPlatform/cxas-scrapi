@@ -53,9 +53,7 @@ VALID_TIME_UNITS = {
 }
 
 
-def _validate_date_range(
-    dr: Any, context: str, errors: list[str]
-) -> None:
+def _validate_date_range(dr: Any, context: str, errors: list[str]) -> None:
     """Validates date range config structure."""
     if not isinstance(dr, dict):
         errors.append(f"{context}: 'date_range' must be a dictionary.")
@@ -85,9 +83,7 @@ def _validate_date_range(
                 )
 
 
-def _validate_chart(
-    chart: Any, context: str, errors: list[str]
-) -> None:
+def _validate_chart(chart: Any, context: str, errors: list[str]) -> None:
     """Validates chart dictionary structure."""
     if not isinstance(chart, dict):
         errors.append(f"{context}: Chart must be a dictionary.")
@@ -178,9 +174,7 @@ def _validate_container(
                 )
             elif "chart" in w or "Chart" in w:
                 chart = w.get("chart") or w.get("Chart")
-                _validate_chart(
-                    chart, f"{context} -> Chart #{idx}", errors
-                )
+                _validate_chart(chart, f"{context} -> Chart #{idx}", errors)
             elif "chart_reference" in w or "chartReference" in w:
                 ref = w.get("chart_reference") or w.get("chartReference")
                 if not isinstance(ref, str) or not ref:
@@ -263,9 +257,7 @@ def validate_dashboards_dict(data: dict[str, Any]) -> list[str]:
 
         date_range = dash.get("date_range") or dash.get("dateRangeConfig")
         if date_range:
-            _validate_date_range(
-                date_range, f"Dashboard '{dash_id}'", errors
-            )
+            _validate_date_range(date_range, f"Dashboard '{dash_id}'", errors)
 
         root_container = dash.get("root_container") or dash.get("rootContainer")
         if not root_container:
@@ -394,9 +386,8 @@ def _normalize_container(container_dict: dict[str, Any]) -> dict[str, Any]:
     """Recursively normalizes container dictionary to API camelCase."""
     payload: dict[str, Any] = {}
 
-    disp = (
-        container_dict.get("display_name")
-        or container_dict.get("displayName")
+    disp = container_dict.get("display_name") or container_dict.get(
+        "displayName"
     )
     if disp:
         payload["displayName"] = disp
@@ -417,9 +408,8 @@ def _normalize_container(container_dict: dict[str, Any]) -> dict[str, Any]:
     if filt:
         payload["filter"] = filt
 
-    dr = (
-        container_dict.get("date_range")
-        or container_dict.get("dateRangeConfig")
+    dr = container_dict.get("date_range") or container_dict.get(
+        "dateRangeConfig"
     )
     if dr:
         payload["dateRangeConfig"] = _normalize_date_range(dr)
@@ -439,8 +429,8 @@ def _normalize_container(container_dict: dict[str, Any]) -> dict[str, Any]:
             chart = w.get("chart") or w.get("Chart")
             w_payload["chart"] = _normalize_chart(chart)
         elif "chart_reference" in w or "chartReference" in w:
-            w_payload["chartReference"] = (
-                w.get("chart_reference") or w.get("chartReference")
+            w_payload["chartReference"] = w.get("chart_reference") or w.get(
+                "chartReference"
             )
 
         w_filt = w.get("filter")
@@ -495,16 +485,14 @@ def yaml_dashboard_to_api_payload(
     if filt:
         payload["filter"] = filt
 
-    dr = (
-        dashboard_dict.get("date_range")
-        or dashboard_dict.get("dateRangeConfig")
+    dr = dashboard_dict.get("date_range") or dashboard_dict.get(
+        "dateRangeConfig"
     )
     if dr:
         payload["dateRangeConfig"] = _normalize_date_range(dr)
 
-    root_c = (
-        dashboard_dict.get("root_container")
-        or dashboard_dict.get("rootContainer")
+    root_c = dashboard_dict.get("root_container") or dashboard_dict.get(
+        "rootContainer"
     )
     if root_c and isinstance(root_c, dict):
         payload["rootContainer"] = _normalize_container(root_c)
@@ -512,9 +500,7 @@ def yaml_dashboard_to_api_payload(
     return str(dash_id), payload
 
 
-def api_dashboard_to_yaml_dashboard(
-    api_dash: dict[str, Any]
-) -> dict[str, Any]:
+def api_dashboard_to_yaml_dashboard(api_dash: dict[str, Any]) -> dict[str, Any]:
     """Converts an API response dictionary to a clean YAML dictionary.
 
     Args:
@@ -585,9 +571,7 @@ def load_dashboards_yaml(file_path: str | Path) -> dict[str, Any]:
     return data
 
 
-def dump_dashboards_yaml(
-    data: dict[str, Any], file_path: str | Path
-) -> None:
+def dump_dashboards_yaml(data: dict[str, Any], file_path: str | Path) -> None:
     """Dumps a dashboards dictionary to a cleanly formatted YAML file.
 
     Args:
@@ -640,7 +624,11 @@ def _strip_container_server_fields(c: Any) -> Any:
     if isinstance(c, dict):
         cleaned: dict[str, Any] = {}
         server_fields = (
-            "containerId", "name", "createTime", "updateTime", "action"
+            "containerId",
+            "name",
+            "createTime",
+            "updateTime",
+            "action",
         )
         for k, v in c.items():
             if k in server_fields:
@@ -699,10 +687,9 @@ def diff_dashboards(
 
             if payload.get("displayName") != remote.get("displayName"):
                 changed_fields.append("displayName")
-            if (
-                payload.get("description")
-                and payload.get("description") != remote.get("description")
-            ):
+            if payload.get("description") and payload.get(
+                "description"
+            ) != remote.get("description"):
                 changed_fields.append("description")
 
             norm_local_root = _strip_container_server_fields(
@@ -768,9 +755,7 @@ def format_diff_report(
         lines.append(f"\n[+] To Create ({len(to_create)}):")
         for did, payload in to_create:
             disp = payload.get("displayName")
-            num_tabs = len(
-                payload.get("rootContainer", {}).get("widgets", [])
-            )
+            num_tabs = len(payload.get("rootContainer", {}).get("widgets", []))
             lines.append(f"  + {did} (Title: '{disp}', Tabs: {num_tabs})")
 
     if to_update:
@@ -892,4 +877,3 @@ def sync_dashboards(
         "deleted": deleted,
         "skipped_delete": skipped_delete,
     }
-

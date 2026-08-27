@@ -589,7 +589,13 @@ def test_dashboard_cli_subparsers() -> None:
 
     # 1. pull-dashboards
     args_pull = parser.parse_args(
-        ["pull-dashboards", "--parent", "projects/p/locations/l", "--out", "my_dashboards.yaml"]
+        [
+            "pull-dashboards",
+            "--parent",
+            "projects/p/locations/l",
+            "--out",
+            "my_dashboards.yaml",
+        ]
     )
     assert args_pull.insights_command == "pull-dashboards"
     assert args_pull.parent == "projects/p/locations/l"
@@ -597,15 +603,19 @@ def test_dashboard_cli_subparsers() -> None:
 
     # 2. diff-dashboards
     args_diff = parser.parse_args(
-        ["diff-dashboards", "--file", "custom.yaml", "--parent", "projects/p/locations/l"]
+        [
+            "diff-dashboards",
+            "--file",
+            "custom.yaml",
+            "--parent",
+            "projects/p/locations/l",
+        ]
     )
     assert args_diff.insights_command == "diff-dashboards"
     assert args_diff.file == "custom.yaml"
 
     # 3. push-dashboards
-    args_push = parser.parse_args(
-        ["push-dashboards", "--dry-run", "--force"]
-    )
+    args_push = parser.parse_args(["push-dashboards", "--dry-run", "--force"])
     assert args_push.insights_command == "push-dashboards"
     assert args_push.dry_run is True
     assert args_push.force is True
@@ -618,14 +628,22 @@ def test_dashboard_cli_subparsers() -> None:
 
     # 5. get-dashboard
     args_get = parser.parse_args(
-        ["get-dashboard", "--dashboard-name", "projects/p/locations/l/dashboards/d1"]
+        [
+            "get-dashboard",
+            "--dashboard-name",
+            "projects/p/locations/l/dashboards/d1",
+        ]
     )
     assert args_get.insights_command == "get-dashboard"
     assert args_get.dashboard_name == "projects/p/locations/l/dashboards/d1"
 
     # 6. delete-dashboard
     args_del = parser.parse_args(
-        ["delete-dashboard", "--dashboard-name", "projects/p/locations/l/dashboards/d1"]
+        [
+            "delete-dashboard",
+            "--dashboard-name",
+            "projects/p/locations/l/dashboards/d1",
+        ]
     )
     assert args_del.insights_command == "delete-dashboard"
 
@@ -675,7 +693,9 @@ def test_handle_diff_dashboards(
                 {
                     "dashboard_id": "d1",
                     "display_name": "Dash 1",
-                    "root_container": {"widgets": [{"container": {"display_name": "T"}}]},
+                    "root_container": {
+                        "widgets": [{"container": {"display_name": "T"}}]
+                    },
                 }
             ],
         },
@@ -708,7 +728,9 @@ def test_handle_push_dashboards(
                 {
                     "dashboard_id": "d1",
                     "display_name": "Dash 1",
-                    "root_container": {"widgets": [{"container": {"display_name": "T"}}]},
+                    "root_container": {
+                        "widgets": [{"container": {"display_name": "T"}}]
+                    },
                 }
             ],
         },
@@ -745,9 +767,7 @@ def test_handle_list_and_get_and_delete_dashboards(
     }
 
     # list
-    handle_list_dashboards(
-        argparse.Namespace(parent="projects/p/locations/l")
-    )
+    handle_list_dashboards(argparse.Namespace(parent="projects/p/locations/l"))
     mock_client.list_dashboards.assert_called_once()
 
     # get
@@ -765,4 +785,3 @@ def test_handle_list_and_get_and_delete_dashboards(
         )
     )
     mock_client.delete_dashboard.assert_called_once()
-

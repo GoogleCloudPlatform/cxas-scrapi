@@ -58,7 +58,9 @@ def test_validate_dashboards_dict_valid() -> None:
                                             "data_source": {
                                                 "generative_insights": {
                                                     "sql_query": "SELECT COUNT(1) FROM c",
-                                                    "chart_spec": {"mark": "text"},
+                                                    "chart_spec": {
+                                                        "mark": "text"
+                                                    },
                                                 }
                                             },
                                         }
@@ -109,13 +111,21 @@ def test_validate_dashboards_dict_errors() -> None:
     assert "Root content must be a mapping" in validate_dashboards_dict([])[0]
 
     # 2. Missing dashboards and single dashboard
-    assert "YAML must contain 'dashboards' list" in validate_dashboards_dict({})[0]
+    assert (
+        "YAML must contain 'dashboards' list" in validate_dashboards_dict({})[0]
+    )
 
     # 3. Non-list dashboards
-    assert "'dashboards' must be a list" in validate_dashboards_dict({"dashboards": "bad"})[0]
+    assert (
+        "'dashboards' must be a list"
+        in validate_dashboards_dict({"dashboards": "bad"})[0]
+    )
 
     # 4. Empty dashboards list
-    assert "'dashboards' list is empty" in validate_dashboards_dict({"dashboards": []})[0]
+    assert (
+        "'dashboards' list is empty"
+        in validate_dashboards_dict({"dashboards": []})[0]
+    )
 
     # 5. Non-dict item
     errors = validate_dashboards_dict({"dashboards": ["invalid"]})
@@ -152,7 +162,12 @@ def test_validate_dashboards_dict_errors() -> None:
                 "date_range": "not_a_dict",
                 "root_container": {
                     "widgets": [
-                        {"container": {"display_name": "x" * 105, "widgets": "not_a_list"}}
+                        {
+                            "container": {
+                                "display_name": "x" * 105,
+                                "widgets": "not_a_list",
+                            }
+                        }
                     ]
                 },
             },
@@ -164,7 +179,11 @@ def test_validate_dashboards_dict_errors() -> None:
                         {
                             "container": {
                                 "widgets": [
-                                    {"chart": {"chart_visualization_type": "INVALID_TYPE"}}
+                                    {
+                                        "chart": {
+                                            "chart_visualization_type": "INVALID_TYPE"
+                                        }
+                                    }
                                 ]
                             }
                         }
@@ -220,13 +239,22 @@ def test_validate_dashboards_dict_errors() -> None:
     errors = validate_dashboards_dict(invalid_dash)
     assert any("must not exceed 100 characters" in e for e in errors)
     assert any("'date_range' must be a dictionary" in e for e in errors)
-    assert any("The widgets in the root container must be of type Container" in e for e in errors)
-    assert any("Root container must contain at least one tab" in e for e in errors)
+    assert any(
+        "The widgets in the root container must be of type Container" in e
+        for e in errors
+    )
+    assert any(
+        "Root container must contain at least one tab" in e for e in errors
+    )
     assert any("is missing required 'root_container'" in e for e in errors)
     assert any("Invalid chart_visualization_type" in e for e in errors)
     assert any("Invalid relative time unit" in e for e in errors)
-    assert any("RootContainer: Container must be a dictionary" in e for e in errors)
-    assert any("'chart_reference' must be a non-empty string" in e for e in errors)
+    assert any(
+        "RootContainer: Container must be a dictionary" in e for e in errors
+    )
+    assert any(
+        "'chart_reference' must be a non-empty string" in e for e in errors
+    )
 
 
 def test_yaml_dashboard_to_api_payload() -> None:
@@ -246,7 +274,9 @@ def test_yaml_dashboard_to_api_payload() -> None:
                         "width": 12,
                         "height": 4,
                         "filter": "agent_id != ''",
-                        "date_range": {"relative": {"quantity": 7, "unit": "day"}},
+                        "date_range": {
+                            "relative": {"quantity": 7, "unit": "day"}
+                        },
                         "widgets": [
                             {
                                 "chart": {
@@ -266,7 +296,9 @@ def test_yaml_dashboard_to_api_payload() -> None:
                                 "chart": {
                                     "display_name": "Query Metrics Chart",
                                     "data_source": {
-                                        "query_metrics": {"metric": "TOTAL_COUNT"}
+                                        "query_metrics": {
+                                            "metric": "TOTAL_COUNT"
+                                        }
                                     },
                                 }
                             },
@@ -297,9 +329,17 @@ def test_yaml_dashboard_to_api_payload() -> None:
     widgets = tabs[0]["container"]["widgets"]
     assert len(widgets) == 3
     assert widgets[0]["chart"]["chartVisualizationType"] == "SCORE_CARD"
-    assert widgets[0]["chart"]["dataSource"]["generativeInsights"]["sqlQuery"] == "SELECT avg_score FROM t"
-    assert widgets[1]["chart"]["dataSource"]["queryMetrics"] == {"metric": "TOTAL_COUNT"}
-    assert widgets[2]["chartReference"] == "projects/p/locations/l/dashboards/d1/charts/c1"
+    assert (
+        widgets[0]["chart"]["dataSource"]["generativeInsights"]["sqlQuery"]
+        == "SELECT avg_score FROM t"
+    )
+    assert widgets[1]["chart"]["dataSource"]["queryMetrics"] == {
+        "metric": "TOTAL_COUNT"
+    }
+    assert (
+        widgets[2]["chartReference"]
+        == "projects/p/locations/l/dashboards/d1/charts/c1"
+    )
     assert widgets[2]["filter"] == "resolved = true"
 
 
@@ -310,7 +350,9 @@ def test_api_dashboard_to_yaml_dashboard() -> None:
         "displayName": "My Dashboard",
         "description": "A test dashboard",
         "filter": "agent_id != ''",
-        "dateRangeConfig": {"relativeDateRange": {"quantity": 7, "unit": "DAY"}},
+        "dateRangeConfig": {
+            "relativeDateRange": {"quantity": 7, "unit": "DAY"}
+        },
         "rootContainer": {"displayName": "Root", "widgets": []},
         "createTime": "2026-01-01T00:00:00Z",
         "updateTime": "2026-01-02T00:00:00Z",
@@ -392,7 +434,9 @@ def test_diff_dashboards() -> None:
             {
                 "dashboard_id": "dash_create",
                 "display_name": "New Dashboard",
-                "root_container": {"widgets": [{"container": {"display_name": "T"}}]},
+                "root_container": {
+                    "widgets": [{"container": {"display_name": "T"}}]
+                },
             },
             {
                 "dashboard_id": "dash_update",
@@ -400,12 +444,16 @@ def test_diff_dashboards() -> None:
                 "description": "Updated description",
                 "filter": "new_filter",
                 "date_range": {"relative": {"quantity": 30, "unit": "DAY"}},
-                "root_container": {"widgets": [{"container": {"display_name": "T2"}}]},
+                "root_container": {
+                    "widgets": [{"container": {"display_name": "T2"}}]
+                },
             },
             {
                 "dashboard_id": "dash_unchanged",
                 "display_name": "Same Title",
-                "root_container": {"widgets": [{"container": {"display_name": "T"}}]},
+                "root_container": {
+                    "widgets": [{"container": {"display_name": "T"}}]
+                },
             },
         ]
     }
@@ -416,8 +464,12 @@ def test_diff_dashboards() -> None:
             "displayName": "Old Title",
             "description": "Old description",
             "filter": "old_filter",
-            "dateRangeConfig": {"relativeDateRange": {"quantity": 7, "unit": "DAY"}},
-            "rootContainer": {"widgets": [{"container": {"display_name": "T1"}}]},
+            "dateRangeConfig": {
+                "relativeDateRange": {"quantity": 7, "unit": "DAY"}
+            },
+            "rootContainer": {
+                "widgets": [{"container": {"display_name": "T1"}}]
+            },
         },
         {
             "name": "projects/p/locations/l/dashboards/dash_unchanged",
@@ -449,7 +501,9 @@ def test_diff_dashboards() -> None:
     assert "rootContainer" in diff["to_update"][0][2]
 
     assert len(diff["to_delete"]) == 1
-    assert diff["to_delete"][0] == "projects/p/locations/l/dashboards/dash_delete"
+    assert (
+        diff["to_delete"][0] == "projects/p/locations/l/dashboards/dash_delete"
+    )
 
     assert diff["unchanged"] == ["dash_unchanged"]
     assert "=== Configurable Dashboards Diff ===" in diff["report"]
@@ -489,12 +543,16 @@ def test_sync_dashboards(tmp_path: typing.Any) -> None:
             {
                 "dashboard_id": "d_new",
                 "display_name": "New Dash",
-                "root_container": {"widgets": [{"container": {"display_name": "T"}}]},
+                "root_container": {
+                    "widgets": [{"container": {"display_name": "T"}}]
+                },
             },
             {
                 "dashboard_id": "d_mod",
                 "display_name": "Updated Mod Dash",
-                "root_container": {"widgets": [{"container": {"display_name": "T"}}]},
+                "root_container": {
+                    "widgets": [{"container": {"display_name": "T"}}]
+                },
             },
         ]
     }
@@ -504,7 +562,9 @@ def test_sync_dashboards(tmp_path: typing.Any) -> None:
         {
             "name": "projects/p/locations/l/dashboards/d_mod",
             "displayName": "Old Mod Dash",
-            "rootContainer": {"widgets": [{"container": {"display_name": "T"}}]},
+            "rootContainer": {
+                "widgets": [{"container": {"display_name": "T"}}]
+            },
         },
         {
             "name": "projects/p/locations/l/dashboards/d_orphan",
@@ -521,17 +581,23 @@ def test_sync_dashboards(tmp_path: typing.Any) -> None:
     res_dry = sync_dashboards(mock_client, file_path, dry_run=True)
     assert res_dry["created"] == ["d_new"]
     assert res_dry["updated"] == ["d_mod"]
-    assert res_dry["skipped_delete"] == ["projects/p/locations/l/dashboards/d_orphan"]
+    assert res_dry["skipped_delete"] == [
+        "projects/p/locations/l/dashboards/d_orphan"
+    ]
     mock_client.create_dashboard.assert_not_called()
     mock_client.update_dashboard.assert_not_called()
     mock_client.delete_dashboard.assert_not_called()
 
     # 2. Apply without force (should skip delete)
-    res_apply = sync_dashboards(mock_client, file_path, force=False, dry_run=False)
+    res_apply = sync_dashboards(
+        mock_client, file_path, force=False, dry_run=False
+    )
     assert res_apply["created"] == ["d_new"]
     assert res_apply["updated"] == ["d_mod"]
     assert res_apply["deleted"] == []
-    assert res_apply["skipped_delete"] == ["projects/p/locations/l/dashboards/d_orphan"]
+    assert res_apply["skipped_delete"] == [
+        "projects/p/locations/l/dashboards/d_orphan"
+    ]
     mock_client.create_dashboard.assert_called_once()
     mock_client.update_dashboard.assert_called_once()
     mock_client.delete_dashboard.assert_not_called()
@@ -539,8 +605,12 @@ def test_sync_dashboards(tmp_path: typing.Any) -> None:
     # 3. Apply with force (should delete orphan)
     mock_client.reset_mock()
     mock_client.list_dashboards.return_value = remote
-    res_force = sync_dashboards(mock_client, file_path, force=True, dry_run=False)
-    assert res_force["deleted"] == ["projects/p/locations/l/dashboards/d_orphan"]
+    res_force = sync_dashboards(
+        mock_client, file_path, force=True, dry_run=False
+    )
+    assert res_force["deleted"] == [
+        "projects/p/locations/l/dashboards/d_orphan"
+    ]
     mock_client.delete_dashboard.assert_called_once_with(
         name="projects/p/locations/l/dashboards/d_orphan"
     )
@@ -579,7 +649,9 @@ def test_normalize_date_range_and_container_fields() -> None:
                         "width": 12,
                         "height": 5,
                         "filter": "region = 'EAST'",
-                        "date_range": {"relative": {"quantity": 1, "unit": "MONTH"}},
+                        "date_range": {
+                            "relative": {"quantity": 1, "unit": "MONTH"}
+                        },
                         "widgets": [
                             {
                                 "chart": {
@@ -590,7 +662,10 @@ def test_normalize_date_range_and_container_fields() -> None:
                                     "height": 4,
                                     "filter": "sentiment > 0",
                                     "date_range": {
-                                        "relative": {"quantity": 3, "unit": "WEEK"}
+                                        "relative": {
+                                            "quantity": 3,
+                                            "unit": "WEEK",
+                                        }
                                     },
                                     "data_source": {
                                         "custom_source": {"custom": "data"}
@@ -686,6 +761,8 @@ def test_validation_deep_edge_cases() -> None:
         ]
     }
     errors = validate_dashboards_dict(invalid_structure)
-    assert any("must specify either 'relative' or 'absolute'" in e for e in errors)
+    assert any(
+        "must specify either 'relative' or 'absolute'" in e for e in errors
+    )
     assert any("Container must be a dictionary" in e for e in errors)
     assert any("Chart must be a dictionary" in e for e in errors)

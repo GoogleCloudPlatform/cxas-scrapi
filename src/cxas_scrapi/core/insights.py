@@ -506,9 +506,7 @@ class Insights(Common):
             else update_mask
         )
         params = {"updateMask": mask_str}
-        return self._request(
-            "PATCH", name, data=dashboard, params=params
-        )
+        return self._request("PATCH", name, data=dashboard, params=params)
 
     def delete_dashboard(self, name: str) -> None:
         """Deletes a dashboard by name or ID."""
@@ -605,9 +603,7 @@ class Insights(Common):
         params = {"updateMask": mask_str}
         return self._request("PATCH", name, data=chart, params=params)
 
-    def delete_chart(
-        self, name: str, dashboard_id: str | None = None
-    ) -> None:
+    def delete_chart(self, name: str, dashboard_id: str | None = None) -> None:
         """Deletes a chart."""
         if not name.startswith("projects/"):
             if not dashboard_id:
