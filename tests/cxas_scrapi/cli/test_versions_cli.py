@@ -18,6 +18,7 @@ import argparse
 import json
 import typing
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from cxas_scrapi.cli.versions_cli import (
@@ -196,7 +197,9 @@ def test_app_versions_list_success(
     )
 
     mock_v = MagicMock()
-    mock_v.name = "projects/test-project/locations/global/apps/test-app/versions/v1"
+    mock_v.name = (
+        "projects/test-project/locations/global/apps/test-app/versions/v1"
+    )
     mock_v.display_name = "v1"
     mock_v.description = "desc"
     mock_v.create_time = "2026-08-27T10:00:00Z"

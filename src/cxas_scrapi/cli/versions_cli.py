@@ -120,7 +120,13 @@ def _obj_to_dict(obj: Any) -> dict[str, Any]:
         except Exception:
             pass
     d: dict[str, Any] = {}
-    for attr in ["name", "display_name", "description", "create_time", "creator"]:
+    for attr in [
+        "name",
+        "display_name",
+        "description",
+        "create_time",
+        "creator",
+    ]:
         try:
             if hasattr(obj, attr):
                 val = getattr(obj, attr)
@@ -160,7 +166,11 @@ def app_versions_list(args: argparse.Namespace) -> None:
         for v in versions:
             vd = _obj_to_dict(v)
             name = str(vd.get("name", "?"))
-            version_id = name.split("/")[-1] if name and name != "?" else "?"
+            version_id = (
+                name.rsplit("/", maxsplit=1)[-1]
+                if name and name != "?"
+                else "?"
+            )
 
             # Truncate description to fit nicely in standard terminal tables
             desc = str(vd.get("description", "N/A"))
@@ -211,7 +221,7 @@ def app_versions_create(args: argparse.Namespace) -> None:
 
         vd = _obj_to_dict(version)
         name = str(vd.get("name", ""))
-        version_id = name.split("/")[-1] if name else ""
+        version_id = name.rsplit("/", maxsplit=1)[-1] if name else ""
         v_display = str(vd.get("display_name", version_display_name))
         v_desc = str(vd.get("description", description))
         create_time = str(vd.get("create_time", ""))
