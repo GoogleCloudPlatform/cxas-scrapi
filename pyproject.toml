@@ -107,7 +107,7 @@ packages = ["src/cxas_scrapi"]
 [tool.ruff]
 line-length = 80
 target-version = "py310"
-extend-exclude = ["*.ipynb", ".agents/skills/cxas-agent-foundry/assets/project-template/", ".agents/skills/cxas-agent-foundry/scripts", ".agents/skills/cxas-sim-eval/scripts", ".agents/skills/cxas-cuj-report-generator/", ".agents/skills/cxas-insights-sim-eval/scripts", "examples/", "skill_eval/scratch/"]
+extend-exclude = ["*.ipynb", ".agents/skills/cxas-agent-foundry/assets/project-template/", ".agents/skills/cxas-agent-foundry/scripts", ".agents/skills/cxas-sim-eval/scripts", ".agents/skills/cxas-cuj-report-generator/", ".agents/skills/cxas-insights-sim-eval/scripts", ".agents/skills/cxas-eval-coverage/scripts", "examples/"]
 
 [tool.ruff.lint]
 select = [
@@ -128,7 +128,9 @@ ignore = [
     "E203",  # extend-ignore = E203 from flake8
     # Add common PL ignores based on standard Google pylint defaults if Ruff implements them
     "PLR0913", # too-many-arguments
+    "PLR0917", # too-many-positional-arguments
     "PLR0912", # too-many-branches
+
     "PLR0915", # too-many-statements
     "PLR0911", # too-many-return-statements
     "PLR0914", # too-many-locals
@@ -146,6 +148,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "src/cxas_scrapi/cli/**" = ["PLC0415", "E501"]
 "src/cxas_scrapi/migration/prompts.py" = ["E501"]
+".agents/skills/cxas-eval-coverage/scripts/*.py" = ["E501"]
 "src/cxas_scrapi/prompts/llm_lint_prompts.py" = ["E501"]
 # html_preview is dominated by HTML/CSS template strings; wrapping them would
 # hurt readability of the templates themselves. The Python code in this file
@@ -162,7 +165,14 @@ ignore = [
 "skill_eval/**/*.py" = ["E501"]
 "src/cxas_scrapi/utils/insights_analytics.py" = ["E501"]
 "src/cxas_scrapi/utils/insights_utils.py" = ["E501"]
+"src/cxas_scrapi/utils/insights_reconciler.py" = ["E501"]
+"src/cxas_scrapi/utils/scorecard_eval_runner.py" = ["E501"]
+"src/cxas_scrapi/utils/metrics_extractor.py" = ["E501"]
+".agents/skills/cxas-insights/scripts/*.py" = ["E501"]
+"tests/cxas_scrapi/**" = ["E501"]
 "examples/bella_notte/run_insights_demo.py" = ["E501"]
+
+
 
 [tool.ruff.format]
 quote-style = "double"

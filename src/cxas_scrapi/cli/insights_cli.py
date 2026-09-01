@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import argparse
+import json
 import logging
 import sys
 import tempfile
@@ -689,6 +690,570 @@ def handle_analyze_metrics(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def handle_apply(args: argparse.Namespace) -> None:
+    """Handles the 'insights apply' command for declarative reconciliation."""
+    print(f"Declaratively applying Insights configuration from: {args.config}")
+    import json
+
+    import yaml
+
+    from cxas_scrapi.utils.insights_reconciler import InsightsReconciler
+    from cxas_scrapi.utils.insights_utils import InsightsUtils
+
+    # Read config to get default project and location
+    with open(args.config, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    project_id = getattr(args, "project_id", None) or config.get("project_id")
+    location = getattr(args, "location", None) or config.get(
+        "location", "us-central1"
+    )
+
+    if not project_id:
+        print(
+            "Error: project_id must be specified in the config file or via --project_id."
+        )
+        sys.exit(1)
+
+    utils = InsightsUtils(project_id=project_id, location=location)
+    reconciler = InsightsReconciler(insights_utils=utils)
+
+    try:
+        result = reconciler.apply(args.config, dry_run=args.dry_run)
+        print("\n--- Insights Reconciliation Result ---")
+        print(json.dumps(result, indent=2, default=str))
+    except Exception as e:
+        print(f"Failed to apply configuration: {e}")
+        sys.exit(1)
+
+
+def handle_diff(args: argparse.Namespace) -> None:
+    """Handles the 'insights diff' command."""
+    print(f"Calculating diff for Insights configuration: {args.config}")
+    import json
+
+    import yaml
+
+    from cxas_scrapi.utils.insights_reconciler import InsightsReconciler
+    from cxas_scrapi.utils.insights_utils import InsightsUtils
+
+    with open(args.config, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    project_id = getattr(args, "project_id", None) or config.get("project_id")
+    location = getattr(args, "location", None) or config.get(
+        "location", "us-central1"
+    )
+
+    if not project_id:
+        print(
+            "Error: project_id must be specified in the config file or via --project_id."
+        )
+        sys.exit(1)
+
+    utils = InsightsUtils(project_id=project_id, location=location)
+    reconciler = InsightsReconciler(insights_utils=utils)
+
+    try:
+        diff_result = reconciler.diff(args.config)
+        print("\n--- Insights Declarative Diff ---")
+        print(json.dumps(diff_result, indent=2, default=str))
+    except Exception as e:
+        print(f"Failed to calculate diff: {e}")
+        sys.exit(1)
+
+
+def handle_eval(args: argparse.Namespace) -> None:
+    """Handles the 'insights eval' command for rapid scorecard prompt testing."""
+    calib_set = getattr(args, "calibration_set", None) or getattr(
+        args, "goldens", None
+    )
+    print(
+        f"Evaluating scorecard template {args.template} against calibration dataset {calib_set}..."
+    )
+    import json
+
+    from cxas_scrapi.utils.scorecard_eval_runner import ScorecardEvalRunner
+
+    try:
+        with open(calib_set, encoding="utf-8") as f:
+            if calib_set.endswith(".json") or calib_set.endswith(".json5"):
+                calibration_cases = json.load(f)
+            else:
+                import yaml
+
+                calibration_cases = yaml.safe_load(f)
+
+        if not isinstance(calibration_cases, list):
+            calibration_cases = [calibration_cases]
+
+        runner = ScorecardEvalRunner(
+            project_id=getattr(args, "project_id", "default-project")
+            or "default-project",
+            location=getattr(args, "location", "global") or "global",
+            model_name=getattr(args, "model", "gemini-2.5-flash")
+            or "gemini-2.5-flash",
+        )
+
+        report = runner.evaluate_scorecard_on_calibration_set(
+            scorecard_template=args.template,
+            calibration_dataset=calibration_cases,
+        )
+
+        print("\n--- Scorecard Evaluation Summary ---")
+        print(f"Scorecard Display Name : {report.scorecard_display_name}")
+        print(f"Conversations Evaluated: {report.total_conversations}")
+        print(f"Total Evaluations      : {report.total_evaluations}")
+        if report.overall_accuracy is not None:
+            print(
+                f"Overall Accuracy       : {report.overall_accuracy * 100:.1f}%"
+            )
+
+        print("\nPer-Question Breakdown:")
+        for q_id, q_m in report.question_metrics.items():
+            acc_str = (
+                f"{q_m['accuracy'] * 100:.1f}%"
+                if q_m["accuracy"] is not None
+                else "N/A"
+            )
+            print(
+                f"  [{q_id}] Accuracy: {acc_str} (Discrepancies: {q_m['discrepancies_count']})"
+            )
+
+        if report.discrepancies:
+            print(f"\n⚠️  Discrepancies Found ({len(report.discrepancies)}):")
+            for d in report.discrepancies[:5]:
+                print(
+                    f"  - Conv '{d.conversation_id}' on '{d.question_id}': Expected '{d.expected_answer}', Predicted '{d.predicted_answer}'"
+                )
+                print(f"    Rationale: {d.rationale}")
+
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump(report.to_dict(), f, indent=2)
+            print(f"\nSaved evaluation report to: {args.output}")
+
+    except Exception as e:
+        print(f"Failed during scorecard evaluation: {e}")
+        sys.exit(1)
+
+
+def handle_report(args: argparse.Namespace) -> None:
+    """Handles the 'insights report' command to export tidy DataFrames."""
+    print(f"Extracting evaluation results from {args.parent}...")
+    from cxas_scrapi.core.scorecards import Scorecards
+    from cxas_scrapi.utils.metrics_extractor import MetricsExtractor
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    scorecards_client = Scorecards(project_id=project_id, location=location)
+    extractor = MetricsExtractor(insights_client=scorecards_client)
+
+    sc_names = (
+        [s.strip() for s in args.scorecards.split(",")]
+        if getattr(args, "scorecards", None)
+        else None
+    )
+
+    try:
+        df = extractor.get_evaluation_results(
+            filter_str=getattr(args, "filter", None),
+            scorecard_names=sc_names,
+        )
+        print(f"\nRetrieved {len(df)} evaluation records.")
+        if not df.empty:
+            print(df.head(10).to_string())
+
+        output_path = getattr(args, "output", None)
+        if output_path:
+            if output_path.endswith(".csv"):
+                df.to_csv(output_path, index=False)
+            elif output_path.endswith(".json"):
+                df.to_json(output_path, orient="records", indent=2)
+            print(f"\nSaved extracted metrics to: {output_path}")
+
+    except Exception as e:
+        print(f"Failed to generate report: {e}")
+        sys.exit(1)
+
+
+def handle_pull_autolabel_rules(args: argparse.Namespace) -> None:
+    """Handles the 'insights pull-autolabel-rules' command."""
+    from cxas_scrapi.core.autolabel_sync import (
+        dump_autolabel_rules_yaml,
+        export_remote_rules_to_yaml_dict,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    client = Insights(project_id=project_id, location=location)
+
+    out_path = (
+        getattr(args, "out", None)
+        or getattr(args, "file", None)
+        or "autolabel_rules.yaml"
+    )
+    print(f"Fetching autolabeling rules from {args.parent}...")
+    try:
+        rules = client.list_autolabeling_rules(parent=args.parent)
+        data = export_remote_rules_to_yaml_dict(rules, project_id, location)
+        dump_autolabel_rules_yaml(data, out_path)
+        print(
+            f"Successfully exported {len(rules)} autolabeling rule(s) to {out_path}"
+        )
+    except Exception as e:
+        print(f"Failed to pull autolabeling rules: {e}")
+        sys.exit(1)
+
+
+def handle_diff_autolabel_rules(args: argparse.Namespace) -> None:
+    """Handles the 'insights diff-autolabel-rules' command."""
+    from cxas_scrapi.core.autolabel_sync import (
+        diff_autolabel_rules,
+        load_autolabel_rules_yaml,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    file_path = getattr(args, "file", None) or "autolabel_rules.yaml"
+    try:
+        data = load_autolabel_rules_yaml(file_path)
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        sys.exit(1)
+
+    parent = getattr(args, "parent", None)
+    if parent:
+        project_id, location = _get_project_and_location_from_parent(parent)
+    else:
+        project_id = data.get("project_id")
+        location = data.get("location")
+        if not project_id or not location:
+            print(
+                "Error: Specify --parent or include project_id and location in YAML."
+            )
+            sys.exit(1)
+        parent = f"projects/{project_id}/locations/{location}"
+
+    client = Insights(project_id=project_id, location=location)
+    print(f"Comparing local rules in '{file_path}' against {parent}...")
+    try:
+        remote_rules = client.list_autolabeling_rules(parent=parent)
+        diff_res = diff_autolabel_rules(data, remote_rules)
+        print(diff_res["report"])
+    except Exception as e:
+        print(f"Failed to diff autolabeling rules: {e}")
+        sys.exit(1)
+
+
+def handle_push_autolabel_rules(args: argparse.Namespace) -> None:
+    """Handles the 'insights push-autolabel-rules' command."""
+    from cxas_scrapi.core.autolabel_sync import (
+        load_autolabel_rules_yaml,
+        sync_autolabel_rules,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    file_path = getattr(args, "file", None) or "autolabel_rules.yaml"
+    try:
+        data = load_autolabel_rules_yaml(file_path)
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        sys.exit(1)
+
+    parent = getattr(args, "parent", None)
+    if parent:
+        project_id, location = _get_project_and_location_from_parent(parent)
+    else:
+        project_id = data.get("project_id")
+        location = data.get("location")
+        if not project_id or not location:
+            print(
+                "Error: Specify --parent or include project_id and location in YAML."
+            )
+            sys.exit(1)
+        parent = f"projects/{project_id}/locations/{location}"
+
+    client = Insights(project_id=project_id, location=location)
+    dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
+
+    action_label = "Dry-run syncing" if dry_run else "Syncing"
+    print(f"{action_label} local rules in '{file_path}' to {parent}...")
+    try:
+        summary = sync_autolabel_rules(
+            client=client,
+            file_path=file_path,
+            parent=parent,
+            force=force,
+            dry_run=dry_run,
+        )
+        if not dry_run:
+            print("\n--- Sync Summary ---")
+            created_str = (
+                ", ".join(summary["created"]) if summary["created"] else "none"
+            )
+            updated_str = (
+                ", ".join(summary["updated"]) if summary["updated"] else "none"
+            )
+            deleted_str = (
+                ", ".join(summary["deleted"]) if summary["deleted"] else "none"
+            )
+            print(f"Created : {len(summary['created'])} ({created_str})")
+            print(f"Updated : {len(summary['updated'])} ({updated_str})")
+            print(f"Deleted : {len(summary['deleted'])} ({deleted_str})")
+            if summary.get("skipped_delete"):
+                print(
+                    f"Skipped Deletions (use --force to delete) : {len(summary['skipped_delete'])}"
+                )
+        else:
+            print(summary["diff_report"])
+    except Exception as e:
+        print(f"Failed to push autolabeling rules: {e}")
+        sys.exit(1)
+
+
+def handle_list_autolabel_rules(args: argparse.Namespace) -> None:
+    """Handles the 'insights list-autolabel-rules' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    client = Insights(project_id=project_id, location=location)
+
+    print(f"Listing autolabeling rules under {args.parent}...")
+    try:
+        rules = client.list_autolabeling_rules(parent=args.parent)
+        print(f"Found {len(rules)} rule(s):")
+        for r in rules:
+            rid = r.get("name", "").split("/")[-1]
+            status = "ACTIVE" if r.get("active", True) else "INACTIVE"
+            print(
+                f" - [{status}] {rid}: '{r.get('displayName', '')}' (Key: {r.get('labelKey')}, Conditions: {len(r.get('conditions', []))})"
+            )
+    except Exception as e:
+        print(f"Failed to list autolabeling rules: {e}")
+        sys.exit(1)
+
+
+def handle_get_autolabel_rule(args: argparse.Namespace) -> None:
+    """Handles the 'insights get-autolabel-rule' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.rule_name)
+    client = Insights(project_id=project_id, location=location)
+
+    try:
+        rule = client.get_autolabeling_rule(args.rule_name)
+        print(json.dumps(rule, indent=2))
+    except Exception as e:
+        print(f"Failed to get autolabeling rule: {e}")
+        sys.exit(1)
+
+
+def handle_delete_autolabel_rule(args: argparse.Namespace) -> None:
+    """Handles the 'insights delete-autolabel-rule' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.rule_name)
+    client = Insights(project_id=project_id, location=location)
+
+    try:
+        client.delete_autolabeling_rule(args.rule_name)
+        print(f"Successfully deleted autolabeling rule: {args.rule_name}")
+    except Exception as e:
+        print(f"Failed to delete autolabeling rule: {e}")
+        sys.exit(1)
+
+
+def handle_pull_dashboards(args: argparse.Namespace) -> None:
+    """Handles the 'insights pull-dashboards' command."""
+    from cxas_scrapi.core.dashboard_sync import (
+        dump_dashboards_yaml,
+        export_remote_dashboards_to_yaml_dict,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    client = Insights(project_id=project_id, location=location)
+
+    out_file = getattr(args, "out", None) or "dashboards.yaml"
+    print(f"Fetching configurable dashboards from {args.parent}...")
+    try:
+        remote_dashboards = client.list_dashboards(parent=args.parent)
+        print(f"Found {len(remote_dashboards)} remote dashboard(s).")
+        yaml_data = export_remote_dashboards_to_yaml_dict(
+            remote_dashboards, project_id=project_id, location=location
+        )
+        dump_dashboards_yaml(yaml_data, out_file)
+        print(
+            f"Successfully exported {len(yaml_data.get('dashboards', []))} custom dashboard(s) to {out_file}"
+        )
+    except Exception as e:
+        print(f"Failed to pull dashboards: {e}")
+        sys.exit(1)
+
+
+def handle_diff_dashboards(args: argparse.Namespace) -> None:
+    """Handles the 'insights diff-dashboards' command."""
+    from cxas_scrapi.core.dashboard_sync import (
+        diff_dashboards,
+        load_dashboards_yaml,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    file_path = getattr(args, "file", None) or "dashboards.yaml"
+    try:
+        data = load_dashboards_yaml(file_path)
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        sys.exit(1)
+
+    parent = getattr(args, "parent", None)
+    if parent:
+        project_id, location = _get_project_and_location_from_parent(parent)
+    else:
+        project_id = data.get("project_id")
+        location = data.get("location")
+        if not project_id or not location:
+            print(
+                "Error: Specify --parent or include project_id and location in YAML."
+            )
+            sys.exit(1)
+        parent = f"projects/{project_id}/locations/{location}"
+
+    client = Insights(project_id=project_id, location=location)
+    print(f"Comparing local dashboards in '{file_path}' against {parent}...")
+    try:
+        remote_dashboards = client.list_dashboards(parent=parent)
+        diff_res = diff_dashboards(data, remote_dashboards)
+        print(diff_res["report"])
+    except Exception as e:
+        print(f"Failed to diff dashboards: {e}")
+        sys.exit(1)
+
+
+def handle_push_dashboards(args: argparse.Namespace) -> None:
+    """Handles the 'insights push-dashboards' command."""
+    from cxas_scrapi.core.dashboard_sync import (
+        load_dashboards_yaml,
+        sync_dashboards,
+    )
+    from cxas_scrapi.core.insights import Insights
+
+    file_path = getattr(args, "file", None) or "dashboards.yaml"
+    try:
+        data = load_dashboards_yaml(file_path)
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        sys.exit(1)
+
+    parent = getattr(args, "parent", None)
+    if parent:
+        project_id, location = _get_project_and_location_from_parent(parent)
+    else:
+        project_id = data.get("project_id")
+        location = data.get("location")
+        if not project_id or not location:
+            print(
+                "Error: Specify --parent or include project_id and location in YAML."
+            )
+            sys.exit(1)
+        parent = f"projects/{project_id}/locations/{location}"
+
+    client = Insights(project_id=project_id, location=location)
+    dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
+
+    action_label = "Dry-run syncing" if dry_run else "Syncing"
+    print(f"{action_label} local dashboards in '{file_path}' to {parent}...")
+    try:
+        summary = sync_dashboards(
+            client=client,
+            file_path=file_path,
+            parent=parent,
+            force=force,
+            dry_run=dry_run,
+        )
+        if not dry_run:
+            print("\n--- Sync Summary ---")
+            created_str = (
+                ", ".join(summary["created"]) if summary["created"] else "none"
+            )
+            updated_str = (
+                ", ".join(summary["updated"]) if summary["updated"] else "none"
+            )
+            deleted_str = (
+                ", ".join(summary["deleted"]) if summary["deleted"] else "none"
+            )
+            print(f"Created : {len(summary['created'])} ({created_str})")
+            print(f"Updated : {len(summary['updated'])} ({updated_str})")
+            print(f"Deleted : {len(summary['deleted'])} ({deleted_str})")
+            if summary.get("skipped_delete"):
+                print(
+                    f"Skipped Deletions (use --force to delete) : {len(summary['skipped_delete'])}"
+                )
+    except Exception as e:
+        print(f"Failed to push dashboards: {e}")
+        sys.exit(1)
+
+
+def handle_list_dashboards(args: argparse.Namespace) -> None:
+    """Handles the 'insights list-dashboards' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(args.parent)
+    client = Insights(project_id=project_id, location=location)
+
+    print(f"Listing dashboards under {args.parent}...")
+    try:
+        dashboards = client.list_dashboards(parent=args.parent)
+        print(f"Found {len(dashboards)} dashboard(s):")
+        for d in dashboards:
+            did = d.get("name", "").split("/")[-1]
+            read_only = (
+                "SYSTEM_READ_ONLY" if d.get("readOnly", False) else "CUSTOM"
+            )
+            num_tabs = len(d.get("rootContainer", {}).get("widgets", []))
+            print(
+                f" - [{read_only}] {did}: '{d.get('displayName', '')}' (Tabs: {num_tabs})"
+            )
+    except Exception as e:
+        print(f"Failed to list dashboards: {e}")
+        sys.exit(1)
+
+
+def handle_get_dashboard(args: argparse.Namespace) -> None:
+    """Handles the 'insights get-dashboard' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(
+        args.dashboard_name
+    )
+    client = Insights(project_id=project_id, location=location)
+
+    try:
+        dashboard = client.get_dashboard(args.dashboard_name)
+        print(json.dumps(dashboard, indent=2))
+    except Exception as e:
+        print(f"Failed to get dashboard: {e}")
+        sys.exit(1)
+
+
+def handle_delete_dashboard(args: argparse.Namespace) -> None:
+    """Handles the 'insights delete-dashboard' command."""
+    from cxas_scrapi.core.insights import Insights
+
+    project_id, location = _get_project_and_location_from_parent(
+        args.dashboard_name
+    )
+    client = Insights(project_id=project_id, location=location)
+
+    try:
+        client.delete_dashboard(args.dashboard_name)
+        print(f"Successfully deleted dashboard: {args.dashboard_name}")
+    except Exception as e:
+        print(f"Failed to delete dashboard: {e}")
+        sys.exit(1)
+
+
 def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
     """Populates the provided insights parser with its subcommands."""
 
@@ -1052,3 +1617,295 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
         "--json-output", help="Optional output path for JSON metrics report."
     )
     parser_metrics.set_defaults(func=handle_analyze_metrics)
+    # 13. 'apply' subcommand for declarative reconciliation
+    parser_apply = insights_subparsers.add_parser(
+        "apply",
+        help="Declaratively reconcile scorecards, rules, and backfills from a config file.",
+    )
+    parser_apply.add_argument(
+        "--config",
+        required=True,
+        help="Path to the declarative YAML config file (e.g. insights_config.yaml).",
+    )
+    parser_apply.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without modifying live GCP resources.",
+    )
+    parser_apply.add_argument(
+        "--project-id",
+        dest="project_id",
+        help="Optional override for GCP project ID.",
+    )
+    parser_apply.add_argument(
+        "--location",
+        help="Optional override for location (defaults to us-central1).",
+    )
+    parser_apply.set_defaults(func=handle_apply)
+
+    # 14. 'diff' subcommand
+    parser_diff = insights_subparsers.add_parser(
+        "diff",
+        help="Preview diff between local declarative config and live GCP state.",
+    )
+    parser_diff.add_argument(
+        "--config",
+        required=True,
+        help="Path to the declarative YAML config file.",
+    )
+    parser_diff.add_argument(
+        "--project-id",
+        dest="project_id",
+        help="Optional override for GCP project ID.",
+    )
+    parser_diff.add_argument(
+        "--location",
+        help="Optional override for location.",
+    )
+    parser_diff.set_defaults(func=handle_diff)
+
+    # 15. 'eval' subcommand for rapid prompt testing against calibration datasets
+    parser_eval = insights_subparsers.add_parser(
+        "eval",
+        help="Evaluate scorecard question prompts directly against QA calibration conversation datasets.",
+    )
+    parser_eval.add_argument(
+        "--template",
+        required=True,
+        help="Path to local scorecard YAML/JSON template.",
+    )
+    parser_eval.add_argument(
+        "--calibration-set",
+        "--goldens",
+        dest="calibration_set",
+        required=True,
+        help="Path to JSON/YAML file with QA calibration conversation cases.",
+    )
+    parser_eval.add_argument(
+        "--model",
+        default="gemini-2.5-flash",
+        help="Gemini model to use for evaluation (default: gemini-2.5-flash).",
+    )
+    parser_eval.add_argument(
+        "--project-id",
+        dest="project_id",
+        help="GCP Project ID for Vertex AI evaluation.",
+    )
+    parser_eval.add_argument(
+        "--location",
+        default="global",
+        help="Vertex AI location (default: global).",
+    )
+    parser_eval.add_argument(
+        "--output",
+        help="Optional path to save JSON evaluation report.",
+    )
+    parser_eval.set_defaults(func=handle_eval)
+
+    # 16. 'report' subcommand
+    parser_report = insights_subparsers.add_parser(
+        "report",
+        help="Extract and flatten evaluation results into a tidy DataFrame / CSV / JSON.",
+    )
+    parser_report.add_argument(
+        "--parent",
+        required=True,
+        help="Parent resource name (projects/*/locations/*).",
+    )
+    parser_report.add_argument(
+        "--filter",
+        help="Optional CEL conversation filter.",
+    )
+    parser_report.add_argument(
+        "--scorecards",
+        help="Optional comma-separated scorecard names to filter.",
+    )
+    parser_report.add_argument(
+        "--output",
+        help="Output file path (.csv or .json).",
+    )
+    parser_report.set_defaults(func=handle_report)
+
+    # 17. AutoLabeling Rules subcommands
+    parser_pull_al = insights_subparsers.add_parser(
+        "pull-autolabel-rules",
+        help="Export all autolabeling rules from project to a declarative YAML file.",
+    )
+    parser_pull_al.add_argument(
+        "--parent",
+        required=True,
+        help="Parent resource name (e.g. projects/*/locations/*).",
+    )
+    parser_pull_al.add_argument(
+        "--out",
+        "--file",
+        dest="out",
+        default="autolabel_rules.yaml",
+        help="Output YAML file path (default: autolabel_rules.yaml).",
+    )
+    parser_pull_al.set_defaults(func=handle_pull_autolabel_rules)
+
+    parser_diff_al = insights_subparsers.add_parser(
+        "diff-autolabel-rules",
+        help="Compare local autolabel_rules.yaml against active rules in GCP.",
+    )
+    parser_diff_al.add_argument(
+        "--file",
+        default="autolabel_rules.yaml",
+        help="Path to local autolabel_rules.yaml (default: autolabel_rules.yaml).",
+    )
+    parser_diff_al.add_argument(
+        "--parent",
+        help="Optional parent resource name override (e.g. projects/*/locations/*).",
+    )
+    parser_diff_al.set_defaults(func=handle_diff_autolabel_rules)
+
+    parser_push_al = insights_subparsers.add_parser(
+        "push-autolabel-rules",
+        help="Deploy and sync local autolabel_rules.yaml to GCP project.",
+    )
+    parser_push_al.add_argument(
+        "--file",
+        default="autolabel_rules.yaml",
+        help="Path to local autolabel_rules.yaml (default: autolabel_rules.yaml).",
+    )
+    parser_push_al.add_argument(
+        "--parent",
+        help="Optional parent resource name override (e.g. projects/*/locations/*).",
+    )
+    parser_push_al.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without creating, updating, or deleting remote rules.",
+    )
+    parser_push_al.add_argument(
+        "--force",
+        action="store_true",
+        help="Delete remote rules that are missing from local YAML.",
+    )
+    parser_push_al.set_defaults(func=handle_push_autolabel_rules)
+
+    parser_list_al = insights_subparsers.add_parser(
+        "list-autolabel-rules",
+        help="List autolabeling rules under a parent project/location.",
+    )
+    parser_list_al.add_argument(
+        "--parent",
+        required=True,
+        help="Parent resource name (e.g. projects/*/locations/*).",
+    )
+    parser_list_al.set_defaults(func=handle_list_autolabel_rules)
+
+    parser_get_al = insights_subparsers.add_parser(
+        "get-autolabel-rule",
+        help="Get full details of a specific autolabeling rule.",
+    )
+    parser_get_al.add_argument(
+        "--rule-name",
+        required=True,
+        help="Full resource name of the autolabeling rule.",
+    )
+    parser_get_al.set_defaults(func=handle_get_autolabel_rule)
+
+    parser_del_al = insights_subparsers.add_parser(
+        "delete-autolabel-rule",
+        help="Delete an autolabeling rule by resource name.",
+    )
+    parser_del_al.add_argument(
+        "--rule-name",
+        required=True,
+        help="Full resource name of the autolabeling rule to delete.",
+    )
+    parser_del_al.set_defaults(func=handle_delete_autolabel_rule)
+
+    # 14. Configurable Dashboard subcommands
+    parser_pull_dash = insights_subparsers.add_parser(
+        "pull-dashboards",
+        help="Export all custom configurable dashboards from project to a declarative YAML file.",
+    )
+    parser_pull_dash.add_argument(
+        "--parent",
+        required=True,
+        help="Parent resource name (e.g. projects/*/locations/*).",
+    )
+    parser_pull_dash.add_argument(
+        "--out",
+        "--file",
+        dest="out",
+        default="dashboards.yaml",
+        help="Output YAML file path (default: dashboards.yaml).",
+    )
+    parser_pull_dash.set_defaults(func=handle_pull_dashboards)
+
+    parser_diff_dash = insights_subparsers.add_parser(
+        "diff-dashboards",
+        help="Compare local dashboards.yaml against active dashboards in GCP.",
+    )
+    parser_diff_dash.add_argument(
+        "--file",
+        default="dashboards.yaml",
+        help="Path to local dashboards.yaml (default: dashboards.yaml).",
+    )
+    parser_diff_dash.add_argument(
+        "--parent",
+        help="Optional parent resource name override (e.g. projects/*/locations/*).",
+    )
+    parser_diff_dash.set_defaults(func=handle_diff_dashboards)
+
+    parser_push_dash = insights_subparsers.add_parser(
+        "push-dashboards",
+        help="Deploy and sync local dashboards.yaml to GCP project.",
+    )
+    parser_push_dash.add_argument(
+        "--file",
+        default="dashboards.yaml",
+        help="Path to local dashboards.yaml (default: dashboards.yaml).",
+    )
+    parser_push_dash.add_argument(
+        "--parent",
+        help="Optional parent resource name override (e.g. projects/*/locations/*).",
+    )
+    parser_push_dash.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without creating, updating, or deleting remote dashboards.",
+    )
+    parser_push_dash.add_argument(
+        "--force",
+        action="store_true",
+        help="Delete remote custom dashboards that are missing from local YAML.",
+    )
+    parser_push_dash.set_defaults(func=handle_push_dashboards)
+
+    parser_list_dash = insights_subparsers.add_parser(
+        "list-dashboards",
+        help="List configurable dashboards under a parent project/location.",
+    )
+    parser_list_dash.add_argument(
+        "--parent",
+        required=True,
+        help="Parent resource name (e.g. projects/*/locations/*).",
+    )
+    parser_list_dash.set_defaults(func=handle_list_dashboards)
+
+    parser_get_dash = insights_subparsers.add_parser(
+        "get-dashboard",
+        help="Get full details of a specific configurable dashboard.",
+    )
+    parser_get_dash.add_argument(
+        "--dashboard-name",
+        required=True,
+        help="Full resource name of the dashboard.",
+    )
+    parser_get_dash.set_defaults(func=handle_get_dashboard)
+
+    parser_del_dash = insights_subparsers.add_parser(
+        "delete-dashboard",
+        help="Delete a configurable dashboard by resource name.",
+    )
+    parser_del_dash.add_argument(
+        "--dashboard-name",
+        required=True,
+        help="Full resource name of the dashboard to delete.",
+    )
+    parser_del_dash.set_defaults(func=handle_delete_dashboard)

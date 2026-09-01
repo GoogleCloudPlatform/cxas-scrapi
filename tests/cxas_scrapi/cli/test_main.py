@@ -425,3 +425,29 @@ def test_run_session_headless_failure(
     captured = capsys.readouterr()
     expected_msg = "ERROR: 'run-session' requires an interactive terminal."
     assert expected_msg in captured.err
+
+
+def test_parser_push_version_name() -> None:
+    """Test that the push parser correctly handles --version-name."""
+    test_args = [
+        "cxas",
+        "push",
+        "--to",
+        "my-app",
+        "--create-version",
+        "--version-name",
+        "v1.2.0",
+        "--version-description",
+        "Release 1.2.0",
+    ]
+    with (
+        mock.patch.object(sys, "argv", test_args),
+        mock.patch("cxas_scrapi.cli.main.app_push") as mock_app_push,
+    ):
+        main_cli.main()
+        mock_app_push.assert_called_once()
+        parsed_args = mock_app_push.call_args[0][0]
+        assert parsed_args.to == "my-app"
+        assert parsed_args.create_version is True
+        assert parsed_args.version_name == "v1.2.0"
+        assert parsed_args.version_description == "Release 1.2.0"

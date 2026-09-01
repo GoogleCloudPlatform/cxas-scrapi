@@ -129,3 +129,28 @@ def test_activate_revision(
 
     res = client.activate_revision("rev_name", wait_for_ready=False)
     assert res["state"] == "TRAINING"
+
+
+def test_sanitize_question(mock_google_auth: typing.Any) -> None:
+    client = Scorecards(project_id="p", location="l")
+    raw_question = {
+        "name": "projects/p/locations/l/qaScorecards/sc1/revisions/r1/qaQuestions/q1",
+        "createTime": "2026-08-20T00:00:00Z",
+        "metrics": {"some": "metric"},
+        "questionBody": "Did agent understand user?",
+        "abbreviation": "intent_understanding",
+        "answerChoices": [
+            {"key": "yes", "body": "Agent understood.", "score": 1.0},
+            {"key": "no", "strValue": "Agent failed.", "score": 0.0},
+            {"key": "na", "score": 0.0},
+        ],
+    }
+    sanitized = client._sanitize_question(raw_question)
+    assert "name" not in sanitized
+    assert "createTime" not in sanitized
+    assert "metrics" not in sanitized
+    assert sanitized["questionBody"] == "Did agent understand user?"
+    assert len(sanitized["answerChoices"]) == 3
+    assert sanitized["answerChoices"][0]["strValue"] == "Agent understood."
+    assert sanitized["answerChoices"][1]["strValue"] == "Agent failed."
+    assert sanitized["answerChoices"][2]["naValue"] is True

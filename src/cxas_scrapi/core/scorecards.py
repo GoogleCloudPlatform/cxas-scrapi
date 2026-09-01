@@ -78,17 +78,62 @@ class Scorecards(Insights):
             f"{revision_name}/qaQuestions", "qaQuestions"
         )
 
+    def _sanitize_question(self, question: QaQuestion) -> QaQuestion:
+        """Sanitizes question dictionary for the CCAI Insights REST API."""
+        q = dict(question)
+        for k in [
+            "name",
+            "createTime",
+            "updateTime",
+            "metrics",
+            "tuningMetadata",
+        ]:
+            q.pop(k, None)
+        if "answerChoices" in q and isinstance(q["answerChoices"], list):
+            sanitized_choices = []
+            for choice in q["answerChoices"]:
+                if not isinstance(choice, dict):
+                    sanitized_choices.append(choice)
+                    continue
+                sc: dict[str, Any] = {}
+                key = str(
+                    choice.get("key")
+                    or choice.get("strValue")
+                    or choice.get("value", "")
+                )
+                sc["key"] = key
+
+                if choice.get("naValue") or key.lower() in ("na", "n/a"):
+                    sc["naValue"] = True
+                elif "numValue" in choice:
+                    sc["numValue"] = float(choice["numValue"])
+                else:
+                    sc["strValue"] = str(
+                        choice.get("strValue") or choice.get("body") or key
+                    )
+
+                if "score" in choice and choice["score"] is not None:
+                    sc["score"] = float(choice["score"])
+
+                sanitized_choices.append(sc)
+            q["answerChoices"] = sanitized_choices
+        return q
+
     def patch_question(
         self, name: str, question: QaQuestion, update_mask: str = "*"
     ) -> QaQuestion:
         params = {"updateMask": update_mask}
-        return self._request("PATCH", name, data=question, params=params)
+        return self._request(
+            "PATCH", name, data=self._sanitize_question(question), params=params
+        )
 
     def create_question(
         self, revision_name: str, question: QaQuestion
     ) -> QaQuestion:
         return self._request(
-            "POST", f"{revision_name}/qaQuestions", data=question
+            "POST",
+            f"{revision_name}/qaQuestions",
+            data=self._sanitize_question(question),
         )
 
     def delete_question(self, name: str) -> None:

@@ -94,6 +94,10 @@ else:
         "TurnEvals": "cxas_scrapi.evals.turn_evals",
         "Variables": "cxas_scrapi.core.variables",
         "Versions": "cxas_scrapi.core.versions",
+        "CXASInsights": "cxas_scrapi.core.cxas_insights",
+        "InsightsReconciler": "cxas_scrapi.utils.insights_reconciler",
+        "MetricsExtractor": "cxas_scrapi.utils.metrics_extractor",
+        "ScorecardEvalRunner": "cxas_scrapi.utils.scorecard_eval_runner",
     }
 
     def __getattr__(name: str) -> Any:
@@ -108,6 +112,7 @@ __all__ = [
     "Agents",
     "Apps",
     "BaseDFCXClient",
+    "CXASInsights",
     "CallbackEvals",
     "Callbacks",
     "ChangelogUtils",
@@ -129,8 +134,11 @@ __all__ = [
     "GuardrailEvals",
     "Guardrails",
     "HighLevelGraphVisualizer",
+    "InsightsReconciler",
     "MainVisualizer",
+    "MetricsExtractor",
     "PlaybookTreeVisualizer",
+    "ScorecardEvalRunner",
     "SecretManagerUtils",
     "Sessions",
     "SimulationEvals",

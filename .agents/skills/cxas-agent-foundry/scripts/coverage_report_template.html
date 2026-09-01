@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en" ng-app="coverageApp">
+<head>
+  <meta charset="utf-8">
+  <title>Evaluation Coverage Report</title>
+  <!-- Google Fonts: Inter & Google Sans style Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <!-- Google Material Icons -->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <!-- AngularJS CDN -->
+  <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
+
+  <style>
+    :root {
+      --google-blue: #1a73e8;
+      --google-blue-alpha: rgba(26, 115, 232, 0.08);
+      --google-green: #1e8e3e;
+      --google-green-alpha: rgba(30, 142, 62, 0.08);
+      --google-red: #d93025;
+      --google-red-alpha: rgba(217, 48, 37, 0.08);
+      --google-yellow: #f9ab00;
+      --google-yellow-alpha: rgba(249, 171, 0, 0.08);
+
+      --bg: #f8fafc;
+      --card-bg: rgba(255, 255, 255, 0.85);
+      --border-color: rgba(226, 232, 240, 0.8);
+      --text-main: #1e293b;
+      --text-muted: #64748b;
+      --sidebar-width: 280px;
+      --transition-speed: 0.25s;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      background-image:
+        radial-gradient(at 0% 0%, rgba(26, 115, 232, 0.04) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(30, 142, 62, 0.04) 0px, transparent 50%);
+      color: var(--text-main);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Top Navigation bar */
+    .navbar {
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      padding: 16px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all var(--transition-speed);
+    }
+
+    .navbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .navbar-logo {
+      background: var(--google-blue);
+      color: white;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(26, 115, 232, 0.3);
+    }
+
+    .navbar-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #0f172a;
+    }
+
+    .navbar-title span {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 400;
+      display: block;
+      margin-top: 2px;
+    }
+
+    .navbar-tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .nav-tab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all var(--transition-speed);
+    }
+
+    .nav-tab:hover {
+      background: rgba(0, 0, 0, 0.03);
+      color: var(--text-main);
+    }
+
+    .nav-tab.active {
+      background: var(--google-blue-alpha);
+      color: var(--google-blue);
+      font-weight: 600;
+    }
+
+    .container {
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 32px 40px;
+      flex: 1;
+    }
+
+    /* Glassmorphic Cards */
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.02);
+      margin-bottom: 24px;
+      transition: transform var(--transition-speed), box-shadow var(--transition-speed);
+    }
+
+    .card:hover {
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.04);
+    }
+
+    .card-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* KPI Summary Cards Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    .kpi-card {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .kpi-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+
+    .kpi-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .kpi-value {
+      font-family: 'Outfit', sans-serif;
+      font-size: 32px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 8px;
+    }
+
+    .kpi-subtext {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .kpi-bar-container {
+      height: 6px;
+      background: #e2e8f0;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 12px;
+    }
+
+    .kpi-bar {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .bg-blue { background-color: var(--google-blue); }
+    .bg-green { background-color: var(--google-green); }
+    .bg-red { background-color: var(--google-red); }
+    .bg-yellow { background-color: var(--google-yellow); }
+
+    /* Alert Banner Layouts */
+    .alert {
+      display: flex;
+      gap: 16px;
+      padding: 16px 20px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      border: 1px solid transparent;
+    }
+
+    .alert-error {
+      background: var(--google-red-alpha);
+      border-color: rgba(217, 48, 37, 0.2);
+      color: #c5221f;
+    }
+
+    .alert-warning {
+      background: var(--google-yellow-alpha);
+      border-color: rgba(249, 171, 0, 0.2);
+      color: #b06000;
+    }
+
+    .alert-icon {
+      font-size: 24px;
+      display: flex;
+      align-items: center;
+    }
+
+    .alert-content h4 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .alert-content ul {
+      margin-left: 20px;
+      font-size: 13.5px;
+    }
+
+    /* Lists and Tables styling */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      padding: 12px 16px;
+      border-bottom: 2px solid #e2e8f0;
+    }
+
+    td {
+      padding: 16px;
+      border-bottom: 1px solid #edf2f7;
+      font-size: 14px;
+      vertical-align: middle;
+    }
+
+    tr:hover td {
+      background: rgba(0, 0, 0, 0.01);
+    }
+
+    .progress-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .progress-bar-small {
+      width: 60px;
+      height: 6px;
+      background: #e2e8f0;
+      border-radius: 3px;
+      display: inline-block;
+      overflow: hidden;
+    }
+
+    .progress-bar-small > span {
+      display: block;
+      height: 100%;
+      border-radius: 3px;
+    }
+
+    /* Badge & pill configurations */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge-success {
+      background: var(--google-green-alpha);
+      color: var(--google-green);
+    }
+
+    .badge-danger {
+      background: var(--google-red-alpha);
+      color: var(--google-red);
+    }
+
+    .badge-warning {
+      background: var(--google-yellow-alpha);
+      color: var(--google-yellow);
+    }
+
+    .badge-info {
+      background: var(--google-blue-alpha);
+      color: var(--google-blue);
+    }
+
+    .pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .pill {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 12px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      color: #334155;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .pill-eval {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 11px;
+      background: #eef2f6;
+      border: 1px solid #cbd5e1;
+      color: #475569;
+      padding: 2px 6px;
+      border-radius: 4px;
+      display: inline-block;
+    }
+
+    /* Inputs & Filters controls */
+    .controls-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .search-input-wrapper {
+      position: relative;
+      flex: 1;
+      min-width: 280px;
+    }
+
+    .search-input-wrapper i {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 18px;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 10px 12px 10px 40px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      outline: none;
+      transition: all var(--transition-speed);
+      background: white;
+    }
+
+    .search-input:focus {
+      border-color: var(--google-blue);
+      box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.15);
+    }
+
+    .select-input {
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      outline: none;
+      background: white;
+      min-width: 160px;
+      cursor: pointer;
+    }
+
+    .select-input:focus {
+      border-color: var(--google-blue);
+    }
+
+    /* Code blocks */
+    code {
+      font-family: 'Roboto Mono', monospace;
+      background: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #0f172a;
+    }
+
+    pre {
+      font-family: 'Roboto Mono', monospace;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 13px;
+      color: #334155;
+    }
+
+    /* Lists layouts */
+    .scanned-list {
+      list-style: none;
+    }
+
+    .scanned-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid #edf2f7;
+      font-size: 13.5px;
+    }
+
+    .scanned-item:last-child {
+      border-bottom: none;
+    }
+
+    .scanned-item i {
+      color: var(--google-blue);
+      font-size: 16px;
+    }
+
+    /* Columns layouts for Tools/Callbacks */
+    .columns-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    @media (max-width: 900px) {
+      .columns-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .entity-item-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid #f1f5f9;
+      transition: background var(--transition-speed);
+    }
+
+    .entity-item-row:hover {
+      background: rgba(0, 0, 0, 0.005);
+    }
+
+    .entity-item-name {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 13.5px;
+      font-weight: 500;
+      color: #1e293b;
+    }
+
+    .mapping-quote {
+      font-style: italic;
+      color: #475569;
+      max-width: 500px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+
+    .mapping-quote:hover {
+      color: var(--text-main);
+    }
+
+    .dialog-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(15, 23, 42, 0.3);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .dialog-box {
+      background: white;
+      border-radius: 16px;
+      max-width: 700px;
+      width: 100%;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      border: 1px solid #e2e8f0;
+      display: flex;
+      flex-direction: column;
+      max-height: 80vh;
+    }
+
+    .dialog-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid #e2e8f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .dialog-header h3 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .dialog-close {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .dialog-close:hover {
+      color: var(--text-main);
+    }
+
+    .dialog-body {
+      padding: 24px;
+      overflow-y: auto;
+      font-size: 14.5px;
+      line-height: 1.6;
+    }
+
+    .empty-search-state {
+      padding: 40px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 15px;
+    }
+
+    .empty-search-state i {
+      font-size: 48px;
+      margin-bottom: 12px;
+      display: block;
+      color: #cbd5e1;
+    }
+  </style>
+</head>
+<body ng-controller="CoverageCtrl">
+
+  <header class="navbar">
+    <div class="navbar-brand">
+      <div class="navbar-logo">
+        <i class="material-icons">donut_large</i>
+      </div>
+      <div class="navbar-title">
+        GECX Agent Coverage
+        <span>Generated: {{ generated_at }}</span>
+      </div>
+    </div>
+    <nav class="navbar-tabs">
+      <div class="nav-tab" ng-class="{active: activeTab === 'overview'}" ng-click="setTab('overview')">
+        <i class="material-icons">dashboard</i> Dashboard
+      </div>
+      <div class="nav-tab" ng-class="{active: activeTab === 'segments'}" ng-click="setTab('segments')">
+        <i class="material-icons">notes</i> Instructions
+      </div>
+      <div class="nav-tab" ng-class="{active: activeTab === 'tools'}" ng-click="setTab('tools')">
+        <i class="material-icons">extension</i> Tools &amp; Callbacks
+      </div>
+      <div class="nav-tab" ng-class="{active: activeTab === 'transfers'}" ng-click="setTab('transfers')">
+        <i class="material-icons">swap_horiz</i> Agent Transfers
+      </div>
+    </nav>
+  </header>
+
+  <div class="container">
+
+    <!-- ERROR ALERTS -->
+    <div class="alert alert-error" ng-if="data.errors.length > 0">
+      <div class="alert-icon">
+        <i class="material-icons">error_outline</i>
+      </div>
+      <div class="alert-content">
+        <h4>API Errors Occurred During Calculation</h4>
+        <ul>
+          <li ng-repeat="err in data.errors">[[ err ]]</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- PHANTOM TOOLS WARNING -->
+    <div class="alert alert-warning" ng-if="hasPhantomTools()">
+      <div class="alert-icon">
+        <i class="material-icons">warning_amber</i>
+      </div>
+      <div class="alert-content">
+        <h4>Phantom Tools Referenced in Evaluations (Not declared in tools/)</h4>
+        <ul>
+          <li ng-repeat="(file, phantoms) in data.phantom_tools_by_file">
+            <code>[[ file ]]</code> references: <span ng-repeat="p in phantoms" class="pill" style="margin-right: 4px;">[[ p ]]</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ===================== TAB: OVERVIEW ===================== -->
+    <div ng-show="activeTab === 'overview'">
+
+      <!-- KPI GRID -->
+      <div class="kpi-grid">
+        <div class="card kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Tool Coverage</span>
+            <i class="material-icons text-muted" style="color: var(--google-blue);">extension</i>
+          </div>
+          <div class="kpi-value">[[ data.metrics.tool_coverage_percent | number:1 ]]%</div>
+          <div class="kpi-subtext">[[ data.metrics.covered_tools ]] / [[ data.metrics.total_tools ]] tools covered</div>
+          <div class="kpi-bar-container">
+            <div class="kpi-bar bg-blue" ng-style="{width: data.metrics.tool_coverage_percent + '%'}"></div>
+          </div>
+        </div>
+
+        <div class="card kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Instruction Coverage</span>
+            <i class="material-icons text-muted" style="color: var(--google-green);">notes</i>
+          </div>
+          <div class="kpi-value">[[ data.metrics.instruction_segment_coverage_percent | number:1 ]]%</div>
+          <div class="kpi-subtext">[[ data.metrics.covered_segments ]] / [[ data.metrics.total_segments ]] segments covered</div>
+          <div class="kpi-bar-container">
+            <div class="kpi-bar bg-green" ng-style="{width: data.metrics.instruction_segment_coverage_percent + '%'}"></div>
+          </div>
+        </div>
+
+        <div class="card kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Callback Coverage</span>
+            <i class="material-icons text-muted" style="color: var(--google-red);">settings_ethernet</i>
+          </div>
+          <div class="kpi-value">[[ data.metrics.callback_coverage_percent | number:1 ]]%</div>
+          <div class="kpi-subtext">[[ data.metrics.covered_callbacks ]] / [[ data.metrics.total_callbacks ]] callbacks covered</div>
+          <div class="kpi-bar-container">
+            <div class="kpi-bar bg-red" ng-style="{width: data.metrics.callback_coverage_percent + '%'}"></div>
+          </div>
+        </div>
+
+        <div class="card kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Transfer Coverage</span>
+            <i class="material-icons text-muted" style="color: var(--google-yellow);">swap_horiz</i>
+          </div>
+          <div class="kpi-value">[[ data.metrics.transfer_coverage_percent | number:1 ]]%</div>
+          <div class="kpi-subtext">[[ data.metrics.covered_transfers ]] / [[ data.metrics.total_transfers ]] transfers covered</div>
+          <div class="kpi-bar-container">
+            <div class="kpi-bar bg-yellow" ng-style="{width: data.metrics.transfer_coverage_percent + '%'}"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MAIN SUMMARY LAYOUT -->
+      <div class="columns-grid">
+
+        <!-- Instruction Category Breakdown -->
+        <div class="card">
+          <div class="card-title">
+            <i class="material-icons" style="color: var(--google-green);">pie_chart</i>
+            Instruction Category Breakdown
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Total</th>
+                <th>Covered</th>
+                <th>Coverage %</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr ng-repeat="cat in categories">
+                <td><strong>[[ cat ]]</strong></td>
+                <td>[[ data.metrics.category_counts[cat] ]]</td>
+                <td>[[ data.metrics.category_covered_counts[cat] || 0 ]]</td>
+                <td>
+                  <div class="progress-pill">
+                    <span class="progress-bar-small">
+                      <span class="bg-green" ng-style="{width: ( (data.metrics.category_covered_counts[cat] || 0) / data.metrics.category_counts[cat] * 100 ) + '%'}"></span>
+                    </span>
+                    <span>[[ ( (data.metrics.category_covered_counts[cat] || 0) / data.metrics.category_counts[cat] * 100 ) | number:1 ]]%</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Files Scanned Card -->
+        <div class="card">
+          <div class="card-title">
+            <i class="material-icons" style="color: var(--google-blue);">folder_open</i>
+            Scanned Workspace Assets
+          </div>
+
+          <h4 style="margin: 8px 0 8px; font-size: 13px; color: var(--text-muted); text-transform: uppercase;">
+            Instruction Files ([[ data.scanned_files.instructions.length ]])
+          </h4>
+          <ul class="scanned-list" style="margin-bottom: 20px;">
+            <li class="scanned-item" ng-repeat="f in data.scanned_files.instructions">
+              <i class="material-icons">description</i>
+              <code>[[ f ]]</code>
+            </li>
+          </ul>
+
+          <h4 style="margin: 8px 0 8px; font-size: 13px; color: var(--text-muted); text-transform: uppercase;">
+            Evaluation Files Scanned ([[ data.scanned_files.evaluations.length ]])
+          </h4>
+          <ul class="scanned-list" style="max-height: 240px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; padding: 4px; background: white;">
+            <li class="scanned-item" ng-repeat="f in data.scanned_files.evaluations">
+              <i class="material-icons">flaky</i>
+              <code style="word-break: break-all;">[[ f ]]</code>
+            </li>
+            <li class="scanned-item" ng-if="data.scanned_files.evaluations.length === 0">
+              <span style="color: var(--text-muted); font-style: italic;">No evaluation files discovered.</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Unused Evaluations Card -->
+        <div class="card">
+          <div class="card-title">
+            <i class="material-icons" style="color: var(--google-red);">warning</i>
+            Unused Evaluations
+          </div>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+            The following evaluation test cases were not found to cover any instruction segments or agent transfers.
+          </p>
+          <h4 style="margin: 8px 0 8px; font-size: 13px; color: var(--text-muted); text-transform: uppercase;">
+            Unused Evals ([[ data.unused_evals.length ]])
+          </h4>
+          <ul class="scanned-list" style="max-height: 240px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; padding: 4px; background: white;">
+            <li class="scanned-item" ng-repeat="ev in data.unused_evals">
+              <i class="material-icons" style="color: var(--google-red);">highlight_off</i>
+              <code style="word-break: break-all;">[[ ev ]]</code>
+            </li>
+            <li class="scanned-item" ng-if="data.unused_evals.length === 0">
+              <span style="color: var(--text-muted); font-style: italic;">All evaluations are utilized.</span>
+            </li>
+          </ul>
+        </div>
+
+      </div>
+
+    </div>
+
+
+    <!-- ===================== TAB: INSTRUCTIONS ===================== -->
+    <div ng-show="activeTab === 'segments'" class="card">
+      <div class="card-title">
+        <i class="material-icons" style="color: var(--google-green);">format_list_bulleted</i>
+        Instruction Segment Details &amp; Mapping
+      </div>
+
+      <div class="controls-row">
+        <div class="search-input-wrapper">
+          <i class="material-icons">search</i>
+          <input type="text" class="search-input" ng-model="filters.segQuery" placeholder="Search by agent, category, or quote text...">
+        </div>
+        <select class="select-input" ng-model="filters.segCoverage">
+          <option value="">All Coverage</option>
+          <option value="Yes">Covered Only</option>
+          <option value="No">Uncovered Only</option>
+        </select>
+        <select class="select-input" ng-model="filters.segCategory">
+          <option value="">All Categories</option>
+          <option ng-repeat="c in categories" value="[[ c ]]">[[ c ]]</option>
+        </select>
+        <select class="select-input" ng-model="filters.segAgent">
+          <option value="">All Agents</option>
+          <option ng-repeat="a in agentsList" value="[[ a ]]">[[ a ]]</option>
+        </select>
+      </div>
+
+      <table ng-show="filteredSegments.length > 0">
+        <thead>
+          <tr>
+            <th style="width: 50px;">#</th>
+            <th style="width: 140px;">Agent</th>
+            <th style="width: 140px;">Category</th>
+            <th>Instruction Quote / Directive</th>
+            <th style="width: 120px;">Covered?</th>
+            <th style="width: 260px;">Covering Eval(s)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr ng-repeat="s in filteredSegments = (data.instruction_segments | filter:segmentFilter)">
+            <td>[[ $index + 1 ]]</td>
+            <td><span class="pill">[[ s.agent ]]</span></td>
+            <td><span class="badge badge-info" style="font-size: 11px;">[[ s.category ]]</span></td>
+            <td>
+              <div ng-click="showQuoteDetails(s)" class="mapping-quote" title="Click to view full quote text">
+                <strong>[[ s.directive ]]</strong>
+                <span style="display: block; font-size: 12.5px; opacity: 0.85; margin-top: 4px;">[[ s.quote ]]</span>
+              </div>
+            </td>
+            <td>
+              <span class="badge" ng-class="{'badge-success': s.covered === 'Yes', 'badge-danger': s.covered === 'No'}">
+                [[ s.covered ]]
+              </span>
+            </td>
+            <td>
+              <div class="pill-list" ng-if="s.evals.length > 0">
+                <span class="pill-eval" ng-repeat="ev in s.evals">[[ ev ]]</span>
+              </div>
+              <span ng-if="!s.evals || s.evals.length === 0" style="color: var(--text-muted); font-style: italic;">None</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="empty-search-state" ng-show="filteredSegments.length === 0">
+        <i class="material-icons">find_in_page</i>
+        No instruction segments match the current filters.
+      </div>
+    </div>
+
+
+    <!-- ===================== TAB: TOOLS & CALLBACKS ===================== -->
+    <div ng-show="activeTab === 'tools'" class="columns-grid">
+
+      <!-- Tools Column -->
+      <div class="card">
+        <div class="card-title">
+          <i class="material-icons" style="color: var(--google-blue);">build</i>
+          Tool Coverage Breakdown
+        </div>
+
+        <div class="controls-row">
+          <div class="search-input-wrapper">
+            <i class="material-icons">search</i>
+            <input type="text" class="search-input" ng-model="filters.toolQuery" placeholder="Filter tools...">
+          </div>
+          <select class="select-input" ng-model="filters.toolCoverage">
+            <option value="">All Tools</option>
+            <option value="Yes">Covered</option>
+            <option value="No">Uncovered</option>
+          </select>
+        </div>
+
+        <div style="border: 1px solid var(--border-color); border-radius: 10px; overflow: hidden; background: white;">
+          <div class="entity-item-row" ng-repeat="t in filteredTools = (toolsList | filter:toolFilter)">
+            <span class="entity-item-name">[[ t.name ]]</span>
+            <span class="badge" ng-class="{'badge-success': t.covered, 'badge-danger': !t.covered}">
+              [[ t.covered ? 'Covered' : 'Uncovered' ]]
+            </span>
+          </div>
+          <div class="empty-search-state" ng-if="filteredTools.length === 0">
+            <i class="material-icons">search_off</i>
+            No tools match the filters.
+          </div>
+        </div>
+      </div>
+
+      <!-- Callbacks Column -->
+      <div class="card">
+        <div class="card-title">
+          <i class="material-icons" style="color: var(--google-red);">settings_ethernet</i>
+          Callback Coverage Breakdown
+        </div>
+
+        <div class="controls-row">
+          <div class="search-input-wrapper">
+            <i class="material-icons">search</i>
+            <input type="text" class="search-input" ng-model="filters.cbQuery" placeholder="Filter callbacks...">
+          </div>
+          <select class="select-input" ng-model="filters.cbCoverage">
+            <option value="">All Callbacks</option>
+            <option value="Yes">Covered</option>
+            <option value="No">Uncovered</option>
+          </select>
+        </div>
+
+        <div style="border: 1px solid var(--border-color); border-radius: 10px; overflow: hidden; background: white;">
+          <div class="entity-item-row" ng-repeat="cb in filteredCallbacks = (callbacksList | filter:cbFilter)">
+            <span class="entity-item-name">[[ cb.name ]]</span>
+            <span class="badge" ng-class="{'badge-success': cb.covered, 'badge-danger': !cb.covered}">
+              [[ cb.covered ? 'Covered' : 'Uncovered' ]]
+            </span>
+          </div>
+          <div class="empty-search-state" ng-if="filteredCallbacks.length === 0">
+            <i class="material-icons">search_off</i>
+            No callbacks match the filters.
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+
+    <!-- ===================== TAB: AGENT TRANSFERS ===================== -->
+    <div ng-show="activeTab === 'transfers'" class="card">
+      <div class="card-title">
+        <i class="material-icons" style="color: var(--google-yellow);">swap_horiz</i>
+        Sub-Agent Transfers Coverage
+      </div>
+      <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px; margin-top: -8px;">
+        This shows the transition matrix of conversations moving between sub-agents. Desired transfers represent configured transitions, whereas Tested transfers have active test cases mapping to them.
+      </p>
+
+      <div class="controls-row">
+        <div class="search-input-wrapper">
+          <i class="material-icons">search</i>
+          <input type="text" class="search-input" ng-model="filters.transferQuery" placeholder="Search by source/destination agent...">
+        </div>
+        <select class="select-input" ng-model="filters.transferDesired">
+          <option value="">All Intentions</option>
+          <option value="Yes">Desired Transitions</option>
+          <option value="No">Undesired Transitions</option>
+        </select>
+        <select class="select-input" ng-model="filters.transferTested">
+          <option value="">All Testing Status</option>
+          <option value="Yes">Tested</option>
+          <option value="No">Untested</option>
+        </select>
+      </div>
+
+      <table ng-show="filteredTransfers.length > 0">
+        <thead>
+          <tr>
+            <th style="width: 50px;">#</th>
+            <th>From Agent</th>
+            <th>To Agent</th>
+            <th style="width: 150px; text-align: center;">Desired?</th>
+            <th style="width: 150px; text-align: center;">Tested?</th>
+            <th>Covering Evaluation(s)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr ng-repeat="t in filteredTransfers = (data.agent_transfers | filter:transferFilter)">
+            <td>[[ $index + 1 ]]</td>
+            <td><code style="font-size: 13.5px;">[[ t.from_agent ]]</code></td>
+            <td><code style="font-size: 13.5px;">[[ t.to_agent ]]</code></td>
+            <td style="text-align: center;">
+              <span class="badge" ng-class="{'badge-info': t.is_desired, 'badge-warning': !t.is_desired}">
+                [[ t.is_desired ? 'Yes' : 'No' ]]
+              </span>
+            </td>
+            <td style="text-align: center;">
+              <span class="badge" ng-class="{'badge-success': t.is_tested, 'badge-danger': !t.is_tested}">
+                [[ t.is_tested ? 'Yes' : 'No' ]]
+              </span>
+            </td>
+            <td>
+              <div class="pill-list" ng-if="t.covering_evals.length > 0">
+                <span class="pill-eval" ng-repeat="ev in t.covering_evals">[[ ev ]]</span>
+              </div>
+              <span ng-if="t.covering_evals.length === 0" style="color: var(--text-muted); font-style: italic;">None</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="empty-search-state" ng-show="filteredTransfers.length === 0">
+        <i class="material-icons">swap_calls</i>
+        No sub-agent transfers match the current filters.
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Detail Dialog / Modal for full instruction quote -->
+  <div class="dialog-backdrop" ng-if="selectedSegment" ng-click="closeQuoteDetails()">
+    <div class="dialog-box" ng-click="$event.stopPropagation()">
+      <div class="dialog-header">
+        <h3>Segment Detail Info</h3>
+        <button class="dialog-close" ng-click="closeQuoteDetails()">&times;</button>
+      </div>
+      <div class="dialog-body">
+        <div style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
+          <span class="pill">Agent: [[ selectedSegment.agent ]]</span>
+          <span class="badge badge-info">Category: [[ selectedSegment.category ]]</span>
+          <span class="badge" ng-class="{'badge-success': selectedSegment.covered === 'Yes', 'badge-danger': selectedSegment.covered === 'No'}">
+            Covered: [[ selectedSegment.covered ]]
+          </span>
+        </div>
+
+        <h4 style="margin: 16px 0 8px; color: var(--text-muted); font-size: 13px; text-transform: uppercase;">Directive Title</h4>
+        <p style="font-weight: 600; margin-bottom: 16px;">[[ selectedSegment.directive ]]</p>
+
+        <h4 style="margin: 16px 0 8px; color: var(--text-muted); font-size: 13px; text-transform: uppercase;">Full Instruction Text</h4>
+        <pre style="white-space: pre-wrap; word-break: break-all;">[[ selectedSegment.full_text ]]</pre>
+
+        <div ng-if="selectedSegment.evals.length > 0" style="margin-top: 16px;">
+          <h4 style="margin: 16px 0 8px; color: var(--text-muted); font-size: 13px; text-transform: uppercase;">Associated Evaluation Files</h4>
+          <div class="pill-list" style="margin-top: 8px;">
+            <span class="pill-eval" ng-repeat="ev in selectedSegment.evals">[[ ev ]]</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Embed report data safely via Jinja2 -->
+  <script type="application/json" id="report-data">{{ data_json | safe }}</script>
+
+  <script>
+    angular.module('coverageApp', [])
+      .config(function($interpolateProvider) {
+        // Use custom interpolation symbols to avoid conflicts with Jinja2
+        $interpolateProvider.startSymbol('[[');
+        $interpolateProvider.endSymbol(']]');
+      })
+      .controller('CoverageCtrl', function($scope) {
+        $scope.activeTab = 'overview';
+        $scope.generated_at = '{{ generated_at }}';
+
+        // Load report data injected by template
+        var dataEl = document.getElementById('report-data');
+        $scope.data = JSON.parse(dataEl.textContent);
+
+        // Filters model
+        $scope.filters = {
+          segQuery: '',
+          segCoverage: '',
+          segCategory: '',
+          segAgent: '',
+          toolQuery: '',
+          toolCoverage: '',
+          cbQuery: '',
+          cbCoverage: '',
+          transferQuery: '',
+          transferDesired: '',
+          transferTested: ''
+        };
+
+        // Extract distinct lists for filters
+        $scope.categories = Object.keys($scope.data.metrics.category_counts).sort();
+
+        // Get unique agents list from instruction segments
+        var agentsSet = {};
+        angular.forEach($scope.data.instruction_segments, function(s) {
+          agentsSet[s.agent] = true;
+        });
+        $scope.agentsList = Object.keys(agentsSet).sort();
+
+        // Format tools and callbacks list for ng-repeat
+        $scope.toolsList = [];
+        angular.forEach($scope.data.tools.covered, function(t) {
+          $scope.toolsList.push({ name: t, covered: true });
+        });
+        angular.forEach($scope.data.tools.uncovered, function(t) {
+          $scope.toolsList.push({ name: t, covered: false });
+        });
+        $scope.toolsList.sort(function(a, b) { return a.name.localeCompare(b.name); });
+
+        $scope.callbacksList = [];
+        angular.forEach($scope.data.callbacks.covered, function(cb) {
+          $scope.callbacksList.push({ name: cb, covered: true });
+        });
+        angular.forEach($scope.data.callbacks.uncovered, function(cb) {
+          $scope.callbacksList.push({ name: cb, covered: false });
+        });
+        $scope.callbacksList.sort(function(a, b) { return a.name.localeCompare(b.name); });
+
+        // helper for phantom tools check
+        $scope.hasPhantomTools = function() {
+          return $scope.data.phantom_tools_by_file &&
+                 Object.keys($scope.data.phantom_tools_by_file).length > 0;
+        };
+
+        $scope.setTab = function(tabName) {
+          $scope.activeTab = tabName;
+        };
+
+        // Details Modal controls
+        $scope.selectedSegment = null;
+        $scope.showQuoteDetails = function(seg) {
+          $scope.selectedSegment = seg;
+        };
+        $scope.closeQuoteDetails = function() {
+          $scope.selectedSegment = null;
+        };
+
+        // Filter callbacks/predicates
+        $scope.segmentFilter = function(s) {
+          var query = $scope.filters.segQuery.toLowerCase();
+          var matchesQuery = !query ||
+                             s.agent.toLowerCase().indexOf(query) !== -1 ||
+                             s.category.toLowerCase().indexOf(query) !== -1 ||
+                             s.directive.toLowerCase().indexOf(query) !== -1 ||
+                             s.quote.toLowerCase().indexOf(query) !== -1;
+
+          var matchesCoverage = !$scope.filters.segCoverage || s.covered === $scope.filters.segCoverage;
+          var matchesCategory = !$scope.filters.segCategory || s.category === $scope.filters.segCategory;
+          var matchesAgent = !$scope.filters.segAgent || s.agent === $scope.filters.segAgent;
+
+          return matchesQuery && matchesCoverage && matchesCategory && matchesAgent;
+        };
+
+        $scope.toolFilter = function(t) {
+          var query = $scope.filters.toolQuery.toLowerCase();
+          var matchesQuery = !query || t.name.toLowerCase().indexOf(query) !== -1;
+
+          var cov = $scope.filters.toolCoverage;
+          var matchesCoverage = !cov || (cov === 'Yes' && t.covered) || (cov === 'No' && !t.covered);
+
+          return matchesQuery && matchesCoverage;
+        };
+
+        $scope.cbFilter = function(cb) {
+          var query = $scope.filters.cbQuery.toLowerCase();
+          var matchesQuery = !query || cb.name.toLowerCase().indexOf(query) !== -1;
+
+          var cov = $scope.filters.cbCoverage;
+          var matchesCoverage = !cov || (cov === 'Yes' && cb.covered) || (cov === 'No' && !cb.covered);
+
+          return matchesQuery && matchesCoverage;
+        };
+
+        $scope.transferFilter = function(t) {
+          var query = $scope.filters.transferQuery.toLowerCase();
+          var matchesQuery = !query ||
+                             t.from_agent.toLowerCase().indexOf(query) !== -1 ||
+                             t.to_agent.toLowerCase().indexOf(query) !== -1;
+
+          var desired = $scope.filters.transferDesired;
+          var matchesDesired = !desired || (desired === 'Yes' && t.is_desired) || (desired === 'No' && !t.is_desired);
+
+          var tested = $scope.filters.transferTested;
+          var matchesTested = !tested || (tested === 'Yes' && t.is_tested) || (tested === 'No' && !t.is_tested);
+
+          return matchesQuery && matchesDesired && matchesTested;
+        };
+      });
+  </script>
+</body>
+</html>

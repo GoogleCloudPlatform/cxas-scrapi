@@ -24,7 +24,8 @@ from typing import Any
 
 from google.api_core.gapic_v1.client_info import ClientInfo
 from google.auth import default
-from google.auth.transport.requests import Request
+from google.auth.transport.requests import AuthorizedSession, Request
+from google.cloud import bigquery
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from proto.marshal.collections import maps, repeated
@@ -225,7 +226,25 @@ class Common:
             return resource_name.rsplit("/sessions/", maxsplit=1)[-1]
         except Exception:
             pass
-        return None
+
+    def get_bigquery_client(
+        self, project_id: str | None = None
+    ) -> bigquery.Client:
+        """Returns an authenticated BigQuery Client."""
+        proj = project_id or self.project_id
+        authed_session = None
+        if self.creds:
+            with contextlib.suppress(Exception):
+                authed_session = AuthorizedSession(self.creds)
+
+        kwargs: dict[str, Any] = {
+            "credentials": self.creds,
+            "project": proj,
+            "client_info": self.client_info,
+        }
+        if authed_session is not None:
+            kwargs["_http"] = authed_session
+        return bigquery.Client(**kwargs)
 
     @staticmethod
     def _tokenize_textproto(text: typing.Any) -> typing.Any:

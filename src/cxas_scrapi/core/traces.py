@@ -32,6 +32,7 @@ import difflib
 import json
 import logging
 import os
+import re
 import subprocess
 import urllib.parse
 import zipfile
@@ -40,7 +41,9 @@ from statistics import median
 from typing import Any
 
 from google import genai
+from google.cloud import bigquery
 
+from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.sessions import Modality, Sessions
@@ -52,10 +55,33 @@ from cxas_scrapi.utils.tracing.audio_analysis import (
     ANALYSIS_REGISTRY,
     AudioAnalysis,
 )
+from cxas_scrapi.utils.tracing.audio_transcription import (
+    DEFAULT_TRANSCRIPTION_MODEL,
+    AudioTranscriber,
+    calculate_wer,
+    contains_non_english,
+    normalize_text,
+)
 from cxas_scrapi.utils.tracing.cloud_logging import CloudLogsClient
 from cxas_scrapi.utils.tracing.trace_config import TraceConfig
 
 logger = logging.getLogger(__name__)
+
+REPROCESSED_TRANSCRIPTS_SCHEMA = [
+    bigquery.SchemaField("conversation_id", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("turn_index", "INT64", mode="REQUIRED"),
+    bigquery.SchemaField("audio_uri", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("original_transcript", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("updated_transcript", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("wer", "FLOAT64", mode="NULLABLE"),
+    bigquery.SchemaField("substitutions", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("deletions", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("insertions", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("hits", "INT64", mode="NULLABLE"),
+    bigquery.SchemaField("is_non_english", "BOOL", mode="NULLABLE"),
+    bigquery.SchemaField("model", "STRING", mode="NULLABLE"),
+    bigquery.SchemaField("reprocessed_at", "TIMESTAMP", mode="NULLABLE"),
+]
 
 
 class Traces(Common):
@@ -354,6 +380,85 @@ class Traces(Common):
 
     # ------------------------------- audio ----------------------------------
 
+    def _get_remote_audio_bucket(self) -> str | None:
+        """Resolves audio bucket from remote App logging settings if needed."""
+        if not self.app_name or not self.project_id or not self.location:
+            return None
+        try:
+            apps = Apps(
+                project_id=self.project_id,
+                location=self.location,
+                creds=self.creds,
+            )
+            app = apps.get_app(self.app_name)
+            logging_settings = getattr(app, "logging_settings", None)
+            if logging_settings:
+                audio_config = getattr(
+                    logging_settings, "audio_recording_config", None
+                )
+                if audio_config:
+                    bucket = getattr(audio_config, "gcs_bucket", None)
+                    if isinstance(bucket, str) and bucket.startswith("gs://"):
+                        return bucket
+        except Exception as e:
+            logger.debug(f"Failed to fetch remote app audio bucket: {e}")
+        return None
+
+    def _get_audio_bucket(self) -> str | None:
+        """Resolves the audio recording GCS bucket.
+
+        Order of precedence:
+          1. `audio.bucket_override` (from `trace.yaml`)
+          2. `app.loggingSettings.audioRecordingConfig.gcsBucket` (from local
+          `app.json`)
+          3. Remote app `loggingSettings.audioRecordingConfig.gcsBucket`
+        """
+        if self.trace_config.audio.bucket_override:
+            return self.trace_config.audio.bucket_override
+        if self.app_config:
+            bucket = self.app_config.audio_bucket()
+            if bucket:
+                return bucket
+        return self._get_remote_audio_bucket()
+
+    def _get_remote_bigquery_export_settings(self) -> dict[str, Any] | None:
+        """Resolves BigQuery export settings from remote App logging
+        settings.
+        """
+        if not self.app_name or not self.project_id or not self.location:
+            return None
+        try:
+            apps = Apps(
+                project_id=self.project_id,
+                location=self.location,
+                creds=self.creds,
+            )
+            app = apps.get_app(self.app_name)
+            logging_settings = getattr(app, "logging_settings", None)
+            if logging_settings:
+                bq_settings = getattr(
+                    logging_settings, "bigquery_export_settings", None
+                )
+                if bq_settings:
+                    dataset = getattr(bq_settings, "dataset", None)
+                    if isinstance(dataset, str) and dataset:
+                        proj = getattr(bq_settings, "project", None)
+                        return {
+                            "enabled": bool(
+                                getattr(bq_settings, "enabled", False)
+                            ),
+                            "project": (
+                                proj
+                                if isinstance(proj, str) and proj
+                                else self.project_id
+                            ),
+                            "dataset": dataset,
+                            "table": (self.app_name or "").split("/")[-1],
+                        }
+        except Exception as e:
+            logger.debug(f"Failed to fetch remote app BQ settings: {e}")
+        return None
+
     def resolve_audio_uri(
         self,
         conversation_id: str,
@@ -367,7 +472,7 @@ class Traces(Common):
              appear in `payload` chunks).
           2. `audio.bucket_override` (from `trace.yaml`) or
              `app.loggingSettings.audioRecordingConfig.gcsBucket`
-             (from `app.json`) formatted via `audio.uri_pattern`.
+             (from `app.json` or remote App) formatted via `audio.uri_pattern`.
           3. If `audio.search_bucket` is enabled and the simple URI does
              not exist, list the bucket and return the first object whose
              name ends with `/{conversation_id}/{search_filename}`.
@@ -378,9 +483,7 @@ class Traces(Common):
             if isinstance(payload, dict) and payload.get("audioUri"):
                 return payload["audioUri"]
 
-        bucket = self.trace_config.audio.bucket_override or (
-            self.app_config.audio_bucket() if self.app_config else None
-        )
+        bucket = self._get_audio_bucket()
         if not bucket:
             return None
         pattern = self.trace_config.audio.uri_pattern
@@ -443,9 +546,7 @@ class Traces(Common):
         `*/{conversation_id}/METADATA.json`, then lists everything under that
         prefix.
         """
-        bucket = self.trace_config.audio.bucket_override or (
-            self.app_config.audio_bucket() if self.app_config else None
-        )
+        bucket = self._get_audio_bucket()
         if not bucket:
             return []
         gcs = GCSUtils(creds=self.creds)
@@ -455,6 +556,489 @@ class Traces(Common):
         if not prefix:
             return []
         return gcs.list_with_prefix(bucket, prefix=prefix)
+
+    def get_user_audio_uris(self, conversation_id: str) -> dict[int, str]:
+        """Returns a mapping of {turn_index: gcs_uri} for user turn recordings.
+
+        Discovers audio files for the given conversation and extracts the
+        turn number from filenames matching `user-turn-<N>.wav`.
+
+        Args:
+            conversation_id: The conversation ID.
+
+        Returns:
+            Dict mapping integer turn_index to GCS URI.
+        """
+        files = self.list_audio_files(conversation_id)
+        user_audio_map: dict[int, str] = {}
+        for f in files:
+            fname = f.split("/")[-1]
+            match = re.search(r"user-turn-(\d+)\.wav$", fname)
+            if match:
+                turn_idx = int(match.group(1))
+                user_audio_map[turn_idx] = f
+        return dict(sorted(user_audio_map.items()))
+
+    def transcribe_user_turns(
+        self,
+        conversation_id: str,
+        model_name: str = DEFAULT_TRANSCRIPTION_MODEL,
+        only_non_english: bool = False,
+        prompt: str | None = None,
+        max_workers: int = 8,
+    ) -> list[dict[str, Any]]:
+        """Transcribes user audio recordings for a trace and evaluates WER.
+
+        Args:
+            conversation_id: Conversation ID of the trace.
+            model_name: Gemini model name for transcription (default:
+                gemini-2.5-flash).
+            only_non_english: If True, only reprocesses turns that contain
+                non-English characters.
+            prompt: Optional custom prompt instruction for transcription.
+            max_workers: Maximum worker threads for parallel transcription.
+
+        Returns:
+            List of dictionaries for each user turn containing transcription
+            and WER metrics.
+        """
+        normalized = self.get_normalized(conversation_id)
+        user_audio_map = self.get_user_audio_uris(conversation_id)
+
+        transcriber = AudioTranscriber(
+            project_id=self.project_id or "",
+            credentials=self.creds,
+            model_name=model_name,
+            prompt=prompt,
+        )
+
+        user_entries = [
+            e for e in normalized.get("entries", []) if e.get("kind") == "user"
+        ]
+
+        def _eval_user_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
+            turn_idx = entry.get("turn", 0)
+            ces_text = entry.get("text") or ""
+            has_non_english = contains_non_english(ces_text)
+
+            audio_uri = user_audio_map.get(turn_idx)
+            if not audio_uri:
+                return None
+
+            if only_non_english and not has_non_english:
+                return {
+                    "conversation_id": conversation_id,
+                    "turn_index": turn_idx,
+                    "audio_uri": audio_uri,
+                    "ces_transcript": ces_text,
+                    "gemini_transcript": None,
+                    "contains_non_english": False,
+                    "reprocessed": False,
+                    "wer": None,
+                    "substitutions": 0,
+                    "deletions": 0,
+                    "insertions": 0,
+                    "hits": 0,
+                    "reference_words": len(normalize_text(ces_text)),
+                    "hypothesis_words": 0,
+                }
+
+            eval_res = transcriber.evaluate_turn(
+                reference_transcript=ces_text,
+                audio_source=audio_uri,
+                turn_index=turn_idx,
+                conversation_id=conversation_id,
+                prompt=prompt,
+            )
+            eval_res["audio_uri"] = audio_uri
+            eval_res["reprocessed"] = True
+            return eval_res
+
+        results: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = [ex.submit(_eval_user_entry, e) for e in user_entries]
+            for fut in as_completed(futures):
+                res = fut.result()
+                if res is not None:
+                    results.append(res)
+
+        results.sort(key=lambda x: int(x.get("turn_index") or 0))
+        return results
+
+    def reprocess_transcriptions(
+        self,
+        conversation_id: str | None = None,
+        output_table: str | None = None,
+        source_table: str | None = None,
+        bq_dataset: str | None = None,
+        bq_project: str | None = None,
+        model_name: str = DEFAULT_TRANSCRIPTION_MODEL,
+        only_non_english: bool = False,
+        dry_run: bool = False,
+        limit: int | None = None,
+        prompt: str | None = None,
+        max_workers: int = 8,
+    ) -> dict[str, Any]:
+        """Reprocesses user speech transcriptions from GCS audio, computes WER,
+        and appends updated turn records to a BigQuery destination table.
+
+        Args:
+            conversation_id: Optional specific conversation ID. If omitted,
+                reprocesses conversations found in the BigQuery source table.
+            output_table: Target BigQuery table name or qualified reference
+                (e.g. `dataset.reprocessed_transcripts`). Defaults to
+                `{dataset}.reprocessed_transcripts`.
+            source_table: Source BigQuery table name containing conversations.
+                Defaults to the app's CES BigQuery export table.
+            bq_dataset: Optional BigQuery dataset override.
+            bq_project: Optional BigQuery project override.
+            model_name: Gemini Flash / Flash-Lite model name (default:
+                gemini-2.5-flash).
+            only_non_english: If True, only reprocesses turns that contain
+                non-English characters.
+            dry_run: If True, calculates transcriptions and WER without
+                mutating BigQuery.
+            limit: Maximum number of conversations to process.
+            prompt: Optional transcription prompt override.
+            max_workers: Maximum worker threads for concurrent processing.
+
+        Returns:
+            Summary dictionary with aggregate metrics and per-turn details.
+        """
+        bq_settings = self._get_remote_bigquery_export_settings()
+        proj = (
+            bq_project
+            or (bq_settings.get("project") if bq_settings else None)
+            or self.project_id
+        )
+        dataset = bq_dataset or (
+            bq_settings.get("dataset") if bq_settings else None
+        )
+        src_table_name = source_table or (self.app_name or "").split("/")[-1]
+
+        if not proj or not dataset:
+            raise ValueError(
+                "BigQuery project and dataset could not be determined. "
+                "Ensure BigQuery export is enabled on the app or pass "
+                "`bq_dataset` / `bq_project`."
+            )
+
+        if "." in src_table_name:
+            src_table_ref = src_table_name
+        else:
+            src_table_ref = f"{proj}.{dataset}.{src_table_name}"
+
+        # Resolve output destination table
+        if output_table:
+            if "." in output_table:
+                parts = output_table.split(".")
+                if len(parts) == 2:
+                    dst_table_ref = f"{proj}.{parts[0]}.{parts[1]}"
+                else:
+                    dst_table_ref = output_table
+            else:
+                dst_table_ref = f"{proj}.{dataset}.{output_table}"
+        else:
+            dst_table_ref = f"{proj}.{dataset}.reprocessed_transcripts"
+
+        bq_client = self.get_bigquery_client(project_id=proj)
+
+        # Ensure output table exists if not dry_run
+        if not dry_run:
+            try:
+                bq_client.get_table(dst_table_ref)
+            except Exception:
+                try:
+                    table_obj = bigquery.Table(
+                        dst_table_ref, schema=REPROCESSED_TRANSCRIPTS_SCHEMA
+                    )
+                    bq_client.create_table(table_obj, exists_ok=True)
+                    logger.info(
+                        f"Created BigQuery destination table {dst_table_ref}"
+                    )
+                except Exception as ex:
+                    logger.warning(
+                        "Could not auto-create destination table %s: %s",
+                        dst_table_ref,
+                        ex,
+                    )
+
+        # Query rows from BigQuery source table
+        if conversation_id:
+            query = (
+                f"SELECT * FROM `{src_table_ref}` "
+                f"WHERE conversation_id = @conv_id ORDER BY turn_index"
+            )
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter(
+                        "conv_id", "STRING", conversation_id
+                    )
+                ]
+            )
+        else:
+            query = (
+                f"SELECT * FROM `{src_table_ref}` "
+                f"ORDER BY create_time DESC, turn_index ASC"
+            )
+            job_config = None
+
+        rows = list(bq_client.query(query, job_config=job_config).result())
+
+        # Group rows by conversation_id
+        conv_rows_map: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            r_dict = dict(r.items())
+            cid = r_dict.get("conversation_id", "")
+            conv_rows_map.setdefault(cid, []).append(r_dict)
+
+        selected_cids = list(conv_rows_map.keys())
+        if limit and not conversation_id:
+            selected_cids = selected_cids[:limit]
+
+        transcriber = AudioTranscriber(
+            project_id=proj,
+            credentials=self.creds,
+            model_name=model_name,
+        )
+
+        turn_results: list[dict[str, Any]] = []
+        total_user_turns_inspected = 0
+        total_turns_reprocessed = 0
+        total_substitutions = 0
+        total_deletions = 0
+        total_insertions = 0
+        total_hits = 0
+        total_ref_words = 0
+        total_hyp_words = 0
+        turn_wers: list[float] = []
+
+        # Discover audio files in parallel for all selected conversations
+        cid_audio_map: dict[str, dict[int, str]] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            fut_to_cid = {
+                ex.submit(self.get_user_audio_uris, cid): cid
+                for cid in selected_cids
+            }
+            for fut in as_completed(fut_to_cid):
+                c_id = fut_to_cid[fut]
+                try:
+                    cid_audio_map[c_id] = fut.result()
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch audio files for {c_id}: {e}"
+                    )
+                    cid_audio_map[c_id] = {}
+
+        def _process_turn(
+            cid: str, row_dict: dict[str, Any]
+        ) -> dict[str, Any] | None:
+            t_idx = row_dict.get("turn_index", 0)
+            messages = row_dict.get("messages", [])
+
+            # Find user messages
+            user_msgs = [m for m in messages if m.get("role") == "user"]
+            if not user_msgs:
+                return None
+
+            # Extract CES transcript chunk
+            ces_transcript = ""
+            has_transcript_chunk = False
+            for um in user_msgs:
+                for c in um.get("chunks", []):
+                    if "transcript" in c:
+                        ces_transcript = c.get("transcript") or ""
+                        has_transcript_chunk = True
+                        break
+                if has_transcript_chunk:
+                    break
+
+            user_audio_map = cid_audio_map.get(cid, {})
+            has_non_english = contains_non_english(ces_transcript)
+
+            if only_non_english and not has_non_english:
+                return {
+                    "conversation_id": cid,
+                    "turn_index": t_idx,
+                    "audio_uri": user_audio_map.get(t_idx),
+                    "ces_transcript": ces_transcript,
+                    "gemini_transcript": None,
+                    "contains_non_english": False,
+                    "reprocessed": False,
+                    "appended_to_bq": False,
+                    "wer": None,
+                }
+
+            audio_uri = user_audio_map.get(t_idx)
+            if not audio_uri:
+                return {
+                    "conversation_id": cid,
+                    "turn_index": t_idx,
+                    "audio_uri": None,
+                    "ces_transcript": ces_transcript,
+                    "gemini_transcript": None,
+                    "contains_non_english": has_non_english,
+                    "reprocessed": False,
+                    "appended_to_bq": False,
+                    "wer": None,
+                    "error": "Audio file not found in GCS",
+                }
+
+            # Transcribe with Gemini
+            try:
+                gemini_transcript = transcriber.transcribe(
+                    audio_uri, prompt=prompt
+                )
+                wer_metrics = calculate_wer(
+                    reference=ces_transcript,
+                    hypothesis=gemini_transcript,
+                    normalize=True,
+                )
+            except Exception as ex:
+                logger.warning(
+                    f"Transcription failed for {cid} turn {t_idx}: {ex}"
+                )
+                return {
+                    "conversation_id": cid,
+                    "turn_index": t_idx,
+                    "audio_uri": audio_uri,
+                    "ces_transcript": ces_transcript,
+                    "gemini_transcript": None,
+                    "contains_non_english": has_non_english,
+                    "reprocessed": False,
+                    "appended_to_bq": False,
+                    "wer": None,
+                    "error": str(ex),
+                }
+
+            return {
+                "conversation_id": cid,
+                "turn_index": t_idx,
+                "audio_uri": audio_uri,
+                "ces_transcript": ces_transcript,
+                "gemini_transcript": gemini_transcript,
+                "contains_non_english": has_non_english,
+                "reprocessed": True,
+                "appended_to_bq": False,
+                **wer_metrics,
+            }
+
+        # Submit turn processing jobs in parallel
+        tasks: list[tuple[str, dict[str, Any]]] = []
+        for cid in selected_cids:
+            for row_dict in conv_rows_map[cid]:
+                tasks.append((cid, row_dict))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = [ex.submit(_process_turn, cid, r) for cid, r in tasks]
+            for fut in as_completed(futures):
+                res = fut.result()
+                if res is not None:
+                    turn_results.append(res)
+
+        # Sort results deterministically by conversation_id and turn_index
+        turn_results.sort(
+            key=lambda t: (
+                str(t.get("conversation_id", "")),
+                int(t.get("turn_index") or 0),
+            )
+        )
+
+        # Append reprocessed turns to BigQuery destination table
+        rows_to_insert = []
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        for t in turn_results:
+            if t.get("reprocessed") and t.get("gemini_transcript") is not None:
+                rows_to_insert.append(
+                    {
+                        "conversation_id": t["conversation_id"],
+                        "turn_index": int(t["turn_index"]),
+                        "audio_uri": t.get("audio_uri"),
+                        "original_transcript": t.get("ces_transcript"),
+                        "updated_transcript": t.get("gemini_transcript"),
+                        "wer": t.get("wer"),
+                        "substitutions": t.get("substitutions"),
+                        "deletions": t.get("deletions"),
+                        "insertions": t.get("insertions"),
+                        "hits": t.get("hits"),
+                        "is_non_english": t.get("contains_non_english"),
+                        "model": model_name,
+                        "reprocessed_at": now_iso,
+                    }
+                )
+
+        if not dry_run and rows_to_insert:
+            try:
+                errors = bq_client.insert_rows_json(
+                    dst_table_ref, rows_to_insert
+                )
+                if errors:
+                    logger.error(
+                        f"Failed to append rows to {dst_table_ref}: {errors}"
+                    )
+                else:
+                    logger.info(
+                        "Appended %s updated turns to %s",
+                        len(rows_to_insert),
+                        dst_table_ref,
+                    )
+                    for t in turn_results:
+                        if (
+                            t.get("reprocessed")
+                            and t.get("gemini_transcript") is not None
+                        ):
+                            t["appended_to_bq"] = True
+            except Exception as bq_ex:
+                logger.error(
+                    "Failed to insert rows into BigQuery destination table"
+                    " %s: %s",
+                    dst_table_ref,
+                    bq_ex,
+                )
+
+        for t in turn_results:
+            total_user_turns_inspected += 1
+            if t.get("reprocessed"):
+                total_turns_reprocessed += 1
+                total_substitutions += t.get("substitutions", 0)
+                total_deletions += t.get("deletions", 0)
+                total_insertions += t.get("insertions", 0)
+                total_hits += t.get("hits", 0)
+                total_ref_words += t.get("reference_words", 0)
+                total_hyp_words += t.get("hypothesis_words", 0)
+                if t.get("wer") is not None:
+                    turn_wers.append(t["wer"])
+
+        overall_errors = (
+            total_substitutions + total_deletions + total_insertions
+        )
+        overall_wer = (
+            round(overall_errors / total_ref_words, 4)
+            if total_ref_words > 0
+            else 0.0
+        )
+        average_turn_wer = (
+            round(sum(turn_wers) / len(turn_wers), 4) if turn_wers else 0.0
+        )
+
+        return {
+            "source_table": src_table_ref,
+            "output_table": dst_table_ref,
+            "dry_run": dry_run,
+            "model_used": model_name,
+            "only_non_english": only_non_english,
+            "total_user_turns_inspected": total_user_turns_inspected,
+            "total_turns_reprocessed": total_turns_reprocessed,
+            "overall_wer": overall_wer,
+            "average_turn_wer": average_turn_wer,
+            "total_substitutions": total_substitutions,
+            "total_deletions": total_deletions,
+            "total_insertions": total_insertions,
+            "total_hits": total_hits,
+            "total_reference_words": total_ref_words,
+            "total_hypothesis_words": total_hyp_words,
+            "turns": turn_results,
+        }
 
     # ----------------------------- analysis ---------------------------------
 
