@@ -184,3 +184,44 @@ def test_resolve_version_name(mock_client_cls: typing.Any) -> None:
     # 5. Error on empty identifier
     with pytest.raises(ValueError, match=r"must not be empty"):
         v.resolve_version_name("")
+
+
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_resolve_version_name_collision(mock_client_cls: typing.Any) -> None:
+    mock_client = mock_client_cls.return_value
+    mock_v1 = MagicMock()
+    mock_v1.name = "projects/p/locations/l/apps/A/versions/001"
+    mock_v1.display_name = "v1.0"
+
+    mock_v2 = MagicMock()
+    mock_v2.name = "projects/p/locations/l/apps/A/versions/002"
+    mock_v2.display_name = "v1.0"
+
+    mock_client.list_app_versions.return_value = [mock_v1, mock_v2]
+
+    v = Versions("projects/p/locations/l/apps/A")
+
+    with pytest.raises(
+        ValueError, match=r"Multiple versions found with display name 'v1\.0'"
+    ):
+        v.resolve_version_name("v1.0")
+
+    # But resolving by exact version ID or full resource name still succeeds
+    assert (
+        v.resolve_version_name("001")
+        == "projects/p/locations/l/apps/A/versions/001"
+    )
+    assert (
+        v.resolve_version_name("projects/p/locations/l/apps/A/versions/002")
+        == "projects/p/locations/l/apps/A/versions/002"
+    )
+
+
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_resolve_version_name_empty_list(mock_client_cls: typing.Any) -> None:
+    mock_client = mock_client_cls.return_value
+    mock_client.list_app_versions.return_value = []
+
+    v = Versions("projects/p/locations/l/apps/A")
+    with pytest.raises(ValueError, match=r"No versions found for app"):
+        v.resolve_version_name("001")

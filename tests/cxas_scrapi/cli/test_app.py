@@ -331,6 +331,36 @@ def test_app_pull_with_full_version_resource_name(
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
 
+@mock.patch("cxas_scrapi.cli.app.Versions")
+def test_app_pull_with_invalid_version_id_exits(
+    mock_versions_cls: typing.Any,
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "pulled_app"),
+        project_id="test-project",
+        location="us",
+        version_id="nonexistent",
+    )
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    mock_v_inst = mock_versions_cls.return_value
+    mock_v_inst.resolve_version_name.side_effect = ValueError(
+        "Version not found"
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_pull(args)
+    assert excinfo.value.code == 1
+
+
 def test_app_push(mock_apps_client: typing.Any, tmp_path: typing.Any) -> None:
     args = argparse.Namespace(
         app_dir=str(tmp_path),

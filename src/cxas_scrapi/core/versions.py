@@ -117,8 +117,14 @@ class Versions(Apps):
     def resolve_version_name(self, version_identifier: str) -> str:
         """Resolves a version identifier to canonical AppVersion resource name.
 
-        Matches against the app's live version list using full resource name,
-        version ID, or version display name.
+        Uses a unified resolution strategy against the app's version catalog.
+        Accepting full resource names, bare version IDs, and human-readable
+        display names through a single catalog inspection provides:
+        1. Single Source of Truth: Verifies the version exists on this app.
+        2. Collision Detection: Fails safely if multiple versions share a
+           non-unique display name (CES does not enforce display name
+           uniqueness).
+        3. Actionable Errors: Lists available versions if resolution fails.
 
         Args:
             version_identifier: Full resource name, version ID, or display name.
@@ -127,7 +133,9 @@ class Versions(Apps):
             The fully-qualified version resource name.
 
         Raises:
-            ValueError: If the version cannot be found on the app.
+            ValueError: If the version cannot be found, is ambiguous (multiple
+                versions share the same display name), or the identifier is
+                empty.
         """
         if not version_identifier:
             raise ValueError("Version identifier must not be empty.")
@@ -147,10 +155,23 @@ class Versions(Apps):
             if v_id == version_identifier:
                 return v.name
 
-        # 3. Match display name (e.g. "v1.0")
-        for v in versions:
-            if v.display_name == version_identifier:
-                return v.name
+        # 3. Match display name (e.g. "v1.0") with collision check (Option A)
+        matching_by_display = [
+            v for v in versions if v.display_name == version_identifier
+        ]
+        if len(matching_by_display) > 1:
+            matching_ids = [
+                v.name.split("/")[-1] for v in matching_by_display if v.name
+            ]
+            ids_str = ", ".join(f"'{m_id}'" for m_id in matching_ids)
+            raise ValueError(
+                f"Multiple versions found with display name "
+                f"'{version_identifier}': {ids_str}. "
+                "Please specify the exact version ID or full resource name "
+                "instead to avoid ambiguity."
+            )
+        if len(matching_by_display) == 1:
+            return matching_by_display[0].name
 
         available = [
             f"'{v.name.split('/')[-1]}' ({v.display_name})"
