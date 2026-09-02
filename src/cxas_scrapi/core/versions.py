@@ -115,19 +115,13 @@ class Versions(Apps):
         return None
 
     def resolve_version_name(self, version_identifier: str) -> str:
-        """Resolves a version identifier to canonical AppVersion resource name.
+        """Resolves a version identifier to a canonical resource name.
 
-        Uses a unified resolution strategy against the app's version catalog.
-        Accepting full resource names, bare version IDs, and human-readable
-        display names through a single catalog inspection provides:
-        1. Single Source of Truth: Verifies the version exists on this app.
-        2. Collision Detection: Fails safely if multiple versions share a
-           non-unique display name (CES does not enforce display name
-           uniqueness).
-        3. Actionable Errors: Lists available versions if resolution fails.
+        Accepts a full resource name, bare version ID, or display name.
 
         Args:
-            version_identifier: Full resource name, version ID, or display name.
+            version_identifier: Full resource name, bare version ID, or
+                display name.
 
         Returns:
             The fully-qualified version resource name.
