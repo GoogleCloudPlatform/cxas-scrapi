@@ -52,6 +52,15 @@ python .agents/skills/cxas-agent-foundry/scripts/app-thresholds.py show
 python .agents/skills/cxas-agent-foundry/scripts/sync-callbacks.py                  # post-push: pull from platform
 python .agents/skills/cxas-agent-foundry/scripts/sync-callbacks.py --from-local <app_dir>  # pre-push: copy from local app dir
 
+# Snapshot app version (create immutable platform backup)
+cxas versions create --app-name projects/<project_id>/locations/<location>/apps/<app_id> \
+  --display-name "v1.0.0-snapshot" --description "Pre-refactor baseline"
+
+# List and compare app versions
+cxas versions list --app-name projects/<project_id>/locations/<location>/apps/<app_id>
+cxas versions compare --app-name projects/<project_id>/locations/<location>/apps/<app_id> \
+  --source <version_id_1> --target <version_id_2> --web
+
 # Cold-start setup (first-time only — venv + project bootstrap)
 .agents/skills/cxas-agent-foundry/scripts/setup.sh
 python .agents/skills/cxas-agent-foundry/scripts/setup-project.py
@@ -109,6 +118,7 @@ Read what the user wants and load the appropriate sub-skill:
 | "Why is this eval failing", "get to 90%" | Debug | `references/debug.md` |
 | "Fix the failing evals", "debug the agent" | Debug | `references/debug.md` |
 | "Tool test is failing", "callback test broke" | Debug | `references/debug.md` |
+| **"Snapshot app version", "Create version", "Compare versions", "List versions"** | **Manage** | **`references/api-reference.md` → "Version Management"** |
 | **"Edit the agent's instructions", "tweak the auth tool", "fix the greeting", "update this callback"** | **Build** (Edit cycle) | **`references/build.md` → "Editing an Existing Agent"** |
 
 **Any phrasing that implies creating, building, or setting up an agent/app routes to `references/build.md` — even if it sounds like "just create the app shell."** "Create a new cxas app" is NOT a shortcut to scaffolding; it triggers the full build flow (todo.md → interview/PRD → TDD + approval → scaffold → lint → evals → push). Skipping the interview / TDD because the user said "create" instead of "build" is a routing failure.

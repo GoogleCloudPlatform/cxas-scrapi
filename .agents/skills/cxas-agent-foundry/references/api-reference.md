@@ -27,10 +27,12 @@ SCRAPI picks up credentials automatically (application-default or service accoun
 
 ```python
 from cxas_scrapi.core.apps import Apps
+
 apps = Apps(project_id="my-project", location="us")
 
 # Or from an existing app
 from cxas_scrapi.core.agents import Agents
+
 agents = Agents(app_name="projects/my-project/locations/us/apps/APP_ID")
 ```
 
@@ -265,10 +267,11 @@ You can inject variables from the session context (like session ID or custom var
 
 ```python
 from google.protobuf import field_mask_pb2  # MUST import -- SDK bug
+
 callbacks = Callbacks(app_name=app_name)
 
 callbacks.create_callback(
-    agent_id=root.name,           # Full resource path
+    agent_id=root.name,  # Full resource path
     callback_type="before_agent",  # lowercase: before_agent, after_agent, before_model, after_model
     python_code="def before_agent_callback(callback_context): ...",
 )
@@ -298,13 +301,17 @@ callbacks.create_callback(
 
 ```python
 # 1. Construct a response (text + tool calls) from before_model
-return LlmResponse.from_parts(parts=[
-    Part(text="I'll transfer you to a specialist now."),
-    Part(function_call=Part.FunctionCall(
-        name="transfer_to_agent",
-        args={"agent": "billing_agent"},
-    )),
-])
+return LlmResponse.from_parts(
+    parts=[
+        Part(text="I'll transfer you to a specialist now."),
+        Part(
+            function_call=Part.FunctionCall(
+                name="transfer_to_agent",
+                args={"agent": "billing_agent"},
+            )
+        ),
+    ]
+)
 
 # 2. Access the user's most recent input (parts list — text, audio, events)
 for part in callback_context.get_last_user_input():
@@ -333,7 +340,9 @@ response = tools.Read_Customer_Datastore_readDatastore(record_id="...")
 
 ```python
 sessions = Sessions(app_name=app_name)
-r = sessions.run(session_id="test-1", text="Hello", variables={"account_id": "123"})
+r = sessions.run(
+    session_id="test-1", text="Hello", variables={"account_id": "123"}
+)
 sessions.parse_result(r)
 ```
 
@@ -344,7 +353,9 @@ sessions.parse_result(r)
 ```python
 evals = Evaluations(app_name=app_name)
 evals_map = evals.get_evaluations_map()
-run = evals.run_evaluation(evaluations=["eval_name"], modality="audio", run_count=5)
+run = evals.run_evaluation(
+    evaluations=["eval_name"], modality="audio", run_count=5
+)
 results = evals.list_evaluation_results_by_run(run_id)
 ```
 
@@ -361,7 +372,9 @@ dfs = utils.evals_to_dataframe(eval_names=["golden_auth"])
 
 ```python
 app = apps.get_app(app_name)
-agents_map = agents.get_agents_map(reverse=True)  # {display_name: resource_path}
+agents_map = agents.get_agents_map(
+    reverse=True
+)  # {display_name: resource_path}
 tools_map = tools.get_tools_map()
 agent = agents.get_agent(resource_path)
 print(agent.instruction)
@@ -369,10 +382,38 @@ print(agent.instruction)
 
 ## Version Management
 
+### CLI Commands
+
+```bash
+# Create an immutable snapshot of the app's current platform state
+cxas versions create --app-name projects/<project_id>/locations/<location>/apps/<app_id> \
+  --display-name "v1.0.0-snapshot" \
+  --description "Pre-improvement snapshot"
+
+# Output version details as JSON
+cxas versions create --app-name projects/<project_id>/locations/<location>/apps/<app_id> --json
+
+# List all versions
+cxas versions list --app-name projects/<project_id>/locations/<location>/apps/<app_id>
+
+# Compare two versions (CLI rich diff or interactive web diff)
+cxas versions compare --app-name projects/<project_id>/locations/<location>/apps/<app_id> \
+  --source <version_id_1> --target <version_id_2> --verbose
+cxas versions compare --app-name projects/<project_id>/locations/<location>/apps/<app_id> \
+  --source <version_id_1> --target <version_id_2> --web --output ./diff_report.html
+```
+
+### Python SDK
+
 ```python
+from cxas_scrapi.core.versions import Versions
+
 versions = Versions(app_name=app_name)
-versions.create_version(display_name="Pre-improvement snapshot")  # for rollback
-versions.list_versions()
+version = versions.create_version(
+    display_name="Pre-improvement snapshot",
+    description="Baseline snapshot before prompt refactoring",
+)
+all_versions = versions.list_versions()
 versions.revert_version(version_name=version_name)
 ```
 
