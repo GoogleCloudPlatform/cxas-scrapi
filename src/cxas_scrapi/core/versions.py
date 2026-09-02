@@ -149,7 +149,8 @@ class Versions(Apps):
             if v_id == version_identifier:
                 return v.name
 
-        # 3. Match display name (e.g. "v1.0") with collision check (Option A)
+        # 3. Match display name (e.g. "v1.0"). Because display names are not
+        # guaranteed to be unique, reject ambiguous matches.
         matching_by_display = [
             v for v in versions if v.display_name == version_identifier
         ]
