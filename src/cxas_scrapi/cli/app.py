@@ -123,7 +123,12 @@ def _app_pull(
     try:
         # Export the app
         print("Exporting app from CXAS...")
-        lro = apps_client.export_app(app_name=app_name, app_version=app_version)
+        if app_version:
+            lro = apps_client.export_app(
+                app_name=app_name, app_version=app_version
+            )
+        else:
+            lro = apps_client.export_app(app_name=app_name)
         response = lro.result()
 
         # Determine the target directory
