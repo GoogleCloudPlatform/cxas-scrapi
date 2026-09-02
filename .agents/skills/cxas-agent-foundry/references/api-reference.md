@@ -51,7 +51,7 @@ grep -A 20 "def create_" .venv/lib/python3.13/site-packages/cxas_scrapi/core/<mo
 6. Create variables
 7. Create callbacks
 8. Set root agent + model on app
-9. Pull to local: `cxas pull $APP_NAME --target-dir cxas_app/`
+9. Pull to local: `cxas pull $APP_NAME --target-dir cxas_app/` (or `--version-id <version>` for a snapshot)
 10. Run linter: `cxas lint --app-dir cxas_app/`
 11. Run build verification gates (see `build-verification.md`)
 
@@ -369,11 +369,33 @@ print(agent.instruction)
 
 ## Version Management
 
+### CLI Commands
+
+```bash
+# Pull an immutable version snapshot to local declarative files
+cxas pull projects/<project_id>/locations/<location>/apps/<app_id> \
+  --version-id "v1.0.0" \
+  --target-dir <project>/cxas_app/
+
+# Pull by bare version ID or full resource name
+cxas pull $APP_NAME --version-id "001" --target-dir cxas_app/
+```
+
+### Python SDK
+
 ```python
+from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.versions import Versions
+
+# Manage versions
 versions = Versions(app_name=app_name)
 versions.create_version(display_name="Pre-improvement snapshot")  # for rollback
 versions.list_versions()
 versions.revert_version(version_name=version_name)
+
+# Export a specific version snapshot to disk
+apps = Apps(project_id=project_id, location=location)
+apps.export_app(app_name=app_name, target_dir="cxas_app/", app_version="v1.0.0")
 ```
 
 ## Diagnostic REST Commands

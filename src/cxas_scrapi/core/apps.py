@@ -172,6 +172,7 @@ class Apps(Common):
         gcs_uri: str | None = None,
         local_path: str | None = None,
         export_format: str = "JSON",
+        app_version: str | None = None,
     ) -> Any:
         # Wait for long-running operation to complete.
         """Exports the specified app.
@@ -182,6 +183,8 @@ class Apps(Common):
             local_path: Optional. Local file path to write the exported zip
                 archive.
             export_format: The format to export the app in ('JSON' or 'YAML').
+            app_version: Optional. The resource name of the app version to
+                export.
         """
         # Validate that exactly one source is provided if both are given
         if gcs_uri and local_path:
@@ -193,6 +196,7 @@ class Apps(Common):
             name=app_name,
             gcs_uri=gcs_uri if gcs_uri else None,
             export_format=export_format,
+            app_version=app_version if app_version else None,
         )
 
         operation = self.client.export_app(request=request)

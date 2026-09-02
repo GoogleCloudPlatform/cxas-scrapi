@@ -100,6 +100,10 @@ For an existing platform app with no local TDD or evals. Skips gates 1-4 (no req
    ```bash
    cxas pull projects/$PROJECT_ID/locations/$LOCATION/apps/$APP_ID \
      --project-id $PROJECT_ID --location $LOCATION --target-dir <project>/cxas_app/
+
+   # (Optional) Pull a specific version snapshot instead of live draft:
+   cxas pull projects/$PROJECT_ID/locations/$LOCATION/apps/$APP_ID \
+     --version-id "v1.0.0" --project-id $PROJECT_ID --location $LOCATION --target-dir <project>/cxas_app/
    ```
 2. `python scripts/inspect-app.py` — share summary with user
 3. Dispatch `agents/tdd-writer.md` with `app_dir: <project>/cxas_app/<AppName>/` (auto-detects reverse mode); show the handoff to the user, ask for approval, re-dispatch on changes
@@ -113,7 +117,7 @@ For an existing platform app with no local TDD or evals. Skips gates 1-4 (no req
 
 The standard edit-test cycle for an agent that's already on the platform:
 
-1. **Pull** the latest platform state to local:
+1. **Pull** the latest platform state to local (or pass `--version-id <version>` for a specific snapshot):
    ```bash
    cxas pull projects/$PROJECT_ID/locations/$LOCATION/apps/$APP_ID \
      --project-id $PROJECT_ID --location $LOCATION --target-dir <project>/cxas_app/
