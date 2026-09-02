@@ -182,12 +182,9 @@ class Versions(Apps):
 
     def get_version(self, version_id: str) -> types.AppVersion:
         """Gets a specific version."""
-        name = (
-            version_id
-            if "projects/" in version_id
-            else f"{self.app_name}/versions/{version_id}"
+        request = types.GetAppVersionRequest(
+            name=f"{self.app_name}/versions/{version_id}"
         )
-        request = types.GetAppVersionRequest(name=name)
         return self.client.get_app_version(request=request)
 
     def delete_version(self, version_id: str) -> None:
