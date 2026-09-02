@@ -3115,3 +3115,67 @@ def test_t013_valid_dict_json(
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
+
+
+# ── Rule T014 (BannedDeprecatedOpenApiTool) Tests ───────────────────────
+
+
+def test_t014_openapi_tool_json_detected(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.tools import (  # noqa: PLC0415,I001
+        BannedDeprecatedOpenApiTool,
+    )
+
+    rule = BannedDeprecatedOpenApiTool()
+    tool_dir = tmp_path / "tools" / "legacy_api"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    f = tool_dir / "legacy_api.json"
+    f.write_text(
+        '{"displayName": "legacy_api", "openApiTool": {"openApiSchema": "..."}}'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "deprecated in CES runtime" in results[0].message
+    assert "Migrate to OpenApiToolset" in results[0].message
+    assert "toolsets/legacy_api" in results[0].fix
+
+
+def test_t014_openapi_dir_detected(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.tools import (  # noqa: PLC0415,I001
+        BannedDeprecatedOpenApiTool,
+    )
+
+    rule = BannedDeprecatedOpenApiTool()
+    tool_dir = tmp_path / "tools" / "legacy_api"
+    openapi_dir = tool_dir / "open_api_tool"
+    openapi_dir.mkdir(parents=True, exist_ok=True)
+    f = tool_dir / "legacy_api.json"
+    f.write_text('{"displayName": "legacy_api"}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "deprecated in CES runtime" in results[0].message
+
+
+def test_t014_python_function_tool_passed(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.tools import (  # noqa: PLC0415,I001
+        BannedDeprecatedOpenApiTool,
+    )
+
+    rule = BannedDeprecatedOpenApiTool()
+    tool_dir = tmp_path / "tools" / "standard_tool"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    f = tool_dir / "standard_tool.json"
+    f.write_text(
+        '{"displayName": "standard_tool", "pythonFunction": {"description": "test"}}'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+

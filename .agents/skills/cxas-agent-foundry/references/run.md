@@ -116,6 +116,13 @@ All commands support `--priority P0` and `--tag <tag>`.
 cxas evals report --output-dir <project>/eval-reports/
 ```
 
-This produces a combined HTML report in the output directory showing results, timeline logs, and summary charts.
+**For an interactive diagnostic dashboard (dynamic parameter filters & LLM failure clustering):**
+```bash
+python .agents/skills/cxas-agent-foundry/scripts/generate_interactive_report.py \
+  --input <project>/eval-reports/sim_results.json \
+  --output <project>/eval-reports/interactive_report.html
+```
+
+This produces a responsive single-page HTML report showing Overall & Adjusted Pass Rates, turn-by-turn trace details, and cross-filtering across dynamic session parameters.
 
 For guidance on interpreting reports (key metrics, triage categories, when to adjust vs fix), see `references/generating-reports.md`.

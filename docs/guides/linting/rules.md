@@ -338,6 +338,8 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | T010 | `tool-python-syntax` | Error | Tool Python file must have valid syntax |
     | T011 | `tool-none-default` | Error | Tool parameter uses `None` as default value |
     | T012 | `tool-json-missing-description` | Error | Tool JSON configuration must include description |
+    | T013 | `tool-config-invalid` | Error | Tool JSON configuration must be a valid JSON object/dictionary |
+    | T014 | `banned-deprecated-openapi-tool` | Error | Standalone OpenApiTool is deprecated in CES runtime |
 
     ---
 
@@ -408,6 +410,19 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* The description field is missing or empty in the tool's JSON configuration.
 
     *Fix:* Add a 'description' key within the 'pythonFunction' or 'widgetTool' object in the tool's JSON file.
+
+    ---
+
+    **T014 — banned-deprecated-openapi-tool**
+
+    Standalone `OpenApiTool` (`tools/<tool_name>/` with `"openApiTool": {...}`) is deprecated in CES conversational runtime and causes runtime failures (`Error: Tool <tool_name> is deprecated and can no longer be run`). OpenAPI tools must be packaged as an `OpenApiToolset` under `toolsets/<toolset_name>/` and referenced under `"toolsets"` in `agent.json`.
+
+    *Triggers:* A tool in `tools/` contains `"openApiTool"` in its JSON configuration or contains an `open_api_tool/` directory.
+
+    *Fix:* Migrate to `OpenApiToolset`:
+    1. Move the OpenAPI schema file to `toolsets/<toolset_name>/open_api_toolset/open_api_schema.yaml`.
+    2. Create `toolsets/<toolset_name>/<toolset_name>.json` defining `openApiToolset`.
+    3. Declare the toolset in `agent.json` under `"toolsets"`.
 
 === "E — Evals"
 

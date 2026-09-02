@@ -25,7 +25,7 @@ Optional:
 1. `references/generating-reports.md` — the "Detailed Coverage Report Template" section is your spec. Match its structure exactly.
 2. `app_dir/<AppName>/app.json` — to find the root agent, variables, system tools.
 3. Every `agents/<name>/<name>.json` and `agents/<name>/instruction.txt` under `app_dir`.
-4. Every `tools/<name>/<name>.json` and the corresponding `python_function/python_code.py` under `app_dir`.
+4. Every `tools/<name>/<name>.json` and `python_function/python_code.py`, plus every `toolsets/<name>/<name>.json` and `open_api_toolset/open_api_schema.yaml` under `app_dir`.
 5. Every callback `python_code.py`.
 6. Every eval YAML in `evals_dir` (goldens, simulations, tool_tests).
 7. `references/api-reference.md` → "Diagnostic REST Commands" if `app_name` was provided and you need platform state.
@@ -36,7 +36,7 @@ Optional:
 
 Build inventories first. Don't analyze coverage until you have a complete list of:
 - Agents (from app.json + agent dirs)
-- Tools (from tools/ dir, plus system tools `end_session`, `customize_response`, `transfer_to_agent`)
+- Tools & Toolsets (from `tools/` dir, `toolsets/` dir, and `agent.json` `"tools"`/`"toolsets"` declarations, plus system tools `end_session`, `customize_response`, `transfer_to_agent`)
 - Transfers (from each agent's `childAgents` array)
 - Callbacks (per agent, by type)
 - Variables (from `variableDeclarations` in app.json)
