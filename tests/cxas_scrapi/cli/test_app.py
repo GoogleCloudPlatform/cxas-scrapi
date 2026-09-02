@@ -193,7 +193,8 @@ def test_app_pull(
     cli_app.app_pull(args)
 
     mock_apps_client.export_app.assert_called_once_with(
-        app_name="projects/test-project/locations/us/apps/123"
+        app_name="projects/test-project/locations/us/apps/123",
+        app_version=None,
     )
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
 
@@ -425,7 +426,8 @@ def test_app_branch(
     cli_app.app_branch(args)
 
     mock_apps_client.export_app.assert_called_once_with(
-        app_name="projects/test-project/locations/us/apps/source-id"
+        app_name="projects/test-project/locations/us/apps/source-id",
+        app_version=None,
     )
     mock_apps_client.import_as_new_app.assert_called_once()
     call_args = mock_apps_client.import_as_new_app.call_args[1]

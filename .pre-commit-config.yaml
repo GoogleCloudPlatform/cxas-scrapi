@@ -39,7 +39,7 @@ repos:
     # Run pytest only on modified test files.
     -   id: pytest
         name: pytest
-        entry: pytest
+        entry: .venv/bin/pytest
         language: system
         files: ^tests/.*test_.*\.py$
 
@@ -51,7 +51,7 @@ repos:
     # project. Set BRAND_CHECK_SKIP=1 to bypass deliberately.
     -   id: brand-check-code
         name: brand-check (added diff lines, via Gemini)
-        entry: python3 scripts/check_brands.py --code-files
+        entry: uv run python3 scripts/check_brands.py --code-files
         language: system
         types: [python]
 
@@ -60,6 +60,6 @@ repos:
     #     pre-commit install --hook-type commit-msg
     -   id: brand-check-msg
         name: brand-check (commit message, via Gemini)
-        entry: python3 scripts/check_brands.py --commit-msg
+        entry: uv run python3 scripts/check_brands.py --commit-msg
         language: system
         stages: [commit-msg]

@@ -201,10 +201,11 @@ class Insights(Common):
         dry runs)."""
         if not name.startswith("projects/"):
             name = f"{self.parent}/conversations/{name}"
+
         payload = {}
         if annotator_selector:
             payload["annotatorSelector"] = annotator_selector
-        return self._request("POST", f"{name}:analyze", data=payload)
+        return self._request("POST", f"{name}/analyses", data=payload)
 
     def bulk_analyze_conversations(
         self,
@@ -374,4 +375,245 @@ class Insights(Common):
         """Deletes an analysis rule."""
         if not name.startswith("projects/"):
             name = f"{self.parent}/analysisRules/{name}"
+        self._request("DELETE", name)
+
+    # --- AutoLabeling Rules Operations ---
+
+    def list_autolabeling_rules(
+        self, parent: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Lists autolabeling rules in the specified parent."""
+        parent = parent or self.parent
+        return self._list_paginated(
+            f"{parent}/autoLabelingRules", "autoLabelingRules"
+        )
+
+    def get_autolabeling_rule(self, name: str) -> dict[str, Any]:
+        """Gets an autolabeling rule by name or ID."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/autoLabelingRules/{name}"
+        return self._request("GET", name)
+
+    def create_autolabeling_rule(
+        self,
+        auto_labeling_rule: dict[str, Any],
+        auto_labeling_rule_id: str | None = None,
+        parent: str | None = None,
+    ) -> dict[str, Any]:
+        """Creates a new autolabeling rule."""
+        parent = parent or self.parent
+        params = (
+            {"autoLabelingRuleId": auto_labeling_rule_id}
+            if auto_labeling_rule_id
+            else None
+        )
+        return self._request(
+            "POST",
+            f"{parent}/autoLabelingRules",
+            data=auto_labeling_rule,
+            params=params,
+        )
+
+    def update_autolabeling_rule(
+        self,
+        name: str,
+        auto_labeling_rule: dict[str, Any],
+        update_mask: str | list[str] = "*",
+    ) -> dict[str, Any]:
+        """Updates an autolabeling rule."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/autoLabelingRules/{name}"
+        mask_str = (
+            ",".join(update_mask)
+            if isinstance(update_mask, (list, tuple))
+            else update_mask
+        )
+        params = {"updateMask": mask_str}
+        return self._request(
+            "PATCH", name, data=auto_labeling_rule, params=params
+        )
+
+    def delete_autolabeling_rule(self, name: str) -> None:
+        """Deletes an autolabeling rule."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/autoLabelingRules/{name}"
+        self._request("DELETE", name)
+
+    # --- Dashboard Operations ---
+
+    def list_dashboards(
+        self,
+        parent: str | None = None,
+        filter_str: str | None = None,
+        page_size: int = 100,
+        max_pages: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Lists dashboards in the specified parent project/location."""
+        parent = parent or self.parent
+        path = f"{parent}/dashboards"
+        params: dict[str, Any] = {"pageSize": page_size}
+        if filter_str:
+            params["filter"] = filter_str
+
+        results = []
+        page_token = None
+        pages = 0
+        while pages < max_pages:
+            if page_token:
+                params["pageToken"] = page_token
+            res = self._request("GET", path, params=params)
+            results.extend(res.get("dashboards", []))
+            page_token = res.get("nextPageToken")
+            pages += 1
+            if not page_token:
+                break
+        return results
+
+    def get_dashboard(self, name: str) -> dict[str, Any]:
+        """Gets a dashboard by name or ID."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/dashboards/{name}"
+        return self._request("GET", name)
+
+    def create_dashboard(
+        self,
+        dashboard: dict[str, Any],
+        dashboard_id: str | None = None,
+        parent: str | None = None,
+    ) -> dict[str, Any]:
+        """Creates a new dashboard."""
+        parent = parent or self.parent
+        params = {"dashboardId": dashboard_id} if dashboard_id else None
+        return self._request(
+            "POST",
+            f"{parent}/dashboards",
+            data=dashboard,
+            params=params,
+        )
+
+    def update_dashboard(
+        self,
+        name: str,
+        dashboard: dict[str, Any],
+        update_mask: str | list[str] = "*",
+    ) -> dict[str, Any]:
+        """Updates an existing dashboard."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/dashboards/{name}"
+        mask_str = (
+            ",".join(update_mask)
+            if isinstance(update_mask, (list, tuple))
+            else update_mask
+        )
+        params = {"updateMask": mask_str}
+        return self._request("PATCH", name, data=dashboard, params=params)
+
+    def delete_dashboard(self, name: str) -> None:
+        """Deletes a dashboard by name or ID."""
+        if not name.startswith("projects/"):
+            name = f"{self.parent}/dashboards/{name}"
+        self._request("DELETE", name)
+
+    # --- Chart Operations ---
+
+    def list_charts(
+        self,
+        parent: str,
+        page_size: int = 100,
+        max_pages: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Lists charts within a dashboard."""
+        if not parent.startswith("projects/"):
+            parent = f"{self.parent}/dashboards/{parent}"
+        path = f"{parent}/charts"
+        params: dict[str, Any] = {"pageSize": page_size}
+
+        results = []
+        page_token = None
+        pages = 0
+        while pages < max_pages:
+            if page_token:
+                params["pageToken"] = page_token
+            res = self._request("GET", path, params=params)
+            results.extend(res.get("charts", []))
+            page_token = res.get("nextPageToken")
+            pages += 1
+            if not page_token:
+                break
+        return results
+
+    def get_chart(
+        self, name: str, dashboard_id: str | None = None
+    ) -> dict[str, Any]:
+        """Gets a chart by resource name, or chart ID within a dashboard."""
+        if not name.startswith("projects/"):
+            if not dashboard_id:
+                raise ValueError(
+                    "dashboard_id is required when name is a chart ID."
+                )
+            dashboard_prefix = (
+                dashboard_id
+                if dashboard_id.startswith("projects/")
+                else f"{self.parent}/dashboards/{dashboard_id}"
+            )
+            name = f"{dashboard_prefix}/charts/{name}"
+        return self._request("GET", name)
+
+    def create_chart(
+        self,
+        parent: str,
+        chart: dict[str, Any],
+        chart_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Creates a new chart under a dashboard parent."""
+        if not parent.startswith("projects/"):
+            parent = f"{self.parent}/dashboards/{parent}"
+        params = {"chartId": chart_id} if chart_id else None
+        return self._request(
+            "POST",
+            f"{parent}/charts",
+            data=chart,
+            params=params,
+        )
+
+    def update_chart(
+        self,
+        name: str,
+        chart: dict[str, Any],
+        update_mask: str | list[str] = "*",
+        dashboard_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Updates a chart."""
+        if not name.startswith("projects/"):
+            if not dashboard_id:
+                raise ValueError(
+                    "dashboard_id is required when name is a chart ID."
+                )
+            dashboard_prefix = (
+                dashboard_id
+                if dashboard_id.startswith("projects/")
+                else f"{self.parent}/dashboards/{dashboard_id}"
+            )
+            name = f"{dashboard_prefix}/charts/{name}"
+        mask_str = (
+            ",".join(update_mask)
+            if isinstance(update_mask, (list, tuple))
+            else update_mask
+        )
+        params = {"updateMask": mask_str}
+        return self._request("PATCH", name, data=chart, params=params)
+
+    def delete_chart(self, name: str, dashboard_id: str | None = None) -> None:
+        """Deletes a chart."""
+        if not name.startswith("projects/"):
+            if not dashboard_id:
+                raise ValueError(
+                    "dashboard_id is required when name is a chart ID."
+                )
+            dashboard_prefix = (
+                dashboard_id
+                if dashboard_id.startswith("projects/")
+                else f"{self.parent}/dashboards/{dashboard_id}"
+            )
+            name = f"{dashboard_prefix}/charts/{name}"
         self._request("DELETE", name)

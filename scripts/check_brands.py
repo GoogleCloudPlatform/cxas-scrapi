@@ -88,6 +88,9 @@ ALLOWED_BRANDS: tuple[str, ...] = (
     "Anthropic",
     "Claude",
     "GitHub",
+    # --- Standard Python ecosystem libraries ---
+    "Pydantic",
+    "Tenacity",
 )
 
 
