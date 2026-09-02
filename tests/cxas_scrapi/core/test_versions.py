@@ -129,22 +129,6 @@ def test_revert_version(
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
-def test_get_version_by_display_name(mock_client_cls: typing.Any) -> None:
-    mock_client = mock_client_cls.return_value
-    mock_v1 = MagicMock()
-    mock_v1.name = "projects/p/locations/l/apps/A/versions/001"
-    mock_v1.display_name = "v1.0"
-    mock_client.list_app_versions.return_value = [mock_v1]
-
-    v = Versions("projects/p/locations/l/apps/A")
-    res = v.get_version_by_display_name("v1.0")
-    assert res is not None
-    assert res.name == "projects/p/locations/l/apps/A/versions/001"
-
-    assert v.get_version_by_display_name("nonexistent") is None
-
-
-@patch("cxas_scrapi.core.apps.AgentServiceClient")
 def test_resolve_version_name(mock_client_cls: typing.Any) -> None:
     mock_client = mock_client_cls.return_value
     mock_v1 = MagicMock()

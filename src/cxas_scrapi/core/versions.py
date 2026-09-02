@@ -97,23 +97,6 @@ class Versions(Apps):
         # Assuming generated client supports create_app_version natively
         return self.client.create_app_version(request=request)
 
-    def get_version_by_display_name(
-        self, display_name: str
-    ) -> types.AppVersion | None:
-        """Gets a specific version by its human-readable display name.
-
-        Args:
-            display_name: The human-readable display name of the version.
-
-        Returns:
-            The AppVersion resource object, or None if not found.
-        """
-        versions = self.list_versions()
-        for version in versions:
-            if version.display_name == display_name:
-                return version
-        return None
-
     def resolve_version_name(self, version_identifier: str) -> str:
         """Resolves a version identifier to a canonical resource name.
 
