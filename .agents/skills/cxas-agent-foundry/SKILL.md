@@ -35,7 +35,14 @@ python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "wh
 # Generate dynamic interactive HTML dashboard with Gemini LLM failure clustering and parameter filters
 python .agents/skills/cxas-agent-foundry/scripts/generate_interactive_report.py --input <path_to_sim_results.json> --output <path_to_report.html>
 
+# Estimate token and tool call production quotas based on sampled trace telemetry
+cxas trace estimate-quota --app-name projects/<project_id>/locations/<location>/apps/<app_id> --peak-text-cpm 100 --peak-audio-cpm 50 --time-filter 7d
+
+# You can also bound the history precisely using UTC ISO strings to override --time-filter
+cxas trace estimate-quota --app-name projects/<project_id>/locations/<location>/apps/<app_id> --time-start "2026-07-29T12:00:00" --time-end "2026-07-30T10:00:00"
+
 # Inspect app architecture
+
 python .agents/skills/cxas-agent-foundry/scripts/inspect-app.py
 
 # Triage failures
