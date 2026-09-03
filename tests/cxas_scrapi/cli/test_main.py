@@ -451,3 +451,30 @@ def test_parser_push_version_name() -> None:
         assert parsed_args.create_version is True
         assert parsed_args.version_name == "v1.2.0"
         assert parsed_args.version_description == "Release 1.2.0"
+
+
+def test_parser_versions_create() -> None:
+    """Test that the versions create parser parses all arguments correctly."""
+    test_args = [
+        "cxas",
+        "versions",
+        "create",
+        "--app-name",
+        "projects/p/locations/l/apps/a",
+        "--display-name",
+        "v1.0.0",
+        "--description",
+        "Test snapshot",
+        "--json",
+    ]
+    with (
+        mock.patch.object(sys, "argv", test_args),
+        mock.patch("cxas_scrapi.cli.main.app_versions_create") as mock_create,
+    ):
+        main_cli.main()
+        mock_create.assert_called_once()
+        parsed_args = mock_create.call_args[0][0]
+        assert parsed_args.app_name == "projects/p/locations/l/apps/a"
+        assert parsed_args.display_name == "v1.0.0"
+        assert parsed_args.description == "Test snapshot"
+        assert parsed_args.json is True

@@ -101,6 +101,42 @@ HTML_DIFF_BLOCK_TEMPLATE = _load_template("versions_diff_block_template.html")
 HTML_REPORT_TEMPLATE = _load_template("versions_compare_report_template.html")
 
 
+def _obj_to_dict(obj: Any) -> dict[str, Any]:
+    """Helper to convert proto message, dict, or mock to dictionary."""
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(type(obj), "to_dict"):
+        try:
+            res = type(obj).to_dict(obj)
+            if isinstance(res, dict):
+                return res
+        except Exception:
+            pass
+    if hasattr(obj, "to_dict"):
+        try:
+            res = obj.to_dict()
+            if isinstance(res, dict):
+                return res
+        except Exception:
+            pass
+    d: dict[str, Any] = {}
+    for attr in [
+        "name",
+        "display_name",
+        "description",
+        "create_time",
+        "creator",
+    ]:
+        try:
+            if hasattr(obj, attr):
+                val = getattr(obj, attr)
+                if not callable(val):
+                    d[attr] = str(val) if val is not None else ""
+        except Exception:
+            pass
+    return d
+
+
 def app_versions_list(args: argparse.Namespace) -> None:
     """Handles the 'versions list' command."""
     _apps_client, app_name, display_name = _resolve_app_args(
@@ -128,21 +164,25 @@ def app_versions_list(args: argparse.Namespace) -> None:
         table.add_column("Creator", style="blue")
 
         for v in versions:
-            vd = type(v).to_dict(v) if not isinstance(v, dict) else v
-            name = vd.get("name", "?")
-            version_id = name.split("/")[-1] if name else "?"
+            vd = _obj_to_dict(v)
+            name = str(vd.get("name", "?"))
+            version_id = (
+                name.rsplit("/", maxsplit=1)[-1]
+                if name and name != "?"
+                else "?"
+            )
 
             # Truncate description to fit nicely in standard terminal tables
-            desc = vd.get("description", "N/A")
+            desc = str(vd.get("description", "N/A"))
             if len(desc) > 45:
                 desc = desc[:42] + "..."
 
             table.add_row(
-                version_id,
-                vd.get("display_name", "N/A"),
-                desc,
-                vd.get("create_time", "N/A"),
-                vd.get("creator", "N/A"),
+                str(version_id),
+                str(vd.get("display_name", "N/A")),
+                str(desc),
+                str(vd.get("create_time", "N/A")),
+                str(vd.get("creator", "N/A")),
             )
 
         console.print(table)
@@ -150,6 +190,70 @@ def app_versions_list(args: argparse.Namespace) -> None:
 
     except Exception as e:
         console.print(f"[red]Failed to list app versions: {e}[/]")
+        sys.exit(1)
+
+
+def app_versions_create(args: argparse.Namespace) -> None:
+    """Handles the 'versions create' command."""
+    _apps_client, app_name, resolved_display_name = _resolve_app_args(
+        args.app_name, args
+    )
+    console = Console()
+
+    version_display_name = (
+        getattr(args, "display_name", None)
+        or f"version-{time.strftime('%Y%m%d-%H%M%S')}"
+    )
+    description = getattr(args, "description", "") or ""
+
+    if not getattr(args, "json", False):
+        console.print(
+            f"\n[bold blue]Creating version for App:[/] [bold magenta]{resolved_display_name}[/] [dim]({app_name})[/]...\n"
+        )
+
+    try:
+        creds = getattr(_apps_client, "creds", None)
+        v_client = Versions(app_name=app_name, creds=creds)
+        version = v_client.create_version(
+            display_name=version_display_name,
+            description=description,
+        )
+
+        vd = _obj_to_dict(version)
+        name = str(vd.get("name", ""))
+        version_id = name.rsplit("/", maxsplit=1)[-1] if name else ""
+        v_display = str(vd.get("display_name", version_display_name))
+        v_desc = str(vd.get("description", description))
+        create_time = str(vd.get("create_time", ""))
+
+        if getattr(args, "json", False):
+            out = {
+                "name": name,
+                "version_id": version_id,
+                "display_name": v_display,
+                "description": v_desc,
+                "create_time": create_time,
+            }
+            print(json.dumps(out, indent=2))
+            return
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Field", style="bold cyan", width=18)
+        table.add_column("Value", style="yellow")
+
+        table.add_row("Version ID", str(version_id or "N/A"))
+        table.add_row("Display Name", str(v_display or "N/A"))
+        table.add_row("Description", str(v_desc or "N/A"))
+        table.add_row("Created At", str(create_time or "N/A"))
+        table.add_row("Resource Name", str(name or "N/A"))
+
+        console.print(table)
+        console.print(
+            f"\n[bold green]✨ Successfully created version '{v_display}'[/]\n"
+        )
+
+    except Exception as e:
+        console.print(f"[red]Failed to create app version: {e}[/]")
         sys.exit(1)
 
 
