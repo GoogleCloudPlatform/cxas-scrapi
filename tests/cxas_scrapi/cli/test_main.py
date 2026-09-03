@@ -262,6 +262,8 @@ def test_deployments_create(mock_deps_cls: typing.Any) -> None:
         app_version="projects/test-project/locations/global/apps/test-app/versions/v1",
         channel_type="API",
         traffic_split=None,
+        persona_property=None,
+        noise_suppression_level=None,
     )
 
 
@@ -350,6 +352,8 @@ def test_deployments_create_with_split(mock_deps_cls: typing.Any) -> None:
         app_version="v1",
         channel_type="API",
         traffic_split={"v1": 90, "v2": 10},
+        persona_property=None,
+        noise_suppression_level=None,
     )
 
 
@@ -451,3 +455,68 @@ def test_parser_push_version_name() -> None:
         assert parsed_args.create_version is True
         assert parsed_args.version_name == "v1.2.0"
         assert parsed_args.version_description == "Release 1.2.0"
+
+
+def test_parser_deployments_create_with_channel_settings() -> None:
+    """Test parser handling for channel settings options."""
+    test_args = [
+        "cxas",
+        "deployments",
+        "create",
+        "--app-name",
+        "projects/p/locations/l/apps/a",
+        "--deployment-id",
+        "dep_1",
+        "--version-id",
+        "v1",
+        "--persona-property",
+        "CONCISE",
+        "--noise-suppression-level",
+        "low",
+    ]
+    with (
+        mock.patch.object(sys, "argv", test_args),
+        mock.patch("cxas_scrapi.cli.main.deployments_create") as mock_create,
+    ):
+        main_cli.main()
+        mock_create.assert_called_once()
+        parsed_args = mock_create.call_args[0][0]
+        assert parsed_args.app_name == "projects/p/locations/l/apps/a"
+        assert parsed_args.deployment_id == "dep_1"
+        assert parsed_args.version_id == "v1"
+        assert parsed_args.persona_property == "CONCISE"
+        assert parsed_args.noise_suppression_level == "low"
+
+
+@mock.patch("cxas_scrapi.core.deployments.Deployments")
+def test_deployments_create_func_with_channel_settings(
+    mock_deps_cls: typing.Any,
+) -> None:
+    """Test that deployments_create forwards channel settings to the client."""
+    mock_instance = mock_deps_cls.return_value
+    mock_instance.create_deployment.return_value = mock.MagicMock(
+        name="dep_res"
+    )
+
+    args = argparse.Namespace(
+        app_name="projects/p/locations/l/apps/a",
+        deployment_id="dep_1",
+        version="v1",
+        version_id=None,
+        display_name="My Dep",
+        channel_type="API",
+        traffic_split=None,
+        persona_property="CONCISE",
+        noise_suppression_level="low",
+    )
+    main_cli.deployments_create(args)
+
+    mock_instance.create_deployment.assert_called_once_with(
+        deployment_id="dep_1",
+        display_name="My Dep",
+        app_version="v1",
+        channel_type="API",
+        persona_property="CONCISE",
+        noise_suppression_level="low",
+        traffic_split=None,
+    )
