@@ -782,6 +782,129 @@ def test_llm_user_check_conversation_status_max_turns() -> None:
     assert conv._check_conversation_status() is False
 
 
+def test_llm_user_conversation_default_max_turns() -> None:
+    mock_genai_client = MagicMock()
+    test_case = {
+        "steps": [{"goal": "greet"}],
+    }
+    conv = LLMUserConversation(mock_genai_client, "model", test_case)
+    assert conv.max_turns == 30
+
+
+def test_llm_user_conversation_max_turns_from_test_case() -> None:
+    mock_genai_client = MagicMock()
+    test_case = {
+        "steps": [{"goal": "greet"}],
+        "max_turns": 15,
+    }
+    conv = LLMUserConversation(mock_genai_client, "model", test_case)
+    assert conv.max_turns == 15
+
+
+def test_llm_user_conversation_max_turns_override() -> None:
+    mock_genai_client = MagicMock()
+    test_case = {
+        "steps": [{"goal": "greet"}],
+        "max_turns": 15,
+    }
+    conv = LLMUserConversation(
+        mock_genai_client, "model", test_case, max_turns=5
+    )
+    assert conv.max_turns == 5
+
+
+def test_simulate_conversation_default_max_turns() -> None:
+    mock_sessions = MagicMock()
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+    simulator.sessions_client = mock_sessions
+
+    test_case = {
+        "name": "test_tc_default",
+        "steps": [{"goal": "greet"}],
+    }
+    with patch.object(
+        LLMUserConversation, "next_user_utterance", return_value=("", {})
+    ):
+        conv = simulator.simulate_conversation(
+            test_case=test_case, console_logging=False
+        )
+    assert conv.max_turns == 30
+
+
+def test_simulate_conversation_uses_test_case_max_turns() -> None:
+    mock_sessions = MagicMock()
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+    simulator.sessions_client = mock_sessions
+
+    test_case = {
+        "name": "test_tc_max_turns",
+        "max_turns": 8,
+        "steps": [{"goal": "greet"}],
+    }
+    with patch.object(
+        LLMUserConversation, "next_user_utterance", return_value=("", {})
+    ):
+        conv = simulator.simulate_conversation(
+            test_case=test_case, console_logging=False
+        )
+    assert conv.max_turns == 8
+
+
+def test_simulate_conversation_uses_explicit_max_turns() -> None:
+    mock_sessions = MagicMock()
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+    simulator.sessions_client = mock_sessions
+
+    test_case = {
+        "name": "test_tc_max_turns",
+        "max_turns": 8,
+        "steps": [{"goal": "greet"}],
+    }
+    with patch.object(
+        LLMUserConversation, "next_user_utterance", return_value=("", {})
+    ):
+        conv = simulator.simulate_conversation(
+            test_case=test_case, max_turns=12, console_logging=False
+        )
+    assert conv.max_turns == 12
+
+
 def test_llm_user_get_active_step_index() -> None:
     mock_genai_client = MagicMock()
     test_case = {
