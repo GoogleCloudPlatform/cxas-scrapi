@@ -3139,7 +3139,7 @@ def test_t014_openapi_tool_json_detected(
     assert len(results) == 1
     assert "deprecated in CES runtime" in results[0].message
     assert "Migrate to OpenApiToolset" in results[0].message
-    assert "toolsets/legacy_api" in results[0].fix
+    assert "toolsets/legacy_api" in results[0].fix_suggestion
 
 
 def test_t014_openapi_dir_detected(
