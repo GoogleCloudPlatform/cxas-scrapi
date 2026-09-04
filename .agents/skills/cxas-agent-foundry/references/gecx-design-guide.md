@@ -582,9 +582,12 @@ Three layers, all in one callback file:
 
 **Lean on the orchestrator.** If a constraint is enforced by code (validation, tool visibility, retry logic), don't duplicate it in prompts or tool docstrings. Redundant constraints cause the LLM to pre-filter input, skip tool calls, or improvise error messages — bypassing the framework's error handling.
 
-**Setters are thin.** Setter tools validate input, write to `pending`, signal errors via `_slot_errors`, and return. They contain zero DAG logic, zero control flow, zero knowledge of other slots.
-
-**Preempt when the answer is known.** When a task fires and the framework knows exactly what to say, it skips the LLM via `LlmResponse.from_parts()`. Faster, deterministic, and consistent.
+**Task Execution: FunctionCall Delegation vs. Static Preemption.**
+When all required slot dependencies are satisfied and a task is ready to fire, choose the appropriate completion pattern:
+- **`FunctionCall` Delegation (Recommended for Natural & Empathetic Responses):** Instead of executing the tool in Python and sending hardcoded text, the `before_model_callback` returns `Part.from_function_call(name=..., args=...)`. The platform executes the tool, returns `toolResponse` to the LLM, and allows the model to synthesize a warm, persona-aligned confirmation turn naturally.
+  - *Audio Filler Optimization:* When modality is audio, combine with `Part.from_text(text="...", partial=True)` to stream conversational filler while the backend API executes, eliminating dead air.
+  - Reference: See [before_model_callback for DAG and slot-filling](https://googlecloudplatform.github.io/cxas-scrapi/stable/design-guide/callbacks/#before_model_callback-for-dag-and-slot-filling).
+- **Static Preemption (`Part.from_text`):** Use only when strict, zero-variance compliance or zero-token turns are required. Bypasses the LLM completely with fixed text.
 
 ### Reference Implementation
 
