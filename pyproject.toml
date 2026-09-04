@@ -169,6 +169,7 @@ ignore = [
 "src/cxas_scrapi/utils/scorecard_eval_runner.py" = ["E501"]
 "src/cxas_scrapi/utils/metrics_extractor.py" = ["E501"]
 ".agents/skills/cxas-insights/scripts/*.py" = ["E501"]
+".agents/skills/cxas-composite-voice-agent-optimizer/scripts/*.py" = ["E501"]
 "tests/cxas_scrapi/**" = ["E501"]
 "examples/bella_notte/run_insights_demo.py" = ["E501"]
 
