@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from cxas_scrapi.cli.llm_lint import llm_lint
     from cxas_scrapi.cli.versions_cli import (
         app_versions_compare,
+        app_versions_create,
         app_versions_list,
     )
     from cxas_scrapi.core.github import init_github_action
@@ -80,6 +81,9 @@ else:
     llm_lint = LazyCallable("cxas_scrapi.cli.llm_lint", "llm_lint")
     app_versions_list = LazyCallable(
         "cxas_scrapi.cli.versions_cli", "app_versions_list"
+    )
+    app_versions_create = LazyCallable(
+        "cxas_scrapi.cli.versions_cli", "app_versions_create"
     )
     app_versions_compare = LazyCallable(
         "cxas_scrapi.cli.versions_cli", "app_versions_compare"
@@ -2661,7 +2665,7 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'versions'
     parser_versions = subparsers.add_parser(
-        "versions", help="Manage CXAS app versions (list, compare)."
+        "versions", help="Manage CXAS app versions (list, create, compare)."
     )
     versions_subparsers = parser_versions.add_subparsers(
         title="Versions Commands", dest="versions_command", required=True
@@ -2677,6 +2681,33 @@ def get_parser() -> argparse.ArgumentParser:
     )
     _add_project_location_args(parser_versions_list, required=False)
     parser_versions_list.set_defaults(func=app_versions_list)
+
+    parser_versions_create = versions_subparsers.add_parser(
+        "create", help="Create a new version snapshot of an app."
+    )
+    parser_versions_create.add_argument(
+        "--app-name",
+        required=True,
+        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_versions_create.add_argument(
+        "--display-name",
+        "-n",
+        help="Display name for the version (default: auto-generated timestamp).",
+    )
+    parser_versions_create.add_argument(
+        "--description",
+        "-d",
+        default="",
+        help="Description for the version.",
+    )
+    parser_versions_create.add_argument(
+        "--json",
+        action="store_true",
+        help="Output result as JSON.",
+    )
+    _add_project_location_args(parser_versions_create, required=False)
+    parser_versions_create.set_defaults(func=app_versions_create)
 
     parser_versions_compare = versions_subparsers.add_parser(
         "compare",

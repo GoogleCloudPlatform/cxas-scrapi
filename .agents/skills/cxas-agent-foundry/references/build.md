@@ -113,10 +113,14 @@ For an existing platform app with no local TDD or evals. Skips gates 1-4 (no req
 
 The standard edit-test cycle for an agent that's already on the platform:
 
-1. **Pull** the latest platform state to local:
+1. **Pull** the latest platform state to local (and optionally snapshot the baseline):
    ```bash
    cxas pull projects/$PROJECT_ID/locations/$LOCATION/apps/$APP_ID \
      --project-id $PROJECT_ID --location $LOCATION --target-dir <project>/cxas_app/
+
+   # (Optional) Snapshot current deployed state before starting major edits:
+   cxas versions create --app-name projects/$PROJECT_ID/locations/$LOCATION/apps/$APP_ID \
+     --display-name "pre-edit-snapshot" --description "Baseline before prompt refactoring"
    ```
 2. **Edit** local files in `<project>/cxas_app/`
 3. **Lint** — dispatch `agents/lint-fixer.md`; wait for `status: clean`
@@ -132,7 +136,7 @@ The standard edit-test cycle for an agent that's already on the platform:
 
 For structural edits (new agent, new tool, new toolset, new `childAgents` entry), also run `python scripts/gate-check.py` after step 5 — eval results don't surface platform-side issues like dropped sub-agents or orphaned tools.
 
-Always pull before editing — pushing without pulling first overwrites whatever's on the platform.
+Always pull before editing — pushing without pulling first overwrites whatever's on the platform. Use `cxas versions compare` to review changes against earlier snapshots.
 
 ---
 
