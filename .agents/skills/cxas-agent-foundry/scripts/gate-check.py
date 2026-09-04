@@ -99,23 +99,41 @@ def gate1_pull_lint_push(config: typing.Any, app_name: typing.Any, skip_push: ty
 
     env = {**os.environ, "GOOGLE_CLOUD_PROJECT": project_id}
 
+    # Resolve cxas binary
+    cxas_bin = os.path.join(os.path.dirname(sys.executable), "cxas")
+    if not os.path.isfile(cxas_bin) or not os.access(cxas_bin, os.X_OK):
+        cxas_bin = "cxas"  # Fallback to PATH
+
     def _run(cmd: typing.Any, label: typing.Any) -> typing.Any:
         print(f"  $ {' '.join(cmd)}")
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
-        if result.returncode != 0:
+        try:
+            result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+            if result.returncode != 0:
+                r.findings.append(
+                    {
+                        "step": label,
+                        "stdout": result.stdout[-2000:],
+                        "stderr": result.stderr[-2000:],
+                    }
+                )
+                return False
+            return True
+        except FileNotFoundError:
             r.findings.append(
                 {
                     "step": label,
-                    "stdout": result.stdout[-2000:],
-                    "stderr": result.stderr[-2000:],
+                    "stdout": "",
+                    "stderr": (
+                        f"Error: '{cmd[0]}' command not found. "
+                        "Ensure it is in your PATH or virtualenv."
+                    ),
                 }
             )
             return False
-        return True
 
     # 1. Pull
     pull_cmd = [
-        "cxas",
+        cxas_bin,
         "pull",
         app_name,
         "--project-id",
@@ -132,7 +150,7 @@ def gate1_pull_lint_push(config: typing.Any, app_name: typing.Any, skip_push: ty
         return r
 
     # 2. Lint
-    lint_cmd = ["cxas", "lint", "--app-dir", app_dir]
+    lint_cmd = [cxas_bin, "lint", "--app-dir", app_dir]
     lint_clean = _run(lint_cmd, "lint")
 
     if not lint_clean:
@@ -143,7 +161,7 @@ def gate1_pull_lint_push(config: typing.Any, app_name: typing.Any, skip_push: ty
     # 3. Push (only if lint clean and not skipped)
     if lint_clean and not skip_push:
         push_cmd = [
-            "cxas",
+            cxas_bin,
             "push",
             "--app-dir",
             app_dir,
