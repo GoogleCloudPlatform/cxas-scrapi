@@ -87,13 +87,16 @@ def _resolve_paths(
                 resolved = True
 
         if not resolved and extra_prefixes:
+            # Normalize separators so prefix matching works on Windows,
+            # where base_path contains backslashes but references use "/".
+            base_norm = str(base_path).replace("\\", "/") if base_path else ""
             for prefix in extra_prefixes:
                 if (
                     data.startswith(prefix)
-                    and base_path
-                    and prefix in base_path
+                    and base_norm
+                    and prefix in base_norm
                 ):
-                    parts = base_path.rsplit(prefix, 1)
+                    parts = base_norm.rsplit(prefix, 1)
                     if parts:
                         alt = Path(parts[0]) / data
                         if alt.exists():
@@ -124,7 +127,10 @@ def _get_required_fields(cls) -> list[str]:  # noqa: ANN001
     for i, line in enumerate(lines):
         match = re.match(r"^\s+(\w+)\s+\([^)]+\):$", line)
         if match and i + 1 < len(lines):  # noqa: SIM102
-            if "REQUIRED" in lines[i + 1].upper():
+            # Only treat the field as required when its description STARTS
+            # with "Required." — descriptions like "Optional. Required
+            # properties of Type.OBJECT" must not match.
+            if lines[i + 1].strip().upper().startswith("REQUIRED"):
                 required.append(match.group(1))
     return required
 

@@ -378,7 +378,39 @@ def filter_metrics_and_assess(
                 )
         else:
             print("WARNING: No custom expectations found in this evaluation.")
-            # Fallback: check basic tool execution result limit
+
+        # Grade deterministic turn expectations (tool calls, tool responses,
+        # agent transfers, unexpected events, engine errors) while ignoring
+        # only the automated LLM metrics (semantic similarity).
+        auto_metric_types = {"Semantic Similarity", "Hallucination"}
+        df_failures = df_dict_new_run.get("failures", pd.DataFrame())
+        if not df_failures.empty and "failure_type" in df_failures.columns:
+            deterministic = df_failures[
+                ~df_failures["failure_type"].isin(auto_metric_types)
+            ]
+        else:
+            deterministic = pd.DataFrame()
+
+        if not deterministic.empty:
+            print(
+                f"FAILED: {len(deterministic)} deterministic expectation "
+                "failure(s) (tool calls, transfers, unexpected events):"
+            )
+            for _, row in deterministic.iterrows():
+                turn = row.get("turn_index")
+                turn_str = f" (Turn {turn})" if turn is not None else ""
+                print(
+                    f"  - [{row.get('display_name', '?')}]"
+                    f" {row.get('failure_type')}{turn_str}: "
+                    f"expected={str(row.get('expected', ''))[:80]!r} "
+                    f"actual={str(row.get('actual', ''))[:80]!r}"
+                )
+            passed = False
+        else:
+            print(
+                "PASSED: All deterministic expectations met "
+                "(semantic-only differences ignored)."
+            )
 
     # Strict overall pass/fail based on the server constraints
     elif overall_status != "PASS":
@@ -530,6 +562,68 @@ def run_eval(args: argparse.Namespace) -> None:
                 df_new_run, args.filter_auto_metrics
             )
 
+            # Optional flake mitigation: re-run only the failed evaluations.
+            retries_left = getattr(args, "retry_failed", 0) or 0
+            while not pass_status and retries_left > 0:
+                failing = _failing_display_names(
+                    df_new_run, args.filter_auto_metrics
+                )
+                if not failing:
+                    break
+                name_by_display = {
+                    e.display_name: e.name
+                    for e in eval_client.list_evaluations(
+                        app_name=args.app_name
+                    )
+                }
+                retry_ids = [
+                    name_by_display[d]
+                    for d in sorted(failing)
+                    if d in name_by_display
+                ]
+                if not retry_ids:
+                    break
+                retries_left -= 1
+                print(
+                    f"\n[Retry] Re-running {len(retry_ids)} failed "
+                    f"evaluation(s) ({retries_left} retr"
+                    f"{'y' if retries_left == 1 else 'ies'} left after "
+                    f"this): {sorted(failing)}"
+                )
+                df_before_retry = eval_utils.evals_to_dataframe().get(
+                    "summary", pd.DataFrame()
+                )
+                retry_old_ids = set()
+                if (
+                    not df_before_retry.empty
+                    and "eval_result_id" in df_before_retry.columns
+                ):
+                    retry_old_ids = set(
+                        df_before_retry["eval_result_id"].unique()
+                    )
+                eval_client.run_evaluation(
+                    evaluations=retry_ids,
+                    app_name=args.app_name,
+                    modality=args.modality,
+                    golden_run_method=args.golden_run_method,
+                )
+                df_new_run = wait_for_evaluation_completion(
+                    eval_utils,
+                    retry_old_ids,
+                    args.app_name,
+                    expected_count=len(retry_ids),
+                )
+                # Retry frames cover only the re-run subset; everything else
+                # already passed in the previous round.
+                pass_status = filter_metrics_and_assess(
+                    df_new_run, args.filter_auto_metrics
+                )
+                if pass_status:
+                    print(
+                        "\n[Retry] Previously failed evaluation(s) passed "
+                        "on re-run — treating as transient flake(s)."
+                    )
+
             if pass_status:
                 print("\nFINAL RESULT: PASS")
                 sys.exit(0)
@@ -574,6 +668,42 @@ def run_eval(args: argparse.Namespace) -> None:
     except Exception as e:
         print(f"Failed to run evaluation: {e}")
         sys.exit(1)
+
+
+def _failing_display_names(
+    df_dict: dict[str, "pd.DataFrame"],
+    filter_auto_metrics: bool,
+) -> set[str]:
+    """Display names of evaluations that failed in this run's frames.
+
+    With filter_auto_metrics, only deterministic failures (everything except
+    the automated LLM metrics) count — mirroring filter_metrics_and_assess.
+    Without it, any non-passing summary row counts.
+    """
+    import pandas as pd
+
+    names: set[str] = set()
+    df_failures = df_dict.get("failures", pd.DataFrame())
+    if not df_failures.empty and "display_name" in df_failures.columns:
+        rows = df_failures
+        if filter_auto_metrics and "failure_type" in rows.columns:
+            rows = rows[
+                ~rows["failure_type"].isin(
+                    {"Semantic Similarity", "Hallucination"}
+                )
+            ]
+        if not rows.empty:
+            names.update(str(n) for n in rows["display_name"].dropna())
+
+    if not filter_auto_metrics:
+        df_summary = df_dict.get("summary", pd.DataFrame())
+        if not df_summary.empty and "display_name" in df_summary.columns:
+            for _, row in df_summary.iterrows():
+                eval_stat = str(row.get("evaluation_status", "")).upper()
+                if eval_stat not in ("PASS", "PASSED", "✅ PASSED"):
+                    names.add(str(row.get("display_name", "")))
+
+    return {n for n in names if n and n != "None"}
 
 
 def combined_evals_report_cmd(args: argparse.Namespace) -> None:
@@ -2066,6 +2196,20 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Method used to replay golden tests (STABLE or NAIVE). "
             "Defaults to STABLE."
+        ),
+    )
+    parser_run.add_argument(
+        "--retry-failed",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "With --wait: re-run only the failed evaluations up to N times "
+            "before declaring failure. Mitigates transient platform flakes "
+            "(e.g. aborted duplicate eval conversations polluting grading): "
+            "a flake passes on retry, a real regression fails every time. "
+            "With --filter-auto-metrics, only deterministic failures "
+            "trigger retries. Defaults to 0 (no retries)."
         ),
     )
 
