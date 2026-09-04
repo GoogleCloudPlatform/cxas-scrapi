@@ -478,3 +478,92 @@ def test_parser_versions_create() -> None:
         assert parsed_args.display_name == "v1.0.0"
         assert parsed_args.description == "Test snapshot"
         assert parsed_args.json is True
+
+
+def test_run_parser_accepts_retry_failed() -> None:
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "--app-name",
+            "projects/p/locations/l/apps/a",
+            "--tags",
+            "P0",
+            "--wait",
+            "--filter-auto-metrics",
+            "--retry-failed",
+            "2",
+        ]
+    )
+    assert args.retry_failed == 2
+
+
+def test_run_parser_retry_failed_defaults_to_zero() -> None:
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "--app-name",
+            "projects/p/locations/l/apps/a",
+            "--tags",
+            "P0",
+        ]
+    )
+    assert args.retry_failed == 0
+
+
+def test_failing_display_names_filters_auto_metrics() -> None:
+    import pandas as pd
+
+    df_dict = {
+        "failures": pd.DataFrame(
+            [
+                {
+                    "display_name": "flaky_eval",
+                    "failure_type": "Tool Call",
+                    "expected": "salesforce_updateCase",
+                    "actual": "(None / Missed)",
+                },
+                {
+                    "display_name": "wording_drift_eval",
+                    "failure_type": "Semantic Similarity",
+                    "expected": "a",
+                    "actual": "b",
+                },
+            ]
+        ),
+        "summary": pd.DataFrame(
+            [
+                {
+                    "display_name": "flaky_eval",
+                    "evaluation_status": "FAIL",
+                },
+                {
+                    "display_name": "wording_drift_eval",
+                    "evaluation_status": "FAIL",
+                },
+            ]
+        ),
+    }
+
+    filtered = main_cli._failing_display_names(
+        df_dict, filter_auto_metrics=True
+    )
+    assert filtered == {"flaky_eval"}
+
+    unfiltered = main_cli._failing_display_names(
+        df_dict, filter_auto_metrics=False
+    )
+    assert unfiltered == {"flaky_eval", "wording_drift_eval"}
+
+
+def test_failing_display_names_empty_frames() -> None:
+    import pandas as pd
+
+    assert (
+        main_cli._failing_display_names(
+            {"failures": pd.DataFrame(), "summary": pd.DataFrame()},
+            filter_auto_metrics=True,
+        )
+        == set()
+    )
