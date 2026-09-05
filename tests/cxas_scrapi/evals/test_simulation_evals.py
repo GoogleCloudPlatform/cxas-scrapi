@@ -1790,3 +1790,40 @@ def test_simulation_evals_escalation_transfer_handling(
     assert (
         "Agent ended session via escalation/transfer" in step_prog.justification
     )
+
+
+def test_simulation_evals_vertex_location_param() -> None:
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with (
+        patch(
+            "cxas_scrapi.evals.simulation_evals.GeminiGenerate"
+        ) as mock_gemini,
+        patch("cxas_scrapi.core.apps.AgentServiceClient"),
+    ):
+        mock_gemini.return_value.location = "europe-west4"
+        sim = SimulationEvals(app_name=app_name, vertex_location="europe-west4")
+        mock_gemini.assert_called_once_with(
+            project_id="test",
+            location="europe-west4",
+            credentials=sim.creds,
+        )
+        assert sim.genai_client.location == "europe-west4"
+
+
+def test_simulation_evals_vertex_location_env(monkeypatch: typing.Any) -> None:
+    monkeypatch.setenv("VERTEX_LOCATION", "us-central1")
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with (
+        patch(
+            "cxas_scrapi.evals.simulation_evals.GeminiGenerate"
+        ) as mock_gemini,
+        patch("cxas_scrapi.core.apps.AgentServiceClient"),
+    ):
+        mock_gemini.return_value.location = "us-central1"
+        sim = SimulationEvals(app_name=app_name)
+        mock_gemini.assert_called_once_with(
+            project_id="test",
+            location="global",
+            credentials=sim.creds,
+        )
+        assert sim.genai_client.location == "us-central1"

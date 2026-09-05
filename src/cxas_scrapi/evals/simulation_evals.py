@@ -404,8 +404,18 @@ class SimulationEvals(Apps):
         rate_limiter: RateLimiter | None = None,
         expectations_only: bool = False,
         deployment_id: str | None = None,
+        vertex_location: str = "global",
         **kwargs: typing.Any,
     ) -> None:
+        """Initializes the SimulationEvals client.
+
+        Args:
+            app_name: CXAS App Name
+            rate_limiter: Optional RateLimiter for API calls
+            expectations_only: Whether to run expectations only
+            deployment_id: Optional deployment ID
+            vertex_location: Optional Vertex AI location. Defaults to 'global'.
+        """
         self.app_name = app_name
         self.expectations_only = expectations_only
         project_id = app_name.split("/")[1]
@@ -421,8 +431,6 @@ class SimulationEvals(Apps):
 
         # Vertex AI requires a specific region (e.g. global), whereas CXAS
         # Apps use 'us' or 'eu'
-        vertex_location = "global"
-
         self.genai_client = GeminiGenerate(
             project_id=self.project_id,
             location=vertex_location,

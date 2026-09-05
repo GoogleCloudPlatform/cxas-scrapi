@@ -626,7 +626,8 @@ class MigrationCLI:
 
             migration_service = MigrationService(
                 project_id=config.project_id,
-                location="us",
+                location=config.location,
+                gemini_location=config.vertex_location,
                 default_model=config.model,
             )
 
