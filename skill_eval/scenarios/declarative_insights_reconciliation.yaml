@@ -1,0 +1,38 @@
+name: Declarative Insights Reconciliation Engine
+prompt: |
+  You are an expert conversational AI engineer managing Contact Center Insights quality infrastructure using Infrastructure-as-Code.
+
+  Your goal is to use the declarative reconciliation engine in `cxas-scrapi` to preview and deploy a desired state configuration for project `{project_id}` (location `us`).
+
+  Please perform the following steps:
+  1. Author an `insights_config.yaml` file declaring:
+     - A scorecard named `Standard Conversational Agent Quality` with at least 3 QA questions (`intent_understanding`, `professional_tone`, `task_resolution`).
+     - A streaming `AnalysisRule` configured with `runQaAnnotator: true` targeting app `9c277d43-8399-46e6-b1d0-6de9cbee5ec5`.
+     - An automatic backfill configuration to analyze missing historical conversations.
+  2. Execute a dry-run preview using `cxas insights diff --config insights_config.yaml --project-id {project_id} --location us`.
+  3. Assert that the diff plan correctly identifies the scorecard revision to create/update, the streaming rule to activate, and the count of missing conversation gaps.
+  4. Apply the declarative configuration using `cxas insights apply --config insights_config.yaml --project-id {project_id} --location us`.
+  5. Verify that the scorecard revision is deployed, the rule is active, and historical gaps are backfilled without errors.
+rubric:
+- criteria: Declarative Spec Authoring
+  perfect: |
+    The agent authored a valid `insights_config.yaml` specifying scorecard questions, streaming analysis rule parameters, and backfill settings conforming to the declarative schema.
+  good: |
+    Authored the config with minor schema deviations that were quickly corrected.
+  failed: |
+    Failed to author a valid declarative configuration file.
+- criteria: Dry-Run Diff Verification
+  perfect: |
+    The agent executed `cxas insights diff` or `InsightsReconciler.diff()` and verified the change summary without prematurely mutating live GCP state.
+  good: |
+    Executed diff with minor output parsing retries.
+  failed: |
+    Did not run a dry-run diff preview before applying changes.
+- criteria: Non-Destructive Apply & Reconciliation
+  perfect: |
+    The agent successfully executed `cxas insights apply` or `InsightsReconciler.apply()`, synchronized questions non-destructively, ensured scorecard revision reached READY state, and activated the streaming analysis rule.
+  good: |
+    Applied changes with minor retries.
+  failed: |
+    Failed to apply the declarative configuration or encountered unhandled exceptions.
+assets: []
