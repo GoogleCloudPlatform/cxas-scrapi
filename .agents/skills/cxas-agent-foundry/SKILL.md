@@ -44,6 +44,9 @@ python .agents/skills/cxas-agent-foundry/scripts/triage-results.py --last 3
 # Run all 6 build-verification gates against the deployed app
 python .agents/skills/cxas-agent-foundry/scripts/gate-check.py
 
+# Generate in-product Cloud eval diagnostic dashboard / self-healing telemetry
+cxas trace eval-report --app-name <app_name> --format html|json --out <path>
+
 # Tune scoring thresholds (similarity, hallucination, extra-tools)
 python .agents/skills/cxas-agent-foundry/scripts/app-thresholds.py show
 
@@ -79,6 +82,7 @@ For heavy diagnosis/analysis work that would otherwise burn main-thread context,
 | `agents/scaffolder.md` | MEDIUM | Bulk-generate all agent code (agent JSONs, instruction.txt, tool python_code, callbacks, app.json) from an APPROVED TDD. One dispatch replaces 30-60 main-thread file writes. |
 | `agents/coverage-analyst.md` | MEDIUM | Generate a full eval coverage report against an agent's architecture. |
 | `agents/eval-writer.md` | MEDIUM | Generate evals for one entire eval TYPE (all goldens, all sims, etc.) — reads TDD's Coverage Map itself. Max 4 dispatches per build. |
+| `agents/cloud-eval-reporter.md` | MEDIUM | Inspect in-product Cloud eval runs, categorize failures across 6 dimensions, run live Cloud REST Linter, and generate HTML dashboard or JSON self-healing telemetry. |
 | `agents/lint-fixer.md` | LOW (mechanical) | Run `cxas lint` and mechanically fix all errors + deterministic warnings until clean. Never run lint on main thread. |
 
 For running evals: there is no sub-agent. Use `scripts/run-and-report.py --json-summary <path> > /dev/null 2>&1` and read the summary file — see `references/debug.md` → "Quick Start". The work was deterministic, so it lives in the script.
