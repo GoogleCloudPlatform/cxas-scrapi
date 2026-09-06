@@ -120,12 +120,21 @@ Read what the user wants and load the appropriate sub-skill:
 | "Tool test is failing", "callback test broke" | Debug | `references/debug.md` |
 | **"Snapshot app version", "Create version", "Compare versions", "List versions"** | **Manage** | **`references/api-reference.md` → "Version Management"** |
 | **"Edit the agent's instructions", "tweak the auth tool", "fix the greeting", "update this callback"** | **Build** (Edit cycle) | **`references/build.md` → "Editing an Existing Agent"** |
+| "Review the agent prompts", "analyze instruction logic", "lint prompts" | Review | `references/review/review.md` |
+| "Locate semantic issues", "audit instructions" | Review | `references/review/review.md` |
 
 **Any phrasing that implies creating, building, or setting up an agent/app routes to `references/build.md` — even if it sounds like "just create the app shell."** "Create a new cxas app" is NOT a shortcut to scaffolding; it triggers the full build flow (todo.md → interview/PRD → TDD + approval → scaffold → lint → evals → push). Skipping the interview / TDD because the user said "create" instead of "build" is a routing failure.
 
 **Editing an existing agent** (instruction tweak, tool change, callback fix) routes to build.md's "Editing an Existing Agent" section — the standard pull → edit → lint → push → run-evals cycle. Don't skip lint or the eval run after — silent regressions are how 90% rates drop to 70%.
 
-If the intent is unclear, ask: "Are you looking to **build/create** evals, **run** them, or **debug** failures?"
+
+If the intent is unclear, ask: "Are you looking to **build/create** evals, **run** them, **debug** failures, or **review** prompt instructions?"
+
+## Step Tracking
+
+**CRITICAL:** Before starting any multi-step workflow (Build, Run, or Debug), you MUST create a `todo.md` checklist in the project workspace. 
+
+As you complete each step in the workflow, update the checklist to check it off (`[ ]` to `[x]`). Do not proceed to the next step until the current one is checked off. This ensures no steps are missed during complex builds or debug sessions.
 
 ## Before Starting
 
