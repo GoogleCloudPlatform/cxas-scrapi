@@ -376,6 +376,50 @@ versions.list_versions()
 versions.revert_version(version_name=version_name)
 ```
 
+## Deployments
+
+### CLI Commands
+
+```bash
+# Create a deployment with channel settings (persona property and noise suppression)
+cxas deployments create \
+  --app-name projects/<project_id>/locations/<location>/apps/<app_id> \
+  --deployment-id <deployment_id> \
+  --version-id <version_id> \
+  --channel-type WEB_UI \
+  --persona-property CONCISE \
+  --noise-suppression-level low
+
+# List deployments
+cxas deployments list --app-name projects/<project_id>/locations/<location>/apps/<app_id>
+```
+
+### Python SDK
+
+```python
+from cxas_scrapi.core.deployments import Deployments
+
+deployments = Deployments(app_name=app_name)
+
+# Create deployment with persona and noise suppression settings
+dep = deployments.create_deployment(
+    deployment_id="my-deployment",
+    display_name="My Deployment",
+    app_version=version_id,
+    channel_type=Deployments.ChannelType.WEB_UI,
+    persona_property=Deployments.Persona.CONCISE,  # or "CONCISE", "CHATTY"
+    noise_suppression_level="low",  # "low", "moderate", "high", "very_high"
+)
+
+# Update channel settings on an existing deployment
+deployments.update_deployment(
+    deployment_id="my-deployment",
+    persona_property=Deployments.Persona.CHATTY,
+    noise_suppression_level="moderate",
+)
+```
+
+
 ## Diagnostic REST Commands
 
 For ad-hoc debugging when SCRAPI doesn't cover your use case. Requires `TOKEN=$(gcloud auth print-access-token)` and `BASE="https://ces.googleapis.com/v1beta/projects/${PROJECT}/locations/${LOCATION}/apps/${APP_ID}"`.
