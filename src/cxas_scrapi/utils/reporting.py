@@ -1574,6 +1574,7 @@ def generate_combined_report_from_dir(
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
     report_format: str = "html",
+    vertex_location: str = "global",
 ) -> str:
     """Load results from directory and generate a combined report.
 
@@ -1654,6 +1655,7 @@ def generate_combined_report_from_dir(
             single_bidi_stream=single_bidi_stream,
             progress_callback=progress_callback,
             capture_agent_audio=capture_agent_audio,
+            vertex_location=vertex_location,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed
@@ -1857,6 +1859,7 @@ def run_all_evals(
     single_bidi_stream: bool = False,
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
+    vertex_location: str = "global",
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -1884,6 +1887,8 @@ def run_all_evals(
       use_tool_fakes: Use fake tools for the session if available.
       timestamp: Optional timestamp to append to result filenames.
       expectations_only: Run simulations checking expectations only.
+      vertex_location: Vertex AI location for evaluation LLM models.
+        Defaults to 'global'.
 
     Returns:
       A dict containing lists of results for 'simulation', 'golden', 'tool', and
@@ -1917,4 +1922,5 @@ def run_all_evals(
         single_bidi_stream=single_bidi_stream,
         progress_callback=progress_callback,
         capture_agent_audio=capture_agent_audio,
+        vertex_location=vertex_location,
     )
