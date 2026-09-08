@@ -1690,10 +1690,6 @@ class VoiceAgentAuditor:
             "unregistered_template_variables": (
                 self.audit_unregistered_template_variables(app_data)
             ),
-            "callback_code_hygiene": self.audit_callback_code_hygiene(),
-            "conversational_shell_agents": self.audit_conversational_shell_agents(
-                app_data
-            ),
             "variable_setting_antipatterns": (
                 self.audit_variable_setting_antipatterns()
             ),

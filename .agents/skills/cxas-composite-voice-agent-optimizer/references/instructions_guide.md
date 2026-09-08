@@ -42,20 +42,16 @@ that the platform cannot know:
 
 ______________________________________________________________________
 
-## 3. Prompt Hygiene Checklist
+## 3. Prompt Hygiene & Preservation Checklist
 
 When auditing and optimizing application prompts against the platform baseline:
 
-- [ ] **Omit Redundant Anti-Leakage Directives**: Remove long "Do not output your internal thoughts" rules (platform handles this).
+- [ ] **Preserve Existing Domain Logic & Taskflows (MANDATORY)**: Never delete, wipe, or strip existing business logic, step definitions, or domain instructions. All composite voice optimizations must be strictly additive.
 
-- [ ] **Omit Markdown & Formatting Bans**: Remove "Do not output markdown, bullet points, or JSON" instructions (platform handles this).
-
-- [ ] **Omit Utterance Echo Bans**: Remove "Do not repeat what the user said" rules (platform handles this).
-
-- [ ] **Strip Prohibited Custom XML**: Remove `<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`, `<call_tool>`, `<parameter_update>`, and `<variable_update>` tags.
+- [ ] **Sanitize Prohibited XML Tags Non-Destructively**: When removing prohibited platform tags (`<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`, `<call_tool>`, `<parameter_update>`, `<variable_update>`), rephrase the tag names into natural language descriptions (e.g. "system context", "state update") without deleting the surrounding rules or domain instructions.
 
 - [ ] **Strip Text Variable Mutations**: Replace `"Set user_language = ES"` or `"Set XXX = YYY"` with tool invocations which update state. The model cannot mutate session memory or runtime variables through plain text output. Furthermore, custom/internal XML tags trigger CXAS platform-level thought-leakage regex safety filters, causing tool execution abortion and generic fallback errors (*"Hmm, I'm having trouble with that right now. Do you want me to try again?"*). Use dedicated tool calls (e.g. `update_language`) to update session variables, or configure runtime flow parameters.
 
-- [ ] **Remove Voice-Related Instructions from Agent**: Remove `<voice_lock>` / `<voice_output>` blocks from all agent instructions files. Instructions about how agent should sound should be specified only in the `synthesizeSpeechConfigs` instructions.
+- [ ] **Remove Voice-Related Instructions from Agent Prompts**: Remove `<voice_lock>` / `<voice_output>` blocks from all agent instructions files. Voice delivery and persona instructions must be specified globally in `app.json` under `synthesizeSpeechConfigs`.
 
-- [ ] **Enforce Explicit Tool Boundaries**: Ensure all business logic constraints, negative contracts, and tool execution boundaries are explicitly specified in prompts and tool definitions.
+- [ ] **Enforce Explicit Tool Boundaries & Additive Pacing**: Add conversational pacing directives to latency-sensitive tools and ensure all business logic constraints, negative contracts, and tool execution boundaries are explicitly specified in tool docstrings without removing existing parameter docs or function comments.

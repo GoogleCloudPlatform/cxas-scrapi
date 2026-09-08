@@ -13,7 +13,8 @@ for the reasoning model. Because the model operates at low thinking effort
 to minimize conversational latency, docstrings must provide unambiguous
 execution contracts for all tools that are visible to the model. Only tools configured in the `agent_name.json` will be visible to the model. And as such will be provided in the prompt to the model.
 
-### Source of Truth for Tool Docstrings:
+### Source of Truth & Preservation Rules for Tool Docstrings:
+- **Preserve Existing Documentation:** Never wipe or replace existing function descriptions, parameter explanations, or return signatures. Additive enhancement only.
 - **Python Tools (`tools/<name>/python_function/python_code.py`):** The Python function docstring inside `python_code.py` is the **exclusive canonical source of truth** in CXAS/CES. Always audit and update docstrings directly in the Python source code rather than mutating the `.json` configuration file.
 - **Non-Python Tools:** The tool description in `<name>.json` (`openApiTool.description` or `clientFunction.description`) is the source of truth.
 

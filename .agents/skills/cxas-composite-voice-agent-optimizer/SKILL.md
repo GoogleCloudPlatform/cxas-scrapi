@@ -57,6 +57,20 @@ Activate this skill when:
 
 ______________________________________________________________________
 
+## ⚠️ Fundamental Rule: Non-Destructive Preservation of Existing Instructions
+
+**CRITICAL — DO NOT REMOVE EXISTING INSTRUCTIONS:**
+When optimizing an agent for Gemini Composite V1, you MUST NOT delete, remove, or strip existing business logic, domain instructions, taskflows, steps, or operational rules from `global_instruction.txt`, `agents/*/instruction.txt`, or tool docstrings.
+
+All adaptations must be strictly **additive and non-destructive**:
+
+1. **Preserve Full Instruction Sets:** Retain all existing domain instructions, guardrails, step transitions, and business logic verbatim.
+2. **Rephrase Prohibited Tags Without Deleting Logic:** When resolving prohibited platform XML tags (e.g., `<context>`, `<state_update>`), rephrase the tag references into plain natural language descriptions (e.g., *"system context"*, *"state update"*) rather than deleting the surrounding rules or instructions.
+3. **Augment Tool Docstrings Additively:** In `tools/*/python_function/python_code.py`, preserve all existing descriptions, parameter documentation, and implementation details. Only append or integrate the required `When to Call:`, `When NOT to Call:`, and conversational pacing cues.
+4. **Enrich Spoken Cues Incrementally:** Add natural voice cues (ellipses `...`, brief bridge words) into response instructions without altering the core messaging or domain content.
+
+______________________________________________________________________
+
 ## Checklist & Inspection Gates
 
 The optimizer evaluates agent configurations against a prioritized checklist:
