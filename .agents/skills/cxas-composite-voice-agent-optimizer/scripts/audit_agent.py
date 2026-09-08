@@ -1361,13 +1361,19 @@ class VoiceAgentAuditor:
             "issues": issues,
         }
 
-    def _get_active_agent_tools(self) -> dict[str, list[str]]:
-        """Discovers all tools declared across agent configuration files (agent.json['tools']).
+    def _get_active_agent_tools(self) -> dict[str, dict[str, Any]]:
+        """Discovers all tools declared across agent configurations or referenced in instructions.
+
+        Classifies tools mentioned in agent instructions as priority P0, and other active
+        declared tools as priority P2.
 
         Returns:
-            Mapping of tool_name -> list of agent names referencing the tool.
+            Mapping of tool_name -> dict containing:
+                - 'agents': list of agent names referencing or declaring the tool
+                - 'in_instruction': bool indicating if the tool is mentioned in instructions
+                - 'priority': 'P0' if mentioned in instruction, else 'P2'
         """
-        active_tools: dict[str, list[str]] = {}
+        raw_tools: dict[str, dict[str, Any]] = {}
         agent_configs = self.discovery.discover_agent_configs()
         if not agent_configs:
             agents_dir = self.workspace_path / "agents"
@@ -1377,7 +1383,60 @@ class VoiceAgentAuditor:
                         json_file = d / f"{d.name}.json"
                         if json_file.is_file():
                             agent_configs[d.name] = json_file
+                        elif (d / "agent.json").is_file():
+                            agent_configs[d.name] = d / "agent.json"
 
+        # 1. Discover all instruction targets and collect instruction contents
+        targets = self._find_instruction_targets()
+        agent_instructions: dict[str, list[str]] = {}
+        global_instructions: list[str] = []
+
+        directive_patterns = [
+            re.compile(r"\{@(?:TOOL|tool)[:\s]+([a-zA-Z0-9_-]+)\}"),
+            re.compile(r"\$\{(?:TOOL|tool):([a-zA-Z0-9_-]+)\}"),
+        ]
+
+        for target in targets:
+            content = target.get_content()
+            if not content:
+                continue
+
+            fname = target.file_path.name
+            if fname == "global_instruction.txt":
+                global_instructions.append(content)
+                target_agent = "global"
+            else:
+                parent_name = target.file_path.parent.name
+                stem_name = target.file_path.stem
+                if parent_name in agent_configs:
+                    target_agent = parent_name
+                elif stem_name in agent_configs:
+                    target_agent = stem_name
+                elif target.file_path.parent == self.workspace_path:
+                    target_agent = self._get_root_agent_name()
+                else:
+                    target_agent = parent_name or "global"
+
+                if target_agent in agent_configs:
+                    if target_agent not in agent_instructions:
+                        agent_instructions[target_agent] = []
+                    agent_instructions[target_agent].append(content)
+                else:
+                    global_instructions.append(content)
+
+            # Discover directive-referenced tools directly from instructions
+            for pat in directive_patterns:
+                for match in pat.findall(content):
+                    tool_ref = match.strip().split("/")[-1]
+                    if tool_ref:
+                        entry = raw_tools.setdefault(
+                            tool_ref, {"agents": set(), "in_instruction": True}
+                        )
+                        entry["in_instruction"] = True
+                        if target_agent != "global":
+                            entry["agents"].add(target_agent)
+
+        # 2. Discover declared tools from agent configuration files
         for agent_name, config_path in sorted(agent_configs.items()):
             if not config_path.is_file():
                 continue
@@ -1398,12 +1457,46 @@ class VoiceAgentAuditor:
                             if isinstance(raw_name, str):
                                 tool_name = raw_name.strip().split("/")[-1]
                         if tool_name:
-                            if tool_name not in active_tools:
-                                active_tools[tool_name] = []
-                            if agent_name not in active_tools[tool_name]:
-                                active_tools[tool_name].append(agent_name)
+                            entry = raw_tools.setdefault(
+                                tool_name,
+                                {"agents": set(), "in_instruction": False},
+                            )
+                            entry["agents"].add(agent_name)
             except (OSError, json.JSONDecodeError):
                 continue
+
+        # 3. Check if declared tools are mentioned in agent or global instructions
+        for tool_name, entry in raw_tools.items():
+            if entry["in_instruction"]:
+                continue
+            tool_pat = re.compile(r"\b" + re.escape(tool_name) + r"\b")
+            is_mentioned = False
+            # Check instructions of referencing agents
+            for ag in entry["agents"]:
+                for inst_text in agent_instructions.get(ag, []):
+                    if tool_pat.search(inst_text):
+                        is_mentioned = True
+                        break
+                if is_mentioned:
+                    break
+            if not is_mentioned:
+                for inst_text in global_instructions:
+                    if tool_pat.search(inst_text):
+                        is_mentioned = True
+                        break
+            if is_mentioned:
+                entry["in_instruction"] = True
+
+        # 4. Build output mapping with P0 / P2 priority
+        active_tools: dict[str, dict[str, Any]] = {}
+        for tool_name, entry in sorted(raw_tools.items()):
+            agents_list = sorted(list(entry["agents"]))
+            in_instruction = entry["in_instruction"]
+            active_tools[tool_name] = {
+                "agents": agents_list,
+                "in_instruction": in_instruction,
+                "priority": "P0" if in_instruction else "P2",
+            }
 
         return active_tools
 
@@ -1474,30 +1567,6 @@ class VoiceAgentAuditor:
 
         return None, 1
 
-    def _is_fast_or_terminal_tool(self, tool_name: str) -> bool:
-        """Determines if a tool is fast, instant, routing, or terminal (exempt from pacing)."""
-        name_lower = tool_name.lower()
-        fast_patterns = [
-            r"(?:^|_)end(?:_session)?(?:$|_)",
-            r"(?:^|_)exit(?:$|_)",
-            r"(?:^|_)wrap_up(?:$|_)",
-            r"(?:^|_)terminate(?:$|_)",
-            r"(?:^|_)router(?:$|_)",
-            r"(?:^|_)classify(?:$|_)",
-            r"(?:^|_)intent(?:$|_)",
-            r"(?:^|_)increment(?:$|_)",
-            r"(?:^|_)counter(?:$|_)",
-            r"(?:^|_)dnis(?:$|_)",
-            r"(?:^|_)delay(?:$|_)",
-            r"(?:^|_)update_cic(?:$|_)",
-            r"(?:^|_)get_cic(?:$|_)",
-            r"(?:^|_)telemetry(?:$|_)",
-            r"(?:^|_)pindrop_call_state(?:$|_)",
-            r"(?:^|_)initialize_session(?:$|_)",
-            r"(?:^|_)mock(?:$|_)",
-        ]
-        return any(re.search(pat, name_lower) for pat in fast_patterns)
-
     def audit_tool_docstring_contracts(self) -> dict[str, Any]:
         """Audits tool docstrings and execution contracts for declared agent tools."""
         issues: list[dict[str, Any]] = []
@@ -1510,9 +1579,19 @@ class VoiceAgentAuditor:
             r"(?i)\bwhen\s+not\s+to\s+(?:call|invoke|use)\b|\bdo\s+not\s+call\b|\bnever\s+call\b|\bnegative\s+contract\b"
         )
 
-        for tool_name, agents in sorted(active_tools.items()):
+        for tool_name, tool_data in sorted(active_tools.items()):
+            if isinstance(tool_data, dict):
+                agents = tool_data.get("agents", [])
+                priority = tool_data.get(
+                    "priority",
+                    "P0" if tool_data.get("in_instruction") else "P2",
+                )
+            else:
+                agents = tool_data
+                priority = "P0"
+
             tool_path, tool_type = self._resolve_tool_path(tool_name)
-            agents_str = ", ".join(agents)
+            agents_str = ", ".join(agents) if agents else "unassigned"
 
             if tool_type == "builtin":
                 continue
@@ -1523,6 +1602,7 @@ class VoiceAgentAuditor:
                         "code": "MISSING_DECLARED_TOOL_FILE",
                         "tool": tool_name,
                         "agents": agents,
+                        "priority": priority,
                         "file": str(self.workspace_path / "tools" / tool_name),
                         "message": (
                             f"Tool '{tool_name}' declared in agent config(s) [{agents_str}]"
@@ -1547,6 +1627,7 @@ class VoiceAgentAuditor:
                         "code": "MISSING_TOOL_DOCSTRING",
                         "tool": tool_name,
                         "agents": agents,
+                        "priority": priority,
                         "file": rel_path,
                         "line": line_no,
                         "message": (
@@ -1568,6 +1649,7 @@ class VoiceAgentAuditor:
                             "code": "MISSING_TOOL_WHEN_TO_CALL",
                             "tool": tool_name,
                             "agents": agents,
+                            "priority": priority,
                             "file": rel_path,
                             "line": line_no,
                             "message": (
@@ -1585,6 +1667,7 @@ class VoiceAgentAuditor:
                             "code": "MISSING_TOOL_WHEN_NOT_TO_CALL",
                             "tool": tool_name,
                             "agents": agents,
+                            "priority": priority,
                             "file": rel_path,
                             "line": line_no,
                             "message": (
@@ -1603,8 +1686,19 @@ class VoiceAgentAuditor:
             "tools_evaluated": len(active_tools),
         }
 
+    def _is_terminal_tool(self, tool_name: str) -> bool:
+        """Determines if a tool is a terminal / fast lifecycle tool (exempt from pacing checks)."""
+        name_lower = tool_name.lower()
+        terminal_patterns = [
+            r"(?:^|_)end(?:_session)?(?:$|_)",
+            r"(?:^|_)exit(?:$|_)",
+            r"(?:^|_)wrap_up(?:$|_)",
+            r"(?:^|_)mock(?:$|_)",
+        ]
+        return any(re.search(pat, name_lower) for pat in terminal_patterns)
+
     def audit_tool_conversational_pacing(self) -> dict[str, Any]:
-        """Audits latency-sensitive vs instant tools for conversational pacing directives."""
+        """Audits active tools for conversational pacing directives."""
         issues: list[dict[str, Any]] = []
         active_tools = self._get_active_agent_tools()
 
@@ -1612,7 +1706,17 @@ class VoiceAgentAuditor:
             r"(?i)\b(?:conversational\s+)?pacing\s+phrase\b|\bbefore\s+calling\s+this\s+tool,\s+speak\b|\bspeak\s+a\s+brief\b|\bspoken\s+pacing\b"
         )
 
-        for tool_name, agents in sorted(active_tools.items()):
+        for tool_name, tool_data in sorted(active_tools.items()):
+            if isinstance(tool_data, dict):
+                agents = tool_data.get("agents", [])
+                priority = tool_data.get(
+                    "priority",
+                    "P0" if tool_data.get("in_instruction") else "P2",
+                )
+            else:
+                agents = tool_data
+                priority = "P0"
+
             tool_path, tool_type = self._resolve_tool_path(tool_name)
             if tool_type in ("builtin", "missing") or tool_path is None:
                 continue
@@ -1628,45 +1732,29 @@ class VoiceAgentAuditor:
             if not doc or not doc.strip():
                 continue
 
-            is_fast = self._is_fast_or_terminal_tool(tool_name)
+            is_terminal = self._is_terminal_tool(tool_name)
             has_pacing = bool(pacing_pattern.search(doc))
-            agents_str = ", ".join(agents)
+            agents_str = ", ".join(agents) if agents else "unassigned"
 
-            if not is_fast and not has_pacing:
+            if not is_terminal and not has_pacing:
                 issues.append(
                     {
                         "code": "MISSING_TOOL_CONVERSATIONAL_PACING",
                         "tool": tool_name,
                         "agents": agents,
+                        "priority": priority,
                         "file": rel_path,
                         "line": line_no,
                         "message": (
-                            f"Latency-sensitive tool '{tool_name}' (declared in: {agents_str}) lacks"
+                            f"Tool '{tool_name}' (declared in: {agents_str}) lacks"
                             f" a conversational pacing directive in {rel_path}. In Gemini Composite V1,"
                             " speak a brief natural bridge phrase before calling to prevent caller dead air"
-                            " during remote execution."
+                            " during execution."
                         ),
                         "recommended": (
                             "Before calling this tool, speak a brief, natural conversational pacing phrase"
-                            " (e.g., 'Let me check that for you...')."
-                        ),
-                    }
-                )
-            elif is_fast and has_pacing:
-                issues.append(
-                    {
-                        "code": "IMPROPER_PACING_ON_FAST_TOOL",
-                        "tool": tool_name,
-                        "agents": agents,
-                        "file": rel_path,
-                        "line": line_no,
-                        "message": (
-                            f"Fast/terminal tool '{tool_name}' in {rel_path} should NOT have a"
-                            " conversational pacing directive. Emitting pacing phrases before instant routing"
-                            " or session exit creates awkward caller utterances."
-                        ),
-                        "recommended": (
-                            "Remove conversational pacing directive from fast/terminal tool docstring."
+                            " with multiple varied options to avoid repetitive responses"
+                            " (e.g., 'Let me check that for you...', 'Just a minute, let me look it up...', 'Checking that for you now...')."
                         ),
                     }
                 )
@@ -1729,36 +1817,41 @@ class VoiceAgentAuditor:
                 msg = issue.get("message", "")
                 fix = issue.get("recommended", "")
 
-                # P0/P1 map to ERROR, P2 maps to WARNING
-                is_error = code in {
-                    "MISSING_SYNTHESIZE_SPEECH_CONFIGS",
-                    "MISSING_DIRECTORS_NOTE",
-                    "MISSING_AUDIO_PROFILE_HEADER",
-                    "MISSING_DIRECTORS_NOTE_HEADER",
-                    "MISSING_TRANSCRIPT_HOOK",
-                    "LOCALE_CODE_IN_ACCENT",
-                    "PROHIBITED_XML_TAG_FOUND",
-                    "PERMISSIVE_CONTRADICTION_FOUND",
-                    "UNREGISTERED_TEMPLATE_VARIABLE",
-                    "MISSING_DECLARED_TOOL_FILE",
-                    "MISSING_SYNTHESIZE_SPEECH_CONFIG_LANG",
-                    "MISSING_VOICE_IDENTIFIER",
-                    "MISSING_DIRECTORS_NOTE_INSTRUCTION",
-                    "ACCENT_DIRECTIVE_MISMATCH",
-                    "MISSING_LANGUAGE_SESSION_VAR",
-                    "A007_FAIL_MISSING_LANG",
-                    "A007_FAIL_MISSING_VOICE",
-                    "A007_FAIL_MISSING_INSTRUCTION",
-                    "A007_FAIL_ACCENT_MISMATCH",
-                    "A007_FAIL_MISSING_VAR",
-                    "LOW_SAMPLING_TEMPERATURE",
-                    "CONVERSATIONAL_SHELL_AGENT_FOUND",
-                    "MISSING_TOOL_DOCSTRING",
-                    "MISSING_TOOL_WHEN_TO_CALL",
-                    "MISSING_TOOL_WHEN_NOT_TO_CALL",
-                    "MISSING_TOOL_CONVERSATIONAL_PACING",
-                    "IMPROPER_PACING_ON_FAST_TOOL",
-                }
+                issue_priority = issue.get("priority")
+                if issue_priority in ("P0", "P1"):
+                    is_error = True
+                elif issue_priority == "P2":
+                    is_error = False
+                else:
+                    # P0/P1 map to ERROR, P2 maps to WARNING
+                    is_error = code in {
+                        "MISSING_SYNTHESIZE_SPEECH_CONFIGS",
+                        "MISSING_DIRECTORS_NOTE",
+                        "MISSING_AUDIO_PROFILE_HEADER",
+                        "MISSING_DIRECTORS_NOTE_HEADER",
+                        "MISSING_TRANSCRIPT_HOOK",
+                        "LOCALE_CODE_IN_ACCENT",
+                        "PROHIBITED_XML_TAG_FOUND",
+                        "PERMISSIVE_CONTRADICTION_FOUND",
+                        "UNREGISTERED_TEMPLATE_VARIABLE",
+                        "MISSING_DECLARED_TOOL_FILE",
+                        "MISSING_SYNTHESIZE_SPEECH_CONFIG_LANG",
+                        "MISSING_VOICE_IDENTIFIER",
+                        "MISSING_DIRECTORS_NOTE_INSTRUCTION",
+                        "ACCENT_DIRECTIVE_MISMATCH",
+                        "MISSING_LANGUAGE_SESSION_VAR",
+                        "A007_FAIL_MISSING_LANG",
+                        "A007_FAIL_MISSING_VOICE",
+                        "A007_FAIL_MISSING_INSTRUCTION",
+                        "A007_FAIL_ACCENT_MISMATCH",
+                        "A007_FAIL_MISSING_VAR",
+                        "LOW_SAMPLING_TEMPERATURE",
+                        "CONVERSATIONAL_SHELL_AGENT_FOUND",
+                        "MISSING_TOOL_DOCSTRING",
+                        "MISSING_TOOL_WHEN_TO_CALL",
+                        "MISSING_TOOL_WHEN_NOT_TO_CALL",
+                        "MISSING_TOOL_CONVERSATIONAL_PACING",
+                    }
                 sev = (
                     getattr(Severity, "ERROR", "error")
                     if is_error
@@ -1817,7 +1910,6 @@ class VoiceAgentAuditor:
             "MISSING_TOOL_WHEN_TO_CALL",
             "MISSING_TOOL_WHEN_NOT_TO_CALL",
             "MISSING_TOOL_CONVERSATIONAL_PACING",
-            "IMPROPER_PACING_ON_FAST_TOOL",
         }
 
         for pass_name, pass_data in audit_res.get("passes", {}).items():
@@ -1829,11 +1921,16 @@ class VoiceAgentAuditor:
                     "message": issue.get("message"),
                     "details": issue,
                 }
-                if code in p0_codes:
+                issue_priority = issue.get("priority")
+                if issue_priority == "P0" or (
+                    not issue_priority and code in p0_codes
+                ):
                     item["priority"] = "P0"
                     item["category"] = "Critical Voice & Synthesis Blocker"
                     p0_issues.append(item)
-                elif code in p1_codes:
+                elif issue_priority == "P1" or (
+                    not issue_priority and code in p1_codes
+                ):
                     item["priority"] = "P1"
                     item["category"] = "High Impact Multi-Language & Stability"
                     p1_issues.append(item)

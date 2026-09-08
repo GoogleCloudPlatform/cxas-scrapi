@@ -87,10 +87,10 @@ The optimizer evaluates agent configurations against a prioritized checklist:
 1. [ ] **Eliminate Prohibited Platform Tags:** Eliminate prohibited platform
    tags (e.g., `<state_update>`, `<context>`, `<reasoning>`, `<thought>`,
    `<internal>`, `<call_tool>`, `<parameter_update>`, `<variable_update>`, `<voice_lock>`, `<voice_output>`) which trigger thought-leakage regex safety filters.
-1. [ ] **Declared Tool Synchronization:** Every tool referenced in agent instructions
-   (e.g., `{@TOOL: tool_name}`, `[Tool Call: tool_name]`) MUST be declared in the
-   agent's configuration `.json` under `"tools"`. Undeclared tools throw fatal
-   `ToolNotFoundError` exceptions at runtime.
+1. [ ] **Instruction Tool Docstrings & Conversational Pacing Directives (P0 Critical):**
+   All tools actively referenced in agent instructions must define unambiguous execution contracts
+   (`When to Call:` and `When NOT to Call:`) and spoken conversational pacing directives
+   (*"Before calling this tool, speak a brief, natural conversational pacing phrase..."*) to prevent caller dead air.
 1. [ ] **Model Settings Configuration:** `modelSettings.model` is set to
    `"gemini-composite-v1"` and `modelSettings.temperature` is set to `1.0`
    (prevents acoustic repetition loops).
@@ -100,21 +100,13 @@ The optimizer evaluates agent configurations against a prioritized checklist:
 
 ### 🟡 Priority P1: Multi-Language Parity, Session Stability & Call Flow
 
-7. [ ] **Tool Docstrings & Conversational Pacing Directives (Selective by Latency):**
-   All tools define unambiguous execution contracts (When to Call & When NOT to Call).
-   For Python tools, docstrings are authored and maintained directly in
-   `tools/<name>/python_function/python_code.py` as the canonical source of truth.
-   Engineering judgment is applied to inject conversational pacing directives
-   (*"Before calling this tool, speak a brief, natural conversational pacing phrase..."*)
-   selectively on tools that perform remote lookups, searches, database mutations, or
-   long-running API calls to prevent caller dead air, while exempting fast/synchronous
-   tools (intent classification, local state access, session wrap-up / exit).
-1. [ ] **Eliminate Deprecated Language-Switching Tools:** Remove dynamic
-   language-switching tools (`language_switcher`, `en_to_es`); session language
-   is established at IVR/session initialization and dynamic switching tools add
-   latency and risk hallucination.
 1. [ ] **Verify Long-Call Stability (5+ Minutes):** Verify long-call stability
    (5+ minutes) without speaker drift, voice fry, or turn exhaustion.
+1. [ ] **Eliminate Reflexive Turn Closings:** Eliminate reflexive turn closings
+   (avoid ending every turn with *"Is there anything else?"*).
+1. [ ] **Enforce Anti-Looping Rules:** Enforce anti-looping rules (cap
+    repetitive empathetic filler or apology phrases to max 1 per session;
+    trigger retry escalations after 2 strikes).
 1. [ ] **Minimize Proactive Unnecessary Call Transfers:** Transfer only on
    explicit customer escalation or hold the line and be rigorous on
    conversational design. Sub-agent handoffs execute silently via tool calls
@@ -122,26 +114,30 @@ The optimizer evaluates agent configurations against a prioritized checklist:
 1. [ ] **Employ Validated Physical Acoustic Tags:** Employ validated physical
    acoustic tags (e.g., `[whispers]`, `[sigh]`, `[chuckles]`, `[slow]`,
    `[seriousness]`).
-1. [ ] **Eliminate Reflexive Turn Closings:** Eliminate reflexive turn closings
-   (avoid ending every turn with *"Is there anything else?"*).
+
 
 ### 🟢 Priority P2: Speech Hygiene, Pacing & Conversational Texture
 
-13. [ ] **Multi-Language Voice Parity:** Every configured locale in
+1. [ ] **Declared Active Tool Contracts & Pacing (P2 Hygiene):** Other active tools
+    declared in agent configurations (but not directly mentioned in instructions) define docstring
+    contracts and conversational pacing directives.
+1. [ ] **Multi-Language Voice Parity:** Every configured locale in
     `languageSettings.supportedLanguageCodes` has a matching entry in
     `synthesizeSpeechConfigs` with localized Director's Notes, appropriate voice
     IDs, and native bridge words.
-01. [ ] **Avoid Text-Based Variable Setting:** Avoid text-based variable setting
+1. [ ] **Avoid Text-Based Variable Setting:** Avoid text-based variable setting
     (e.g., `"Set login_status = true"` or `"Set keypad_mentioned = true"`); use
     structured tool invocations for state changes (e.g., `update_login_status`).
-01. [ ] **Remove Inert Abstract Tags:** Remove inert abstract tags (e.g.,
+1. [ ] **Remove Inert Abstract Tags:** Remove inert abstract tags (e.g.,
     `[empathetic]`, `[warm]`, `[calm]`, `[short pause]`).
-01. [ ] **Format Number & Currency Clusters:** Format number and currency
+1. [ ] **Format Number & Currency Clusters:** Format number and currency
     clusters for natural, chunked reading (e.g., credit card numbers, phone
     numbers).
-01. [ ] **Enforce Anti-Looping Rules:** Enforce anti-looping rules (cap
-    repetitive empathetic filler or apology phrases to max 1 per session;
-    trigger retry escalations after 2 strikes).
+1. [ ] **Eliminate Deprecated Language-Switching Tools:** Remove dynamic
+   language-switching tools (`language_switcher`, `en_to_es`); session language
+   is established at IVR/session initialization and dynamic switching tools add
+   latency and risk hallucination.
+
 
 ______________________________________________________________________
 
@@ -228,7 +224,6 @@ Combines **automated in-place remediation** for structural audio configurations 
 
 1. **Contextual Instruction & Session Variable Refactoring (Prompt-Level):**
 
-   - **Declare Session Variables (`user_language`):** In multi-language applications, register `user_language` or `app_language` in `app.json.variableDeclarations` so that runtime language state is tracked reliably.
    - **Contextual Prohibited XML Refactoring:** Review flagged internal XML tags (`<state_update>`, `<thought>`, `<reasoning>`, `<context>`, `<call_tool>`, `<voice_lock>`, `<voice_output>`). Rather than blindly stripping them via regex without context:
      - Convert `<state_update>` or `<variable_update>` into dedicated tool invocations (e.g., `update_account_state()`).
      - Remove raw leaked thought/reasoning blocks and `<voice_lock>`/`<voice_output>` tags from prompt instructions.
@@ -236,12 +231,14 @@ Combines **automated in-place remediation** for structural audio configurations 
    - **Eliminate Text Variable Mutations:** Replace `"Set user_language = ES"` with tool invocations.
    - **Sync Declared Tools:** Verify all tool references in agent prompts (e.g. `{@TOOL: ...}`) are declared in the agent's `.json` configuration. Remove or declare missing tools.
    - **Eliminate Deprecated Language Switchers:** Deprecate dynamic language switching tools (`language_switcher`, `en_to_es`); set session language at session init.
+   - **Eliminate Reflexive Turn Closings:** Eliminate reflexive turn closings (avoid ending every turn with `"Is there anything else?"`).
+   
 
 1. **Interactive Tool Docstring & Conversational Pacing Refactoring (Collaborative with User):**
 
    Tool docstrings serve as explicit runtime execution contracts for Gemini Composite V1 reasoning models. Because tool docstrings encode brand-specific voice texture and business constraints, **they are intentionally NOT auto-remediated blindly via CLI flags**. Instead, they are audited automatically and remediated interactively with user input.
 
-   - **Auditing Scope:** Only tools actively declared in `agent.json["tools"]` across the application are audited for docstring contracts and pacing directives. Unused orphan tools in the `tools/` folder are excluded.
+   - **Auditing Scope & Priority Tiering:** Tools actively declared in `agent.json["tools"]` or referenced in agent instructions (`{@TOOL: ...}`) are audited. Tools mentioned in agent instructions are flagged at **Priority P0** (critical execution contracts), while other active declared tools are flagged at **Priority P2** (hygiene). Unused orphan tools in the `tools/` folder are excluded.
 
    - **Python Tools Canonical Source of Truth:**
      - For Python tools, ALWAYS author and edit the docstring directly in `tools/<tool_name>/python_function/python_code.py`.
@@ -249,14 +246,13 @@ Combines **automated in-place remediation** for structural audio configurations 
      - For OpenAPI, Client, or Data Store tools without Python code, edit their respective configuration `.json` file.
 
    - **Interactive Step-by-Step Refactoring Process:**
-     1. **Review Flagged Tools from Report:** Inspect the Priority P1 findings for `MISSING_TOOL_CONVERSATIONAL_PACING`, `MISSING_TOOL_WHEN_TO_CALL`, and `MISSING_TOOL_WHEN_NOT_TO_CALL`.
-     2. **Categorize by Latency & Architecture:**
-        - **Latency-Sensitive Tools (Requires Pacing Phrase):** External API calls, DB queries, ServiceNow incidents, remote auth checks, or CRM lookups.
-        - **Fast / Synchronous / Terminal Tools (Exempt from Pacing):** Intent classification, routing, local session variable setters/getters, retry counters, or session exit (`itx_end_session`).
+     1. **Review Flagged Tools from Report:** Inspect the Priority P0 (tools in instructions) and Priority P2 findings for `MISSING_TOOL_CONVERSATIONAL_PACING`, `MISSING_TOOL_WHEN_TO_CALL`, and `MISSING_TOOL_WHEN_NOT_TO_CALL`.
+     2. **Tool Execution & Conversational Pacing Design:**
+        - **Conversational Pacing Directives:** In Gemini Composite V1, spoken pacing phrases (*"Before calling this tool, speak a brief, natural conversational pacing phrase..."*) prevent dead air across tool executions. Terminal tools (e.g. session wrap-up, exit, test mocks) are exempt from missing pacing checks.
         - **Callback Conflict Check:** If the application uses legacy `after_model_callbacks` or trivia tools to fill wait time, confirm with the user whether to transition to native model-level pacing phrases or align the prompt instructions.
      3. **Solicit User Phrasing & Author Docstring:** Present the proposed docstring structure to the user, incorporating:
         - Concise function summary.
-        - Conversational pacing directive with natural speech texture (*"Before calling this tool, speak a brief, natural conversational pacing phrase..."*).
+        - Conversational pacing directive with multiple natural phrasing options (*"Before calling this tool, speak a brief, natural conversational pacing phrase with varied options (e.g., 'Let me check that for you...', 'Just a minute, let me look it up...', 'Checking that for you now...') to prevent repetitive responses."*).
         - `When to Call:` positive trigger conditions.
         - `When NOT to Call:` negative operational boundaries.
      4. **Apply to Python Source Code:** Write the approved docstring into `tools/<name>/python_function/python_code.py`.
@@ -267,7 +263,8 @@ Combines **automated in-place remediation** for structural audio configurations 
          """Searches for customer accounts by phone number.
 
          Before calling this tool, speak a brief, natural conversational pacing phrase
-         to keep the caller informed (e.g., 'Let me look up your account details...').
+         with varied phrasing to avoid repetition across turns (e.g., 'Let me check that for you...',
+         'Just a minute, let me look it up...', or 'Looking up your account now...').
 
          When to Call:
          - Call when the customer provides their phone number for account lookup.
@@ -288,6 +285,8 @@ Combines **automated in-place remediation** for structural audio configurations 
    # Run SCRAPI structural linter
    cxas lint
    ```
+
+1. **Verify Checklist Above:** Run through the entire checklist above and verify that all items are checked off.
 
 1. **SCRAPI Deployment Lifecycle (for Deployed Agents):** When optimizing
    agents deployed on CXAS / CES:
@@ -318,16 +317,16 @@ following guides:
 
 - [Director's Notes & Audio Profile Guide](references/directors_notes_guide.md):
   Complete schema definitions, global placement rationale, accent
-  normalization tables, and multilingual golden templates (`en-US`, `en-GB`,
-  `en-AU`, `en-IE`, `es-US`/`es-419`).
-- [Empirical Tags Catalog](references/empirical_tags_catalog.md): 26 working
-  physical acoustic tags with measurements and 43+ inert tags to strip.
+  normalization tables, and multilingual golden templates.
+- [Global & Agent Instruction Guidelines](references/instructions_guide.md):
+  Platform baseline vs. application responsibilities, dialogue sanitization,
+  and prompt hygiene checklists.
+- [Empirical Tags Catalog](references/empirical_tags_catalog.md): List of working
+  physical acoustic tags to be used and inert tags to strip.
 - [Natural Speech Patterns & Anti-Looping Guide](references/natural_speech_patterns.md):
   Micro-pauses (`...`), localized bridge words, digit clustering, and empathy
   capping.
 - [Tool Design & Conversational Pacing](references/tool_design_and_pacing.md):
   Tool docstring contracts, spoken pacing phrases before tool execution,
   payload contamination prevention, and execution standards.
-- [Global & Agent Instruction Guidelines](references/instructions_guide.md):
-  Platform baseline vs. application responsibilities, dialogue sanitization,
-  and prompt hygiene checklists.
+

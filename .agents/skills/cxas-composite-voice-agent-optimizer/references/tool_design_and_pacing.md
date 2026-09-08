@@ -50,7 +50,7 @@ def manage_service_appointment(
   - Do NOT call when the user is asking general informational questions about service types.
   - Do NOT call 'BOOK_SLOT' before the user explicitly selects and confirms a specific time window.
 
-  Before calling this tool, speak a brief, natural conversational pacing phrase using conversational speech texture (e.g., 'Let me check the available time slots for you.' or 'Reserving that time window now.').
+  Before calling this tool, speak a brief, natural conversational pacing phrase with varied options to avoid repetitive responses (e.g., 'Let me check the available time slots for you...', 'Just a minute, let me look it up...', or 'Reserving that time window now.').
 
   Args:
     action_code: Action to perform ('CHECK_SLOTS', 'BOOK_SLOT', 'CANCEL_SLOT').
@@ -66,37 +66,19 @@ def manage_service_appointment(
 
 --------------------------------------------------------------------------------
 
-## 2. Spoken Conversational Pacing Phrases & Selective Application
+## 2. Spoken Conversational Pacing Phrases & Priority Classification
 
-In a composite voice architecture, tool execution introduces an unavoidable
-processing delay before the model generates the tool result and streams text
-to the TTS engine. Without a pacing phrase on long-running tools, the caller
-experiences dead air.
+In a composite voice architecture, tool execution introduces processing delay
+before the model generates the tool result and streams text to the TTS engine.
+Without a pacing phrase, the caller experiences dead air.
 
-### Selective Application by Tool Category:
-
-Apply engineering judgment to distinguish tools that need pacing phrases from fast local tools:
-
-| Tool Category | Examples | Pacing Phrase Needed? | Rationale |
-| :--- | :--- | :---: | :--- |
-| **Remote Lookups & Search** | `search_faq`, `get_available_slots`, `lookup_account` | **YES** | Remote API / database queries take 300ms–2s; prevents dead air. |
-| **State Mutations & Transactions** | `book_appointment`, `cancel_slot`, `modify_order` | **YES** | Backend transactions take time to commit; keeps caller engaged. |
-| **Outbound Dispatch & Notifications** | `send_tracker_link`, `dispatch_callback` | **YES** | External notification dispatch latency. |
-| **Diagnostics & Trouble Trees** | `process_trouble_tree`, `run_diagnostic` | **YES** | Heavy multi-step reasoning / backend queries. |
-| **Session Wrap-up & Termination** | `exit_conversation`, `call_wrap_up`, `end_call` | **NO (Exempt)** | Saying "One moment while I check..." before saying goodbye sounds robotic and unnatural. |
-| **Intent Classification & Routing** | `classify_user_intent`, `triage_route` | **NO (Exempt)** | Fast, synchronous internal routing checks. |
-| **Local State Getters / Setters** | `get_agent_context`, `set_variable` | **NO (Exempt)** | In-memory session context access. |
-| **Test & Mock Tools** | `mock_transfer`, `test_call_lifecycle` | **NO (Exempt)** | Local test fixtures. |
+### Priority Tiering for Active Tools:
+- **Priority P0 (Tools Mentioned in Instructions):** Tools actively referenced in agent instructions (`{@TOOL: ...}`) represent runtime execution paths invoked by the model. Missing docstring contracts (`When to Call:`, `When NOT to Call:`) or missing conversational pacing directives on these tools are critical P0 blockers.
+- **Priority P2 (Other Active Declared Tools):** Tools declared in agent configuration (`agent.json["tools"]`) that are not directly referenced in prompt instructions are audited at Priority P2 hygiene.
 
 ### Pacing Rules:
-
--   **Mandatory Directive for Latency Tools**: Tool docstrings must explicitly direct the model to
-    emit a brief, natural conversational bridge phrase *before* invoking the
-    function call (e.g., *"One moment while I look that up for you..."*, *"Let
-    me check the schedule for that day..."*).
--   **No Premature Claims**: The model must never predict the tool outcome or
-    quote result values in the pacing phrase before the tool has returned its
-    payload.
+- **Pacing Directive with Multiple Phrasing Options**: Active tool docstrings should explicitly direct the model to emit a brief, natural conversational bridge phrase with varied phrasing options *before* invoking the function call (e.g., *"Let me check that for you..."*, *"Just a minute, let me look it up..."*, *"Looking into the schedule for that day..."*) to prevent repetitive responses across turns. Terminal / fast lifecycle tools (e.g. session exit, wrap-up, mock fixtures) are exempt from `MISSING_TOOL_CONVERSATIONAL_PACING` checks.
+- **No Premature Claims**: The model must never predict the tool outcome or quote result values in the pacing phrase before the tool has returned its payload.
 
 --------------------------------------------------------------------------------
 
