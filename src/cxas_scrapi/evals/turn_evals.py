@@ -132,6 +132,7 @@ class TurnEvals:
         app_name: str,
         creds: typing.Any = None,
         rate_limiter: RateLimiter | None = None,
+        vertex_location: str = "global",
     ) -> None:
         """Initializes the TurnEvals class.
 
@@ -139,6 +140,7 @@ class TurnEvals:
             app_name: CXAS App Name
             creds: Optional Google Cloud credentials
             rate_limiter: Optional RateLimiter for API calls
+            vertex_location: Optional Vertex AI location. Defaults to 'global'.
         """
         self.app_name = app_name
         self.creds = creds
@@ -151,8 +153,6 @@ class TurnEvals:
 
         # Initialize GenAI Client
         project_id = app_name.split("/")[1]
-        vertex_location = "global"
-
         self.genai_client = GeminiGenerate(
             project_id=project_id,
             location=vertex_location,

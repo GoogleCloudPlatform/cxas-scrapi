@@ -14,6 +14,7 @@
 
 import asyncio
 import logging
+import os
 import random
 import threading
 import typing
@@ -52,7 +53,10 @@ class GeminiGenerate:
             f"(Max Concurrency: {max_concurrent_requests})"
         )
         self.project_id = project_id
-        self.location = location
+        if location == "global" and os.getenv("VERTEX_LOCATION"):
+            self.location = os.getenv("VERTEX_LOCATION")
+        else:
+            self.location = location or os.getenv("VERTEX_LOCATION", "global")
         self.credentials = credentials
         self._thread_local = threading.local()
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)

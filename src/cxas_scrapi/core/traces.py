@@ -1081,6 +1081,7 @@ class Traces(Common):
         gem = GeminiGenerate(
             project_id=self.project_id,
             credentials=self.creds,
+            location=self.trace_config.gemini.location,
             model_name=self.trace_config.gemini.model,
         )
         overrides = self.trace_config.gemini.audio_metrics
@@ -1130,6 +1131,7 @@ class Traces(Common):
         gem = GeminiGenerate(
             project_id=self.project_id,
             credentials=self.creds,
+            location=self.trace_config.gemini.location,
             model_name=self.trace_config.gemini.model,
         )
         all_metrics = self.trace_config.gemini.triage_metrics

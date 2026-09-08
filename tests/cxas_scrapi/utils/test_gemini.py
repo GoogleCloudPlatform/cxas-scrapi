@@ -260,3 +260,22 @@ def test_generate_async_zero_retries_returns_none(
     gen = GeminiGenerate(project_id="p", max_concurrent_requests=1)
     res = asyncio.run(gen.generate_async(prompt="x", max_retries=0))
     assert res is None
+
+
+def test_gemini_generate_default_location() -> None:
+    """Test GeminiGenerate defaults location to 'global'."""
+    gen = GeminiGenerate(project_id="test-proj")
+    assert gen.location == "global"
+
+
+def test_gemini_generate_explicit_location() -> None:
+    """Test GeminiGenerate uses explicit location parameter."""
+    gen = GeminiGenerate(project_id="test-proj", location="europe-west4")
+    assert gen.location == "europe-west4"
+
+
+def test_gemini_generate_env_location(monkeypatch: typing.Any) -> None:
+    """Test GeminiGenerate resolves VERTEX_LOCATION environment variable."""
+    monkeypatch.setenv("VERTEX_LOCATION", "us-central1")
+    gen = GeminiGenerate(project_id="test-proj")
+    assert gen.location == "us-central1"

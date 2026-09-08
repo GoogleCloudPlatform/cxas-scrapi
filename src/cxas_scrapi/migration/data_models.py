@@ -152,6 +152,8 @@ class MigrationConfig(BaseModel):
     project_id: str
     target_name: str
     model: str
+    location: str = "us"
+    vertex_location: str | None = None
     env: str = "PROD"
     profile: str = "standard"
     architecture: str = "hub-and-spoke"

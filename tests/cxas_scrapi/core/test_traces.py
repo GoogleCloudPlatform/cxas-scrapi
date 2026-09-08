@@ -676,6 +676,22 @@ def test_analyze_audio_handles_unparseable_response(
     assert out["agent_cutoff"]["justification"] == "no verdict here"
 
 
+def test_analyze_audio_custom_location(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    _patch_audio_files(traces_obj, monkeypatch)
+    traces_obj.trace_config.gemini.location = "europe-west4"
+    mock_gemini_cls = MagicMock()
+    monkeypatch.setattr(traces_mod, "GeminiGenerate", mock_gemini_cls)
+    traces_obj.analyze_audio("c1", metrics=["agent_cutoff"])
+    mock_gemini_cls.assert_called_once_with(
+        project_id=traces_obj.project_id,
+        credentials=traces_obj.creds,
+        location="europe-west4",
+        model_name=traces_obj.trace_config.gemini.model,
+    )
+
+
 def test_list_audio_files_uses_gcs_listing(
     traces_obj: typing.Any, monkeypatch: typing.Any
 ) -> None:
@@ -753,6 +769,23 @@ def test_triage_runs_all_metrics_when_none_specified(
     out = traces_obj.triage("c1")
     assert set(out.keys()) == set(
         traces_obj.trace_config.gemini.triage_metrics.keys()
+    )
+
+
+def test_triage_custom_location(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    traces_obj.history = MagicMock()
+    traces_obj.history.get_conversation.return_value = _conv_dict()
+    traces_obj.trace_config.gemini.location = "europe-west4"
+    mock_gemini_cls = MagicMock()
+    monkeypatch.setattr(traces_mod, "GeminiGenerate", mock_gemini_cls)
+    traces_obj.triage("c1", metrics=["hallucination"])
+    mock_gemini_cls.assert_called_once_with(
+        project_id=traces_obj.project_id,
+        credentials=traces_obj.creds,
+        location="europe-west4",
+        model_name=traces_obj.trace_config.gemini.model,
     )
 
 

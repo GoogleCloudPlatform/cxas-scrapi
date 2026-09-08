@@ -95,8 +95,15 @@ from cxas_scrapi.evals.simulation_evals import SimulationEvals
 
 sim_evals = SimulationEvals(
     app_name="projects/my-project/locations/us/apps/my-app",
+    vertex_location="europe-west4",  # Optional: custom region for data residency
 )
 ```
+
+!!! note "Data Residency & Regional Vertex AI"
+    By default, Vertex AI calls for simulation generation use `"global"`. If your organization requires a specific region due to data residency policies (e.g. `europe-west4` or `us-central1`), pass `vertex_location="europe-west4"` to `SimulationEvals` or set the `VERTEX_LOCATION` environment variable:
+    ```bash
+    export VERTEX_LOCATION="europe-west4"
+    ```
 
 ### Running a single evaluation programmatically
 
