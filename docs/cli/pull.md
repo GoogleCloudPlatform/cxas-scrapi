@@ -5,7 +5,7 @@ Use `cxas pull` to download a CX Agent Studio app to your local machine — it's
 ## Usage
 
 ```
-cxas pull <app> [--target-dir DIR] [--project-id PROJECT] [--location LOCATION]
+cxas pull <app> [--target-dir DIR] [--version-id VERSION] [--project-id PROJECT] [--location LOCATION] [--overwrite]
 ```
 
 ## Arguments
@@ -19,8 +19,10 @@ cxas pull <app> [--target-dir DIR] [--project-id PROJECT] [--location LOCATION]
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--target-dir DIR` | No | `.` (current directory) | The local directory to extract the app into. The directory is created if it does not exist. |
+| `--version-id VERSION` | No | — | Optional. Export a specific app version instead of the live app. Can be a version display name (e.g., `'v1.0'`), a bare version ID (e.g., `'001'`), or a full resource name (`projects/.../locations/.../apps/.../versions/001`). |
 | `--project-id PROJECT` | No* | — | GCP project ID. Required when `app` is a display name rather than a full resource name. |
 | `--location LOCATION` | No* | — | GCP location (e.g., `global`, `us-central1`). Required when `app` is a display name. |
+| `--overwrite` | No | `False` | Overwrite destination directory without confirmation prompt. |
 
 *Required when `app` is specified as a display name.
 
@@ -68,6 +70,16 @@ cxas pull projects/my-gcp-project/locations/us-central1/apps/abc123 \
 
 ```bash
 cxas pull projects/my-gcp-project/locations/global/apps/abc123
+```
+
+**Pull a specific version snapshot:**
+
+```bash
+cxas pull "My Support Agent" \
+  --version-id "v1.0" \
+  --target-dir ./my-agent \
+  --project-id my-gcp-project \
+  --location us-central1
 ```
 
 ## Related Commands

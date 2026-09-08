@@ -25,9 +25,10 @@ cxas push --app-dir <project>/cxas_app/<AppName> \
   --to projects/<project_id>/locations/<location>/apps/<app_id> \
   --project-id <project_id> --location <location>
 
-# Pull platform state to local
+# Pull platform state to local (use --version-id to export an immutable version snapshot instead of live draft)
 cxas pull projects/<project_id>/locations/<location>/apps/<app_id> \
-  --project-id <project_id> --location <location> --target-dir <project>/cxas_app/
+  --project-id <project_id> --location <location> --target-dir <project>/cxas_app/ \
+  [--version-id <version_id_or_name>]
 
 # Run evals + triage + report (single command)
 python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py --message "what changed" --runs 5

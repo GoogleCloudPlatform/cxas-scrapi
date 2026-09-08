@@ -193,9 +193,86 @@ def test_app_pull(
     cli_app.app_pull(args)
 
     mock_apps_client.export_app.assert_called_once_with(
-        app_name="projects/test-project/locations/us/apps/123"
+        app_name="projects/test-project/locations/us/apps/123",
+        app_version=None,
     )
     assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
+
+
+@mock.patch("cxas_scrapi.cli.app.Versions")
+def test_app_pull_with_version_id(
+    mock_versions_cls: typing.Any,
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "pulled_app"),
+        project_id="test-project",
+        location="us",
+        version_id="0.0.3",
+    )
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    mock_v_inst = mock_versions_cls.return_value
+    mock_v_inst.resolve_version_name.return_value = (
+        "projects/test-project/locations/us/apps/123/versions/0.0.3"
+    )
+
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("app.yaml", "name: Test App")
+    dummy_zip_bytes = dummy_zip_io.getvalue()
+
+    mock_lro = mock.MagicMock()
+    mock_response = mock.MagicMock()
+    mock_response.app_content = dummy_zip_bytes
+    mock_lro.result.return_value = mock_response
+    mock_apps_client.export_app.return_value = mock_lro
+
+    cli_app.app_pull(args)
+
+    mock_v_inst.resolve_version_name.assert_called_once_with("0.0.3")
+    mock_apps_client.export_app.assert_called_once_with(
+        app_name="projects/test-project/locations/us/apps/123",
+        app_version="projects/test-project/locations/us/apps/123/versions/0.0.3",
+    )
+    assert os.path.exists(os.path.join(args.target_dir, "app.yaml"))
+
+
+@mock.patch("cxas_scrapi.cli.app.Versions")
+def test_app_pull_with_invalid_version_id_exits(
+    mock_versions_cls: typing.Any,
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "pulled_app"),
+        project_id="test-project",
+        location="us",
+        version_id="nonexistent",
+    )
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    mock_v_inst = mock_versions_cls.return_value
+    mock_v_inst.resolve_version_name.side_effect = ValueError(
+        "Version not found"
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_pull(args)
+    assert excinfo.value.code == 1
 
 
 def test_app_push(mock_apps_client: typing.Any, tmp_path: typing.Any) -> None:
@@ -262,7 +339,8 @@ def test_app_branch(
     cli_app.app_branch(args)
 
     mock_apps_client.export_app.assert_called_once_with(
-        app_name="projects/test-project/locations/us/apps/source-id"
+        app_name="projects/test-project/locations/us/apps/source-id",
+        app_version=None,
     )
     mock_apps_client.import_as_new_app.assert_called_once()
     call_args = mock_apps_client.import_as_new_app.call_args[1]
