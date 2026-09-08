@@ -1913,3 +1913,39 @@ def test_simulation_evals_escalation_transfer_handling(
     assert (
         "Agent ended session via escalation/transfer" in step_prog.justification
     )
+
+
+def test_simulation_evals_default_vertex_location() -> None:
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with (
+        patch(
+            "cxas_scrapi.evals.simulation_evals.GeminiGenerate"
+        ) as mock_gemini,
+        patch("cxas_scrapi.core.apps.AgentServiceClient"),
+    ):
+        simulator = SimulationEvals(app_name=app_name)
+    assert simulator.vertex_location == "global"
+    mock_gemini.assert_called_once_with(
+        project_id="test",
+        location="global",
+        credentials=simulator.creds,
+    )
+
+
+def test_simulation_evals_custom_vertex_location() -> None:
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with (
+        patch(
+            "cxas_scrapi.evals.simulation_evals.GeminiGenerate"
+        ) as mock_gemini,
+        patch("cxas_scrapi.core.apps.AgentServiceClient"),
+    ):
+        simulator = SimulationEvals(
+            app_name=app_name, vertex_location="us-central1"
+        )
+    assert simulator.vertex_location == "us-central1"
+    mock_gemini.assert_called_once_with(
+        project_id="test",
+        location="us-central1",
+        credentials=simulator.creds,
+    )

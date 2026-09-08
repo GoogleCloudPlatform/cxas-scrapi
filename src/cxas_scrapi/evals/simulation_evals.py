@@ -407,10 +407,12 @@ class SimulationEvals(Apps):
         rate_limiter: RateLimiter | None = None,
         expectations_only: bool = False,
         deployment_id: str | None = None,
+        vertex_location: str = "global",
         **kwargs: typing.Any,
     ) -> None:
         self.app_name = app_name
         self.expectations_only = expectations_only
+        self.vertex_location = vertex_location
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
@@ -422,13 +424,9 @@ class SimulationEvals(Apps):
         )
         self.tools_map = Tools(app_name=app_name, **kwargs).get_tools_map()
 
-        # Vertex AI requires a specific region (e.g. global), whereas CXAS
-        # Apps use 'us' or 'eu'
-        vertex_location = "global"
-
         self.genai_client = GeminiGenerate(
             project_id=self.project_id,
-            location=vertex_location,
+            location=self.vertex_location,
             credentials=self.creds,
         )
 

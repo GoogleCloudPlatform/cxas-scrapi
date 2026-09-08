@@ -670,6 +670,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         capture_agent_audio=getattr(args, "capture_agent_audio", False),
         single_bidi_stream=getattr(args, "single_bidi_stream", False),
         report_format=getattr(args, "format", "html") or "html",
+        vertex_location=getattr(args, "vertex_location", "global") or "global",
     )
     print(f"Combined report generated at {actual_output_path}")
 
@@ -1861,6 +1862,11 @@ def get_parser() -> argparse.ArgumentParser:
         "--single-bidi-stream",
         action="store_true",
         help="Keep one persistent bidi WebSocket open per audio simulation instead of one connection per turn.",
+    )
+    parser_report.add_argument(
+        "--vertex-location",
+        default="global",
+        help="Vertex AI location for evaluation LLM models. Defaults to 'global'.",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
