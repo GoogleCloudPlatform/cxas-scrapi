@@ -520,3 +520,53 @@ def test_deployments_create_func_with_channel_settings(
         noise_suppression_level="low",
         traffic_split=None,
     )
+
+
+def test_parser_deployments_create_case_normalization() -> None:
+    """Test parser normalizes case for persona and noise suppression level."""
+    test_args = [
+        "cxas",
+        "deployments",
+        "create",
+        "--app-name",
+        "projects/p/locations/l/apps/a",
+        "--deployment-id",
+        "dep_1",
+        "--version-id",
+        "v1",
+        "--persona-property",
+        "chatty",
+        "--noise-suppression-level",
+        "HIGH",
+    ]
+    with (
+        mock.patch.object(sys, "argv", test_args),
+        mock.patch("cxas_scrapi.cli.main.deployments_create") as mock_create,
+    ):
+        main_cli.main()
+        mock_create.assert_called_once()
+        parsed_args = mock_create.call_args[0][0]
+        assert parsed_args.persona_property == "CHATTY"
+        assert parsed_args.noise_suppression_level == "high"
+
+
+def test_parser_deployments_create_invalid_choices() -> None:
+    """Test parser rejects invalid choices for channel settings."""
+    test_args = [
+        "cxas",
+        "deployments",
+        "create",
+        "--app-name",
+        "projects/p/locations/l/apps/a",
+        "--deployment-id",
+        "dep_1",
+        "--version-id",
+        "v1",
+        "--persona-property",
+        "INVALID_PERSONA",
+    ]
+    with (
+        mock.patch.object(sys, "argv", test_args),
+        pytest.raises(SystemExit),
+    ):
+        main_cli.main()

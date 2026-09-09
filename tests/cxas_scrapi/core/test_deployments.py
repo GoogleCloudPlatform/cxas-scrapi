@@ -513,3 +513,61 @@ def test_build_persona_property() -> None:
 
     with pytest.raises(KeyError):
         Deployments._build_persona_property("INVALID")
+
+
+def test_validate_noise_suppression_level() -> None:
+    assert Deployments._validate_noise_suppression_level(None) is None
+    assert Deployments._validate_noise_suppression_level("low") == "low"
+    assert Deployments._validate_noise_suppression_level("LOW") == "low"
+    assert (
+        Deployments._validate_noise_suppression_level("moderate") == "moderate"
+    )
+    assert Deployments._validate_noise_suppression_level("High") == "high"
+    assert (
+        Deployments._validate_noise_suppression_level("very_high")
+        == "very_high"
+    )
+
+    with pytest.raises(ValueError, match="Invalid noise_suppression_level"):
+        Deployments._validate_noise_suppression_level("invalid_level")
+
+
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_create_deployment_invalid_noise_level(
+    mock_client_cls: typing.Any,
+) -> None:
+    deps = Deployments("projects/p/locations/l/apps/a")
+    with pytest.raises(ValueError, match="Invalid noise_suppression_level"):
+        deps.create_deployment(
+            deployment_id="dep_1",
+            display_name="Dep 1",
+            app_version="v1",
+            noise_suppression_level="extreme",
+        )
+
+
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_update_deployment_isolated_channel_settings(
+    mock_client_cls: typing.Any,
+) -> None:
+    mock_client = mock_client_cls.return_value
+    mock_client.update_deployment.return_value = MagicMock()
+
+    deps = Deployments("projects/p/locations/l/apps/a")
+
+    # Update only persona_property
+    deps.update_deployment("dep_1", persona_property="CHATTY")
+    args = mock_client.update_deployment.call_args[1]["request"]
+    assert "channel_profile.persona_property" in args.update_mask.paths
+    assert len(args.update_mask.paths) == 1
+    assert (
+        args.deployment.channel_profile.persona_property.persona
+        == types.ChannelProfile.PersonaProperty.Persona.CHATTY
+    )
+
+    # Update only noise_suppression_level (case-insensitive)
+    deps.update_deployment("dep_1", noise_suppression_level="MODERATE")
+    args = mock_client.update_deployment.call_args[1]["request"]
+    assert "channel_profile.noise_suppression_level" in args.update_mask.paths
+    assert len(args.update_mask.paths) == 1
+    assert args.deployment.channel_profile.noise_suppression_level == "moderate"

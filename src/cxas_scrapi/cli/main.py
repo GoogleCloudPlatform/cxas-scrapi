@@ -2522,11 +2522,15 @@ def get_parser() -> argparse.ArgumentParser:
     parser_deps_create.add_argument(
         "--persona-property",
         required=False,
+        type=str.upper,
+        choices=["CONCISE", "CHATTY"],
         help="Persona property for channel profile (e.g. CONCISE, CHATTY).",
     )
     parser_deps_create.add_argument(
         "--noise-suppression-level",
         required=False,
+        type=str.lower,
+        choices=["low", "moderate", "high", "very_high"],
         help="Noise suppression level for channel profile (e.g. low).",
     )
     _add_project_location_args(parser_deps_create, required=False)
