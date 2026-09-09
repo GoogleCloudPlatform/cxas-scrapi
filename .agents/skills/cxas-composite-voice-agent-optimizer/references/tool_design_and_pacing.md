@@ -1,17 +1,12 @@
 # Tool Design & Conversational Pacing
 
-This reference defines tool docstring contracts, conversational pacing
-directives, payload contamination prevention, and execution standards for the
-dialogue reasoning model in the Gemini Composite V1 architecture.
+This reference defines tool docstring contracts, conversational pacing directives, payload contamination prevention, and execution standards for the dialogue reasoning model in the Gemini Composite V1 architecture.
 
 --------------------------------------------------------------------------------
 
 ## 1. Tool Docstring Engineering
 
-In Gemini Composite V1, tool docstrings serve as explicit prompt instructions
-for the reasoning model. Because the model operates at low thinking effort
-to minimize conversational latency, docstrings must provide unambiguous
-execution contracts for all tools that are visible to the model. Only tools configured in the `agent_name.json` will be visible to the model. And as such will be provided in the prompt to the model.
+In Gemini Composite V1, tool docstrings serve as explicit prompt instructions for the reasoning model. Because the model operates at low thinking effort to minimize conversational latency, docstrings must provide unambiguous execution contracts for all tools that are visible to the model. Only tools configured in the `agent_name.json` will be visible to the model. And as such will be provided in the prompt to the model.
 
 ### Source of Truth & Preservation Rules for Tool Docstrings:
 - **Preserve Existing Documentation:** Never wipe or replace existing function descriptions, parameter explanations, or return signatures. Additive enhancement only.
@@ -21,14 +16,10 @@ execution contracts for all tools that are visible to the model. Only tools conf
 ### Mandatory Tool Docstring Sections:
 
 1.  **Summary & Capabilities**: Clear description of what the tool executes.
-2.  **Execution Guidelines (When to Call & When NOT to Call)**: Explicit
-    operational boundaries to prevent ungrounded or hallucinated tool
-    invocations.
-3.  **Conversational Pacing Directive (for Latency-Sensitive Tools)**: Prompt
-    instructing the model to speak a brief spoken phrase before tool execution.
+2.  **Execution Guidelines (When to Call & When NOT to Call)**: Explicit operational boundaries to prevent ungrounded or hallucinated tool invocations.
+3.  **Conversational Pacing Directive (for Latency-Sensitive Tools)**: Prompt instructing the model to speak a brief spoken phrase before tool execution.
 4.  **Parameter Specifications**: Types, valid values, and default behaviors.
-5.  **Context Argument Synthesis Rules**: How to rewrite brief caller fragments
-    into complete semantic statements.
+5.  **Context Argument Synthesis Rules**: How to rewrite brief caller fragments into complete semantic statements.
 
 ### Example in `tools/manage_service_appointment/python_function/python_code.py`:
 
@@ -68,37 +59,56 @@ def manage_service_appointment(
 
 ## 2. Spoken Conversational Pacing Phrases & Priority Classification
 
-In a composite voice architecture, tool execution introduces processing delay
-before the model generates the tool result and streams text to the TTS engine.
-Without a pacing phrase, the caller experiences dead air.
+In a composite voice architecture, tool execution introduces processing delay before the model generates the tool result and streams text to the TTS engine. Without a pacing phrase, the caller experiences dead air.
 
 ### Priority Tiering for Active Tools:
-- **Priority P0 (Tools Mentioned in Instructions):** Tools actively referenced in agent instructions (`{@TOOL: ...}`) represent runtime execution paths invoked by the model. Missing docstring contracts (`When to Call:`, `When NOT to Call:`) or missing conversational pacing directives on these tools are critical P0 blockers.
+- **Priority P1 (Tools Mentioned in Instructions):** Tools actively referenced in agent instructions (`{@TOOL: ...}`) represent runtime execution paths invoked by the model. Missing docstring contracts (`When to Call:`, `When NOT to Call:`) or missing conversational pacing directives on these tools are priority P1 findings.
 - **Priority P2 (Other Active Declared Tools):** Tools declared in agent configuration (`agent.json["tools"]`) that are not directly referenced in prompt instructions are audited at Priority P2 hygiene.
 
 ### Pacing Rules:
-- **Pacing Directive with Multiple Phrasing Options**: Active tool docstrings should explicitly direct the model to emit a brief, natural conversational bridge phrase with varied phrasing options *before* invoking the function call (e.g., *"Let me check that for you..."*, *"Just a minute, let me look it up..."*, *"Looking into the schedule for that day..."*) to prevent repetitive responses across turns. Terminal / fast lifecycle tools (e.g. session exit, wrap-up, mock fixtures) are exempt from `MISSING_TOOL_CONVERSATIONAL_PACING` checks.
+- **Pacing Directive with Multiple Phrasing Options**: Active tool docstrings should explicitly direct the model to emit a brief, natural conversational bridge phrase with varied phrasing options *before* invoking the function call (e.g., *"Let me check that for you..."*, *"Just a minute, let me look it up..."*, *"Looking into the schedule for that day..."*) to prevent repetitive responses across turns. Terminal / fast lifecycle tools (e.g. session wrap-up, exit, test mocks) are exempt from `MISSING_TOOL_CONVERSATIONAL_PACING` checks.
 - **No Premature Claims**: The model must never predict the tool outcome or quote result values in the pacing phrase before the tool has returned its payload.
+
+### 2.1 Cross-Scope Contradictions & Anti-Looping Prevention (P0 Critical):
+A critical failure mode occurs when agent instructions and tool docstrings impose mutually contradictory constraints on spoken dialogue.
+
+#### Conflicting Instructions Example:
+- **Agent Instruction (`agents/appointments/instruction.txt`):**
+  ```
+  Always call the `manage_service_appointment` tool, wait for its response and then generate a response. Never say anything which is not in the tool response.
+  ```
+- **Tool Docstring (`tools/manage_service_appointment/...`):**
+  ```
+  Before calling this tool, speak a brief, natural conversational pacing phrase with varied options to avoid repetitive responses (e.g., 'Let me check the available time slots for you...', 'Just a minute, let me look it up...', or 'Reserving that time window now.').
+  ```
+
+#### Why This Breaks the Agent:
+The agent instruction forbids speaking before receiving the tool response (*"wait for its response and then generate a response"* / *"Never say anything which is not in the tool response"*), whereas the tool docstring mandates speaking a pacing phrase *before* invoking the tool. This direct contradiction creates an impossible operational constraint for Gemini Composite V1, resulting in:
+1. **Model Looping & Hesitation:** The model repeatedly tries and aborts generating tool calls and conversational turns.
+2. **Dead Air / Latency Spikes:** The agent stalls or times out waiting for conflicting internal policies to resolve.
+3. **Safety Fallbacks:** Triggers generic platform fallback messages (*"I'm sorry, I'm having trouble with that right now."*).
+
+#### Collaborative Remediation Strategy:
+This is a **Priority P0 blocker**. The skill must detect this contradiction, present it to the user, and ask clarifying questions to align the behaviors:
+- **Harmonized Agent Instruction (Recommended):** Update the agent instruction to explicitly permit spoken pacing phrases before tool execution while keeping the final answer grounded in the tool response:
+  ```
+  Before invoking `manage_service_appointment`, speak a natural conversational pacing phrase. Once the tool responds, generate your answer grounded strictly in the tool output. Never invent details not returned by the tool.
+  ```
+- **Docstring Adjustment (Alternative):** If the agent must remain completely silent prior to tool return, remove the pre-call pacing requirement from the tool docstring.
 
 --------------------------------------------------------------------------------
 
 ## 3. Foreign Tool Payload Contamination Protection
 
-Backend databases, knowledge bases, and API integrations frequently return raw
-JSON payloads, English error strings, or system identifiers (e.g., `{"status":
-"Out of stock", "category": "Equipment"}`).
+Backend databases, knowledge bases, and API integrations frequently return raw JSON payloads, English error strings, or system identifiers (e.g., `{"status": "Out of stock", "category": "Equipment"}`).
 
 ### Vulnerability:
 
-Without explicit boundary instructions, LLMs often quote or parrot raw tool
-output strings verbatim into non-English or specialized sessions, causing sudden
-language flips or broken persona tone.
+Without explicit boundary instructions, LLMs often quote or parrot raw tool output strings verbatim into non-English or specialized sessions, causing sudden language flips or broken persona tone.
 
 ### Mitigation:
 
-Instruct the agent to formulate search queries in the API's required format, but
-synthesize all spoken customer responses strictly in the session language
-(`{{user_language}}`):
+Instruct the agent to formulate search queries in the API's required format, but synthesize all spoken customer responses strictly in the session language (`{{user_language}}`):
 
 ```xml
 <taskflow>
@@ -116,14 +126,6 @@ synthesize all spoken customer responses strictly in the session language
 
 ## 4. Declared Tool Synchronization & Pre-Classification Ordering
 
-1.  **Tool Declaration Synchronization**: Every `{@TOOL: tool_name}` referenced
-    in instruction prompts MUST be declared in the agent's configuration `.json`
-    under `"tools": ["tool_name"]`. Undeclared tools throw fatal
-    `ToolNotFoundError` exceptions at runtime.
-2.  **Pre-Classification Terminology Resolution**: When supporting localized
-    product names, regional plan tiers, or specialized acronyms, invoke
-    terminology resolution tools *before* intent classification or
-    knowledge-base search to prevent misclassification.
-3.  **Elimination of Deprecated Language-Switching Tools**: Deprecate dynamic
-    language-switching tools (`language_switcher`, `en_to_es`). Session language
-    is established at IVR/session initialization; dynamic tools add latency and risk hallucination.
+1.  **Tool Declaration Synchronization**: Every `{@TOOL: tool_name}` referenced in instruction prompts MUST be declared in the agent's configuration `.json` under `"tools": ["tool_name"]`. Undeclared tools throw fatal `ToolNotFoundError` exceptions at runtime.
+2.  **Pre-Classification Terminology Resolution**: When supporting localized product names, regional plan tiers, or specialized acronyms, invoke terminology resolution tools *before* intent classification or knowledge-base search to prevent misclassification.
+3.  **Elimination of Deprecated Language-Switching Tools**: Deprecate dynamic language-switching tools (`language_switcher`, `en_to_es`). Session language is established at IVR/session initialization; dynamic tools add latency and risk hallucination.

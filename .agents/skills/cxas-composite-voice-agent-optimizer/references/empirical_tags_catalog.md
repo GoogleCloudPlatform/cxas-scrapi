@@ -1,15 +1,12 @@
 # Empirical Working Tags vs. Inert Tags Catalog
 
-Empirical testing on Gemini Composite V1 and Gemini TTS models established that
-the model responds exclusively to physical acoustic directives and vocal sounds.
-Abstract emotional adjectives in brackets produce zero acoustic modulation.
+Empirical testing on Gemini Composite V1 and Gemini TTS models established that the model responds exclusively to physical acoustic directives and vocal sounds. Abstract emotional adjectives in brackets produce zero acoustic modulation.
 
 ______________________________________________________________________
 
 ## 1. ✅ Working Physical Acoustic Tags (26 Empirical Tags)
 
-These 26 tags produce measurable, reproducible changes in pitch, tempo, volume,
-duration, or vocal tract acoustic artifacts.
+These 26 tags produce measurable, reproducible changes in pitch, tempo, volume, duration, or vocal tract acoustic artifacts.
 
 | Category | Tag | Acoustic Measurement / Physical Effect | Recommended Use Case | Concrete Example |
 | :--- | :--- | :--- | :--- | :--- |
@@ -33,23 +30,12 @@ ______________________________________________________________________
 
 ## 2. ❌ Ineffective / Inert Tags (43+ Tags to Strip)
 
-- **Abstract Emotion Tags**: `[warm]`, `[calm]`, `[clear]`, `[professional]`,
-  `[empathetic]`, `[reassuring]`, `[sympathetic]`, `[hope]`, `[happy]`,
-  `[crying]`, `[awe]`, `[fearful]`, `[surprised]`, `[cautious]`, `[alarm]`,
-  `[anxiety]`, `[relief]`, `[tension]`, `[determination]`, `[enthusiasm]`,
-  `[adoration]`, `[interest]`, `[curiosity]`, `[annoyance]`, `[aggression]`,
-  `[nervousness]`, `[neutral]`, `[negative]`, `[positive]`, `[admiration]`,
-  `[disgusted]`
-- **Pause Tags**: `[short pause]`, `[long pause]`, `[short_pause]`,
-  `[medium_pause]`, `[prosody rate="85%"]`, `[prosody rate="115%"]`
-  *(Remediation: use ellipses `...`)*
-- **Delivery Style Tags**: `[formal]`, `[casual]`, `[mumbles]`, `[stammers]`,
-  `[breathless]`, `[panic]`
+- **Abstract Emotion Tags**: `[warm]`, `[calm]`, `[clear]`, `[professional]`, `[empathetic]`, `[reassuring]`, `[sympathetic]`, `[hope]`, `[happy]`, `[crying]`, `[awe]`, `[fearful]`, `[surprised]`, `[cautious]`, `[alarm]`, `[anxiety]`, `[relief]`, `[tension]`, `[determination]`, `[enthusiasm]`, `[adoration]`, `[interest]`, `[curiosity]`, `[annoyance]`, `[aggression]`, `[nervousness]`, `[neutral]`, `[negative]`, `[positive]`, `[admiration]`, `[disgusted]`
+- **Pause Tags**: `[short pause]`, `[long pause]`, `[short_pause]`, `[medium_pause]`, `[prosody rate="85%"]`, `[prosody rate="115%"]` *(Remediation: use ellipses `...`)*
+- **Delivery Style Tags**: `[formal]`, `[casual]`, `[mumbles]`, `[stammers]`, `[breathless]`, `[panic]`
 
 ______________________________________________________________________
 
 ## 3. 🚫 Prohibited Internal Platform XML Tags
 
-Do NOT output internal platform XML tags (`<state_update>`, `<context>`,
-`<reasoning>`, `<thought>`, `<internal>`). Emitting custom XML tags triggers
-platform thought-leakage regex safety filters and aborts tool execution.
+Do NOT output internal platform XML tags (`<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`). Emitting custom XML tags triggers platform thought-leakage regex safety filters and aborts tool execution.

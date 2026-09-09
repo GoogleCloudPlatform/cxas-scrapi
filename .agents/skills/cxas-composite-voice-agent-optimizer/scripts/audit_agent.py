@@ -1015,29 +1015,32 @@ class VoiceAgentAuditor:
                                 }
                             )
 
-        var_decls = app_data.get("variableDeclarations")
-        if not isinstance(var_decls, list):
-            var_decls = []
-        var_names = [
-            v.get("name")
-            for v in var_decls
-            if isinstance(v, dict) and isinstance(v.get("name"), str)
-        ]
-        if (
-            "user_language" not in var_names
-            and "user_lang" not in var_names
-            and "app_language" not in var_names
-        ):
-            issues.append(
-                {
-                    "code": "MISSING_LANGUAGE_SESSION_VAR",
-                    "variable": "user_language",
-                    "message": (
-                        "Neither 'user_language' nor 'app_language' session variable is"
-                        " declared in app.json.variableDeclarations."
-                    ),
-                }
-            )
+        # Check user_language only if the app is multi-lingual
+        is_multilingual = len(supported_langs) > 0 or len(all_declared_langs) > 1
+        if is_multilingual:
+            var_decls = app_data.get("variableDeclarations")
+            if not isinstance(var_decls, list):
+                var_decls = []
+            var_names = [
+                v.get("name")
+                for v in var_decls
+                if isinstance(v, dict) and isinstance(v.get("name"), str)
+            ]
+            if (
+                "user_language" not in var_names
+                and "user_lang" not in var_names
+                and "app_language" not in var_names
+            ):
+                issues.append(
+                    {
+                        "code": "MISSING_LANGUAGE_SESSION_VAR",
+                        "variable": "user_language",
+                        "message": (
+                            "Neither 'user_language' nor 'app_language' session variable is"
+                            " declared in app.json.variableDeclarations for multi-lingual app."
+                        ),
+                    }
+                )
 
         return {
             "passed": len(issues) == 0,
@@ -1364,14 +1367,14 @@ class VoiceAgentAuditor:
     def _get_active_agent_tools(self) -> dict[str, dict[str, Any]]:
         """Discovers all tools declared across agent configurations or referenced in instructions.
 
-        Classifies tools mentioned in agent instructions as priority P0, and other active
+        Classifies tools mentioned in agent instructions as priority P1, and other active
         declared tools as priority P2.
 
         Returns:
             Mapping of tool_name -> dict containing:
                 - 'agents': list of agent names referencing or declaring the tool
                 - 'in_instruction': bool indicating if the tool is mentioned in instructions
-                - 'priority': 'P0' if mentioned in instruction, else 'P2'
+                - 'priority': 'P1' if mentioned in instruction, else 'P2'
         """
         raw_tools: dict[str, dict[str, Any]] = {}
         agent_configs = self.discovery.discover_agent_configs()
@@ -1487,7 +1490,7 @@ class VoiceAgentAuditor:
             if is_mentioned:
                 entry["in_instruction"] = True
 
-        # 4. Build output mapping with P0 / P2 priority
+        # 4. Build output mapping with P1 / P2 priority
         active_tools: dict[str, dict[str, Any]] = {}
         for tool_name, entry in sorted(raw_tools.items()):
             agents_list = sorted(list(entry["agents"]))
@@ -1495,7 +1498,7 @@ class VoiceAgentAuditor:
             active_tools[tool_name] = {
                 "agents": agents_list,
                 "in_instruction": in_instruction,
-                "priority": "P0" if in_instruction else "P2",
+                "priority": "P1" if in_instruction else "P2",
             }
 
         return active_tools
@@ -1584,11 +1587,11 @@ class VoiceAgentAuditor:
                 agents = tool_data.get("agents", [])
                 priority = tool_data.get(
                     "priority",
-                    "P0" if tool_data.get("in_instruction") else "P2",
+                    "P1" if tool_data.get("in_instruction") else "P2",
                 )
             else:
                 agents = tool_data
-                priority = "P0"
+                priority = "P1"
 
             tool_path, tool_type = self._resolve_tool_path(tool_name)
             agents_str = ", ".join(agents) if agents else "unassigned"
@@ -1711,11 +1714,11 @@ class VoiceAgentAuditor:
                 agents = tool_data.get("agents", [])
                 priority = tool_data.get(
                     "priority",
-                    "P0" if tool_data.get("in_instruction") else "P2",
+                    "P1" if tool_data.get("in_instruction") else "P2",
                 )
             else:
                 agents = tool_data
-                priority = "P0"
+                priority = "P1"
 
             tool_path, tool_type = self._resolve_tool_path(tool_name)
             if tool_type in ("builtin", "missing") or tool_path is None:

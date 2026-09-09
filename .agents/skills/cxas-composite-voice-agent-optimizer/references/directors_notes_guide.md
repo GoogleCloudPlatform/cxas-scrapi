@@ -6,14 +6,11 @@ ______________________________________________________________________
 
 ## 1. Schema & JSON Placement in `app.json`
 
-The Audio Profile and Director's Note must be declared globally under
-`audioProcessingConfig.synthesizeSpeechConfigs`.
+The Audio Profile and Director's Note must be declared globally under `audioProcessingConfig.synthesizeSpeechConfigs`.
 
-- **`voice`** *(string)*: Voice identifier, e.g. `en-US-Chirp3-HD-Aoede` or
-  bare Gemini voice names (e.g. `Zephyr`, `Aoede`).
+- **`voice`** *(string)*: Voice identifier, e.g. `en-US-Chirp3-HD-Aoede` or bare Gemini voice names (e.g. `Zephyr`, `Aoede`).
 - **`speakingRate`** *(number)*: Multiplier for speech pace (default: `1.0`).
-- **`instruction`** *(string)*: Free-text style prompt containing the `# Audio Profile` and `# Director's note`. Steers persona, pacing, intonation, and
-  accent.
+- **`instruction`** *(string)*: Free-text style prompt containing the `# Audio Profile` and `# Director's note`. Steers persona, pacing, intonation, and accent.
 
 ```json
 {
@@ -57,8 +54,7 @@ ______________________________________________________________________
 
 ### 3.1 Semantic Strings vs. Locale Codes
 
-The Gemini TTS conditioning layer decodes natural language semantic tokens to
-steer vocal tract simulation and acoustic priors.
+The Gemini TTS conditioning layer decodes natural language semantic tokens to steer vocal tract simulation and acoustic priors.
 
 - ✅ **Valid / Recommended:**
   - `* Accent: American English`
@@ -107,22 +103,15 @@ steer vocal tract simulation and acoustic priors.
 
 ### 3.3 Mandatory `## Transcript:\n` Hook (Preventing Style Leakage)
 
-Every Director's Note MUST conclude with the exact delimiter `## Transcript:\n`
-(or `### TRANSCRIPT:\n`).
+Every Director's Note MUST conclude with the exact delimiter `## Transcript:\n` (or `### TRANSCRIPT:\n`).
 
-- **Style Prompt Leakage Bug:** If this delimiter is missing, misspelled (e.g.
-  `## Transcript` without colon), or omitted, the TTS synthesizer may
-  interpret the entire Director's Note as spoken dialogue, causing the voice
-  agent to read out loud its own persona instructions (e.g. *"Relaxed and
-  contemporary Irish speech..."*) before continuing the conversation.
+- **Style Prompt Leakage Bug:** If this delimiter is missing, misspelled (e.g. `## Transcript` without colon), or omitted, the TTS synthesizer may interpret the entire Director's Note as spoken dialogue, causing the voice agent to read out loud its own persona instructions (e.g. *"Relaxed and contemporary Irish speech..."*) before continuing the conversation.
 
 ______________________________________________________________________
 
 ## 4. Spoken Text Formatting for Speech Synthesis
 
-The TTS engine synthesizes written text verbatim based on the Director's Note.
-This can include instructions on how to pronounce certain words or phrases,
-dates, numbers and other content.
+The TTS engine synthesizes written text verbatim based on the Director's Note. This can include instructions on how to pronounce certain words or phrases, dates, numbers and other content.
 
 | Content Type | Poor Formatting (Robotic / Ambiguous) | Recommended Spoken Formatting |
 | :--- | :--- | :--- |
