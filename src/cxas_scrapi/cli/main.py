@@ -2249,6 +2249,15 @@ def get_parser() -> argparse.ArgumentParser:
         help="Path to the app directory to lint (default: current directory).",
     )
     parser_lint.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help=(
+            "Target model (e.g., gemini-composite-v1, gemini-2.5-flash). "
+            "If omitted, inferred from app.json."
+        ),
+    )
+    parser_lint.add_argument(
         "--fix",
         action="store_true",
         help="Show fix suggestions for each issue.",

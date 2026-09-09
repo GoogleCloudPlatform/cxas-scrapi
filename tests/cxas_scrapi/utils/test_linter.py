@@ -754,3 +754,269 @@ def test_structure_rules_dispatched_by_target(tmp_path: typing.Any) -> None:
         r for r in _RULE_REGISTRY["structure"] if r.id != "S999"
     ]
     _REGISTERED_IDS.discard(("S999", "structure"))
+
+
+# ── Model-Specific Lint Rules Tests ──────────────────────────────────────
+
+
+def test_rule_model_applicability() -> None:
+    class AgnosticRule(Rule):
+        id = "M001"
+
+        def check(
+            self,
+            file_path: typing.Any,
+            content: typing.Any,
+            context: typing.Any,
+        ) -> typing.Any:
+            return []
+
+    class CompositeRule(Rule):
+        id = "M002"
+        models = ["gemini-composite-v1"]
+
+        def check(
+            self,
+            file_path: typing.Any,
+            content: typing.Any,
+            context: typing.Any,
+        ) -> typing.Any:
+            return []
+
+    class FlashRule(Rule):
+        id = "M003"
+        models = ["gemini-2.5-flash", "gemini-1.5-flash"]
+
+        def check(
+            self,
+            file_path: typing.Any,
+            content: typing.Any,
+            context: typing.Any,
+        ) -> typing.Any:
+            return []
+
+    r_agnostic = AgnosticRule()
+    r_composite = CompositeRule()
+    r_flash = FlashRule()
+
+    # Agnostic rule applies to everything
+    assert r_agnostic.is_applicable_for_model(None) is True
+    assert r_agnostic.is_applicable_for_model("gemini-composite-v1") is True
+    assert r_agnostic.is_applicable_for_model("gemini-2.5-flash") is True
+
+    # Composite rule
+    assert r_composite.is_applicable_for_model(None) is False
+    assert r_composite.is_applicable_for_model("gemini-composite-v1") is True
+    assert r_composite.is_applicable_for_model("GEMINI-COMPOSITE-V1") is True
+    # Substrings or prefixes that are not exact matches should NOT match
+    assert r_composite.is_applicable_for_model("gemini-composite") is False
+    assert r_composite.is_applicable_for_model("gemini-composite-v2") is False
+    assert r_composite.is_applicable_for_model("gemini-2.5-flash") is False
+
+    # Flash rule
+    assert r_flash.is_applicable_for_model(None) is False
+    assert r_flash.is_applicable_for_model("gemini-2.5-flash") is True
+    assert r_flash.is_applicable_for_model("gemini-1.5-flash") is True
+    assert r_flash.is_applicable_for_model("gemini-2.5") is False
+    assert r_flash.is_applicable_for_model("gemini-composite-v1") is False
+
+
+def test_rule_decorator_with_models() -> None:
+    from cxas_scrapi.utils.linter import (  # noqa: PLC0415
+        _REGISTERED_IDS,
+        _RULE_REGISTRY,
+    )
+
+    @rule("instructions", models=["gemini-composite-v1"])
+    class DecoratedModelRule(Rule):
+        id = "M004"
+
+        def check(
+            self,
+            file_path: typing.Any,
+            content: typing.Any,
+            context: typing.Any,
+        ) -> typing.Any:
+            return []
+
+    assert DecoratedModelRule.models == ["gemini-composite-v1"]
+
+    _RULE_REGISTRY["instructions"] = [
+        r for r in _RULE_REGISTRY["instructions"] if r.id != "M004"
+    ]
+    _REGISTERED_IDS.discard(("M004", "instructions"))
+
+
+def test_discovery_and_context_model_resolution(tmp_path: typing.Any) -> None:
+    # App with modelSettings in app.json
+    app_data = {
+        "name": "test-app",
+        "displayName": "Test App",
+        "rootAgent": "agent1",
+        "modelSettings": {"model": "gemini-composite-v1"},
+    }
+    (tmp_path / "app.json").write_text(json.dumps(app_data))
+
+    agents_dir = tmp_path / "agents"
+    agent1_dir = agents_dir / "agent1"
+    agent1_dir.mkdir(parents=True)
+    (agent1_dir / "instruction.txt").write_text("Instruction for agent 1")
+    # agent1 has no modelSettings -> inherits app model
+    (agent1_dir / "agent1.json").write_text(
+        json.dumps({"displayName": "Agent 1"})
+    )
+
+    agent2_dir = agents_dir / "agent2"
+    agent2_dir.mkdir(parents=True)
+    (agent2_dir / "instruction.txt").write_text("Instruction for agent 2")
+    # agent2 has specific modelSettings
+    (agent2_dir / "agent2.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Agent 2",
+                "modelSettings": {"model": "gemini-2.5-flash"},
+            }
+        )
+    )
+
+    discovery = Discovery(tmp_path, tmp_path / "evals")
+    assert discovery.discover_app_model() == "gemini-composite-v1"
+    agent_models = discovery.discover_agent_models()
+    assert agent_models == {"agent2": "gemini-2.5-flash"}
+
+    # build_context without override
+    config = LintConfig()
+    context = build_context(tmp_path, config, discovery)
+    assert context.model == "gemini-composite-v1"
+    assert (
+        context.get_model_for_file(agent1_dir / "instruction.txt")
+        == "gemini-composite-v1"
+    )
+    assert (
+        context.get_model_for_file(agent2_dir / "instruction.txt")
+        == "gemini-2.5-flash"
+    )
+    assert (
+        context.get_model_for_file(tmp_path / "app.json")
+        == "gemini-composite-v1"
+    )
+
+    # build_context with CLI override
+    context_cli = build_context(
+        tmp_path, config, discovery, model_override="gemini-1.5-pro"
+    )
+    assert context_cli.model == "gemini-1.5-pro"
+    assert (
+        context_cli.get_model_for_file(agent1_dir / "instruction.txt")
+        == "gemini-1.5-pro"
+    )
+    # agent2 still has its specific override if defined
+    assert (
+        context_cli.get_model_for_file(agent2_dir / "instruction.txt")
+        == "gemini-2.5-flash"
+    )
+
+
+def test_run_rules_with_model_filtering(tmp_path: typing.Any) -> None:
+    from cxas_scrapi.utils.linter import (  # noqa: PLC0415
+        _REGISTERED_IDS,
+        _RULE_REGISTRY,
+    )
+
+    _make_app(tmp_path, agents=["agent1"])
+    (tmp_path / "app.json").write_text(
+        json.dumps(
+            {
+                "name": "app",
+                "displayName": "App",
+                "rootAgent": "agent1",
+                "modelSettings": {"model": "gemini-composite-v1"},
+            }
+        )
+    )
+
+    @rule("instructions")
+    class AgnosticTestRule(Rule):
+        id = "M101"
+        name = "agnostic-test"
+        description = "Test agnostic rule"
+        default_severity = Severity.WARNING
+
+        def check(
+            self, file_path: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
+            return [self.make_result(str(file_path), "Agnostic rule fired")]
+
+    @rule("instructions", models=["gemini-composite-v1"])
+    class CompositeTestRule(Rule):
+        id = "M102"
+        name = "composite-test"
+        description = "Test composite rule"
+        default_severity = Severity.WARNING
+
+        def check(
+            self, file_path: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
+            return [self.make_result(str(file_path), "Composite rule fired")]
+
+    @rule("instructions", models=["gemini-2.5-flash"])
+    class FlashTestRule(Rule):
+        id = "M103"
+        name = "flash-test"
+        description = "Test flash rule"
+        default_severity = Severity.WARNING
+
+        def check(
+            self, file_path: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
+            return [self.make_result(str(file_path), "Flash rule fired")]
+
+    registry = build_registry()
+    discovery = Discovery(tmp_path, tmp_path / "evals")
+    config = LintConfig()
+
+    # Case 1: Model is gemini-composite-v1 (inferred from app.json)
+    context_composite = build_context(tmp_path, config, discovery)
+    report_composite = LintReport()
+    run_rules(
+        registry,
+        config,
+        context_composite,
+        discovery,
+        report_composite,
+        categories=["instructions"],
+        specific_rules={"M101", "M102", "M103"},
+    )
+    rule_ids_composite = {r.rule_id for r in report_composite.results}
+    assert "M101" in rule_ids_composite
+    assert "M102" in rule_ids_composite
+    assert "M103" not in rule_ids_composite
+
+    # Case 2: CLI overrides to gemini-2.5-flash
+    context_flash = build_context(
+        tmp_path, config, discovery, model_override="gemini-2.5-flash"
+    )
+    report_flash = LintReport()
+    run_rules(
+        registry,
+        config,
+        context_flash,
+        discovery,
+        report_flash,
+        categories=["instructions"],
+        specific_rules={"M101", "M102", "M103"},
+    )
+    rule_ids_flash = {r.rule_id for r in report_flash.results}
+    assert "M101" in rule_ids_flash
+    assert "M102" not in rule_ids_flash
+    assert "M103" in rule_ids_flash
+
+    # Cleanup
+    _RULE_REGISTRY["instructions"] = [
+        r
+        for r in _RULE_REGISTRY["instructions"]
+        if r.id not in {"M101", "M102", "M103"}
+    ]
+    _REGISTERED_IDS.discard(("M101", "instructions"))
+    _REGISTERED_IDS.discard(("M102", "instructions"))
+    _REGISTERED_IDS.discard(("M103", "instructions"))

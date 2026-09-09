@@ -179,6 +179,8 @@ class Rule(ABC):
       Values: ``"app_config"``, ``"instruction"``, ``"agent_config"``.
       Rules that don't set ``target`` receive the default files for
       their category.
+    - models: optional list of model names/patterns this rule applies to.
+      If None or empty, the rule is model-agnostic and applies to all models.
     """
 
     id: str = ""
@@ -187,6 +189,25 @@ class Rule(ABC):
     default_severity: Severity = Severity.WARNING
     category: str = ""
     target: str = ""
+    models: list[str] | None = None
+
+    def is_applicable_for_model(self, model: str | None) -> bool:
+        """Check if this rule is applicable for the given model.
+
+        If `models` is None or empty, the rule is model-agnostic and
+        applies to all models.
+        If `models` is specified, it returns True only if `model` is
+        provided and exactly matches one of the specified models
+        (case-insensitive).
+        """
+        if not self.models:
+            return True
+        if not model:
+            return False
+        model_lower = model.strip().lower()
+        return any(
+            target.strip().lower() == model_lower for target in self.models
+        )
 
     @abstractmethod
     def check(
@@ -222,7 +243,10 @@ _RULE_REGISTRY: dict[str, list[Rule]] = defaultdict(list)
 _REGISTERED_IDS: set[tuple[str, str]] = set()
 
 
-def rule(category: str) -> typing.Any:
+def rule(
+    category: str,
+    models: list[str] | str | None = None,
+) -> typing.Any:
     """Class decorator that auto-registers a Rule into its category.
 
     Duplicate ``(rule_id, category)`` pairs are silently ignored so
@@ -236,10 +260,19 @@ def rule(category: str) -> typing.Any:
         class InvalidJson(Rule):
             id = "A001"
             ...
+
+        @rule("instructions", models=["gemini-composite-v1"])
+        class CompositeSpecificRule(Rule):
+            id = "C001"
+            ...
     """
 
     def decorator(cls) -> typing.Any:  # noqa: ANN001
         cls.category = category
+        if models is not None:
+            cls.models = [models] if isinstance(models, str) else list(models)
+        elif isinstance(getattr(cls, "models", None), str):
+            cls.models = [cls.models]
         instance = cls()
         key = (instance.id, category)
         if key not in _REGISTERED_IDS:
@@ -271,6 +304,8 @@ class LintContext:
     project_root: Path
     app_dir: Path
     evals_dir: Path
+    model: str | None = None
+    agent_models: dict[str, str] = field(default_factory=dict)
     all_agent_names: set = field(default_factory=set)
     all_agent_display_names: set = field(default_factory=set)
     all_tool_names: set = field(default_factory=set)
@@ -288,6 +323,23 @@ class LintContext:
     @property
     def all_known_tools(self) -> set:
         return self.all_tool_names | self.platform_tools
+
+    def get_model_for_agent(self, agent_name: str) -> str | None:
+        """Get agent-configured model (or fallback to app-level model)."""
+        return self.agent_models.get(agent_name, self.model)
+
+    def get_model_for_file(self, file_path: Path) -> str | None:
+        """Resolve the effective model for a specific file."""
+        if self.app_root:
+            try:
+                rel = file_path.resolve().relative_to(self.app_root.resolve())
+                parts = rel.parts
+                if len(parts) >= 2 and parts[0] == "agents":
+                    agent_name = parts[1]
+                    return self.get_model_for_agent(agent_name)
+            except ValueError:
+                pass
+        return self.model
 
 
 # ── Rule Registry ────────────────────────────────────────────────────────
@@ -332,7 +384,10 @@ class RuleRegistry:
                 current_cat = r.category
                 print(f"\n  {current_cat.upper()}")
             sev = r.default_severity.value.upper()
-            print(f"    {r.id}  [{sev:7s}]  {r.name}: {r.description}")
+            model_info = f" [models: {', '.join(r.models)}]" if r.models else ""
+            print(
+                f"    {r.id}  [{sev:7s}]{model_info}  {r.name}: {r.description}"
+            )
 
 
 # ── Configuration ────────────────────────────────────────────────────────
@@ -344,6 +399,7 @@ class LintConfig:
 
     app_dir: str = "."
     evals_dir: str = "evals/"
+    model: str | None = None
     rules: dict[str, Severity] = field(default_factory=dict)
     options: dict[str, dict] = field(default_factory=dict)
     ignore: list[str] = field(default_factory=list)
@@ -360,6 +416,7 @@ class LintConfig:
 
             config.app_dir = data.get("app_dir", config.app_dir)
             config.evals_dir = data.get("evals_dir", config.evals_dir)
+            config.model = data.get("model", config.model)
 
             for rule_id, severity_str in (data.get("rules") or {}).items():
                 config.rules[rule_id] = Severity.from_str(severity_str)
@@ -552,6 +609,26 @@ class Discovery:
                 return p
         return None
 
+    def discover_app_model(self) -> str | None:
+        """Return model specified in app config under ``modelSettings``."""
+        app_cfg = self.discover_app_config()
+        if not app_cfg or not app_cfg.exists():
+            return None
+        try:
+            content = app_cfg.read_text()
+            if app_cfg.suffix == ".json":
+                data = json.loads(content)
+            else:
+                data = yaml.safe_load(content) or {}
+            model_settings = (
+                data.get("modelSettings") or data.get("model_settings") or {}
+            )
+            if isinstance(model_settings, dict):
+                return model_settings.get("model")
+        except Exception:
+            pass
+        return None
+
     def discover_agent_configs(self) -> dict[str, Path]:
         """Return ``{agent_name: json_path}`` for all agent configs."""
         if not self.app_root:
@@ -570,6 +647,26 @@ class Discovery:
                 json_file = d / f"{d.name}.json"
                 if json_file.exists():
                     result[d.name] = json_file
+        return result
+
+    def discover_agent_models(self) -> dict[str, str]:
+        """Return ``{agent_name: model}`` for agents with ``modelSettings``."""
+        configs = self.discover_agent_configs()
+        result = {}
+        for name, path in configs.items():
+            try:
+                data = json.loads(path.read_text())
+                model_settings = (
+                    data.get("modelSettings")
+                    or data.get("model_settings")
+                    or {}
+                )
+                if isinstance(model_settings, dict) and model_settings.get(
+                    "model"
+                ):
+                    result[name] = model_settings["model"]
+            except Exception:
+                pass
         return result
 
     def _discover_resource_dirs(self, subdir: str) -> dict[str, Path]:
@@ -691,6 +788,7 @@ def build_context(
     project_root: Path,
     config: LintConfig,
     discovery: Discovery,
+    model_override: str | None = None,
 ) -> LintContext:
     """Build the shared lint context from discovered app resources."""
     agents = discovery.discover_agents()
@@ -735,10 +833,17 @@ def build_context(
         except Exception:  # pylint: disable=broad-except
             pass
 
+    resolved_model = (
+        model_override or config.model or discovery.discover_app_model()
+    )
+    agent_models = discovery.discover_agent_models()
+
     return LintContext(
         project_root=project_root,
         app_dir=discovery.app_dir,
         evals_dir=project_root / config.evals_dir,
+        model=resolved_model,
+        agent_models=agent_models,
         all_agent_names=set(agents.keys()),
         all_agent_display_names={
             discovery.dir_name_to_display(name) for name in agents
@@ -778,8 +883,11 @@ def run_rules(
             rel = str(file_path.relative_to(context.project_root))
             if config.is_ignored(rel):
                 continue
+            file_model = context.get_model_for_file(file_path)
             content = file_path.read_text() if file_path.is_file() else ""
             for rule_obj in rules:
+                if not rule_obj.is_applicable_for_model(file_model):
+                    continue
                 sev = _get_severity(rule_obj, rel)
                 if sev is None:
                     continue
