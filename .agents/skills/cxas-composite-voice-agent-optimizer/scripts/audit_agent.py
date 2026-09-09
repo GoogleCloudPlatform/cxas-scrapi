@@ -1016,7 +1016,9 @@ class VoiceAgentAuditor:
                             )
 
         # Check user_language only if the app is multi-lingual
-        is_multilingual = len(supported_langs) > 0 or len(all_declared_langs) > 1
+        is_multilingual = (
+            len(supported_langs) > 0 or len(all_declared_langs) > 1
+        )
         if is_multilingual:
             var_decls = app_data.get("variableDeclarations")
             if not isinstance(var_decls, list):
