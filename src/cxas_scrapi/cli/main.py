@@ -1136,6 +1136,32 @@ def deployments_create(args: argparse.Namespace) -> None:
     print(f"Deployment created successfully: {deployment.name}")
 
 
+def deployments_update(args: argparse.Namespace) -> None:
+    """Updates deployment configuration and channel settings."""
+    from cxas_scrapi.core.deployments import Deployments
+
+    kwargs = {}
+    if getattr(args, "display_name", None):
+        kwargs["display_name"] = args.display_name
+    version_id = getattr(args, "version", None) or getattr(
+        args, "version_id", None
+    )
+    if version_id:
+        kwargs["app_version"] = version_id
+    if getattr(args, "channel_type", None):
+        kwargs["channel_type"] = args.channel_type
+    if getattr(args, "persona_property", None):
+        kwargs["persona_property"] = args.persona_property
+    if getattr(args, "noise_suppression_level", None):
+        kwargs["noise_suppression_level"] = args.noise_suppression_level
+
+    deployments_client = Deployments(app_name=args.app_name)
+    deployment = deployments_client.update_deployment(
+        deployment_id=args.deployment_id, **kwargs
+    )
+    print(f"Deployment updated successfully: {deployment.name}")
+
+
 def deployments_promote(args: argparse.Namespace) -> None:
     """Promotes app to live traffic."""
     from google.api_core.exceptions import NotFound
@@ -2457,7 +2483,8 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'deployments'
     parser_deps = subparsers.add_parser(
-        "deployments", help="Manage deployments (list, create, promote)."
+        "deployments",
+        help="Manage deployments (list, create, update, promote).",
     )
     deps_subparsers = parser_deps.add_subparsers(
         title="Deployments Commands",
@@ -2535,6 +2562,56 @@ def get_parser() -> argparse.ArgumentParser:
     )
     _add_project_location_args(parser_deps_create, required=False)
     parser_deps_create.set_defaults(func=deployments_create)
+
+    parser_deps_update = deps_subparsers.add_parser(
+        "update", help="Update deployment configuration and channel settings."
+    )
+    parser_deps_update.add_argument(
+        "--app-name",
+        required=True,
+        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_deps_update.add_argument(
+        "--deployment-id",
+        required=True,
+        help="Deployment ID for update_deployment.",
+    )
+    parser_deps_update.add_argument(
+        "--version-id",
+        required=False,
+        help="Version ID for update_deployment.",
+    )
+    parser_deps_update.add_argument(
+        "--version",
+        required=False,
+        help="Version ID for update_deployment.",
+    )
+    parser_deps_update.add_argument(
+        "--display-name",
+        required=False,
+        help="Display name for the deployment.",
+    )
+    parser_deps_update.add_argument(
+        "--channel-type",
+        required=False,
+        help="Channel type (e.g. API).",
+    )
+    parser_deps_update.add_argument(
+        "--persona-property",
+        required=False,
+        type=str.upper,
+        choices=["CONCISE", "CHATTY"],
+        help="Persona property for channel profile (e.g. CONCISE, CHATTY).",
+    )
+    parser_deps_update.add_argument(
+        "--noise-suppression-level",
+        required=False,
+        type=str.lower,
+        choices=["low", "moderate", "high", "very_high"],
+        help="Noise suppression level for channel profile (e.g. low).",
+    )
+    _add_project_location_args(parser_deps_update, required=False)
+    parser_deps_update.set_defaults(func=deployments_update)
 
     parser_deps_promote = deps_subparsers.add_parser(
         "promote", help="Promote app to live traffic."

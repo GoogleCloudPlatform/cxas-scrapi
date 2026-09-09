@@ -570,3 +570,61 @@ def test_parser_deployments_create_invalid_choices() -> None:
         pytest.raises(SystemExit),
     ):
         main_cli.main()
+
+
+def test_parser_deployments_update_with_channel_settings() -> None:
+    """Test parser handling for deployments update options."""
+    test_args = [
+        "cxas",
+        "deployments",
+        "update",
+        "--app-name",
+        "projects/p/locations/l/apps/a",
+        "--deployment-id",
+        "dep_1",
+        "--persona-property",
+        "chatty",
+        "--noise-suppression-level",
+        "MODERATE",
+    ]
+    with (
+        mock.patch.object(sys, "argv", test_args),
+        mock.patch("cxas_scrapi.cli.main.deployments_update") as mock_update,
+    ):
+        main_cli.main()
+        mock_update.assert_called_once()
+        parsed_args = mock_update.call_args[0][0]
+        assert parsed_args.app_name == "projects/p/locations/l/apps/a"
+        assert parsed_args.deployment_id == "dep_1"
+        assert parsed_args.persona_property == "CHATTY"
+        assert parsed_args.noise_suppression_level == "moderate"
+
+
+@mock.patch("cxas_scrapi.core.deployments.Deployments")
+def test_deployments_update_func(mock_deps_cls: typing.Any) -> None:
+    """Test that deployments_update forwards options to the client."""
+    mock_instance = mock_deps_cls.return_value
+    mock_instance.update_deployment.return_value = mock.MagicMock(
+        name="dep_res"
+    )
+
+    args = argparse.Namespace(
+        app_name="projects/p/locations/l/apps/a",
+        deployment_id="dep_1",
+        version="v2",
+        version_id=None,
+        display_name="Updated Dep",
+        channel_type="API",
+        persona_property="CHATTY",
+        noise_suppression_level="moderate",
+    )
+    main_cli.deployments_update(args)
+
+    mock_instance.update_deployment.assert_called_once_with(
+        deployment_id="dep_1",
+        display_name="Updated Dep",
+        app_version="v2",
+        channel_type="API",
+        persona_property="CHATTY",
+        noise_suppression_level="moderate",
+    )

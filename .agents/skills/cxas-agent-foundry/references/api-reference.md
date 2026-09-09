@@ -390,6 +390,13 @@ cxas deployments create \
   --persona-property CONCISE \
   --noise-suppression-level low
 
+# Update channel settings on an existing deployment
+cxas deployments update \
+  --app-name projects/<project_id>/locations/<location>/apps/<app_id> \
+  --deployment-id <deployment_id> \
+  --persona-property CHATTY \
+  --noise-suppression-level moderate
+
 # List deployments
 cxas deployments list --app-name projects/<project_id>/locations/<location>/apps/<app_id>
 ```
