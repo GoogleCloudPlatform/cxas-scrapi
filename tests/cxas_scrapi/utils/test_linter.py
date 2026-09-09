@@ -241,9 +241,9 @@ def test_reset_registry() -> None:
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    # 69 baseline + 11 cross-surface V100-V104 registrations
+    # 70 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
-    assert len(registry_restored.all_rules()) == 81  # noqa: PLR2004
+    assert len(registry_restored.all_rules()) == 82  # noqa: PLR2004
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -545,9 +545,9 @@ def test_discovery_filtering(tmp_path: typing.Any) -> None:
 def test_build_registry_all_rules() -> None:
     registry = build_registry()
     all_rules = registry.all_rules()
-    # 69 baseline + 11 cross-surface V100-V104 registrations
+    # 70 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
-    assert len(all_rules) == 81  # noqa: PLR2004
+    assert len(all_rules) == 82  # noqa: PLR2004
 
 
 def test_build_context(tmp_path: typing.Any) -> None:

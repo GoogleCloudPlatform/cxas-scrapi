@@ -633,3 +633,50 @@ class ToolConfigInvalid(Rule):
             ]
 
         return []
+
+
+@rule("tools")
+class BannedDeprecatedOpenApiTool(Rule):
+    id = "T014"
+    name = "banned-deprecated-openapi-tool"
+    description = (
+        "Standalone OpenApiTool is deprecated in CES runtime. "
+        "Use OpenApiToolset under toolsets/ instead."
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        tool_config, json_path = _load_tool_config(file_path)
+        if not tool_config or not json_path or not json_path.exists():
+            return []
+
+        # Check for standalone openApiTool in JSON config or open_api_tool dir
+        has_openapi_key = "openApiTool" in tool_config
+        has_openapi_dir = (json_path.parent / "open_api_tool").exists()
+        if not (has_openapi_key or has_openapi_dir):
+            return []
+
+        rel = str(json_path.relative_to(context.project_root))
+        display_name = (
+            tool_config.get("displayName")
+            or tool_config.get("name")
+            or json_path.stem
+        )
+        return [
+            self.make_result(
+                file=rel,
+                message=(
+                    f"Tool '{display_name}' uses standalone OpenApiTool which is "
+                    "deprecated in CES runtime and causes conversational turn failures. "
+                    "Migrate to OpenApiToolset under the toolsets/ directory."
+                ),
+                fix=(
+                    f"Move schema to toolsets/{display_name}/open_api_toolset/open_api_schema.yaml, "
+                    f"create toolsets/{display_name}/{display_name}.json with openApiToolset, "
+                    f"and declare under 'toolsets' in agent.json."
+                ),
+            )
+        ]
+
