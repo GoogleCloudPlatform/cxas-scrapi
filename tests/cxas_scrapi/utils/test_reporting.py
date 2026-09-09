@@ -885,6 +885,7 @@ def test_run_all_evals_include_filtering(
         rate_limiter=None,
         expectations_only=False,
         deployment_id=None,
+        vertex_location="global",
     )
     mock_sim_evals.return_value.run_simulations.assert_called_once()
 
@@ -1022,6 +1023,7 @@ def test_run_all_evals_dict_based_simulations(
         rate_limiter=None,
         expectations_only=False,
         deployment_id=None,
+        vertex_location="global",
     )
     mock_sim_evals.return_value.run_simulations.assert_called_once_with(
         [
@@ -1088,6 +1090,52 @@ def test_run_all_evals_with_deployment_id(
         rate_limiter=None,
         expectations_only=False,
         deployment_id="dep123",
+        vertex_location="global",
+    )
+
+
+@patch("cxas_scrapi.evals.runner.Evaluations")
+@patch("cxas_scrapi.evals.runner.ToolEvals")
+@patch("cxas_scrapi.evals.runner.SimulationEvals")
+@patch("cxas_scrapi.evals.runner.CallbackEvals")
+@patch("cxas_scrapi.evals.runner.EvalUtils")
+@patch("glob.glob")
+@patch("os.path.exists")
+@patch("os.path.isdir")
+@patch("yaml.safe_load")
+@patch("builtins.open", new_callable=mock_open)
+def test_run_all_evals_custom_vertex_location(
+    mock_open_file: typing.Any,
+    mock_yaml_load: typing.Any,
+    mock_isdir: typing.Any,
+    mock_exists: typing.Any,
+    mock_glob: typing.Any,
+    mock_eval_utils: typing.Any,
+    mock_callback_evals: typing.Any,
+    mock_sim_evals: typing.Any,
+    mock_tool_evals: typing.Any,
+    mock_evaluations: typing.Any,
+) -> None:
+    mock_exists.return_value = True
+    mock_isdir.return_value = True
+    mock_glob.side_effect = [
+        ["evals/simulations/sim1.yaml"],
+    ]
+    mock_yaml_load.return_value = [{"name": "sim1"}]
+
+    run_all_evals(
+        app_name="projects/p",
+        include=["sims"],
+        simulation_dir="evals/simulations/",
+        vertex_location="europe-west1",
+    )
+
+    mock_sim_evals.assert_called_once_with(
+        app_name="projects/p",
+        rate_limiter=None,
+        expectations_only=False,
+        deployment_id=None,
+        vertex_location="europe-west1",
     )
 
 
@@ -1292,6 +1340,7 @@ def test_run_all_evals_expectations_only(
         single_bidi_stream=False,
         progress_callback=None,
         capture_agent_audio=False,
+        vertex_location="global",
     )
 
 

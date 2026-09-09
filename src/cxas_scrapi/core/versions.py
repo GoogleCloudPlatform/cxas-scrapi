@@ -97,6 +97,72 @@ class Versions(Apps):
         # Assuming generated client supports create_app_version natively
         return self.client.create_app_version(request=request)
 
+    def resolve_version_name(self, version_identifier: str) -> str:
+        """Resolves a version identifier to a canonical resource name.
+
+        Accepts a full resource name, bare version ID, or display name.
+
+        Args:
+            version_identifier: Full resource name, bare version ID, or
+                display name.
+
+        Returns:
+            The fully-qualified version resource name.
+
+        Raises:
+            ValueError: If the version cannot be found, is ambiguous (multiple
+                versions share the same display name), or the identifier is
+                empty.
+        """
+        if not version_identifier:
+            raise ValueError("Version identifier must not be empty.")
+
+        versions = self.list_versions()
+        if not versions:
+            raise ValueError(f"No versions found for app '{self.app_name}'.")
+
+        # 1. Match full resource name (e.g. projects/.../versions/001)
+        for v in versions:
+            if v.name == version_identifier:
+                return v.name
+
+        # 2. Match version ID (the last segment of the resource name)
+        for v in versions:
+            v_id = v.name.split("/")[-1] if v.name else ""
+            if v_id == version_identifier:
+                return v.name
+
+        # 3. Match display name (e.g. "v1.0"). Because display names are not
+        # guaranteed to be unique, reject ambiguous matches.
+        matching_by_display = [
+            v for v in versions if v.display_name == version_identifier
+        ]
+        if len(matching_by_display) > 1:
+            matching_ids = [
+                v.name.split("/")[-1] for v in matching_by_display if v.name
+            ]
+            ids_str = ", ".join(f"'{m_id}'" for m_id in matching_ids)
+            raise ValueError(
+                f"Multiple versions found with display name "
+                f"'{version_identifier}': {ids_str}. "
+                "Please specify the exact version ID or full resource name "
+                "instead to avoid ambiguity."
+            )
+        if len(matching_by_display) == 1:
+            return matching_by_display[0].name
+
+        available = [
+            f"'{v.name.split('/')[-1]}' ({v.display_name})"
+            if v.display_name
+            else f"'{v.name.split('/')[-1]}'"
+            for v in versions
+        ]
+        avail_str = ", ".join(available)
+        raise ValueError(
+            f"Version '{version_identifier}' not found for app "
+            f"'{self.app_name}'. Available versions: {avail_str}"
+        )
+
     def get_version(self, version_id: str) -> types.AppVersion:
         """Gets a specific version."""
         request = types.GetAppVersionRequest(

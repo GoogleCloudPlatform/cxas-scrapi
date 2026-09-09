@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from cxas_scrapi.cli.llm_lint import llm_lint
     from cxas_scrapi.cli.versions_cli import (
         app_versions_compare,
+        app_versions_create,
         app_versions_list,
     )
     from cxas_scrapi.core.github import init_github_action
@@ -80,6 +81,9 @@ else:
     llm_lint = LazyCallable("cxas_scrapi.cli.llm_lint", "llm_lint")
     app_versions_list = LazyCallable(
         "cxas_scrapi.cli.versions_cli", "app_versions_list"
+    )
+    app_versions_create = LazyCallable(
+        "cxas_scrapi.cli.versions_cli", "app_versions_create"
     )
     app_versions_compare = LazyCallable(
         "cxas_scrapi.cli.versions_cli", "app_versions_compare"
@@ -666,6 +670,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         capture_agent_audio=getattr(args, "capture_agent_audio", False),
         single_bidi_stream=getattr(args, "single_bidi_stream", False),
         report_format=getattr(args, "format", "html") or "html",
+        vertex_location=getattr(args, "vertex_location", "global") or "global",
     )
     print(f"Combined report generated at {actual_output_path}")
 
@@ -783,6 +788,11 @@ def ci_test(args: argparse.Namespace) -> None:
     from cxas_scrapi.core.apps import Apps
     from cxas_scrapi.core.evaluations import Evaluations
 
+    # Resolve cxas binary path relative to the current python interpreter
+    cxas_bin = os.path.join(os.path.dirname(sys.executable), "cxas")
+    if not os.path.isfile(cxas_bin) or not os.access(cxas_bin, os.X_OK):
+        cxas_bin = "cxas"  # Fallback to PATH
+
     print("Starting CI Test Lifecycle...")
 
     if hasattr(args, "display_name") and args.display_name:
@@ -813,7 +823,7 @@ def ci_test(args: argparse.Namespace) -> None:
         if os.path.exists(test_file):
             print(f"\\n--- Running Tool Tests on {temp_app_name} ---")
             cmd = [
-                "cxas",
+                cxas_bin,
                 "test-tools",
                 "--app-name",
                 temp_app_name,
@@ -842,7 +852,7 @@ def ci_test(args: argparse.Namespace) -> None:
             )
             for eval_id in all_eval_ids:
                 cmd = [
-                    "cxas",
+                    cxas_bin,
                     "run",
                     "--app-name",
                     temp_app_name,
@@ -1883,6 +1893,11 @@ def get_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Keep one persistent bidi WebSocket open per audio simulation instead of one connection per turn.",
     )
+    parser_report.add_argument(
+        "--vertex-location",
+        default="global",
+        help="Vertex AI location for evaluation LLM models. Defaults to 'global'.",
+    )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
     parser_test_tools = subparsers.add_parser(
@@ -2199,6 +2214,16 @@ def get_parser() -> argparse.ArgumentParser:
     parser_pull.add_argument("app", help="App Resource Name or Display Name.")
     parser_pull.add_argument(
         "--target-dir", default=".", help="Directory to extract to."
+    )
+    parser_pull.add_argument(
+        "--version-id",
+        default=None,
+        help=(
+            "Optional. Export a specific app version instead of the live app. "
+            "Can be a version display name (e.g., 'v1.0'), a bare version ID "
+            "(e.g., '001'), or a full resource name "
+            "(e.g., 'projects/.../locations/.../apps/.../versions/001')."
+        ),
     )
     parser_pull.add_argument(
         "--overwrite",
@@ -2724,7 +2749,7 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'versions'
     parser_versions = subparsers.add_parser(
-        "versions", help="Manage CXAS app versions (list, compare)."
+        "versions", help="Manage CXAS app versions (list, create, compare)."
     )
     versions_subparsers = parser_versions.add_subparsers(
         title="Versions Commands", dest="versions_command", required=True
@@ -2740,6 +2765,33 @@ def get_parser() -> argparse.ArgumentParser:
     )
     _add_project_location_args(parser_versions_list, required=False)
     parser_versions_list.set_defaults(func=app_versions_list)
+
+    parser_versions_create = versions_subparsers.add_parser(
+        "create", help="Create a new version snapshot of an app."
+    )
+    parser_versions_create.add_argument(
+        "--app-name",
+        required=True,
+        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_versions_create.add_argument(
+        "--display-name",
+        "-n",
+        help="Display name for the version (default: auto-generated timestamp).",
+    )
+    parser_versions_create.add_argument(
+        "--description",
+        "-d",
+        default="",
+        help="Description for the version.",
+    )
+    parser_versions_create.add_argument(
+        "--json",
+        action="store_true",
+        help="Output result as JSON.",
+    )
+    _add_project_location_args(parser_versions_create, required=False)
+    parser_versions_create.set_defaults(func=app_versions_create)
 
     parser_versions_compare = versions_subparsers.add_parser(
         "compare",

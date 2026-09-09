@@ -93,11 +93,22 @@ def app_pull(args: argparse.Namespace) -> None:
 
     apps_client, app_name, _ = _resolve_app_args(args.app, args)
 
+    version_id = getattr(args, "version_id", None)
+    app_version = None
+    if version_id:
+        versions_client = Versions(app_name=app_name)
+        try:
+            app_version = versions_client.resolve_version_name(version_id)
+        except ValueError as e:
+            print(f"Error resolving version: {e}")
+            sys.exit(1)
+
     _app_pull(
         apps_client,
         app_name,
         args.target_dir,
         getattr(args, "overwrite", False),
+        app_version=app_version,
     )
 
 
@@ -106,12 +117,13 @@ def _app_pull(
     app_name: str,
     target_dir: str,
     overwrite: bool = False,
+    app_version: str | None = None,
 ) -> None:
     """Helper to pull an app from CXAS."""
     try:
         # Export the app
         print("Exporting app from CXAS...")
-        lro = apps_client.export_app(app_name=app_name)
+        lro = apps_client.export_app(app_name=app_name, app_version=app_version)
         response = lro.result()
 
         # Determine the target directory

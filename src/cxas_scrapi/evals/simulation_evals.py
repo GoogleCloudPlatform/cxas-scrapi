@@ -188,7 +188,7 @@ class LLMUserConversation(Conversation):
         genai_client: GeminiGenerate,
         genai_model: str,
         test_case: dict[str, Any],
-        max_turns: int = _MAX_TURNS,
+        max_turns: int | None = None,
         initial_utterance: str = _FIRST_UTTERANCE,
     ) -> None:
         super().__init__()
@@ -196,7 +196,10 @@ class LLMUserConversation(Conversation):
         self.genai_model = genai_model
         self.test_case = test_case
         self.initial_utterance = initial_utterance
-        self.max_turns = max_turns
+        if max_turns is not None:
+            self.max_turns = max_turns
+        else:
+            self.max_turns = test_case.get("max_turns") or _MAX_TURNS
         self.steps_progress = []
         for step in test_case["steps"]:
             self.steps_progress.append(
@@ -404,10 +407,12 @@ class SimulationEvals(Apps):
         rate_limiter: RateLimiter | None = None,
         expectations_only: bool = False,
         deployment_id: str | None = None,
+        vertex_location: str = "global",
         **kwargs: typing.Any,
     ) -> None:
         self.app_name = app_name
         self.expectations_only = expectations_only
+        self.vertex_location = vertex_location
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
@@ -419,13 +424,9 @@ class SimulationEvals(Apps):
         )
         self.tools_map = Tools(app_name=app_name, **kwargs).get_tools_map()
 
-        # Vertex AI requires a specific region (e.g. global), whereas CXAS
-        # Apps use 'us' or 'eu'
-        vertex_location = "global"
-
         self.genai_client = GeminiGenerate(
             project_id=self.project_id,
-            location=vertex_location,
+            location=self.vertex_location,
             credentials=self.creds,
         )
 
@@ -574,6 +575,7 @@ class SimulationEvals(Apps):
         initial_utterance: str = _FIRST_UTTERANCE,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
+        max_turns: int | None = None,
         **kwargs: Any,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
@@ -587,6 +589,8 @@ class SimulationEvals(Apps):
             single_bidi_stream: For audio modality, keep one persistent
                 bidi WebSocket open for the whole conversation instead of
                 opening a new connection per turn (the default).
+            max_turns: Maximum number of conversation turns. Defaults to
+                the test_case's max_turns setting, or 30 if unspecified.
         """
         sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
         eval_model = eval_model or _DEFAULT_GEMINI_MODEL
@@ -597,6 +601,7 @@ class SimulationEvals(Apps):
             genai_client=self.genai_client,
             genai_model=sim_user_model,
             test_case=test_case,
+            max_turns=max_turns,
             initial_utterance=initial_utterance,
         )
 
