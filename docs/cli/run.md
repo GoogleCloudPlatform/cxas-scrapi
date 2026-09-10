@@ -24,6 +24,8 @@ cxas run --app-name APP
 | `--tags TAG ...` | No* | — | Space-separated list of tags. Runs all evaluations that have at least one of the specified tags. |
 | `--wait` | No | `false` | Block until all triggered evaluations complete and exit with code `0` on pass or `1` on fail. Without this flag the command fires the run and returns immediately. |
 | `--filter-auto-metrics` | No | `false` | When waiting for results, ignore automated LLM metrics (semantic similarity, hallucination) and only assess custom expectations and tool invocation results. Useful when you care about business-logic correctness rather than language quality scores. |
+| `--retry-failed N` | No | `0` | With `--wait`: re-run only the failed evaluations up to `N` times before declaring failure. Mitigates transient platform flakes (e.g. an aborted duplicate evaluation conversation polluting grading) — a flake passes on retry, a real regression fails every attempt. With `--filter-auto-metrics`, only deterministic failures trigger retries. |
+| `--retry-failed N` | No | `0` | With `--wait`: re-run only the failed evaluations up to `N` times before declaring failure. Mitigates transient platform flakes (e.g. an aborted duplicate evaluation conversation polluting grading) — a flake passes on retry, a real regression fails every attempt. With `--filter-auto-metrics`, only deterministic failures trigger retries. |
 | `--modality text\|audio` | No | `text` | The modality to use when executing the evaluation. |
 
 *You must provide at least one of `--evaluation-id`, `--display-name_prefix`, or `--tags`.

@@ -182,9 +182,40 @@ class Tools(Apps):
 
         for tool in tools:
             if self._is_toolset(tool.name):
-                # Try to parse OpenAPI toolsets locally to avoid excessive
-                # API calls
-                if getattr(tool, "open_api_toolset", None):
+                # Prefer the RetrieveTools API — it returns the REAL tool
+                # resource names. Locally-fabricated paths of the form
+                # '{toolset}/tools/{operationId}' are rejected by APIs that
+                # expect 'apps/{app}/tools/{tool}' (e.g. evaluations).
+                resolved = False
+                try:
+                    toolset_tools = self.retrieve_tools(
+                        tool.name.split("/")[-1]
+                    )
+                    for toolset_tool in toolset_tools.tools:
+                        if reverse:
+                            tools_dict[toolset_tool.display_name] = (
+                                toolset_tool.name
+                            )
+                            # Alias for the '{toolset}_{operation}' naming
+                            # convention used in instructions and goldens.
+                            alias = (
+                                f"{tool.display_name}_"
+                                f"{toolset_tool.display_name}"
+                            )
+                            tools_dict.setdefault(alias, toolset_tool.name)
+                        else:
+                            tools_dict[toolset_tool.name] = (
+                                toolset_tool.display_name
+                            )
+                    resolved = True
+                except google_exceptions.GoogleAPICallError as e:
+                    print(
+                        f"[WARNING] Failed to retrieve tools for toolset"
+                        f" {tool.display_name}: {e}"
+                    )
+
+                # Fallback: parse OpenAPI toolsets locally.
+                if not resolved and getattr(tool, "open_api_toolset", None):
                     schema_str = getattr(
                         tool.open_api_toolset, "open_api_schema", None
                     )
@@ -193,25 +224,6 @@ class Tools(Apps):
                             schema_str, tool.display_name, tool.name, reverse
                         )
                         tools_dict.update(openapi_tools)
-                else:
-                    try:
-                        toolset_tools = self.retrieve_tools(
-                            tool.name.split("/")[-1]
-                        )
-                        for toolset_tool in toolset_tools.tools:
-                            if reverse:
-                                tools_dict[toolset_tool.display_name] = (
-                                    toolset_tool.name
-                                )
-                            else:
-                                tools_dict[toolset_tool.name] = (
-                                    toolset_tool.display_name
-                                )
-                    except google_exceptions.GoogleAPICallError as e:
-                        print(
-                            f"[WARNING] Failed to retrieve tools for toolset"
-                            f" {tool.display_name}: {e}"
-                        )
             elif reverse:
                 tools_dict[tool.display_name] = tool.name
             else:

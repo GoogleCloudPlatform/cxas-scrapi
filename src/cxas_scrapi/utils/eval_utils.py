@@ -56,6 +56,10 @@ class ToolCall(BaseModel):
     args: dict[str, Any] = {}
     output: str | dict[str, Any] | None = None
     agent: str | None = None
+    # When True, the expectation is recorded with skipEvaluation so the
+    # platform does not grade it — for calls that may legitimately occur
+    # or not (e.g. conditional lookups, retries).
+    optional: bool = False
 
 
 class Turn(BaseModel):
@@ -305,13 +309,12 @@ class EvalUtils(Evaluations):
             ):
                 agent_name = tool_call.args.get("agent") or tool_call.agent
                 agent_resource = self.agent_map.get(agent_name, agent_name)
-                steps.append(
-                    {
-                        "expectation": {
-                            "agentTransfer": {"targetAgent": agent_resource}
-                        }
-                    }
-                )
+                transfer_expectation = {
+                    "agentTransfer": {"targetAgent": agent_resource}
+                }
+                if tool_call.optional:
+                    transfer_expectation["skipEvaluation"] = True
+                steps.append({"expectation": transfer_expectation})
                 continue
 
             tool_call_id = f"adk-{uuid.uuid4()}"
@@ -324,29 +327,42 @@ class EvalUtils(Evaluations):
             ):
                 tool_resource = f"{self.app_name}/tools/{action}"
 
-            tool_call_expectation = {
-                "expectation": {
-                    "toolCall": {
-                        "id": tool_call_id,
-                        "tool": tool_resource,
-                        "args": tool_call.args,
+            # The ToolCall proto has a oneof tool_identifier: plain tools use
+            # the 'tool' resource string, but toolset operations MUST use the
+            # 'toolsetTool' message — the API rejects toolset paths in 'tool'.
+            if "/toolsets/" in tool_resource and "/tools/" in tool_resource:
+                toolset_name, tool_id = tool_resource.rsplit("/tools/", 1)
+                tool_identifier = {
+                    "toolsetTool": {
+                        "toolset": toolset_name,
+                        "toolId": tool_id,
                     }
                 }
+            else:
+                tool_identifier = {"tool": tool_resource}
+
+            tool_call_expectation_body = {
+                "toolCall": {
+                    "id": tool_call_id,
+                    **tool_identifier,
+                    "args": tool_call.args,
+                }
             }
-            steps.append(tool_call_expectation)
+            if tool_call.optional:
+                tool_call_expectation_body["skipEvaluation"] = True
+            steps.append({"expectation": tool_call_expectation_body})
 
             if tool_call.output is not None:
-                steps.append(
-                    {
-                        "expectation": {
-                            "toolResponse": {
-                                "id": tool_call_id,
-                                "tool": tool_resource,
-                                "response": tool_call.output,
-                            }
-                        }
+                tool_response_body = {
+                    "toolResponse": {
+                        "id": tool_call_id,
+                        **tool_identifier,
+                        "response": tool_call.output,
                     }
-                )
+                }
+                if tool_call.optional:
+                    tool_response_body["skipEvaluation"] = True
+                steps.append({"expectation": tool_response_body})
 
         return {"steps": steps, "params_injected": params_injected}
 
