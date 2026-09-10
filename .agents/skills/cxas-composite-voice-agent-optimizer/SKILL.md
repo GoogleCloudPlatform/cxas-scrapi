@@ -39,7 +39,7 @@ All adaptations must be strictly **additive and non-destructive**:
 1. **Preserve Full Instruction Sets:** Retain all existing domain instructions, guardrails, step transitions, and business logic verbatim.
 2. **Relocate Voice & Speech Guidance to Director's Notes (P0):** Identify voice, speech delivery, accent, vocal tone, and acoustic pacing instructions inside `global_instruction.txt` and `agents/*/instruction.txt`, migrate/consolidate them into the global Director's Note in `app.json` (`synthesizeSpeechConfigs`), and remove them from agent text prompts to prevent context waste and instruction dilution.
 3. **Rephrase Prohibited Tags Without Deleting Logic:** When resolving prohibited platform XML tags (e.g., `<context>`, `<state_update>`), rephrase the tag references into plain natural language descriptions (e.g., *"system context"*, *"state update"*) rather than deleting the surrounding rules or instructions.
-4. **Augment Tool Docstrings Additively:** In `tools/*/python_function/python_code.py`, preserve all existing descriptions, parameter documentation, and implementation details. Only append or integrate the required `When to Call:`, `When NOT to Call:`, and conversational pacing cues.
+4. **Augment Tool Docstrings Additively (Only if Insufficient):** In `tools/*/python_function/python_code.py`, preserve all existing descriptions, parameter documentation, and implementation details. Only append or integrate explicit `When to Call:` and `When NOT to Call:` execution boundaries if the existing docstring or description is missing, ambiguous, or insufficient.
 5. **Harmonize Conflicting Directives Collaboratively:** When resolving contradictory instructions across scopes, ask the user which behavior to preserve and adjust the wording to eliminate the contradiction without deleting core domain logic.
 6. **Enrich Spoken Cues Incrementally:** Add natural voice cues (ellipses `...`, brief bridge words like "umm...") into response instructions without altering the core messaging or domain content.
 
@@ -61,7 +61,7 @@ The optimizer evaluates agent configurations against a prioritized checklist:
 
 ### 🟡 Priority P1: Multi-Language Parity, Session Stability & Call Flow
 
-1. [ ] **Instruction Tool Docstrings & Conversational Pacing Directives:** All tools actively referenced in agent instructions must define unambiguous execution contracts (`When to Call:` and `When NOT to Call:`) and spoken conversational pacing directives (*"Before calling this tool, speak a brief, natural conversational pacing phrase..."*) to prevent caller dead air.
+1. [ ] **Tool Docstrings & Conversational Pacing Directives:** All active tools must define conversational pacing directives (*"Before calling this tool, speak a brief, natural conversational pacing phrase..."*) to prevent caller dead air. If existing docstrings are missing or insufficient, define explicit execution contracts (`When to Call:` and `When NOT to Call:`).
 1. [ ] **Multi-Language Session Variable (`user_language`):** When the application is multi-lingual (declares `languageSettings.supportedLanguageCodes` with multiple locales), ensure `user_language` or `app_language` is declared in `app.json.variableDeclarations` to track active caller language and prevent language drift. (Single-language/unilingual apps skip this check).
 1. [ ] **Verify Long-Call Stability (5+ Minutes):** Verify long-call stability (5+ minutes) without speaker drift, voice fry, or turn exhaustion.
 1. [ ] **Eliminate Reflexive Turn Closings:** Eliminate reflexive turn closings (avoid ending every turn with *"Is there anything else?"*).
@@ -72,9 +72,9 @@ The optimizer evaluates agent configurations against a prioritized checklist:
 
 ### 🟢 Priority P2: Speech Hygiene, Pacing & Conversational Texture
 
-1. [ ] **Declared Active Tool Contracts & Pacing (P2 Hygiene):** Other active tools declared in agent configurations (but not directly mentioned in instructions) define docstring contracts and conversational pacing directives.
+1. [ ] **Tool Docstring Sufficiency (Only if Insufficient):** Inspect declared active tools. If the existing tool docstring or description is incomplete or ambiguous, refine it with clear positive/negative execution boundaries.
 1. [ ] **Multi-Language Voice Parity:** Every configured locale in `languageSettings.supportedLanguageCodes` has a matching entry in `synthesizeSpeechConfigs` with localized Director's Notes, appropriate voice IDs, and native bridge words.
-1. [ ] **Avoid Text-Based Variable Setting:** Avoid text-based variable setting (e.g., `"Set login_status = true"` or `"Set keypad_mentioned = true"`); use structured tool invocations for state changes (e.g., `update_login_status`).
+1. [ ] **Eliminate Text-Based Variable Setting Antipatterns:** Avoid text-based variable setting (e.g., `"Set login_status = true"` or `"Set user_language = es"`); state mutations cannot occur via raw text output in CES. Use structured tool invocations (e.g., `update_login_status`) instead.
 1. [ ] **Remove Inert Abstract Tags:** Remove inert abstract tags (e.g., `[empathetic]`, `[warm]`, `[calm]`, `[short pause]`).
 1. [ ] **Format Number & Currency Clusters:** Format number and currency clusters for natural, chunked reading (e.g., credit card numbers, phone numbers).
 1. [ ] **Eliminate Deprecated Language-Switching Tools:** Remove dynamic language-switching tools (`language_switcher`, `en_to_es`); session language is established at IVR/session initialization and dynamic switching tools add latency and risk hallucination.
@@ -121,7 +121,7 @@ Assesses an existing CXAS agent workspace, checks **all** checklist inspection g
      --workspace=. --report
    ```
 
-   *(What this covers: `app.json` `synthesizeSpeechConfigs`, Director's Notes headers, trailing `## Transcript:\n` hooks, sampling temperature, Chirp3-HD voice mapping, natural language accents, declared tool docstring presence, missing pacing directives on active tools, prohibited XML tags, and text variable mutations).*
+   *(What this covers: `app.json` `synthesizeSpeechConfigs` (A007), Director's Notes headers (A007), trailing `## Transcript:\n` hooks (A007), natural language accents (A008), multi-language audio profile parity (A009), model settings and sampling temperature (A010), prohibited platform XML tags (I015), inert acoustic emotion tags (I017), unregistered template variables (V104), and conversational tool pacing (T014)).*
 
 3. **Pass 2 — Semantic Voice & Policy Review (LLM Checklist Evaluation):** Actively evaluate the workspace instructions against the qualitative checklist gates not covered by static scripts:
    - **Relocate Voice, Accent & Speaking Directives to Director's Notes (P0):** Review `global_instruction.txt` and `agents/*/instruction.txt` for voice styling, accent directives, vocal tone, speech pace, pronunciation rules, or `<voice_lock>`/`<voice_output>` blocks that belong in Director's Notes rather than reasoning prompts. With Gemini Composite V1, Director's Notes configured in `app.json` are the only way to provide speech-related guidance to the TTS model. 
@@ -129,6 +129,8 @@ Assesses an existing CXAS agent workspace, checks **all** checklist inspection g
    - **Speech Texture & Natural Hesitation Directives (P0):** Inspect instructions for micro-pause ellipses (`...`), natural hesitation bridge words, and digit clustering rules.
    - **Long-Call Stability & Empathy Capping (P1):** Verify that empathetic fillers and apologies are capped to a maximum of 1 occurrence per call.
    - **Silent Sub-Agent Routing & Spoken Transfer Announcements (P1):** Ensure sub-agent handoffs execute silently without transition jargon, while human escalation tools include spoken verbal announcements.
+   - **Tool Docstring Sufficiency & Boundaries (P1/P2 - Only if Insufficient):** Inspect declared tools across `tools/`. Review their docstrings and descriptions. If an existing tool docstring is missing, ambiguous, or lacks clear guidance on when the model should or should not execute the tool, recommend adding `When to Call:` and `When NOT to Call:` boundaries. If the existing docstring is already complete, clear, and accurate, preserve it without unnecessary modification.
+   - **Eliminate Text-Based Variable Setting Antipatterns (P2):** Inspect instruction files for raw text variable mutation statements (e.g., `Set user_language = es`, `Set keypad_entered = true`, `Set auth_status = verified`). In CES, state mutations cannot occur via raw output text; verify that state changes are mediated through tool calls (e.g., `update_language`) instead.
 
 4. **Synthesize & Present Unified Prioritized Report:** Combine findings from both Pass 1 (Static) and Pass 2 (Semantic) into a single structured assessment. **Always generate a comprehensive markdown table** of all P0, P1, and P2 issues with the following structure:
 
@@ -212,16 +214,17 @@ Combines **automated in-place remediation** for structural audio configurations 
      - For OpenAPI, Client, or Data Store tools without Python code, edit their respective configuration `.json` file.
 
    - **Interactive Step-by-Step Refactoring Process:**
-     1. **Review Flagged Tools from Report:** Inspect the Priority P1 (tools in instructions) and Priority P2 findings for `MISSING_TOOL_CONVERSATIONAL_PACING`, `MISSING_TOOL_WHEN_TO_CALL` and `MISSING_TOOL_WHEN_NOT_TO_CALL`.
+     1. **Review Flagged Tools from Report:** Inspect the findings for missing conversational pacing (`T014`) and review tool docstrings for sufficiency.
      2. **Tool Execution & Conversational Pacing Design:**
         - **Conversational Pacing Directives:** In Gemini Composite V1, spoken pacing phrases (*"Before calling this tool, speak a brief, natural conversational pacing phrase..."*) prevent dead air across tool executions. Terminal tools (e.g. session wrap-up, exit, test mocks) are exempt from missing pacing checks.
+        - **Docstring Sufficiency Check (Only if Insufficient):** Check if the existing docstring clearly explains the function, parameters, and execution bounds. If the existing docstring is already clear and sufficient, preserve it. Only author or refine explicit `When to Call:` and `When NOT to Call:` sections if the existing documentation is incomplete, missing, or ambiguous.
         - **Cross-Scope Contradiction Check:** Verify that agent and global instructions do not contradict the tool docstring (e.g., demanding complete silence before tool return while the tool specifies a pacing directive). Ask the user which behavior to preserve and align the directives.
         - **Callback Conflict Check:** If the application uses legacy `after_model_callbacks` or trivia tools to fill wait time, confirm with the user whether to transition to native model-level pacing phrases or align the prompt instructions.
      3. **Solicit User Phrasing & Author Docstring:** Present the proposed docstring structure to the user, incorporating:
         - Concise function summary.
         - Conversational pacing directive with multiple natural phrasing options (*"Before calling this tool, speak a brief, natural conversational pacing phrase with varied options (e.g., 'Let me check that for you...', 'Just a minute, let me look it up...', 'Checking that for you now...') to prevent repetitive responses."*).
-        - `When to Call:` positive trigger conditions.
-        - `When NOT to Call:` negative operational boundaries.
+        - `When to Call:` positive trigger conditions (if needed).
+        - `When NOT to Call:` negative operational boundaries (if needed).
      4. **Apply to Python Source Code:** Write the approved docstring into `tools/<name>/python_function/python_code.py`.
 
    - **Docstring Pattern Example:**

@@ -25,7 +25,6 @@ Language Drift Prevention.
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import pathlib
 import re
@@ -50,9 +49,12 @@ try:
         LintReport,
         LintResult,
         Rule,
+        RuleRegistry,
         Severity,
         build_context,
+        build_registry,
         rule,
+        run_rules,
     )
 except (ImportError, ModuleNotFoundError):
     import importlib.util
@@ -79,9 +81,12 @@ except (ImportError, ModuleNotFoundError):
         LintReport = _mod.LintReport
         LintResult = _mod.LintResult
         Rule = _mod.Rule
+        RuleRegistry = _mod.RuleRegistry
         Severity = _mod.Severity
         build_context = _mod.build_context
+        build_registry = _mod.build_registry
         rule = _mod.rule
+        run_rules = _mod.run_rules
     else:
         raise ImportError("Could not find cxas_scrapi.utils.linter") from None
 
@@ -737,114 +742,45 @@ class VoiceAgentAuditor:
 
         return "root_agent" in rel_parts or "root_agent" in rel_lower
 
+    def _run_lint_rules(
+        self, specific_rules: set[str] | None = None
+    ) -> list[LintResult]:
+        """Runs cxas lint rules configured for Gemini Composite V1."""
+        config = LintConfig.load(self.workspace_path)
+        context = build_context(
+            project_root=self.workspace_path,
+            config=config,
+            discovery=self.discovery,
+            model_override="gemini-composite-v1",
+        )
+        registry = build_registry()
+        report = LintReport()
+        run_rules(
+            registry=registry,
+            config=config,
+            context=context,
+            discovery=self.discovery,
+            report=report,
+            specific_rules=specific_rules,
+        )
+        return report.results
+
     def audit_audio_profile(
         self, app_data: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Audits synthesizeSpeechConfigs, Audio Profile headers, and transcript hooks."""
-        if app_data is None:
-            app_data = self._read_app_json()
-        if not isinstance(app_data, dict):
-            app_data = {}
-
-        issues: list[dict[str, Any]] = []
-        audio_cfg = app_data.get("audioProcessingConfig")
-        if not isinstance(audio_cfg, dict):
-            audio_cfg = {}
-        speech_configs = audio_cfg.get("synthesizeSpeechConfigs")
-
-        if not isinstance(speech_configs, dict) or not speech_configs:
-            issues.append(
-                {
-                    "code": "MISSING_SYNTHESIZE_SPEECH_CONFIGS",
-                    "message": (
-                        "app.json is missing"
-                        " audioProcessingConfig.synthesizeSpeechConfigs."
-                    ),
-                }
-            )
-        else:
-            for locale, cfg in speech_configs.items():
-                if not isinstance(cfg, dict):
-                    issues.append(
-                        {
-                            "code": "MISSING_DIRECTORS_NOTE",
-                            "locale": locale,
-                            "message": (
-                                f"synthesizeSpeechConfigs[{locale}] lacks a Director's Note"
-                                " instruction."
-                            ),
-                        }
-                    )
-                    continue
-                instruction = cfg.get("instruction")
-                if not isinstance(instruction, str) or not instruction:
-                    issues.append(
-                        {
-                            "code": "MISSING_DIRECTORS_NOTE",
-                            "locale": locale,
-                            "message": (
-                                f"synthesizeSpeechConfigs[{locale}] lacks a Director's Note"
-                                " instruction."
-                            ),
-                        }
-                    )
-                else:
-                    has_audio_profile = bool(
-                        re.search(
-                            r"^#+\s*audio\s*profile",
-                            instruction,
-                            re.IGNORECASE | re.MULTILINE,
-                        )
-                    )
-                    if not has_audio_profile:
-                        issues.append(
-                            {
-                                "code": "MISSING_AUDIO_PROFILE_HEADER",
-                                "locale": locale,
-                                "message": (
-                                    f"synthesizeSpeechConfigs[{locale}].instruction missing"
-                                    " '# Audio Profile' header."
-                                ),
-                            }
-                        )
-                    has_directors_note = bool(
-                        re.search(
-                            r"^#+\s*director'?s\s*notes?",
-                            instruction,
-                            re.IGNORECASE | re.MULTILINE,
-                        )
-                    )
-                    if not has_directors_note:
-                        issues.append(
-                            {
-                                "code": "MISSING_DIRECTORS_NOTE_HEADER",
-                                "locale": locale,
-                                "message": (
-                                    f"synthesizeSpeechConfigs[{locale}].instruction missing"
-                                    " '# Director's note' header."
-                                ),
-                            }
-                        )
-                    # Ensure transcript hook strictly concludes the prompt.
-                    has_trailing_transcript_hook = bool(
-                        re.search(
-                            r"#{2,3}\s*transcript\s*:\s*$",
-                            instruction.strip(),
-                            re.IGNORECASE,
-                        )
-                    )
-                    if not has_trailing_transcript_hook:
-                        issues.append(
-                            {
-                                "code": "MISSING_TRANSCRIPT_HOOK",
-                                "locale": locale,
-                                "message": (
-                                    f"synthesizeSpeechConfigs[{locale}].instruction missing"
-                                    " trailing '## Transcript:' hook."
-                                ),
-                            }
-                        )
-
+        results = self._run_lint_rules(specific_rules={"A007"})
+        issues = [
+            {
+                "code": r.rule_id,
+                "file": r.file,
+                "line": r.line,
+                "message": r.message,
+                "recommended": r.fix_suggestion,
+                "priority": "P0",
+            }
+            for r in results
+        ]
         return {
             "passed": len(issues) == 0,
             "issues": issues,
@@ -854,52 +790,18 @@ class VoiceAgentAuditor:
         self, app_data: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Audits Accent directives to ensure natural language names instead of locale codes."""
-        if app_data is None:
-            app_data = self._read_app_json()
-        if not isinstance(app_data, dict):
-            app_data = {}
-
-        issues: list[dict[str, Any]] = []
-        audio_cfg = app_data.get("audioProcessingConfig")
-        if not isinstance(audio_cfg, dict):
-            audio_cfg = {}
-        speech_configs = audio_cfg.get("synthesizeSpeechConfigs")
-        if not isinstance(speech_configs, dict):
-            speech_configs = {}
-
-        locale_code_pattern = re.compile(
-            r"Accent:\s*([a-z]{2}(?:[-_][a-z0-9]{2,3})?)\b", re.IGNORECASE
-        )
-
-        for locale, cfg in speech_configs.items():
-            if not isinstance(cfg, dict):
-                continue
-            instruction = cfg.get("instruction")
-            if not isinstance(instruction, str):
-                continue
-            match = locale_code_pattern.search(instruction)
-            if match:
-                invalid_code = match.group(1)
-                recommended = get_locale_accent(invalid_code)
-                if recommended.lower() != invalid_code.lower() and (
-                    "-" in invalid_code
-                    or "_" in invalid_code
-                    or len(invalid_code) == 2
-                ):
-                    issues.append(
-                        {
-                            "code": "LOCALE_CODE_IN_ACCENT",
-                            "locale": locale,
-                            "found": match.group(0),
-                            "invalid_code": invalid_code,
-                            "recommended": f"Accent: {recommended}",
-                            "message": (
-                                f"Locale code '{invalid_code}' used in Accent directive. Use"
-                                f" '{recommended}' instead."
-                            ),
-                        }
-                    )
-
+        results = self._run_lint_rules(specific_rules={"A008"})
+        issues = [
+            {
+                "code": r.rule_id,
+                "file": r.file,
+                "line": r.line,
+                "message": r.message,
+                "recommended": r.fix_suggestion,
+                "priority": "P0",
+            }
+            for r in results
+        ]
         return {
             "passed": len(issues) == 0,
             "issues": issues,
@@ -908,275 +810,41 @@ class VoiceAgentAuditor:
     def audit_multilang_coverage(
         self, app_data: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Audits multi-language voice parity across all declared languages (Multilingual Coverage & Language Drift Prevention)."""
-        if app_data is None:
-            app_data = self._read_app_json()
-        if not isinstance(app_data, dict):
-            app_data = {}
-
-        issues: list[dict[str, Any]] = []
-        lang_settings = app_data.get("languageSettings")
-        if not isinstance(lang_settings, dict):
-            lang_settings = {}
-        default_lang = lang_settings.get("defaultLanguageCode")
-        supported_langs = lang_settings.get("supportedLanguageCodes")
-        if not isinstance(supported_langs, list):
-            supported_langs = []
-
-        all_declared_langs = set()
-        if default_lang and isinstance(default_lang, str):
-            all_declared_langs.add(default_lang)
-        all_declared_langs.update(
-            [lang for lang in supported_langs if isinstance(lang, str)]
-        )
-
-        audio_cfg = app_data.get("audioProcessingConfig")
-        if not isinstance(audio_cfg, dict):
-            audio_cfg = {}
-        speech_configs = audio_cfg.get("synthesizeSpeechConfigs")
-        if not isinstance(speech_configs, dict):
-            speech_configs = {}
-
-        for lang in sorted(all_declared_langs):
-            match_res = _find_speech_config(speech_configs, lang)
-            if not match_res:
-                issues.append(
-                    {
-                        "code": "MISSING_SYNTHESIZE_SPEECH_CONFIG_LANG",
-                        "locale": lang,
-                        "message": (
-                            f"Declared language '{lang}' has no entry in"
-                            " audioProcessingConfig.synthesizeSpeechConfigs."
-                        ),
-                    }
-                )
-            else:
-                matched_key, cfg = match_res
-                if not cfg.get("voice") or not isinstance(
-                    cfg.get("voice"), str
-                ):
-                    issues.append(
-                        {
-                            "code": "MISSING_VOICE_IDENTIFIER",
-                            "locale": lang,
-                            "message": (
-                                f"Declared language '{lang}' (key: '{matched_key}') is"
-                                " missing a voice identifier."
-                            ),
-                        }
-                    )
-                instruction = cfg.get("instruction")
-                has_directors_note = bool(
-                    isinstance(instruction, str)
-                    and re.search(
-                        r"^#+\s*director'?s\s*notes?",
-                        instruction,
-                        re.IGNORECASE | re.MULTILINE,
-                    )
-                )
-                if (
-                    not isinstance(instruction, str)
-                    or not instruction
-                    or not has_directors_note
-                ):
-                    issues.append(
-                        {
-                            "code": "MISSING_DIRECTORS_NOTE_INSTRUCTION",
-                            "locale": lang,
-                            "message": (
-                                f"Declared language '{lang}' (key: '{matched_key}') is"
-                                " missing a complete Director's Note instruction."
-                            ),
-                        }
-                    )
-                else:
-                    accent_match = re.search(
-                        r"\bAccent:\s*([^\n\r]+)", instruction, re.IGNORECASE
-                    )
-                    if accent_match:
-                        found_accent = accent_match.group(1).strip()
-                        expected_accent = get_locale_accent(lang)
-                        if (
-                            found_accent.lower() != expected_accent.lower()
-                            and found_accent.lower() != lang.lower()
-                            and found_accent.lower().replace("_", "-")
-                            != lang.lower().replace("_", "-")
-                        ):
-                            issues.append(
-                                {
-                                    "code": "ACCENT_DIRECTIVE_MISMATCH",
-                                    "locale": lang,
-                                    "found": found_accent,
-                                    "expected": expected_accent,
-                                    "message": (
-                                        f"Config for '{lang}' specifies 'Accent: {found_accent}'."
-                                        f" Change to 'Accent: {expected_accent}'."
-                                    ),
-                                }
-                            )
-
-        # Check user_language only if the app is multi-lingual
-        is_multilingual = (
-            len(supported_langs) > 0 or len(all_declared_langs) > 1
-        )
-        if is_multilingual:
-            var_decls = app_data.get("variableDeclarations")
-            if not isinstance(var_decls, list):
-                var_decls = []
-            var_names = [
-                v.get("name")
-                for v in var_decls
-                if isinstance(v, dict) and isinstance(v.get("name"), str)
-            ]
-            if (
-                "user_language" not in var_names
-                and "user_lang" not in var_names
-                and "app_language" not in var_names
-            ):
-                issues.append(
-                    {
-                        "code": "MISSING_LANGUAGE_SESSION_VAR",
-                        "variable": "user_language",
-                        "message": (
-                            "Neither 'user_language' nor 'app_language' session variable is"
-                            " declared in app.json.variableDeclarations for multi-lingual app."
-                        ),
-                    }
-                )
-
+        """Audits multi-language voice parity across all declared languages."""
+        results = self._run_lint_rules(specific_rules={"A009"})
+        issues = [
+            {
+                "code": r.rule_id,
+                "file": r.file,
+                "line": r.line,
+                "message": r.message,
+                "recommended": r.fix_suggestion,
+                "priority": "P1",
+            }
+            for r in results
+        ]
         return {
             "passed": len(issues) == 0,
-            "declared_languages": sorted(list(all_declared_langs)),
             "issues": issues,
         }
 
     def audit_prohibited_xml_tags(self) -> dict[str, Any]:
         """Audits instruction files for prohibited internal platform XML tags."""
-        issues: list[dict[str, Any]] = []
-        targets = self._find_instruction_targets()
-
-        tags_joined = "|".join([re.escape(tag) for tag in PROHIBITED_XML_TAGS])
-        pattern = re.compile(
-            rf"<\s*/?\s*(?:{tags_joined})\b[^>]*>", re.IGNORECASE
-        )
-
-        for target in targets:
-            content = target.get_content()
-            if content is None:
-                continue
-
-            for line_num, line in enumerate(content.splitlines(), start=1):
-                for match in pattern.finditer(line):
-                    tag_found = match.group(0)
-                    issues.append(
-                        {
-                            "code": "PROHIBITED_XML_TAG_FOUND",
-                            "file": target.rel_path,
-                            "line": line_num,
-                            "tag": tag_found,
-                            "message": (
-                                f"Prohibited platform XML tag '{tag_found}' found in"
-                                f" {target.rel_path}:{line_num}. Custom/internal XML tags"
-                                " trigger thought-leakage regex safety filters and cause"
-                                " generic error fallbacks. Remove custom XML tags from"
-                                " instructions."
-                            ),
-                        }
-                    )
-
-        return {
-            "passed": len(issues) == 0,
-            "files_scanned": len(targets),
-            "issues": issues,
-        }
-
-    def audit_variable_setting_antipatterns(self) -> dict[str, Any]:
-        """Audits instruction files for raw text variable mutation anti-patterns."""
-        issues: list[dict[str, Any]] = []
-        targets = self._find_instruction_targets()
-
-        var_set_pattern = re.compile(
-            r"(?i)\bset\s+[a-zA-Z0-9_]+\s*=", re.IGNORECASE
-        )
-
-        for target in targets:
-            content = target.get_content()
-            if content is None:
-                continue
-
-            for line_num, line in enumerate(content.splitlines(), start=1):
-                for match in var_set_pattern.finditer(line):
-                    matched_text = match.group(0)
-                    issues.append(
-                        {
-                            "code": "VARIABLE_SETTING_ANTIPATTERN",
-                            "file": target.rel_path,
-                            "line": line_num,
-                            "match": matched_text,
-                            "message": (
-                                f"Text-based variable setting anti-pattern '{matched_text}'"
-                                f" found in {target.rel_path}:{line_num}. State mutations"
-                                " cannot occur via raw output text. Use tool calls (e.g."
-                                " update_language) instead."
-                            ),
-                        }
-                    )
-
-        return {
-            "passed": len(issues) == 0,
-            "files_scanned": len(targets),
-            "issues": issues,
-        }
-
-    def audit_permissive_contradictions(self) -> dict[str, Any]:
-        """Audits for permissive prompt instructions that contradict language and persona locks."""
-        issues: list[dict[str, Any]] = []
-        targets = self._find_instruction_targets()
-
-        permissive_patterns = [
-            re.compile(
-                r"(?i)\b(?:reply|respond|answer|speak)\s+in\s+(?:the\s+)?(?:same\s+)?language\s+(?:as|that)\s+(?:the\s+)?(?:customer|caller|user)"
-            ),
-            re.compile(
-                r"(?i)\badapt\s+to\s+(?:the\s+)?(?:customer'?s?|caller'?s?|user'?s?)\s+(?:language|dialect)"
-            ),
-            re.compile(
-                r"(?i)\bmatch\s+(?:the\s+)?(?:customer'?s?|caller'?s?|user'?s?)\s+(?:language|dialect)"
-            ),
-            re.compile(
-                r"(?i)\bwhichever\s+language\s+(?:the\s+)?(?:customer|caller|user)\s+(?:speaks|prefers)"
-            ),
+        results = self._run_lint_rules(specific_rules={"I015"})
+        issues = [
+            {
+                "code": r.rule_id,
+                "file": r.file,
+                "line": r.line,
+                "message": r.message,
+                "recommended": r.fix_suggestion,
+                "priority": "P0",
+            }
+            for r in results
         ]
-
-        for target in targets:
-            content = target.get_content()
-            if content is None:
-                continue
-
-            for line_num, line in enumerate(content.splitlines(), start=1):
-                for pat in permissive_patterns:
-                    match = pat.search(line)
-                    if match:
-                        matched_text = match.group(0)
-                        issues.append(
-                            {
-                                "code": "PERMISSIVE_CONTRADICTION_FOUND",
-                                "file": target.rel_path,
-                                "line": line_num,
-                                "match": matched_text,
-                                "message": (
-                                    f"Permissive language contradiction '{matched_text}' found"
-                                    f" in {target.rel_path}:{line_num}. Permissive directives"
-                                    " override session language locks whenever noisy ASR or"
-                                    " phonetic slips occur. Replace with strict session"
-                                    " language constraints."
-                                ),
-                            }
-                        )
-
         return {
             "passed": len(issues) == 0,
-            "files_scanned": len(targets),
+            "files_scanned": len(self._find_instruction_targets()),
             "issues": issues,
         }
 
@@ -1184,49 +852,18 @@ class VoiceAgentAuditor:
         self, app_data: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Verifies that all {{var}} references in instructions are declared in app.json."""
-        if app_data is None:
-            app_data = self._read_app_json()
-        if not isinstance(app_data, dict):
-            app_data = {}
-
-        issues: list[dict[str, Any]] = []
-        var_decls = app_data.get("variableDeclarations")
-        if not isinstance(var_decls, list):
-            var_decls = []
-
-        declared_vars = set()
-        for v in var_decls:
-            if isinstance(v, dict) and isinstance(v.get("name"), str):
-                declared_vars.add(v["name"])
-
-        targets = self._find_instruction_targets()
-        var_pattern = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}")
-
-        for target in targets:
-            content = target.get_content()
-            if content is None:
-                continue
-
-            for line_num, line in enumerate(content.splitlines(), start=1):
-                for match in var_pattern.finditer(line):
-                    var_name = match.group(1)
-                    if var_name not in declared_vars:
-                        issues.append(
-                            {
-                                "code": "UNREGISTERED_TEMPLATE_VARIABLE",
-                                "file": target.rel_path,
-                                "line": line_num,
-                                "variable": var_name,
-                                "message": (
-                                    f"Template variable '{{{{{var_name}}}}}' in"
-                                    f" {target.rel_path}:{line_num} is not declared in"
-                                    " app.json.variableDeclarations. Unregistered variables"
-                                    " resolve to empty strings or cause runtime template"
-                                    " errors."
-                                ),
-                            }
-                        )
-
+        results = self._run_lint_rules(specific_rules={"V104"})
+        issues = [
+            {
+                "code": r.rule_id,
+                "file": r.file,
+                "line": r.line,
+                "message": r.message,
+                "recommended": r.fix_suggestion,
+                "priority": "P0",
+            }
+            for r in results
+        ]
         return {
             "passed": len(issues) == 0,
             "issues": issues,
@@ -1234,540 +871,62 @@ class VoiceAgentAuditor:
 
     def audit_inert_tags(self) -> dict[str, Any]:
         """Audits instruction files for ineffective or inert acoustic emotion tags."""
-        issues: list[dict[str, Any]] = []
-        targets = self._find_instruction_targets()
-
-        escaped_tags = [re.escape(f"[{tag}]") for tag in INERT_TAGS]
-        pattern = re.compile("|".join(escaped_tags), re.IGNORECASE)
-
-        for target in targets:
-            content = target.get_content()
-            if content is None:
-                continue
-
-            for line_num, line in enumerate(content.splitlines(), start=1):
-                for match in pattern.finditer(line):
-                    tag_found = match.group(0)
-                    issues.append(
-                        {
-                            "code": "INERT_TAG_FOUND",
-                            "file": target.rel_path,
-                            "line": line_num,
-                            "tag": tag_found,
-                            "message": (
-                                f"Inert acoustic tag '{tag_found}' found in"
-                                f" {target.rel_path}:{line_num}. This tag produces zero"
-                                " acoustic effect and should be removed."
-                            ),
-                        }
-                    )
-
+        results = self._run_lint_rules(specific_rules={"I017"})
+        issues = [
+            {
+                "code": r.rule_id,
+                "file": r.file,
+                "line": r.line,
+                "message": r.message,
+                "recommended": r.fix_suggestion,
+                "priority": "P2",
+            }
+            for r in results
+        ]
         return {
             "passed": len(issues) == 0,
-            "files_scanned": len(targets),
-            "issues": issues,
-        }
-
-    def audit_natural_speech_cues(self) -> dict[str, Any]:
-        """Audits instruction files for reflexive conversational turn closings and loop triggers."""
-        issues: list[dict[str, Any]] = []
-        targets = self._find_instruction_targets()
-
-        reflexive_closing_pattern = re.compile(
-            r"(?:"
-            r"is\s+there\s+anything\s+else\s+(?:i\s+can\s+(?:help|assist)"
-            r"\s+you\s+with|you\s+need(?:\s+help\s+with)?)"
-            r"|can\s+i\s+(?:help|assist)\s+you\s+with\s+anything\s+else"
-            r"(?:\s+today)?"
-            r"|anything\s+else\s+i\s+can\s+(?:help|assist)\s+you\s+with"
-            r")",
-            re.IGNORECASE,
-        )
-
-        for target in targets:
-            content = target.get_content()
-            if content is None:
-                continue
-
-            for line_num, line in enumerate(content.splitlines(), start=1):
-                if reflexive_closing_pattern.search(line):
-                    issues.append(
-                        {
-                            "code": "REFLEXIVE_CLOSING_LOOP",
-                            "file": target.rel_path,
-                            "line": line_num,
-                            "message": (
-                                "Reflexive closing phrase found in"
-                                f" {target.rel_path}:{line_num}. Replace with comprehension"
-                                " confirmations or natural pauses."
-                            ),
-                        }
-                    )
-
-        return {
-            "passed": len(issues) == 0,
+            "files_scanned": len(self._find_instruction_targets()),
             "issues": issues,
         }
 
     def audit_anti_looping_and_stability(
         self, app_data: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Audits sampling temperature and sub-agent voice lock directives for long-call stability."""
-        if app_data is None:
-            app_data = self._read_app_json()
-        if not isinstance(app_data, dict):
-            app_data = {}
-
-        issues: list[dict[str, Any]] = []
-
-        model_settings = app_data.get("modelSettings")
-        if not isinstance(model_settings, dict):
-            model_settings = {}
-        temp = model_settings.get("temperature")
-        if temp is None:
-            issues.append(
-                {
-                    "code": "LOW_SAMPLING_TEMPERATURE",
-                    "found": None,
-                    "recommended": 1.0,
-                    "message": (
-                        "modelSettings.temperature is missing from app.json. Set to 1.0"
-                        " to avoid deterministic acoustic repetition deadlocks."
-                    ),
-                }
-            )
-        elif isinstance(temp, (int, float)) and temp < 1.0:
-            issues.append(
-                {
-                    "code": "LOW_SAMPLING_TEMPERATURE",
-                    "found": temp,
-                    "recommended": 1.0,
-                    "message": (
-                        f"modelSettings.temperature is {temp}. Set to 1.0 to avoid"
-                        " deterministic acoustic repetition deadlocks."
-                    ),
-                }
-            )
-        elif not isinstance(temp, (int, float)):
-            issues.append(
-                {
-                    "code": "LOW_SAMPLING_TEMPERATURE",
-                    "found": temp,
-                    "recommended": 1.0,
-                    "message": (
-                        f"modelSettings.temperature is invalid ({temp}). Set to 1.0 to"
-                        " avoid deterministic acoustic repetition deadlocks."
-                    ),
-                }
-            )
-
-        return {
-            "passed": len(issues) == 0,
-            "issues": issues,
-        }
-
-    def _get_active_agent_tools(self) -> dict[str, dict[str, Any]]:
-        """Discovers all tools declared across agent configurations or referenced in instructions.
-
-        Classifies tools mentioned in agent instructions as priority P1, and other active
-        declared tools as priority P2.
-
-        Returns:
-            Mapping of tool_name -> dict containing:
-                - 'agents': list of agent names referencing or declaring the tool
-                - 'in_instruction': bool indicating if the tool is mentioned in instructions
-                - 'priority': 'P1' if mentioned in instruction, else 'P2'
-        """
-        raw_tools: dict[str, dict[str, Any]] = {}
-        agent_configs = self.discovery.discover_agent_configs()
-        if not agent_configs:
-            agents_dir = self.workspace_path / "agents"
-            if agents_dir.is_dir():
-                for d in sorted(agents_dir.iterdir()):
-                    if d.is_dir():
-                        json_file = d / f"{d.name}.json"
-                        if json_file.is_file():
-                            agent_configs[d.name] = json_file
-                        elif (d / "agent.json").is_file():
-                            agent_configs[d.name] = d / "agent.json"
-
-        # 1. Discover all instruction targets and collect instruction contents
-        targets = self._find_instruction_targets()
-        agent_instructions: dict[str, list[str]] = {}
-        global_instructions: list[str] = []
-
-        directive_patterns = [
-            re.compile(r"\{@(?:TOOL|tool)[:\s]+([a-zA-Z0-9_-]+)\}"),
-            re.compile(r"\$\{(?:TOOL|tool):([a-zA-Z0-9_-]+)\}"),
-        ]
-
-        for target in targets:
-            content = target.get_content()
-            if not content:
-                continue
-
-            fname = target.file_path.name
-            if fname == "global_instruction.txt":
-                global_instructions.append(content)
-                target_agent = "global"
-            else:
-                parent_name = target.file_path.parent.name
-                stem_name = target.file_path.stem
-                if parent_name in agent_configs:
-                    target_agent = parent_name
-                elif stem_name in agent_configs:
-                    target_agent = stem_name
-                elif target.file_path.parent == self.workspace_path:
-                    target_agent = self._get_root_agent_name()
-                else:
-                    target_agent = parent_name or "global"
-
-                if target_agent in agent_configs:
-                    if target_agent not in agent_instructions:
-                        agent_instructions[target_agent] = []
-                    agent_instructions[target_agent].append(content)
-                else:
-                    global_instructions.append(content)
-
-            # Discover directive-referenced tools directly from instructions
-            for pat in directive_patterns:
-                for match in pat.findall(content):
-                    tool_ref = match.strip().split("/")[-1]
-                    if tool_ref:
-                        entry = raw_tools.setdefault(
-                            tool_ref, {"agents": set(), "in_instruction": True}
-                        )
-                        entry["in_instruction"] = True
-                        if target_agent != "global":
-                            entry["agents"].add(target_agent)
-
-        # 2. Discover declared tools from agent configuration files
-        for agent_name, config_path in sorted(agent_configs.items()):
-            if not config_path.is_file():
-                continue
-            try:
-                data = json.loads(config_path.read_text(encoding="utf-8"))
-                tools_list = data.get("tools", [])
-                if isinstance(tools_list, list):
-                    for item in tools_list:
-                        tool_name = None
-                        if isinstance(item, str):
-                            tool_name = item.strip().split("/")[-1]
-                        elif isinstance(item, dict):
-                            raw_name = (
-                                item.get("name")
-                                or item.get("displayName")
-                                or item.get("tool")
-                            )
-                            if isinstance(raw_name, str):
-                                tool_name = raw_name.strip().split("/")[-1]
-                        if tool_name:
-                            entry = raw_tools.setdefault(
-                                tool_name,
-                                {"agents": set(), "in_instruction": False},
-                            )
-                            entry["agents"].add(agent_name)
-            except (OSError, json.JSONDecodeError):
-                continue
-
-        # 3. Check if declared tools are mentioned in agent or global instructions
-        for tool_name, entry in raw_tools.items():
-            if entry["in_instruction"]:
-                continue
-            tool_pat = re.compile(r"\b" + re.escape(tool_name) + r"\b")
-            is_mentioned = False
-            # Check instructions of referencing agents
-            for ag in entry["agents"]:
-                for inst_text in agent_instructions.get(ag, []):
-                    if tool_pat.search(inst_text):
-                        is_mentioned = True
-                        break
-                if is_mentioned:
-                    break
-            if not is_mentioned:
-                for inst_text in global_instructions:
-                    if tool_pat.search(inst_text):
-                        is_mentioned = True
-                        break
-            if is_mentioned:
-                entry["in_instruction"] = True
-
-        # 4. Build output mapping with P1 / P2 priority
-        active_tools: dict[str, dict[str, Any]] = {}
-        for tool_name, entry in sorted(raw_tools.items()):
-            agents_list = sorted(list(entry["agents"]))
-            in_instruction = entry["in_instruction"]
-            active_tools[tool_name] = {
-                "agents": agents_list,
-                "in_instruction": in_instruction,
-                "priority": "P1" if in_instruction else "P2",
+        """Audits sampling temperature for composite models."""
+        results = self._run_lint_rules(specific_rules={"A010"})
+        issues = [
+            {
+                "code": r.rule_id,
+                "file": r.file,
+                "line": r.line,
+                "message": r.message,
+                "recommended": r.fix_suggestion,
+                "priority": "P0",
             }
-
-        return active_tools
-
-    def _resolve_tool_path(
-        self, tool_name: str
-    ) -> tuple[pathlib.Path | None, str]:
-        """Resolves the primary definition file and type for a tool.
-
-        Returns:
-            (path, tool_type) where tool_type is 'python', 'json', 'builtin', or 'missing'.
-        """
-        builtin_tools = {"end_session", "transfer_to_agent"}
-        if tool_name in builtin_tools or tool_name.startswith("sys."):
-            return None, "builtin"
-
-        tools_dir = self.workspace_path / "tools" / tool_name
-        if not tools_dir.is_dir():
-            return None, "missing"
-
-        py_code = tools_dir / "python_function" / "python_code.py"
-        if py_code.is_file():
-            return py_code, "python"
-
-        tool_json = tools_dir / f"{tool_name}.json"
-        if tool_json.is_file():
-            return tool_json, "json"
-
-        json_files = sorted(tools_dir.glob("*.json"))
-        if json_files:
-            return json_files[0], "json"
-
-        return None, "missing"
-
-    def _extract_tool_docstring(
-        self, file_path: pathlib.Path, tool_name: str, tool_type: str
-    ) -> tuple[str | None, int]:
-        """Extracts the docstring / description and line number for a tool."""
-        if tool_type == "python":
-            try:
-                content = file_path.read_text(encoding="utf-8")
-                tree = ast.parse(content)
-                for node in tree.body:
-                    if (
-                        isinstance(node, ast.FunctionDef)
-                        and node.name == tool_name
-                    ):
-                        doc = ast.get_docstring(node)
-                        return doc, node.lineno
-                for node in tree.body:
-                    if isinstance(node, ast.FunctionDef):
-                        doc = ast.get_docstring(node)
-                        return doc, node.lineno
-                return ast.get_docstring(tree), 1
-            except Exception:
-                return None, 1
-        elif tool_type == "json":
-            try:
-                content = file_path.read_text(encoding="utf-8")
-                data = json.loads(content)
-                desc = (
-                    data.get("description")
-                    or data.get("openApiTool", {}).get("description")
-                    or data.get("clientFunction", {}).get("description")
-                )
-                return desc if isinstance(desc, str) else None, 1
-            except Exception:
-                return None, 1
-
-        return None, 1
-
-    def audit_tool_docstring_contracts(self) -> dict[str, Any]:
-        """Audits tool docstrings and execution contracts for declared agent tools."""
-        issues: list[dict[str, Any]] = []
-        active_tools = self._get_active_agent_tools()
-
-        when_call_pattern = re.compile(
-            r"(?i)\bwhen\s+to\s+(?:call|invoke|use)\b|\bexecution\s+guidelines?\b|\busage\s+guidelines?\b"
-        )
-        when_not_call_pattern = re.compile(
-            r"(?i)\bwhen\s+not\s+to\s+(?:call|invoke|use)\b|\bdo\s+not\s+call\b|\bnever\s+call\b|\bnegative\s+contract\b"
-        )
-
-        for tool_name, tool_data in sorted(active_tools.items()):
-            if isinstance(tool_data, dict):
-                agents = tool_data.get("agents", [])
-                priority = tool_data.get(
-                    "priority",
-                    "P1" if tool_data.get("in_instruction") else "P2",
-                )
-            else:
-                agents = tool_data
-                priority = "P1"
-
-            tool_path, tool_type = self._resolve_tool_path(tool_name)
-            agents_str = ", ".join(agents) if agents else "unassigned"
-
-            if tool_type == "builtin":
-                continue
-
-            if tool_type == "missing" or tool_path is None:
-                issues.append(
-                    {
-                        "code": "MISSING_DECLARED_TOOL_FILE",
-                        "tool": tool_name,
-                        "agents": agents,
-                        "priority": priority,
-                        "file": str(self.workspace_path / "tools" / tool_name),
-                        "message": (
-                            f"Tool '{tool_name}' declared in agent config(s) [{agents_str}]"
-                            f" is missing its definition file under tools/{tool_name}/."
-                        ),
-                    }
-                )
-                continue
-
-            try:
-                rel_path = str(tool_path.relative_to(self.workspace_path))
-            except ValueError:
-                rel_path = str(tool_path)
-
-            doc, line_no = self._extract_tool_docstring(
-                tool_path, tool_name, tool_type
-            )
-
-            if not doc or not doc.strip():
-                issues.append(
-                    {
-                        "code": "MISSING_TOOL_DOCSTRING",
-                        "tool": tool_name,
-                        "agents": agents,
-                        "priority": priority,
-                        "file": rel_path,
-                        "line": line_no,
-                        "message": (
-                            f"Tool '{tool_name}' (declared in: {agents_str}) lacks a"
-                            f" docstring or description in {rel_path}."
-                        ),
-                        "recommended": (
-                            f"Add a complete docstring to '{tool_name}' explaining its capabilities,"
-                            " input arguments, return values, and explicit execution boundaries."
-                        ),
-                    }
-                )
-                continue
-
-            if tool_type == "python":
-                if not when_call_pattern.search(doc):
-                    issues.append(
-                        {
-                            "code": "MISSING_TOOL_WHEN_TO_CALL",
-                            "tool": tool_name,
-                            "agents": agents,
-                            "priority": priority,
-                            "file": rel_path,
-                            "line": line_no,
-                            "message": (
-                                f"Tool '{tool_name}' docstring in {rel_path} lacks an explicit"
-                                " 'When to Call:' execution contract."
-                            ),
-                            "recommended": (
-                                "Add a 'When to Call:' section specifying positive trigger conditions."
-                            ),
-                        }
-                    )
-                if not when_not_call_pattern.search(doc):
-                    issues.append(
-                        {
-                            "code": "MISSING_TOOL_WHEN_NOT_TO_CALL",
-                            "tool": tool_name,
-                            "agents": agents,
-                            "priority": priority,
-                            "file": rel_path,
-                            "line": line_no,
-                            "message": (
-                                f"Tool '{tool_name}' docstring in {rel_path} lacks an explicit"
-                                " 'When NOT to Call:' negative boundary contract."
-                            ),
-                            "recommended": (
-                                "Add a 'When NOT to Call:' section specifying negative operational constraints."
-                            ),
-                        }
-                    )
-
+            for r in results
+        ]
         return {
             "passed": len(issues) == 0,
             "issues": issues,
-            "tools_evaluated": len(active_tools),
         }
-
-    def _is_terminal_tool(self, tool_name: str) -> bool:
-        """Determines if a tool is a terminal / fast lifecycle tool (exempt from pacing checks)."""
-        name_lower = tool_name.lower()
-        terminal_patterns = [
-            r"(?:^|_)end(?:_session)?(?:$|_)",
-            r"(?:^|_)exit(?:$|_)",
-            r"(?:^|_)wrap_up(?:$|_)",
-            r"(?:^|_)mock(?:$|_)",
-        ]
-        return any(re.search(pat, name_lower) for pat in terminal_patterns)
 
     def audit_tool_conversational_pacing(self) -> dict[str, Any]:
         """Audits active tools for conversational pacing directives."""
-        issues: list[dict[str, Any]] = []
-        active_tools = self._get_active_agent_tools()
-
-        pacing_pattern = re.compile(
-            r"(?i)\b(?:conversational\s+)?pacing\s+phrase\b|\bbefore\s+calling\s+this\s+tool,\s+speak\b|\bspeak\s+a\s+brief\b|\bspoken\s+pacing\b"
-        )
-
-        for tool_name, tool_data in sorted(active_tools.items()):
-            if isinstance(tool_data, dict):
-                agents = tool_data.get("agents", [])
-                priority = tool_data.get(
-                    "priority",
-                    "P1" if tool_data.get("in_instruction") else "P2",
-                )
-            else:
-                agents = tool_data
-                priority = "P1"
-
-            tool_path, tool_type = self._resolve_tool_path(tool_name)
-            if tool_type in ("builtin", "missing") or tool_path is None:
-                continue
-
-            try:
-                rel_path = str(tool_path.relative_to(self.workspace_path))
-            except ValueError:
-                rel_path = str(tool_path)
-
-            doc, line_no = self._extract_tool_docstring(
-                tool_path, tool_name, tool_type
-            )
-            if not doc or not doc.strip():
-                continue
-
-            is_terminal = self._is_terminal_tool(tool_name)
-            has_pacing = bool(pacing_pattern.search(doc))
-            agents_str = ", ".join(agents) if agents else "unassigned"
-
-            if not is_terminal and not has_pacing:
-                issues.append(
-                    {
-                        "code": "MISSING_TOOL_CONVERSATIONAL_PACING",
-                        "tool": tool_name,
-                        "agents": agents,
-                        "priority": priority,
-                        "file": rel_path,
-                        "line": line_no,
-                        "message": (
-                            f"Tool '{tool_name}' (declared in: {agents_str}) lacks"
-                            f" a conversational pacing directive in {rel_path}. In Gemini Composite V1,"
-                            " speak a brief natural bridge phrase before calling to prevent caller dead air"
-                            " during execution."
-                        ),
-                        "recommended": (
-                            "Before calling this tool, speak a brief, natural conversational pacing phrase"
-                            " with multiple varied options to avoid repetitive responses"
-                            " (e.g., 'Let me check that for you...', 'Just a minute, let me look it up...', 'Checking that for you now...')."
-                        ),
-                    }
-                )
-
+        results = self._run_lint_rules(specific_rules={"T014"})
+        issues = [
+            {
+                "code": r.rule_id,
+                "file": r.file,
+                "line": r.line,
+                "message": r.message,
+                "recommended": r.fix_suggestion,
+                "priority": "P1",
+            }
+            for r in results
+        ]
         return {
             "passed": len(issues) == 0,
             "issues": issues,
-            "tools_evaluated": len(active_tools),
         }
 
     def audit(self) -> dict[str, Any]:
@@ -1779,19 +938,13 @@ class VoiceAgentAuditor:
             "accent_specifications": self.audit_accent_specifications(app_data),
             "multilang_coverage": self.audit_multilang_coverage(app_data),
             "prohibited_xml_tags": self.audit_prohibited_xml_tags(),
-            "permissive_contradictions": self.audit_permissive_contradictions(),
             "unregistered_template_variables": (
                 self.audit_unregistered_template_variables(app_data)
             ),
-            "variable_setting_antipatterns": (
-                self.audit_variable_setting_antipatterns()
-            ),
             "inert_tags": self.audit_inert_tags(),
-            "natural_speech_cues": self.audit_natural_speech_cues(),
             "anti_looping_and_stability": self.audit_anti_looping_and_stability(
                 app_data
             ),
-            "tool_docstring_contracts": self.audit_tool_docstring_contracts(),
             "tool_conversational_pacing": (
                 self.audit_tool_conversational_pacing()
             ),
@@ -1830,6 +983,14 @@ class VoiceAgentAuditor:
                 else:
                     # P0/P1 map to ERROR, P2 maps to WARNING
                     is_error = code in {
+                        "A007",
+                        "A008",
+                        "A009",
+                        "A010",
+                        "I015",
+                        "T014",
+                        "V104",
+                        "REFLEXIVE_CLOSING_LOOP",
                         "MISSING_SYNTHESIZE_SPEECH_CONFIGS",
                         "MISSING_DIRECTORS_NOTE",
                         "MISSING_AUDIO_PROFILE_HEADER",
@@ -1884,6 +1045,11 @@ class VoiceAgentAuditor:
         p2_issues: list[dict[str, Any]] = []
 
         p0_codes = {
+            "A007",
+            "A008",
+            "A010",
+            "I015",
+            "V104",
             "MISSING_SYNTHESIZE_SPEECH_CONFIGS",
             "MISSING_DIRECTORS_NOTE",
             "MISSING_AUDIO_PROFILE_HEADER",
@@ -1899,6 +1065,9 @@ class VoiceAgentAuditor:
         }
 
         p1_codes = {
+            "A009",
+            "T014",
+            "REFLEXIVE_CLOSING_LOOP",
             "MISSING_SYNTHESIZE_SPEECH_CONFIG_LANG",
             "MISSING_VOICE_IDENTIFIER",
             "MISSING_DIRECTORS_NOTE_INSTRUCTION",
