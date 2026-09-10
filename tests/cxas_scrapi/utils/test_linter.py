@@ -23,6 +23,7 @@ import pytest
 from cxas_scrapi.utils.linter import (
     Discovery,
     LintConfig,
+    LintContext,
     LintReport,
     LintResult,
     Rule,
@@ -241,9 +242,9 @@ def test_reset_registry() -> None:
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    # 69 baseline + 11 cross-surface V100-V104 registrations
-    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
-    assert len(registry_restored.all_rules()) == 81  # noqa: PLR2004
+    # 73 baseline + 11 cross-surface V100-V104 registrations
+    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + I017 + T014.
+    assert len(registry_restored.all_rules()) == 87  # noqa: PLR2004
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -545,9 +546,9 @@ def test_discovery_filtering(tmp_path: typing.Any) -> None:
 def test_build_registry_all_rules() -> None:
     registry = build_registry()
     all_rules = registry.all_rules()
-    # 69 baseline + 11 cross-surface V100-V104 registrations
-    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1).
-    assert len(all_rules) == 81  # noqa: PLR2004
+    # 73 baseline + 11 cross-surface V100-V104 registrations
+    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + I017 + T014.
+    assert len(all_rules) == 87  # noqa: PLR2004
 
 
 def test_build_context(tmp_path: typing.Any) -> None:
@@ -1011,6 +1012,23 @@ def test_run_rules_with_model_filtering(tmp_path: typing.Any) -> None:
     assert "M102" not in rule_ids_flash
     assert "M103" in rule_ids_flash
 
+    # Case 3: model_only=True for gemini-composite-v1
+    report_composite_only = LintReport()
+    run_rules(
+        registry,
+        config,
+        context_composite,
+        discovery,
+        report_composite_only,
+        categories=["instructions"],
+        specific_rules={"M101", "M102", "M103"},
+        model_only=True,
+    )
+    rule_ids_composite_only = {r.rule_id for r in report_composite_only.results}
+    assert "M101" not in rule_ids_composite_only  # Agnostic excluded
+    assert "M102" in rule_ids_composite_only
+    assert "M103" not in rule_ids_composite_only
+
     # Cleanup
     _RULE_REGISTRY["instructions"] = [
         r
@@ -1020,3 +1038,124 @@ def test_run_rules_with_model_filtering(tmp_path: typing.Any) -> None:
     _REGISTERED_IDS.discard(("M101", "instructions"))
     _REGISTERED_IDS.discard(("M102", "instructions"))
     _REGISTERED_IDS.discard(("M103", "instructions"))
+
+
+def test_rules_for_model() -> None:
+    registry = RuleRegistry()
+
+    class AgnosticRule(Rule):
+        id = "T001"
+        name = "agnostic"
+        description = "Agnostic"
+        category = "instructions"
+
+        def check(
+            self, file_path: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
+            return []
+
+    class CompositeRule(Rule):
+        id = "T002"
+        name = "composite"
+        description = "Composite"
+        category = "instructions"
+        models = ["gemini-composite-v1"]
+
+        def check(
+            self, file_path: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
+            return []
+
+    class FlashRule(Rule):
+        id = "T003"
+        name = "flash"
+        description = "Flash"
+        category = "instructions"
+        models = ["gemini-2.5-flash"]
+
+        def check(
+            self, file_path: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
+            return []
+
+    registry.register(AgnosticRule())
+    registry.register(CompositeRule())
+    registry.register(FlashRule())
+
+    # All rules applicable to gemini-composite-v1 (including agnostic)
+    comp_rules = registry.rules_for_model("gemini-composite-v1")
+    comp_ids = {r.id for r in comp_rules}
+    assert comp_ids == {"T001", "T002"}
+
+    # Model-only rules for gemini-composite-v1 (excluding agnostic)
+    comp_only_rules = registry.rules_for_model(
+        "gemini-composite-v1", model_only=True
+    )
+    comp_only_ids = {r.id for r in comp_only_rules}
+    assert comp_only_ids == {"T002"}
+
+    # Model-only rules for flash
+    flash_only_rules = registry.rules_for_model(
+        "gemini-2.5-flash", model_only=True
+    )
+    assert {r.id for r in flash_only_rules} == {"T003"}
+
+
+def test_list_rules_with_model_filter(capsys: typing.Any) -> None:
+    registry = RuleRegistry()
+
+    class AgnosticRule(Rule):
+        id = "T001"
+        name = "agnostic"
+        description = "Agnostic rule desc"
+        category = "instructions"
+
+        def check(
+            self, file_path: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
+            return []
+
+    class CompositeRule(Rule):
+        id = "T002"
+        name = "composite"
+        description = "Composite rule desc"
+        category = "instructions"
+        models = ["gemini-composite-v1"]
+
+        def check(
+            self, file_path: typing.Any, content: typing.Any, ctx: typing.Any
+        ) -> typing.Any:
+            return []
+
+    registry.register(AgnosticRule())
+    registry.register(CompositeRule())
+
+    # Listing with model_only=True
+    registry.list_rules(model="gemini-composite-v1", model_only=True)
+    captured = capsys.readouterr()
+    assert "T002" in captured.out
+    assert "T001" not in captured.out
+
+    # Listing without model_only
+    registry.list_rules(model="gemini-composite-v1", model_only=False)
+    captured = capsys.readouterr()
+    assert "T001" in captured.out
+    assert "T002" in captured.out
+
+
+def test_lint_context_model_resolution(tmp_path: typing.Any) -> None:
+    ctx = LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path / "evals",
+        model="gemini-composite-v1",
+        agent_models={"agent_a": "gemini-2.5-flash"},
+        app_root=tmp_path,
+    )
+
+    agent_a_file = tmp_path / "agents" / "agent_a" / "instruction.txt"
+    agent_b_file = tmp_path / "agents" / "agent_b" / "instruction.txt"
+    assert ctx.get_model_for_agent("agent_a") == "gemini-2.5-flash"
+    assert ctx.get_model_for_agent("agent_b") == "gemini-composite-v1"
+    assert ctx.get_model_for_file(agent_a_file) == "gemini-2.5-flash"
+    assert ctx.get_model_for_file(agent_b_file) == "gemini-composite-v1"

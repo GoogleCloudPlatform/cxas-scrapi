@@ -376,15 +376,46 @@ class RuleRegistry:
     def rules_for_category(self, category: str) -> list[Rule]:
         return [r for r in self.all_rules() if r.category == category]
 
-    def list_rules(self) -> None:
-        """Print all registered rules."""
+    def rules_for_model(
+        self, model: str, model_only: bool = False
+    ) -> list[Rule]:
+        """Return rules applicable to a specific model.
+
+        If `model_only` is True, returns only rules that are specific to
+        that model (i.e. rules with non-empty `models` that match).
+        If `model_only` is False, returns all rules applicable to that model
+        (including model-agnostic rules).
+        """
+        if model_only:
+            return [
+                r
+                for r in self.all_rules()
+                if r.models and r.is_applicable_for_model(model)
+            ]
+        return [
+            r for r in self.all_rules() if r.is_applicable_for_model(model)
+        ]
+
+    def list_rules(
+        self, model: str | None = None, model_only: bool = False
+    ) -> None:
+        """Print all registered rules, optionally filtered by model."""
         current_cat = ""
-        for r in self.all_rules():
+        if model:
+            rules = self.rules_for_model(model, model_only=model_only)
+        elif model_only:
+            rules = [r for r in self.all_rules() if r.models]
+        else:
+            rules = self.all_rules()
+
+        for r in rules:
             if r.category != current_cat:
                 current_cat = r.category
                 print(f"\n  {current_cat.upper()}")
             sev = r.default_severity.value.upper()
-            model_info = f" [models: {', '.join(r.models)}]" if r.models else ""
+            model_info = (
+                f" [models: {', '.join(r.models)}]" if r.models else ""
+            )
             print(
                 f"    {r.id}  [{sev:7s}]{model_info}  {r.name}: {r.description}"
             )
@@ -865,11 +896,14 @@ def run_rules(
     report: LintReport,
     categories: list[str] | None = None,
     specific_rules: set[str] | None = None,
+    model_only: bool = False,
 ) -> None:
     """Run lint rules against discovered files."""
 
     def should_run(rule_obj: typing.Any) -> bool:
         if specific_rules and rule_obj.id not in specific_rules:
+            return False
+        if model_only and not rule_obj.models:
             return False
         return not (categories and rule_obj.category not in categories)
 

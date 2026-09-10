@@ -633,3 +633,127 @@ class ToolConfigInvalid(Rule):
             ]
 
         return []
+
+
+# --- T014: Conversational tool pacing for composite models ---------------
+
+
+@rule("tools", models=["gemini-composite-v1"])
+class CompositeToolConversationalPacing(Rule):
+    id = "T014"
+    name = "composite-tool-pacing"
+    description = (
+        "Tool docstring or description must include a conversational pacing "
+        "directive in Gemini Composite V1 to prevent dead air"
+    )
+    default_severity = Severity.WARNING
+
+    PACING_PATTERN = re.compile(
+        r"(?i)\b(?:conversational\s+)?pacing\s+phrase\b|"
+        r"\bbefore\s+calling\s+this\s+tool,\s+speak\b|"
+        r"\bspeak\s+a\s+brief\b|"
+        r"\bspoken\s+pacing\b"
+    )
+
+    TERMINAL_PATTERNS = (
+        r"(?:^|_)end(?:_session)?(?:$|_)",
+        r"(?:^|_)exit(?:$|_)",
+        r"(?:^|_)wrap_up(?:$|_)",
+        r"(?:^|_)mock(?:$|_)",
+    )
+
+    TOOL_TYPES = (
+        "clientFunction",
+        "openApiTool",
+        "googleSearchTool",
+        "connectorTool",
+        "dataStoreTool",
+        "pythonFunction",
+        "mcpTool",
+        "fileSearchTool",
+        "systemTool",
+        "agentTool",
+        "widgetTool",
+    )
+
+    def _is_terminal(self, tool_name: str) -> bool:
+        name_lower = tool_name.lower()
+        return any(re.search(pat, name_lower) for pat in self.TERMINAL_PATTERNS)
+
+    def _get_docstring_and_line(
+        self, file_path: Path, content: str
+    ) -> tuple[str | None, int]:
+        if file_path.suffix == ".py":
+            # Check triple double-quoted or single-quoted docstrings
+            m = re.search(r'("""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\')', content)
+            if m:
+                line = content[: m.start()].count("\n") + 1
+                return m.group(1), line
+            return None, 1
+
+        if file_path.suffix == ".json":
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError:
+                return None, 1
+            if not isinstance(data, dict):
+                return None, 1
+
+            desc = data.get("description")
+            if isinstance(desc, str) and desc.strip():
+                return desc, 1
+
+            for t in self.TOOL_TYPES:
+                tool_obj = data.get(t)
+                if isinstance(tool_obj, dict):
+                    nested_desc = tool_obj.get("description")
+                    if isinstance(nested_desc, str) and nested_desc.strip():
+                        return nested_desc, 1
+
+            return None, 1
+
+        return None, 1
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        # Determine tool name from directory layout (Python or JSON tool)
+        if file_path.suffix == ".py":
+            tool_name = file_path.parent.parent.name
+        elif file_path.suffix == ".json":
+            tool_name = file_path.parent.name
+        else:
+            return []
+
+        if self._is_terminal(tool_name):
+            return []
+
+        doc, line_no = self._get_docstring_and_line(file_path, content)
+        if not doc or not doc.strip():
+            # Missing docstring is handled by T002 / T012
+            return []
+
+        if not self.PACING_PATTERN.search(doc):
+            rel = str(file_path.relative_to(context.project_root))
+            return [
+                self.make_result(
+                    file=rel,
+                    line=line_no,
+                    message=(
+                        f"Tool '{tool_name}' lacks a conversational pacing "
+                        "directive. In Gemini Composite V1, speak a brief "
+                        "natural bridge phrase before calling to prevent "
+                        "caller dead air during execution."
+                    ),
+                    fix=(
+                        "Add a conversational pacing directive to the tool "
+                        "docstring/description (e.g. 'Before calling this "
+                        "tool, speak a brief conversational pacing phrase: "
+                        "Let me check that for you...')."
+                    ),
+                )
+            ]
+
+        return []
+
+

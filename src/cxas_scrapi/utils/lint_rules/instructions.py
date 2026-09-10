@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Instruction lint rules (I001-I016).
+"""Instruction lint rules (I001-I017).
 
 Validates agent instruction files against CXAS design guide best practices.
 """
@@ -639,44 +639,77 @@ class BannedLegacyXmlTags(Rule):
     id = "I015"
     name = "banned-legacy-xml-tags"
     description = (
-        "Instruction contains legacy CamelCase / state-machine XML tags"
-        " that diverge from the canonical taskflow schema"
+        "Instruction contains legacy CamelCase, state-machine, or prohibited "
+        "internal platform XML tags"
     )
     default_severity = Severity.ERROR
 
-    BANNED_TAGS = (
-        "<Agent>",
-        "<Conversation_Schema>",
-        "<Persona>",
-        "<Role>",
-        "<General_Instruction>",
-        "<Context>",
-        "<state",
-        "<transitions>",
-        "<transition ",
+    BANNED_EXACT_TAG_NAMES = (
+        "Agent",
+        "Conversation_Schema",
+        "Persona",
+        "Role",
+        "General_Instruction",
+        "Context",
+    )
+
+    PROHIBITED_TAG_NAMES = (
+        "state",
+        "transitions",
+        "transition",
+        "state_update",
+        "context",
+        "reasoning",
+        "thought",
+        "internal",
+        "call_tool",
+        "parameter_update",
+        "variable_update",
+        "voice_lock",
+        "voice_output",
+    )
+
+    _EXACT_PATTERN = re.compile(
+        r"<\s*/?\s*(?:"
+        + "|".join(re.escape(t) for t in BANNED_EXACT_TAG_NAMES)
+        + r")\b[^>]*>"
+    )
+
+    _PROHIBITED_PATTERN = re.compile(
+        r"<\s*/?\s*(?:"
+        + "|".join(re.escape(t) for t in PROHIBITED_TAG_NAMES)
+        + r")\b[^>]*>",
+        re.IGNORECASE,
     )
 
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
-        return [
-            self.make_result(
-                file=rel,
-                line=_find_line(content, tag),
-                message=(
-                    f"Banned legacy XML tag '{tag}' — use the canonical"
-                    " lowercase taskflow schema instead"
-                ),
-                fix=(
-                    "Rewrite into <role>/<persona>/<primary_goal>/"
-                    "<constraints>/<guidelines>/<taskflow>/<subtask>/"
-                    "<step>/<trigger>/<action>"
-                ),
-            )
-            for tag in self.BANNED_TAGS
-            if tag in content
-        ]
+        results = []
+        for line_num, line in enumerate(content.splitlines(), start=1):
+            for match in list(self._EXACT_PATTERN.finditer(line)) + list(
+                self._PROHIBITED_PATTERN.finditer(line)
+            ):
+                tag = match.group(0)
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        line=line_num,
+                        message=(
+                            f"Banned XML tag '{tag}' found — custom, legacy, "
+                            "or internal XML tags trigger thought-leakage "
+                            "safety filters or diverge from canonical schema"
+                        ),
+                        fix=(
+                            "Remove internal tags or rewrite into canonical "
+                            "<role>/<persona>/<primary_goal>/<constraints>/"
+                            "<guidelines>/<taskflow>/<subtask>/<step>/"
+                            "<trigger>/<action>"
+                        ),
+                    )
+                )
+        return results
 
 
 # --- I016: prose state machine -------------------------------------------
@@ -971,3 +1004,96 @@ class ProseStateMachine(Rule):
                 ),
             )
         ]
+
+
+# --- I017: inert acoustic tags in composite models -----------------------
+
+
+@rule("instructions", models=["gemini-composite-v1"])
+class CompositeInertTags(Rule):
+    id = "I017"
+    name = "composite-inert-tags"
+    description = (
+        "Instruction contains ineffective or inert acoustic emotion tags "
+        "for Gemini Composite V1"
+    )
+    default_severity = Severity.WARNING
+
+    INERT_TAGS = (
+        "warm",
+        "calm",
+        "clear",
+        "professional",
+        "empathetic",
+        "reassuring",
+        "sympathetic",
+        "hope",
+        "happy",
+        "crying",
+        "awe",
+        "fearful",
+        "surprised",
+        "cautious",
+        "alarm",
+        "anxiety",
+        "relief",
+        "tension",
+        "determination",
+        "enthusiasm",
+        "adoration",
+        "interest",
+        "curiosity",
+        "annoyance",
+        "aggression",
+        "nervousness",
+        "neutral",
+        "negative",
+        "positive",
+        "admiration",
+        "disgusted",
+        "short pause",
+        "long pause",
+        "short_pause",
+        "formal",
+        "casual",
+        "mumbles",
+        "stammers",
+        "breathless",
+        "panic",
+    )
+
+    _PATTERN = re.compile(
+        r"\[\s*(?:"
+        + "|".join(re.escape(t) for t in INERT_TAGS)
+        + r")\s*\]"
+        r"|\[\s*/?\s*prosody\b[^\]]*\]"
+        r"|<\s*/?\s*prosody\b[^>]*>",
+        re.IGNORECASE,
+    )
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+        results = []
+        for line_num, line in enumerate(content.splitlines(), start=1):
+            for match in self._PATTERN.finditer(line):
+                tag_found = match.group(0)
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        line=line_num,
+                        message=(
+                            f"Inert acoustic tag '{tag_found}' found in "
+                            "instruction. This tag produces zero acoustic "
+                            "effect in Gemini Composite V1."
+                        ),
+                        fix=(
+                            "Remove the inert bracketed tag or use effective "
+                            "composite vocal tags (e.g. [whispers], [sigh], "
+                            "[chuckles], [serious], [deadpan])."
+                        ),
+                    )
+                )
+        return results
+

@@ -15,6 +15,7 @@
 
 """Tests for individual lint rules."""
 
+import json
 import typing
 from unittest.mock import patch
 
@@ -352,7 +353,7 @@ def test_i014_no_agents_directory(
 def test_i015_banned_legacy_xml_tags(
     tmp_path: typing.Any, context: typing.Any
 ) -> None:
-    """Instruction with legacy CamelCase / state-machine tags fires I015."""
+    """Instruction with legacy CamelCase or prohibited tags fires I015."""
     from cxas_scrapi.utils.lint_rules.instructions import BannedLegacyXmlTags  # noqa: PLC0415,I001
 
     rule = BannedLegacyXmlTags()
@@ -363,17 +364,23 @@ def test_i015_banned_legacy_xml_tags(
         '    <state id="main"><transitions>'
         '<transition condition="x" next_state="y"/></transitions></state>\n'
         "  </Conversation_Schema>\n"
+        "  <thought>internal thoughts</thought>\n"
+        "  <state_update>status=1</state_update>\n"
+        "  <call_tool name='foo'/>\n"
         "</Agent>\n"
     )
     f.write_text(content)
 
     results = rule.check(f, content, context)
     tags = {r.message for r in results}
-    assert any("<Agent>" in t for t in tags)
-    assert any("<Conversation_Schema>" in t for t in tags)
-    assert any("<state" in t for t in tags)
-    assert any("<transitions>" in t for t in tags)
-    assert any("<transition " in t for t in tags)
+    assert any("Agent" in t for t in tags)
+    assert any("Conversation_Schema" in t for t in tags)
+    assert any("state" in t for t in tags)
+    assert any("transitions" in t for t in tags)
+    assert any("transition" in t for t in tags)
+    assert any("thought" in t for t in tags)
+    assert any("state_update" in t for t in tags)
+    assert any("call_tool" in t for t in tags)
 
 
 def test_i015_canonical_text_ok(
@@ -540,7 +547,69 @@ def test_i016_config_thresholds(
     assert len(results) == 1
 
 
+# ── I017: Composite Inert Tags ───────────────────────────────────────────
+
+
+def test_i017_inert_tags_flagged(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.instructions import CompositeInertTags  # noqa: PLC0415,I001
+
+    rule = CompositeInertTags()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "<role>Agent</role>\n"
+        "Greet the user [warm] and [clear]. Then say goodbye [casual].\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 3
+    assert all(r.rule_id == "I017" for r in results)
+    assert any("[warm]" in r.message for r in results)
+    assert any("[clear]" in r.message for r in results)
+    assert any("[casual]" in r.message for r in results)
+
+
+def test_i017_prosody_rate_tags_flagged(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.instructions import CompositeInertTags  # noqa: PLC0415,I001
+
+    rule = CompositeInertTags()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "<role>Agent</role>\n"
+        "Speak [prosody rate=\"85%\"] and [prosody rate=90%]. "
+        "Also <prosody rate=\"fast\">text</prosody>.\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 4
+    assert all(r.rule_id == "I017" for r in results)
+    assert any('[prosody rate="85%"]' in r.message for r in results)
+    assert any("[prosody rate=90%]" in r.message for r in results)
+    assert any('<prosody rate="fast">' in r.message for r in results)
+    assert any("</prosody>" in r.message for r in results)
+
+
+def test_i017_effective_tags_not_flagged(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.instructions import CompositeInertTags  # noqa: PLC0415,I001
+
+    rule = CompositeInertTags()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "<role>Agent</role>\n"
+        "Greet the user [whispers]. Then [sigh] and speak [serious].\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
 # ── Callback Rules ───────────────────────────────────────────────────────
+
 
 
 def test_c001_wrong_fn_name(tmp_path: typing.Any, context: typing.Any) -> None:
@@ -1462,6 +1531,133 @@ def test_t010_json_tool_skipped(
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
+
+
+def test_t014_tool_missing_pacing(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.tools import (  # noqa: PLC0415,I001
+        CompositeToolConversationalPacing,
+    )
+
+    rule = CompositeToolConversationalPacing()
+    tool_dir = tmp_path / "tools" / "lookup_account" / "python_function"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    f = tool_dir / "python_code.py"
+    f.write_text(
+        '"""Lookup account details by ID."""\n'
+        "def lookup_account(account_id: str):\n"
+        "    pass\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert results[0].rule_id == "T014"
+    assert "conversational pacing directive" in results[0].message
+
+
+def test_t014_tool_with_pacing(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.tools import (  # noqa: PLC0415,I001
+        CompositeToolConversationalPacing,
+    )
+
+    rule = CompositeToolConversationalPacing()
+    tool_dir = tmp_path / "tools" / "lookup_account" / "python_function"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    f = tool_dir / "python_code.py"
+    f.write_text(
+        '"""Lookup account details.\n\n'
+        "Before calling this tool, speak a brief conversational pacing phrase:\n"
+        "- Let me look that up for you.\n"
+        '"""\n'
+        "def lookup_account(account_id: str):\n"
+        "    pass\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t014_terminal_tool_exempt(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.tools import (  # noqa: PLC0415,I001
+        CompositeToolConversationalPacing,
+    )
+
+    rule = CompositeToolConversationalPacing()
+    tool_dir = tmp_path / "tools" / "end_session" / "python_function"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    f = tool_dir / "python_code.py"
+    f.write_text(
+        '"""Ends the conversation."""\n'
+        "def end_session():\n"
+        "    pass\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t014_json_tool_with_pacing(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.tools import (  # noqa: PLC0415,I001
+        CompositeToolConversationalPacing,
+    )
+
+    rule = CompositeToolConversationalPacing()
+    f = tmp_path / "tools" / "fetch_balance" / "fetch_balance.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        '{"displayName": "fetch_balance", "description": '
+        '"Fetches user balance. Spoken pacing: Checking your balance now."}'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t014_json_nested_tool_type_with_pacing(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.tools import (  # noqa: PLC0415,I001
+        CompositeToolConversationalPacing,
+    )
+
+    rule = CompositeToolConversationalPacing()
+    f = tmp_path / "tools" / "search_orders" / "search_orders.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        '{"displayName": "search_orders", "openApiTool": '
+        '{"description": "Orders search API. Before calling this tool, '
+        'speak a brief conversational pacing phrase: Checking orders."}}'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t014_json_nested_tool_type_missing_pacing(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.tools import (  # noqa: PLC0415,I001
+        CompositeToolConversationalPacing,
+    )
+
+    rule = CompositeToolConversationalPacing()
+    f = tmp_path / "tools" / "search_orders" / "search_orders.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        '{"displayName": "search_orders", "openApiTool": '
+        '{"description": "Orders search API without pacing."}}'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "conversational pacing directive" in results[0].message
 
 
 # ── Eval Rules ───────────────────────────────────────────────────────────
@@ -2992,6 +3188,21 @@ def test_v104_undeclared_template_ref(
     assert any("full_name" in r.message for r in results)
 
 
+def test_v104_double_brace_syntax(
+    tmp_path: typing.Any, var_context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.variables import InstructionVariableRef  # noqa: PLC0415,I001
+
+    rule = InstructionVariableRef()
+    f = tmp_path / "instruction.txt"
+    f.write_text(
+        "Greet {{unregistered_var}} and {{customer.auth_status}} today."
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert "unregistered_var" in results[0].message
+
+
 def test_v104_skips_builtins_and_directives(
     tmp_path: typing.Any, var_context: typing.Any
 ) -> None:
@@ -3113,5 +3324,180 @@ def test_t013_valid_dict_json(
     f = tool_dir / "my_tool.json"
     f.write_text('{"displayName": "my_tool", "pythonFunction": {}}')
 
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+# ── Composite V1 Voice Rules (A007-A010) Tests ───────────────────────────
+
+
+def test_a007_missing_speech_configs(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import CompositeAudioProfile  # noqa: PLC0415,I001
+
+    rule = CompositeAudioProfile()
+    f = tmp_path / "app.json"
+    f.write_text('{"name": "app", "audioProcessingConfig": {}}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "missing audioProcessingConfig.synthesizeSpeechConfigs" in (
+        results[0].message
+    )
+
+
+def test_a007_missing_headers_and_transcript_hook(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import CompositeAudioProfile  # noqa: PLC0415,I001
+
+    rule = CompositeAudioProfile()
+    f = tmp_path / "app.json"
+    data = {
+        "name": "app",
+        "audioProcessingConfig": {
+            "synthesizeSpeechConfigs": {
+                "en-US": {
+                    "voice": "en-US-Chirp3-HD-Aoede",
+                    "instruction": "Speak naturally.",
+                }
+            }
+        },
+    }
+    f.write_text(json.dumps(data))
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 3
+    messages = [r.message for r in results]
+    assert any("missing '# Audio Profile' header" in m for m in messages)
+    assert any("missing '# Director's note' header" in m for m in messages)
+    assert any("missing trailing '## Transcript:' hook" in m for m in messages)
+
+
+def test_a007_valid_speech_config(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import CompositeAudioProfile  # noqa: PLC0415,I001
+
+    rule = CompositeAudioProfile()
+    f = tmp_path / "app.json"
+    valid_inst = (
+        "# Audio Profile\nYou are a helpful agent.\n\n"
+        "# Director's note\n* Persona: Friendly\n* Accent: American English\n\n"
+        "## Transcript:\n"
+    )
+    data = {
+        "name": "app",
+        "audioProcessingConfig": {
+            "synthesizeSpeechConfigs": {
+                "en-US": {
+                    "voice": "en-US-Chirp3-HD-Aoede",
+                    "instruction": valid_inst,
+                }
+            }
+        },
+    }
+    f.write_text(json.dumps(data))
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_a008_locale_code_in_accent(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import (  # noqa: PLC0415,I001
+        CompositeAccentSpecification,
+    )
+
+    rule = CompositeAccentSpecification()
+    f = tmp_path / "app.json"
+    inst = (
+        "# Audio Profile\nAgent\n"
+        "# Director's note\n* Accent: en-US\n\n## Transcript:\n"
+    )
+    data = {
+        "name": "app",
+        "audioProcessingConfig": {
+            "synthesizeSpeechConfigs": {
+                "en-US": {"instruction": inst}
+            }
+        },
+    }
+    f.write_text(json.dumps(data))
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "Locale code 'en-US' used in Accent directive" in results[0].message
+    assert "American English" in results[0].message
+
+
+def test_a009_multilang_coverage(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import (  # noqa: PLC0415,I001
+        CompositeMultilangCoverage,
+    )
+
+    rule = CompositeMultilangCoverage()
+    f = tmp_path / "app.json"
+    data = {
+        "name": "app",
+        "languageSettings": {
+            "defaultLanguageCode": "en-US",
+            "supportedLanguageCodes": ["es-US"],
+        },
+        "audioProcessingConfig": {
+            "synthesizeSpeechConfigs": {
+                "en-US": {
+                    "voice": "en-US-Chirp3-HD-Aoede",
+                    "instruction": (
+                        "# Director's note\nAccent: American English\n"
+                        "## Transcript:\n"
+                    ),
+                }
+            }
+        },
+    }
+    f.write_text(json.dumps(data))
+
+    # es-US is missing from synthesizeSpeechConfigs
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert (
+        "Declared language 'es-US' has no entry in "
+        "audioProcessingConfig.synthesizeSpeechConfigs"
+    ) in results[0].message
+
+
+def test_a010_sampling_temperature(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import (  # noqa: PLC0415,I001
+        CompositeSamplingTemperature,
+    )
+
+    rule = CompositeSamplingTemperature()
+    f = tmp_path / "app.json"
+
+    # Missing temperature
+    f.write_text(json.dumps({"name": "app", "modelSettings": {}}))
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "modelSettings.temperature is missing" in results[0].message
+
+    # Low temperature
+    f.write_text(
+        json.dumps({"name": "app", "modelSettings": {"temperature": 0.5}})
+    )
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "modelSettings.temperature is 0.5" in results[0].message
+
+    # Valid temperature
+    f.write_text(
+        json.dumps({"name": "app", "modelSettings": {"temperature": 1.0}})
+    )
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0

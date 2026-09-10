@@ -532,10 +532,13 @@ def app_lint(args: argparse.Namespace) -> None:
 
     registry = build_registry()
 
+    model_override = getattr(args, "model", None)
+    model_only = getattr(args, "model_only", False)
+
     if getattr(args, "list_rules", False):
         print("CXAS Agent Linter — Available Rules")
         print("=" * 60)
-        registry.list_rules()
+        registry.list_rules(model=model_override, model_only=model_only)
         sys.exit(0)
 
     json_output = getattr(args, "json_output", False)
@@ -613,7 +616,6 @@ def app_lint(args: argparse.Namespace) -> None:
             )
         sys.exit(1)
 
-    model_override = getattr(args, "model", None)
     context = build_context(
         project_root, config, discovery, model_override=model_override
     )
@@ -652,6 +654,7 @@ def app_lint(args: argparse.Namespace) -> None:
         report,
         categories=categories,
         specific_rules=specific_rules,
+        model_only=model_only,
     )
 
     report.print_and_exit(json_output, show_fixes)

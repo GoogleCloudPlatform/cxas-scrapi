@@ -2258,6 +2258,14 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
     parser_lint.add_argument(
+        "--model-only",
+        action="store_true",
+        help=(
+            "Run only model-specific rules for the target model "
+            "(exclude model-agnostic rules)."
+        ),
+    )
+    parser_lint.add_argument(
         "--fix",
         action="store_true",
         help="Show fix suggestions for each issue.",
