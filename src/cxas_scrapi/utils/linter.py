@@ -392,9 +392,7 @@ class RuleRegistry:
                 for r in self.all_rules()
                 if r.models and r.is_applicable_for_model(model)
             ]
-        return [
-            r for r in self.all_rules() if r.is_applicable_for_model(model)
-        ]
+        return [r for r in self.all_rules() if r.is_applicable_for_model(model)]
 
     def list_rules(
         self, model: str | None = None, model_only: bool = False
@@ -413,9 +411,7 @@ class RuleRegistry:
                 current_cat = r.category
                 print(f"\n  {current_cat.upper()}")
             sev = r.default_severity.value.upper()
-            model_info = (
-                f" [models: {', '.join(r.models)}]" if r.models else ""
-            )
+            model_info = f" [models: {', '.join(r.models)}]" if r.models else ""
             print(
                 f"    {r.id}  [{sev:7s}]{model_info}  {r.name}: {r.description}"
             )

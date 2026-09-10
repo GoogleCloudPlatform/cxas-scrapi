@@ -543,10 +543,10 @@ class CompositeAudioProfile(Rule):
                         file=rel,
                         message=(
                             f"synthesizeSpeechConfigs['{locale}'].instruction "
-                            "missing '# Director\'s note' header"
+                            "missing '# Director's note' header"
                         ),
                         fix=(
-                            "Add '# Director\'s note' section to speech "
+                            "Add '# Director's note' section to speech "
                             "instruction"
                         ),
                     )
@@ -671,17 +671,14 @@ class CompositeMultilangCoverage(Rule):
             return []
 
         lang_settings = (
-            data.get("languageSettings")
-            or data.get("language_settings")
-            or {}
+            data.get("languageSettings") or data.get("language_settings") or {}
         )
         if not isinstance(lang_settings, dict):
             lang_settings = {}
 
-        default_lang = (
-            lang_settings.get("defaultLanguageCode")
-            or lang_settings.get("default_language_code")
-        )
+        default_lang = lang_settings.get(
+            "defaultLanguageCode"
+        ) or lang_settings.get("default_language_code")
         supported_langs = (
             lang_settings.get("supportedLanguageCodes")
             or lang_settings.get("supported_language_codes")
@@ -795,8 +792,7 @@ class CompositeMultilangCoverage(Rule):
                                         f"'Accent: {expected_accent}'."
                                     ),
                                     fix=(
-                                        "Change to 'Accent: "
-                                        f"{expected_accent}'"
+                                        f"Change to 'Accent: {expected_accent}'"
                                     ),
                                     severity=Severity.WARNING,
                                 )

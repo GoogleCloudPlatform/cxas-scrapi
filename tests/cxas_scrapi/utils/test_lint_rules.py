@@ -579,8 +579,8 @@ def test_i017_prosody_rate_tags_flagged(
     f = tmp_path / "instruction.txt"
     f.write_text(
         "<role>Agent</role>\n"
-        "Speak [prosody rate=\"85%\"] and [prosody rate=90%]. "
-        "Also <prosody rate=\"fast\">text</prosody>.\n"
+        'Speak [prosody rate="85%"] and [prosody rate=90%]. '
+        'Also <prosody rate="fast">text</prosody>.\n'
     )
 
     results = rule.check(f, f.read_text(), context)
@@ -609,7 +609,6 @@ def test_i017_effective_tags_not_flagged(
 
 
 # ── Callback Rules ───────────────────────────────────────────────────────
-
 
 
 def test_c001_wrong_fn_name(tmp_path: typing.Any, context: typing.Any) -> None:
@@ -1591,11 +1590,7 @@ def test_t014_terminal_tool_exempt(
     tool_dir = tmp_path / "tools" / "end_session" / "python_function"
     tool_dir.mkdir(parents=True, exist_ok=True)
     f = tool_dir / "python_code.py"
-    f.write_text(
-        '"""Ends the conversation."""\n'
-        "def end_session():\n"
-        "    pass\n"
-    )
+    f.write_text('"""Ends the conversation."""\ndef end_session():\n    pass\n')
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -3420,9 +3415,7 @@ def test_a008_locale_code_in_accent(
     data = {
         "name": "app",
         "audioProcessingConfig": {
-            "synthesizeSpeechConfigs": {
-                "en-US": {"instruction": inst}
-            }
+            "synthesizeSpeechConfigs": {"en-US": {"instruction": inst}}
         },
     }
     f.write_text(json.dumps(data))

@@ -755,5 +755,3 @@ class CompositeToolConversationalPacing(Rule):
             ]
 
         return []
-
-

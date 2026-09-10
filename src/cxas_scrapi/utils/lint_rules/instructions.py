@@ -1063,9 +1063,7 @@ class CompositeInertTags(Rule):
     )
 
     _PATTERN = re.compile(
-        r"\[\s*(?:"
-        + "|".join(re.escape(t) for t in INERT_TAGS)
-        + r")\s*\]"
+        r"\[\s*(?:" + "|".join(re.escape(t) for t in INERT_TAGS) + r")\s*\]"
         r"|\[\s*/?\s*prosody\b[^\]]*\]"
         r"|<\s*/?\s*prosody\b[^>]*>",
         re.IGNORECASE,
@@ -1096,4 +1094,3 @@ class CompositeInertTags(Rule):
                     )
                 )
         return results
-
