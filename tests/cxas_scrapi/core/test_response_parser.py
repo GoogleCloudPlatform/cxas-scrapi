@@ -16,7 +16,10 @@ from types import SimpleNamespace
 
 from google.cloud.ces_v1beta import types
 
-from cxas_scrapi.core.response_parser import ParsedSessionResponse
+from cxas_scrapi.core.response_parser import (
+    ParsedSessionResponse,
+    payload_ends_session,
+)
 
 
 def test_parser_basic_text() -> None:
@@ -308,3 +311,39 @@ def test_parser_top_level_citations_and_payload() -> None:
     assert parsed.custom_payloads[0] == {"custom_field": "custom_value"}
     expected_trace = "Custom Payload (Output): {'custom_field': 'custom_value'}"
     assert expected_trace in parsed.detailed_trace
+
+
+def test_payload_ends_session_helper() -> None:
+    """The helper recognizes self-terminating transfer directives only."""
+    assert payload_ends_session({"transferToNga": "projects/p/.../apps/a"})
+    assert payload_ends_session(
+        {"transferToDialogflow": "projects/p/.../agents/a", "variables": {}}
+    )
+    assert not payload_ends_session({"custom_field": "custom_value"})
+    assert not payload_ends_session("not-a-dict")
+    assert not payload_ends_session(None)
+
+
+def test_parser_self_terminating_transfer_ends_session() -> None:
+    """A transfer custom payload ends the session even without end_session.
+
+    Self-terminating transfers (transferToNga / transferToDialogflow, flows
+    >= 0.42.0) hand off with the directive alone and no paired end_session; a
+    bidi caller that waits for end_session would otherwise hang until timeout.
+    """
+    output = SimpleNamespace(
+        citations=None,
+        payload={
+            "transferToNga": "projects/p/locations/us/apps/a",
+            "variables": {"skip_greeting": "true"},
+        },
+        text=None,
+        end_session=None,
+        tool_calls=None,
+        diagnostic_info=None,
+    )
+
+    parsed = ParsedSessionResponse([output])
+    assert parsed.session_ended is True
+    assert len(parsed.custom_payloads) == 1
+    assert "transferToNga" in parsed.custom_payloads[0]

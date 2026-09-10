@@ -1140,3 +1140,66 @@ def test_bidi_session_handler_with_proto_session_config(
     handler._send_inputs()
 
     assert mock_message_to_json.call_count >= 1
+
+
+def test_output_ends_session_recognizes_self_terminating_transfer() -> None:
+    """_output_ends_session is True only for a self-terminating transfer payload."""
+    transfer = types.SessionOutput()
+    json_format.ParseDict(
+        {"payload": {"transferToNga": "projects/p/locations/us/apps/a"}},
+        transfer._pb,
+        ignore_unknown_fields=True,
+    )
+    assert BidiSessionHandler._output_ends_session(transfer) is True
+
+    plain_payload = types.SessionOutput()
+    json_format.ParseDict(
+        {"payload": {"custom_field": "custom_value"}},
+        plain_payload._pb,
+        ignore_unknown_fields=True,
+    )
+    assert BidiSessionHandler._output_ends_session(plain_payload) is False
+
+    text_only = types.SessionOutput(text="hello")
+    assert BidiSessionHandler._output_ends_session(text_only) is False
+
+
+def test_bidi_session_handler_transfer_ends_session() -> None:
+    """A self-terminating transfer payload ends an interactive session.
+
+    Since flows >= 0.42.0 a transfer (transferToNga / transferToDialogflow)
+    hands off with the payload alone and no paired end_session. An interactive
+    bidi handler must treat it as the end of the session and enqueue the turn,
+    or a caller waiting for end_session would hang until the socket close.
+    """
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config={"session": "s"},
+        input_queue=queue.Queue(),
+        response_queue=queue.Queue(),
+    )
+
+    message = types.BidiSessionServerMessage(
+        session_output=types.SessionOutput(turn_completed=True)
+    )
+    json_format.ParseDict(
+        {
+            "sessionOutput": {
+                "payload": {"transferToNga": "projects/p/locations/us/apps/a"}
+            }
+        },
+        message._pb,
+        ignore_unknown_fields=True,
+    )
+    json_data = json_format.MessageToJson(
+        message._pb, preserving_proto_field_name=False
+    )
+
+    handler._on_message(MagicMock(), json_data)
+
+    assert handler._self_terminated_transfer is True
+    drained = []
+    while not handler.response_queue.empty():
+        drained.append(handler.response_queue.get_nowait())
+    assert {"session_ended": True} in drained

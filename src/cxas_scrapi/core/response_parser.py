@@ -23,6 +23,19 @@ from google.protobuf.json_format import MessageToDict
 
 logger = logging.getLogger(__name__)
 
+# Transfer directives that hand the session off to another agent with no
+# paired end_session (self-terminating vendors, flows >= 0.42.0): the directive
+# IS the teardown. Callers waiting on a bidi stream must treat one as the end of
+# the session, or they block for an end_session that never arrives and time out.
+SELF_TERMINATING_TRANSFER_KEYS = ("transferToNga", "transferToDialogflow")
+
+
+def payload_ends_session(payload_val: Any) -> bool:
+    """True if a custom payload carries a self-terminating transfer."""
+    return isinstance(payload_val, dict) and any(
+        key in payload_val for key in SELF_TERMINATING_TRANSFER_KEYS
+    )
+
 
 def expand_pb_struct(pb_struct: Any) -> Any:
     """Helper to recursively convert protobuf Struct/Map/Message to standard
@@ -238,6 +251,8 @@ class ParsedSessionResponse:
                 self.detailed_trace.append(
                     f"Custom Payload (Output): {payload_val}"
                 )
+                if payload_ends_session(payload_val):
+                    self.session_ended = True
 
             # Top-level tool calls
             tc_msg = getattr(output, "tool_calls", None)
@@ -392,6 +407,8 @@ class ParsedSessionResponse:
                                 self.detailed_trace.append(
                                     f"Custom Payload: {payload_val}"
                                 )
+                                if payload_ends_session(payload_val):
+                                    self.session_ended = True
 
                     # Also check action transfer at the message level
                     actions = getattr(message, "actions", None)

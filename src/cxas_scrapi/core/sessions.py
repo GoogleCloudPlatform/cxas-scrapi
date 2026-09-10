@@ -60,7 +60,11 @@ import contextlib
 
 from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
-from cxas_scrapi.core.response_parser import ParsedSessionResponse
+from cxas_scrapi.core.response_parser import (
+    ParsedSessionResponse,
+    expand_pb_struct,
+    payload_ends_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -342,6 +346,9 @@ class BidiSessionHandler:
         self._close_status_code: int | None = None
         self._close_msg: str | None = None
         self._connection_error: BaseException | None = None
+        # Set once a self-terminating transfer payload is seen: the session is
+        # over, so the socket close that follows is the expected teardown.
+        self._self_terminated_transfer = False
 
         # Setup continuous background noise segment if provided
         self.bg_noise_segment = None
@@ -829,8 +836,44 @@ class BidiSessionHandler:
                         }
                     )
 
+            # A self-terminating transfer (transferToNga /
+            # transferToDialogflow) hands off with the payload ALONE and no
+            # end_session; the server then closes the socket
+            # (failed_precondition "goodbye"). turn_completed may or may not
+            # fire first, so emit the turn here (if not already flushed) to
+            # capture the transfer, end the session, and mark it so the
+            # impending close reads as a clean teardown, not a connection
+            # error.
+            if (
+                self.interactive
+                and not self._self_terminated_transfer
+                and self.response_queue is not None
+                and response.session_output
+                and self._output_ends_session(response.session_output)
+            ):
+                self._self_terminated_transfer = True
+                if self.current_turn_outputs:
+                    self.response_queue.put(
+                        ScrapiRunSessionResponse(
+                            original_response=types.RunSessionResponse(
+                                outputs=list(self.current_turn_outputs)
+                            ),
+                            agent_audio_paths={},
+                        )
+                    )
+                    self.current_turn_outputs = []
+                self.response_queue.put({"session_ended": True})
+
         except Exception as e:
             logging.debug("Failed to parse message: %s", e)
+
+    @staticmethod
+    def _output_ends_session(session_output: typing.Any) -> bool:
+        """True if a session_output carries a self-terminating transfer."""
+        payload = getattr(session_output, "payload", None)
+        if not payload:
+            return False
+        return payload_ends_session(expand_pb_struct(payload))
 
     def _should_skip_output(self, response: typing.Any) -> bool:
         """Filters comfort-noise/ack packets and stale-turn output.
@@ -899,12 +942,19 @@ class BidiSessionHandler:
         # Stash connection-level errors
         self._connection_error = error
         if self.response_queue is not None:
-            self.response_queue.put(
-                {
-                    "session_ended": True,
-                    "connection_error": error,
-                }
-            )
+            if self._self_terminated_transfer:
+                # A self-terminating transfer already ended the session; the
+                # socket close that follows (failed_precondition "goodbye") is
+                # the expected teardown, not a connection failure -- report a
+                # clean end.
+                self.response_queue.put({"session_ended": True})
+            else:
+                self.response_queue.put(
+                    {
+                        "session_ended": True,
+                        "connection_error": error,
+                    }
+                )
 
     def _on_close(
         self,
