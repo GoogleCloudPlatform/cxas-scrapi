@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cxas-scrapi"
-version = "1.8.0"
+version = "1.9.0"
 description = "A high level scripting API for CX Agent Studio developers."
 readme = "README.md"
 authors = [

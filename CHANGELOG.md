@@ -1,6 +1,76 @@
 # Changelog
 
 
+## [1.9.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.8.0...v1.9.0) (2026-09-11)
+
+
+### Features
+
+* add declarative autolabeling rules engine, CLI, and cxas-autolabel-rules skillFeat/insights autolabel rules ([c686c1f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c686c1fdb9843ac117e0e8e77e64ae42ece4ee7c))
+* **cli:** add --version-name flag to cxas push ([6e1a38a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6e1a38a06656c011e77261c3f9fc4c498f0ba6a6))
+* **cli:** add --version-name flag to cxas push ([929d707](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/929d7078db95121b87dbc5d880a065703c01d073))
+* **cli:** add 'cxas versions create' command for app version snapshots ([2a20bd1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2a20bd111b933d81daed82d8ae56975b67003ce2))
+* **cli:** add 'cxas versions create' command for app version snapshots ([87616c7](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/87616c795cb2fa442e68a7475466ef7d938e6292))
+* **cli:** add configurable dashboard CLI commands ([2d3f931](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2d3f9318c5dfd3412b87ef60e304bd9039fd255a))
+* **cli:** resolve version display names in addition to version IDs in cxas pull ([2ac9428](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2ac94285f76fb17c010ab0463b126424d6ed2991))
+* **cli:** support pulling a specific app version with --version-id ([c11317b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c11317bea25b226253e9fc694ca91709d97826a1)), closes [#252](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/252)
+* **dashboards:** enhance vega-lite schema defaults and generative insights request payload ([423bb9b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/423bb9be20e3f0b61da6f2d09fcce6d8d11b3dc7))
+* eval coverage ([4f7b43c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4f7b43ca6adda0acad95a7e3654eee4e2ed1438c))
+* **evals:** support configurable vertex location parameter ([e341986](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e3419865f288751153cefa0fe77889c293b3780a))
+* **evals:** support configurable vertex location parameter ([5e2b307](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5e2b307ec16789fbcb5a36ec2d38665ef5e99b50))
+* **foundry:** add interactive evaluation reporter with LLM failure clustering to cxas-agent-foundry ([91997ea](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/91997eaad3c2fd65085c779a8b33b69cfa3de59b))
+* **foundry:** merge interactive evaluation reporter into cxas-agent-foundry ([147dcc2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/147dcc22154f830fed31ce275d464882aafceb4f))
+* **insights:** add autolabeling rules CRUD operations to Core SDK ([1f3e567](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1f3e56737440b2ff68a7fe3cb99291aa16b081d3))
+* **insights:** add dashboard and chart CRUD methods to core SDK ([fcf4d72](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/fcf4d725c4a9e8b4bd2a680a4a66af1d4f07622c))
+* **insights:** add declarative autolabel YAML sync and CLI tooling ([bb1397e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bb1397e54d1bb30261aa54888b35e9a19d467db8))
+* **insights:** add declarative configurable dashboards as code and cxas-configurable-dashboards skill ([1855297](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/18552972b38fd22e4ba8fdd9963bb9c3ebb55a74))
+* **insights:** add declarative dashboard sync and diff engine ([618141f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/618141f8c7a357017d7a5b12b18970a7e9063c9c))
+* **insights:** Add declarative reconciliation engine, app facade, and CLI commands ([55797a2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/55797a207213fe0f5e03b849e7c9311c79804d55))
+* **insights:** Add declarative reconciliation engine, app facade, and unit tests ([24a9cf8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/24a9cf851030439554a909bb64d56e19ed4187e3))
+* **migration:** build autonomous tool consolidation pipeline with deterministic alias resolution, improved acyclic topology wiring, and critical improvements and fixes ([#404](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/404)) ([2bbf193](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2bbf1935c2e337a1a59a8fb3a2ace25f525c9ecb))
+* **skills:** add cxas-autolabel-rules skill, cel cookbook, schema, and sync script ([7947815](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/794781567a272812be0c13766f3b881c9a64c428))
+* **skills:** add cxas-composite-voice-agent-optimizer skill ([#447](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/447)) ([775b9e9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/775b9e9f5e8c4ec16247ba539ae99ddd804703a7))
+* **skills:** add cxas-configurable-dashboards skill and cookbook ([de3c6c3](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/de3c6c3c36fdac3430acd74b1ff27a5a6b0fedf3))
+* support pulling a specific app version with --version-id ([67dd261](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/67dd261548e3d0cd8218d18d21bd5f3c5b64c65d))
+* **tracing:** add audio transcription, WER calculation, and BigQuery table reprocessing ([536740a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/536740a584717aa071d58b78a279c861597cd63a))
+* **tracing:** write updated turns to append-only BigQuery updates table ([20f2fcd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/20f2fcd8d397ccabc005579d55d1a3fce19f9105))
+* Update turn evals for tool_not_called and not_contains ([2162038](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2162038d7f5e16ef187aca14090cfd0254e7d019))
+
+
+### Bug Fixes
+
+* **bidi:** end sim session on self-terminating transfer payload ([17a2cca](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/17a2cca68db03b1379ff1bfd9f09e7564d9e85a7))
+* **bidi:** end sim session on self-terminating transfer payload ([182112e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/182112e85ed89ffa3b5cde3edae5d5fb3efed115))
+* **ci:** format code with ruff and isolate template file reads from mock_open ([3670138](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/36701388f6d0155f4ffd3bc156ba3e80668f923a))
+* **ci:** use built-in GITHUB_TOKEN for release-please ([f58e094](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f58e0942495fb47c2bf1225fe6a53e610e8eef81))
+* **core:** harden version resolution with collision detection and clean git history ([1a2a6f2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1a2a6f2c90471e0cf575e595a08311bb2869b57f))
+* **dashboards:** strip server generated fields before diff and restrict update mask to API supported fields ([10eb2dd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/10eb2dd6623a28358e2bd0217c14e4b7af65861f))
+* **deps:** update junit-framework monorepo to v6.1.3 ([40de1c2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/40de1c2a4d2a71b2775accace2d5877aaaab16a2))
+* **deps:** update junit-framework monorepo to v6.1.3 ([bbb2203](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bbb22032a9f47cfcdf2831ddc915225def036ab9))
+* **evals:** allow test_case max_turns and runtime overrides in simulation evals ([4f2a578](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4f2a5782e87d01ae55314d4436f32c0ce1a10b22))
+* **evals:** support test_case max_turns and runtime overrides in simulation evals ([70dc2f3](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/70dc2f3e6d04fa4c342e5ae91a18de5683428014))
+* **tracing:** update default transcription model to gemini-3.5-flash ([57c2225](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/57c2225c497d1d46d3e3520af4d89a4e2e4a1f89))
+
+
+### Documentation
+
+* add quotas and rate limits guide to getting-started ([3379e91](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3379e91a1c6eac9c902ac652dc386f3fed2294c4))
+* add quotas and rate limits guide to getting-started ([88bceba](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/88bceba059d907d32bb232bc94ab6acaa5ce40ad))
+* align quotas guide with Gemini Standard PayGo usage tiers and official documentation ([1a81dc3](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1a81dc30f7b61e6b01e0508ad554a1281a4e2bb1))
+* **callbacks:** document preemption vs LLM re-invocation lifecycle and EMPTY_RESPONSE prevention ([f3e6ccf](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f3e6ccf1c35f604ca54f5083c6668421ab756f25))
+* **cli:** document --version-name and versioning options for cxas push ([af98bc7](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/af98bc7c22f5b2b33818660680b230df7b59f5ad))
+* **core:** clarify display name ambiguity handling comment ([d3cff15](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d3cff15770d367f08cc3dd2331f5bfdab3307103))
+* **core:** simplify resolve_version_name docstring ([5da4cfe](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5da4cfec69c484a782bc86567d59769732df182e))
+* **skills:** add configurable dashboards design document ([8dc9d43](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8dc9d431f5f35b87bf32ad3c3a9a017d7815fbf6))
+* **skills:** add dashboard_sql_cookbook with conversation column definitions and recipes ([69e2993](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/69e2993a9785d9c9587b359ea64ccc4ab66f9efc))
+* **skills:** add production examples for regex detection and runtimeAnnotations in cel_cookbook ([c8a15ab](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c8a15ab1b94b9d09c6cbd1eec8e513133fccfb01))
+* **skills:** document cxas pull --version-id in agent foundry skill and AGENTS.md ([c30a311](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c30a31124d42a3e8fb9376d1a7fe2f5b6a8601ca))
+* **skills:** enforce camelCase field naming in cel_cookbook and SKILL.md ([e956ed3](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e956ed34bbed4258797c871aab29d1a9a5be3a84))
+* **skills:** expand conversation protobuf schema in cel_cookbook ([8dfbbe6](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8dfbbe695701f021e80fed839b76c0c44e11eb55))
+* **skills:** remove conversation.labels and qualityMetadata from cel_cookbook ([bf5a3dd](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bf5a3dd9e55434bb18c0eccc3f463695c55f4ff3))
+* **skills:** update cxas-agent-foundry and AGENTS.md for versions CLI ([fc5a1dc](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/fc5a1dc54f0d9f703479c6c446b3d6e4df016411))
+* **tracing:** document audio transcription, WER evaluation, and BigQuery reprocessing ([fab7925](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/fab7925825c233d9d55ad08e9176cece0822e133))
+
 ## [1.8.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.7.0...v1.8.0) (2026-07-30)
 
 
