@@ -66,6 +66,7 @@ dependencies = [
   "ratelimit",
   "pydub",
   "audioop-lts; python_version >= '3.13'",
+  "opencc",
 ]
 
 [project.optional-dependencies]
