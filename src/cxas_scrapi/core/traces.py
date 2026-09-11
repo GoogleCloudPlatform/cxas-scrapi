@@ -1280,7 +1280,191 @@ class Traces(Common):
             "top_transfer_targets": _top_n(per_transfer, 10),
         }
 
-    # ----------------------------- bundle/bug -------------------------------
+    def estimate_quota(
+        self,
+        peak_text_cpm: int = 0,
+        peak_audio_cpm: int = 0,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        time_filter: str = "7d",
+        source_filter: str | None = None,
+        limit: int = 200,
+        max_workers: int = 8,
+    ) -> dict[str, Any]:
+        """Estimates production quotas based on sampled traces separately for text and audio.
+
+        Args:
+            peak_text_cpm: Estimated peak text conversations per minute.
+            peak_audio_cpm: Estimated peak audio conversations per minute.
+            start_time: ISO string for the start of the trace inclusion window.
+            end_time: ISO string for the end of the trace inclusion window.
+            time_filter: Time window for sampling traces.
+            source_filter: Optional source filter.
+            limit: Max number of traces to sample for the average.
+            max_workers: Concurrency for fetching traces.
+
+        Returns:
+            A dictionary containing quota estimations split by channel.
+        """
+        rows = self.list(
+            time_filter=time_filter,
+            source_filter=source_filter,
+            limit=limit,
+        )
+        if not rows:
+            return {
+                "error": "No conversations found to estimate quotas.",
+                "traffic_assumptions": {
+                    "peak_text_cpm": peak_text_cpm,
+                    "peak_audio_cpm": peak_audio_cpm
+                }
+            }
+
+        fetched_items = []
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(self.get_normalized, r["id"]): r for r in rows}
+            for fut in as_completed(futures):
+                try:
+                    fetched_items.append({
+                        "normalized": fut.result(),
+                        "channel": futures[fut].get("channel", "TEXT")
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to fetch {futures[fut]['id']}: {e}")
+
+        def _init_stats():
+            return {
+                "total_tokens_input": 0, "total_tokens_output": 0, 
+                "total_tool_calls": 0, "total_turns": 0, 
+                "total_duration_ms": 0, "sample_size": 0
+            }
+
+        stats_by_channel = {}
+
+        for item in fetched_items:
+            n = item["normalized"]
+            conv_dict = n.get("raw", {})
+            start_iso = n.get("start_time")
+            
+            if start_time and start_iso and start_iso < start_time:
+                continue
+            if end_time and start_iso and start_iso > end_time:
+                continue
+            
+            turn_modalities = {"VOICE": 0, "CHAT": 0, "UNSPECIFIED": 0}
+            
+            for turn in conv_dict.get("turns", []):
+                rs = turn.get("root_span") or {}
+                attrs = rs.get("attributes") or {}
+                
+                input_types = attrs.get("input types", attrs.get("input_types", []))
+                input_str = str(input_types).lower()
+                
+                if "audio" in input_str:
+                    turn_modalities["VOICE"] += 1
+                elif "text" in input_str:
+                    turn_modalities["CHAT"] += 1
+                else:
+                    turn_modalities["UNSPECIFIED"] += 1
+
+            ch = "UNSPECIFIED"
+            if conv_dict.get("turns", []):
+                # Select the highest count. In case of ties, max() favors the keys that appear first in the dict.
+                # So if TEXT and AUDIO tie, VOICE wins (which is usually safe for capacity).
+                ch = max(turn_modalities, key=turn_modalities.get)
+
+            if ch not in stats_by_channel:
+                stats_by_channel[ch] = _init_stats()
+            
+            b = stats_by_channel[ch]
+            b["total_turns"] += n.get("num_turns", 0)
+            
+            totals = n.get("totals") or {}
+            
+            t = totals.get("tokens") or {}
+            b["total_tokens_input"] += t.get("input", 0)
+            b["total_tokens_output"] += t.get("output", 0)
+
+            sc = totals.get("span_counts") or {}
+            b["total_tool_calls"] += (sc.get("Tool", 0) + sc.get("ToolUse", 0))
+            b["total_duration_ms"] += totals.get("duration_ms", 0)
+            b["sample_size"] += 1
+
+        def _compute_averages(b):
+            s = b["sample_size"]
+            if s == 0:
+                return {}
+            avg_duration_sec = (b["total_duration_ms"] / 1000.0) / s
+            return {
+                "tokens_input": b["total_tokens_input"] / s,
+                "tokens_output": b["total_tokens_output"] / s,
+                "tokens_total": (b["total_tokens_input"] + b["total_tokens_output"]) / s,
+                "tool_calls": b["total_tool_calls"] / s,
+                "turns": b["total_turns"] / s,
+                "duration_seconds": avg_duration_sec
+            }
+
+        def _compute_quotas(avgs, peak_cpm):
+            q = {
+                "chat_token_quota": avgs.get("tokens_total", 0) * peak_cpm,
+                "execute_tool_quota": avgs.get("tool_calls", 0) * peak_cpm,
+                "streaming_analyze_content_quota": avgs.get("turns", 0) * peak_cpm,
+            }
+            if "duration_seconds" in avgs:
+                q["audio_seconds_per_minute"] = avgs["duration_seconds"] * peak_cpm
+                q["concurrent_bidi_sessions"] = (peak_cpm / 60.0) * avgs["duration_seconds"]
+            return q
+
+        ret_avgs = {}
+        ret_quotas = {}
+        
+        # Determine the peak cpm dynamically per channel based on inputs (fallback to text cpm for unknown)
+        for ch, stats in stats_by_channel.items():
+            avgs = _compute_averages(stats)
+            ret_avgs[ch.lower()] = avgs
+            
+            cpm = peak_text_cpm
+            if ch == "VOICE":
+                cpm = peak_audio_cpm
+            
+            ret_quotas[ch.lower()] = _compute_quotas(avgs, cpm)
+            
+        return {
+            "traffic_assumptions": {
+                "peak_text_cpm": peak_text_cpm,
+                "peak_audio_cpm": peak_audio_cpm,
+                "sample_size": len([f for f in futures if "error" not in futures[f]]),
+                "samples_per_channel": {ch: stats["sample_size"] for ch, stats in stats_by_channel.items()}
+            },
+            "averages_per_conversation": ret_avgs,
+            "estimated_quotas_per_minute": ret_quotas
+        }
+        
+        if peak_audio_cpm > 0 and audio_avgs:
+            audio_sec_per_min = audio_avgs["duration_seconds"] * peak_audio_cpm
+            concurrent_bidi = (peak_audio_cpm / 60.0) * audio_avgs["duration_seconds"]
+            estimates["audio"] = {
+                "chat_token_quota": audio_avgs["tokens_total"] * peak_audio_cpm,
+                "execute_tool_quota": audio_avgs["tool_calls"] * peak_audio_cpm,
+                "streaming_analyze_content_quota": audio_avgs["turns"] * peak_audio_cpm,
+                "audio_seconds_per_minute": audio_sec_per_min,
+                "concurrent_bidi_sessions": concurrent_bidi
+            }
+
+        return {
+            "traffic_assumptions": {
+                "peak_text_cpm": peak_text_cpm,
+                "peak_audio_cpm": peak_audio_cpm,
+                "sample_size": len(fetched_items),
+                "audio_samples": stats_by_channel["AUDIO"]["sample_size"],
+                "text_samples": stats_by_channel["TEXT"]["sample_size"]
+            },
+            "averages_per_conversation": {
+                "text": text_avgs,
+                "audio": audio_avgs
+            },
+            "estimated_quotas_per_minute": estimates
+        }
 
     def bundle(
         self,
