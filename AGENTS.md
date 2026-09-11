@@ -35,6 +35,7 @@ This workspace provides several specialized AI skills to assist with development
 
 - **`cxas-agent-foundry`**: The primary skill for the end-to-end GECX agent lifecycle. Use this for building agents from PRDs, generating and running evals, debugging failures, and syncing code.
 - **`cxas-autolabel-rules`**: Author, validate, and manage Contact Center AI (CCAI) Insights Autolabeling Rules declaratively via YAML and CEL.
+- **`cxas-composite-voice-agent-optimizer`**: Audits, optimizes, and remediates CXAS agent configurations for Gemini Composite V1 voice naturalness, persona styling, and multi-language coverage.
 - **`cxas-configurable-dashboards`**: Author, validate, and manage CCAI Insights Configurable Dashboards declaratively via YAML, Vega-Lite specs, and SQL metrics queries.
 - **`cxas-sim-eval`**: A utility skill for converting CXAS golden evaluations to SCRAPI SimulationEvals test cases.
 

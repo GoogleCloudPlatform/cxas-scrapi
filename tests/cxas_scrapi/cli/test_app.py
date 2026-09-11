@@ -430,6 +430,8 @@ def _lint_args(
         only=None,
         rule=None,
         fix=False,
+        model=None,
+        model_only=False,
         **_LINT_RESOURCE_DEFAULTS,
     )
     defaults.update(overrides)
@@ -607,6 +609,59 @@ def test_app_lint_rule_filter(capsys: typing.Any, tmp_path: typing.Any) -> None:
         assert r["rule_id"] == "I001", (
             f"Expected only I001 with --rule I001, got {r['rule_id']}"
         )
+
+
+def test_app_lint_list_rules_with_model(capsys: typing.Any) -> None:
+    args = _lint_args(
+        list_rules=True, model="gemini-composite-v1", model_only=True
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_lint(args)
+
+    assert excinfo.value.code == 0
+    captured = capsys.readouterr()
+    assert "I017" in captured.out
+    assert "Available Rules" in captured.out
+    # Agnostic rules should not be listed when model_only=True
+    assert "I001" not in captured.out
+
+
+def test_app_lint_model_only(capsys: typing.Any, tmp_path: typing.Any) -> None:
+    _make_lint_app(tmp_path)
+    # Put an inert tag in instruction.txt
+    agent_dir = tmp_path / "agents" / "root_agent"
+    (agent_dir / "instruction.txt").write_text(
+        "<role>test</role>"
+        "<persona>test</persona>"
+        "<taskflow><subtask name='main'>"
+        "<step>[short pause] do it</step>"
+        "</subtask></taskflow>"
+    )
+    args = _lint_args(
+        tmp_path,
+        json_output=True,
+        model="gemini-composite-v1",
+        model_only=True,
+    )
+
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        cli_app.app_lint(args)
+
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    import json  # noqa: PLC0415
+
+    results = json.loads(captured.out)
+    rule_ids = {r["rule_id"] for r in results}
+    assert "I017" in rule_ids
+    assert "A007" in rule_ids
+    # Model-agnostic rules should be excluded
+    assert "I001" not in rule_ids
+    assert "A001" not in rule_ids
 
 
 def test_app_push_zip_timestamp_touch(

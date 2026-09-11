@@ -544,10 +544,13 @@ def app_lint(args: argparse.Namespace) -> None:
 
     registry = build_registry()
 
+    model_override = getattr(args, "model", None)
+    model_only = getattr(args, "model_only", False)
+
     if getattr(args, "list_rules", False):
         print("CXAS Agent Linter — Available Rules")
         print("=" * 60)
-        registry.list_rules()
+        registry.list_rules(model=model_override, model_only=model_only)
         sys.exit(0)
 
     json_output = getattr(args, "json_output", False)
@@ -625,19 +628,23 @@ def app_lint(args: argparse.Namespace) -> None:
             )
         sys.exit(1)
 
-    context = build_context(project_root, config, discovery)
+    context = build_context(
+        project_root, config, discovery, model_override=model_override
+    )
 
     if not json_output:
         print(f"Linting app: {discovery.app_root.name}")
         print("=" * 60)
+        if context.model:
+            print(f"  Model:     {context.model}")
         agents = discovery.discover_agents()
         tools = discovery.discover_tools()
         callbacks = discovery.discover_callbacks()
         evals = discovery.discover_evals()
-        print(f"  Agents: {len(agents)}")
-        print(f"  Tools: {len(tools)}")
+        print(f"  Agents:    {len(agents)}")
+        print(f"  Tools:     {len(tools)}")
         print(f"  Callbacks: {len(callbacks)}")
-        print(f"  Evals: {len(evals)}")
+        print(f"  Evals:     {len(evals)}")
 
     categories = None
     if getattr(args, "validate_only", False):
@@ -659,6 +666,7 @@ def app_lint(args: argparse.Namespace) -> None:
         report,
         categories=categories,
         specific_rules=specific_rules,
+        model_only=model_only,
     )
 
     report.print_and_exit(json_output, show_fixes)

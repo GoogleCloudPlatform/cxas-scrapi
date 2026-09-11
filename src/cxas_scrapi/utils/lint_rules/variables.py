@@ -53,9 +53,10 @@ SCHEMA_TYPE_TO_PY = {
 # Builtin instruction variables that bypass declaration checks.
 INSTRUCTION_BUILTINS = {"current_date"}
 
-# Template ref pattern — matches {var} and {var.child}. Excludes @TOOL/@AGENT
-# directives (those have a colon: {@TOOL: name}) and double-brace forms.
-TEMPLATE_RE = re.compile(r"(?<!\{)\{([a-zA-Z_][\w.]*)\}(?!\})")
+# Template ref pattern — matches single {var} and double {{var}} syntax (plus
+# dotted paths like {var.child} and {{var.child}}). Excludes {@TOOL: name}
+# and {@AGENT: name} directives.
+TEMPLATE_RE = re.compile(r"\{{1,2}(?!@)([a-zA-Z_][\w.]*)\}{1,2}")
 
 # Eval YAML keys that contain nested var assignments shaped like
 # ``{var_name: {nested_key: value, ...}, ...}``.
