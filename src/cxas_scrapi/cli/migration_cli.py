@@ -928,7 +928,9 @@ def run_end_to_end(args: argparse.Namespace) -> None:
         # so the always-on default doesn't silently re-shape the app
         # under this profile. Stage 1/2/3 stay skipped; no grouping gate.
         optimize_for_cxas = False
-        persist_bundle = False
+        persist_bundle = not getattr(args, "no_persist", False) and getattr(
+            args, "persist_bundle", True
+        )
         gen_report = True
         architecture = "hub-and-spoke"
         gen_unit_tests = False
@@ -1011,6 +1013,23 @@ def run_end_to_end(args: argparse.Namespace) -> None:
     start_tee_logging(config.target_name)
     try:
         asyncio.run(_main())
+        if config.persist_bundle:
+            bundle_path = f"{config.target_name}_ir.json"
+            bundle = IRBundle(
+                config=config,
+                source_agent_data=agent_data,
+                ir=service.ir,
+                app_url=(
+                    f"https://ces.cloud.google.com/projects/{config.project_id}"
+                    f"/locations/{service.location}/apps/{service.ir.metadata.app_id}"
+                    if service.ir.metadata.app_id
+                    else None
+                ),
+            )
+            service.persist_bundle(
+                bundle, bundle_path, phase="migrate", status="ok"
+            )
+            _sub_console.print(f"[green]IR bundle saved → {bundle_path}[/]")
         _sub_console.print(
             f"[bold green]Migration complete:[/] {config.target_name}"
         )
@@ -1041,8 +1060,8 @@ def run_stage_1(args: argparse.Namespace) -> None:
     async def _main() -> typing.Any:
         return await service.run_stage_1(
             bundle=bundle,
-            grouping_json_path=args.grouping_json,
-            version_label=args.version_label,
+            grouping_json_path=getattr(args, "grouping_json", None),
+            version_label=getattr(args, "version_label", "0.0.3"),
             dedup_version_label=getattr(args, "dedup_version_label", None)
             or "0.0.2",
             persist_bundle_path=persist_path,
