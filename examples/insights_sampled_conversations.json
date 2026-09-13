@@ -1,0 +1,404 @@
+[
+  {
+    "conversation_id": "1b61f4a8-0d52-4cd6-86dc-0c5a8ef292ae",
+    "conversation_name": "projects/693473348399/locations/us/conversations/1b61f4a8-0d52-4cd6-86dc-0c5a8ef292ae",
+    "turns": [
+      {
+        "speaker": "END_USER",
+        "text": "hey what the hell"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Let's keep the language clean and appropriate for this, okay? No need for that kind of stuff in the future."
+      }
+    ],
+    "expected_answers": {}
+  },
+  {
+    "conversation_id": "f59734a7-9ded-45da-9eb6-9ce0e260497d",
+    "conversation_name": "projects/693473348399/locations/us/conversations/f59734a7-9ded-45da-9eb6-9ce0e260497d",
+    "turns": [
+      {
+        "speaker": "END_USER",
+        "text": "hey"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "my friend was saying you guys sell organic pet food at the store, is that true? I couldn't find it online..."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Thanks for trying out our<a href=\"https://cloud.google.com/customer-engagement-ai/conversational-agents/\" target=\"_blank\">Next Gen CES agent building platform</a>!\n            \nI'm a sample agent designed to be an educational tool, showing some best practices for building agents on our platform.\n\nSince you've ventured off the main path, let me take a moment to highlight some key features of our platform you can explore in the UI:\n\n*   \u2692\ufe0f **Build Mode:** This is your current view. Here you can preview your agent in our simulator (where we're talking now!), build multi-agent architectures, add tools, set up guardrails, and manage version control for your agent application. Check out the right tool bar for more settings.\n*   \ud83d\udccb **Evaluate Mode:** This mode allows you to test and understand the performance of the agent you are building. We've preloaded some evaluations for you to look into. You can find the Evaluate Mode at the top of the screen.\n*   \ud83d\ude80 **Deploy Mode:** This mode allows you to deploy your agent to the world using our web chat interface, telephony integrations, or our API. You can find the Deploy Mode at the top of the screen, next to Evaluate.\n\nI will now transfer you back to the main retail agent to continue the conversation."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Now that we've clarified that, is there anything I can help you with regarding plant identification or product recommendations?"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Welcome back, Patrick! I see you've already got some items in your Cymbal Home & Garden cart. How can I help you today?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "ah ok ok, just a demo."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Is there anything else I can help you with today regarding plant identification or product recommendations?"
+      }
+    ],
+    "expected_answers": {}
+  },
+  {
+    "conversation_id": "effa2857-ef4d-4524-92fc-fffb9f0c0d5f",
+    "conversation_name": "projects/693473348399/locations/us/conversations/effa2857-ef4d-4524-92fc-fffb9f0c0d5f",
+    "turns": [
+      {
+        "speaker": "END_USER",
+        "text": "yeah I have 40 different petunias that I just bought in various colors and I wanted to know if I'm getting the right potting soil and fertilizer for them. can you see if what I have in my cart seems good?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "hi"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Okay, I see you have petunias! For petunias, a \"Bloom Booster Potting Mix\" and \"Flower Power Fertilizer\" are often recommended because they provide the extra nutrients and specific formulation that flowering annuals like petunias love.\n\nWhat do you think of these options?"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Welcome back, Patrick! I see you've already got some items in your Cymbal Home & Garden cart. How can I help you today?"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "uhh I'll take a look at these later. I need to run right now. bye"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Okay, no problem. Feel free to come back any time."
+      }
+    ],
+    "expected_answers": {}
+  },
+  {
+    "conversation_id": "4fbd4dbb-0ee9-4c41-862d-a12fe5dc3561",
+    "conversation_name": "projects/693473348399/locations/us/conversations/4fbd4dbb-0ee9-4c41-862d-a12fe5dc3561",
+    "turns": [
+      {
+        "speaker": "END_USER",
+        "text": "hey can I buy shovels from you guys?\n"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Thanks for trying out our<a href=\"https://cloud.google.com/customer-engagement-ai/conversational-agents/\" target=\"_blank\">Next Gen CES agent building platform</a>!\n            \nI'm a sample agent designed to be an educational tool, showing some best practices for building agents on our platform.\n\nSince you've ventured off the main path, let me take a moment to highlight some key features of our platform you can explore in the UI:\n\n*   \u2692\ufe0f **Build Mode:** This is your current view. Here you can preview your agent in our simulator (where we're talking now!), build multi-agent architectures, add tools, set up guardrails, and manage version control for your agent application. Check out the right tool bar for more settings.\n*   \ud83d\udccb **Evaluate Mode:** This mode allows you to test and understand the performance of the agent you are building. We've preloaded some evaluations for you to look into. You can find the Evaluate Mode at the top of the screen.\n*   \ud83d\ude80 **Deploy Mode:** This mode allows you to deploy your agent to the world using our web chat interface, telephony integrations, or our API. You can find the Deploy Mode at the top of the screen, next to Evaluate.\n\nI will now transfer you back to the main retail agent to continue the conversation."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Now that we've clarified that, is there anything I can help you with regarding plant identification or product recommendations?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "no thanks, I'm out! goodbye"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      }
+    ],
+    "expected_answers": {}
+  },
+  {
+    "conversation_id": "effcdcee-00f6-45c4-90c9-50250acb3cf7",
+    "conversation_name": "projects/693473348399/locations/us/conversations/effcdcee-00f6-45c4-90c9-50250acb3cf7",
+    "turns": [
+      {
+        "speaker": "END_USER",
+        "text": "hi"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Welcome back, Patrick! I see you've already got some items in your Cymbal Home & Garden cart. How can I help you today?"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "yeah I have 40 different petunias that I just bought in various colors and I wanted to know if I'm getting the right potting soil and fertilizer for them. can you see if what I have in my cart seems good?"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Okay, so you've got 40 petunias and want to make sure you have the right soil and fertilizer. I've looked into it, and it seems like petunias really thrive in full sun with well-drained, moderately fertile soil.\n\nBased on that, I'd recommend the \"Bloom Booster Potting Mix\" because it provides extra nutrients that petunias love, and \"Flower Power Fertilizer,\" which is specifically formulated for flowering annuals.\n\nWhat do you think of these options?"
+      }
+    ],
+    "expected_answers": {}
+  },
+  {
+    "conversation_id": "378cddd9-9e6b-4ebe-862c-043dade92712",
+    "conversation_name": "projects/693473348399/locations/us/conversations/378cddd9-9e6b-4ebe-862c-043dade92712",
+    "turns": [
+      {
+        "speaker": "END_USER",
+        "text": "hey what the hell"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Let's keep the language clean and appropriate for this, okay? No need for that kind of stuff in the future."
+      },
+      {
+        "speaker": "END_USER",
+        "text": "yeah whatever. bye"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Okay, no problem. Feel free to come back any time.\n"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      }
+    ],
+    "expected_answers": {}
+  },
+  {
+    "conversation_id": "22107c00-7e6f-479b-b401-ce2a38717e5c",
+    "conversation_name": "projects/693473348399/locations/us/conversations/22107c00-7e6f-479b-b401-ce2a38717e5c",
+    "turns": [
+      {
+        "speaker": "END_USER",
+        "text": "my friend was saying you guys sell organic pet food at the store, is that true? I couldn't find it online..."
+      },
+      {
+        "speaker": "END_USER",
+        "text": "hey"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Thanks for trying out our<a href=\"https://cloud.google.com/customer-engagement-ai/conversational-agents/\" target=\"_blank\">Next Gen CES agent building platform</a>!\n            \nI'm a sample agent designed to be an educational tool, showing some best practices for building agents on our platform.\n\nSince you've ventured off the main path, let me take a moment to highlight some key features of our platform you can explore in the UI:\n\n*   \u2692\ufe0f **Build Mode:** This is your current view. Here you can preview your agent in our simulator (where we're talking now!), build multi-agent architectures, add tools, set up guardrails, and manage version control for your agent application. Check out the right tool bar for more settings.\n*   \ud83d\udccb **Evaluate Mode:** This mode allows you to test and understand the performance of the agent you are building. We've preloaded some evaluations for you to look into. You can find the Evaluate Mode at the top of the screen.\n*   \ud83d\ude80 **Deploy Mode:** This mode allows you to deploy your agent to the world using our web chat interface, telephony integrations, or our API. You can find the Deploy Mode at the top of the screen, next to Evaluate.\n\nI will now transfer you back to the main retail agent to continue the conversation."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Welcome back, Patrick! I see you've already got some items in your Cymbal Home & Garden cart. How can I help you today?"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "ah ok ok, just a demo."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Now that we've clarified that, is there anything I can help you with regarding plant identification or product recommendations?"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Sounds good! Is there anything else I can help you with today? Perhaps with your current cart or some product recommendations?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "nah I'm good, have a nice day! bye"
+      }
+    ],
+    "expected_answers": {}
+  },
+  {
+    "conversation_id": "d2ca9110-b281-41b7-9e6f-a896e95d833d",
+    "conversation_name": "projects/693473348399/locations/us/conversations/d2ca9110-b281-41b7-9e6f-a896e95d833d",
+    "turns": [
+      {
+        "speaker": "END_USER",
+        "text": "Hello, I need to talk about an item in my cart."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Welcome back, Patrick! I see you've already got some items in your Cymbal Home & Garden cart. How can I help you today?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "Yes, I currently have 'All-Purpose Fertilizer' in my cart, but I'm looking for something specifically better for my rose bushes."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Okay, I see you have \"All-Purpose Fertilizer\" in your cart. For your rose bushes, I have a couple of excellent recommendations that are specifically formulated to help them thrive:\n\n1.  **Premium Rose & Flower Soil Mix:** This is designed for strong roots and vibrant blooms.\n2.  **Systemic Rose & Flower Care:** This is a 3-in-1 formula that provides fertilizer, insect control, and disease prevention for roses.\n\nWhat do you think of these options?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "Which one of these would you recommend more for fertilizing my rose bushes?"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "For fertilizing your rose bushes, I would recommend the **Systemic Rose & Flower Care**. It's a 3-in-1 formula that not only fertilizes but also provides insect control and disease prevention, which is great for roses.\n\nWould you like me to swap the \"All-Purpose Fertilizer\" in your cart for the \"Systemic Rose & Flower Care\"?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "Yes, that sounds good. Please swap it in my cart."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Done! I've updated your cart with the Systemic Rose & Flower Care.\n\nIs there anything else I can help you with today regarding plant identification or product recommendations?"
+      }
+    ],
+    "expected_answers": {}
+  },
+  {
+    "conversation_id": "016fefba-c37b-4b6f-92d1-16203195271f",
+    "conversation_name": "projects/693473348399/locations/us/conversations/016fefba-c37b-4b6f-92d1-16203195271f",
+    "turns": [
+      {
+        "speaker": "END_USER",
+        "text": "Hi, I need to swap out an item in my shopping cart."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Welcome back, Patrick! I see you've already got some items in your Cymbal Home & Garden cart. How can I help you today?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "I have 'All-Purpose Fertilizer' in my cart, and I'd like to swap it for a rose-specific fertilizer."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Okay, Patrick, I see you're looking for a rose-specific fertilizer. I have a couple of recommendations that would be great for your roses:\n\nFirst, there's \"Systemic Rose & Flower Care\" which is a 3-in-1 formula providing fertilizer, insect control, and disease prevention.\n\nWhat do you think of these options?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "That sounds good, what's the other option?"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "My apologies, Patrick! The other option I was referring to is the \"Premium Rose & Flower Soil Mix,\" which is formulated for strong roots and vibrant blooms in rose bushes.\n\nWould you like me to swap the 'All-Purpose Fertilizer' in your cart for the \"Systemic Rose & Flower Care\" or the \"Premium Rose & Flower Soil Mix\"?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "I'll take the 'Systemic Rose & Flower Care'. Please swap it for the 'All-Purpose Fertilizer' in my cart."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Done! I've updated your cart with the 'Systemic Rose & Flower Care'. Is there anything else I can help you with today?"
+      },
+      {
+        "speaker": "END_USER",
+        "text": "Thank you, that's all for today."
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      }
+    ],
+    "expected_answers": {}
+  },
+  {
+    "conversation_id": "2a9b2eb6-3605-4419-b9cf-48ccaadcb8fc",
+    "conversation_name": "projects/693473348399/locations/us/conversations/2a9b2eb6-3605-4419-b9cf-48ccaadcb8fc",
+    "turns": [
+      {
+        "speaker": "END_USER",
+        "text": "hi"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Call]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "[Tool Response]"
+      },
+      {
+        "speaker": "AUTOMATED_AGENT",
+        "text": "Welcome back, Patrick! I see you've already got some items in your Cymbal Home & Garden cart. How can I help you today?"
+      }
+    ],
+    "expected_answers": {}
+  }
+]
