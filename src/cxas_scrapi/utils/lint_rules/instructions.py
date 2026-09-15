@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Instruction lint rules (I001-I017).
+"""Instruction lint rules (I001-I016).
 
 Validates agent instruction files against CXAS design guide best practices.
 """
@@ -1004,93 +1004,3 @@ class ProseStateMachine(Rule):
                 ),
             )
         ]
-
-
-# --- I017: inert acoustic tags in composite models -----------------------
-
-
-@rule("instructions", models=["gemini-composite-v1"])
-class CompositeInertTags(Rule):
-    id = "I017"
-    name = "composite-inert-tags"
-    description = (
-        "Instruction contains ineffective or inert acoustic emotion tags "
-        "for Gemini Composite V1"
-    )
-    default_severity = Severity.WARNING
-
-    INERT_TAGS = (
-        "warm",
-        "calm",
-        "clear",
-        "professional",
-        "empathetic",
-        "reassuring",
-        "sympathetic",
-        "hope",
-        "happy",
-        "crying",
-        "awe",
-        "fearful",
-        "surprised",
-        "cautious",
-        "alarm",
-        "anxiety",
-        "relief",
-        "tension",
-        "determination",
-        "enthusiasm",
-        "adoration",
-        "interest",
-        "curiosity",
-        "annoyance",
-        "aggression",
-        "nervousness",
-        "neutral",
-        "negative",
-        "positive",
-        "admiration",
-        "disgusted",
-        "short pause",
-        "long pause",
-        "short_pause",
-        "formal",
-        "casual",
-        "mumbles",
-        "stammers",
-        "breathless",
-        "panic",
-    )
-
-    _PATTERN = re.compile(
-        r"\[\s*(?:" + "|".join(re.escape(t) for t in INERT_TAGS) + r")\s*\]"
-        r"|\[\s*/?\s*prosody\b[^\]]*\]"
-        r"|<\s*/?\s*prosody\b[^>]*>",
-        re.IGNORECASE,
-    )
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        rel = str(file_path.relative_to(context.project_root))
-        results = []
-        for line_num, line in enumerate(content.splitlines(), start=1):
-            for match in self._PATTERN.finditer(line):
-                tag_found = match.group(0)
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        line=line_num,
-                        message=(
-                            f"Inert acoustic tag '{tag_found}' found in "
-                            "instruction. This tag produces zero acoustic "
-                            "effect in Gemini Composite V1."
-                        ),
-                        fix=(
-                            "Remove the inert bracketed tag or use effective "
-                            "composite vocal tags (e.g. [whispers], [sigh], "
-                            "[chuckles], [serious], [deadpan])."
-                        ),
-                    )
-                )
-        return results

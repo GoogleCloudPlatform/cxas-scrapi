@@ -113,12 +113,11 @@ ______________________________________________________________________
 
 The TTS engine synthesizes written text verbatim based on the Director's Note. This can include instructions on how to pronounce certain words or phrases, dates, numbers and other content.
 
-| Content Type | Poor Formatting (Robotic / Ambiguous) | Recommended Spoken Formatting |
+| Content Type | Poor Formatting (Robotic / Ambiguous) | Recommended Spoken Formatting in Director's Notes instructions |
 | :--- | :--- | :--- |
 | **Alphanumeric IDs** | "Code 8934B" | "eight nine three four ... B" (spaced with slight pause) |
 | **Numeric Values** | "Value is 15.50" | "fifteen fifty" or "fifteen dollars and fifty cents" |
 | **Dates** | "2026-04-15" or "04/15/2026" | "April fifteenth twenty twenty-six" |
-| **Micro-Pauses** | `[short pause]` (Inert tag) | `...` (Standard ellipsis) |
 | **Hesitations** | "Retrieving records." | "Let's see here... let me check that." |
 | **Phone Numbers** | "8005550199" | "eight zero zero ... five five five ... zero one nine nine" |
 
@@ -170,6 +169,11 @@ You are a real human being working in customer care—warm, patient, and highly 
 * Intonation & Emotion: Use natural, dynamic pitch variations to express active listening and engagement. Avoid sounding monotone, rigid, or like an automated recording. Let genuine human warmth guide your vocal melody.
 * Realism & Imperfections: If bridge words (like "um," "ah," or "hmm") are in the text, deliver them naturally and thoughtfully, exactly as a human does when searching for information or gathering their thoughts.
 * Consistency: Maintain your natural, human conversational style throughout the entire read. When reading phone numbers, account IDs, or digits, group them naturally with slight pauses (e.g., reading a phone number in clusters), just as you would when reading numbers off a screen to a friend.
+* Dates: Format dates as full natural words (e.g., "January fifteenth, twenty twenty-six" rather than "01/15/26"). Never speak aloud dashes, hyphens, slashes, or numeric separators.
+* Currency & Monetary Values: Ensure that all monetary amounts are explicitly spoken with their full currency names instead of letter-by-letter. Read all monetary amounts fully and accurately as whole spoken numbers with explicit currency units.
+  - Standard & Multi-Digit Amounts: Read full place values (millions, thousands, hundreds) without dropping words or altering numerical values (e.g., "$1,234.56" as "one thousand two hundred thirty-four dollars and fifty-six cents"; "$2,313,909.87" as "two million three hundred thirteen thousand nine hundred nine dollars and eighty-seven cents").
+  - Single-Digit Cents & Decimals: Read cents precisely (e.g., "$1,898.09" as "eighteen hundred ninety-eight dollars and nine cents"; "$0.99" as "ninety-nine cents").
+  - Whole Dollar Amounts: Read whole numbers cleanly with currency words (e.g., "$50.00" as "fifty dollars").
 
 Accent: American English
 

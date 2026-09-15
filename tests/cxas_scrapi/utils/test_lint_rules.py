@@ -547,67 +547,6 @@ def test_i016_config_thresholds(
     assert len(results) == 1
 
 
-# ── I017: Composite Inert Tags ───────────────────────────────────────────
-
-
-def test_i017_inert_tags_flagged(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.instructions import CompositeInertTags  # noqa: PLC0415,I001
-
-    rule = CompositeInertTags()
-    f = tmp_path / "instruction.txt"
-    f.write_text(
-        "<role>Agent</role>\n"
-        "Greet the user [warm] and [clear]. Then say goodbye [casual].\n"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 3
-    assert all(r.rule_id == "I017" for r in results)
-    assert any("[warm]" in r.message for r in results)
-    assert any("[clear]" in r.message for r in results)
-    assert any("[casual]" in r.message for r in results)
-
-
-def test_i017_prosody_rate_tags_flagged(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.instructions import CompositeInertTags  # noqa: PLC0415,I001
-
-    rule = CompositeInertTags()
-    f = tmp_path / "instruction.txt"
-    f.write_text(
-        "<role>Agent</role>\n"
-        'Speak [prosody rate="85%"] and [prosody rate=90%]. '
-        'Also <prosody rate="fast">text</prosody>.\n'
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 4
-    assert all(r.rule_id == "I017" for r in results)
-    assert any('[prosody rate="85%"]' in r.message for r in results)
-    assert any("[prosody rate=90%]" in r.message for r in results)
-    assert any('<prosody rate="fast">' in r.message for r in results)
-    assert any("</prosody>" in r.message for r in results)
-
-
-def test_i017_effective_tags_not_flagged(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.instructions import CompositeInertTags  # noqa: PLC0415,I001
-
-    rule = CompositeInertTags()
-    f = tmp_path / "instruction.txt"
-    f.write_text(
-        "<role>Agent</role>\n"
-        "Greet the user [whispers]. Then [sigh] and speak [serious].\n"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 0
-
-
 # ── Callback Rules ───────────────────────────────────────────────────────
 
 

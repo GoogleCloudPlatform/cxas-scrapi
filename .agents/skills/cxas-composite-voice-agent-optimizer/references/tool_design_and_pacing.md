@@ -61,12 +61,13 @@ def manage_service_appointment(
 
 In a composite voice architecture, tool execution introduces processing delay before the model generates the tool result and streams text to the TTS engine. Without a pacing phrase, the caller experiences dead air.
 
-### Priority Tiering for Active Tools:
-- **Priority P1 (Tools Mentioned in Instructions):** Tools actively referenced in agent instructions (`{@TOOL: ...}`) represent runtime execution paths invoked by the model. Missing docstring contracts (`When to Call:`, `When NOT to Call:`) or missing conversational pacing directives on these tools are priority P1 findings.
-- **Priority P2 (Other Active Declared Tools):** Tools declared in agent configuration (`agent.json["tools"]`) that are not directly referenced in prompt instructions are audited at Priority P2 hygiene.
+### Priority Tiering & Human Approval Policy:
+- **Priority P2 (Lowest Priority - Spoken Conversational Pacing):** Conversational pacing directives (`MISSING_TOOL_CONVERSATIONAL_PACING` / `T014`) are audited at **Priority P2 (Lowest Priority / Advisory)**. Spoken conversational pacing must **ONLY be added for tools explicitly approved by the person executing the skill**. Never automatically or bulk-inject pacing phrases across tools without explicit user confirmation.
+- **Priority P1 (Tool Operational Docstrings):** Missing fundamental docstring contracts (`When to Call:`, `When NOT to Call:`) or parameter specifications on active runtime execution paths represent Priority P1 findings.
 
 ### Pacing Rules:
-- **Pacing Directive with Multiple Phrasing Options**: Active tool docstrings should explicitly direct the model to emit a brief, natural conversational bridge phrase with varied phrasing options *before* invoking the function call (e.g., *"Let me check that for you..."*, *"Just a minute, let me look it up..."*, *"Looking into the schedule for that day..."*) to prevent repetitive responses across turns. Terminal / fast lifecycle tools (e.g. session wrap-up, exit, test mocks) are exempt from `MISSING_TOOL_CONVERSATIONAL_PACING` checks.
+- **Explicit Approval Required**: Conversational pacing is only added to latency-heavy or backend API tools specifically selected and approved by the developer / user executing the skill.
+- **Pacing Directive with Multiple Phrasing Options**: When approved, active tool docstrings should explicitly direct the model to emit a brief, natural conversational bridge phrase with varied phrasing options *before* invoking the function call (e.g., *"Let me check that for you..."*, *"Just a minute, let me look it up..."*, *"Looking into the schedule for that day..."*) to prevent repetitive responses across turns. Terminal / fast lifecycle tools (e.g. session wrap-up, exit, test mocks) are exempt from `MISSING_TOOL_CONVERSATIONAL_PACING` checks.
 - **No Premature Claims**: The model must never predict the tool outcome or quote result values in the pacing phrase before the tool has returned its payload.
 
 ### 2.1 Cross-Scope Contradictions & Anti-Looping Prevention (P0 Critical):

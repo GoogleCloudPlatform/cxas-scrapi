@@ -621,7 +621,7 @@ def test_app_lint_list_rules_with_model(capsys: typing.Any) -> None:
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    assert "I017" in captured.out
+    assert "A007" in captured.out
     assert "Available Rules" in captured.out
     # Agnostic rules should not be listed when model_only=True
     assert "I001" not in captured.out
@@ -629,15 +629,6 @@ def test_app_lint_list_rules_with_model(capsys: typing.Any) -> None:
 
 def test_app_lint_model_only(capsys: typing.Any, tmp_path: typing.Any) -> None:
     _make_lint_app(tmp_path)
-    # Put an inert tag in instruction.txt
-    agent_dir = tmp_path / "agents" / "root_agent"
-    (agent_dir / "instruction.txt").write_text(
-        "<role>test</role>"
-        "<persona>test</persona>"
-        "<taskflow><subtask name='main'>"
-        "<step>[short pause] do it</step>"
-        "</subtask></taskflow>"
-    )
     args = _lint_args(
         tmp_path,
         json_output=True,
@@ -657,7 +648,6 @@ def test_app_lint_model_only(capsys: typing.Any, tmp_path: typing.Any) -> None:
 
     results = json.loads(captured.out)
     rule_ids = {r["rule_id"] for r in results}
-    assert "I017" in rule_ids
     assert "A007" in rule_ids
     # Model-agnostic rules should be excluded
     assert "I001" not in rule_ids

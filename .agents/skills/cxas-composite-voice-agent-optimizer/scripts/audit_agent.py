@@ -238,76 +238,70 @@ PROHIBITED_XML_TAGS: list[str] = [
     "voice_output",
 ]
 
-INERT_TAGS: list[str] = [
-    "warm",
-    "calm",
-    "clear",
-    "professional",
-    "empathetic",
-    "reassuring",
-    "sympathetic",
-    "hope",
-    "happy",
-    "crying",
-    "awe",
-    "fearful",
-    "surprised",
-    "cautious",
-    "alarm",
-    "anxiety",
-    "relief",
-    "tension",
-    "determination",
-    "enthusiasm",
-    "adoration",
-    "interest",
-    "curiosity",
-    "annoyance",
-    "aggression",
-    "nervousness",
-    "neutral",
-    "negative",
-    "positive",
-    "admiration",
-    "disgusted",
-    "short pause",
-    "long pause",
-    "short_pause",
-    "medium_pause",
-    'prosody rate="85%"',
-    'prosody rate="115%"',
-    "formal",
-    "casual",
-    "mumbles",
-    "stammers",
-    "breathless",
-    "panic",
-]
-
 WORKING_TAGS: list[str] = [
+    # Non-Speech Vocal Sounds (Mode 1)
     "whispers",
     "whispering",
     "sigh",
     "sighs",
     "chuckles",
     "laughs",
+    "laughing",
     "gasp",
     "exhales",
     "clears throat",
+    "uhm",
+    # Style & Delivery Modifiers (Mode 2)
+    "sarcasm",
+    "robotic",
+    "shouting",
+    "yelling",
+    "deadpan",
+    "extremely fast",
     "slow",
     "slower",
     "fast",
     "faster",
-    "confusion",
-    "sleepy",
-    "bored",
-    "seriousness",
-    "serious",
-    "deadpan",
+    # Explicit Pacing & Pause Controls (Mode 4)
+    "short pause",
+    "medium pause",
+    "long pause",
+    # Expressive & Emotional Delivery Tags
+    "positive",
+    "happy",
+    "enthusiasm",
+    "amusement",
+    "adoration",
+    "admiration",
+    "interest",
+    "celebratory",
     "excitement",
     "excited",
-    "celebratory",
-    "yelling",
+    "relief",
+    "hope",
+    "determination",
+    "neutral",
+    "seriousness",
+    "serious",
+    "curiosity",
+    "curious",
+    "sleepy",
+    "bored",
+    "cautious",
+    "alarm",
+    "confusion",
+    "panic",
+    "anxiety",
+    "nervousness",
+    "tension",
+    "negative",
+    "annoyance",
+    "frustration",
+    "agitation",
+    "anger",
+    "aggression",
+    "scared",
+    "awe",
 ]
 
 
@@ -869,26 +863,6 @@ class VoiceAgentAuditor:
             "issues": issues,
         }
 
-    def audit_inert_tags(self) -> dict[str, Any]:
-        """Audits instruction files for ineffective or inert acoustic emotion tags."""
-        results = self._run_lint_rules(specific_rules={"I017"})
-        issues = [
-            {
-                "code": r.rule_id,
-                "file": r.file,
-                "line": r.line,
-                "message": r.message,
-                "recommended": r.fix_suggestion,
-                "priority": "P2",
-            }
-            for r in results
-        ]
-        return {
-            "passed": len(issues) == 0,
-            "files_scanned": len(self._find_instruction_targets()),
-            "issues": issues,
-        }
-
     def audit_anti_looping_and_stability(
         self, app_data: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -920,7 +894,7 @@ class VoiceAgentAuditor:
                 "line": r.line,
                 "message": r.message,
                 "recommended": r.fix_suggestion,
-                "priority": "P1",
+                "priority": "P2",
             }
             for r in results
         ]
@@ -941,7 +915,6 @@ class VoiceAgentAuditor:
             "unregistered_template_variables": (
                 self.audit_unregistered_template_variables(app_data)
             ),
-            "inert_tags": self.audit_inert_tags(),
             "anti_looping_and_stability": self.audit_anti_looping_and_stability(
                 app_data
             ),
@@ -988,7 +961,6 @@ class VoiceAgentAuditor:
                         "A009",
                         "A010",
                         "I015",
-                        "T014",
                         "V104",
                         "REFLEXIVE_CLOSING_LOOP",
                         "MISSING_SYNTHESIZE_SPEECH_CONFIGS",
@@ -1016,7 +988,6 @@ class VoiceAgentAuditor:
                         "MISSING_TOOL_DOCSTRING",
                         "MISSING_TOOL_WHEN_TO_CALL",
                         "MISSING_TOOL_WHEN_NOT_TO_CALL",
-                        "MISSING_TOOL_CONVERSATIONAL_PACING",
                     }
                 sev = (
                     getattr(Severity, "ERROR", "error")
@@ -1066,7 +1037,6 @@ class VoiceAgentAuditor:
 
         p1_codes = {
             "A009",
-            "T014",
             "REFLEXIVE_CLOSING_LOOP",
             "MISSING_SYNTHESIZE_SPEECH_CONFIG_LANG",
             "MISSING_VOICE_IDENTIFIER",
@@ -1083,7 +1053,6 @@ class VoiceAgentAuditor:
             "MISSING_TOOL_DOCSTRING",
             "MISSING_TOOL_WHEN_TO_CALL",
             "MISSING_TOOL_WHEN_NOT_TO_CALL",
-            "MISSING_TOOL_CONVERSATIONAL_PACING",
         }
 
         for pass_name, pass_data in audit_res.get("passes", {}).items():
@@ -1205,7 +1174,7 @@ class VoiceAgentAuditor:
                 " Texture\n"
             )
             lines.append(
-                "These issues waste context tokens, use inert acoustic tags, or"
+                "These issues waste context tokens or"
                 " introduce IVR-style conversational dead-ends.\n"
             )
             for idx, item in enumerate(p2, start=1):
