@@ -24,13 +24,13 @@ import os
 import time
 import typing
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 import pandas as pd
 import pydantic
 import yaml
 from google import genai
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator
 
 from cxas_scrapi.core.agents import Agents
 from cxas_scrapi.core.common import Common
@@ -51,6 +51,47 @@ TIMESTAMP_PATTERN = r"\d{8}_\d{6}"
 logger = logging.getLogger(__name__)
 
 
+def _parse_variables_input(v: Any) -> dict[str, Any]:
+    """Normalises the several accepted shapes of an eval variable block.
+
+    Accepted forms:
+
+    * ``{"auth_status": "pending"}`` -- a plain mapping.
+    * ``[{"name": "auth_status", "value": "pending"}]`` -- the proto-shaped
+      list emitted by ``cxas export`` and shown in the console.
+    * ``["auth_status"]`` -- a bare list of names, meaning "look the current
+      value up at runtime" (mapped to ``None``).
+    * A JSON string of any of the above.
+    """
+    if v is None:
+        return {}
+    if isinstance(v, str):
+        try:
+            return _parse_variables_input(json.loads(v))
+        except json.JSONDecodeError:
+            return {}
+    if isinstance(v, list):
+        parsed: dict[str, Any] = {}
+        for item in v:
+            # Proto shape: {"name": ..., "value": ...}
+            if isinstance(item, dict) and "name" in item:
+                parsed[str(item["name"])] = item.get("value")
+            # Single-entry mapping: {"auth_status": "pending"}
+            elif isinstance(item, dict):
+                parsed.update({str(k): val for k, val in item.items()})
+            # Bare name: fetch the current value at runtime.
+            else:
+                parsed[str(item)] = None
+        return parsed
+    if isinstance(v, dict):
+        return v
+    return {}
+
+
+# A variable map that tolerates the mapping / list / JSON-string forms.
+VariableMap = Annotated[dict[str, Any], BeforeValidator(_parse_variables_input)]
+
+
 class ToolCall(BaseModel):
     action: str
     args: dict[str, Any] = {}
@@ -62,13 +103,17 @@ class Turn(BaseModel):
     user: str | None = None
     agent: str | list[str] | None = None
     tool_calls: list[ToolCall] = []
+    # Session state to stage immediately before this turn's user input.
+    # STABLE goldens replay every turn in an isolated session, so state has to
+    # be re-declared on each turn that depends on it -- not just the first.
+    variables: VariableMap = {}
 
 
 class Conversation(BaseModel):
     conversation: str
     expectations: list[str] = []
     tags: list[str] = []
-    session_parameters: dict[str, Any] = {}
+    session_parameters: VariableMap = {}
     turns: list[Turn]
 
 
@@ -140,20 +185,11 @@ class EvalUtils(Evaluations):
 
     @staticmethod
     def parse_variables_input(v: Any) -> dict[str, Any]:
-        """Allows YAML to accept a list of strings OR a custom dictionary."""
-        if v is None:
-            return {}
-        if isinstance(v, str):
-            try:
-                return json.loads(v)
-            except json.JSONDecodeError:
-                return {}
-        if isinstance(v, list):
-            # Convert list of names to a dict flagged for fetching (None)
-            return {str(item): None for item in v}
-        if isinstance(v, dict):
-            return v
-        return {}
+        """Allows YAML to accept a list, a JSON string OR a dictionary.
+
+        See :func:`_parse_variables_input` for the accepted shapes.
+        """
+        return _parse_variables_input(v)
 
     @staticmethod
     def _map_outcome(val: typing.Any) -> typing.Any:
@@ -258,15 +294,33 @@ class EvalUtils(Evaluations):
     ) -> dict[str, Any]:
         """Processes a single turn from a conversation dataset into JSON steps.
 
+        Conversation-level ``session_parameters`` are staged once, on the first
+        turn. Turn-level ``variables`` are staged on every turn that declares
+        them: STABLE replays each turn in an isolated session with no carried
+        state, so a stateful multi-turn golden has to re-declare whatever the
+        turn depends on.
+
+        Args:
+            turn: The turn to compile.
+            session_params: Conversation-level parameters, injected once.
+            params_injected: Whether ``session_params`` were already staged by
+                an earlier turn.
+
         Returns:
-            A tuple of (steps_list, updated_params_injected).
+            A dict of ``{"steps": [...], "params_injected": bool}``.
         """
         steps = []
         user_input_text = turn.user
 
+        variables: dict[str, Any] = {}
         if not params_injected and session_params:
-            steps.append({"userInput": {"variables": session_params}})
+            variables.update(session_params)
             params_injected = True
+        # Turn-level values are more specific, so they win on conflict.
+        variables.update(turn.variables)
+
+        if variables:
+            steps.append({"userInput": {"variables": variables}})
 
         user_input_obj = {}
         if user_input_text is None:
@@ -1180,12 +1234,24 @@ class EvalUtils(Evaluations):
                 json_turns = golden["turns"]
             # Otherwise process raw YAML turns (Case 1b)
             elif "turns" in golden:
+                # A top-level variables block applies to the whole golden and
+                # is staged once, on the first turn.
+                root_params = _parse_variables_input(
+                    golden.get("variables")
+                    or golden.get("session_parameters")
+                    or data.get("variables")
+                    or data.get("session_parameters")
+                )
+                params_injected = False
                 for t in golden["turns"]:
                     turn = Turn.model_validate(t)
                     result = self._process_dataset_turn(
-                        turn, session_params={}, params_injected=True
+                        turn,
+                        session_params=root_params,
+                        params_injected=params_injected,
                     )
                     json_turns.append({"steps": result["steps"]})
+                    params_injected = result["params_injected"]
 
             expectations = (
                 golden.get("evaluationExpectations")

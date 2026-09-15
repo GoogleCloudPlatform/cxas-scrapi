@@ -70,6 +70,7 @@ conversations:
 | `agent` | string or list[string] | Expected agent response (required — omitting causes "UNEXPECTED RESPONSE" failures). Use a list when the agent may respond with multiple text chunks. |
 | `tool_calls` | list | Expected tool invocations during this turn |
 | `event` | string | Instead of `user`, inject a platform event (e.g., `"welcome"`) |
+| `variables` | dict or list | Session state to stage immediately before this turn's user input. See [Per-turn variables](#per-turn-variables). |
 
 ### Tool call fields
 
@@ -103,6 +104,40 @@ common_session_parameters:
 ```
 
 You can also set `session_parameters` per conversation to override the common values for specific test cases.
+
+### Per-turn variables
+
+Conversation-level parameters are staged once, before the first turn. A turn can
+also declare its own `variables:` block, which is staged immediately before that
+turn's user input and overrides any conversation-level value of the same name.
+
+This matters for stateful multi-turn goldens replayed with
+`--golden-run-method STABLE`: STABLE replays each turn in an isolated session
+with no carried-over state, so any state a turn depends on has to be re-declared
+on that turn.
+
+```yaml
+conversations:
+  - conversation: "auth_then_lookup"
+    turns:
+      - user: "I want to check my account"
+        variables:
+          auth_status: "pending"
+        agent: "Sure — could you give me your PIN?"
+
+      - user: "1234"
+        variables:
+          auth_status: "success"   # re-declared: STABLE won't carry turn 1's state
+        agent: "Thanks, you're verified. What would you like to look up?"
+```
+
+The proto-shaped list form produced by `cxas export` is also accepted:
+
+```yaml
+        variables:
+          - name: "auth_status"
+            value: "success"
+```
 
 ### Tags
 

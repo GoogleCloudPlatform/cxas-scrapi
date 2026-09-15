@@ -511,3 +511,177 @@ def test_eval_utils_credentials_propagation() -> None:
         assert utils.agents_client.creds == mock_creds
         assert utils.ch_client.creds == mock_creds
         assert utils.eval_client.creds == mock_creds
+
+
+# ---------------------------------------------------------------------------
+# Turn-level variable injection (multi-turn STABLE replays)
+# ---------------------------------------------------------------------------
+
+
+def _injected_variables(steps: list[dict[str, typing.Any]]) -> list[dict]:
+    """Return the variable payloads emitted as userInput steps."""
+    return [
+        step["userInput"]["variables"]
+        for step in steps
+        if "userInput" in step and "variables" in step["userInput"]
+    ]
+
+
+def test_process_dataset_turn_injects_turn_level_variables() -> None:
+    """Turn-level variables must be emitted even after the first turn.
+
+    STABLE replays each turn in an isolated session, so state has to be
+    re-injected on every turn. ``params_injected=True`` means the
+    conversation-level parameters were already emitted by an earlier turn; it
+    must not suppress this turn's own variables.
+    """
+    utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
+
+    turn = Turn.model_validate(
+        {"user": "1234", "variables": {"auth_status": "success"}}
+    )
+    result = utils._process_dataset_turn(
+        turn, session_params={}, params_injected=True
+    )
+
+    assert _injected_variables(result["steps"]) == [{"auth_status": "success"}]
+    # Variables must be staged before the user utterance they apply to.
+    assert result["steps"][0]["userInput"] == {
+        "variables": {"auth_status": "success"}
+    }
+    assert result["steps"][1]["userInput"]["text"] == "1234"
+
+
+def test_turn_variables_accept_name_value_list() -> None:
+    """The proto-style ``[{name, value}]`` list form is accepted."""
+    turn = Turn.model_validate(
+        {
+            "user": "1234",
+            "variables": [
+                {"name": "auth_status", "value": "success"},
+                {"name": "retry_count", "value": 2},
+            ],
+        }
+    )
+
+    assert turn.variables == {"auth_status": "success", "retry_count": 2}
+
+
+def test_process_dataset_turn_merges_session_and_turn_variables() -> None:
+    """Turn-level variables merge over conversation-level parameters."""
+    utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
+
+    turn = Turn.model_validate(
+        {"user": "hello", "variables": {"auth_status": "pending"}}
+    )
+    result = utils._process_dataset_turn(
+        turn,
+        session_params={"auth_status": "unset", "locale": "en-US"},
+        params_injected=False,
+    )
+
+    assert _injected_variables(result["steps"]) == [
+        {"auth_status": "pending", "locale": "en-US"}
+    ]
+    assert result["params_injected"] is True
+
+
+def test_process_dataset_turn_without_variables_is_unchanged() -> None:
+    """Turns with no variables must not emit an empty variables step."""
+    utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
+
+    result = utils._process_dataset_turn(
+        Turn.model_validate({"user": "hello"}),
+        session_params={},
+        params_injected=True,
+    )
+
+    assert _injected_variables(result["steps"]) == []
+    assert result["steps"][0]["userInput"]["text"] == "hello"
+
+
+def test_load_golden_evals_emits_variables_for_every_turn() -> None:
+    """Dataset-format goldens keep per-turn variables on turns 2..N."""
+    dataset = {
+        "conversations": [
+            {
+                "conversation": "Auth_MultiTurn",
+                "turns": [
+                    {
+                        "user": "I want to check my account",
+                        "variables": {"auth_status": "pending"},
+                        "agent": "Please provide your pin.",
+                    },
+                    {
+                        "user": "1234",
+                        "variables": {"auth_status": "success"},
+                        "agent": "Authentication successful.",
+                    },
+                ],
+            }
+        ]
+    }
+
+    with (
+        patch("builtins.open", mock_open(read_data="")),
+        patch("yaml.safe_load", return_value=dataset),
+        patch("cxas_scrapi.utils.eval_utils.Evaluations"),
+    ):
+        utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
+        result = utils.load_golden_eval_from_yaml("dummy.yaml")
+
+    turns = result["golden"]["turns"]
+    assert len(turns) == 2
+    assert _injected_variables(turns[0]["steps"]) == [
+        {"auth_status": "pending"}
+    ]
+    assert _injected_variables(turns[1]["steps"]) == [
+        {"auth_status": "success"}
+    ]
+
+
+def test_load_golden_evals_direct_export_turn_variables() -> None:
+    """Case 1b (direct export) also honours per-turn variables."""
+    exported = {
+        "displayName": "Mock_MultiTurn_Variable_Drop",
+        "turns": [
+            {
+                "user": "I want to check my account",
+                "variables": [{"name": "auth_status", "value": "pending"}],
+            },
+            {
+                "user": "1234",
+                "variables": [{"name": "auth_status", "value": "success"}],
+            },
+        ],
+    }
+
+    with (
+        patch("builtins.open", mock_open(read_data="")),
+        patch("yaml.safe_load", return_value=exported),
+        patch("cxas_scrapi.utils.eval_utils.Evaluations"),
+    ):
+        utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
+        result = utils.load_golden_eval_from_yaml("dummy.yaml")
+
+    turns = result["golden"]["turns"]
+    assert _injected_variables(turns[0]["steps"]) == [
+        {"auth_status": "pending"}
+    ]
+    assert _injected_variables(turns[1]["steps"]) == [
+        {"auth_status": "success"}
+    ]
+
+
+def test_parse_variables_input_name_value_list() -> None:
+    """``parse_variables_input`` understands the ``[{name, value}]`` form."""
+    parsed = EvalUtils.parse_variables_input(
+        [{"name": "a", "value": 1}, {"name": "b", "value": "two"}]
+    )
+    assert parsed == {"a": 1, "b": "two"}
+
+    # A bare list of names still means "fetch the current value".
+    assert EvalUtils.parse_variables_input(["a", "b"]) == {
+        "a": None,
+        "b": None,
+    }
