@@ -109,23 +109,9 @@ Every Director's Note MUST conclude with the exact delimiter `## Transcript:\n` 
 
 ______________________________________________________________________
 
-## 4. Spoken Text Formatting for Speech Synthesis
+## 4. Multilingual Golden Director's Note Templates
 
-The TTS engine synthesizes written text verbatim based on the Director's Note. This can include instructions on how to pronounce certain words or phrases, dates, numbers and other content.
-
-| Content Type | Poor Formatting (Robotic / Ambiguous) | Recommended Spoken Formatting in Director's Notes instructions |
-| :--- | :--- | :--- |
-| **Alphanumeric IDs** | "Code 8934B" | "eight nine three four ... B" (spaced with slight pause) |
-| **Numeric Values** | "Value is 15.50" | "fifteen fifty" or "fifteen dollars and fifty cents" |
-| **Dates** | "2026-04-15" or "04/15/2026" | "April fifteenth twenty twenty-six" |
-| **Hesitations** | "Retrieving records." | "Let's see here... let me check that." |
-| **Phone Numbers** | "8005550199" | "eight zero zero ... five five five ... zero one nine nine" |
-
-______________________________________________________________________
-
-## 5. Multilingual Golden Director's Note Templates
-
-### 5.1 Provide Symmetrical Locale Configuration for each supported language
+### 4.1 Provide Symmetrical Locale Configuration for each supported language
 
 Sample configuration for English (`en-US`) and Spanish (`es-US`):
 
@@ -153,7 +139,7 @@ Sample configuration for English (`en-US`) and Spanish (`es-US`):
 }
 ```
 
-### 5.2 Example Director's Notes
+### 4.2 Example Director's Notes
 
 #### English (`en-US`)
 

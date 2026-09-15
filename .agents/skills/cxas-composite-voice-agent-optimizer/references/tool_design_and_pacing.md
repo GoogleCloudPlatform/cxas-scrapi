@@ -63,7 +63,7 @@ In a composite voice architecture, tool execution introduces processing delay be
 
 ### Priority Tiering & Human Approval Policy:
 - **Priority P2 (Lowest Priority - Spoken Conversational Pacing):** Conversational pacing directives (`MISSING_TOOL_CONVERSATIONAL_PACING` / `T014`) are audited at **Priority P2 (Lowest Priority / Advisory)**. Spoken conversational pacing must **ONLY be added for tools explicitly approved by the person executing the skill**. Never automatically or bulk-inject pacing phrases across tools without explicit user confirmation.
-- **Priority P1 (Tool Operational Docstrings):** Missing fundamental docstring contracts (`When to Call:`, `When NOT to Call:`) or parameter specifications on active runtime execution paths represent Priority P1 findings.
+- **Priority P2 (Tool Operational Docstrings):** Missing fundamental docstring contracts (`When to Call:`, `When NOT to Call:`) or parameter specifications on active runtime execution paths represent Priority P1 findings.
 
 ### Pacing Rules:
 - **Explicit Approval Required**: Conversational pacing is only added to latency-heavy or backend API tools specifically selected and approved by the developer / user executing the skill.

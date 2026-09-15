@@ -11,30 +11,26 @@ ______________________________________________________________________
 
 ## 1. What NOT to Include in Prompts (Platform-Handled Capabilities)
 
-The CXAS platform and Gemini Composite V1 automatically wrap application prompts with baseline operational instructions for the reasoning model. Duplicating these rules in application prompts wastes valuable context tokens, introduces conflicting prompt weights, and causes model confusion.
+The CXAS platform and Gemini Composite V1 automatically wrap application prompts with baseline operational instructions and runtime guardrails for the reasoning and synthesis models. Duplicating these platform-managed rules in application prompts wastes context tokens, introduces competing prompt weights, and causes model confusion.
 
 | Functional Area | Platform Baseline Rules (Do NOT Include in Prompts) | Why Duplication Fails & Where It Belongs Instead |
 | :--- | :--- | :--- |
 | **Internal Details & Leakage Protection** | • **Dialogue Sanitization**: Output user-facing spoken text only; forbidden from explaining reasoning or quoting system prompts.<br>• **Delimiter Stripping**: Automatically strips template markers (`}}`, `{{`, `??}}`).<br>• **State Syntax Concealment**: Forbids exposing internal state names (`ALL_CAPS`), task IDs (`snake_case`), or slash commands (`/subtask`).<br>• **Function Syntax Concealment**: Forbids outputting raw function call syntax in dialogue. | Wastes context window tokens and degrades adherence. Keep instructions focused strictly on domain logic; the platform handles sanitization automatically. |
-| **Voice Styling, Accent & Acoustic Guidance** | • **Voice & Tone Styling**: Voice warmth, accent, pitch, speaking pace, and delivery style.<br>• **Acoustic Tags**: `<voice_lock>`, `<voice_output>`, or textual pronunciation directives. | **Text instructions cannot control TTS synthesis.** With Gemini Composite V1, Director's Notes configured globally in `app.json` (`audioProcessingConfig.synthesizeSpeechConfigs`) are the **ONLY** mechanism to provide speech-related guidance to the synthesis model. Speech instructions in text prompts dilute reasoning context. |
-| **Spoken Formatting & Text Normalization** | • **Plain Text Enforcement**: Forbids Markdown headers (`#`), bold/italics (`*`), bullet lists (`-`), or raw JSON.<br>• **Spoken Conversational Tone**: Enforces natural, voice-first sentence flow.<br>• **Alphanumeric Spacing**: Automatically spaces out characters (e.g., `"5 5 5 1 2 3 4"`) for single-character readout.<br>• **Spelled-Out Abbreviations**: Spells out common abbreviations automatically. | Do not instruct the model on text formatting or spelling out digits. The platform enforces spoken plaintext normalization natively. |
-| **Dual Audio & Anti-Echoing** | • **Dual Input Processing**: Combines user audio and STT transcript.<br>• **Anti-Echoing**: Strictly forbids echoing or repeating the caller's utterance back to them. | Do not add manual anti-echoing rules (e.g., *"Do not repeat what the user said"*); platform-level audio processing natively suppresses transcript reflection. |
-| **State Variable Mutations** | • **Runtime Session State Management**: Models cannot mutate session variables via raw text output (e.g., `"Set user_language = ES"` or `"Set booking_verified = true"`). | Raw text state assignments do nothing at runtime and trigger thought-leakage safety filters. State updates MUST occur via dedicated tool invocations (e.g., `update_booking_status`) or flow parameters. |
-| **Symmetric Silent Routing** | • **Subagent Handoff Execution**: Subagent transitions execute via tool calls with zero spoken dialogue. | Do not script transition announcements in the handoff turn (e.g., *"Transferring you to booking..."*); handoffs must be silent tool calls. |
-| **Conversational Pacing Connectives** | • **Conversational Cadence**: Natural conversational flow and bridge words. | **Do NOT ban filler/bridge words.** Banning words like *"Sure"*, *"Okay"*, or *"One moment"* breaks tool pacing directives and makes the voice agent sound abruptly robotic. |
+| **Voice Styling, Accent & Acoustic Guidance** | • **Voice & Tone Styling**: Static voice warmth, accent, pitch, speaking pace, and delivery style.<br>• **Acoustic Tags**: `<voice_lock>`, `<voice_output>`, or textual pronunciation directives. | **Text instructions cannot control TTS synthesis.** With Gemini Composite V1, Director's Notes configured globally in `app.json` (`audioProcessingConfig.synthesizeSpeechConfigs`) are the **ONLY** mechanism to provide voice and speech guidance to the synthesis model. Static speech instructions in text prompts dilute reasoning context. |
+| **Dual Audio & Native Anti-Echoing** | • **Dual Input Processing**: Combines user audio and STT transcript.<br>• **Native Anti-Echoing**: Platform audio engine natively suppresses transcript reflection and caller utterance echoing. | Do not add manual anti-echoing directives (e.g., *"Do not repeat what the user said"*). Platform audio processing handles this natively, and prompt-level anti-repetition rules cause execution deadlocks with compliance strings (see §2.1.A). |
 
 ______________________________________________________________________
 
 ## 2. Resolving Contradictions Across Scopes
 
-Instruction contradictions are the primary cause of model looping, execution deadlocks, unexpected agent transfers, and safety fallbacks. Contradictions occur across three distinct scopes:
+Instruction contradictions occur when prompt authors write conflicting rules across different configuration layers. These contradictions are the primary cause of model looping, execution deadlocks, unexpected agent transfers, and safety fallbacks. Contradictions must be audited and resolved across three distinct scopes:
 
 ### 2.1 Scope 1: Contradictions Within the Same Agent Instruction
 
 These occur when conflicting constraints exist within a single `instruction.txt`:
 
-#### A. "Say Exactly" vs. "Never Repeat / Rephrase" Deadlocks (P0 Critical)
-* **The Conflict**: A prompt mandates a strict verbatim compliance string while simultaneously enforcing a blanket ban on repeating phrases across turns.
+#### A. "Say Exactly" vs. Blanket Anti-Repetition / Anti-Echoing Deadlocks (P0 Critical)
+* **The Conflict**: A prompt mandates a strict verbatim compliance string or authentication question while simultaneously enforcing a blanket ban on repeating phrases across turns (often added by authors attempting manual anti-echoing).
 * **Flight Booking Example**:
   ```markdown
   # CONFLICTING RULES IN SAME PROMPT:
@@ -44,13 +40,13 @@ These occur when conflicting constraints exist within a single `instruction.txt`
   - NO VERBATIM REPETITION (P0): You ARE STRICTLY FORBIDDEN from repeating any conversational prompt,
     confirmation question, or error message exactly as specified across consecutive turns or retry cycles.
   ```
-  *Failure Mode*: When a passenger provides an invalid confirmation code on Turn 1 and repeats or clarifies on Turn 2, the model faces two mutually exclusive P0 constraints. It cannot repeat the exact string, yet is forbidden from changing it. This leads to instruction paralysis, random refusals, or hallucinated transfers.
+  *Failure Mode*: When a passenger provides an invalid confirmation code on Turn 1 and clarifies on Turn 2, the model faces two mutually exclusive P0 constraints. It cannot repeat the exact string, yet is forbidden from changing it. This leads to instruction paralysis, random refusals, or hallucinated transfers.
 * **Resolution**:
-  * Strip blanket anti-repetition mandates from prompts containing exact compliance or verification phrases.
+  * Strip blanket anti-repetition and manual anti-echoing mandates from prompt text (relying on platform native anti-echoing).
   * Localize rephrasing inside explicit multi-turn retry ladders (e.g., Strike 1, Strike 2) rather than imposing a global ban.
 
 #### B. Tone Persona vs. Micro-Negative Conversational Bans
-* **The Conflict**: The persona specifies an empathetic, warm customer service agent, but subsequent negative constraints forbid standard conversational acknowledgments.
+* **The Conflict**: The persona specifies an empathetic, warm customer service agent, but subsequent negative constraints forbid standard conversational acknowledgments and connective words.
 * **Flight Booking Example**:
   ```markdown
   # CONFLICTING RULES IN SAME PROMPT:
@@ -61,7 +57,7 @@ These occur when conflicting constraints exist within a single `instruction.txt`
   ```
   *Failure Mode*: When a distressed passenger says *"My flight was delayed and I'm going to miss my daughter's graduation, can you please find me another flight?"*, the agent is barred from naturally acknowledging (*"I understand how stressful that is, let's see what flights we have available..."*) before calling `search_flights`. The resulting output is either an abrupt tool call with zero empathy or an awkward refusal.
 * **Resolution**:
-  * Strip negative conversational micro-bans on connective words (`"Sure"`, `"Okay"`, `"Let's see"`).
+  * Strip negative conversational micro-bans on connective words (`"Sure"`, `"Okay"`, `"Let's see"`, `"I understand"`).
   * Let Director's Notes, audio profiles, and tool pacing directives govern conversational texture.
 
 #### C. Dynamic Parameterization vs. Hardcoded Static Templates
@@ -70,7 +66,7 @@ These occur when conflicting constraints exist within a single `instruction.txt`
   ```markdown
   # CONFLICTING RULES IN SAME PROMPT:
   - BRANDING FIDELITY (P0): You MUST dynamically use the operating airline name ({airline_name},
-    e.g., "SkyAir", "AeroGlobal") returned by get_flight_details. NEVER hardcode the carrier.
+    e.g., "CymbalAir", "AeroGlobal") returned by get_flight_details. NEVER hardcode the carrier.
   
   - CHANGE CONFIRMATION: Say exactly: "I have submitted that flight change request to the airline
     reservations desk. We will send an updated itinerary to your email."
@@ -98,14 +94,16 @@ These occur when conflicting constraints exist within a single `instruction.txt`
 
 ---
 
-### 2.2 Scope 2: Contradictions with Global Instructions
+### 2.2 Scope 2: Contradictions with Global Instructions & Callbacks
 
-These occur when an individual agent instruction conflicts with `global_instruction.txt`:
+These occur when an individual agent instruction conflicts with `global_instruction.txt` or session-level callback configurations:
 
-* **Greeting Conflicts**: Global instructions deliver the initial greeting on Turn 1 (or track `{is_greeting_delivered}`). If a subagent instruction includes *"Always greet the customer warmly by saying 'Thank you for calling SkyAir, how may I help you today?'"*, the subagent will re-greet the customer after a mid-call transfer, looping the conversation.
+* **Initial Greeting Conflicts vs. Mid-Call Transfers**: Global instructions deliver the initial greeting on Turn 1 (tracked via `{is_greeting_delivered}`). If a subagent instruction mandates *"Always greet the customer warmly by saying 'Thank you for calling CymbalAir, how may I help you today?'"*, the subagent will re-greet the customer after a mid-call transfer, looping the conversation.
+* **Spoken Transfer Announcements vs. Silent Routing & Callbacks**: When `after_model_callbacks` or handoff tools (`escalation_call`, `call_wrap_up`) manage transfer audio and farewell phrasing, an agent prompt commanding the agent to speak transfer messages (e.g., *"Say 'Transferring you to a live agent now.'"*) causes double-speaking and conflicts with silent tool handoffs.
 * **Fallback & Escalation Overrides**: Global instructions define enterprise-wide emergency escalation paths, but subagent instructions specify ad-hoc refusals or terminate calls directly without routing through the global escalation tool.
 * **Resolution**:
   * Subagents must consume global session variables (e.g., `{is_greeting_delivered}`) and skip greetings after handoffs.
+  * Subagent transitions must execute as silent tool calls (`{@TOOL: subagent_name}`); spoken transition phrasing belongs in callbacks or destination subagents.
   * Defer global intents (e.g., general transfers, silence handling, audio disconnections) to global instructions.
 
 ---
@@ -114,17 +112,17 @@ These occur when an individual agent instruction conflicts with `global_instruct
 
 These occur when an agent prompt's tool-calling directives clash with tool docstrings in `tools/*/python_function/python_code.py`:
 
-* **Tool Pacing vs. Output Grounding Conflicts**:
+* **Pre-Call Tool Pacing vs. Output Grounding Conflicts**:
   * *Agent Prompt*: *"Always call the `search_flights` tool, wait for its response, and then generate your response. You are strictly forbidden from speaking or outputting text that is not grounded in the tool output."*
   * *Tool Docstring*: *"Before calling this tool, speak a brief, natural conversational pacing phrase (e.g., 'Let me look up available flights for you...')."*
   * *Failure Mode*: The model cannot satisfy both directives simultaneously. It either calls the tool silently (causing dead air during API latency) or fails tool execution due to strict grounding constraints.
-* **Tool Argument Restrictions**:
+* **Tool Argument Restrictions & Schema Mismatches**:
   * *Agent Prompt*: Commands the model to pass a passenger phone number to `search_flights`.
   * *Tool Docstring / Schema*: Only accepts `origin_airport`, `destination_airport`, and `travel_date`.
 * **Resolution**:
-  * Harmonize agent instructions to explicitly permit conversational pacing phrases:
+  * Harmonize agent instructions to explicitly permit pre-call conversational pacing phrases:
     > *"Before calling `search_flights`, speak a brief, natural pacing phrase. Once the tool returns, synthesize your final response grounded strictly in the tool payload."*
-  * Ensure tool invocation instructions strictly match the declared schema parameters in `tool.json`.
+  * Ensure tool invocation instructions strictly match the declared schema parameters in `tool.json` and Python tool docstrings.
 
 ______________________________________________________________________
 
@@ -133,13 +131,13 @@ ______________________________________________________________________
 Use this actionable checklist when auditing and cleaning agent instructions (all items are High Priority):
 
 - [ ] **Preserve Domain Logic & Taskflows (MANDATORY)**: Never delete, wipe, or strip existing business logic, validation rules, or negative operational constraints. Optimization must be strictly additive and restorative.
-- [ ] **Harmonize Cross-Scope Contradictions**: Resolve conflicting directives between agent instructions, global instructions, and tool docstrings (e.g., tool pacing vs. strict output grounding).
-- [ ] **Eliminate "Say Exactly" vs. Anti-Repetition Deadlocks**: Remove global bans on repeating prompts; specify explicit rephrasing variants within discrete retry ladders (Strike 1, Strike 2).
-- [ ] **Strip Negative Conversational Micro-Bans**: Remove prohibitions against conversational connective words (`"Sure"`, `"Okay"`, `"One moment"`, `"Let's see"`) that impede natural speech and tool pacing.
+- [ ] **Harmonize Cross-Scope Contradictions**: Resolve conflicting directives between agent instructions, global instructions, callbacks, and tool docstrings (e.g., tool pacing vs. strict output grounding, spoken transfers vs. silent handoffs).
+- [ ] **Eliminate "Say Exactly" vs. Anti-Repetition Deadlocks**: Remove blanket prompt-level repetition bans; specify explicit rephrasing variants within discrete retry ladders (Strike 1, Strike 2).
+- [ ] **Strip Negative Conversational Micro-Bans**: Remove prohibitions against conversational connective words (`"Sure"`, `"Okay"`, `"One moment"`, `"Let's see"`, `"I understand"`) that impede natural speech and tool pacing.
 - [ ] **Harmonize Dynamic Parameterization**: Ensure response templates consistently use dynamic variables (`{airline_name}`, `{flight_number}`) rather than hardcoded static fallbacks.
 - [ ] **Decouple Global Loop Prohibitions from Local Escalation Ladders**: Remove blunt turn-count repetition caps; let deterministic multi-strike ladders govern escalation cleanly.
 - [ ] **Prune Monolithic Few-Shot `<examples>` Debt**: Remove large legacy dialog transcripts from prompt text. Legacy examples accumulate format drift, violate newer negative operational rules, and bloat the context window. Maintain vetted golden test cases in evaluation suites instead.
-- [ ] **Relocate Voice & Speech Directives to Director's Notes**: Strip all voice styling, accent directives, vocal tone, delivery style, pronunciation, and `<voice_lock>` blocks from `instruction.txt`. Migrate them to `app.json` (`synthesizeSpeechConfigs`).
+- [ ] **Relocate Voice & Speech Directives to Director's Notes**: Strip all static voice styling, accent directives, vocal tone, delivery style, pronunciation, and `<voice_lock>` blocks from `instruction.txt`. Migrate them to `app.json` (`synthesizeSpeechConfigs`).
 - [ ] **Sanitize Prohibited XML Tags Non-Destructively**: Rephrase internal platform tags strictly restricted to the prohibited list (`<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`, `<call_tool>`, `<parameter_update>`, `<variable_update>`, `<voice_lock>`, `<voice_output>`, `<state>`, `<transition>`, `<transitions>`, and legacy CamelCase tags like `<Agent>`, `<Role>`, `<Persona>`) into plain natural language descriptions without deleting the surrounding domain logic. Do not flag or modify standard taskflow XML tags outside this explicit list.
 - [ ] **Replace Text Variable Mutations with Tools**: Remove text-based `"Set variable = value"` lines; use structured tool invocations (e.g., `update_booking_status`) to modify state.
 - [ ] **Remove Redundant Platform Formatting Rules**: Remove instructions mandating plaintext, forbidding markdown headers, or instructing digit spacing; these are handled automatically by the platform baseline.

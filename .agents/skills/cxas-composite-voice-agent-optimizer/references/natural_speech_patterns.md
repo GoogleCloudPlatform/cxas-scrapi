@@ -147,7 +147,7 @@ Beyond audio tags, the text of the generated response must be engineered specifi
 
 Instruct the LLM to emit ellipses `...` to force natural acoustic pauses during data retrieval or mid-sentence transitions:
 
-- ✅ *Natural:* `"Your seat is confirmed in fourteen A ... and flight four twenty-eight boards at gate twenty-two at two fifteen."`
+- ✅ *Natural:* `""Your seat is confirmed in 14A ... and flight 428 boards at gate 22 at 14:15 on 10/16."`
 - ❌ *Monotonic:* `"Your seat is confirmed in 14A and flight 428 boards at gate 22 at 14:15 on 10/16."`
 
 ### 2.2 Localized Conversational Bridge Words
