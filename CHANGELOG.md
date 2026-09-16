@@ -1,6 +1,13 @@
 # Changelog
 
 
+## [1.9.2](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.9.1...v1.9.2) (2026-09-16)
+
+
+### Bug Fixes
+
+* **ci:** use secrets.GH_TOKEN for release-please to satisfy Google CLA ([#460](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/460)) ([eac70da](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/eac70da61021a4aa5373c2c62b165795a01a5e3c))
+
 ## [1.9.1](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.9.0...v1.9.1) (2026-09-16)
 
 
