@@ -696,6 +696,53 @@ def trace_open(args: argparse.Namespace) -> None:
             subprocess.run(["open", url], check=False)
 
 
+# ------------------------------ eval-report ---------------------------------
+
+
+def trace_eval_report(args: argparse.Namespace) -> None:
+    from cxas_scrapi.utils.cloud_eval_reporter import generate_cloud_report
+    from cxas_scrapi.utils.eval_utils import EvalUtils
+
+    eval_utils = EvalUtils(
+        app_name=args.app_name, env=getattr(args, "env", "PROD").upper()
+    )
+    evaluations = eval_utils.list_evaluations(args.app_name)
+    results = []
+    eval_names_map = {}
+    for evaluation in evaluations:
+        eval_dict = type(evaluation).to_dict(evaluation)
+        ename = eval_dict.get("name", "")
+        edisplay = (
+            eval_dict.get("display_name")
+            or eval_dict.get("displayName")
+            or ename
+        )
+        if ename:
+            eval_names_map[ename] = edisplay
+
+        results.extend(eval_utils.list_evaluation_results(evaluation.name))
+
+    if getattr(args, "eval_run", None):
+        results = [
+            r
+            for r in results
+            if getattr(r, "evaluation_run", "") == args.eval_run
+        ]
+
+    out_path = generate_cloud_report(
+        eval_results=[type(r).to_dict(r) for r in results],
+        app_id=args.app_name,
+        output_path=args.out,
+        report_format=args.format,
+        env=getattr(args, "env", "prod").lower(),
+        app_dir=getattr(args, "app_dir", ""),
+        eval_names_map=eval_names_map,
+    )
+    print(
+        f"Successfully generated in-product Cloud evaluation report: {out_path}"
+    )
+
+
 # ----------------------------- argparse wiring ------------------------------
 
 
@@ -1073,3 +1120,32 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     add_trace_args(p_open)
     p_open.add_argument("conversation_id")
     p_open.set_defaults(func=trace_open)
+
+    # eval-report
+    p_eval_report = trace_subparsers.add_parser(
+        "eval-report",
+        help="Generate an in-product Cloud evaluation diagnostic report.",
+    )
+    add_trace_args(p_eval_report)
+    p_eval_report.add_argument(
+        "--eval-run",
+        help="Optional evaluation run ID. Defaults to latest evaluation results.",
+    )
+    p_eval_report.add_argument(
+        "--format",
+        choices=["html", "json"],
+        default="html",
+        help="Output format: 'html' or 'json'.",
+    )
+    p_eval_report.add_argument(
+        "--out",
+        required=True,
+        help="File path to write the report to.",
+    )
+    p_eval_report.add_argument(
+        "--env",
+        choices=["dev", "prod"],
+        default="prod",
+        help="Cloud console environment for deep links.",
+    )
+    p_eval_report.set_defaults(func=trace_eval_report)
