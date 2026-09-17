@@ -55,6 +55,19 @@ report = conversation.generate_report()
 print(report)  # Colorized in terminal, styled HTML in Jupyter
 ```
 
+## Naturalness Metric (optional)
+
+`SimulationEvals` can also grade *how human the agent sounds*. The metric is opt-in: a test case that does not declare a `naturalness_metric` block behaves exactly as before, with no extra Gemini call and no extra keys in the results. See the [Local Simulations guide](../../guides/evaluation/local-simulations.md#naturalness-metric) for the YAML schema and worked examples.
+
+- **`NaturalnessConfig`** (Pydantic model) — the per-test-case configuration: which model grades, which qualities are scored, the label bands, the turn/conversation blend weight, the perceived-latency bands and weight, and an optional `pass_threshold`. Unknown keys are tolerated, so newer YAML still loads.
+- **`NaturalnessResult`** — the aggregate result for one simulation: `overall_score`, `overall_label`, per-turn gradings, conversation-level factors, `factor_averages`, `label_counts`, `latency_ms_by_turn`, `failure_reasons`, and `passed`. Exposed as `conversation.naturalness_result`.
+- **`TurnNaturalness`** — the grading for a single agent turn: its label, 1–5 score, justification, and the factors behind it.
+- **`NaturalnessFactor`** — one scored quality (e.g. `pacing`) with its 1–5 score, an optional short `value` descriptor, and the evidence-citing `reason`.
+- **`NaturalnessLabel`** enum — `Bot-like`, `Transitional`, or `Human-like`.
+- **`evaluate_naturalness()`** — grades a simulation trace directly, optionally against the agent's recorded audio and the platform's per-turn perceived latency. Returns `None` (after logging) when there is nothing to grade or the grading call fails, so the metric can never break a run.
+
+In `audio` modality the agent's recordings are attached to the grading call automatically, so pacing and emotion are judged from what the caller heard. `perceivedLatency` is measured from the conversation trace rather than judged, and a turn past `latency_failure_threshold_ms` fails the simulation outright.
+
 ## Reference
 
 ::: cxas_scrapi.evals.simulation_evals.SimulationEvals
@@ -64,3 +77,15 @@ print(report)  # Colorized in terminal, styled HTML in Jupyter
 ::: cxas_scrapi.evals.simulation_evals.StepStatus
 
 ::: cxas_scrapi.evals.simulation_evals.SimulationReport
+
+::: cxas_scrapi.evals.naturalness.NaturalnessConfig
+
+::: cxas_scrapi.evals.naturalness.NaturalnessResult
+
+::: cxas_scrapi.evals.naturalness.TurnNaturalness
+
+::: cxas_scrapi.evals.naturalness.NaturalnessFactor
+
+::: cxas_scrapi.evals.naturalness.NaturalnessLabel
+
+::: cxas_scrapi.evals.naturalness.evaluate_naturalness

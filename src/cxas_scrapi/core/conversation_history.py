@@ -39,8 +39,17 @@ class ConversationHistory(Common):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
+        transport: str | None = None,
         **kwargs: typing.Any,
     ) -> None:
+        """Initializes the client.
+
+        Args:
+            transport: `"grpc"` or `"rest"`, defaulting to the
+                `CES_TRANSPORT` environment variable. Conversations that
+                include audio routinely exceed gRPC's 4 MB response limit,
+                so use `"rest"` when fetching whole conversations.
+        """
         super().__init__(
             creds_path=creds_path,
             creds_dict=creds_dict,
@@ -52,7 +61,9 @@ class ConversationHistory(Common):
         self.app_name = app_name
         self.client_options = self._get_client_options(self.app_name)
         self.client = AgentServiceClient(
-            transport=self.get_grpc_transport(AgentServiceClient),
+            transport=self.get_grpc_transport(
+                AgentServiceClient, transport_type=transport
+            ),
             client_info=self.client_info,
         )
 

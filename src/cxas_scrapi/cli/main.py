@@ -671,6 +671,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         single_bidi_stream=getattr(args, "single_bidi_stream", False),
         report_format=getattr(args, "format", "html") or "html",
         vertex_location=getattr(args, "vertex_location", "global") or "global",
+        naturalness=getattr(args, "naturalness", None),
     )
     print(f"Combined report generated at {actual_output_path}")
 
@@ -1837,6 +1838,19 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Evaluate test results using only expectations "
             "(ignore goal success_criteria)"
+        ),
+    )
+    parser_report.add_argument(
+        "--naturalness",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Force the naturalness metric on or off for every simulation. "
+            "--naturalness grades every simulation even if the test case "
+            "does not declare the metric. --no-naturalness skips grading "
+            "even where a test case does declare it, which is useful when "
+            "hill-climbing on correctness before tuning for naturalness. "
+            "Omit the flag to let each test case decide."
         ),
     )
     parser_report.add_argument(

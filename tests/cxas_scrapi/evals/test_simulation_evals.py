@@ -22,6 +22,14 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+from cxas_scrapi.evals.naturalness import (
+    NaturalnessConfig,
+    NaturalnessFactor,
+    NaturalnessLabel,
+    NaturalnessResult,
+    TurnNaturalness,
+    parse_naturalness_config,
+)
 from cxas_scrapi.evals.simulation_evals import (
     LLMUserConversation,
     SimulationEvals,
@@ -967,6 +975,18 @@ def test_llm_user_next_user_utterance_static_utterance_bypass() -> None:
     mock_genai_client.generate.assert_not_called()
 
 
+def test_simulation_evals_retains_app_name() -> None:
+    """`Common.__init__` assigns `self.app_name` unconditionally, so an
+    assignment made before `super().__init__()` is silently replaced with
+    `None`. That left every `self.app_name` consumer resolving conversation
+    and trace resources under the name `"None/..."`."""
+    app_name = "projects/p/locations/l/apps/a"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name)
+    assert evals.app_name == app_name
+
+
 def test_simulation_evals_add_agent_text() -> None:
     app_name = "projects/p/locations/l/apps/a"
     with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
@@ -1751,6 +1771,7 @@ def test_simulation_evals_expectations_only_passing() -> None:
     ]
     mock_conv.current_turn = 1
     mock_conv.get_transcript.return_value = "transcript"
+    mock_conv.naturalness_result = None
 
     with patch.object(evals, "simulate_conversation", return_value=mock_conv):
         res = evals._run_single_simulation_job(
@@ -1785,6 +1806,7 @@ def test_simulation_evals_expectations_only_failing() -> None:
     ]
     mock_conv.current_turn = 1
     mock_conv.get_transcript.return_value = "transcript"
+    mock_conv.naturalness_result = None
 
     with patch.object(evals, "simulate_conversation", return_value=mock_conv):
         res = evals._run_single_simulation_job(
@@ -1816,6 +1838,7 @@ def test_simulation_evals_expectations_only_fallback() -> None:
     mock_conv.expectation_results = []
     mock_conv.current_turn = 1
     mock_conv.get_transcript.return_value = "transcript"
+    mock_conv.naturalness_result = None
 
     with patch.object(evals, "simulate_conversation", return_value=mock_conv):
         res = evals._run_single_simulation_job(
@@ -1949,3 +1972,430 @@ def test_simulation_evals_custom_vertex_location() -> None:
         location="us-central1",
         credentials=simulator.creds,
     )
+
+
+def _naturalness_evals(**kwargs: typing.Any) -> SimulationEvals:
+    app_name = "projects/p/locations/l/apps/a"
+    with (
+        patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"),
+        patch("cxas_scrapi.core.apps.AgentServiceClient"),
+    ):
+        return SimulationEvals(app_name=app_name, **kwargs)
+
+
+def _passing_conv(naturalness_result: typing.Any = None) -> MagicMock:
+    conv = MagicMock()
+    conv.steps_progress = [MagicMock(status=StepStatus.COMPLETED)]
+    conv.expectation_results = []
+    conv.current_turn = 1
+    conv.get_transcript.return_value = "transcript"
+    conv.naturalness_result = naturalness_result
+    return conv
+
+
+def test_simulation_naturalness_absent_leaves_results_unchanged() -> None:
+    """Backward compatibility: no config means no naturalness keys."""
+    evals = _naturalness_evals()
+    conv = _passing_conv(naturalness_result=None)
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc={"name": "test"},
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is True
+    assert "naturalness" not in res
+    assert "naturalness_label" not in res
+    assert "naturalness_details" not in res
+
+
+def test_simulation_naturalness_adds_result_keys() -> None:
+    evals = _naturalness_evals()
+    result = NaturalnessResult(
+        overall_score=4.1,
+        overall_label=NaturalnessLabel.HUMAN_LIKE,
+        turn_count=2,
+    )
+    conv = _passing_conv(naturalness_result=result)
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc={"name": "test", "naturalness_metric": True},
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["naturalness"] == "4.1/5"
+    assert res["naturalness_label"] == "Human-like"
+    assert res["naturalness_details"]["overall_score"] == 4.1
+    # Informational only: the simulation still passes.
+    assert res["passed"] is True
+
+
+def test_simulation_naturalness_threshold_can_fail_a_run() -> None:
+    evals = _naturalness_evals()
+    result = NaturalnessResult(
+        overall_score=2.0,
+        overall_label=NaturalnessLabel.BOT_LIKE,
+        pass_threshold=3.5,
+        passed=False,
+    )
+    conv = _passing_conv(naturalness_result=result)
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc={"name": "test"},
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is False
+
+
+def test_simulation_naturalness_run_level_override_is_persisted() -> None:
+    """run_simulations must stash the override for monkeypatched runners."""
+    evals = _naturalness_evals()
+    assert evals.naturalness is None
+
+    with patch.object(
+        evals, "_run_single_simulation_job", return_value={"passed": True}
+    ):
+        evals.run_simulations(
+            [{"name": "test"}], runs=1, parallel=1, naturalness=True
+        )
+
+    assert evals.naturalness is True
+
+
+def test_simulation_naturalness_run_level_false_force_disables() -> None:
+    """`False` must survive as `False`, not be treated as "unset".
+
+    This is the hill-climbing switch: iterate on correctness with grading
+    off, even for test cases that declare the metric, then turn it back on.
+    """
+    evals = _naturalness_evals()
+
+    with patch.object(
+        evals, "_run_single_simulation_job", return_value={"passed": True}
+    ):
+        evals.run_simulations(
+            [{"name": "test"}], runs=1, parallel=1, naturalness=False
+        )
+
+    assert evals.naturalness is False
+    # A test case that declared the metric is still switched off by it.
+    assert (
+        parse_naturalness_config(
+            {"naturalness_metric": {"pass_threshold": 3.5}}, evals.naturalness
+        )
+        is None
+    )
+
+
+def test_simulate_conversation_skips_naturalness_when_unconfigured() -> None:
+    evals = _naturalness_evals()
+    conv = MagicMock()
+    conv.naturalness_result = None
+
+    with patch(
+        "cxas_scrapi.evals.simulation_evals.evaluate_naturalness"
+    ) as mock_eval:
+        evals._evaluate_naturalness(conv, ["User: hi"], "model", False, None)
+
+    mock_eval.assert_not_called()
+    assert conv.naturalness_result is None
+
+
+def test_simulation_naturalness_latency_failure_fails_a_run() -> None:
+    """A hard failure sinks the run even without a pass_threshold."""
+    evals = _naturalness_evals()
+    result = NaturalnessResult(
+        overall_score=4.6,
+        overall_label=NaturalnessLabel.HUMAN_LIKE,
+        passed=False,
+        failure_reasons=["perceived latency reached 5.2s on turn 2"],
+    )
+    conv = _passing_conv(naturalness_result=result)
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc={"name": "test"},
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="audio",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is False
+    assert res["naturalness_details"]["failure_reasons"]
+
+
+def test_evaluate_naturalness_auto_enables_audio_in_audio_modality() -> None:
+    """Audio modality is the case the metric exists for, so listen by default."""
+    evals = _naturalness_evals()
+    conv = MagicMock()
+
+    with (
+        patch.object(
+            evals, "_conversation_latency", return_value=({0: 900.0}, None)
+        ),
+        patch.object(
+            evals, "_resolve_agent_audio", return_value={0: "gs://b/a.wav"}
+        ) as mock_audio,
+        patch(
+            "cxas_scrapi.evals.simulation_evals.evaluate_naturalness"
+        ) as mock_eval,
+    ):
+        evals._evaluate_naturalness(
+            conv,
+            ["User: hi"],
+            "model",
+            False,
+            NaturalnessConfig(),
+            session_id="sess-1",
+            modality="audio",
+        )
+
+    mock_audio.assert_called_once()
+    kwargs = mock_eval.call_args.kwargs
+    assert kwargs["config"].use_audio is True
+    assert kwargs["audio_paths"] == {0: "gs://b/a.wav"}
+    assert kwargs["latency_ms_by_turn"] == {0: 900.0}
+
+
+def test_evaluate_naturalness_text_modality_skips_audio_lookup() -> None:
+    evals = _naturalness_evals()
+    conv = MagicMock()
+
+    with (
+        patch.object(evals, "_conversation_latency", return_value=({}, None)),
+        patch.object(evals, "_resolve_agent_audio") as mock_audio,
+        patch(
+            "cxas_scrapi.evals.simulation_evals.evaluate_naturalness"
+        ) as mock_eval,
+    ):
+        evals._evaluate_naturalness(
+            conv,
+            ["User: hi"],
+            "model",
+            False,
+            NaturalnessConfig(),
+            session_id="sess-1",
+            modality="text",
+        )
+
+    mock_audio.assert_not_called()
+    assert mock_eval.call_args.kwargs["audio_paths"] is None
+
+
+def test_conversation_latency_reads_perceived_latency_per_turn() -> None:
+    evals = _naturalness_evals()
+    normalized = {
+        "start_time": "2024-01-01T00:00:00Z",
+        "turn_metrics": [
+            {"turn": 0, "perceived_latency_ms": 1200},
+            {"turn": 1, "perceived_latency_ms": None},
+            {"turn": 2, "perceived_latency_ms": 4100.5},
+        ],
+    }
+
+    with (
+        patch("cxas_scrapi.evals.simulation_evals.ConversationHistory"),
+        patch(
+            "cxas_scrapi.evals.simulation_evals.trace_report.normalize",
+            return_value=normalized,
+        ),
+    ):
+        latencies, start_time = evals._conversation_latency("sess-1")
+
+    # The turn with no measurement is omitted rather than defaulted.
+    assert latencies == {0: 1200.0, 2: 4100.5}
+    assert start_time == "2024-01-01T00:00:00Z"
+
+
+def test_conversation_latency_tolerates_an_unreachable_trace() -> None:
+    """Latency is a nice-to-have; a failed fetch must not break the run."""
+    evals = _naturalness_evals()
+
+    with patch(
+        "cxas_scrapi.evals.simulation_evals.ConversationHistory",
+        side_effect=RuntimeError("no trace"),
+    ):
+        latencies, start_time = evals._conversation_latency("sess-1")
+
+    assert latencies == {}
+    assert start_time is None
+
+
+def test_resolve_agent_audio_maps_one_based_recordings_to_turns() -> None:
+    """agent-turn-N.wav is turn N-1, so the map has to be shifted."""
+    evals = _naturalness_evals()
+    conv = MagicMock()
+
+    with patch("cxas_scrapi.evals.simulation_evals.Traces") as mock_traces:
+        mock_traces.return_value.get_agent_audio_uris.return_value = {
+            1: "gs://b/agent-turn-1.wav",
+            2: "gs://b/agent-turn-2.wav",
+        }
+        paths = evals._resolve_agent_audio(
+            conv, "sess-1", None, NaturalnessConfig()
+        )
+
+    assert paths == {
+        0: "gs://b/agent-turn-1.wav",
+        1: "gs://b/agent-turn-2.wav",
+    }
+
+
+def test_resolve_agent_audio_falls_back_to_local_capture() -> None:
+    evals = _naturalness_evals()
+    conv = MagicMock()
+    conv.agent_audio_paths = {0: "/tmp/turn0.wav"}
+
+    with patch("cxas_scrapi.evals.simulation_evals.Traces") as mock_traces:
+        mock_traces.return_value.get_agent_audio_uris.return_value = {}
+        paths = evals._resolve_agent_audio(
+            conv, "sess-1", None, NaturalnessConfig()
+        )
+
+    assert paths == {0: "/tmp/turn0.wav"}
+
+
+def test_resolve_agent_audio_respects_source_none() -> None:
+    evals = _naturalness_evals()
+    conv = MagicMock()
+    conv.agent_audio_paths = {0: "/tmp/turn0.wav"}
+
+    with patch("cxas_scrapi.evals.simulation_evals.Traces") as mock_traces:
+        paths = evals._resolve_agent_audio(
+            conv, "sess-1", None, NaturalnessConfig(audio_source="none")
+        )
+
+    mock_traces.assert_not_called()
+    assert paths == {}
+
+
+def test_naturalness_report_shows_latency_and_failure() -> None:
+    conv = LLMUserConversation(
+        genai_client=MagicMock(),
+        genai_model="fake",
+        test_case={"name": "t", "steps": []},
+    )
+    conv.naturalness_result = NaturalnessResult(
+        overall_score=4.5,
+        overall_label=NaturalnessLabel.HUMAN_LIKE,
+        turns=[
+            TurnNaturalness(
+                turn_index=0,
+                score=2.5,
+                factors=[
+                    NaturalnessFactor(
+                        quality="perceivedLatency", score=1, value="5.2s"
+                    )
+                ],
+            )
+        ],
+        latency_ms_by_turn={0: 5200.0},
+        failure_reasons=["perceived latency reached 5.2s on turn 0"],
+    )
+
+    report = conv.generate_report()
+
+    assert report.naturalness_df is not None
+    assert report.naturalness_df.loc[0, "latency_s"] == 5.2
+    assert report.naturalness_df.loc[0, "perceivedLatency"] == 1
+    assert "FAILED" in report.naturalness_headline
+    assert "5.2s" in report.naturalness_headline
+
+
+def test_conversation_latency_polls_until_the_trace_is_published() -> None:
+    """The platform publishes a conversation some time after the call ends."""
+    evals = _naturalness_evals()
+    normalized = {
+        "start_time": None,
+        "turn_metrics": [{"turn": 0, "perceived_latency_ms": 900}],
+    }
+    history = MagicMock()
+    history.get_conversation.side_effect = [
+        RuntimeError("404 not found"),
+        RuntimeError("404 not found"),
+        "conversation",
+    ]
+
+    with (
+        patch(
+            "cxas_scrapi.evals.simulation_evals.ConversationHistory",
+            return_value=history,
+        ),
+        patch(
+            "cxas_scrapi.evals.simulation_evals.trace_report.normalize",
+            return_value=normalized,
+        ),
+        patch("cxas_scrapi.evals.simulation_evals.time.sleep") as mock_sleep,
+    ):
+        latencies, _ = evals._conversation_latency("sess-1", timeout_s=120.0)
+
+    assert latencies == {0: 900.0}
+    assert history.get_conversation.call_count == 3
+    # A steady poll, so the trace is picked up as soon as it lands.
+    assert [c.args[0] for c in mock_sleep.call_args_list] == [5.0, 5.0]
+
+
+def test_conversation_latency_gives_up_within_its_budget() -> None:
+    evals = _naturalness_evals()
+    history = MagicMock()
+    history.get_conversation.side_effect = RuntimeError("404 not found")
+
+    with (
+        patch(
+            "cxas_scrapi.evals.simulation_evals.ConversationHistory",
+            return_value=history,
+        ),
+        patch("cxas_scrapi.evals.simulation_evals.time.sleep") as mock_sleep,
+    ):
+        latencies, start_time = evals._conversation_latency(
+            "sess-1", timeout_s=0.0
+        )
+
+    assert latencies == {}
+    assert start_time is None
+    # A zero budget must not sleep at all.
+    mock_sleep.assert_not_called()
+
+
+def test_conversation_latency_fetches_over_rest() -> None:
+    """A conversation with audio exceeds gRPC's 4 MB response limit."""
+    evals = _naturalness_evals()
+
+    with (
+        patch(
+            "cxas_scrapi.evals.simulation_evals.ConversationHistory"
+        ) as mock_history,
+        patch(
+            "cxas_scrapi.evals.simulation_evals.trace_report.normalize",
+            return_value={"turn_metrics": []},
+        ),
+    ):
+        evals._conversation_latency("sess-1")
+
+    assert mock_history.call_args.kwargs["transport"] == "rest"

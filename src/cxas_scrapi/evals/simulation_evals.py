@@ -19,6 +19,7 @@ import enum
 import functools
 import inspect
 import json
+import logging
 import re
 import shutil
 import time
@@ -38,6 +39,14 @@ from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import BidiSessionError, Sessions
 from cxas_scrapi.core.tools import Tools
+from cxas_scrapi.core.traces import Traces
+from cxas_scrapi.evals.naturalness import (
+    NaturalnessConfig,
+    NaturalnessResult,
+    evaluate_naturalness,
+    extract_agent_turns,
+    parse_naturalness_config,
+)
 from cxas_scrapi.prompts import llm_user_prompts
 from cxas_scrapi.utils.eval_utils import (
     Conversation as GoldenConversation,
@@ -54,10 +63,16 @@ from cxas_scrapi.utils.eval_utils import (
 )
 from cxas_scrapi.utils.gemini import GeminiGenerate
 from cxas_scrapi.utils.rate_limiter import RateLimiter
+from cxas_scrapi.utils.tracing import trace_report
+
+logger = logging.getLogger(__name__)
 
 _FIRST_UTTERANCE = "event: welcome"
 _MAX_TURNS = 30
 _DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+# How often to re-check whether a finished conversation has been published,
+# which is what the naturalness metric reads perceived latency from.
+_LATENCY_POLL_INTERVAL_S = 5.0
 
 
 class Step(pydantic.BaseModel):
@@ -98,9 +113,13 @@ class SimulationReport:
         self,
         goals_df: pd.DataFrame,
         expectations_df: pd.DataFrame | None = None,
+        naturalness_df: pd.DataFrame | None = None,
+        naturalness_headline: str = "",
     ) -> None:
         self.goals_df = goals_df
         self.expectations_df = expectations_df
+        self.naturalness_df = naturalness_df
+        self.naturalness_headline = naturalness_headline
 
     def __str__(self) -> typing.Any:
         green = "\033[1;32m"
@@ -123,12 +142,26 @@ class SimulationReport:
 
             res += "\n\n--- Expectations ---\n" + exp_str
 
+        if self.naturalness_df is not None:
+            nat_str = self.naturalness_df.to_string()
+            nat_str = nat_str.replace("Bot-like", f"{red}Bot-like{reset}")
+            nat_str = nat_str.replace("Human-like", f"{green}Human-like{reset}")
+            res += "\n\n--- Naturalness ---\n"
+            if self.naturalness_headline:
+                res += self.naturalness_headline + "\n"
+            res += nat_str
+
         return res
 
     def _repr_html_(self) -> typing.Any:
         html = "<h3>Goal Progress</h3>" + self.goals_df._repr_html_()
         if self.expectations_df is not None:
             html += "<h3>Expectations</h3>" + self.expectations_df._repr_html_()
+        if self.naturalness_df is not None:
+            html += "<h3>Naturalness</h3>"
+            if self.naturalness_headline:
+                html += f"<p><b>{self.naturalness_headline}</b></p>"
+            html += self.naturalness_df._repr_html_()
         return html
 
 
@@ -234,6 +267,8 @@ class LLMUserConversation(Conversation):
                 }
             self.audio_expectations.append(exp_dict)
         self.expectation_results: list[ExpectationResult] = []
+        # Populated only when the optional Naturalness Metric is configured.
+        self.naturalness_result: NaturalnessResult | None = None
 
     def _check_conversation_status(self) -> bool:
         """Checks if the conversation should continue."""
@@ -369,7 +404,48 @@ class LLMUserConversation(Conversation):
                 )
             expectations_df = pd.DataFrame(exp_records)
 
-        return SimulationReport(goals_df, expectations_df)
+        naturalness_df = None
+        naturalness_headline = ""
+        result = self.naturalness_result
+        if result:
+            nat_records = []
+            for turn in result.turns:
+                record: dict[str, Any] = {
+                    "turn": turn.turn_index,
+                    "label": turn.label.value,
+                    "score": turn.score,
+                }
+                # The measured value, alongside the 1-5 band it maps to, so a
+                # slow turn is legible without decoding the band.
+                latency_ms = result.latency_ms_by_turn.get(turn.turn_index)
+                if latency_ms is not None:
+                    record["latency_s"] = round(latency_ms / 1000.0, 2)
+                # One column per graded quality keeps the table scannable.
+                for factor in turn.factors:
+                    if factor.quality:
+                        record[factor.quality] = factor.score
+                record["justification"] = turn.justification
+                nat_records.append(record)
+            naturalness_df = pd.DataFrame(nat_records)
+            naturalness_headline = (
+                f"Overall: {result.overall_score}/5 "
+                f"({result.overall_label.value})"
+            )
+            if result.pass_threshold is not None:
+                verdict = "PASS" if result.passed else "FAIL"
+                naturalness_headline += (
+                    f" | threshold {result.pass_threshold} -> {verdict}"
+                )
+            # A hard failure can sink a run that scored well, so name it.
+            for reason in result.failure_reasons:
+                naturalness_headline += f" | FAILED: {reason}"
+
+        return SimulationReport(
+            goals_df,
+            expectations_df,
+            naturalness_df=naturalness_df,
+            naturalness_headline=naturalness_headline,
+        )
 
 
 def cleanup_session_dir(func: typing.Any) -> typing.Any:
@@ -408,14 +484,22 @@ class SimulationEvals(Apps):
         expectations_only: bool = False,
         deployment_id: str | None = None,
         vertex_location: str = "global",
+        naturalness: bool | dict[str, Any] | None = None,
         **kwargs: typing.Any,
     ) -> None:
-        self.app_name = app_name
         self.expectations_only = expectations_only
         self.vertex_location = vertex_location
+        # Run-level override for the optional Naturalness Metric. `None`
+        # defers entirely to each test case; True enables it everywhere with
+        # defaults; a dict is merged over the test case's own block.
+        self.naturalness = naturalness
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
+        # Must follow super().__init__: `Common` assigns `self.app_name`
+        # unconditionally, and it is not handed the app name here, so setting
+        # this any earlier would be silently overwritten with `None`.
+        self.app_name = app_name
         self.sessions_client = Sessions(
             app_name,
             deployment_id=deployment_id,
@@ -484,6 +568,185 @@ class SimulationEvals(Apps):
                 expectations=all_expectations,
                 audio_paths=audio_paths,
             )
+
+    def _conversation_latency(
+        self, session_id: str, timeout_s: float = 120.0
+    ) -> tuple[dict[int, float], Any]:
+        """Reads per-turn perceived latency from the platform conversation.
+
+        A conversation is published some time after the call ends — commonly
+        under a minute, but not instantly — so a fetch straight after a
+        simulation reliably 404s. This polls until it appears or `timeout_s`
+        is spent. The interval is fixed rather than backing off: we are
+        waiting on an event that is known to be coming, so backing off would
+        only overshoot the moment it lands.
+
+        Returns `({turn_index: latency_ms}, start_time)`. Giving up is logged
+        and returns empty values: latency is a nice-to-have, and an
+        unreachable trace must not fail an otherwise healthy simulation.
+        """
+        try:
+            # Over REST, because a conversation carrying audio comfortably
+            # exceeds gRPC's 4 MB response limit.
+            history = ConversationHistory(
+                app_name=self.app_name, creds=self.creds, transport="rest"
+            )
+        except Exception as exc:  # noqa: BLE001 - never break a run
+            logger.warning(
+                "Naturalness: could not reach conversation history for %s "
+                "(%s); the perceivedLatency dimension will be omitted.",
+                session_id,
+                exc,
+            )
+            return {}, None
+
+        deadline = time.monotonic() + max(timeout_s, 0.0)
+        normalized = None
+
+        while normalized is None:
+            try:
+                conversation = history.get_conversation(session_id)
+                normalized = trace_report.normalize(conversation)
+            except Exception as exc:  # noqa: BLE001 - never break a run
+                if time.monotonic() + _LATENCY_POLL_INTERVAL_S > deadline:
+                    logger.warning(
+                        "Naturalness: conversation %s was not published "
+                        "within %.0fs (%s); the perceivedLatency dimension "
+                        "will be omitted.",
+                        session_id,
+                        timeout_s,
+                        exc,
+                    )
+                    return {}, None
+                logger.debug(
+                    "Naturalness: conversation %s not published yet (%s); "
+                    "polling again.",
+                    session_id,
+                    exc,
+                )
+                time.sleep(_LATENCY_POLL_INTERVAL_S)
+
+        latencies: dict[int, float] = {}
+        for metrics in normalized.get("turn_metrics", []) or []:
+            latency_ms = metrics.get("perceived_latency_ms")
+            if latency_ms is None:
+                continue
+            latencies[int(metrics.get("turn", 0))] = float(latency_ms)
+        return latencies, normalized.get("start_time")
+
+    def _resolve_agent_audio(
+        self,
+        eval_conv: LLMUserConversation,
+        session_id: str,
+        start_time: Any,
+        config: NaturalnessConfig,
+        speech_index_by_turn: dict[int, int] | None = None,
+    ) -> dict[int, str]:
+        """Maps `speech_index` to the agent's recorded audio for that turn.
+
+        Prefers the platform's recording bucket, which holds real
+        post-synthesis audio for every turn, and falls back to WAVs captured
+        locally during the run. Returns an empty map when neither is
+        available, which downgrades grading to transcript-only.
+
+        Both sources are normalised onto `speech_index` (see
+        `extract_agent_turns`). The bucket already numbers recordings over
+        speaking turns only, whereas the local capture is keyed by simulation
+        turn, so the latter is translated.
+        """
+        source = (config.audio_source or "auto").lower()
+        if source == "none":
+            return {}
+
+        if source in ("auto", "gcs") and session_id:
+            try:
+                traces = Traces(app_name=self.app_name, creds=self.creds)
+                uris = traces.get_agent_audio_uris(
+                    session_id, start_time=start_time
+                )
+            except Exception as exc:  # noqa: BLE001 - never break a run
+                logger.warning(
+                    "Naturalness: could not list agent audio for %s (%s).",
+                    session_id,
+                    exc,
+                )
+                uris = {}
+            if uris:
+                # Filenames are 1-based: agent-turn-N is speech_index N-1.
+                return {number - 1: uri for number, uri in uris.items()}
+            if source == "gcs":
+                logger.info(
+                    "Naturalness: no agent recordings found for %s.",
+                    session_id,
+                )
+                return {}
+
+        local = dict(getattr(eval_conv, "agent_audio_paths", None) or {})
+        if not local or not speech_index_by_turn:
+            return local
+        return {
+            speech_index_by_turn[turn]: path
+            for turn, path in local.items()
+            if turn in speech_index_by_turn
+        }
+
+    def _evaluate_naturalness(
+        self,
+        eval_conv: LLMUserConversation,
+        detailed_trace: list[str],
+        model: str,
+        console_logging: bool,
+        config: NaturalnessConfig | None,
+        session_id: str = "",
+        modality: str = "text",
+    ) -> None:
+        """Runs the optional Naturalness Metric.
+
+        Does nothing when the metric is not configured, which keeps existing
+        simulation YAML files working unchanged.
+
+        Modifies `eval_conv.naturalness_result` in place.
+        """
+        if config is None:
+            return
+
+        if console_logging:
+            print("\nEvaluating Naturalness...")
+
+        # In audio modality how the agent sounds is the thing being judged,
+        # so listen to it by default rather than reading a transcript of it.
+        if modality == "audio" and not config.use_audio:
+            config = config.model_copy(update={"use_audio": True})
+
+        latencies, start_time = self._conversation_latency(
+            session_id, timeout_s=config.latency_fetch_timeout_s
+        )
+
+        speech_index_by_turn = {
+            t.turn_index: t.speech_index
+            for t in extract_agent_turns(detailed_trace)
+        }
+
+        audio_paths = (
+            self._resolve_agent_audio(
+                eval_conv,
+                session_id,
+                start_time,
+                config,
+                speech_index_by_turn=speech_index_by_turn,
+            )
+            if config.use_audio
+            else None
+        )
+
+        eval_conv.naturalness_result = evaluate_naturalness(
+            gemini_client=self.genai_client,
+            model_name=model,
+            trace=detailed_trace,
+            config=config,
+            audio_paths=audio_paths,
+            latency_ms_by_turn=latencies,
+        )
 
     def _send_request_with_retry(
         self,
@@ -576,6 +839,7 @@ class SimulationEvals(Apps):
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
         max_turns: int | None = None,
+        naturalness: bool | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
@@ -591,11 +855,18 @@ class SimulationEvals(Apps):
                 opening a new connection per turn (the default).
             max_turns: Maximum number of conversation turns. Defaults to
                 the test_case's max_turns setting, or 30 if unspecified.
+            naturalness: Overrides the test case's `naturalness_metric`
+                block. `None` (the default) defers to the test case, so
+                simulations that never declare the metric are unaffected.
         """
         sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
         eval_model = eval_model or _DEFAULT_GEMINI_MODEL
         if session_id is None:
             session_id = str(uuid.uuid4())
+        naturalness_config = parse_naturalness_config(
+            test_case,
+            naturalness if naturalness is not None else self.naturalness,
+        )
         voice_config = voice_config or test_case.get("voice_config")
         eval_conv = LLMUserConversation(
             genai_client=self.genai_client,
@@ -739,6 +1010,15 @@ class SimulationEvals(Apps):
                 console_logging,
                 capture_agent_audio=capture_agent_audio,
             )
+            self._evaluate_naturalness(
+                eval_conv,
+                detailed_trace,
+                eval_model,
+                console_logging,
+                naturalness_config,
+                session_id=session_id,
+                modality=modality,
+            )
             eval_conv._session_id = session_id
             eval_conv.session_id = session_id
             eval_conv._detailed_trace = detailed_trace
@@ -775,7 +1055,12 @@ class SimulationEvals(Apps):
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
     ) -> dict[str, Any]:
-        """Runs a single simulation job and returns the results."""
+        """Runs a single simulation job and returns the results.
+
+        The Naturalness Metric override is read from `self.naturalness`
+        rather than passed in, so that wrappers which monkeypatch this
+        method with a fixed signature keep working.
+        """
         name = tc["name"]
         label = f"{name} (run {run_idx + 1}/{runs})"
         session_id = str(uuid.uuid4())
@@ -817,6 +1102,21 @@ class SimulationEvals(Apps):
             elif total_exp > 0:
                 passed = passed and (expectations_met == total_exp)
 
+            # The naturalness metric affects pass/fail when the test case
+            # opted in with an explicit pass_threshold, or when a turn broke
+            # the perceived-latency limit.
+            naturalness_result = conv.naturalness_result
+            naturalness_note = ""
+            if naturalness_result:
+                naturalness_note = (
+                    f" | naturalness: {naturalness_result.overall_score}/5 "
+                    f"({naturalness_result.overall_label.value})"
+                )
+                for reason in naturalness_result.failure_reasons:
+                    naturalness_note += f" | FAILED: {reason}"
+                if naturalness_result.passed is not None:
+                    passed = passed and naturalness_result.passed
+
             status = "PASS" if passed else "FAIL"
             if parallel > 1 or not verbose:
                 print(
@@ -824,9 +1124,10 @@ class SimulationEvals(Apps):
                     f"{goals_completed}/{total_goals} | "
                     f"expectations: {expectations_met}/{total_exp} | "
                     f"turns: {conv.current_turn} | {duration_s}s"
+                    f"{naturalness_note}"
                 )
 
-            return {
+            result: dict[str, Any] = {
                 "name": name,
                 "run": run_idx + 1,
                 "passed": passed,
@@ -860,6 +1161,17 @@ class SimulationEvals(Apps):
                     for r in conv.expectation_results
                 ],
             }
+
+            # Only present when the metric was configured, so existing
+            # consumers of sim_results.json see an unchanged payload.
+            if naturalness_result:
+                result["naturalness"] = f"{naturalness_result.overall_score}/5"
+                result["naturalness_label"] = (
+                    naturalness_result.overall_label.value
+                )
+                result["naturalness_details"] = naturalness_result.model_dump()
+
+            return result
         except Exception as e:
             print(f"  ERROR  {label}: {e}")
             return {
@@ -962,6 +1274,7 @@ class SimulationEvals(Apps):
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
+        naturalness: bool | dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         if expectations_only is not None:
             self.expectations_only = expectations_only
@@ -977,9 +1290,16 @@ class SimulationEvals(Apps):
             verbose: Whether to log to console (only active if parallel=1).
             use_tool_fakes: Use fake tools for the session if available.
             capture_agent_audio: If True, capture real-time agent audio WAVs.
+            naturalness: Run-level override for the optional Naturalness
+                Metric. Leave as None to honour each test case's own
+                `naturalness_metric` block.
         """
         sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
         eval_model = eval_model or _DEFAULT_GEMINI_MODEL
+        if naturalness is not None:
+            # Persist on the instance so wrappers that reimplement the
+            # aggregation loop still see the override.
+            self.naturalness = naturalness
         jobs = self._prepare_simulation_jobs(test_cases, runs)
         return self._aggregate_simulation_results(
             jobs,

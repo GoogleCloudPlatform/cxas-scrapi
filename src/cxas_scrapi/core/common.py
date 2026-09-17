@@ -398,9 +398,21 @@ class Common:
                 agent_texts.append(output["text"])
         return separator.join(agent_texts)
 
-    def get_grpc_transport(self, client_class: type) -> typing.Any:
-        """Creates a customer transport for CXAS SCRAPI calls."""
-        transport_type = os.environ.get("CES_TRANSPORT", "grpc").lower()
+    def get_grpc_transport(
+        self, client_class: type, transport_type: str | None = None
+    ) -> typing.Any:
+        """Creates a customer transport for CXAS SCRAPI calls.
+
+        Args:
+            client_class: The generated client the transport is built for.
+            transport_type: `"grpc"` or `"rest"`. Defaults to the
+                `CES_TRANSPORT` environment variable, then to gRPC. Pass it
+                explicitly to override the transport for one client without
+                touching the environment, which is shared by every thread.
+        """
+        transport_type = (
+            transport_type or os.environ.get("CES_TRANSPORT", "grpc")
+        ).lower()
 
         host = DEFAULT_API_ENDPOINT
         client_opts = getattr(self, "client_options", None)

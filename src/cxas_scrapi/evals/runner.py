@@ -73,6 +73,7 @@ def run_all_evals(
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
     vertex_location: str = "global",
+    naturalness: bool | dict[str, typing.Any] | None = None,
 ) -> typing.Any:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -241,6 +242,7 @@ def run_all_evals(
                     expectations_only=expectations_only,
                     deployment_id=deployment_id,
                     vertex_location=vertex_location,
+                    naturalness=naturalness,
                 )
                 test_cases = []
                 for sf in sim_files:
@@ -284,6 +286,7 @@ def run_all_evals(
                             else None
                         ),
                         capture_agent_audio=capture_agent_audio,
+                        naturalness=naturalness,
                     )
                     results["simulation"] = sim_results
                     if output_dir:

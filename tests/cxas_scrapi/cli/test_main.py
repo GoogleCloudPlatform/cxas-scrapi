@@ -92,6 +92,22 @@ def test_get_parser_evals_report() -> None:
     assert args.eval_model == "gemini-3.1-flash-lite"
     assert args.run is True
     assert args.timestamped is False
+    # Absent flag must stay None (not False) so it defers to the YAML.
+    assert args.naturalness is None
+
+
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [("--naturalness", True), ("--no-naturalness", False)],
+)
+def test_get_parser_evals_report_naturalness(flag: str, expected: bool) -> None:
+    """The naturalness flag is tri-state: on, off, or defer to the YAML."""
+    parser = get_parser()
+    args = parser.parse_args(
+        ["evals", "report", "--output-dir", "/path/to/output", flag]
+    )
+
+    assert args.naturalness is expected
 
 
 def test_get_parser_evals_report_timestamped() -> None:

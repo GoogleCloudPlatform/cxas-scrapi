@@ -239,6 +239,106 @@ def _render_expectation_details(expectation_details: typing.Any) -> typing.Any:
     return html
 
 
+_NATURALNESS_BADGE = {
+    "Human-like": "met",
+    "Transitional": "",
+    "Bot-like": "not-met",
+}
+
+
+def _render_naturalness_factors(factors: typing.Any) -> typing.Any:
+    """Render one turn's scored qualities as a compact list."""
+    if not factors:
+        return ""
+    parts = []
+    for factor in factors:
+        quality = _escape(str(factor.get("quality", "")))
+        score = _escape(str(factor.get("score", "")))
+        value = factor.get("value") or ""
+        label = f"{quality} {score}/5"
+        if value:
+            label += f" ({_escape(str(value))})"
+        reason = _escape(str(factor.get("reason", "")))
+        parts.append(
+            f"<li><b>{label}</b>"
+            + (f' <span class="meta">{reason}</span>' if reason else "")
+            + "</li>"
+        )
+    return "<ul>" + "".join(parts) + "</ul>"
+
+
+def _render_naturalness_details(details: typing.Any) -> typing.Any:
+    """Render the optional Naturalness Metric breakdown.
+
+    Returns an empty string when the metric did not run, so reports for
+    simulations that never opted in are byte-identical to before.
+    """
+    if not details:
+        return ""
+
+    label = str(details.get("overall_label", ""))
+    badge = _NATURALNESS_BADGE.get(label, "")
+    score = details.get("overall_score", "?")
+
+    html = '<div class="expectation">'
+    html += (
+        f'<b>Naturalness:</b> <span class="badge {badge}">'
+        f"{_escape(label)}</span> {_escape(str(score))}/5"
+    )
+    threshold = details.get("pass_threshold")
+    if threshold is not None:
+        verdict = "PASS" if details.get("passed") else "FAIL"
+        html += (
+            f' <span class="meta">(threshold {_escape(str(threshold))} '
+            f"&rarr; {verdict})</span>"
+        )
+    # A hard failure, e.g. a turn past the latency limit, sinks the run on its
+    # own, so it is called out rather than left to the factor list.
+    for reason in details.get("failure_reasons") or []:
+        html += (
+            f'<br><span class="badge not-met">FAILED</span> '
+            f'<span class="meta">{_escape(str(reason))}</span>'
+        )
+    if details.get("summary"):
+        html += (
+            f'<br><span class="meta">{_escape(str(details["summary"]))}</span>'
+        )
+
+    averages = details.get("factor_averages") or {}
+    if averages:
+        avg_text = ", ".join(f"{k} {v}/5" for k, v in averages.items())
+        html += f'<br><span class="meta">Averages: {_escape(avg_text)}</span>'
+
+    conv_factors = details.get("conversation_factors") or []
+    if conv_factors:
+        html += "<br><b>Conversation level:</b>"
+        html += _render_naturalness_factors(conv_factors)
+
+    for turn in details.get("turns") or []:
+        turn_label = str(turn.get("label", ""))
+        turn_badge = _NATURALNESS_BADGE.get(turn_label, "")
+        html += (
+            f'<details class="run-detail"><summary>Turn '
+            f"{_escape(str(turn.get('turn_index', '?')))} &mdash; "
+            f'<span class="badge {turn_badge}">{_escape(turn_label)}</span> '
+            f"{_escape(str(turn.get('score', '?')))}/5</summary>"
+        )
+        if turn.get("agent_utterance"):
+            html += (
+                f'<div class="meta">'
+                f"{_escape(str(turn['agent_utterance']))}</div>"
+            )
+        if turn.get("justification"):
+            html += (
+                f'<div class="meta">{_escape(str(turn["justification"]))}</div>'
+            )
+        html += _render_naturalness_factors(turn.get("factors"))
+        html += "</details>\n"
+
+    html += "</div>\n"
+    return html
+
+
 def _parse_trace(trace: typing.Any, tools_map: typing.Any) -> typing.Any:
     """Parse trace lines into typed entries."""
     parsed_lines = []
@@ -392,10 +492,14 @@ def _get_run_detail(
         f'<span class="{run_cls}">'
         f"{'PASS' if r.get('passed') else 'FAIL'}</span>"
     )
+    naturalness = r.get("naturalness")
+    naturalness_note = (
+        f" | naturalness: {_escape(str(naturalness))}" if naturalness else ""
+    )
     html += (
         f" | goals: {r.get('goals', '?')} | "
         f"expectations: {r.get('expectations', '?')} | "
-        f"turns: {r.get('turns', '?')}</summary>\n"
+        f"turns: {r.get('turns', '?')}{naturalness_note}</summary>\n"
     )
 
     html += _render_session_link(session_id, ces_base)
@@ -412,6 +516,8 @@ def _get_run_detail(
         html += _render_step_details(r.get("step_details", []))
 
         html += _render_expectation_details(r.get("expectation_details", []))
+
+        html += _render_naturalness_details(r.get("naturalness_details"))
 
         html += _render_trace(
             r.get("detailed_trace", []), tools_map, r.get("turns", "?")
@@ -636,13 +742,26 @@ def generate_combined_html_report(
                 sim_stats[n]["pass"] += 1
             sim_stats[n]["runs"].append(r)
         for name, s in sim_stats.items():
+            # The detail column is otherwise unused for sims; show the mean
+            # naturalness score when the metric ran.
+            nat_scores = [
+                run["naturalness_details"]["overall_score"]
+                for run in s["runs"]
+                if isinstance(run.get("naturalness_details"), dict)
+                and run["naturalness_details"].get("overall_score") is not None
+            ]
+            detail = ""
+            if nat_scores:
+                detail = (
+                    f"naturalness {sum(nat_scores) / len(nat_scores):.1f}/5"
+                )
             unified.append(
                 {
                     "name": name,
                     "type": "sim",
                     "passed": s["pass"] == s["total"],
                     "score": f"{s['pass']}/{s['total']}",
-                    "detail": "",
+                    "detail": detail,
                     "runs": s["total"],
                     "run_results": s["runs"],
                 }
@@ -1402,6 +1521,22 @@ def load_golden_results(
     return results
 
 
+def _merge_naturalness(common: Any, case: Any) -> Any:
+    """Merges a file-level naturalness block with a per-eval override.
+
+    The per-eval value always wins: an explicit ``false`` opts a single eval
+    out of a file-wide metric, and a mapping is merged key-by-key over the
+    common block.
+    """
+    if case is None:
+        return common
+    if isinstance(case, bool) or not isinstance(case, dict):
+        return case
+    base = dict(common) if isinstance(common, dict) else {}
+    base.update(case)
+    return base
+
+
 def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
     """Loads sim files and merges common params and expectations.
 
@@ -1418,6 +1553,7 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
 
     common_params = data.get("common_session_parameters", {}) or {}
     common_expectations = data.get("common_expectations", []) or []
+    common_naturalness = data.get("common_naturalness_metric")
     cases = data.get("evals", [])
     if not isinstance(cases, list):
         return []
@@ -1435,6 +1571,14 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
             # Merge expectations
             case_expectations = case_copy.get("expectations", []) or []
             case_copy["expectations"] = common_expectations + case_expectations
+
+            # Merge the optional naturalness metric block. A per-eval block
+            # wins key-by-key, and an explicit `false` opts that eval out.
+            if common_naturalness is not None:
+                case_copy["naturalness_metric"] = _merge_naturalness(
+                    common_naturalness,
+                    case_copy.get("naturalness_metric"),
+                )
 
             merged_cases.append(case_copy)
     return merged_cases
@@ -1575,6 +1719,7 @@ def generate_combined_report_from_dir(
     capture_agent_audio: bool = False,
     report_format: str = "html",
     vertex_location: str = "global",
+    naturalness: bool | dict[str, Any] | None = None,
 ) -> str:
     """Load results from directory and generate a combined report.
 
@@ -1603,6 +1748,10 @@ def generate_combined_report_from_dir(
       deployment_id: Optional deployment ID to target for simulations.
       report_format: Output format for the combined report, 'html'
         (default) or 'json'.
+      naturalness: Optional run-level override for the naturalness metric.
+        True enables it with defaults, False disables it, and a dict is
+        merged over each test case's own config. None (default) defers to
+        the test case.
 
     Returns:
       The resolved output path or URL where the report was saved.
@@ -1656,6 +1805,7 @@ def generate_combined_report_from_dir(
             progress_callback=progress_callback,
             capture_agent_audio=capture_agent_audio,
             vertex_location=vertex_location,
+            naturalness=naturalness,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed
@@ -1860,6 +2010,7 @@ def run_all_evals(
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
     vertex_location: str = "global",
+    naturalness: bool | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -1889,6 +2040,10 @@ def run_all_evals(
       expectations_only: Run simulations checking expectations only.
       vertex_location: Vertex AI location for evaluation LLM models.
         Defaults to 'global'.
+      naturalness: Optional run-level override for the naturalness metric.
+        True enables it with defaults, False disables it, and a dict is
+        merged over each test case's own config. None (default) defers to
+        the test case.
 
     Returns:
       A dict containing lists of results for 'simulation', 'golden', 'tool', and
@@ -1923,4 +2078,5 @@ def run_all_evals(
         progress_callback=progress_callback,
         capture_agent_audio=capture_agent_audio,
         vertex_location=vertex_location,
+        naturalness=naturalness,
     )
