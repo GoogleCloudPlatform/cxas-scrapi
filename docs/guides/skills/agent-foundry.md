@@ -56,19 +56,21 @@ Environment check complete. Here's what I found:
 
 What would you like to do?
   1. Build a new agent or add a new capability
-  2. Run all evaluations and see the current pass rate
-  3. Debug evaluation failures
+  2. Audit instructions for logic issues (Review)
+  3. Run all evaluations and see the current pass rate
+  4. Debug evaluation failures
 ```
 
 ---
 
 ## Intent routing
 
-After the onboarding check, the foundry routes to one of three sub-skills based on your intent:
+After the onboarding check, the foundry routes to one of four sub-skills based on your intent:
 
 | User intent | Routes to |
 |-------------|-----------|
 | "Build a new agent", "Add a tool", "Create an eval" | [Build skill](build.md) |
+| "Audit the instructions", "Review the prompts", "Check logic" | [Review skill](review.md) |
 | "Run evals", "What's the pass rate?", "Test the agent" | [Run skill](run.md) |
 | "Evals are failing", "Fix the instruction", "Debug this failure" | [Debug skill](debug.md) |
 
@@ -92,7 +94,7 @@ These scripts are registered with Claude Code's and Gemini CLI's hook frameworks
 
 ## The `gecx-config.json` role
 
-The foundry reads `gecx-config.json` at startup to understand your environment. All three sub-skills inherit this configuration. If the config is missing or incomplete, the foundry prompts you to fill it in before proceeding.
+The foundry reads `gecx-config.json` at startup to understand your environment. All four sub-skills inherit this configuration. If the config is missing or incomplete, the foundry prompts you to fill it in before proceeding.
 
 ```json
 {
