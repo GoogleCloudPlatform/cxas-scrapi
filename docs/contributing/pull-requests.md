@@ -30,6 +30,8 @@ Use descriptive branch names:
 - Keep commits focused — one logical change per commit.
 - Write clear commit messages that explain *why*, not just *what*.
 - Follow the [code style guide](code-style.md).
+- If you add or modify a skill under `.agents/skills/`, add or update
+  [skill evals](skill-evals.md).
 
 ### 3. Run checks locally
 
@@ -63,6 +65,7 @@ Then open a pull request on GitHub. In your PR description:
 
 - **Small and focused** — Smaller PRs are easier to review and less likely to introduce issues. If your change touches many files, consider splitting it into multiple PRs.
 - **Tests included** — New features should come with tests. Bug fixes should include a test that would have caught the bug.
+- **Skill evals included** - Skill changes should include realistic skill eval prompts and expectations.
 - **Documentation updated** — If your change affects the CLI, API, or user-facing behavior, update the relevant documentation.
 
 ## Review Process
