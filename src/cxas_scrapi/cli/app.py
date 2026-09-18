@@ -72,7 +72,14 @@ def _resolve_app_args(
 
 
 def _handle_import_result(result: Any, success_verb: str) -> str | None:
-    """Helper to wait for import LRO and print success message."""
+    """Helper to wait for import LRO and report the outcome.
+
+    The server excludes any resource that fails validation from the imported
+    app and records the reason in ``ImportAppResponse.warnings``. Those
+    messages are the only indication that part of the import did not land, so
+    they are reported on stderr and treated as a failure rather than being
+    discarded behind a success message.
+    """
     if hasattr(result, "result"):
         print("Waiting for import to complete...")
         app = result.result()
@@ -80,6 +87,22 @@ def _handle_import_result(result: Any, success_verb: str) -> str | None:
         app = result
 
     app_name = getattr(app, "name", None)
+    warnings = list(getattr(app, "warnings", None) or [])
+
+    if warnings:
+        print(
+            f"ERROR: {len(warnings)} resource(s) were rejected by the server "
+            "and are not present in the imported app:",
+            file=sys.stderr,
+        )
+        for warning in warnings:
+            print(f"  - {warning}", file=sys.stderr)
+        print(
+            "Fix the reported resources and push again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     if app_name:
         print(f"Successfully {success_verb}: {app_name}")
     else:
