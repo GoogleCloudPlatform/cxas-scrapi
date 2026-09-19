@@ -175,13 +175,37 @@ class GCSUtils(Common):
         conversation_id: str,
         marker_filename: str = "METADATA.json",
         max_results: int = 5000,
+        prefix_hints: list[str] | None = None,
     ) -> str | None:
         """Locates the GCS "directory" prefix that holds a conversation's
-        recordings, by scanning the bucket for an object whose path matches
-        `*/{conversation_id}/{marker_filename}`. Returns the prefix
-        (everything up to and including `{conversation_id}/`) or None.
+        recordings. Returns the prefix (everything up to and including
+        `{conversation_id}/`) or None.
+
+        When `prefix_hints` is supplied, each hint is treated as the *parent*
+        of the conversation directory and probed directly with a scoped list
+        (e.g. hint `"evaluations"` probes `evaluations/{conversation_id}/`).
+        This is the fast path and should be preferred.
+
+        Without hints, the bucket is scanned for an object whose path matches
+        `*/{conversation_id}/{marker_filename}`. That scan stops after
+        `max_results` objects, so on a large bucket it can return None for a
+        conversation that does exist — pass `prefix_hints` to avoid it.
         """
         bucket_name, _ = self._parse_gcs_uri(gcs_bucket_uri, require_path=False)
+
+        for hint in prefix_hints or []:
+            prefix = self._conversation_prefix(hint, conversation_id)
+            found = next(
+                iter(
+                    self.client.list_blobs(
+                        bucket_name, prefix=prefix, max_results=1
+                    )
+                ),
+                None,
+            )
+            if found is not None:
+                return prefix
+
         suffix = f"/{conversation_id}/{marker_filename}"
         for blob in self.client.list_blobs(
             bucket_name, max_results=max_results
@@ -190,6 +214,16 @@ class GCSUtils(Common):
                 # Trim off the marker filename, keep the trailing slash.
                 return blob.name[: -len(marker_filename)]
         return None
+
+    @staticmethod
+    def _conversation_prefix(parent: str, conversation_id: str) -> str:
+        """Joins a parent prefix and a conversation id into a directory
+        prefix, tolerating leading/trailing slashes on the parent.
+        """
+        parent = (parent or "").strip("/")
+        if not parent:
+            return f"{conversation_id}/"
+        return f"{parent}/{conversation_id}/"
 
     @staticmethod
     def _parse_gcs_uri(

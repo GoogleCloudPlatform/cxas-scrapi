@@ -310,6 +310,84 @@ def test_generate_combined_html_report(tmp_path: typing.Any) -> None:
         assert "test_callback" in content
 
 
+def test_generate_combined_html_report_renders_naturalness(
+    tmp_path: typing.Any,
+) -> None:
+    output_path = str(tmp_path / "report.html")
+    sim_results = [
+        {
+            "name": "graded_sim",
+            "run": 1,
+            "passed": True,
+            "goals": "1/1",
+            "expectations": "0/0",
+            "turns": 2,
+            "duration_s": 1.0,
+            "transcript": "User: hi\nAgent: hey there",
+            "naturalness": "4.1/5",
+            "naturalness_label": "Human-like",
+            "naturalness_details": {
+                "overall_score": 4.1,
+                "overall_label": "Human-like",
+                "turn_count": 1,
+                "summary": "Sounds like a person.",
+                "factor_averages": {"emotion": 4.0, "pacing": 4.2},
+                "label_counts": {
+                    "Bot-like": 0,
+                    "Transitional": 0,
+                    "Human-like": 1,
+                },
+                "turns": [
+                    {
+                        "turn_index": 0,
+                        "agent_utterance": "hey there",
+                        "label": "Human-like",
+                        "score": 4.1,
+                        "justification": "Warm and unscripted.",
+                        "factors": [
+                            {
+                                "quality": "emotion",
+                                "score": 4,
+                                "value": "warm",
+                                "reason": "Matched the caller's mood.",
+                            },
+                            {
+                                "quality": "perceivedLatency",
+                                "score": 1,
+                                "value": "5.2s",
+                                "reason": "unacceptable: 5.2s is slow",
+                            },
+                        ],
+                    }
+                ],
+                "conversation_factors": [],
+                "latency_ms_by_turn": {"0": 5200.0},
+                "failure_reasons": ["perceived latency reached 5.2s on turn 0"],
+            },
+        },
+        {"name": "ungraded_sim", "run": 1, "passed": True, "turns": 1},
+    ]
+
+    generate_combined_html_report(
+        sim_results=sim_results,
+        output_path=output_path,
+        app_name="projects/test-proj/locations/global/apps/test-app",
+    )
+
+    with open(output_path) as f:
+        content = f.read()
+
+    assert "Human-like" in content
+    assert "4.1/5" in content
+    assert "Warm and unscripted." in content
+    # The measured latency dimension and the hard failure it caused.
+    assert "perceivedLatency" in content
+    assert "5.2s" in content
+    assert "perceived latency reached 5.2s on turn 0" in content
+    # The ungraded run must still render, without a naturalness block.
+    assert "ungraded_sim" in content
+
+
 @patch("cxas_scrapi.utils.reporting._upload_to_gcs")
 def test_generate_combined_html_report_gcs_success(
     mock_upload: typing.Any,
@@ -886,6 +964,7 @@ def test_run_all_evals_include_filtering(
         expectations_only=False,
         deployment_id=None,
         vertex_location="global",
+        naturalness=None,
     )
     mock_sim_evals.return_value.run_simulations.assert_called_once()
 
@@ -1024,6 +1103,7 @@ def test_run_all_evals_dict_based_simulations(
         expectations_only=False,
         deployment_id=None,
         vertex_location="global",
+        naturalness=None,
     )
     mock_sim_evals.return_value.run_simulations.assert_called_once_with(
         [
@@ -1046,6 +1126,7 @@ def test_run_all_evals_dict_based_simulations(
         single_bidi_stream=False,
         progress_callback=ANY,
         capture_agent_audio=False,
+        naturalness=None,
     )
 
 
@@ -1091,6 +1172,7 @@ def test_run_all_evals_with_deployment_id(
         expectations_only=False,
         deployment_id="dep123",
         vertex_location="global",
+        naturalness=None,
     )
 
 
@@ -1136,6 +1218,7 @@ def test_run_all_evals_custom_vertex_location(
         expectations_only=False,
         deployment_id=None,
         vertex_location="europe-west1",
+        naturalness=None,
     )
 
 
@@ -1193,6 +1276,47 @@ evals:
             "The agent welcomes the user",
             "The agent behaves politely",
         ]
+
+
+def test_load_sim_test_cases_without_common_naturalness() -> None:
+    """Existing sim files must not grow a naturalness key."""
+    yaml_data = """
+evals:
+  - name: sim1
+"""
+    with patch("builtins.open", mock_open(read_data=yaml_data)):
+        cases = _load_sim_test_cases("dummy.yaml")
+
+    assert "naturalness_metric" not in cases[0]
+
+
+def test_load_sim_test_cases_merges_common_naturalness_metric() -> None:
+    yaml_data = """
+common_naturalness_metric:
+  pass_threshold: 3.5
+  turn_weight: 0.8
+evals:
+  - name: inherits
+  - name: overrides
+    naturalness_metric:
+      pass_threshold: 4.0
+  - name: opts_out
+    naturalness_metric: false
+"""
+    with patch("builtins.open", mock_open(read_data=yaml_data)):
+        cases = _load_sim_test_cases("dummy.yaml")
+
+    assert cases[0]["naturalness_metric"] == {
+        "pass_threshold": 3.5,
+        "turn_weight": 0.8,
+    }
+    # A per-eval mapping wins key-by-key.
+    assert cases[1]["naturalness_metric"] == {
+        "pass_threshold": 4.0,
+        "turn_weight": 0.8,
+    }
+    # An explicit false opts a single eval out of the file-wide metric.
+    assert cases[2]["naturalness_metric"] is False
 
 
 def test_generate_combined_report_from_dir_timestamped(
@@ -1341,6 +1465,7 @@ def test_run_all_evals_expectations_only(
         progress_callback=None,
         capture_agent_audio=False,
         vertex_location="global",
+        naturalness=None,
     )
 
 

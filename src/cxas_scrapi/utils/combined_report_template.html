@@ -272,7 +272,7 @@
           {% set failed_str = "false" if r.get("passed") else "true" %}
 
           <details class="run-detail" data-failed="{{ failed_str }}">
-            <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }} | turns: {{ r.get('turns','?') }}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}</summary>
+            <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }} | turns: {{ r.get('turns','?') }}{% if r.get('naturalness') %} | naturalness: {{ r['naturalness'] }}{% endif %}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}</summary>
 
             {% if r.get('session_id') %}
               {% if ces_base %}
@@ -319,6 +319,62 @@
                   {% endif %}
                 </div>
               {% endfor %}
+
+              {% set nat = r.get('naturalness_details') %}
+              {% if nat %}
+                {% set nat_cls = {'Human-like': 'met', 'Bot-like': 'not-met'}.get(nat.get('overall_label'), '') %}
+                <details class="tool-details">
+                  <summary class="tool-summary">&#127908; <b>Naturalness</b> — <span class="badge {{ nat_cls }}">{{ nat.get('overall_label','') | escape }}</span> {{ nat.get('overall_score','?') }}/5{% if nat.get('pass_threshold') is not none %} (threshold {{ nat['pass_threshold'] }} &rarr; {% if nat.get('passed') %}PASS{% else %}FAIL{% endif %}){% endif %}</summary>
+
+                  {% for reason in nat.get('failure_reasons', []) %}
+                    <div class="expectation"><span class="badge not-met">FAILED</span> <span class="meta">{{ reason | escape }}</span></div>
+                  {% endfor %}
+
+                  {% if nat.get('summary') %}
+                    <div class="expectation">{{ nat['summary'] | escape }}</div>
+                  {% endif %}
+
+                  {% if nat.get('factor_averages') %}
+                    <div class="expectation"><b>Averages:</b>
+                      {% for quality, avg in nat['factor_averages'].items() %}
+                        <span class="badge">{{ quality | escape }} {{ avg }}/5</span>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+
+                  {% if nat.get('conversation_factors') %}
+                    <div class="expectation"><b>Conversation level</b>
+                      <ul>
+                        {% for f in nat['conversation_factors'] %}
+                          <li><b>{{ f.get('quality','') | escape }} {{ f.get('score','') }}/5</b>{% if f.get('value') %} ({{ f['value'] | escape }}){% endif %}
+                            {% if f.get('reason') %}<br><span class="meta">{{ f['reason'] | escape }}</span>{% endif %}
+                          </li>
+                        {% endfor %}
+                      </ul>
+                    </div>
+                  {% endif %}
+
+                  {% for t in nat.get('turns', []) %}
+                    {% set t_cls = {'Human-like': 'met', 'Bot-like': 'not-met'}.get(t.get('label'), '') %}
+                    <details class="run-detail">
+                      <summary>Turn {{ t.get('turn_index','?') }} — <span class="badge {{ t_cls }}">{{ t.get('label','') | escape }}</span> {{ t.get('score','?') }}/5</summary>
+                      {% if t.get('agent_utterance') %}
+                        <div class="transcript"><div class="agent-msg">{{ t['agent_utterance'] | escape }}</div></div>
+                      {% endif %}
+                      {% if t.get('justification') %}
+                        <div class="meta">{{ t['justification'] | escape }}</div>
+                      {% endif %}
+                      <ul>
+                        {% for f in t.get('factors', []) %}
+                          <li><b>{{ f.get('quality','') | escape }} {{ f.get('score','') }}/5</b>{% if f.get('value') %} ({{ f['value'] | escape }}){% endif %}
+                            {% if f.get('reason') %}<br><span class="meta">{{ f['reason'] | escape }}</span>{% endif %}
+                          </li>
+                        {% endfor %}
+                      </ul>
+                    </details>
+                  {% endfor %}
+                </details>
+              {% endif %}
 
               {% if r.get('_processed_trace') %}
                 <details open><summary>Conversation Trace ({{ r.get('turns','?') }} turns)</summary>

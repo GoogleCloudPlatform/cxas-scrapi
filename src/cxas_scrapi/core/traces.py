@@ -535,29 +535,99 @@ class Traces(Common):
         dest_path = os.path.join(dest_dir, f"{conversation_id}{ext}")
         return gcs.download_to_file(gcs_uri, dest_path)
 
-    def list_audio_files(self, conversation_id: str) -> list[str]:
+    def _recording_prefix_hints(
+        self, when: datetime.datetime | str | None = None
+    ) -> list[str]:
+        """Candidate *parent* prefixes for a conversation's recording dir.
+
+        Two layouts coexist in the same bucket:
+
+            evaluations/<conversation_id>/...
+            <project>/<location>/<app>/<YYYY-MM-DD>/<conversation_id>/...
+
+        The date segment is the recorder's local date rather than UTC, so a
+        conversation recorded just after midnight UTC lands under the previous
+        day. Candidates therefore bracket `when` by a day on either side.
+        """
+        hints = ["evaluations"]
+        app_id = (self.app_name or "").split("/")[-1]
+        if not (self.project_id and self.location and app_id):
+            return hints
+
+        if isinstance(when, str):
+            try:
+                when = datetime.datetime.fromisoformat(
+                    when.replace("Z", "+00:00")
+                )
+            except ValueError:
+                when = None
+        base = (when or datetime.datetime.now(datetime.timezone.utc)).date()
+
+        for delta in (0, -1, 1):
+            day = base + datetime.timedelta(days=delta)
+            hints.append(
+                f"{self.project_id}/{self.location}/{app_id}/{day.isoformat()}"
+            )
+        return hints
+
+    def list_audio_files(
+        self,
+        conversation_id: str,
+        start_time: datetime.datetime | str | None = None,
+    ) -> list[str]:
         """Returns the list of GCS URIs of every audio file recorded for a
         conversation.
 
         Conversations are stored as a directory of files
         (`METADATA.json`, `full-session.wav`, `agent-turn-N.wav`,
-        `user-turn-N.wav`); this method discovers the directory by scanning
-        the configured audio bucket for an object matching
-        `*/{conversation_id}/METADATA.json`, then lists everything under that
-        prefix.
+        `user-turn-N.wav`); this method discovers the directory in the
+        configured audio bucket, then lists everything under that prefix.
+
+        Args:
+            conversation_id: The conversation ID.
+            start_time: When the conversation started, if known. Recording
+                directories are partitioned by date, so supplying this makes
+                discovery a direct lookup instead of a guess around today.
         """
         bucket = self._get_audio_bucket()
         if not bucket:
             return []
         gcs = GCSUtils(creds=self.creds)
         prefix = gcs.find_dir_for_conversation(
-            bucket, conversation_id=conversation_id
+            bucket,
+            conversation_id=conversation_id,
+            prefix_hints=self._recording_prefix_hints(start_time),
         )
         if not prefix:
             return []
         return gcs.list_with_prefix(bucket, prefix=prefix)
 
-    def get_user_audio_uris(self, conversation_id: str) -> dict[int, str]:
+    def _turn_audio_uris(
+        self,
+        conversation_id: str,
+        role: str,
+        start_time: datetime.datetime | str | None = None,
+    ) -> dict[int, str]:
+        """Maps `{turn_number: gcs_uri}` for one role's per-turn recordings.
+
+        Turn numbers come from the `<role>-turn-<N>.wav` filenames and are
+        **1-based**, matching the platform's own numbering: `<role>-turn-N`
+        corresponds to conversation turn `N - 1`.
+        """
+        files = self.list_audio_files(conversation_id, start_time=start_time)
+        pattern = re.compile(rf"{re.escape(role)}-turn-(\d+)\.wav$")
+        audio_map: dict[int, str] = {}
+        for f in files:
+            match = pattern.search(f.split("/")[-1])
+            if match:
+                audio_map[int(match.group(1))] = f
+        return dict(sorted(audio_map.items()))
+
+    def get_user_audio_uris(
+        self,
+        conversation_id: str,
+        start_time: datetime.datetime | str | None = None,
+    ) -> dict[int, str]:
         """Returns a mapping of {turn_index: gcs_uri} for user turn recordings.
 
         Discovers audio files for the given conversation and extracts the
@@ -565,19 +635,41 @@ class Traces(Common):
 
         Args:
             conversation_id: The conversation ID.
+            start_time: When the conversation started, if known; speeds up
+                recording-directory discovery.
 
         Returns:
             Dict mapping integer turn_index to GCS URI.
         """
-        files = self.list_audio_files(conversation_id)
-        user_audio_map: dict[int, str] = {}
-        for f in files:
-            fname = f.split("/")[-1]
-            match = re.search(r"user-turn-(\d+)\.wav$", fname)
-            if match:
-                turn_idx = int(match.group(1))
-                user_audio_map[turn_idx] = f
-        return dict(sorted(user_audio_map.items()))
+        return self._turn_audio_uris(
+            conversation_id, "user", start_time=start_time
+        )
+
+    def get_agent_audio_uris(
+        self,
+        conversation_id: str,
+        start_time: datetime.datetime | str | None = None,
+    ) -> dict[int, str]:
+        """Returns a mapping of {turn_index: gcs_uri} for agent turn
+        recordings.
+
+        The counterpart to :meth:`get_user_audio_uris`, matching
+        `agent-turn-<N>.wav`. Numbering is per conversation turn, not per
+        spoken utterance: a turn the agent did not speak in still gets a
+        (near-empty) file, so `agent-turn-N` reliably lines up with
+        conversation turn `N - 1`.
+
+        Args:
+            conversation_id: The conversation ID.
+            start_time: When the conversation started, if known; speeds up
+                recording-directory discovery.
+
+        Returns:
+            Dict mapping integer turn_index to GCS URI.
+        """
+        return self._turn_audio_uris(
+            conversation_id, "agent", start_time=start_time
+        )
 
     def transcribe_user_turns(
         self,

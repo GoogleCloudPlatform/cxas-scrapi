@@ -235,3 +235,68 @@ def test_find_dir_for_conversation_not_found(
         gcs.find_dir_for_conversation("gs://b", conversation_id="missing")
         is None
     )
+
+
+@patch("cxas_scrapi.utils.gcs_utils.storage.Client")
+def test_find_dir_for_conversation_uses_prefix_hint(
+    mock_client_cls: typing.Any,
+) -> None:
+    """A matching hint short-circuits before any full-bucket scan."""
+    mock_client = mock_client_cls.return_value
+    hit = Mock()
+    hit.name = "proj/us/app/2026-09-17/conv-42/METADATA.json"
+
+    def list_blobs(_bucket: str, **kwargs: typing.Any) -> list[typing.Any]:
+        if kwargs.get("prefix") == "proj/us/app/2026-09-17/conv-42/":
+            return [hit]
+        return []
+
+    mock_client.list_blobs.side_effect = list_blobs
+
+    gcs = GCSUtils()
+    out = gcs.find_dir_for_conversation(
+        "gs://my-bucket",
+        conversation_id="conv-42",
+        prefix_hints=["evaluations", "proj/us/app/2026-09-17"],
+    )
+    assert out == "proj/us/app/2026-09-17/conv-42/"
+    # Hints are probed with scoped lists; the unscoped scan never runs.
+    assert all(
+        kwargs.get("prefix")
+        for _, kwargs in mock_client.list_blobs.call_args_list
+    )
+
+
+@patch("cxas_scrapi.utils.gcs_utils.storage.Client")
+def test_find_dir_for_conversation_falls_back_to_scan(
+    mock_client_cls: typing.Any,
+) -> None:
+    """Hints that all miss must not suppress the scan."""
+    mock_client = mock_client_cls.return_value
+    found = Mock()
+    found.name = "deep/nested/path/conv-42/METADATA.json"
+
+    def list_blobs(_bucket: str, **kwargs: typing.Any) -> list[typing.Any]:
+        return [] if kwargs.get("prefix") else [found]
+
+    mock_client.list_blobs.side_effect = list_blobs
+
+    gcs = GCSUtils()
+    out = gcs.find_dir_for_conversation(
+        "gs://my-bucket",
+        conversation_id="conv-42",
+        prefix_hints=["evaluations"],
+    )
+    assert out == "deep/nested/path/conv-42/"
+
+
+@pytest.mark.parametrize(
+    ("parent", "expected"),
+    [
+        ("evaluations", "evaluations/c1/"),
+        ("/evaluations/", "evaluations/c1/"),
+        ("", "c1/"),
+    ],
+)
+def test_conversation_prefix(parent: str, expected: str) -> None:
+    assert GCSUtils._conversation_prefix(parent, "c1") == expected

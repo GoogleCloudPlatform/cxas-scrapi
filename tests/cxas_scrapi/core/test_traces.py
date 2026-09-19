@@ -687,9 +687,11 @@ def test_list_audio_files_uses_gcs_listing(
         traces_mod, "GCSUtils", MagicMock(return_value=fake_gcs)
     )
     assert traces_obj.list_audio_files("conv-1") == _FAKE_FILES
-    fake_gcs.find_dir_for_conversation.assert_called_once_with(
-        "gs://b", conversation_id="conv-1"
-    )
+    _, kwargs = fake_gcs.find_dir_for_conversation.call_args
+    assert kwargs["conversation_id"] == "conv-1"
+    # Hints are what keep discovery off the full-bucket scan path.
+    assert kwargs["prefix_hints"][0] == "evaluations"
+    assert len(kwargs["prefix_hints"]) == 4
 
 
 def test_list_audio_files_returns_empty_when_no_bucket(
@@ -1082,7 +1084,7 @@ def test_get_user_audio_uris(
     monkeypatch.setattr(
         traces_obj,
         "list_audio_files",
-        lambda cid: [
+        lambda cid, start_time=None: [
             "gs://bucket/dir/METADATA.json",
             "gs://bucket/dir/full-session.wav",
             "gs://bucket/dir/agent-turn-1.wav",
@@ -1098,6 +1100,58 @@ def test_get_user_audio_uris(
         2: "gs://bucket/dir/user-turn-2.wav",
         5: "gs://bucket/dir/user-turn-5.wav",
     }
+
+
+def test_get_agent_audio_uris(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    """Agent turns are picked up and user turns ignored, keyed 1-based."""
+    monkeypatch.setattr(
+        traces_obj,
+        "list_audio_files",
+        lambda cid, start_time=None: [
+            "gs://bucket/dir/METADATA.json",
+            "gs://bucket/dir/full-session.wav",
+            "gs://bucket/dir/agent-turn-2.wav",
+            "gs://bucket/dir/agent-turn-1.wav",
+            "gs://bucket/dir/user-turn-1.wav",
+        ],
+    )
+    assert traces_obj.get_agent_audio_uris("c1") == {
+        1: "gs://bucket/dir/agent-turn-1.wav",
+        2: "gs://bucket/dir/agent-turn-2.wav",
+    }
+
+
+def test_get_agent_audio_uris_empty_without_recordings(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    monkeypatch.setattr(
+        traces_obj, "list_audio_files", lambda cid, start_time=None: []
+    )
+    assert traces_obj.get_agent_audio_uris("c1") == {}
+
+
+def test_recording_prefix_hints_brackets_the_date(
+    traces_obj: typing.Any,
+) -> None:
+    """Recording dirs are partitioned by *local* date, so neighbouring days
+    must be probed too — a conversation started just after midnight UTC is
+    filed under the previous day.
+    """
+    hints = traces_obj._recording_prefix_hints("2026-09-18T06:12:00Z")
+    assert hints[0] == "evaluations"
+    dates = [h.split("/")[-1] for h in hints[1:]]
+    assert dates == ["2026-09-18", "2026-09-17", "2026-09-19"]
+
+
+def test_recording_prefix_hints_tolerates_bad_timestamp(
+    traces_obj: typing.Any,
+) -> None:
+    """An unparseable timestamp degrades to today rather than raising."""
+    hints = traces_obj._recording_prefix_hints("not-a-timestamp")
+    assert hints[0] == "evaluations"
+    assert len(hints) == 4
 
 
 @patch("cxas_scrapi.core.traces.AudioTranscriber")

@@ -176,3 +176,28 @@ if __name__ == "__main__":
     test_common_init()
     test_client_options()
     print("Done.")
+
+
+def test_get_grpc_transport_argument_overrides_the_environment(
+    monkeypatch: typing.Any,
+) -> None:
+    """Parallel runs share os.environ, so callers need a local override."""
+    monkeypatch.setenv("CES_TRANSPORT", "grpc")
+    common = Common()
+    client_class = MagicMock()
+
+    common.get_grpc_transport(client_class, transport_type="REST")
+
+    client_class.get_transport_class.assert_called_once_with("rest")
+
+
+def test_get_grpc_transport_defaults_to_the_environment(
+    monkeypatch: typing.Any,
+) -> None:
+    monkeypatch.setenv("CES_TRANSPORT", "rest")
+    common = Common()
+    client_class = MagicMock()
+
+    common.get_grpc_transport(client_class)
+
+    client_class.get_transport_class.assert_called_once_with("rest")

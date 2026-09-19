@@ -29,6 +29,8 @@
 #   5. max_turns set to reasonable limit per flow complexity
 #   6. Multi-step sims test sequential goals in a single conversation
 #      (e.g., authenticate → ask question → follow up with second topic)
+#   7. naturalness_metric is OPTIONAL and opt-in — omit it entirely and the
+#      eval behaves exactly as before (see the last eval in this file)
 # =============================================================================
 
 evals:
@@ -115,6 +117,80 @@ evals:
       - "The agent must provide the balance from the tool response"
       - "The agent must acknowledge the second topic without requiring re-authentication"
       - "The agent must route to troubleshooting or attempt to diagnose the service issue"
+    session_parameters:
+      account_id: "9820598207"
+      customer_id: "4444444"
+
+  # --- Voice sim with the OPTIONAL Naturalness Metric ---
+  #
+  # The naturalness_metric block is opt-in. Every eval above omits it and
+  # behaves exactly as before: no extra Gemini call, no extra result keys.
+  # Add it to voice evals where sounding human matters as much as task
+  # success — Gemini then grades every agent turn as Bot-like /
+  # Transitional / Human-like and reports an overall 1-5 score.
+  #
+  # Shorthand: `naturalness_metric: true` enables it with all defaults.
+
+  - name: upset_caller_billing_dispute
+    tags: [P0, voice, naturalness, CUJ-3]
+    naturalness_metric:
+      # false keeps the block in the file but skips grading. Default: true
+      enabled: true
+      # Grading model. Omit to reuse the simulation's eval_model
+      model: "gemini-2.5-pro"
+      # Override the graded turn-level dimensions. Omit (or leave empty) for
+      # the defaults: emotion, pacing, grammarStyle, disfluency,
+      # lexicalVariety, concision, spokenNumbers, empathyCalibration,
+      # scriptedness, turnTaking
+      turn_qualities: [emotion, pacing, grammarStyle, disfluency, empathyCalibration, spokenNumbers]
+      # Conversation-level dimensions. Defaults: personaConsistency,
+      # repetitionAvoidance, emotionalArcTracking, conversationalFlow
+      conversation_qualities: [personaConsistency, emotionalArcTracking, repetitionAvoidance]
+      # Free-text rubric addendum — brand voice, locale, tone rules
+      extra_guidance: >
+        This caller is already angry. The agent must hold a calm, unhurried
+        register for the rest of the call, even once the caller goes quiet
+        and transactional. One apology only — repeated apologies read as
+        robotic. Amounts and dates must be spoken aloud ("a hundred and
+        fifty dollars", "Thursday the ninth"), never as 150.00 USD or
+        2026-04-09.
+      # overall = turn_weight * mean(turn scores)
+      #         + (1 - turn_weight) * mean(conversation factor scores)
+      # Default: 0.75 (clamped to 0.0-1.0)
+      turn_weight: 0.8
+      # Label bands. Defaults: 2.5 and 3.75
+      bot_like_below: 2.5
+      human_like_at_or_above: 4.0
+      # Omit pass_threshold to keep the metric purely informational.
+      # When set, the sim FAILS if the overall score falls below it.
+      pass_threshold: 3.5
+      # Attach captured agent WAVs so tone and pacing are judged acoustically.
+      # Requires running the sim with capture_agent_audio=True. Default: false
+      use_audio: false
+      # Show tool calls in the graded transcript so "let me just check
+      # that..." is judged in context. Default: true
+      include_tool_calls: true
+    steps:
+      - goal: Complain angrily about an incorrect charge and get it refunded
+        success_criteria: Agent acknowledges the incorrect charge, looks up the account, and offers a refund
+        response_guide: >
+          You are a customer who has been charged twice for the same monthly
+          plan. Open angry — "I have been billed twice and nobody told me."
+          Provide account ID 9820598207 and customer ID 4444444 when asked,
+          but stay annoyed. Once the agent starts helping, go quiet and
+          transactional: short answers like "okay" and "yeah, that's right."
+        max_turns: 12
+      - goal: Confirm the refund and end the call
+        success_criteria: Agent confirms the refund amount and timing and closes the call
+        response_guide: >
+          Accept the first reasonable resolution offered. Do not soften your
+          tone much — you are still mildly irritated, just cooperative.
+        max_turns: 6
+    expectations:
+      - "The agent must verify the caller's identity before discussing the account"
+      - "The agent must call a tool to look up the account or billing history"
+      - "The agent must state a specific refund amount and when it will land"
+      - "The agent must not repeat the same apology or empathy line more than once"
     session_parameters:
       account_id: "9820598207"
       customer_id: "4444444"
