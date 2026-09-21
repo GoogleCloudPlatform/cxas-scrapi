@@ -216,7 +216,7 @@ evals:
     tags: [P0, voice, naturalness]
     naturalness_metric:
       enabled: true
-      model: "gemini-2.5-pro"
+      model: "gemini-3.1-pro-preview"
       turn_qualities: [emotion, pacing, grammarStyle, disfluency, spokenNumbers]
       conversation_qualities: [personaConsistency, emotionalArcTracking]
       extra_guidance: >
@@ -381,7 +381,7 @@ results = sim_evals.run_simulations(test_cases=test_cases, naturalness=True)
 # A dict is merged OVER whatever the test case declared
 eval_conv = sim_evals.simulate_conversation(
     test_case=test_case,
-    naturalness={"pass_threshold": 4.0, "model": "gemini-2.5-pro"},
+    naturalness={"pass_threshold": 4.0, "model": "gemini-3.1-pro-preview"},
 )
 ```
 

@@ -137,7 +137,7 @@ evals:
       # false keeps the block in the file but skips grading. Default: true
       enabled: true
       # Grading model. Omit to reuse the simulation's eval_model
-      model: "gemini-2.5-pro"
+      model: "gemini-3.1-pro-preview"
       # Override the graded turn-level dimensions. Omit (or leave empty) for
       # the defaults: emotion, pacing, grammarStyle, disfluency,
       # lexicalVariety, concision, spokenNumbers, empathyCalibration,
