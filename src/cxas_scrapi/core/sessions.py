@@ -1113,23 +1113,42 @@ class BidiInteractiveSession:
         time.sleep(0.5)
 
     def send_turn(
-        self, text: str, variables: dict[str, Any] | None = None
+        self,
+        text: str,
+        variables: dict[str, Any] | None = None,
+        audio_bytes: bytes | None = None,
     ) -> Any:
-        """Sends a user query and returns the agent's turn response."""
+        """Sends a user query (via raw audio bytes, event/dtmf, or TTS) and
+        returns the agent's turn response.
+        """
         if self.sessions_client.rate_limiter:
             self.sessions_client.rate_limiter.wait_and_consume()
-        # Convert text to TTS audio bytes
-        audio_transformer = AudioTransformer()
-        lang_code = "en-US"
-        if variables and "locale" in variables:
-            lang_code = variables["locale"]
 
-        if text.startswith("event:"):
+        if audio_bytes is not None:
+            audio_payload: dict[str, Any] = {
+                "audio": audio_bytes,
+                "text": text,
+            }
+            if variables:
+                audio_payload["variables"] = variables
+            self.input_queue.put({"audio": audio_payload})
+        elif text.startswith("event:"):
             event_name = text[len("event:") :].strip()
             if variables:
                 self.input_queue.put({"variables": variables})
             self.input_queue.put({"event": {"event": event_name}})
+        elif text.startswith("dtmf:"):
+            dtmf_digits = text[len("dtmf:") :].strip()
+            if variables:
+                self.input_queue.put({"variables": variables})
+            self.input_queue.put({"dtmf": dtmf_digits})
         else:
+            # Convert text to TTS audio bytes
+            audio_transformer = AudioTransformer()
+            lang_code = "en-US"
+            if variables and "locale" in variables:
+                lang_code = variables["locale"]
+
             current_voice_config = (self.voice_config or {}).copy()
             if "language_code" not in current_voice_config:
                 current_voice_config["language_code"] = lang_code
