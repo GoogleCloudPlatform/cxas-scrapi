@@ -509,3 +509,82 @@ class InvalidMatchType(Rule):
                         )
                     )
         return results
+
+
+def _is_shadow(file_path: Path) -> bool:
+    return "shadows" in file_path.parts or "shadow_evals" in file_path.parts
+
+
+@rule("evals")
+class ShadowEvalStructure(Rule):
+    id = "E012"
+    name = "eval-shadow-structure"
+    description = (
+        "Shadow eval must specify conversation_id and non-empty natural "
+        "expectations"
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if not _is_shadow(file_path):
+            return []
+        data = _parse_yaml(content)
+        if not data:
+            return []
+
+        rel = str(file_path.relative_to(context.project_root))
+        if isinstance(data, list):
+            evals_list = data
+        elif isinstance(data, dict):
+            evals_list = (
+                data.get("shadow_evals")
+                or data.get("evals")
+                or data.get("conversations")
+                or []
+            )
+        else:
+            return []
+
+        results = []
+        for idx, ev in enumerate(evals_list, start=1):
+            if not isinstance(ev, dict):
+                continue
+            conv_id = str(ev.get("conversation_id", "")).strip()
+            name = ev.get("name") or conv_id or f"item #{idx}"
+            if not conv_id:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Shadow eval '{name}' is missing required "
+                            "'conversation_id'"
+                        ),
+                        fix="Add conversation_id: '<past-conversation-uuid>'",
+                    )
+                )
+            exps = ev.get("expectations")
+            if not isinstance(exps, list) or not any(
+                (isinstance(e, str) and e.strip())
+                or (
+                    isinstance(e, dict)
+                    and str(e.get("expectation", "")).strip()
+                )
+                for e in exps
+            ):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Shadow eval '{name}' (conversation_id="
+                            f"'{conv_id}') must define non-empty "
+                            "'expectations' in natural prompts"
+                        ),
+                        fix=(
+                            "Add expectations: ['The agent resolves the "
+                            "user request...']"
+                        ),
+                    )
+                )
+        return results

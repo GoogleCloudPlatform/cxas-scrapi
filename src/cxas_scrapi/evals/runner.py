@@ -26,10 +26,12 @@ from google.cloud.ces_v1beta.types import RunEvaluationOperationMetadata
 
 from cxas_scrapi.core.evaluations import Evaluations
 from cxas_scrapi.evals.callback_evals import CallbackEvals
+from cxas_scrapi.evals.shadow_evals import ShadowEvals
 from cxas_scrapi.evals.simulation_evals import SimulationEvals
 from cxas_scrapi.evals.tool_evals import ToolEvals
 from cxas_scrapi.utils.eval_utils import (
     CALLBACK_RESULTS_FILENAME,
+    SHADOW_RESULTS_FILENAME,
     SIM_RESULTS_FILENAME,
     TOOL_RESULTS_FILENAME,
     EvalUtils,
@@ -52,6 +54,7 @@ def run_all_evals(
     goldens_dir: str | None = None,
     tool_test_file: str | None = None,
     simulation_dir: str | None = None,
+    shadow_dir: str | None = None,
     app_dir: str | None = None,
     output_dir: str | None = None,
     filter_files: list[str] | None = None,
@@ -75,7 +78,7 @@ def run_all_evals(
     vertex_location: str = "global",
     naturalness: bool | dict[str, typing.Any] | None = None,
 ) -> typing.Any:
-    """Runs all 4 types of evaluations and returns aggregated results.
+    """Runs all evaluations and returns aggregated results.
 
     This high-level orchestration function decouples execution logic from pure
     HTML report generation.
@@ -85,6 +88,8 @@ def run_all_evals(
     )
 
     results = {"callback": [], "tool": [], "golden": [], "simulation": []}
+    if include and "shadows" in include:
+        results["shadow"] = []
 
     include = include or ["sims", "goldens", "tools", "callbacks"]
 
@@ -298,6 +303,80 @@ def run_all_evals(
                         )
                         with open(save_path, "w") as f:
                             json.dump(sim_results, f, indent=2)
+
+    # 4b. Shadow evaluations
+    if "shadows" in include:
+        if not shadow_dir:
+            shadow_dir = "evals/shadows/"
+        if app_name and os.path.exists(shadow_dir):
+            if os.path.isdir(shadow_dir):
+                shadow_files = glob.glob(os.path.join(shadow_dir, "*.yaml"))
+            else:
+                shadow_files = [shadow_dir]
+            if filter_files:
+                shadow_files = [
+                    f
+                    for f in shadow_files
+                    if any(
+                        pattern.lower() in os.path.basename(f).lower()
+                        for pattern in filter_files
+                    )
+                ]
+            if shadow_files:
+                shadow_evals = ShadowEvals(
+                    app_name=app_name,
+                    rate_limiter=rate_limiter,
+                    expectations_only=expectations_only or True,
+                    deployment_id=deployment_id,
+                    vertex_location=vertex_location,
+                    naturalness=naturalness,
+                )
+                shadow_cases = []
+                for sf in shadow_files:
+                    cases = shadow_evals.load_shadow_test_cases_from_file(sf)
+                    if filter_tags:
+                        cases = [
+                            c
+                            for c in cases
+                            if any(t in filter_tags for t in c.tags)
+                        ]
+                    if filter_names:
+                        cases = [c for c in cases if c.name in filter_names]
+                    shadow_cases.extend(cases)
+                if shadow_cases:
+                    shadow_modality = (
+                        modality if modality != "text" else "audio"
+                    )
+                    shadow_results = shadow_evals.run_shadow_evals(
+                        shadow_cases,
+                        runs=runs,
+                        parallel=parallel,
+                        sim_user_model=sim_user_model,
+                        eval_model=eval_model,
+                        modality=shadow_modality,
+                        background_noise_file=bg_noise_file,
+                        burst_noise_files=burst_noise_files,
+                        use_tool_fakes=use_tool_fakes,
+                        skip_playback_wait=skip_playback_wait,
+                        single_bidi_stream=single_bidi_stream,
+                        progress_callback=lambda c, t: (
+                            progress_callback("shadows", c, t)
+                            if progress_callback
+                            else None
+                        ),
+                        capture_agent_audio=capture_agent_audio,
+                        naturalness=naturalness,
+                    )
+                    results["shadow"] = shadow_results
+                    if output_dir:
+                        save_path = os.path.join(
+                            output_dir,
+                            add_timestamp_suffix(
+                                SHADOW_RESULTS_FILENAME, timestamp
+                            ),
+                        )
+                        with open(save_path, "w") as f:
+                            json.dump(shadow_results, f, indent=2)
 
     # 5. Platform goldens (Run and Wait in Batches)
     if "goldens" in include and evaluations_to_run:
