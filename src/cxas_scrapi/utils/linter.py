@@ -556,6 +556,8 @@ class Discovery:
                     json_file = d / f"{d.name}.json"
                     if json_file.exists():
                         result[d.name] = json_file
+                    elif (d / "agent.json").exists():
+                        result[d.name] = d / "agent.json"
         return result
 
     def discover_tools(self) -> dict[str, Path]:
@@ -674,6 +676,8 @@ class Discovery:
                 json_file = d / f"{d.name}.json"
                 if json_file.exists():
                     result[d.name] = json_file
+                elif (d / "agent.json").exists():
+                    result[d.name] = d / "agent.json"
         return result
 
     def discover_agent_models(self) -> dict[str, str]:

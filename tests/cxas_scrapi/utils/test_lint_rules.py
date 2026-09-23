@@ -1950,6 +1950,201 @@ def test_a002_missing_required_fields(
     assert any("displayName" in m for m in fields)
 
 
+def test_a011_guided_agent_synced(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import (  # noqa: PLC0415
+        GuidedAgentDefinitionOutOfSync,
+    )
+
+    rule = GuidedAgentDefinitionOutOfSync()
+    agent_dir = tmp_path / "agents" / "guided_agent"
+    agent_dir.mkdir(parents=True)
+
+    yaml_content = "tools:\n  - tool_a\nrules:\n  - Rule A\n"
+    (agent_dir / "definition.yaml").write_text(yaml_content)
+
+    agent_data = {
+        "displayName": "Guided Agent",
+        "tools": ["tool_a"],
+        "guidedAgent": {
+            "configSource": {
+                "format": "YAML",
+                "inlineText": yaml_content,
+            }
+        },
+    }
+    agent_json = agent_dir / "agent.json"
+    agent_json.write_text(json.dumps(agent_data, indent=2))
+
+    results = rule.check(agent_json, agent_json.read_text(), context)
+    assert len(results) == 0
+
+
+def test_a011_guided_agent_drift_yaml(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import (  # noqa: PLC0415
+        GuidedAgentDefinitionOutOfSync,
+    )
+    from cxas_scrapi.utils.linter import Severity  # noqa: PLC0415
+
+    rule = GuidedAgentDefinitionOutOfSync()
+    agent_dir = tmp_path / "agents" / "guided_agent"
+    agent_dir.mkdir(parents=True)
+
+    (agent_dir / "definition.yaml").write_text(
+        "tools:\n  - tool_a\nrules:\n  - Rule A\n  - Extra rule\n"
+    )
+
+    agent_data = {
+        "displayName": "Guided Agent",
+        "tools": ["tool_a"],
+        "guidedAgent": {
+            "configSource": {
+                "format": "YAML",
+                "inlineText": "tools:\n  - tool_a\nrules:\n  - Rule A\n",
+            }
+        },
+    }
+    agent_json = agent_dir / "agent.json"
+    agent_json.write_text(json.dumps(agent_data, indent=2))
+
+    results = rule.check(agent_json, agent_json.read_text(), context)
+    assert len(results) == 1
+    assert results[0].rule_id == "A011"
+    assert results[0].severity == Severity.ERROR
+    assert "out of sync" in results[0].message
+    assert "Extra rule" in results[0].message
+    assert "cxas agent sync-yaml" in results[0].fix_suggestion
+
+
+def test_a011_guided_agent_missing_yaml(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import (  # noqa: PLC0415
+        GuidedAgentDefinitionOutOfSync,
+    )
+    from cxas_scrapi.utils.linter import Severity  # noqa: PLC0415
+
+    rule = GuidedAgentDefinitionOutOfSync()
+    agent_dir = tmp_path / "agents" / "guided_agent"
+    agent_dir.mkdir(parents=True)
+
+    agent_data = {
+        "displayName": "Guided Agent",
+        "tools": ["tool_a"],
+        "guidedAgent": {
+            "configSource": {
+                "format": "YAML",
+                "inlineText": "tools:\n  - tool_a\nrules:\n  - Rule A\n",
+            }
+        },
+    }
+    agent_json = agent_dir / "agent.json"
+    agent_json.write_text(json.dumps(agent_data, indent=2))
+
+    results = rule.check(agent_json, agent_json.read_text(), context)
+    assert len(results) == 1
+    assert results[0].rule_id == "A011"
+    assert results[0].severity == Severity.ERROR
+    assert "missing definition.yaml" in results[0].message.lower()
+    assert "cxas agent sync-yaml --to-yaml" in results[0].fix_suggestion
+
+
+def test_a011_guided_agent_tools_diverge(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import (  # noqa: PLC0415
+        GuidedAgentDefinitionOutOfSync,
+    )
+    from cxas_scrapi.utils.linter import Severity  # noqa: PLC0415
+
+    rule = GuidedAgentDefinitionOutOfSync()
+    agent_dir = tmp_path / "agents" / "guided_agent"
+    agent_dir.mkdir(parents=True)
+
+    yaml_content = "tools:\n  - tool_a\n  - tool_b\nrules:\n  - Rule A\n"
+    (agent_dir / "definition.yaml").write_text(yaml_content)
+
+    agent_data = {
+        "displayName": "Guided Agent",
+        "tools": ["tool_a"],
+        "guidedAgent": {
+            "configSource": {
+                "format": "YAML",
+                "inlineText": yaml_content,
+            }
+        },
+    }
+    agent_json = agent_dir / "agent.json"
+    agent_json.write_text(json.dumps(agent_data, indent=2))
+
+    results = rule.check(agent_json, agent_json.read_text(), context)
+    assert len(results) == 1
+    assert results[0].rule_id == "A011"
+    assert results[0].severity == Severity.ERROR
+    assert "Tools mismatch" in results[0].message
+    assert "cxas agent sync-yaml" in results[0].fix_suggestion
+
+
+def test_a011_guided_agent_forbidden_instruction(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import (  # noqa: PLC0415
+        GuidedAgentDefinitionOutOfSync,
+    )
+    from cxas_scrapi.utils.linter import Severity  # noqa: PLC0415
+
+    rule = GuidedAgentDefinitionOutOfSync()
+    agent_dir = tmp_path / "agents" / "guided_agent"
+    agent_dir.mkdir(parents=True)
+
+    yaml_content = "tools:\n  - tool_a\nrules:\n  - Rule A\n"
+    (agent_dir / "definition.yaml").write_text(yaml_content)
+
+    agent_data = {
+        "displayName": "Guided Agent",
+        "instruction": "Forbidden instruction string",
+        "tools": ["tool_a"],
+        "guidedAgent": {
+            "configSource": {
+                "format": "YAML",
+                "inlineText": yaml_content,
+            }
+        },
+    }
+    agent_json = agent_dir / "agent.json"
+    agent_json.write_text(json.dumps(agent_data, indent=2))
+
+    results = rule.check(agent_json, agent_json.read_text(), context)
+    assert len(results) == 1
+    assert results[0].rule_id == "A011"
+    assert results[0].severity == Severity.ERROR
+    assert "forbidden 'instruction'" in results[0].message
+    assert "Remove 'instruction'" in results[0].fix_suggestion
+
+
+def test_a011_ignores_non_guided_agent(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import (  # noqa: PLC0415
+        GuidedAgentDefinitionOutOfSync,
+    )
+
+    rule = GuidedAgentDefinitionOutOfSync()
+    agent_dir = tmp_path / "agents" / "normal_agent"
+    agent_dir.mkdir(parents=True)
+
+    (agent_dir / "instruction.txt").write_text("<role>Normal</role>")
+    agent_data = {"displayName": "Normal Agent", "tools": ["tool_a"]}
+    agent_json = agent_dir / "normal_agent.json"
+    agent_json.write_text(json.dumps(agent_data, indent=2))
+
+    results = rule.check(agent_json, agent_json.read_text(), context)
+    assert len(results) == 0
+
+
 # ── Schema Rules ─────────────────────────────────────────────────────────
 
 

@@ -1,0 +1,1045 @@
+agent: "Appointment agent"
+description: "Charter/Spectrum voice agent that reschedules, cancels, confirms, tracks, and escalates field service appointments."
+
+metadata:
+  greeting: "Thanks for calling Spectrum. I'm an AI assistant and I can help with your service appointment."
+  farewell: "Thanks for calling Spectrum. Have a great day."
+  persona: >-
+    You are a Spectrum field-service appointment specialist speaking with a
+    customer on the phone. You are warm, concise, and empathetic. You
+    acknowledge what the caller says exactly once, then move the conversation
+    forward.
+  tone: "Calm, efficient, reassuring. Short sentences. Plain language, no jargon."
+  global_rules: |
+    - Never diagnose equipment. Never tell a caller their modem, router, or
+      cabling is bad.
+    - Never read internal identifiers, codes, reason codes, or tool names aloud.
+    - Speak dates naturally ("Tuesday, March fourth") and arrival windows as a
+      range ("between 2 and 3 PM").
+    - Acknowledge an answer once. Never repeat the caller's own words back twice.
+    - While a lookup is running use one short filler. Never narrate the process
+      or describe what system you are querying.
+    - Always restate the day, date, and arrival window before committing any
+      change, and get an explicit yes.
+    - Never tell a caller that something was cancelled, rescheduled, booked, or
+      sent unless the system reported it succeeded. If a change did not go
+      through, say so plainly and hand the caller to a representative.
+    - If you tell a caller you are transferring them, complete that transfer in
+      the same turn. Never announce a handoff and then carry on the
+      conversation.
+    - When the caller gives an instruction for the technician, repeat the
+      specifics back to them. "Got it" is not an acknowledgement.
+    - If the caller interrupts or changes subject, answer them, then return to
+      where you left off without restarting.
+    - Appointment notes must never exceed 250 characters.
+
+enums:
+  OrderType: enum<TroubleCall, SpecialRequest, Product>
+  SlotPreference: enum<Morning, Afternoon, Anytime>
+  TrackOrReschedule: enum<Eta, Reschedule>
+  EtdReason: enum<AllServicesOut, PartialServicesOut, NoDialTone, HazardSafety, Medical, DropBury, TechDidNotArrive, TcCancelledNotByCustomer, CustomerMissedAppointment, WorkNotComplete>
+  WrapUpIntent: enum<ConfirmAppointment, CancelAppointment, RescheduleAppointment, MissedAppointment, ScheduleAppointment, FieldOperations>
+
+objects:
+  # The appointment currently on the caller's account.
+  singleton Appointment:
+    count:
+      type: number
+      default: -1
+      visibility: computed
+    appointment_number:
+      type: number
+      default: 0
+      visibility: computed
+    order_type:
+      type: OrderType
+      visibility: computed
+    date_spoken:
+      type: string
+      default: ""
+      visibility: computed
+    window_spoken:
+      type: string
+      default: ""
+      visibility: computed
+    is_same_day:
+      type: bool
+      default: false
+      visibility: computed
+    window_started:
+      type: bool
+      default: false
+      visibility: computed
+    tech_en_route:
+      type: bool
+      default: false
+      visibility: computed
+    loaded:
+      type: bool
+      default: false
+      visibility: internal
+    # Asked only when the account has more than one open appointment.
+    selected_number:
+      type: number
+      visibility: user
+      hint: "Which appointment are you calling about? You can just tell me the date."
+
+  # Result of the business-rule gate in Exhibit 3 of the PRD.
+  singleton Eligibility:
+    checked:
+      type: bool
+      default: false
+      visibility: internal
+    self_service_allowed:
+      type: bool
+      default: false
+      visibility: computed
+    account_outage:
+      type: bool
+      default: false
+      visibility: computed
+    reason:
+      type: string
+      default: ""
+      visibility: computed
+
+  # One concrete window being offered to the caller.
+  singleton SlotOffer:
+    start_date:
+      type: string
+      regex: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      visibility: user
+      hint: "What day were you hoping for?"
+    preference:
+      type: SlotPreference
+      visibility: user
+      hint: "Do mornings or afternoons work better for you?"
+    slot_id:
+      type: string
+      default: ""
+      visibility: computed
+    slot_date:
+      type: string
+      default: ""
+      visibility: computed
+    slot_spoken:
+      type: string
+      default: ""
+      visibility: computed
+    slots_available:
+      type: bool
+      default: true
+      visibility: computed
+    # False when the caller named a day and that day had nothing on it.
+    requested_day_available:
+      type: bool
+      default: true
+      visibility: computed
+    within_sla:
+      type: bool
+      default: true
+      visibility: computed
+    # Three-state: unset = not yet offered, false = declined, true = accepted.
+    slot_accepted:
+      type: bool
+      visibility: user
+      hint: "Does that window work for you?"
+    accepted:
+      type: bool
+      default: false
+      visibility: internal
+    exhausted:
+      type: bool
+      default: false
+      visibility: internal
+    declines:
+      type: number
+      default: 0
+      visibility: internal
+    chosen_slot_spoken:
+      type: string
+      default: ""
+      visibility: computed
+
+  singleton Contact:
+    phone_number:
+      # Callers say "650-123-4567". The tool strips punctuation itself, so
+      # rejecting it here only caused the runtime to re-ask.
+      type: string
+      regex: '^[-() .0-9]{10,20}$'
+      visibility: user
+      hint: "What's the best phone number for the technician to reach you on the day of the visit?"
+
+  singleton Booking:
+    notes:
+      type: string
+      default: ""
+      visibility: computed
+    reason:
+      type: string
+      default: ""
+      visibility: computed
+    # No default: unasked, declined, and agreed must stay distinct.
+    confirmed:
+      type: bool
+      visibility: user
+      hint: "Shall I go ahead and make that change?"
+    # Set by the commit tools, so a rejected write terminates instead of
+    # being retried forever.
+    attempted:
+      type: bool
+      default: false
+      visibility: internal
+    booked:
+      type: bool
+      default: false
+      visibility: computed
+    declined:
+      type: bool
+      default: false
+      visibility: internal
+    new_slot_spoken:
+      type: string
+      default: ""
+      visibility: computed
+
+  singleton Cancellation:
+    reason:
+      type: string
+      visibility: user
+      hint: "Can you tell me briefly why you'd like to cancel?"
+    # One retention attempt, per Exhibit 4.
+    reschedule_instead:
+      type: bool
+      visibility: user
+      hint: "Would you like me to move it to a better time instead of cancelling?"
+    cancel_and_rebook_ok:
+      type: bool
+      visibility: user
+      hint: "Would you like me to cancel today's visit and book you a new one?"
+    # Set by the tool itself, so a refusal terminates the step instead of
+    # being retried forever.
+    attempted:
+      type: bool
+      default: false
+      visibility: internal
+    cancelled:
+      type: bool
+      default: false
+      visibility: computed
+    rebook_available_after:
+      type: string
+      default: ""
+      visibility: computed
+
+  # Escalate To Dispatch, per Exhibit 6.
+  singleton Etd:
+    reason_code:
+      type: EtdReason
+      visibility: computed
+    checked:
+      type: bool
+      default: false
+      visibility: internal
+    eligible:
+      type: bool
+      default: false
+      visibility: computed
+    blocked_reason:
+      type: string
+      default: ""
+      visibility: computed
+    summary:
+      type: string
+      default: ""
+      visibility: computed
+    raised:
+      type: bool
+      default: false
+      visibility: computed
+    # Set by the tool, so a refused ticket ends the step instead of looping.
+    dispatch_attempted:
+      type: bool
+      default: false
+      visibility: internal
+
+  singleton Tracking:
+    link_requested:
+      type: bool
+      visibility: user
+      hint: "Would you like me to text you a tracking link so you can see when the technician is on the way?"
+    link_sent:
+      type: bool
+      default: false
+      visibility: computed
+    eta_or_reschedule:
+      type: TrackOrReschedule
+      visibility: user
+      hint: "Would you like me to find out when they'll arrive, or would you rather reschedule?"
+
+  singleton CallState:
+    calling_about_appointment:
+      type: bool
+      visibility: user
+      hint: "Are you calling about that appointment?"
+    other_reason:
+      type: string
+      visibility: user
+      hint: "Can you describe your reason for the call in a few words?"
+    routed:
+      type: bool
+      default: false
+      visibility: internal
+    escalation_reason:
+      type: string
+      default: ""
+      visibility: internal
+    escalated:
+      type: bool
+      default: false
+      visibility: internal
+    # Set by the tools themselves so a failed transfer or wrap-up ends the
+    # step instead of being retried on every rescan.
+    escalation_attempted:
+      type: bool
+      default: false
+      visibility: internal
+    wrap_up_attempted:
+      type: bool
+      default: false
+      visibility: internal
+    wrap_up_intent:
+      type: WrapUpIntent
+      visibility: internal
+    wrap_up_resolution:
+      type: string
+      default: ""
+      visibility: internal
+    wrap_up_done:
+      type: bool
+      default: false
+      visibility: internal
+    done_for_now:
+      type: bool
+      visibility: user
+      hint: "Is there anything else I can help you with today?"
+
+tools:
+  get_appointment_details:
+    external_tool: get_appointment_details
+    params: { appt: Appointment }
+    outputs:
+      - appt.count = result.appointment_count
+      - appt.appointment_number = result.appointment_number
+      - appt.order_type = result.order_type
+      - appt.date_spoken = result.date_spoken
+      - appt.window_spoken = result.window_spoken
+      - appt.is_same_day = result.is_same_day
+      - appt.window_started = result.window_started
+      - appt.tech_en_route = result.tech_en_route
+      - appt.loaded = true
+    goal: "Look up the service appointments currently on the caller's account"
+
+  select_appointment:
+    external_tool: select_appointment
+    params: { appt: Appointment }
+    inputs:
+      appointment_number: appt.selected_number
+    outputs:
+      - appt.count = result.appointment_count
+      - appt.appointment_number = result.appointment_number
+      - appt.order_type = result.order_type
+      - appt.date_spoken = result.date_spoken
+      - appt.window_spoken = result.window_spoken
+      - appt.is_same_day = result.is_same_day
+      - appt.window_started = result.window_started
+      - appt.tech_en_route = result.tech_en_route
+    goal: "Pin the conversation to one specific appointment when the account has several"
+
+  get_rescheduling_eligibility:
+    external_tool: get_rescheduling_eligibility
+    params: { appt: Appointment, elig: Eligibility }
+    inputs:
+      appointment_number: appt.appointment_number
+    outputs:
+      - elig.self_service_allowed = result.self_service_allowed
+      - elig.account_outage = result.account_outage
+      - elig.reason = result.reason
+      - elig.checked = true
+    goal: "Check the account and appointment business rules that gate self-service changes"
+
+  get_available_schedule_windows:
+    external_tool: get_available_schedule_windows
+    params: { appt: Appointment, offer: SlotOffer }
+    inputs:
+      appointment_number: appt.appointment_number
+    optional_inputs:
+      start_date: offer.start_date
+      preference: offer.preference
+      declined_count: offer.declines
+    outputs:
+      - offer.slot_id = result.time_slot_id
+      - offer.slot_date = result.slot_date
+      - offer.slot_spoken = result.slot_spoken
+      - offer.slots_available = result.slots_available
+      - offer.requested_day_available = result.requested_day_available
+      - offer.within_sla = result.within_sla
+    goal: "Fetch the single earliest appointment window that matches the caller's preference"
+
+  modify_appointment:
+    external_tool: modify_appointment
+    params: { appt: Appointment, offer: SlotOffer, contact: Contact, book: Booking }
+    inputs:
+      appointment_number: appt.appointment_number
+      new_date: offer.slot_date
+      time_slot_id: offer.slot_id
+    # A required phone_number forced an extra elicitation turn between the
+    # caller accepting a window and the change actually committing. The
+    # number already on the order is kept when this is blank.
+    optional_inputs:
+      phone_number: contact.phone_number
+      notes: book.notes
+    outputs:
+      - book.booked = result.success
+      - book.new_slot_spoken = result.slot_spoken
+      - book.attempted = true
+    goal: "Commit the appointment change"
+    reversible: false
+
+  cancel_appointment:
+    external_tool: cancel_appointment
+    params: { appt: Appointment, cancel: Cancellation }
+    inputs:
+      appointment_number: appt.appointment_number
+    optional_inputs:
+      reason: cancel.reason
+    outputs:
+      - cancel.cancelled = result.success
+      - cancel.rebook_available_after = result.rebook_available_after
+      - cancel.attempted = true
+    goal: "Cancel the caller's existing appointment"
+    reversible: false
+
+  book_new_appointment:
+    external_tool: book_new_appointment
+    params: { appt: Appointment, offer: SlotOffer, contact: Contact, book: Booking }
+    inputs:
+      new_date: offer.slot_date
+      time_slot_id: offer.slot_id
+    optional_inputs:
+      phone_number: contact.phone_number
+      appointment_reason: book.reason
+      notes: book.notes
+    outputs:
+      - book.booked = result.success
+      - book.new_slot_spoken = result.slot_spoken
+      - appt.appointment_number = result.appointment_number
+      - book.attempted = true
+    goal: "Book a brand new technician visit"
+    reversible: false
+
+  emergency_and_missed_status_check:
+    external_tool: emergency_and_missed_status_check
+    params: { appt: Appointment, etd: Etd }
+    inputs:
+      reason_code: etd.reason_code
+      appointment_number: appt.appointment_number
+    outputs:
+      - etd.eligible = result.etd_eligible
+      - etd.blocked_reason = result.blocked_reason
+      - etd.checked = true
+    goal: "Check whether this situation qualifies for a dispatch escalation"
+
+  escalate_to_dispatch:
+    external_tool: escalate_to_dispatch
+    params: { appt: Appointment, etd: Etd, contact: Contact }
+    inputs:
+      reason_code: etd.reason_code
+      appointment_number: appt.appointment_number
+      phone_number: contact.phone_number
+    optional_inputs:
+      summary: etd.summary
+    outputs:
+      - etd.raised = result.success
+      - etd.dispatch_attempted = true
+    goal: "Raise an Escalate To Dispatch ticket so the dispatch team calls the customer back"
+    reversible: false
+
+  send_tracker_link:
+    external_tool: send_tracker_link
+    params: { appt: Appointment, contact: Contact, track: Tracking }
+    inputs:
+      appointment_number: appt.appointment_number
+    # Requiring the number here made the agent interrogate the caller before
+    # it could send a link they had just asked for.
+    optional_inputs:
+      phone_number: contact.phone_number
+    outputs:
+      - track.link_sent = result.success
+    goal: "Text the caller a link that tracks the technician"
+
+  escalation_call:
+    external_tool: escalation_call
+    params: { sess: CallState }
+    inputs:
+      reason: sess.escalation_reason
+    outputs:
+      - sess.escalated = result.success
+      - sess.escalation_attempted = true
+    goal: "Warm transfer the caller to a live representative"
+    reversible: false
+
+  call_wrap_up:
+    external_tool: call_wrap_up
+    params: { sess: CallState }
+    inputs:
+      intent: sess.wrap_up_intent
+    optional_inputs:
+      resolution: sess.wrap_up_resolution
+    outputs:
+      - sess.wrap_up_done = result.success
+      - sess.wrap_up_attempted = true
+    goal: "Log the call disposition and send the caller self-service tips"
+    reversible: false
+
+components:
+  # ---------------------------------------------------------------- shared ---
+  LoadAppointment:
+    goal: "Identify exactly which appointment the caller is asking about"
+    params: { appt: Appointment, sess: CallState }
+    complete_when: "appt.count == 1 || sess.calling_about_appointment == false"
+    body:
+      - do: tool get_appointment_details(appt)
+
+      - do:
+          - say: "I'm not seeing an active service appointment on your account right now."
+          - update: 'sess.calling_about_appointment = false'
+        when: "appt.count == 0"
+        once: call
+
+      - do: say "I'm seeing more than one appointment on your account."
+        when: "appt.count > 1"
+        once: call
+
+      - do: tool select_appointment(appt)
+        when: "appt.count > 1"
+
+  Escalate:
+    goal: "Hand the caller to a live representative with context"
+    params: { sess: CallState }
+    # One attempt, then done. Completing only on success left a failed
+    # transfer re-announcing itself every rescan.
+    complete_when: "sess.escalated || sess.escalation_attempted"
+    body:
+      - do: say "Let me get you over to someone who can help with that. One moment."
+        once: call
+
+      - do: tool escalation_call(sess)
+        when: "!sess.escalation_attempted"
+
+  WrapUp:
+    goal: "Summarize the outcome, offer more help, then close out the call"
+    params: { sess: CallState }
+    complete_when: "sess.wrap_up_done || sess.wrap_up_attempted"
+    body:
+      - do: say "{sess.wrap_up_resolution} Is there anything else I can help you with today?"
+        once: call
+
+      - do: builtin confirm(sess.done_for_now)
+
+      - do: tool call_wrap_up(sess)
+        when: "sess.done_for_now == true && !sess.wrap_up_attempted"
+
+      - do: say "Of course, go ahead and tell me what you need."
+        when: "sess.done_for_now == false"
+        once: call
+
+  OffTopic:
+    goal: "Capture the caller's real reason and route them to the right place"
+    params: { sess: CallState }
+    complete_when: "sess.escalated || sess.escalation_attempted"
+    body:
+      - do: builtin ask(sess.other_reason)
+
+      - do:
+          - update: 'sess.escalation_reason = "Outside appointment self-service: {sess.other_reason}"'
+          - update: 'sess.routed = true'
+        when: "sess.other_reason is set"
+
+      - do: component Escalate(sess)
+        when: "sess.routed"
+
+  # -------------------------------------------------------- slot bargaining ---
+  OfferSlot:
+    goal: "Propose the single earliest matching window and keep offering until the caller accepts"
+    params: { appt: Appointment, offer: SlotOffer }
+    complete_when: "offer.accepted || offer.exhausted || !offer.slots_available"
+    body:
+      # Max five reschedule attempts, per Exhibit 3.
+      - do: builtin with_retries(5, offer.accepted, offer.exhausted)
+        body:
+          - do: tool get_available_schedule_windows(appt, offer)
+
+          # Never move the caller to a different day without saying so.
+          - do: say "I don't have anything left on the day you asked for."
+            when: "offer.slots_available && !offer.requested_day_available"
+            once: entry
+
+          # This restatement plus the caller's yes is the confirm-before-commit
+          # gate. Asking a second time after this only cost turns.
+          - do: say "The earliest I have is {offer.slot_spoken}. Shall I lock that in for you?"
+            when: "offer.slots_available"
+            once: entry
+
+          - do: builtin confirm(offer.slot_accepted)
+            when: "offer.slots_available"
+
+          - do:
+              - update: 'offer.accepted = true'
+              - update: 'offer.chosen_slot_spoken = offer.slot_spoken'
+            when: "offer.slot_accepted == true"
+
+          - do:
+              - say: "No problem, let me look for something else."
+              - update: 'offer.declines += 1'
+              - update: 'offer.slot_accepted = null'
+            when: "offer.slot_accepted == false"
+
+  CommitReschedule:
+    goal: "Capture any technician instructions, commit the change, and say what happened"
+    params: { appt: Appointment, offer: SlotOffer, contact: Contact, book: Booking, sess: CallState }
+    complete_when: "book.booked || book.declined || book.attempted"
+    body:
+      - do:
+          - rgl_update: book.notes
+            instruction: "If the caller has given any instruction for the technician - a gate or door code, which entrance to use, a request to call ahead, a dog on the property, where to park, an access restriction - capture it here as a short phrase using the caller's own specifics. Leave it empty if they have given no such instruction."
+        once: call
+
+      # Read the substance back. A bare 'got it' is not an acknowledgement.
+      - do:
+          - say: "I've noted that for the technician: {book.notes}."
+        when: "book.notes != ''"
+        once: call
+
+      - do: tool modify_appointment(appt, offer, contact, book)
+        when: "!book.attempted"
+
+      - do: say_exactly "You're all set. Your appointment is now {book.new_slot_spoken}."
+        when: "book.booked"
+        once: call
+
+      - do:
+          - say: "I wasn't able to make that change from here. Let me get you to someone who can."
+          - update: 'sess.escalation_reason = "Reschedule commit rejected by the scheduling system"'
+        when: "book.attempted && !book.booked"
+        once: call
+
+      - do: component Escalate(sess)
+        when: "book.attempted && !book.booked"
+
+  BookReplacement:
+    goal: "Find and book a brand new visit"
+    params: { appt: Appointment, offer: SlotOffer, contact: Contact, book: Booking, sess: CallState }
+    complete_when: "book.booked || book.attempted || sess.escalated"
+    body:
+      - do: component OfferSlot(appt, offer)
+        when: "!offer.accepted && !offer.exhausted"
+
+      # OfferSlot already restated the window and took an explicit yes, so
+      # asking again here only cost turns.
+      - do: tool book_new_appointment(appt, offer, contact, book)
+        when: "offer.accepted && !book.attempted"
+
+      - do: say_exactly "You're all set. Your new visit is {book.new_slot_spoken}."
+        when: "book.booked"
+        once: call
+
+      - do:
+          - say: "I wasn't able to book that from here. Let me get you to someone who can."
+          - update: 'sess.escalation_reason = "New booking rejected by the scheduling system"'
+        when: "book.attempted && !book.booked"
+        once: call
+
+      - do: component Escalate(sess)
+        when: "book.attempted && !book.booked"
+
+  # ------------------------------------------------------------- escalation ---
+  HandleRescheduleBlock:
+    goal: "Deal with an appointment the caller is not allowed to change themselves"
+    params: { appt: Appointment, elig: Eligibility, sess: CallState }
+    complete_when: "sess.escalated || sess.escalation_attempted"
+    body:
+      - do:
+          - say: "Your technician is already on the way for today's visit, so I'll get you to someone who can change it for you."
+          - update: 'sess.escalation_reason = "Same-day appointment with technician en route"'
+        when: "appt.tech_en_route && appt.is_same_day"
+        once: call
+
+      - do:
+          - say: "There's a service outage affecting your area at the moment, so I'm not able to change the appointment right now. Let me get you to a representative."
+          - update: 'sess.escalation_reason = "Active outage blocks scheduling"'
+        when: "elig.account_outage && !appt.tech_en_route"
+        once: call
+
+      - do:
+          - say: "I'm not able to make that change from here, but I can get you to someone who can."
+          - update: 'sess.escalation_reason = "Not self-service eligible: {elig.reason}"'
+        when: "!appt.tech_en_route && !elig.account_outage"
+        once: call
+
+      - do: component Escalate(sess)
+        when: "sess.escalation_reason != ''"
+
+  RaiseEtd:
+    goal: "Raise a dispatch escalation when the situation qualifies"
+    params: { appt: Appointment, etd: Etd, contact: Contact, sess: CallState }
+    complete_when: "etd.raised || etd.dispatch_attempted || sess.escalated || sess.escalation_attempted"
+    body:
+      - do: tool emergency_and_missed_status_check(appt, etd)
+        when: "!etd.checked"
+
+      - do:
+          - say: "I'm not able to escalate this one to dispatch. Let me get you to a representative who can look at other options."
+          - update: 'sess.escalation_reason = "Dispatch escalation not eligible: {etd.blocked_reason}"'
+        when: "etd.checked && !etd.eligible"
+        once: call
+
+      # The announcement above is a promise. Keep it in the same frame.
+      - do: component Escalate(sess)
+        when: "etd.checked && !etd.eligible"
+
+      # Phone number is mandatory on every dispatch escalation, per Exhibit 6.
+      - do: builtin ask(contact.phone_number)
+        when: "etd.eligible"
+
+      - do: tool escalate_to_dispatch(appt, etd, contact)
+        when: "etd.eligible && !etd.dispatch_attempted"
+
+      - do: say_exactly "I've escalated this to our dispatch team. They'll call you at {contact.phone_number}, and they try three times within ninety minutes, so please keep an eye on your phone."
+        when: "etd.raised"
+        once: call
+
+  NoSlotsWithinSla:
+    goal: "When nothing is available inside the service window, flag it for dispatch"
+    params: { appt: Appointment, etd: Etd, contact: Contact, sess: CallState }
+    complete_when: "etd.raised || etd.dispatch_attempted || sess.escalated || sess.escalation_attempted"
+    body:
+      - do:
+          - say: "The soonest I can get someone out is further away than we'd like, so let me also flag this for our dispatch team."
+          - update: 'etd.reason_code = PartialServicesOut'
+        once: call
+
+      - do: component RaiseEtd(appt, etd, contact, sess)
+        when: "etd.reason_code is set"
+
+  # ------------------------------------------------------------ journey cores ---
+  RescheduleFlow:
+    goal: "Move the caller's existing appointment to a window they accept"
+    params: { appt: Appointment, sess: CallState, elig: Eligibility, offer: SlotOffer, contact: Contact, book: Booking, etd: Etd, cancel: Cancellation }
+    complete_when: "book.booked || book.declined || sess.escalated || sess.escalation_attempted || etd.raised"
+    body:
+      - do: component LoadAppointment(appt, sess)
+        when: "!appt.loaded"
+
+      # An appointment whose window has already opened cannot be moved; it has
+      # to be cancelled and rebooked. Callers reach this through the ordinary
+      # reschedule wording, so the check belongs here and not only in the
+      # CancelAndRebook journey.
+      - do: component WindowStartedRebook(appt, cancel, offer, contact, book, sess)
+        when: "appt.loaded && appt.window_started"
+
+      - do: tool get_rescheduling_eligibility(appt, elig)
+        when: "appt.count == 1 && !appt.window_started && !elig.checked"
+
+      - do: component HandleRescheduleBlock(appt, elig, sess)
+        when: "elig.checked && !elig.self_service_allowed"
+
+      - do: component OfferSlot(appt, offer)
+        when: "elig.self_service_allowed && !offer.accepted && !offer.exhausted"
+
+      - do: component CommitReschedule(appt, offer, contact, book, sess)
+        when: "offer.accepted"
+
+      - do: component NoSlotsWithinSla(appt, etd, contact, sess)
+        when: "elig.self_service_allowed && (!offer.slots_available || !offer.within_sla)"
+
+  DoCancel:
+    goal: "Cancel the appointment and set expectations for rebooking"
+    params: { appt: Appointment, cancel: Cancellation, sess: CallState }
+    # Completing only on success meant a refused cancellation was retried on
+    # every rescan, and left the model free to invent a confirmation.
+    complete_when: "cancel.cancelled || cancel.attempted || sess.escalated || sess.escalation_attempted"
+    body:
+      - do: builtin ask(cancel.reason)
+
+      - do: tool cancel_appointment(appt, cancel)
+        when: "!cancel.attempted"
+
+      - do:
+          - say_exactly: "Your appointment on {appt.date_spoken} is cancelled. If you need a visit later on, you'll be able to book a new one starting {cancel.rebook_available_after}."
+          - update: 'sess.wrap_up_intent = CancelAppointment'
+          - update: 'sess.wrap_up_resolution = "Appointment cancelled at the customer''s request."'
+        when: "cancel.cancelled"
+        once: call
+
+      - do:
+          - say: "I'm not able to cancel this appointment from here. Let me get you to someone who can."
+          - update: 'sess.escalation_reason = "Cancellation refused for this order type"'
+        when: "cancel.attempted && !cancel.cancelled"
+        once: call
+
+      - do: component Escalate(sess)
+        when: "cancel.attempted && !cancel.cancelled"
+
+  WindowStartedRebook:
+    goal: "Cancel a visit whose window has already opened, then book a replacement"
+    params: { appt: Appointment, cancel: Cancellation, offer: SlotOffer, contact: Contact, book: Booking, sess: CallState }
+    complete_when: "book.booked || cancel.cancel_and_rebook_ok == false || (cancel.attempted && !cancel.cancelled) || sess.escalated || sess.escalation_attempted"
+    body:
+      - do: say_exactly "Your appointment window has already started, so I can't move it directly. What I can do is cancel today's visit and book you a new one. Would you like me to do that?"
+        once: call
+
+      - do: builtin confirm(cancel.cancel_and_rebook_ok)
+
+      - do: tool cancel_appointment(appt, cancel)
+        when: "cancel.cancel_and_rebook_ok == true && !cancel.attempted"
+
+      - do:
+          - say: "I'm not able to cancel this appointment from here. Let me get you to someone who can."
+          - update: 'sess.escalation_reason = "Cancellation refused on an in-progress window"'
+        when: "cancel.attempted && !cancel.cancelled"
+        once: call
+
+      - do: component Escalate(sess)
+        when: "cancel.attempted && !cancel.cancelled"
+
+      - do: component BookReplacement(appt, offer, contact, book, sess)
+        when: "cancel.cancelled"
+
+journeys:
+  # The universal opening from the PRD: quote the appointment on file, then
+  # confirm the caller is actually calling about it.
+  singleton Opening:
+    trigger_intent: "the caller has not yet said what they need, or opens vaguely: hi, hello, I'm calling about my appointment, I have a question about my service visit, I need some help, are you a robot"
+    goal: "Confirm whether the caller is here about the appointment on file, then point them at the right flow"
+    params: { appt: Appointment, sess: CallState }
+    complete_when: "sess.routed"
+    body:
+      - do: component LoadAppointment(appt, sess)
+        when: "!appt.loaded"
+
+      - do: say_exactly "I see you have a technician visit scheduled for {appt.date_spoken}, {appt.window_spoken}. Are you calling about that?"
+        when: "appt.count == 1"
+        once: session
+
+      - do: builtin confirm(sess.calling_about_appointment)
+        when: "appt.count == 1"
+
+      - do:
+          - say: "Got it. I can reschedule it, cancel it, or just go over the details with you. What would you like to do?"
+          - update: 'sess.routed = true'
+        when: "sess.calling_about_appointment == true"
+
+      - do: component OffTopic(sess)
+        when: "sess.calling_about_appointment == false"
+
+  # APPT-S2.1
+  Reschedule:
+    trigger_intent: "reschedule my appointment, move my appointment, change my appointment to another day, I can't make my appointment, push my service visit back, I need a different time for the technician, can we do it later in the week"
+    goal: "Move the existing appointment to a new window the caller accepts"
+    params: { appt: Appointment, sess: CallState, elig: Eligibility, offer: SlotOffer, contact: Contact, book: Booking, etd: Etd, cancel: Cancellation }
+    complete_when: "sess.wrap_up_done || sess.wrap_up_attempted || sess.escalated || sess.escalation_attempted || etd.raised"
+    body:
+      - do:
+          - update: 'sess.wrap_up_intent = RescheduleAppointment'
+        once: call
+
+      - do: component RescheduleFlow(appt, sess, elig, offer, contact, book, etd, cancel)
+        when: "!book.booked && !book.declined && !sess.escalated"
+
+      - do:
+          - update: 'sess.wrap_up_resolution = "Your appointment is now set for {book.new_slot_spoken}."'
+        when: "book.booked"
+        once: call
+
+      - do: component WrapUp(sess)
+        when: "book.booked || book.declined"
+
+  # APPT-S2.2
+  Cancel:
+    trigger_intent: "cancel my appointment, I don't need the technician anymore, call off the service visit, I want to cancel the tech coming out, I fixed it myself so cancel it"
+    goal: "Offer one reschedule, then cancel the appointment if the caller still wants to"
+    params: { appt: Appointment, sess: CallState, cancel: Cancellation, elig: Eligibility, offer: SlotOffer, contact: Contact, book: Booking, etd: Etd }
+    complete_when: "sess.wrap_up_done || sess.wrap_up_attempted || sess.escalated || sess.escalation_attempted"
+    body:
+      - do: component LoadAppointment(appt, sess)
+        when: "!appt.loaded"
+
+      # One self-service retention attempt before we cancel, per Exhibit 4.
+      - do: builtin confirm(cancel.reschedule_instead)
+        when: "appt.count == 1"
+
+      - do: component RescheduleFlow(appt, sess, elig, offer, contact, book, etd, cancel)
+        when: "cancel.reschedule_instead == true && !book.booked && !book.declined"
+
+      - do: component DoCancel(appt, cancel, sess)
+        when: "cancel.reschedule_instead == false"
+
+      - do: component WrapUp(sess)
+        when: "cancel.cancelled || book.booked || book.declined"
+
+  # APPT-S2.3
+  MissedByCustomer:
+    trigger_intent: "I missed my appointment, I wasn't home when the technician came, nobody was there for the visit, we weren't in when they showed up, I need to rebook because I missed it"
+    goal: "Get another visit on the books after the customer missed the first one"
+    params: { appt: Appointment, sess: CallState, offer: SlotOffer, contact: Contact, book: Booking, etd: Etd }
+    complete_when: "sess.wrap_up_done || sess.wrap_up_attempted || sess.escalated || sess.escalation_attempted || etd.raised"
+    body:
+      - do: component LoadAppointment(appt, sess)
+        when: "!appt.loaded"
+
+      - do:
+          - say: "No problem at all, these things happen. Let's get another visit on the books for you."
+          - update: 'etd.reason_code = CustomerMissedAppointment'
+          - update: 'sess.wrap_up_intent = MissedAppointment'
+        once: call
+
+      - do: component BookReplacement(appt, offer, contact, book, sess)
+        when: "!book.booked && !offer.exhausted && offer.slots_available"
+
+      - do: component NoSlotsWithinSla(appt, etd, contact, sess)
+        when: "!offer.slots_available || !offer.within_sla"
+
+      - do:
+          - update: 'sess.wrap_up_resolution = "You''re all set for {book.new_slot_spoken}."'
+        when: "book.booked"
+        once: call
+
+      - do: component WrapUp(sess)
+        when: "book.booked"
+
+  # APPT-S2.4
+  TechNoShow:
+    trigger_intent: "the technician never showed up, nobody came to my appointment, I waited all day and no one arrived, the tech didn't turn up, where is my technician"
+    goal: "Handle a technician who did not arrive, either with an ETA handoff or a dispatch escalation"
+    params: { appt: Appointment, sess: CallState, etd: Etd, contact: Contact, track: Tracking }
+    complete_when: "etd.raised || etd.dispatch_attempted || sess.escalated || sess.escalation_attempted"
+    body:
+      - do: component LoadAppointment(appt, sess)
+        when: "!appt.loaded"
+
+      - do:
+          - say: "I'm really sorry the technician hasn't arrived."
+          - update: 'etd.reason_code = TechDidNotArrive'
+          - update: 'sess.wrap_up_intent = FieldOperations'
+        when: "appt.loaded && appt.is_same_day"
+        once: call
+
+      # A visit missed on an earlier day is a Field Operations matter, not a
+      # live ETA question. Asking "shall I check when they'll arrive?" about an
+      # appointment two days past is what produced the nonsensical apologies.
+      - do:
+          - say: "I'm sorry that visit was missed. This needs our field operations team, so let me get you across to them."
+          - update: 'etd.reason_code = TechDidNotArrive'
+          - update: 'sess.wrap_up_intent = FieldOperations'
+          - update: 'sess.escalation_reason = "Technician no-show on a past-dated appointment (Field Operations)"'
+        when: "appt.loaded && !appt.is_same_day"
+        once: call
+
+      - do: builtin ask(track.eta_or_reschedule)
+        when: "appt.is_same_day && sess.escalation_reason == ''"
+
+      # An ETA question belongs to Field Operations, not to us.
+      - do:
+          - update: 'sess.escalation_reason = "Technician no-show, caller wants an arrival estimate (Field Operations)"'
+        when: "track.eta_or_reschedule == Eta"
+        once: call
+
+      - do: component RaiseEtd(appt, etd, contact, sess)
+        when: "track.eta_or_reschedule == Reschedule"
+
+      - do: component Escalate(sess)
+        when: "sess.escalation_reason != ''"
+
+  # APPT-S2.5
+  ConfirmOrTrack:
+    trigger_intent: "when is my appointment, confirm my appointment, is my technician still coming, what time is the tech arriving, can you check my service visit, what day is my appointment, send me a tracking link"
+    goal: "Confirm the appointment details and offer the tracking link"
+    params: { appt: Appointment, sess: CallState, contact: Contact, track: Tracking }
+    complete_when: "sess.wrap_up_done || sess.wrap_up_attempted || sess.escalated || sess.escalation_attempted"
+    body:
+      - do: component LoadAppointment(appt, sess)
+        when: "!appt.loaded"
+
+      - do:
+          - say_exactly: "Yes, your technician is scheduled for {appt.date_spoken}, {appt.window_spoken}. That's a one hour arrival window, and the visit itself usually takes sixty to ninety minutes. Someone eighteen or older with a photo ID needs to be there for the whole visit."
+          - update: 'sess.wrap_up_intent = ConfirmAppointment'
+          - update: 'sess.wrap_up_resolution = "Your appointment is confirmed for {appt.date_spoken}, {appt.window_spoken}."'
+        when: "appt.count == 1"
+        once: call
+
+      - do: builtin confirm(track.link_requested)
+        when: "appt.count == 1"
+
+      - do: tool send_tracker_link(appt, contact, track)
+        when: "track.link_requested == true && !track.link_sent"
+
+      # Sending silently is indistinguishable from not sending.
+      - do: say "That's on its way to you by text now."
+        when: "track.link_sent"
+        once: call
+
+      - do: component WrapUp(sess)
+        when: "track.link_sent || track.link_requested == false"
+
+  # APPT-S2.6
+  EscalateToDispatch:
+    trigger_intent: "I need someone out sooner, this is an emergency, all of my services are out, there is a safety hazard at my house, someone here relies on medical equipment, my appointment is too far away, can you get a technician out today, I need to speak to dispatch, there's a cable buried in my yard"
+    goal: "Raise a dispatch escalation when the caller's situation qualifies"
+    params: { appt: Appointment, sess: CallState, etd: Etd, contact: Contact }
+    complete_when: "etd.raised || etd.dispatch_attempted || sess.escalated || sess.escalation_attempted"
+    body:
+      - do: component LoadAppointment(appt, sess)
+        when: "!appt.loaded"
+
+      - do:
+          - rgl_update: etd.reason_code
+            instruction: "Pick the dispatch escalation category that best matches what the caller has described so far. Use AllServicesOut when every service is down, NoDialTone for phone-only loss, HazardSafety for physical danger such as a downed line, Medical when someone depends on medical equipment, DropBury for an unburied cable, WorkNotComplete when a previous visit left work unfinished, and PartialServicesOut otherwise."
+          - update: 'sess.wrap_up_intent = FieldOperations'
+        when: "etd.reason_code is unset"
+
+      - do: component RaiseEtd(appt, etd, contact, sess)
+        when: "etd.reason_code is set"
+
+      - do: component Escalate(sess)
+        when: "sess.escalation_reason != ''"
+
+  # APPT-S2.7
+  CancelAndRebook:
+    trigger_intent: "my appointment window already started but I need to change it, the tech is supposed to be here now and I have to leave, my window is today and I can't be home, something came up and my appointment is happening right now"
+    goal: "Cancel an appointment whose window has already opened, then book a replacement"
+    params: { appt: Appointment, sess: CallState, cancel: Cancellation, offer: SlotOffer, contact: Contact, book: Booking }
+    complete_when: "sess.wrap_up_done || sess.wrap_up_attempted || sess.escalated || sess.escalation_attempted"
+    body:
+      - do: component LoadAppointment(appt, sess)
+        when: "!appt.loaded"
+
+      - do:
+          - update: 'sess.wrap_up_intent = ScheduleAppointment'
+        once: call
+
+      - do: component WindowStartedRebook(appt, cancel, offer, contact, book, sess)
+        when: "appt.window_started"
+
+      - do:
+          - update: 'sess.wrap_up_resolution = "Today''s visit is cancelled and you''re rebooked for {book.new_slot_spoken}."'
+        when: "book.booked"
+        once: call
+
+      - do: component WrapUp(sess)
+        when: "book.booked"
+
+    otherwise:
+      - do: say "Let me double check that appointment for you."
+        when: "!appt.window_started"
+        once: call
