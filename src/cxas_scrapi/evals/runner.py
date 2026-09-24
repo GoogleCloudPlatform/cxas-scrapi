@@ -74,6 +74,9 @@ def run_all_evals(
     capture_agent_audio: bool = False,
     vertex_location: str = "global",
     naturalness: bool | dict[str, typing.Any] | None = None,
+    infra_retries: int = 0,
+    retry_parallel: int | None = None,
+    retry_cooldown: float = 60.0,
 ) -> typing.Any:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -83,6 +86,9 @@ def run_all_evals(
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
         _load_sim_test_cases,
     )
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
     results = {"callback": [], "tool": [], "golden": [], "simulation": []}
 
@@ -268,6 +274,13 @@ def run_all_evals(
                         f"Running {len(test_cases)} simulations across "
                         f"{len(sim_files)} files"
                     )
+                    sim_kwargs: dict[str, typing.Any] = {}
+                    if infra_retries:
+                        sim_kwargs["infra_retries"] = infra_retries
+                    if retry_parallel is not None:
+                        sim_kwargs["retry_parallel"] = retry_parallel
+                    if retry_cooldown != 60.0:
+                        sim_kwargs["retry_cooldown"] = retry_cooldown
                     sim_results = sim_evals.run_simulations(
                         test_cases,
                         runs=runs,
@@ -287,6 +300,7 @@ def run_all_evals(
                         ),
                         capture_agent_audio=capture_agent_audio,
                         naturalness=naturalness,
+                        **sim_kwargs,
                     )
                     results["simulation"] = sim_results
                     if output_dir:

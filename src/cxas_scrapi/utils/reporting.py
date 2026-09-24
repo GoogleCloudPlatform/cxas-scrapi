@@ -2011,6 +2011,9 @@ def run_all_evals(
     capture_agent_audio: bool = False,
     vertex_location: str = "global",
     naturalness: bool | dict[str, Any] | None = None,
+    infra_retries: int = 0,
+    retry_parallel: int | None = None,
+    retry_cooldown: float = 60.0,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -2049,6 +2052,13 @@ def run_all_evals(
       A dict containing lists of results for 'simulation', 'golden', 'tool', and
       'callback'.
     """
+    extra_kwargs: dict[str, Any] = {}
+    if infra_retries:
+        extra_kwargs["infra_retries"] = infra_retries
+    if retry_parallel is not None:
+        extra_kwargs["retry_parallel"] = retry_parallel
+    if retry_cooldown != 60.0:
+        extra_kwargs["retry_cooldown"] = retry_cooldown
     return evals_runner.run_all_evals(
         app_name=app_name,
         modality=modality,
@@ -2079,4 +2089,5 @@ def run_all_evals(
         capture_agent_audio=capture_agent_audio,
         vertex_location=vertex_location,
         naturalness=naturalness,
+        **extra_kwargs,
     )
