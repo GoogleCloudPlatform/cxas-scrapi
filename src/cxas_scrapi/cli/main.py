@@ -1068,6 +1068,7 @@ def local_test(args: argparse.Namespace) -> None:
     # The command passed to the container
     inner_cmd = [
         tag,
+        "cxas",
         "ci-test",
         "--app-dir",
         "/workspace",
