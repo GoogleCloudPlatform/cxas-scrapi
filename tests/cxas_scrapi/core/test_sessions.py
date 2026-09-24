@@ -1203,3 +1203,34 @@ def test_bidi_session_handler_transfer_ends_session() -> None:
     while not handler.response_queue.empty():
         drained.append(handler.response_queue.get_nowait())
     assert {"session_ended": True} in drained
+
+
+def test_should_skip_output_preserves_self_terminating_transfer_payload() -> (
+    None
+):
+    """Test _should_skip_output does not drop bare self-terminating transfer packets."""
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config={"session": "session_123"},
+        input_queue=queue.Queue(),
+        response_queue=queue.Queue(),
+    )
+    response = types.BidiSessionServerMessage()
+    json_format.ParseDict(
+        {
+            "sessionOutput": {
+                "payload": {"transferToNga": "projects/p/locations/us/apps/a"},
+                "turnCompleted": False,
+            }
+        },
+        response._pb,
+        ignore_unknown_fields=True,
+    )
+
+    assert handler._should_skip_output(response) is False
+    json_data = json_format.MessageToJson(
+        response._pb, preserving_proto_field_name=False
+    )
+    handler._on_message(MagicMock(), json_data)
+    assert handler._self_terminated_transfer is True
