@@ -1178,6 +1178,17 @@ class Modality(str, Enum):
 
 
 class Sessions(Common):
+    _audio_preflight_lock = threading.Lock()
+    _audio_preflight_passed: typing.ClassVar[set[str]] = set()
+    _audio_preflight_failed: typing.ClassVar[dict[str, Exception]] = {}
+    _audio_preflight_max_attempts: int = 6
+
+    @classmethod
+    def reset_audio_preflight_cache(cls) -> None:
+        with cls._audio_preflight_lock:
+            cls._audio_preflight_passed.clear()
+            cls._audio_preflight_failed.clear()
+
     def __init__(
         self,
         app_name: str,
@@ -1208,6 +1219,36 @@ class Sessions(Common):
                 "project ID."
             )
 
+        project = self.project_id
+        if project in self._audio_preflight_passed:
+            return
+        if project in self._audio_preflight_failed:
+            raise self._audio_preflight_failed[project]
+
+        with self._audio_preflight_lock:
+            if project in self._audio_preflight_passed:
+                return
+            if project in self._audio_preflight_failed:
+                raise self._audio_preflight_failed[project]
+
+            for attempt in range(self._audio_preflight_max_attempts):
+                try:
+                    self._check_audio_requirements_once()
+                    self._audio_preflight_passed.add(project)
+                    return
+                except PermissionError as e:
+                    self._audio_preflight_failed[project] = e
+                    raise
+                except RuntimeError as e:
+                    if "is not enabled" in str(e):
+                        self._audio_preflight_failed[project] = e
+                        raise
+                    if attempt < self._audio_preflight_max_attempts - 1:
+                        time.sleep(2**attempt)
+                        continue
+                    raise
+
+    def _check_audio_requirements_once(self) -> None:
         services = ["ces.googleapis.com", "texttospeech.googleapis.com"]
 
         with self._creds_lock:
