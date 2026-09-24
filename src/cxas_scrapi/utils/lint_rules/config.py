@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""App and agent config lint rules (A001-A005).
+"""App and agent config lint rules (A001-A011).
 
 Validates app.json and agent JSON configuration files.
 """
@@ -20,6 +20,12 @@ Validates app.json and agent JSON configuration files.
 import json
 from pathlib import Path
 
+from cxas_scrapi.utils.agent_yaml import (
+    find_agent_json,
+    find_definition_yaml,
+    is_guided_agent,
+    is_guided_agent_synced,
+)
 from cxas_scrapi.utils.linter import (
     LintContext,
     LintResult,
@@ -137,6 +143,19 @@ class AgentMissingInstruction(Rule):
             return []
 
         agent_dir = file_path.parent
+        # Guided agents use definition.yaml (guidedAgent.configSource)
+        if (
+            is_guided_agent(agent_dir)
+            or find_definition_yaml(agent_dir) is not None
+        ):
+            return []
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict) and is_guided_agent(data):
+                return []
+        except Exception:
+            pass
+
         instruction = agent_dir / "instruction.txt"
         if not instruction.exists():
             return [
@@ -303,9 +322,9 @@ class AppRootAgentValidation(Rule):
             )
             return results
 
-        # 5. Check if <rootAgent>.json exists
+        # 5. Check if <rootAgent>.json exists (or fallback agent.json)
         agent_json = agent_dir / f"{root_agent_name}.json"
-        if not agent_json.exists():
+        if not agent_json.exists() and not (agent_dir / "agent.json").exists():
             results.append(
                 self.make_result(
                     file=rel,
@@ -858,3 +877,122 @@ class CompositeSamplingTemperature(Rule):
             )
 
         return results
+
+@rule("config")
+class GuidedAgentDefinitionOutOfSync(Rule):
+    id = "A011"
+    name = "config-guided-agent-sync"
+    description = (
+        "Flags divergence between definition.yaml and agent config "
+        "(or missing definition.yaml) for Guided Agents"
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = (
+            str(file_path.relative_to(context.project_root))
+            if context
+            and context.project_root
+            and file_path.is_relative_to(context.project_root)
+            else str(file_path)
+        )
+
+        if file_path.name == "app.json":
+            return []
+
+        agent_dir = file_path if file_path.is_dir() else file_path.parent
+
+        # Try to parse agent_data from content or agent.json
+        agent_data = None
+        if content:
+            try:
+                agent_data = json.loads(content)
+            except Exception:
+                agent_data = None
+
+        agent_json_path = (
+            file_path
+            if (file_path.is_file() and file_path.suffix == ".json")
+            else find_agent_json(agent_dir)
+        )
+        if (
+            not isinstance(agent_data, dict)
+            and agent_json_path
+            and agent_json_path.is_file()
+        ):
+            try:
+                with open(agent_json_path, encoding="utf-8") as f:
+                    agent_data = json.load(f)
+            except Exception:
+                agent_data = None
+
+        # Determine if this is a Guided Agent
+        is_guided = (
+            (isinstance(agent_data, dict) and is_guided_agent(agent_data))
+            or is_guided_agent(agent_dir)
+            or (find_definition_yaml(agent_dir) is not None)
+        )
+
+        if not is_guided:
+            return []
+
+        results = []
+
+        # 1. Check if definition.yaml exists
+        yaml_path = find_definition_yaml(agent_dir)
+        if not yaml_path or not yaml_path.is_file():
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        f"Guided Agent '{agent_dir.name}' is missing "
+                        "definition.yaml. Guided Agents require "
+                        "a definition.yaml file."
+                    ),
+                    fix=(
+                        "Run 'cxas agent sync-yaml --to-yaml' to generate "
+                        "definition.yaml"
+                    ),
+                )
+            )
+        else:
+            # 2. Check synchronization between definition.yaml and agent config
+            target_for_sync = file_path if file_path.is_file() else agent_dir
+            synced, diff_reason = is_guided_agent_synced(target_for_sync)
+            if not synced and "forbidden 'instruction'" not in diff_reason:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Guided Agent '{agent_dir.name}' definition.yaml "
+                            f"is out of sync with agent config: {diff_reason}"
+                        ),
+                        fix=(
+                            "Run 'cxas agent sync-yaml' to synchronize "
+                            "definition.yaml and agent config"
+                        ),
+                    )
+                )
+
+        # 3. Check forbidden 'instruction' field in agent config
+        if isinstance(agent_data, dict) and "instruction" in agent_data:
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        f"Guided Agent '{agent_dir.name}' contains forbidden "
+                        "'instruction' field in agent config. Guided Agents "
+                        "must define instructions via definition.yaml "
+                        "(guidedAgent.configSource)."
+                    ),
+                    fix=(
+                        "Remove 'instruction' field from agent config and "
+                        "run 'cxas agent sync-yaml'"
+                    ),
+                )
+            )
+
+        return results
+

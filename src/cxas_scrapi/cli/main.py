@@ -43,6 +43,7 @@ DEFAULT_MODEL = "gemini-3.1-flash-live"
 if TYPE_CHECKING:
     import pandas as pd
 
+    from cxas_scrapi.cli.agent import agent_sync_yaml
     from cxas_scrapi.cli.app import (
         app_branch,
         app_create,
@@ -66,6 +67,7 @@ if TYPE_CHECKING:
 else:
     from cxas_scrapi.cli.utils import LazyCallable
 
+    agent_sync_yaml = LazyCallable("cxas_scrapi.cli.agent", "agent_sync_yaml")
     app_branch = LazyCallable("cxas_scrapi.cli.app", "app_branch")
     app_create = LazyCallable("cxas_scrapi.cli.app", "app_create")
     app_delete = LazyCallable("cxas_scrapi.cli.app", "app_delete")
@@ -2459,6 +2461,52 @@ def get_parser() -> argparse.ArgumentParser:
     )
     _add_project_location_args(parser_branch)
     parser_branch.set_defaults(func=app_branch)
+
+    # Subparsers for 'agent'
+    parser_agent = subparsers.add_parser("agent", help="Manage CXAS agents.")
+    agent_subparsers = parser_agent.add_subparsers(
+        title="Agent Commands", dest="agent_command", required=True
+    )
+    parser_sync_yaml = agent_subparsers.add_parser(
+        "sync-yaml",
+        help="Synchronize Guided Agent YAML definitions and agent.json manifests.",
+    )
+    parser_sync_yaml.add_argument(
+        "--agent-dir",
+        help=(
+            "Path to a specific agent directory (defaults to scanning "
+            "all agents/* under the current directory or --dir)."
+        ),
+    )
+    parser_sync_yaml.add_argument(
+        "--dir",
+        "--app-dir",
+        dest="dir",
+        default=".",
+        help=(
+            "Path to the app directory containing agents/ "
+            "(defaults to current directory)."
+        ),
+    )
+    parser_sync_yaml.add_argument(
+        "--to-json",
+        action="store_true",
+        help="Force compiling definition.yaml -> agent.json.",
+    )
+    parser_sync_yaml.add_argument(
+        "--to-yaml",
+        action="store_true",
+        help="Force extracting agent.json -> definition.yaml.",
+    )
+    parser_sync_yaml.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Check synchronization status without writing "
+            "(exits with 0 if in sync, 1 if drift detected)."
+        ),
+    )
+    parser_sync_yaml.set_defaults(func=agent_sync_yaml)
 
     # Subparsers for 'apps'
     parser_apps = subparsers.add_parser("apps", help="Manage apps (list, get).")

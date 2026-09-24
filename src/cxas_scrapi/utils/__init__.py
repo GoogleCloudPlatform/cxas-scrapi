@@ -13,6 +13,15 @@
 # limitations under the License.
 
 
+from cxas_scrapi.utils.agent_yaml import (
+    extract_tools_from_yaml,
+    find_agent_json,
+    find_definition_yaml,
+    guided_agent_to_yaml,
+    is_guided_agent,
+    is_guided_agent_synced,
+    yaml_to_guided_agent,
+)
 from cxas_scrapi.utils.changelog_utils import ChangelogUtils
 from cxas_scrapi.utils.eval_utils import EvalUtils
 from cxas_scrapi.utils.gcs_utils import GCSUtils
@@ -37,4 +46,11 @@ __all__ = [
     "RateLimiter",
     "ScorecardEvalRunner",
     "SecretManagerUtils",
+    "extract_tools_from_yaml",
+    "find_agent_json",
+    "find_definition_yaml",
+    "guided_agent_to_yaml",
+    "is_guided_agent",
+    "is_guided_agent_synced",
+    "yaml_to_guided_agent",
 ]

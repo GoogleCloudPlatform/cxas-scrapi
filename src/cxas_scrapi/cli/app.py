@@ -26,11 +26,20 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from rich.console import Console
+
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.versions import Versions
+from cxas_scrapi.utils.agent_yaml import (
+    find_definition_yaml,
+    guided_agent_to_yaml,
+    is_guided_agent,
+    yaml_to_guided_agent,
+)
 
 logger = logging.getLogger(__name__)
+console = Console()
 
 
 def _resolve_app_args(
@@ -208,6 +217,32 @@ def _app_pull(
                                         )
                                         os.rmdir(dir_path)
 
+        # Extract Guided Agent YAML definitions if any guided agents are present
+        target_path = Path(target_dir)
+        candidate_agents_dirs: list[Path] = []
+        if (target_path / "agents").is_dir():
+            candidate_agents_dirs.append(target_path / "agents")
+        for sub in target_path.iterdir():
+            if (
+                sub.is_dir()
+                and (sub / "agents").is_dir()
+                and sub.name != "agents"
+            ):
+                candidate_agents_dirs.append(sub / "agents")
+
+        for agents_dir in candidate_agents_dirs:
+            for agent_dir in sorted(agents_dir.iterdir()):
+                if agent_dir.is_dir() and is_guided_agent(agent_dir):
+                    try:
+                        guided_agent_to_yaml(agent_dir)
+                        console.print(
+                            f"[green]Extracted definition.yaml for guided agent: {agent_dir.name}[/green]"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to extract definition.yaml for {agent_dir.name}: {e}"
+                        )
+
         print("Successfully pulled app.")
 
     except Exception as e:
@@ -257,6 +292,22 @@ def _app_push(
     args: argparse.Namespace | None = None,
 ) -> str | None:
     """Helper to push an app to CXAS."""
+    # Before packaging, compile Guided Agent definition.yaml -> agent.json in source directory if writable
+    src_agents_dir = os.path.join(app_dir, "agents")
+    if os.path.isdir(src_agents_dir):
+        for entry in sorted(os.listdir(src_agents_dir)):
+            agent_path = Path(src_agents_dir) / entry
+            if agent_path.is_dir() and (
+                find_definition_yaml(agent_path) is not None
+                or is_guided_agent(agent_path)
+            ):
+                try:
+                    yaml_to_guided_agent(agent_path)
+                except Exception as e:
+                    logger.warning(
+                        f"Could not compile definition.yaml for {entry} in source: {e}"
+                    )
+
     temp_dir = tempfile.mkdtemp()
     inner_dir = os.path.join(temp_dir, "agent")
     os.makedirs(inner_dir)
@@ -301,6 +352,25 @@ def _app_push(
                 f"Warning: Custom environment file "
                 f"'{env_file}' not found. Skipping."
             )
+
+    # Ensure staged agent.json contains compiled inlineText and synchronized tools
+    staged_agents_dir = os.path.join(inner_dir, "agents")
+    if os.path.isdir(staged_agents_dir):
+        for entry in sorted(os.listdir(staged_agents_dir)):
+            staged_agent_path = Path(staged_agents_dir) / entry
+            if staged_agent_path.is_dir() and (
+                find_definition_yaml(staged_agent_path) is not None
+                or is_guided_agent(staged_agent_path)
+            ):
+                try:
+                    yaml_to_guided_agent(staged_agent_path)
+                    console.print(
+                        f"[green]Compiled definition.yaml -> agent.json for guided agent: {entry}[/green]"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to compile definition.yaml in staging for {entry}: {e}"
+                    )
 
     # ZIP does not support timestamps before 1980.
     # Touch files and directories in temp_dir with timestamps before 1980.
