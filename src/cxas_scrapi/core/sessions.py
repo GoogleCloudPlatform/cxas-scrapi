@@ -865,7 +865,7 @@ class BidiSessionHandler:
                 self.response_queue.put({"session_ended": True})
 
         except Exception as e:
-            logging.debug("Failed to parse message: %s", e)
+            logging.warning("Failed to parse message: %s", e)
 
     @staticmethod
     def _output_ends_session(session_output: typing.Any) -> bool:
@@ -881,6 +881,12 @@ class BidiSessionHandler:
         Only used in single-stream mode, where the persistent connection
         also carries keepalive silence and out-of-turn packets.
         """
+        if self._output_ends_session(response.session_output):
+            logging.warning(
+                "Self-terminating transfer payload received; not skipping."
+            )
+            return False
+
         # Check if this is an empty comfort noise or variables ack packet
         has_text = bool(response.session_output.text)
         has_diag_messages = False
@@ -909,7 +915,14 @@ class BidiSessionHandler:
         )
 
         if is_empty_response:
-            logging.debug("Ignoring empty/silent server response packet.")
+            if getattr(response.session_output, "payload", None):
+                logging.warning(
+                    "Dropping an 'empty' server packet that carries a custom "
+                    "payload: %s",
+                    expand_pb_struct(response.session_output.payload),
+                )
+            else:
+                logging.debug("Ignoring empty/silent server response packet.")
             return True
 
         turn_idx = response.session_output.turn_index
