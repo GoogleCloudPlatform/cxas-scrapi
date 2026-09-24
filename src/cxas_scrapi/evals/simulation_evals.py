@@ -1095,9 +1095,12 @@ class SimulationEvals(Apps):
                 if r.status == ExpectationStatus.MET
             )
             total_exp = len(conv.expectation_results)
+            declared_exp = self._declared_expectations_count(tc, conv)
 
             passed = goals_completed == total_goals
-            if getattr(self, "expectations_only", False) and total_exp > 0:
+            if declared_exp > 0 and total_exp == 0:
+                passed = False
+            elif getattr(self, "expectations_only", False) and total_exp > 0:
                 passed = expectations_met == total_exp
             elif total_exp > 0:
                 passed = passed and (expectations_met == total_exp)
@@ -1180,6 +1183,39 @@ class SimulationEvals(Apps):
                 "passed": False,
                 "error": str(e),
             }
+
+    @staticmethod
+    def _declared_expectations_count(
+        tc: dict[str, Any], conv: Any = None
+    ) -> int:
+        tc_exp = len(tc.get("expectations") or []) + len(
+            tc.get("audio_expectations") or []
+        )
+        if tc_exp > 0:
+            return tc_exp
+        if conv is not None:
+            conv_exp = getattr(conv, "expectations", None)
+            conv_audio_exp = getattr(conv, "audio_expectations", None)
+            count = 0
+            if isinstance(conv_exp, (list, tuple)):
+                count += len(conv_exp)
+            if isinstance(conv_audio_exp, (list, tuple)):
+                count += len(conv_audio_exp)
+            return count
+        return 0
+
+    @staticmethod
+    def _inconclusive_reason(
+        row: dict[str, Any], declared_by_name: dict[str, int]
+    ) -> str | None:
+        if row.get("error"):
+            return f"session died: {str(row['error'])[:80]}"
+        name = row.get("name")
+        if declared_by_name.get(name, 0) > 0 and str(
+            row.get("expectations", "")
+        ).endswith("/0"):
+            return "judge returned no verdicts"
+        return None
 
     def _aggregate_simulation_results(
         self,
@@ -1275,6 +1311,9 @@ class SimulationEvals(Apps):
         single_bidi_stream: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
         naturalness: bool | dict[str, Any] | None = None,
+        infra_retries: int = 0,
+        retry_parallel: int | None = None,
+        retry_cooldown: float = 60.0,
     ) -> list[dict[str, Any]]:
         if expectations_only is not None:
             self.expectations_only = expectations_only
@@ -1301,7 +1340,7 @@ class SimulationEvals(Apps):
             # aggregation loop still see the override.
             self.naturalness = naturalness
         jobs = self._prepare_simulation_jobs(test_cases, runs)
-        return self._aggregate_simulation_results(
+        results = self._aggregate_simulation_results(
             jobs,
             runs,
             parallel,
@@ -1317,6 +1356,108 @@ class SimulationEvals(Apps):
             single_bidi_stream=single_bidi_stream,
             progress_callback=progress_callback,
         )
+
+        declared_by_name = {
+            tc.get("name", ""): self._declared_expectations_count(tc)
+            for tc in test_cases
+            if isinstance(tc, dict) and tc.get("name")
+        }
+        tc_by_name = {
+            tc.get("name", ""): tc
+            for tc in test_cases
+            if isinstance(tc, dict) and tc.get("name")
+        }
+
+        for attempt in range(1, max(0, infra_retries) + 1):
+            bad = [
+                (idx, why)
+                for idx, row in enumerate(results)
+                if isinstance(row, dict)
+                and (why := self._inconclusive_reason(row, declared_by_name))
+            ]
+            if not bad:
+                break
+            need_names = {results[idx].get("name") for idx, _ in bad}
+            print(
+                f"[infra] retry {attempt}/{infra_retries}: {len(bad)} "
+                f"inconclusive run(s) across {len(need_names)} case(s); "
+                f"cooling down {retry_cooldown}s"
+            )
+            if retry_cooldown > 0:
+                time.sleep(retry_cooldown)
+
+            retry_jobs = [
+                (
+                    tc_by_name[results[idx]["name"]],
+                    max(0, int(results[idx].get("run", 1)) - 1),
+                )
+                for idx, _ in bad
+                if results[idx].get("name") in tc_by_name
+            ]
+            if not retry_jobs:
+                break
+            effective_retry_parallel = max(
+                1,
+                min(
+                    retry_parallel if retry_parallel is not None else parallel,
+                    len(retry_jobs),
+                ),
+            )
+            fresh_rows = self._aggregate_simulation_results(
+                retry_jobs,
+                runs,
+                effective_retry_parallel,
+                sim_user_model,
+                eval_model,
+                modality,
+                verbose,
+                capture_agent_audio=capture_agent_audio,
+                background_noise_file=background_noise_file,
+                burst_noise_files=burst_noise_files,
+                use_tool_fakes=use_tool_fakes,
+                skip_playback_wait=skip_playback_wait,
+                single_bidi_stream=single_bidi_stream,
+            )
+            fresh_by_key: dict[tuple[Any, Any], list[dict[str, Any]]] = {}
+            for r in fresh_rows or []:
+                if isinstance(r, dict):
+                    fresh_by_key.setdefault(
+                        (r.get("name"), r.get("run")), []
+                    ).append(r)
+
+            for idx, why in bad:
+                orig = results[idx]
+                key = (orig.get("name"), orig.get("run"))
+                pool = fresh_by_key.get(key)
+                if pool:
+                    new_row = pool.pop(0)
+                    new_row.update(
+                        run=orig.get("run"),
+                        infra_retries=attempt,
+                        retried_because=why,
+                    )
+                    results[idx] = new_row
+
+        still = [
+            (row, why)
+            for row in results
+            if isinstance(row, dict)
+            and (why := self._inconclusive_reason(row, declared_by_name))
+        ]
+        for row, _ in still:
+            if row.get("passed"):
+                row["passed"] = False
+        if still and infra_retries > 0:
+            print(
+                f"[infra] {len(still)} run(s) still inconclusive after "
+                f"{infra_retries} retries -- counted as FAIL:"
+            )
+            for row, why in still:
+                print(
+                    f"        - {row.get('name')} run {row.get('run')}: {why}"
+                )
+
+        return results
 
     def _add_agent_text(self, turn: Turn, text: str) -> None:
         """Consistently handles adding agent text to a Turn."""

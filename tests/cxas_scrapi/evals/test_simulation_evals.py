@@ -2399,3 +2399,113 @@ def test_conversation_latency_fetches_over_rest() -> None:
         evals._conversation_latency("sess-1")
 
     assert mock_history.call_args.kwargs["transport"] == "rest"
+
+
+def test_simulation_evals_declared_expectations_ungraded_fails_closed() -> None:
+    """A run whose judge returned 0 verdicts for declared expectations must fail closed."""
+    evals = _naturalness_evals(expectations_only=True)
+    conv = _passing_conv(naturalness_result=None)
+    conv.expectations = ["agent must confirm transfer"]
+    conv.expectation_results = []
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc={
+                "name": "test",
+                "expectations": ["agent must confirm transfer"],
+            },
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["expectations"] == "0/0"
+    assert res["passed"] is False
+
+
+def test_simulation_evals_infra_retries_reruns_inconclusive_and_fails_closed() -> (
+    None
+):
+    """infra_retries re-runs only inconclusive runs and fails closed on exhausted ones."""
+    evals = _naturalness_evals(expectations_only=True)
+    test_cases = [
+        {"name": "dead", "expectations": ["e1"]},
+        {"name": "ungraded", "expectations": ["e1", "e2"]},
+        {"name": "real_fail", "expectations": ["e1", "e2"]},
+        {"name": "no_exp"},
+    ]
+
+    initial_rows = [
+        {
+            "name": "dead",
+            "run": 1,
+            "passed": False,
+            "error": "Timeout waiting for agent response via WebSocket",
+        },
+        {
+            "name": "ungraded",
+            "run": 1,
+            "passed": True,
+            "expectations": "0/0",
+        },
+        {
+            "name": "real_fail",
+            "run": 1,
+            "passed": False,
+            "expectations": "1/2",
+        },
+        {
+            "name": "no_exp",
+            "run": 1,
+            "passed": True,
+            "expectations": "0/0",
+        },
+    ]
+    retry_rows = [
+        {
+            "name": "dead",
+            "run": 1,
+            "passed": True,
+            "expectations": "1/1",
+        },
+        {
+            "name": "ungraded",
+            "run": 1,
+            "passed": True,
+            "expectations": "0/0",
+        },
+    ]
+
+    with patch.object(
+        evals,
+        "_aggregate_simulation_results",
+        side_effect=[initial_rows, retry_rows],
+    ) as mock_agg:
+        results = evals.run_simulations(
+            test_cases=test_cases,
+            runs=1,
+            parallel=2,
+            infra_retries=1,
+            retry_cooldown=0,
+        )
+
+    assert mock_agg.call_count == 2
+    retried_names = [tc["name"] for tc, _ in mock_agg.call_args_list[1].args[0]]
+    assert retried_names == ["dead", "ungraded"]
+
+    by_name = {r["name"]: r for r in results}
+    assert by_name["dead"]["passed"] is True
+    assert by_name["dead"]["infra_retries"] == 1
+    assert "session died" in by_name["dead"]["retried_because"]
+    assert by_name["ungraded"]["passed"] is False
+    assert by_name["ungraded"]["infra_retries"] == 1
+    assert (
+        by_name["ungraded"]["retried_because"] == "judge returned no verdicts"
+    )
+    assert "infra_retries" not in by_name["real_fail"]
+    assert by_name["no_exp"]["passed"] is True
+    assert "infra_retries" not in by_name["no_exp"]
