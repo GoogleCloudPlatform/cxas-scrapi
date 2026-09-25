@@ -426,6 +426,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | E009 | `eval-sim-missing-tags` | Warning | Simulation eval missing `tags` field |
     | E010 | `eval-tool-test-wrong-key` | Error | Tool test uses `test_cases` instead of `tests` |
     | E011 | `eval-invalid-match-type` | Error | Invalid `$matchType` value in golden `tool_calls` |
+    | E012 | `eval-shadow-structure` | Error | Shadow eval needs `conversation_id` and non-empty `expectations`, a valid `replay_mode`, and only known keys (unknown keys are warnings) |
 
     ---
 
@@ -452,6 +453,12 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     **E011 — eval-invalid-match-type**
 
     Valid `$matchType` values are: `ignore`, `semantic`, `contains`, `regexp`. Common typos like `regex` (should be `regexp`) or `fuzzy` (should be `semantic`) silently fall back to exact matching.
+
+    ---
+
+    **E012 — eval-shadow-structure**
+
+    Applies to YAML files under `evals/shadows/`. Each shadow eval needs a `conversation_id` and at least one natural-language expectation. `replay_mode` (on the case or in `config:`) must be `hybrid` or `exact`. Unknown keys in a case or in the `config:` block are reported as warnings with a *did you mean* suggestion, because ShadowEvals would otherwise ignore them silently (for example `session_params` instead of `session_parameters`).
 
 === "A — Config"
 

@@ -69,6 +69,27 @@ from cxas_scrapi.core.response_parser import (
 logger = logging.getLogger(__name__)
 
 
+class _BidiGoodbyeLogFilter(logging.Filter):
+    """Demotes websocket-client's ERROR log for the server's routine
+    `failed_precondition ... - goodbye` close frame to DEBUG.
+
+    The BidiRunSession server closes each socket with that frame once a turn
+    or session is done. websocket-client logs every close frame at ERROR, which
+    reads like a failure on every run. Genuine connection problems are still
+    reported through `_on_error` / `connection_error`.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if "failed_precondition" in message and "goodbye" in message:
+            logger.debug("Bidi socket closed by server: %s", message)
+            return False
+        return True
+
+
+logging.getLogger("websocket").addFilter(_BidiGoodbyeLogFilter())
+
+
 BIDI_SESSION_URI = (
     f"wss://{DEFAULT_API_ENDPOINT}/ws/"
     "google.cloud.ces.v1.SessionService/BidiRunSession/locations/"

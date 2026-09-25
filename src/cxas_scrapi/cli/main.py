@@ -1792,7 +1792,8 @@ def get_parser() -> argparse.ArgumentParser:
         "--include",
         default="sims,goldens,tools,callbacks",
         help=(
-            "Categories to include (comma-separated, "
+            "Categories to include (comma-separated; one or more of sims, "
+            "goldens, tools, callbacks, shadows; "
             "default: sims,goldens,tools,callbacks)."
         ),
     )

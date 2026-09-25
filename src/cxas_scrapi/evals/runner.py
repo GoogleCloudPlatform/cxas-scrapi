@@ -310,7 +310,15 @@ def run_all_evals(
             shadow_dir = "evals/shadows/"
         if app_name and os.path.exists(shadow_dir):
             if os.path.isdir(shadow_dir):
-                shadow_files = glob.glob(os.path.join(shadow_dir, "*.yaml"))
+                # Match `ShadowEvals.load_shadow_tests_from_dir`: recurse and
+                # accept both YAML extensions.
+                shadow_files = sorted(
+                    f
+                    for ext in ("*.yaml", "*.yml")
+                    for f in glob.glob(
+                        os.path.join(shadow_dir, "**", ext), recursive=True
+                    )
+                )
             else:
                 shadow_files = [shadow_dir]
             if filter_files:
@@ -326,7 +334,9 @@ def run_all_evals(
                 shadow_evals = ShadowEvals(
                     app_name=app_name,
                     rate_limiter=rate_limiter,
-                    expectations_only=expectations_only or True,
+                    # Expectations are mandatory on every shadow case and are
+                    # the pass criteria; goals are only inferred guidance.
+                    expectations_only=True,
                     deployment_id=deployment_id,
                     vertex_location=vertex_location,
                     naturalness=naturalness,
@@ -366,6 +376,16 @@ def run_all_evals(
                         ),
                         capture_agent_audio=capture_agent_audio,
                         naturalness=naturalness,
+                        artifacts_dir=(
+                            os.path.join(
+                                output_dir,
+                                add_timestamp_suffix(
+                                    "shadow_artifacts", timestamp
+                                ),
+                            )
+                            if output_dir
+                            else None
+                        ),
                     )
                     results["shadow"] = shadow_results
                     if output_dir:

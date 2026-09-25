@@ -1,19 +1,19 @@
 ---
 title: Testing & Evaluation
-description: Overview of the five evaluation types in SCRAPI and when to use each.
+description: Overview of the six evaluation types in SCRAPI and when to use each.
 ---
 
 # Testing & Evaluation
 
 Testing a conversational agent is different from testing a traditional software system. The agent's behavior is probabilistic — the same input can produce slightly different outputs on different runs. A robust evaluation strategy tests deterministic behavior where it exists, and measures quality where it doesn't.
 
-SCRAPI provides five complementary evaluation types, each targeting a different layer of your agent.
+SCRAPI provides six complementary evaluation types, each targeting a different layer of your agent.
 
 <figure class="diagram"><img src="../../assets/diagrams/eval-system.svg" alt="Eval System"></figure>
 
 ---
 
-## The five evaluation types
+## The six evaluation types
 
 | Type | What it tests | Where it runs | Format |
 |------|--------------|---------------|--------|
@@ -22,6 +22,7 @@ SCRAPI provides five complementary evaluation types, each targeting a different 
 | **Tool Tests** | Isolated tool inputs and outputs with assertions | Local machine | YAML with `tests:` key |
 | **Callback Tests** | Python unit tests for callback code | Local machine (pytest) | pytest files |
 | **Turn Evals** | Single-turn response assertions | Local machine using Sessions API | Python code |
+| **Shadow Evals** | A past call replayed with its recorded caller audio against the current agent | Local machine using Sessions API (audio) | YAML with `shadow_evals:` key |
 
 ---
 
@@ -37,6 +38,9 @@ Is the behavior deterministic (same input → exact same output)?
 └── NO  → Is this a multi-turn conversation goal?
           ├── YES → Local Simulations
           └── NO  → Turn Evals (single-turn quality checks)
+
+Do you want to re-run a real (recorded) call against a new agent version?
+└── YES → Shadow Evals (replays the caller's recorded audio)
 
 Is the behavior in a Python callback?
 └── YES → Callback Tests (pytest)
@@ -68,6 +72,9 @@ In practice, you'll use multiple types together. A well-tested agent typically h
 **"I want to quickly verify a single agent response meets a condition"**
 : Use [Turn Evals](turn-evals.md). They're the most lightweight option for single-turn assertions.
 
+**"I want to check how a new agent version handles calls that already happened"**
+: Use [Shadow Evals](shadow-evals.md). They replay a past conversation with the caller's recorded audio and judge the new conversation against your expectations.
+
 ---
 
 ## What's in this section
@@ -86,6 +93,9 @@ In practice, you'll use multiple types together. A well-tested agent typically h
 
 `Turn Evals`
 :   The `TurnEvals` class, the `TurnOperator` enum, and single-turn code examples.
+
+[`Shadow Evals`](shadow-evals.md)
+:   Replaying past calls with recorded caller audio, seeding session state, preflight checks, and the side-by-side audio report.
 
 [`Running Evaluations`](running-evals-cli.md)
 :   End-to-end CLI workflow, `cxas ci-test`, exit codes for CI, and combining multiple eval types.
