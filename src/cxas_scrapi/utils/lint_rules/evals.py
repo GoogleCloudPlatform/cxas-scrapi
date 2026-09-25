@@ -13,11 +13,12 @@
 # limitations under the License.
 
 
-"""Eval lint rules (E001-E011).
+"""Eval lint rules (E001-E012).
 
 Validates golden, scenario, and simulation YAML files.
 """
 
+import difflib
 import re
 import typing
 from pathlib import Path
@@ -521,9 +522,53 @@ class ShadowEvalStructure(Rule):
     name = "eval-shadow-structure"
     description = (
         "Shadow eval must specify conversation_id and non-empty natural "
-        "expectations"
+        "expectations, use a valid replay_mode, and only known keys"
     )
     default_severity = Severity.ERROR
+
+    _VALID_REPLAY_MODES = ("hybrid", "exact")
+    _CONFIG_KEYS = frozenset(
+        {
+            "project_id",
+            "location",
+            "app_id",
+            "gcs_bucket",
+            "max_turns",
+            "voice_config",
+            "replay_mode",
+            "use_tool_fakes",
+            "session_parameters",
+        }
+    )
+
+    @staticmethod
+    def _case_keys() -> frozenset[str]:
+        from cxas_scrapi.evals.shadow_evals import (  # noqa: PLC0415
+            ShadowTestCase,
+        )
+
+        return frozenset(ShadowTestCase.model_fields)
+
+    def _unknown_key_results(
+        self, rel: str, data: dict, known: frozenset[str], where: str
+    ) -> list[LintResult]:
+        results = []
+        for key in data:
+            if key in known:
+                continue
+            close = difflib.get_close_matches(str(key), known, n=1)
+            results.append(
+                self.make_result(
+                    file=rel,
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Unknown key '{key}' in {where} is ignored by "
+                        "ShadowEvals"
+                    ),
+                    fix=f"Did you mean '{close[0]}'?" if close else "",
+                )
+            )
+        return results
 
     def check(
         self, file_path: Path, content: str, context: LintContext
@@ -535,6 +580,8 @@ class ShadowEvalStructure(Rule):
             return []
 
         rel = str(file_path.relative_to(context.project_root))
+        results = []
+        config: dict = {}
         if isinstance(data, list):
             evals_list = data
         elif isinstance(data, dict):
@@ -544,15 +591,44 @@ class ShadowEvalStructure(Rule):
                 or data.get("conversations")
                 or []
             )
+            config = data.get("config") or {}
+            if isinstance(config, dict):
+                results.extend(
+                    self._unknown_key_results(
+                        rel, config, self._CONFIG_KEYS, "the config block"
+                    )
+                )
+            else:
+                config = {}
         else:
             return []
 
-        results = []
+        case_keys = self._case_keys()
         for idx, ev in enumerate(evals_list, start=1):
             if not isinstance(ev, dict):
                 continue
             conv_id = str(ev.get("conversation_id", "")).strip()
             name = ev.get("name") or conv_id or f"item #{idx}"
+            results.extend(
+                self._unknown_key_results(
+                    rel, ev, case_keys, f"shadow eval '{name}'"
+                )
+            )
+            replay_mode = ev.get("replay_mode", config.get("replay_mode"))
+            if (
+                replay_mode is not None
+                and replay_mode not in self._VALID_REPLAY_MODES
+            ):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Shadow eval '{name}' has invalid replay_mode "
+                            f"'{replay_mode}'"
+                        ),
+                        fix="Use replay_mode: hybrid (default) or exact",
+                    )
+                )
             if not conv_id:
                 results.append(
                     self.make_result(

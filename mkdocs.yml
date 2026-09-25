@@ -182,6 +182,7 @@ nav:
       - guides/evaluation/index.md
       - Platform Goldens: guides/evaluation/platform-goldens.md
       - Local Simulations: guides/evaluation/local-simulations.md
+      - Shadow Evals: guides/evaluation/shadow-evals.md
       - Tool Tests: guides/evaluation/tool-tests.md
       - Callback Tests: guides/evaluation/callback-tests.md
       - Turn Evals: guides/evaluation/turn-evals.md
@@ -260,6 +261,7 @@ nav:
     - Evals:
       - api/evals/tool-evals.md
       - api/evals/simulation-evals.md
+      - api/evals/shadow-evals.md
       - api/evals/callback-evals.md
       - api/evals/guardrail-evals.md
     - Utils:

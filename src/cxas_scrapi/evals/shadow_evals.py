@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
 import typing
 import uuid
@@ -56,6 +57,7 @@ from cxas_scrapi.evals.naturalness import (
     extract_agent_turns,
     parse_naturalness_config,
 )
+from cxas_scrapi.evals.shadow_html_report import render_shadow_html_report
 from cxas_scrapi.evals.simulation_evals import (
     _DEFAULT_GEMINI_MODEL,
     _FIRST_UTTERANCE,
@@ -100,6 +102,10 @@ class ShadowPastTurn(pydantic.BaseModel):
     has_audio: bool = False
     used: bool = False
     audio_bytes: bytes | None = pydantic.Field(default=None, exclude=True)
+    # The agent's reply in the same past turn (text and platform recording),
+    # used for side-by-side reports.
+    agent_response: str = ""
+    agent_audio_uri: str | None = None
 
 
 class ShadowTurnLog(pydantic.BaseModel):
@@ -181,6 +187,31 @@ class ShadowTestCase(pydantic.BaseModel):
             )
         self.expectations = valid_exps
         return self
+
+
+class ShadowPreflightIssue(pydantic.BaseModel):
+    """A single problem found while checking a ShadowEval before running."""
+
+    level: typing.Literal["error", "warning", "info"]
+    message: str
+
+
+class ShadowPreflightResult(pydantic.BaseModel):
+    """Outcome of `ShadowEvals.preflight` for one test case."""
+
+    name: str
+    conversation_id: str
+    past_user_turns: int = 0
+    past_user_turns_with_audio: int = 0
+    issues: list[ShadowPreflightIssue] = pydantic.Field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        """True when no `error`-level issue was found."""
+        return not any(i.level == "error" for i in self.issues)
+
+    def add(self, level: str, message: str) -> None:
+        self.issues.append(ShadowPreflightIssue(level=level, message=message))
 
 
 class ShadowReport:
@@ -309,6 +340,17 @@ def extract_pcm_bytes_from_wav(wav_bytes: bytes) -> bytes:
             logger.warning("Failed to resample WAV via pydub: %s", exc)
 
     return frames or wav_bytes
+
+
+def pcm_to_wav_bytes(pcm_bytes: bytes) -> bytes:
+    """Wraps 16kHz, 1-channel, 16-bit LINEAR16 PCM bytes in a WAV header."""
+    with io.BytesIO() as buf:
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(AUDIO_CHANNELS)
+            wf.setsampwidth(AUDIO_SAMPLE_WIDTH)
+            wf.setframerate(AUDIO_SAMPLE_RATE_HZ)
+            wf.writeframes(pcm_bytes)
+        return buf.getvalue()
 
 
 class ShadowUserConversation(Conversation):
@@ -992,6 +1034,201 @@ class ShadowEvals(Apps):
             fallback = fallback or f"gs://{match.group(1)}"
         return fallback
 
+    def _open_past_conversation(
+        self, tc: ShadowTestCase
+    ) -> tuple[Traces, dict[str, Any], str | None]:
+        """Loads the past conversation trace and resolves its recording bucket.
+
+        Returns:
+            Tuple of `(traces_client, normalized_trace, bucket_override)`.
+        """
+        source_app_name = self._resolve_source_app_name(tc)
+        traces_client = Traces(app_name=source_app_name, creds=self.creds)
+        normalized = traces_client.get_normalized(tc.conversation_id)
+
+        bucket_override = tc.gcs_bucket or self.default_gcs_bucket
+        if not bucket_override:
+            bucket_override = self._infer_recording_bucket(
+                normalized, tc.conversation_id
+            )
+            if bucket_override:
+                logger.info(
+                    "Inferred audio recording bucket %s for conversation %s "
+                    "(set `gcs_bucket` to override).",
+                    bucket_override,
+                    tc.conversation_id,
+                )
+        if bucket_override:
+            traces_client.trace_config.audio.bucket_override = bucket_override
+        return traces_client, normalized, bucket_override
+
+    @staticmethod
+    def _list_turn_audio_uris(
+        traces_client: Traces,
+        conversation_id: str,
+        normalized: dict[str, Any],
+        role: str,
+    ) -> dict[int, str]:
+        """Lists `{turn_number: gcs_uri}` recordings for `role` ("user" or
+        "agent"); returns an empty mapping when none can be listed."""
+        getter = (
+            traces_client.get_user_audio_uris
+            if role == "user"
+            else traces_client.get_agent_audio_uris
+        )
+        try:
+            uris = getter(
+                conversation_id, start_time=normalized.get("start_time")
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not list %s audio URIs for conversation %s (%s).",
+                role,
+                conversation_id,
+                exc,
+            )
+            return {}
+        if not isinstance(uris, dict):
+            return {}
+        return {
+            k: v
+            for k, v in uris.items()
+            if isinstance(k, int) and isinstance(v, str)
+        }
+
+    @staticmethod
+    def _spoken_user_turn_numbers(normalized: dict[str, Any]) -> list[int]:
+        """Returns the 1-based turn numbers in which the caller spoke
+        (session-start events excluded)."""
+        numbers: list[int] = []
+        raw_turns = (normalized.get("raw") or {}).get("turns") or []
+        if raw_turns:
+            for turn_idx, p_turn in enumerate(raw_turns, start=1):
+                texts = [
+                    (c.get("text") or c.get("transcript") or "").strip()
+                    for m in p_turn.get("messages", []) or []
+                    if (m.get("role") or "").strip().lower() == "user"
+                    for c in m.get("chunks") or []
+                ]
+                texts = [t for t in texts if t]
+                if texts and not texts[0].startswith("<event"):
+                    numbers.append(turn_idx)
+            return numbers
+        for entry in normalized.get("entries", []) or []:
+            text = (entry.get("text") or "").strip()
+            if entry.get("kind") == "user" and not text.startswith("<event"):
+                numbers.append(int(entry.get("turn", 0)) + 1)
+        return numbers
+
+    def _target_recording_bucket(self) -> str | None:
+        """Returns the target app's audio recording bucket, if enabled."""
+        try:
+            bucket = Traces(
+                app_name=self.app_name, creds=self.creds
+            )._get_remote_audio_bucket()
+        except Exception as exc:
+            logger.debug("Could not read target app recording config: %s", exc)
+            return None
+        return bucket if isinstance(bucket, str) else None
+
+    def preflight(
+        self,
+        test_case: ShadowTestCase | dict[str, Any],
+        modality: str = "audio",
+    ) -> ShadowPreflightResult:
+        """Checks that a ShadowEval can faithfully replay its past conversation
+        before any session is opened.
+
+        Errors (the case should not run):
+          - the past conversation trace cannot be loaded;
+          - it has no caller turns;
+          - in audio modality, none of the caller turns has a recording (the
+            replay would be pure TTS).
+
+        Warnings / info:
+          - some caller turns have no recording;
+          - the target app does not record audio (new calls will not be in
+            GCS; use `artifacts_dir` to keep local copies);
+          - no `session_parameters` / `use_tool_fakes` are set (replays often
+            diverge when the original session relied on seeded state).
+        """
+        tc = (
+            ShadowTestCase(**test_case)
+            if isinstance(test_case, dict)
+            else test_case
+        )
+        result = ShadowPreflightResult(
+            name=tc.name, conversation_id=tc.conversation_id
+        )
+        source_app_name = self._resolve_source_app_name(tc)
+        try:
+            traces_client, normalized, bucket = self._open_past_conversation(tc)
+        except Exception as exc:
+            result.add(
+                "error",
+                f"Could not load past conversation '{tc.conversation_id}' "
+                f"from {source_app_name}: {exc}. Check `project_id`, "
+                "`location`, `app_id` and the conversation ID.",
+            )
+            return result
+
+        spoken = self._spoken_user_turn_numbers(normalized)
+        result.past_user_turns = len(spoken)
+        if not spoken:
+            result.add(
+                "error",
+                f"Past conversation '{tc.conversation_id}' has no caller turns "
+                "to replay.",
+            )
+            return result
+
+        if modality == "audio":
+            uris = self._list_turn_audio_uris(
+                traces_client, tc.conversation_id, normalized, "user"
+            )
+            result.past_user_turns_with_audio = sum(
+                1 for n in spoken if n in uris
+            )
+            bucket_label = bucket or "resolved from the source app"
+            recording_hint = (
+                "Set `gcs_bucket` to the bucket the original call was "
+                f"recorded to (currently {bucket_label}) "
+                "and make sure the source app had audio recording "
+                "(loggingSettings.audioRecordingConfig) enabled at the time."
+            )
+            if result.past_user_turns_with_audio == 0:
+                result.add(
+                    "error",
+                    "No recorded caller audio was found for any of the "
+                    f"{len(spoken)} caller turns, so the replay would be pure "
+                    f"TTS. {recording_hint}",
+                )
+            elif result.past_user_turns_with_audio < len(spoken):
+                result.add(
+                    "warning",
+                    f"Only {result.past_user_turns_with_audio}/{len(spoken)} "
+                    "caller turns have recorded audio; the rest will be "
+                    f"synthesized via TTS. {recording_hint}",
+                )
+            if not self._target_recording_bucket():
+                result.add(
+                    "info",
+                    f"Audio recording is not enabled on {self.app_name}, so "
+                    "new calls will not be recorded to GCS. Pass "
+                    "`artifacts_dir` to keep local copies of the replayed "
+                    "audio and a side-by-side HTML report.",
+                )
+
+        if not tc.session_parameters and tc.use_tool_fakes is None:
+            result.add(
+                "info",
+                "No `session_parameters` or `use_tool_fakes` set. If the "
+                "original session relied on seeded session variables or tool "
+                "fakes (e.g. a mocked caller lookup), set them in the case or "
+                "the `config:` block, or the replay may diverge.",
+            )
+        return result
+
     def fetch_past_conversation_data(
         self,
         test_case: ShadowTestCase | dict[str, Any],
@@ -1013,37 +1250,15 @@ class ShadowEvals(Apps):
             if isinstance(test_case, dict)
             else test_case
         )
-        source_app_name = self._resolve_source_app_name(tc)
-        traces_client = Traces(app_name=source_app_name, creds=self.creds)
-        normalized = traces_client.get_normalized(tc.conversation_id)
-        start_time = normalized.get("start_time")
-
-        bucket_override = tc.gcs_bucket or self.default_gcs_bucket
-        if not bucket_override:
-            bucket_override = self._infer_recording_bucket(
-                normalized, tc.conversation_id
-            )
-            if bucket_override:
-                logger.info(
-                    "Inferred audio recording bucket %s for conversation %s "
-                    "(set `gcs_bucket` to override).",
-                    bucket_override,
-                    tc.conversation_id,
-                )
-        if bucket_override:
-            traces_client.trace_config.audio.bucket_override = bucket_override
-
-        try:
-            user_audio_uris = traces_client.get_user_audio_uris(
-                tc.conversation_id, start_time=start_time
-            )
-        except Exception as exc:
-            logger.warning(
-                "Could not list user audio URIs for conversation %s (%s).",
-                tc.conversation_id,
-                exc,
-            )
-            user_audio_uris = {}
+        traces_client, normalized, bucket_override = (
+            self._open_past_conversation(tc)
+        )
+        user_audio_uris = self._list_turn_audio_uris(
+            traces_client, tc.conversation_id, normalized, "user"
+        )
+        agent_audio_uris = self._list_turn_audio_uris(
+            traces_client, tc.conversation_id, normalized, "agent"
+        )
 
         gcs_client = GCSUtils(creds=self.creds) if user_audio_uris else None
 
@@ -1060,6 +1275,8 @@ class ShadowEvals(Apps):
             for turn_idx, p_turn in enumerate(raw_turns, start=1):
                 turn_user_texts: list[str] = []
                 turn_agent_texts: list[str] = []
+                # Agent text spoken after the user in this turn (the reply).
+                turn_agent_reply: list[str] = []
 
                 for msg in p_turn.get("messages", []) or []:
                     role = (msg.get("role") or "").strip()
@@ -1076,6 +1293,8 @@ class ShadowEvals(Apps):
                                 )
                             else:
                                 turn_agent_texts.append(text_val)
+                                if turn_user_texts:
+                                    turn_agent_reply.append(text_val)
                                 history_lines.append(
                                     f"[Turn {turn_idx}] Agent ({role}): "
                                     f"{text_val}"
@@ -1147,6 +1366,8 @@ class ShadowEvals(Apps):
                             has_audio=bool(pcm_bytes),
                             used=False,
                             audio_bytes=pcm_bytes,
+                            agent_response=" ".join(turn_agent_reply),
+                            agent_audio_uri=agent_audio_uris.get(turn_idx),
                         )
                     )
                     last_agent_texts = []
@@ -1187,12 +1408,19 @@ class ShadowEvals(Apps):
                             has_audio=bool(pcm_bytes),
                             used=False,
                             audio_bytes=pcm_bytes,
+                            agent_audio_uri=agent_audio_uris.get(turn_num),
                         )
                     )
                     last_agent_texts = []
                 elif kind == "agent":
                     a_text = (entry.get("text") or "").strip()
                     last_agent_texts.append(a_text)
+                    if past_turns and a_text:
+                        past_turns[-1].agent_response = " ".join(
+                            filter(
+                                None, [past_turns[-1].agent_response, a_text]
+                            )
+                        )
                     history_lines.append(f"[Turn {turn_num}] Agent: {a_text}")
                 elif kind == "tool_call":
                     history_lines.append(
@@ -1377,6 +1605,166 @@ class ShadowEvals(Apps):
             latency_ms_by_turn={},
         )
 
+    def save_shadow_artifacts(
+        self,
+        shadow_conv: ShadowUserConversation,
+        artifacts_dir: str,
+        test_case: ShadowTestCase,
+        session_id: str,
+        use_tool_fakes: bool | None = None,
+        download_past_agent_audio: bool = True,
+    ) -> str:
+        """Persists a replay's audio and a side-by-side HTML report.
+
+        Writes into `artifacts_dir`:
+          - `audio/past_user_turn_<N>.wav`: recorded caller audio per past
+            turn (exactly what was streamed for `use_past_audio` turns);
+          - `audio/past_agent_turn_<N>.wav`: the original agent reply (when
+            the source app recorded it);
+          - `audio/new_agent_turn_<N>.wav`: the new agent reply (requires
+            `capture_agent_audio`);
+          - `shadow_result.json` and `shadow_report.html`.
+
+        Returns:
+            Path to the HTML report.
+        """
+        audio_dir = os.path.join(artifacts_dir, "audio")
+        os.makedirs(audio_dir, exist_ok=True)
+
+        def _rel(path: str) -> str:
+            return os.path.relpath(path, artifacts_dir)
+
+        gcs_client = None
+        past_payload: dict[int, dict[str, Any]] = {}
+        for pt in shadow_conv.past_turns:
+            user_audio = None
+            if pt.audio_bytes or (
+                pt.audio_path and os.path.exists(pt.audio_path)
+            ):
+                user_audio = os.path.join(
+                    audio_dir, f"past_user_turn_{pt.turn_index}.wav"
+                )
+                if pt.audio_path and os.path.exists(pt.audio_path):
+                    shutil.copyfile(pt.audio_path, user_audio)
+                else:
+                    with open(user_audio, "wb") as f:
+                        f.write(pcm_to_wav_bytes(pt.audio_bytes or b""))
+            agent_audio = None
+            if download_past_agent_audio and pt.agent_audio_uri:
+                try:
+                    gcs_client = gcs_client or GCSUtils(creds=self.creds)
+                    data = gcs_client.download_blob(pt.agent_audio_uri)
+                    agent_audio = os.path.join(
+                        audio_dir, f"past_agent_turn_{pt.turn_index}.wav"
+                    )
+                    with open(agent_audio, "wb") as f:
+                        f.write(data)
+                except Exception as exc:
+                    logger.warning(
+                        "Could not download past agent audio %s: %s",
+                        pt.agent_audio_uri,
+                        exc,
+                    )
+                    agent_audio = None
+            past_payload[pt.turn_index] = {
+                "turn_index": pt.turn_index,
+                "user_text": pt.user_transcript,
+                "user_audio": _rel(user_audio) if user_audio else None,
+                "agent_text": pt.agent_response,
+                "agent_audio": _rel(agent_audio) if agent_audio else None,
+            }
+
+        replayed: set[int] = set()
+        turns: list[dict[str, Any]] = []
+        for log in shadow_conv.turn_logs:
+            past_idx = log.selected_past_turn_index
+            if log.decision == "event" and shadow_conv.past_turns:
+                first = shadow_conv.past_turns[0]
+                if (first.user_transcript or "").lstrip().startswith("<event"):
+                    past_idx = first.turn_index
+            past = past_payload.get(past_idx) if past_idx is not None else None
+            if past_idx is not None:
+                replayed.add(past_idx)
+            new_agent_audio = None
+            if log.agent_audio_path and os.path.exists(log.agent_audio_path):
+                new_agent_audio = os.path.join(
+                    audio_dir, f"new_agent_turn_{log.sim_turn}.wav"
+                )
+                shutil.copyfile(log.agent_audio_path, new_agent_audio)
+            is_past_audio = (
+                log.decision == ShadowDecisionType.USE_PAST_AUDIO.value
+            )
+            turns.append(
+                {
+                    "sim_turn": log.sim_turn,
+                    "decision": log.decision,
+                    "justification": log.decision_justification,
+                    "user_text": log.user_utterance,
+                    "user_audio": (
+                        past.get("user_audio")
+                        if past and is_past_audio
+                        else None
+                    ),
+                    "agent_text": log.agent_response,
+                    "agent_audio": (
+                        _rel(new_agent_audio) if new_agent_audio else None
+                    ),
+                    "past": past,
+                }
+            )
+
+        results = shadow_conv.expectation_results or []
+        met = sum(1 for r in results if r.status == ExpectationStatus.MET)
+        data = {
+            "name": test_case.name,
+            "conversation_id": test_case.conversation_id,
+            "source_app": self._resolve_source_app_name(test_case),
+            "target_app": self.app_name,
+            "session_id": session_id,
+            "replay_mode": test_case.replay_mode,
+            "session_parameters": test_case.session_parameters,
+            "use_tool_fakes": use_tool_fakes,
+            "summary": {
+                "passed": bool(results) and met == len(results),
+                "expectations": f"{met}/{len(results)}",
+                "past_audio_turns": sum(
+                    1
+                    for t in shadow_conv.turn_logs
+                    if t.decision == ShadowDecisionType.USE_PAST_AUDIO.value
+                ),
+                "tts_turns": sum(
+                    1
+                    for t in shadow_conv.turn_logs
+                    if t.decision == ShadowDecisionType.GENERATE_TTS.value
+                ),
+            },
+            "expectations": [
+                {
+                    "expectation": r.expectation,
+                    "status": r.status.value,
+                    "justification": r.justification,
+                }
+                for r in results
+            ],
+            "turns": turns,
+            "unreplayed_past_turns": [
+                p
+                for idx, p in past_payload.items()
+                if idx not in replayed
+                and not (p["user_text"] or "").lstrip().startswith("<event")
+            ],
+        }
+        with open(
+            os.path.join(artifacts_dir, "shadow_result.json"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(data, f, indent=2, default=str)
+        report_path = os.path.join(artifacts_dir, "shadow_report.html")
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(render_shadow_html_report(data))
+        return report_path
+
     @cleanup_session_dir
     def run_shadow_conversation(
         self,
@@ -1396,11 +1784,18 @@ class ShadowEvals(Apps):
         single_bidi_stream: bool = False,
         max_turns: int | None = None,
         naturalness: bool | dict[str, Any] | None = None,
+        artifacts_dir: str | None = None,
         **kwargs: Any,
     ) -> ShadowUserConversation:
         """Replays a past conversation on the target agent over Bidi audio (or
         text) using `ShadowUserConversation` to arbitrate between past audio
         files and TTS.
+
+        Downloaded and captured audio lives in a temporary session directory
+        that is deleted when this returns. Pass `artifacts_dir` to keep it,
+        together with a side-by-side HTML report (see
+        `save_shadow_artifacts`); the report path is then available as
+        `conversation.report_path`.
         """
         sim_user_model = sim_user_model or _DEFAULT_GEMINI_MODEL
         eval_model = eval_model or _DEFAULT_GEMINI_MODEL
@@ -1420,6 +1815,9 @@ class ShadowEvals(Apps):
         voice_config = voice_config or tc_model.voice_config
         if tc_model.use_tool_fakes is not None:
             use_tool_fakes = tc_model.use_tool_fakes
+        # The report needs the new agent audio, so capture it when keeping
+        # artifacts.
+        capture_agent_audio = capture_agent_audio or bool(artifacts_dir)
 
         session_dir = f"/tmp/scrapi_evals/{session_id}"
         past_turns, full_past_history, _ = self.fetch_past_conversation_data(
@@ -1596,6 +1994,24 @@ class ShadowEvals(Apps):
             shadow_conv.session_id = session_id
             shadow_conv._detailed_trace = detailed_trace
             shadow_conv.detailed_trace = detailed_trace
+            shadow_conv.report_path = None
+            if artifacts_dir:
+                try:
+                    shadow_conv.report_path = self.save_shadow_artifacts(
+                        shadow_conv,
+                        artifacts_dir,
+                        tc_model,
+                        session_id,
+                        use_tool_fakes=use_tool_fakes,
+                    )
+                    if console_logging:
+                        print(f"ShadowEval report: {shadow_conv.report_path}")
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to save ShadowEval artifacts to %s: %s",
+                        artifacts_dir,
+                        exc,
+                    )
             return shadow_conv
         finally:
             if interactive_session:
@@ -1617,11 +2033,20 @@ class ShadowEvals(Apps):
         use_tool_fakes: bool = False,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
+        artifacts_dir: str | None = None,
     ) -> dict[str, Any]:
         """Executes a single shadow eval run and packages the results."""
         name = tc.name
         label = f"{name} (run {run_idx + 1}/{runs})"
         session_id = str(uuid.uuid4())
+        run_artifacts_dir = (
+            os.path.join(
+                artifacts_dir,
+                re.sub(r"[^A-Za-z0-9_.-]+", "_", name) + f"_run{run_idx + 1}",
+            )
+            if artifacts_dir
+            else None
+        )
         try:
             start_ts = time.time()
             conv = self.run_shadow_conversation(
@@ -1637,6 +2062,7 @@ class ShadowEvals(Apps):
                 use_tool_fakes=use_tool_fakes,
                 skip_playback_wait=skip_playback_wait,
                 single_bidi_stream=single_bidi_stream,
+                artifacts_dir=run_artifacts_dir,
             )
             duration_s = round(time.time() - start_ts, 1)
 
@@ -1718,6 +2144,9 @@ class ShadowEvals(Apps):
                     for r in conv.expectation_results
                 ],
             }
+            report_path = getattr(conv, "report_path", None)
+            if isinstance(report_path, str):
+                result["report_path"] = report_path
             if conv.naturalness_result:
                 result["naturalness"] = (
                     f"{conv.naturalness_result.overall_score}/5"
@@ -1757,9 +2186,20 @@ class ShadowEvals(Apps):
         single_bidi_stream: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
         naturalness: bool | dict[str, Any] | None = None,
+        artifacts_dir: str | None = None,
+        preflight: bool = True,
     ) -> list[dict[str, Any]]:
         """Runs a batch of shadow evaluation test cases across `runs` and
         `parallel` workers.
+
+        Args:
+            artifacts_dir: If set, each run keeps its audio and writes a
+                side-by-side HTML report under
+                `<artifacts_dir>/<case>_run<N>/` (see `save_shadow_artifacts`).
+            preflight: Check every case with `preflight` first. Cases with
+                preflight errors are reported as failed without opening a
+                session; warnings are printed and attached to the results as
+                `preflight_issues`.
         """
         if expectations_only is not None:
             self.expectations_only = expectations_only
@@ -1773,11 +2213,48 @@ class ShadowEvals(Apps):
             ShadowTestCase(**tc) if isinstance(tc, dict) else tc
             for tc in test_cases
         ]
+
+        results: list[dict[str, Any]] = []
+        blocked: list[dict[str, Any]] = []
+        preflight_issues: dict[int, list[dict[str, str]]] = {}
+        if preflight:
+            runnable: list[ShadowTestCase] = []
+            for tc in validated_cases:
+                check = self.preflight(tc, modality=modality)
+                for issue in check.issues:
+                    print(
+                        f"  [{issue.level.upper()}] {tc.name}: {issue.message}"
+                    )
+                issues = [i.model_dump() for i in check.issues]
+                if check.ok:
+                    runnable.append(tc)
+                    if issues:
+                        preflight_issues[id(tc)] = issues
+                    continue
+                errors = "; ".join(
+                    i.message for i in check.issues if i.level == "error"
+                )
+                blocked.append(
+                    {
+                        "name": tc.name,
+                        "conversation_id": tc.conversation_id,
+                        "run": 1,
+                        "passed": False,
+                        "error": f"Preflight failed: {errors}",
+                        "preflight_issues": issues,
+                    }
+                )
+            validated_cases = runnable
+
         jobs = [
             (tc, run_idx) for tc in validated_cases for run_idx in range(runs)
         ]
+        issues_by_name = {
+            tc.name: preflight_issues[id(tc)]
+            for tc in validated_cases
+            if id(tc) in preflight_issues
+        }
 
-        results: list[dict[str, Any]] = []
         with Progress() as progress:
             task_id = progress.add_task("Running Shadow Evals", total=len(jobs))
             if parallel <= 1:
@@ -1798,6 +2275,7 @@ class ShadowEvals(Apps):
                             use_tool_fakes=use_tool_fakes,
                             skip_playback_wait=skip_playback_wait,
                             single_bidi_stream=single_bidi_stream,
+                            artifacts_dir=artifacts_dir,
                         )
                     )
                     progress.update(task_id, advance=1)
@@ -1823,6 +2301,7 @@ class ShadowEvals(Apps):
                             use_tool_fakes=use_tool_fakes,
                             skip_playback_wait=skip_playback_wait,
                             single_bidi_stream=single_bidi_stream,
+                            artifacts_dir=artifacts_dir,
                         ): (tc.name, run_idx)
                         for tc, run_idx in jobs
                     }
@@ -1832,7 +2311,10 @@ class ShadowEvals(Apps):
                         if progress_callback:
                             progress_callback(len(results), len(jobs))
 
-        return results
+        for res in results:
+            if res.get("name") in issues_by_name:
+                res.setdefault("preflight_issues", issues_by_name[res["name"]])
+        return blocked + results
 
     @staticmethod
     def _warn_unknown_keys(

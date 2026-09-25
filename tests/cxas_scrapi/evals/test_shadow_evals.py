@@ -15,6 +15,8 @@
 """Unit tests for ShadowEvals and ShadowUserConversation."""
 
 import io
+import json
+import logging
 import wave
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,7 @@ from cxas_scrapi.evals.shadow_evals import (
     ShadowPastTurn,
     ShadowReport,
     ShadowTestCase,
+    ShadowTurnLog,
     ShadowUserConversation,
     extract_pcm_bytes_from_wav,
 )
@@ -885,3 +888,237 @@ def test_infer_recording_bucket_prefers_conversation_uri() -> None:
         == "gs://unrelated-bucket"
     )
     assert ShadowEvals._infer_recording_bucket({}, "conv-1") is None
+
+
+def test_shadow_eval_lint_rule_e012_keys_and_replay_mode(
+    tmp_path: Path,
+) -> None:
+    """E012 warns on unknown keys (with a suggestion) and errors on an
+    invalid replay_mode, including one inherited from `config:`."""
+    shadow_dir = tmp_path / "evals" / "shadows"
+    shadow_dir.mkdir(parents=True)
+    path = shadow_dir / "typos.yaml"
+    content = """
+config:
+  replay_mode: exactly
+  use_toolfakes: true
+shadow_evals:
+  - conversation_id: conv-1
+    session_params: {customer_tier: gold}
+    expectations: ["Agent helps."]
+"""
+    ctx = LintContext(
+        project_root=tmp_path, app_dir=tmp_path, evals_dir=tmp_path / "evals"
+    )
+    findings = ShadowEvalStructure().check(path, content, ctx)
+
+    warnings = [f for f in findings if f.severity.name == "WARNING"]
+    errors = [f for f in findings if f.severity.name == "ERROR"]
+    assert {f.fix_suggestion for f in warnings} == {
+        "Did you mean 'use_tool_fakes'?",
+        "Did you mean 'session_parameters'?",
+    }
+    assert len(errors) == 1
+    assert "replay_mode" in errors[0].message
+
+
+def _preflight_evals(
+    mock_traces_cls: Any, user_uris: dict[int, str]
+) -> ShadowEvals:
+    mock_traces = mock_traces_cls.return_value
+    mock_traces.get_normalized.return_value = {
+        "start_time": "2026-09-20T10:00:00Z",
+        "raw": {
+            "turns": [
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "chunks": [
+                                {"text": "<event>session start</event>"}
+                            ],
+                        },
+                        {"role": "agent", "chunks": [{"text": "Hi!"}]},
+                    ]
+                },
+                {
+                    "messages": [
+                        {"role": "user", "chunks": [{"transcript": "Hello."}]},
+                        {
+                            "role": "agent",
+                            "chunks": [{"text": "How can I help?"}],
+                        },
+                    ]
+                },
+                {
+                    "messages": [
+                        {"role": "user", "chunks": [{"transcript": "Bye."}]},
+                    ]
+                },
+            ]
+        },
+    }
+    mock_traces.get_user_audio_uris.return_value = user_uris
+    mock_traces._get_remote_audio_bucket.return_value = None
+    return ShadowEvals(
+        app_name="projects/p/locations/us/apps/a", creds=MagicMock()
+    )
+
+
+@patch("cxas_scrapi.evals.shadow_evals.Traces")
+@patch("cxas_scrapi.evals.shadow_evals.Tools")
+@patch("cxas_scrapi.evals.shadow_evals.Sessions")
+@patch("cxas_scrapi.evals.shadow_evals.GeminiGenerate")
+def test_preflight_reports_audio_coverage_and_seeding(
+    mock_gemini_cls: Any,
+    mock_sessions_cls: Any,
+    mock_tools_cls: Any,
+    mock_traces_cls: Any,
+) -> None:
+    tc = ShadowTestCase(conversation_id="conv-1", expectations=["Helps."])
+
+    evals = _preflight_evals(mock_traces_cls, {})
+    no_audio = evals.preflight(tc)
+    assert not no_audio.ok
+    assert no_audio.past_user_turns == 2
+    assert any("pure TTS" in i.message for i in no_audio.issues)
+
+    evals = _preflight_evals(mock_traces_cls, {2: "gs://b/c/user-turn-2.wav"})
+    partial = evals.preflight(tc)
+    assert partial.ok
+    assert partial.past_user_turns_with_audio == 1
+    levels = {i.level for i in partial.issues}
+    assert levels == {"warning", "info"}
+    assert any("session_parameters" in i.message for i in partial.issues)
+    assert any("artifacts_dir" in i.message for i in partial.issues)
+
+    mock_traces_cls.return_value.get_normalized.side_effect = RuntimeError(
+        "404"
+    )
+    missing = evals.preflight(tc)
+    assert not missing.ok
+    assert "Could not load past conversation" in missing.issues[0].message
+
+
+@patch("cxas_scrapi.evals.shadow_evals.Traces")
+@patch("cxas_scrapi.evals.shadow_evals.Tools")
+@patch("cxas_scrapi.evals.shadow_evals.Sessions")
+@patch("cxas_scrapi.evals.shadow_evals.GeminiGenerate")
+def test_run_shadow_evals_skips_cases_failing_preflight(
+    mock_gemini_cls: Any,
+    mock_sessions_cls: Any,
+    mock_tools_cls: Any,
+    mock_traces_cls: Any,
+) -> None:
+    evals = _preflight_evals(mock_traces_cls, {})
+    with patch.object(evals, "_run_single_shadow_job") as run_job:
+        results = evals.run_shadow_evals(
+            [{"conversation_id": "conv-1", "expectations": ["Helps."]}]
+        )
+    run_job.assert_not_called()
+    assert results[0]["passed"] is False
+    assert results[0]["error"].startswith("Preflight failed")
+
+
+@patch("cxas_scrapi.evals.shadow_evals.GCSUtils")
+@patch("cxas_scrapi.evals.shadow_evals.Tools")
+@patch("cxas_scrapi.evals.shadow_evals.Sessions")
+@patch("cxas_scrapi.evals.shadow_evals.GeminiGenerate")
+def test_save_shadow_artifacts_writes_side_by_side_report(
+    mock_gemini_cls: Any,
+    mock_sessions_cls: Any,
+    mock_tools_cls: Any,
+    mock_gcs_cls: Any,
+    tmp_path: Path,
+) -> None:
+    mock_gcs_cls.return_value.download_blob.return_value = _make_wav_bytes()
+    past_turns = [
+        ShadowPastTurn(
+            turn_index=2,
+            user_transcript="Where is <my> order?",
+            has_audio=True,
+            audio_bytes=b"\x01\x02" * 160,
+            agent_response="Let me check.",
+            agent_audio_uri="gs://b/c/agent-turn-2.wav",
+        ),
+        ShadowPastTurn(
+            turn_index=3, user_transcript="Thanks.", has_audio=False
+        ),
+    ]
+    tc = ShadowTestCase(
+        name="order_status",
+        conversation_id="conv-1",
+        expectations=["Agent checks the order."],
+        session_parameters={"customer_tier": "gold"},
+    )
+    conv = ShadowUserConversation(
+        genai_client=MagicMock(),
+        genai_model="gemini-3.1-flash-lite",
+        test_case=tc,
+        past_turns=past_turns,
+    )
+    agent_wav = tmp_path / "turn_1_agent.wav"
+    agent_wav.write_bytes(_make_wav_bytes())
+    conv.turn_logs = [
+        ShadowTurnLog(
+            sim_turn=1,
+            decision=ShadowDecisionType.USE_PAST_AUDIO.value,
+            selected_past_turn_index=2,
+            user_utterance="Where is <my> order?",
+            agent_response="Checking your order now.",
+            agent_audio_path=str(agent_wav),
+        )
+    ]
+    conv.expectation_results = [
+        ExpectationResult(
+            expectation="Agent checks the order.",
+            status=ExpectationStatus.MET,
+            justification="It did.",
+        )
+    ]
+    evals = ShadowEvals(
+        app_name="projects/p/locations/us/apps/a", creds=MagicMock()
+    )
+
+    out = tmp_path / "artifacts"
+    report = evals.save_shadow_artifacts(conv, str(out), tc, "sess-1")
+
+    audio = out / "audio"
+    assert (audio / "past_user_turn_2.wav").exists()
+    assert (audio / "past_agent_turn_2.wav").exists()
+    assert (audio / "new_agent_turn_1.wav").exists()
+    html_text = Path(report).read_text(encoding="utf-8")
+    assert 'src="audio/past_user_turn_2.wav"' in html_text
+    assert 'src="audio/new_agent_turn_1.wav"' in html_text
+    assert "Where is &lt;my&gt; order?" in html_text
+    assert "customer_tier" in html_text
+    data = json.loads((out / "shadow_result.json").read_text())
+    assert data["summary"]["expectations"] == "1/1"
+    assert data["turns"][0]["user_audio"] == "audio/past_user_turn_2.wav"
+    assert [p["turn_index"] for p in data["unreplayed_past_turns"]] == [3]
+
+
+def test_bidi_goodbye_close_log_is_demoted() -> None:
+    from cxas_scrapi.core.sessions import _BidiGoodbyeLogFilter  # noqa: PLC0415
+
+    log_filter = _BidiGoodbyeLogFilter()
+    goodbye = logging.LogRecord(
+        "websocket",
+        logging.ERROR,
+        __file__,
+        1,
+        "fin=1 opcode=8 data=b'generic::failed_precondition: x' - goodbye",
+        None,
+        None,
+    )
+    other = logging.LogRecord(
+        "websocket",
+        logging.ERROR,
+        __file__,
+        1,
+        "connection refused",
+        None,
+        None,
+    )
+    assert log_filter.filter(goodbye) is False
+    assert log_filter.filter(other) is True
