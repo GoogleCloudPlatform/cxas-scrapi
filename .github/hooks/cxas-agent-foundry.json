@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "./.agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push.sh",
+        "timeout": 30
+      },
+      {
+        "type": "command",
+        "command": "./.agents/skills/cxas-agent-foundry/scripts/hooks/pre-agent-push-lint.sh",
+        "timeout": 30
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "./.agents/skills/cxas-agent-foundry/scripts/hooks/post-agent-update.sh",
+        "timeout": 5
+      }
+    ]
+  }
+}

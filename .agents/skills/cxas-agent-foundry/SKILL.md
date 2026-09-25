@@ -96,7 +96,7 @@ Before routing to any sub-skill, check these signals in order:
 
 | Signal | Action |
 |--------|--------|
-| No `.venv/` or no config | **First-time setup needed.** Load `references/setup.md` before doing anything else. |
+| No `.venv/` or no config | **First-time setup needed.** Load [references/setup.md](./references/setup.md) before doing anything else. |
 | `gecx-config.json` exists but no `cxas_app/` content | Returning user, new project. Route normally. |
 | All exist | Returning user. Route normally. |
 
@@ -106,23 +106,23 @@ Read what the user wants and load the appropriate sub-skill:
 
 | User says... | Phase | Load |
 |-------------|-------|------|
-| "Build me an agent from this PRD" | Build | `references/build.md` |
-| **"Create a new cxas app", "Make a new agent", "Set up an agent", "I wanna build an agent"** | **Build** | **`references/build.md`** |
-| "Create evals for my agent" | Build | `references/build.md` |
-| "Generate tool tests", "create callback tests" | Build | `references/build.md` |
-| "Update evals -- requirements changed" | Build | `references/build.md` |
-| "Update the TDD" | Build | `references/build.md` |
-| "Run evals", "push evals", "check results" | Run | `references/run.md` |
-| "Run tool tests", "test the callbacks" | Run | `references/run.md` |
-| "Generate a report" | Run | `references/run.md` |
-| "Generate interactive report", "cluster failures dashboard" | Run | `references/generating-reports.md` → "Interactive Diagnostic Dashboard" |
-| "Why is this eval failing", "get to 90%" | Debug | `references/debug.md` |
-| "Fix the failing evals", "debug the agent" | Debug | `references/debug.md` |
-| "Tool test is failing", "callback test broke" | Debug | `references/debug.md` |
-| **"Snapshot app version", "Create version", "Compare versions", "List versions"** | **Manage** | **`references/api-reference.md` → "Version Management"** |
-| **"Edit the agent's instructions", "tweak the auth tool", "fix the greeting", "update this callback"** | **Build** (Edit cycle) | **`references/build.md` → "Editing an Existing Agent"** |
+| "Build me an agent from this PRD" | Build | [references/build.md](./references/build.md) |
+| **"Create a new cxas app", "Make a new agent", "Set up an agent", "I wanna build an agent"** | **Build** | **[references/build.md](./references/build.md)** |
+| "Create evals for my agent" | Build | [references/build.md](./references/build.md) |
+| "Generate tool tests", "create callback tests" | Build | [references/build.md](./references/build.md) |
+| "Update evals -- requirements changed" | Build | [references/build.md](./references/build.md) |
+| "Update the TDD" | Build | [references/build.md](./references/build.md) |
+| "Run evals", "push evals", "check results" | Run | [references/run.md](./references/run.md) |
+| "Run tool tests", "test the callbacks" | Run | [references/run.md](./references/run.md) |
+| "Generate a report" | Run | [references/run.md](./references/run.md) |
+| "Generate interactive report", "cluster failures dashboard" | Run | [references/generating-reports.md](./references/generating-reports.md) → "Interactive Diagnostic Dashboard" |
+| "Why is this eval failing", "get to 90%" | Debug | [references/debug.md](./references/debug.md) |
+| "Fix the failing evals", "debug the agent" | Debug | [references/debug.md](./references/debug.md) |
+| "Tool test is failing", "callback test broke" | Debug | [references/debug.md](./references/debug.md) |
+| **"Snapshot app version", "Create version", "Compare versions", "List versions"** | **Manage** | **[references/api-reference.md](./references/api-reference.md)** → "Version Management" |
+| **"Edit the agent's instructions", "tweak the auth tool", "fix the greeting", "update this callback"** | **Build** (Edit cycle) | **[references/build.md](./references/build.md)** → "Editing an Existing Agent" |
 
-**Any phrasing that implies creating, building, or setting up an agent/app routes to `references/build.md` — even if it sounds like "just create the app shell."** "Create a new cxas app" is NOT a shortcut to scaffolding; it triggers the full build flow (todo.md → interview/PRD → TDD + approval → scaffold → lint → evals → push). Skipping the interview / TDD because the user said "create" instead of "build" is a routing failure.
+**Any phrasing that implies creating, building, or setting up an agent/app routes to [references/build.md](./references/build.md) — even if it sounds like "just create the app shell."** "Create a new cxas app" is NOT a shortcut to scaffolding; it triggers the full build flow (todo.md → interview/PRD → TDD + approval → scaffold → lint → evals → push). Skipping the interview / TDD because the user said "create" instead of "build" is a routing failure.
 
 **Editing an existing agent** (instruction tweak, tool change, callback fix) routes to build.md's "Editing an Existing Agent" section — the standard pull → edit → lint → push → run-evals cycle. Don't skip lint or the eval run after — silent regressions are how 90% rates drop to 70%.
 

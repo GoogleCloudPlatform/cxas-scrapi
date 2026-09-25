@@ -50,9 +50,9 @@ if echo "$cmd" | grep -qE 'update_agent'; then
 
   msg="${pull_msg}${sync_msg}REMINDER: Agent was updated. Run callback tests to verify, and update TDD changelog."
   if [ "$agent" = "claude" ]; then
-    echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"$msg\"}}"
+    jq -cn --arg msg "$msg" '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":$msg}}'
   else
-    echo "{\"decision\":\"allow\",\"context_update\":\"$msg\"}"
+    jq -cn --arg msg "$msg" '{"decision":"allow","context_update":$msg}'
   fi
 else
   if [ "$agent" = "claude" ]; then

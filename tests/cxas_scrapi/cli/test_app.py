@@ -916,3 +916,35 @@ def test_app_init_headless_failure(
     )
     assert expected_msg in captured.err
     assert "Use --force to overwrite." in captured.err
+
+
+def test_app_init_preserves_user_files_in_shared_dirs(
+    monkeypatch: typing.Any, tmp_path: typing.Any
+) -> None:
+    """`cxas init` merges into existing directories rather than replacing them.
+
+    The bundled skills ship `.github/agents/`, but `.github/` itself belongs to
+    the user and holds their workflows and CODEOWNERS. Installing must not
+    remove anything the user put there.
+    """
+    fake_prefix = tmp_path / "prefix"
+    skills_root = fake_prefix / "share" / "cxas-scrapi" / "skills"
+    (skills_root / ".github" / "agents").mkdir(parents=True)
+    (skills_root / ".github" / "agents" / "lint-fixer.md").write_text("agent")
+    monkeypatch.setattr(sys, "prefix", str(fake_prefix))
+
+    target_dir = tmp_path / "target"
+    (target_dir / ".github" / "workflows").mkdir(parents=True)
+    (target_dir / ".github" / "workflows" / "ci.yml").write_text("name: CI")
+    (target_dir / ".github" / "CODEOWNERS").write_text("* @owner")
+
+    args = argparse.Namespace(
+        target_dir=str(target_dir), force=True, no_input=True
+    )
+
+    cli_app.app_init(args)
+
+    github_dir = target_dir / ".github"
+    assert (github_dir / "workflows" / "ci.yml").read_text() == "name: CI"
+    assert (github_dir / "CODEOWNERS").read_text() == "* @owner"
+    assert (github_dir / "agents" / "lint-fixer.md").read_text() == "agent"

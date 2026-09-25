@@ -5,7 +5,7 @@ description: Using cxas init to install AI skills into your project.
 
 # Installing Skills
 
-`cxas init` copies the bundled SCRAPI skills into your project and sets up the integration files for Claude Code and Gemini CLI. Run it once per project.
+`cxas init` copies the bundled SCRAPI skills into your project and sets up the integration files for Claude Code, Gemini CLI, and GitHub Copilot. Run it once per project.
 
 ---
 
@@ -34,9 +34,14 @@ your-project/
 │       └── cxas-sim-eval/
 │           └── SKILL.md
 ├── .claude/
+│   ├── agents/                # Subagents, symlinked to the foundry skill
 │   └── settings.json          # Registers hooks with Claude Code
 ├── .gemini/
+│   ├── agents/                # Subagents, symlinked to the foundry skill
 │   └── settings.json          # Registers hooks with Gemini CLI
+├── .github/
+│   ├── agents/                # Subagents for GitHub Copilot
+│   └── hooks/                 # Registers hooks with GitHub Copilot in VS Code
 └── AGENTS.md                  # Overview for the AI assistant
 ```
 
@@ -169,6 +174,19 @@ Registers hooks with Claude Code:
 
 Similar configuration for Gemini CLI, using `BeforeTool`/`AfterTool` hooks with the `run_shell_command` matcher.
 
+### `.github/agents/`
+
+Subagent definitions for GitHub Copilot in VS Code. These are the same files
+used by Claude Code and Gemini CLI — a single set of definitions lives in
+`.agents/skills/cxas-agent-foundry/agents/` and each harness reads from there.
+
+### `.github/hooks/`
+
+Registers the same hook scripts with GitHub Copilot in VS Code, using VS Code's
+native hook format. VS Code loads it automatically. Leave the
+`chat.useClaudeHooks` setting off: turning it on also loads
+`.claude/settings.json`, and each hook then runs twice.
+
 ### `AGENTS.md`
 
 A high-level overview file that the AI assistant reads to understand the project structure. It includes:
@@ -184,7 +202,7 @@ You can edit `AGENTS.md` to add project-specific context that helps the AI make 
 
 ## Verifying the installation
 
-After running `cxas init`, verify that Claude Code or Gemini CLI picks up the skills:
+After running `cxas init`, verify that your assistant picks up the skills:
 
 In Claude Code, the skill is automatically triggered when the AI detects relevant intent. Try asking:
 ```
@@ -195,5 +213,8 @@ In Gemini CLI:
 ```
 /cxas-agent-foundry
 ```
+
+In GitHub Copilot Chat in VS Code, open the Agent dropdown and select a foundry
+subagent such as `lint-fixer`.
 
 You should see the foundry skill respond with an environment readiness check and prompt for what you'd like to do.
