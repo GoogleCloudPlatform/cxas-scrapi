@@ -305,6 +305,94 @@ def test_app_push(mock_apps_client: typing.Any, tmp_path: typing.Any) -> None:
     assert "app_content" in call_args
 
 
+def _mock_import_lro(name: str, warnings: list[str]) -> typing.Any:
+    """Builds a mock import LRO mirroring an ImportAppResponse.
+
+    The real response carries exactly two fields, ``name`` and ``warnings``.
+    Both are set explicitly so the mock cannot accidentally satisfy an
+    assertion via MagicMock's auto-attribute behaviour.
+    """
+    mock_response = mock.MagicMock()
+    mock_response.name = name
+    mock_response.warnings = warnings
+    mock_lro = mock.MagicMock()
+    mock_lro.result.return_value = mock_response
+    return mock_lro
+
+
+def test_app_push_surfaces_server_import_warnings(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    """Resources dropped by the server must be reported to the user.
+
+    When a resource fails validation the CES ImportApp RPC excludes it from the
+    imported app and records the reason in ``ImportAppResponse.warnings``. That
+    is the only signal the developer gets that part of their push did not land,
+    so it must not be discarded.
+    """
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        display_name="New App Name",
+        project_id="test-project",
+        location="us",
+    )
+
+    with open(os.path.join(tmp_path, "app.yaml"), "w") as f:
+        f.write("name: test")
+
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/new-id",
+        [
+            "Warning: Tool 'broken_tool' was removed due to import error: "
+            "Failed to parse python function: Syntax error",
+            "Warning: Tool 'other_tool' was removed due to import error: "
+            "Failed to parse python function: Function not found in code",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_push(args)
+
+    assert excinfo.value.code == 1
+
+    captured = capsys.readouterr()
+    assert "broken_tool" in captured.err
+    assert "other_tool" in captured.err
+
+
+def test_app_push_clean_import_reports_no_warnings(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    """A push with no dropped resources stays quiet and succeeds."""
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        display_name="New App Name",
+        project_id="test-project",
+        location="us",
+    )
+
+    with open(os.path.join(tmp_path, "app.yaml"), "w") as f:
+        f.write("name: test")
+
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/new-id", []
+    )
+
+    app_name = cli_app.app_push(args)
+
+    assert app_name == "projects/test-project/locations/us/apps/new-id"
+
+    captured = capsys.readouterr()
+    assert "Successfully pushed" in captured.out
+    assert captured.err == ""
+
+
 def test_app_branch(
     mock_apps_client: typing.Any,
     mock_common_get_project_id: typing.Any,
