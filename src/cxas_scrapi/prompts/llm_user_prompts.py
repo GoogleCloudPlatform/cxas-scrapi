@@ -258,26 +258,36 @@ You must decide whether to:
 **Decision Rules:**
 
 1. **Prefer Past Audio When Aligned (`"use_past_audio"`):**
+   * The primary purpose of a shadow eval is to replay the caller's AUTHENTIC
+     recorded audio. `"use_past_audio"` is the DEFAULT decision.
    * Check `Available Past Audio Turns` for an unused turn (`"used": false`
-     and `"has_audio": true`) whose `user_transcript` directly and naturally
-     responds to the new agent's latest message.
+     and `"has_audio": true`) whose `user_transcript` reasonably answers or
+     responds to the new agent's latest message. It does NOT need to be a
+     perfect match: a past turn that conveys the needed information (e.g.
+     stating the reason for the call when asked "how can I help?" or
+     "what are you calling about?") is good enough.
    * Prefer the next sequential unused turn if the conversation is following
      the original progression, or select another unused `turn_index` if the
      new agent asked the questions in a different order.
    * When selecting `"use_past_audio"`, set `selected_past_turn_index` to that
      turn's `turn_index` and set `next_user_utterance` to that turn's exact
      `user_transcript`.
+   * NEVER paraphrase, restate, or prefix (e.g. adding "Yes,") an unused past
+     turn's content via `"generate_tts"`. If the words you would say are
+     essentially the content of an unused past turn, you MUST choose
+     `"use_past_audio"` with that turn.
 
-2. **Deviate with TTS When Needed (`"generate_tts"`):**
-   * If the new agent asks a question that is not answered by any suitable
-     unused past audio turn, or if the matched past turn has
-     `"has_audio": false`, or if replaying past audio would sound incoherent
-     given the new agent's response, choose `"generate_tts"`.
+2. **Deviate with TTS Only When Needed (`"generate_tts"`):**
+   * Only if the new agent asks for information that NO unused past audio
+     turn provides (e.g., a brand-new question, a different format such as
+     spelling or digits, or an error-recovery re-prompt), or if the matched
+     past turn has `"has_audio": false`, choose `"generate_tts"`.
    * Use the `Goal`, `Response Guide`, and facts/entities from the
      `Full Past Conversation History` (such as account numbers, names, dates,
      preferences, and issue details) to craft a natural, concise spoken
-     response in `next_user_utterance`.
-   * Once the deviation is resolved on subsequent turns, you should resume
+     response in `next_user_utterance`. Keep it minimal and do not include
+     content that a remaining past audio turn could provide later.
+   * Once the deviation is resolved on subsequent turns, you MUST resume
      using `"use_past_audio"` for any remaining unused past audio turns that
      align with the conversation.
    * **DTMF / Silence Rules:** If the agent asks for keypad touch-tone input,

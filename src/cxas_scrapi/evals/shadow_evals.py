@@ -14,6 +14,7 @@
 
 """Shadow evaluation classes for replaying past conversations on CXAS Agents."""
 
+import difflib
 import enum
 import io
 import json
@@ -111,6 +112,8 @@ class ShadowTurnLog(pydantic.BaseModel):
     audio_source: str = ""
     decision_justification: str = ""
     agent_response: str = ""
+    user_audio_path: str | None = None
+    agent_audio_path: str | None = None
 
 
 class ShadowTestCase(pydantic.BaseModel):
@@ -139,6 +142,14 @@ class ShadowTestCase(pydantic.BaseModel):
     voice_config: dict[str, Any] | None = None
     naturalness_metric: bool | dict[str, Any] | None = None
     initial_utterance: str = _FIRST_UTTERANCE
+    # "hybrid": an LLM picks, per turn, between replaying recorded caller
+    # audio and TTS for new information. "exact": replays the recorded
+    # caller turns in order with no LLM.
+    replay_mode: typing.Literal["hybrid", "exact"] = "hybrid"
+    # Replays often depend on the tool fakes the original session ran with
+    # (e.g. mocked caller / account lookups keyed on `session_parameters`). When
+    # set, overrides the run-level `use_tool_fakes` flag for this case.
+    use_tool_fakes: bool | None = None
 
     @pydantic.model_validator(mode="after")
     def validate_test_case(self) -> "ShadowTestCase":
@@ -339,6 +350,9 @@ class ShadowUserConversation(Conversation):
             if initial_utterance is not None
             else self.test_case_model.initial_utterance
         )
+        self.replay_mode = getattr(
+            self.test_case_model, "replay_mode", "hybrid"
+        )
 
         if max_turns is not None:
             self.max_turns = max_turns
@@ -533,6 +547,17 @@ class ShadowUserConversation(Conversation):
             if self.initial_utterance:
                 utterance = self.initial_utterance
                 self._add_user_utterance(utterance)
+                # If first past turn was also an event or start,
+                # mark it used so exact replay skips it
+                if self.past_turns and not self.past_turns[0].has_audio:
+                    first_text = (
+                        self.past_turns[0].user_transcript or ""
+                    ).strip()
+                    if (
+                        first_text.startswith("<event")
+                        or first_text == utterance
+                    ):
+                        self.past_turns[0].used = True
                 turn_log = ShadowTurnLog(
                     sim_turn=0,
                     decision="event",
@@ -570,6 +595,7 @@ class ShadowUserConversation(Conversation):
                         if has_raw
                         else "TTS (fallback: no past audio)"
                     ),
+                    user_audio_path=first_pt.audio_path,
                     decision_justification="Initial turn from past recording.",
                 )
                 self.turn_logs.append(turn_log)
@@ -580,6 +606,61 @@ class ShadowUserConversation(Conversation):
                     session_params,
                     turn_log,
                 )
+
+        if self.replay_mode == "exact":
+            next_pt = self._find_past_turn(None)
+            if next_pt is None:
+                for prog in self.steps_progress:
+                    if prog.status == StepStatus.IN_PROGRESS:
+                        prog.status = StepStatus.COMPLETED
+                        if not prog.justification:
+                            prog.justification = (
+                                "All historical audio turns replayed."
+                            )
+                self._add_user_utterance("")
+                self.current_turn += 1
+                return "", None, {}, None
+
+            next_pt.used = True
+            utterance = next_pt.user_transcript
+            self._add_user_utterance(utterance)
+            has_raw = bool(
+                next_pt.has_audio and next_pt.audio_bytes is not None
+            )
+            decision_str = (
+                ShadowDecisionType.USE_PAST_AUDIO.value
+                if has_raw
+                else ShadowDecisionType.GENERATE_TTS.value
+            )
+            audio_src = (
+                (
+                    next_pt.audio_uri
+                    or next_pt.audio_path
+                    or f"user-turn-{next_pt.turn_index}.wav"
+                )
+                if has_raw
+                else "TTS (no past audio)"
+            )
+            turn_log = ShadowTurnLog(
+                sim_turn=self.current_turn,
+                decision=decision_str,
+                selected_past_turn_index=next_pt.turn_index,
+                user_utterance=utterance,
+                audio_source=audio_src,
+                user_audio_path=next_pt.audio_path,
+                decision_justification=(
+                    f"Exact replay of past turn #{next_pt.turn_index} "
+                    "using recorded caller audio."
+                ),
+            )
+            self.turn_logs.append(turn_log)
+            self.current_turn += 1
+            return (
+                utterance,
+                next_pt.audio_bytes if has_raw else None,
+                {},
+                turn_log,
+            )
 
         prompt = self._prepare_shadow_llm_prompt()
         output: ShadowUserConversation.Output = self.genai_client.generate(
@@ -621,22 +702,9 @@ class ShadowUserConversation(Conversation):
                     matched_pt.user_transcript or output.next_user_utterance
                 )
                 if matched_pt.has_audio and matched_pt.audio_bytes is not None:
-                    self._add_user_utterance(utterance)
-                    turn_log = ShadowTurnLog(
-                        sim_turn=self.current_turn,
-                        decision=ShadowDecisionType.USE_PAST_AUDIO.value,
-                        selected_past_turn_index=matched_pt.turn_index,
-                        user_utterance=utterance,
-                        audio_source=(
-                            matched_pt.audio_uri
-                            or matched_pt.audio_path
-                            or f"user-turn-{matched_pt.turn_index}.wav"
-                        ),
-                        decision_justification=output.decision_justification,
+                    return self._emit_past_audio_turn(
+                        matched_pt, output.decision_justification
                     )
-                    self.turn_logs.append(turn_log)
-                    self.current_turn += 1
-                    return utterance, matched_pt.audio_bytes, {}, turn_log
 
                 # Fallback to TTS if past turn had no audio file in GCS
                 utterance = utterance or output.next_user_utterance
@@ -656,8 +724,23 @@ class ShadowUserConversation(Conversation):
                 self.current_turn += 1
                 return utterance, None, {}, turn_log
 
-        # Deviation mode: GENERATE_TTS
+        # Guardrail: the LLM sometimes paraphrases a recorded past turn via
+        # TTS instead of replaying it. If the generated text restates an
+        # unused past turn that has audio, replay the authentic recording.
         utterance = output.next_user_utterance
+        paraphrased_pt = self._match_unused_past_turn(utterance)
+        if paraphrased_pt is not None:
+            paraphrased_pt.used = True
+            return self._emit_past_audio_turn(
+                paraphrased_pt,
+                (
+                    f"{output.decision_justification} (Overridden: generated "
+                    f"TTS {utterance!r} restates past turn "
+                    f"#{paraphrased_pt.turn_index}; replaying recorded audio.)"
+                ),
+            )
+
+        # Deviation mode: GENERATE_TTS
         self._add_user_utterance(utterance)
         turn_log = ShadowTurnLog(
             sim_turn=self.current_turn,
@@ -670,6 +753,91 @@ class ShadowUserConversation(Conversation):
         self.turn_logs.append(turn_log)
         self.current_turn += 1
         return utterance, None, {}, turn_log
+
+    def _emit_past_audio_turn(
+        self, past_turn: ShadowPastTurn, justification: str
+    ) -> tuple[str, bytes | None, dict[str, Any], ShadowTurnLog]:
+        """Records and returns a turn that replays `past_turn`'s audio."""
+        utterance = past_turn.user_transcript
+        self._add_user_utterance(utterance)
+        turn_log = ShadowTurnLog(
+            sim_turn=self.current_turn,
+            decision=ShadowDecisionType.USE_PAST_AUDIO.value,
+            selected_past_turn_index=past_turn.turn_index,
+            user_utterance=utterance,
+            audio_source=(
+                past_turn.audio_uri
+                or past_turn.audio_path
+                or f"user-turn-{past_turn.turn_index}.wav"
+            ),
+            user_audio_path=past_turn.audio_path,
+            decision_justification=justification,
+        )
+        self.turn_logs.append(turn_log)
+        self.current_turn += 1
+        return utterance, past_turn.audio_bytes, {}, turn_log
+
+    @staticmethod
+    def _normalize_words(text: str) -> list[str]:
+        return re.findall(r"[a-z0-9']+", (text or "").lower())
+
+    def _match_unused_past_turn(
+        self, utterance: str, threshold: float = 0.8
+    ) -> ShadowPastTurn | None:
+        """Returns the past turn (with audio) whose recording should be
+        replayed instead of synthesizing `utterance` via TTS, or `None`.
+
+        Unused turns match at `threshold`. If none match, an already-used turn
+        is re-replayed only when `utterance` is a near-verbatim repeat of it
+        (e.g. the new agent re-asked the same question).
+        """
+        return self._match_past_turn(
+            utterance, threshold, include_used=False
+        ) or self._match_past_turn(utterance, 0.95, include_used=True)
+
+    def _match_past_turn(
+        self, utterance: str, threshold: float, include_used: bool
+    ) -> ShadowPastTurn | None:
+        """Returns the best-matching past turn (with audio; earliest on ties)
+        whose transcript is essentially the same as `utterance`.
+
+        Similarity is the fraction of the past turn's words present in
+        `utterance`, provided the utterance adds at most a couple of extra
+        words (so "Yes, I'm calling about X" matches a past "I'm calling about
+        X", but "I'm calling about X for my order 4417" does not). Very short
+        past turns (<= 2 words) require an exact word match to
+        avoid replaying e.g. "Yes." when the user should say "No.".
+        """
+        words = self._normalize_words(utterance)
+        if not words or utterance.startswith(("event:", "dtmf:")):
+            return None
+        # A used turn is only re-replayed on a verbatim repeat.
+        max_extra = 0 if include_used else 2
+        best: tuple[float, ShadowPastTurn] | None = None
+        for pt in self.past_turns:
+            if pt.used != include_used:
+                continue
+            if not (pt.has_audio and pt.audio_bytes is not None):
+                continue
+            past_words = self._normalize_words(pt.user_transcript)
+            if not past_words:
+                continue
+            if len(past_words) <= 2:
+                score = 1.0 if past_words == words else 0.0
+            else:
+                past_set = set(past_words)
+                utt_set = set(words)
+                coverage = sum(w in utt_set for w in past_words) / len(
+                    past_words
+                )
+                # Words the utterance adds beyond the past turn (e.g. a
+                # leading "yes"). More than a couple means new information
+                # that the recording does not contain, so keep TTS.
+                extra = sum(w not in past_set for w in words)
+                score = coverage if extra <= max_extra else 0.0
+            if score >= threshold and (best is None or score > best[0]):
+                best = (score, pt)
+        return best[1] if best else None
 
     def next_user_utterance(
         self, last_agent_response: str = ""
@@ -803,6 +971,27 @@ class ShadowEvals(Apps):
             return app_id
         return f"projects/{proj}/locations/{loc}/apps/{app_id}"
 
+    @staticmethod
+    def _infer_recording_bucket(
+        normalized: dict[str, Any], conversation_id: str
+    ) -> str | None:
+        """Infers the audio recording bucket from `gs://` URIs in a trace.
+
+        Prefers URIs that reference `conversation_id` (recordings are stored
+        under `<bucket>/.../<conversation_id>/`) over unrelated buckets that
+        may appear elsewhere in the trace (e.g. tool payloads).
+        """
+        try:
+            raw_str = json.dumps(normalized, default=str)
+        except (TypeError, ValueError):
+            return None
+        fallback = None
+        for match in re.finditer(r"gs://([a-z0-9_.\-]+)/([^\s\"']*)", raw_str):
+            if conversation_id in match.group(2):
+                return f"gs://{match.group(1)}"
+            fallback = fallback or f"gs://{match.group(1)}"
+        return fallback
+
     def fetch_past_conversation_data(
         self,
         test_case: ShadowTestCase | dict[str, Any],
@@ -826,12 +1015,23 @@ class ShadowEvals(Apps):
         )
         source_app_name = self._resolve_source_app_name(tc)
         traces_client = Traces(app_name=source_app_name, creds=self.creds)
-        bucket_override = tc.gcs_bucket or self.default_gcs_bucket
-        if bucket_override:
-            traces_client.trace_config.audio.bucket_override = bucket_override
-
         normalized = traces_client.get_normalized(tc.conversation_id)
         start_time = normalized.get("start_time")
+
+        bucket_override = tc.gcs_bucket or self.default_gcs_bucket
+        if not bucket_override:
+            bucket_override = self._infer_recording_bucket(
+                normalized, tc.conversation_id
+            )
+            if bucket_override:
+                logger.info(
+                    "Inferred audio recording bucket %s for conversation %s "
+                    "(set `gcs_bucket` to override).",
+                    bucket_override,
+                    tc.conversation_id,
+                )
+        if bucket_override:
+            traces_client.trace_config.audio.bucket_override = bucket_override
 
         try:
             user_audio_uris = traces_client.get_user_audio_uris(
@@ -909,10 +1109,12 @@ class ShadowEvals(Apps):
 
                 if turn_user_texts:
                     user_turn_counter += 1
-                    # Match 1-based user turn or 1-based conversation turn
+                    # Platform recordings are numbered per 1-based
+                    # conversation turn (`user-turn-N` == raw turn N), so
+                    # prefer `turn_idx`; fall back to the user-turn counter.
                     audio_uri = user_audio_uris.get(
-                        user_turn_counter
-                    ) or user_audio_uris.get(turn_idx)
+                        turn_idx
+                    ) or user_audio_uris.get(user_turn_counter)
                     audio_path = None
                     pcm_bytes = None
 
@@ -961,8 +1163,8 @@ class ShadowEvals(Apps):
                     u_text = (entry.get("text") or "").strip()
                     history_lines.append(f"[Turn {turn_num}] User: {u_text}")
                     audio_uri = user_audio_uris.get(
-                        user_turn_counter
-                    ) or user_audio_uris.get(turn_num)
+                        turn_num
+                    ) or user_audio_uris.get(user_turn_counter)
                     audio_path = None
                     pcm_bytes = None
                     if audio_uri and gcs_client is not None:
@@ -997,6 +1199,27 @@ class ShadowEvals(Apps):
                         f"[Turn {turn_num}] Tool Call: {entry.get('tool')} "
                         f"args={entry.get('args')}"
                     )
+
+        # Missing recordings silently degrade the replay to TTS, which defeats
+        # the point of a ShadowEval, so surface it loudly.
+        spoken = [
+            pt
+            for pt in past_turns
+            if not (pt.user_transcript or "").lstrip().startswith("<event")
+        ]
+        with_audio = sum(1 for pt in spoken if pt.has_audio)
+        if spoken and with_audio < len(spoken):
+            logger.warning(
+                "Only %d/%d past user turns of conversation %s have recorded "
+                "audio (bucket=%s); the rest will be synthesized via TTS. "
+                "Check `gcs_bucket` and that the app's audio recording "
+                "(loggingSettings.audioRecordingConfig) was enabled for the "
+                "original call.",
+                with_audio,
+                len(spoken),
+                tc.conversation_id,
+                bucket_override or "<default>",
+            )
 
         return past_turns, "\n".join(history_lines), normalized
 
@@ -1195,6 +1418,8 @@ class ShadowEvals(Apps):
             naturalness if naturalness is not None else self.naturalness,
         )
         voice_config = voice_config or tc_model.voice_config
+        if tc_model.use_tool_fakes is not None:
+            use_tool_fakes = tc_model.use_tool_fakes
 
         session_dir = f"/tmp/scrapi_evals/{session_id}"
         past_turns, full_past_history, _ = self.fetch_past_conversation_data(
@@ -1300,6 +1525,12 @@ class ShadowEvals(Apps):
                         shadow_conv.agent_audio_paths[current_sim_turn] = (
                             audio_path
                         )
+                        if shadow_conv.turn_logs and isinstance(
+                            audio_path, str
+                        ):
+                            shadow_conv.turn_logs[
+                                -1
+                            ].agent_audio_path = audio_path
 
                 if console_logging:
                     self.sessions_client.parse_result(response)
@@ -1604,6 +1835,20 @@ class ShadowEvals(Apps):
         return results
 
     @staticmethod
+    def _warn_unknown_keys(
+        data: dict[str, Any], known: set[str], where: str
+    ) -> None:
+        """Logs a warning (with a suggestion) for each unrecognized key."""
+        for key in data:
+            if key in known:
+                continue
+            close = difflib.get_close_matches(str(key), known, n=1)
+            hint = f" Did you mean '{close[0]}'?" if close else ""
+            logger.warning(
+                "Ignoring unknown key '%s' in %s.%s", key, where, hint
+            )
+
+    @staticmethod
     def load_shadow_test_cases_from_yaml(
         yaml_data: str,
     ) -> list[ShadowTestCase]:
@@ -1634,10 +1879,24 @@ class ShadowEvals(Apps):
             "gcs_bucket",
             "max_turns",
             "voice_config",
+            "replay_mode",
+            "use_tool_fakes",
+        )
+        # Unknown keys are silently dropped by pydantic, so a typo such as
+        # `session_params` would quietly run the replay without seeding.
+        known_case_keys = set(ShadowTestCase.model_fields)
+        ShadowEvals._warn_unknown_keys(
+            global_config,
+            set(inherited_keys) | {"session_parameters"},
+            "config",
         )
         for item in raw_evals:
             if not isinstance(item, dict):
                 continue
+            label = item.get("name") or item.get("conversation_id")
+            ShadowEvals._warn_unknown_keys(
+                item, known_case_keys, f"shadow eval '{label}'"
+            )
             merged = dict(item)
             for key in inherited_keys:
                 if merged.get(key) is None and key in global_config:
