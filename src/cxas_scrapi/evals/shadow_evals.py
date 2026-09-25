@@ -566,12 +566,13 @@ class ShadowUserConversation(Conversation):
         audio bytes or generate new TTS audio.
 
         Returns:
-            Tuple of:
-              - `user_utterance`: Text transcript or event/dtmf string.
-              - `audio_bytes`: Raw 16kHz PCM bytes if replaying a past GCS
-                recording, or `None` if TTS / event should be used.
-              - `variables_to_inject`: Session parameters dict.
-              - `turn_log`: `ShadowTurnLog` entry describing the decision.
+            tuple: `(user_utterance, audio_bytes, variables_to_inject,
+                turn_log)` where `user_utterance` is the text transcript or
+                event/dtmf string; `audio_bytes` is raw 16kHz PCM if
+                replaying a past GCS recording, or `None` if TTS / event
+                should be used; `variables_to_inject` is the session
+                parameters dict; and `turn_log` is the `ShadowTurnLog`
+                entry describing the decision.
         """
         if last_agent_response:
             self._add_agent_response(last_agent_response)
