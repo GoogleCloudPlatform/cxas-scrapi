@@ -1,6 +1,28 @@
 # Changelog
 
 
+## [1.10.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.9.1...v1.10.0) (2026-09-25)
+
+
+### Features
+
+* **evals:** add optional Naturalness Metric to SimulationEvals ([2a5154f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2a5154f3bf8e44468c2bb7656b4ead7dc65d1ad3))
+* **evals:** add ShadowEvals for replaying past conversations with hybrid audio/TTS simUser ([41cee96](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/41cee96fc92787800816b7b84b87140a76bfac72))
+* **evals:** ShadowEvals preflight, audio artifacts + side-by-side report, docs, lint/runner cleanups ([b76fd1f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b76fd1f710f4e06de22593bb83dfa7ef7d661687))
+
+
+### Bug Fixes
+
+* **ci:** use secrets.GH_TOKEN for release-please to satisfy Google CLA ([#460](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/460)) ([eac70da](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/eac70da61021a4aa5373c2c62b165795a01a5e3c))
+* **cli:** report server import warnings and fail on partial push ([#463](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/463)) ([158f196](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/158f19610c553660300c0acca0f8389a4cce81e6))
+* **evals:** make ShadowEvals replay recorded audio reliably and harden config ([4b612e2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4b612e23baaac49f649959db4fafad8dc5080347))
+
+
+### Documentation
+
+* **evals:** fix next_user_turn docstring indentation for strict mkdocs build ([14be090](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/14be0908007b1f502a7d2b630eff7aa899f263c1))
+* **evals:** use a current model in the Naturalness examples ([ac8e255](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/ac8e2552c136b2995ebc8cc476e57a5230e1e7b0))
+
 ## [1.9.1](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.9.0...v1.9.1) (2026-09-16)
 
 
