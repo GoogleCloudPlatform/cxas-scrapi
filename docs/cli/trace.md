@@ -28,6 +28,7 @@ All `cxas trace` subcommands share a few flags:
 | `cxas trace audio transcribe <id>` / `cxas trace transcribe-audio <id>` | Transcribe GCS user turn audio with Gemini Flash/Flash-Lite, calculate WER against CES transcripts, and optionally reprocess into a cloned BigQuery export table. |
 | `cxas trace triage <id>` | Run text-only Gemini triage prompts over the transcript. |
 | `cxas trace replay <id>` | Replay user inputs against the current agent and diff. |
+| `cxas trace estimate-quota` | Estimates production token and tool quotas based on an average of recent conversational traces. |
 | `cxas trace stats` | Aggregate stats over recent conversations. |
 | `cxas trace bundle <id>` | Zip transcript + logs + audio + report into a single archive. |
 | `cxas trace bug-report <id>` | Flag a conversation as a platform bug; uploads bundle to a configured GCS bucket. |
@@ -57,6 +58,16 @@ Compare a deployed conversation against the current agent:
 
 ```
 cxas trace replay conv-id-1 --app-name projects/p/locations/l/apps/a --diff
+```
+
+
+Generate a quota estimation based on conversational traces from the last 7 days, assuming a peak traffic of 100 conversations per minute:
+
+```
+cxas trace estimate-quota \
+  --app-name projects/p/locations/l/apps/a \
+  --peak-text-cpm 100 --peak-audio-cpm 50 \
+  --time-filter 7d
 ```
 
 Generate a 7-day stats report grouped by source, written as Markdown:
