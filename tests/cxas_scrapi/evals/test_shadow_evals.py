@@ -626,3 +626,262 @@ def test_shadow_evals_single_bidi_stream_interactive(
             is None
         )
         mock_interactive.close.assert_called_once()
+
+
+def test_shadow_user_conversation_exact_replay() -> None:
+    """When replay_mode='exact', ShadowUserConversation replays past audio
+    turns sequentially with authentic audio bytes without calling Gemini.
+    """
+    mock_gemini = MagicMock()
+    pcm_turn_1 = b"\xaa\xbb" * 160
+    pcm_turn_2 = b"\xcc\xdd" * 160
+
+    past_turns = [
+        ShadowPastTurn(
+            turn_index=1,
+            user_transcript="First question from caller.",
+            audio_uri="gs://bucket/user-turn-1.wav",
+            has_audio=True,
+            audio_bytes=pcm_turn_1,
+        ),
+        ShadowPastTurn(
+            turn_index=2,
+            user_transcript="Second confirmation from caller.",
+            audio_uri="gs://bucket/user-turn-2.wav",
+            has_audio=True,
+            audio_bytes=pcm_turn_2,
+        ),
+    ]
+
+    tc = ShadowTestCase(
+        name="exact_replay_test",
+        conversation_id="conv-exact",
+        replay_mode="exact",
+        expectations=["Agent succeeds."],
+        initial_utterance="event: session start",
+    )
+
+    conv = ShadowUserConversation(
+        genai_client=mock_gemini,
+        genai_model="gemini-3.1-flash-lite",
+        test_case=tc,
+        past_turns=past_turns,
+    )
+
+    # Turn 0: event
+    u0, a0, _, l0 = conv.next_user_turn()
+    assert u0 == "event: session start"
+    assert a0 is None
+    assert l0.decision == "event"
+
+    # Turn 1: exact replay of past turn 1
+    u1, a1, _, l1 = conv.next_user_turn("Agent greeting.")
+    assert u1 == "First question from caller."
+    assert a1 == pcm_turn_1
+    assert l1.decision == ShadowDecisionType.USE_PAST_AUDIO.value
+    assert l1.selected_past_turn_index == 1
+
+    # Turn 2: exact replay of past turn 2
+    u2, a2, _, l2 = conv.next_user_turn("Agent ask confirmation.")
+    assert u2 == "Second confirmation from caller."
+    assert a2 == pcm_turn_2
+    assert l2.decision == ShadowDecisionType.USE_PAST_AUDIO.value
+    assert l2.selected_past_turn_index == 2
+
+    # Turn 3: all turns replayed -> conversation ends
+    u3, a3, _, l3 = conv.next_user_turn("Agent goodbye.")
+    assert u3 == ""
+    assert a3 is None
+    assert l3 is None
+
+    # Verify Gemini was never invoked for simulated turn decisions
+    mock_gemini.generate.assert_not_called()
+
+
+def _hybrid_conv(mock_gemini: MagicMock) -> ShadowUserConversation:
+    past_turns = [
+        ShadowPastTurn(
+            turn_index=2,
+            user_transcript="I'm calling about my order. The package never "
+            "arrived.",
+            has_audio=True,
+            audio_bytes=b"\x01\x02" * 160,
+            audio_path="/tmp/past_user_turn_2.wav",
+        ),
+        ShadowPastTurn(
+            turn_index=3,
+            user_transcript="Yes.",
+            has_audio=True,
+            audio_bytes=b"\x03\x04" * 160,
+        ),
+    ]
+    tc = ShadowTestCase(
+        conversation_id="conv-guard",
+        expectations=["Agent resolves the delivery issue."],
+        initial_utterance="event: session start",
+    )
+    conv = ShadowUserConversation(
+        genai_client=mock_gemini,
+        genai_model="gemini-3.1-flash-lite",
+        test_case=tc,
+        past_turns=past_turns,
+    )
+    conv.next_user_turn()  # consume initial event
+    return conv
+
+
+def test_shadow_user_tts_paraphrase_overridden_to_past_audio() -> None:
+    """A generate_tts decision that restates an unused past turn replays the
+    recorded audio instead of synthesizing TTS."""
+    mock_gemini = MagicMock()
+    mock_gemini.generate.return_value = ShadowUserConversation.Output(
+        decision=ShadowDecisionType.GENERATE_TTS,
+        next_user_utterance="Yes, I'm calling about my order. The package "
+        "never arrived.",
+        decision_justification="Agent asked if caller is an existing customer.",
+    )
+    conv = _hybrid_conv(mock_gemini)
+
+    utt, audio, _, log = conv.next_user_turn("Are you an existing customer?")
+
+    assert audio == b"\x01\x02" * 160
+    assert utt.startswith("I'm calling about my order")
+    assert log.decision == ShadowDecisionType.USE_PAST_AUDIO.value
+    assert log.selected_past_turn_index == 2
+    assert log.user_audio_path == "/tmp/past_user_turn_2.wav"
+    assert "Overridden" in log.decision_justification
+    assert conv.past_turns[0].used
+
+
+def test_shadow_user_genuine_tts_not_overridden() -> None:
+    """New information (and short non-identical answers) stays on TTS."""
+    mock_gemini = MagicMock()
+    mock_gemini.generate.side_effect = [
+        ShadowUserConversation.Output(
+            decision=ShadowDecisionType.GENERATE_TTS,
+            next_user_utterance="My zip code is 94043.",
+        ),
+        ShadowUserConversation.Output(
+            decision=ShadowDecisionType.GENERATE_TTS,
+            next_user_utterance="No.",
+        ),
+    ]
+    conv = _hybrid_conv(mock_gemini)
+
+    _, audio1, _, log1 = conv.next_user_turn("What's your zip code?")
+    _, audio2, _, log2 = conv.next_user_turn("Anything else?")
+
+    assert audio1 is None
+    assert audio2 is None
+    assert log1.decision == ShadowDecisionType.GENERATE_TTS.value
+    assert log2.decision == ShadowDecisionType.GENERATE_TTS.value
+    assert not any(pt.used for pt in conv.past_turns)
+
+
+def test_shadow_user_tts_with_new_info_kept_and_verbatim_repeat_reused() -> (
+    None
+):
+    """TTS that adds new info stays TTS; a verbatim repeat of an already-used
+    past turn re-replays its recording."""
+    mock_gemini = MagicMock()
+    mock_gemini.generate.side_effect = [
+        ShadowUserConversation.Output(
+            decision=ShadowDecisionType.USE_PAST_AUDIO,
+            selected_past_turn_index=2,
+        ),
+        ShadowUserConversation.Output(
+            decision=ShadowDecisionType.GENERATE_TTS,
+            next_user_utterance="I'm calling about my order from last Tuesday "
+            "afternoon. The package never arrived.",
+        ),
+        ShadowUserConversation.Output(
+            decision=ShadowDecisionType.GENERATE_TTS,
+            next_user_utterance="I'm calling about my order. The package "
+            "never arrived.",
+        ),
+    ]
+    conv = _hybrid_conv(mock_gemini)
+
+    _, _, _, l1 = conv.next_user_turn("Are you an existing customer?")
+    _, a2, _, l2 = conv.next_user_turn("Which order is this about?")
+    _, a3, _, l3 = conv.next_user_turn("What are you calling about?")
+
+    assert l1.decision == ShadowDecisionType.USE_PAST_AUDIO.value
+    assert a2 is None
+    assert l2.decision == ShadowDecisionType.GENERATE_TTS.value
+    assert a3 == b"\x01\x02" * 160
+    assert l3.decision == ShadowDecisionType.USE_PAST_AUDIO.value
+    assert l3.selected_past_turn_index == 2
+
+
+def test_load_shadow_yaml_inherits_tool_fakes_and_session_params() -> None:
+    """`use_tool_fakes` and `session_parameters` in the global config block
+    seed every shadow case (case-level values win)."""
+    yaml_text = """
+config:
+  use_tool_fakes: true
+  session_parameters:
+    customer_tier: gold
+shadow_evals:
+  - conversation_id: conv-1
+    expectations: ["Agent greets the returning customer."]
+  - conversation_id: conv-2
+    use_tool_fakes: false
+    session_parameters:
+      customer_tier: silver
+    expectations: ["Agent offers the silver-tier options."]
+"""
+    cases = ShadowEvals.load_shadow_test_cases_from_yaml(yaml_text)
+
+    assert cases[0].use_tool_fakes is True
+    assert cases[0].session_parameters == {"customer_tier": "gold"}
+    assert cases[1].use_tool_fakes is False
+    assert cases[1].session_parameters == {"customer_tier": "silver"}
+
+
+def test_load_shadow_yaml_warns_on_unknown_keys(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Typos are dropped by pydantic, so the loader must warn about them."""
+    yaml_text = """
+config:
+  use_toolfakes: true
+shadow_evals:
+  - conversation_id: conv-1
+    session_params:
+      customer_tier: gold
+    expectations: ["Agent greets the returning customer."]
+"""
+    with caplog.at_level("WARNING"):
+        cases = ShadowEvals.load_shadow_test_cases_from_yaml(yaml_text)
+
+    assert cases[0].session_parameters == {}
+    assert "Did you mean 'use_tool_fakes'?" in caplog.text
+    assert "Did you mean 'session_parameters'?" in caplog.text
+
+
+def test_shadow_test_case_rejects_invalid_replay_mode() -> None:
+    with pytest.raises(ValueError, match="replay_mode"):
+        ShadowTestCase(
+            conversation_id="conv-1",
+            expectations=["Agent helps."],
+            replay_mode="exactly",
+        )
+
+
+def test_infer_recording_bucket_prefers_conversation_uri() -> None:
+    normalized = {
+        "raw": {
+            "tool_payload": "gs://unrelated-bucket/some/file.json",
+            "audio": "gs://rec-bucket/proj/us/app/2026-09-25/conv-1/x.wav",
+        }
+    }
+    assert (
+        ShadowEvals._infer_recording_bucket(normalized, "conv-1")
+        == "gs://rec-bucket"
+    )
+    assert (
+        ShadowEvals._infer_recording_bucket(normalized, "conv-2")
+        == "gs://unrelated-bucket"
+    )
+    assert ShadowEvals._infer_recording_bucket({}, "conv-1") is None
