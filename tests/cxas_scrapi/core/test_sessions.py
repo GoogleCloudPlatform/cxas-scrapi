@@ -677,6 +677,13 @@ def test_bidi_session_handler_send_inputs_use_tool_fakes(
     assert config.get("useToolFakes") is True
 
 
+@pytest.fixture(autouse=True)
+def _reset_audio_preflight_cache() -> typing.Generator[None, None, None]:
+    Sessions.reset_audio_preflight_cache()
+    yield
+    Sessions.reset_audio_preflight_cache()
+
+
 @patch("cxas_scrapi.core.sessions.requests.get")
 def test_check_audio_requirements_success(mock_get: typing.Any) -> None:
     """Test _check_audio_requirements success case."""
@@ -689,6 +696,8 @@ def test_check_audio_requirements_success(mock_get: typing.Any) -> None:
     mock_response.json.return_value = {"state": "ENABLED"}
     mock_get.return_value = mock_response
 
+    sessions._check_audio_requirements()
+    assert mock_get.call_count == 2
     sessions._check_audio_requirements()
     assert mock_get.call_count == 2
 
@@ -708,6 +717,11 @@ def test_check_audio_requirements_api_disabled(mock_get: typing.Any) -> None:
     with pytest.raises(RuntimeError) as exc_info:
         sessions._check_audio_requirements()
     assert "is not enabled" in str(exc_info.value)
+    assert mock_get.call_count == 1
+
+    with pytest.raises(RuntimeError):
+        sessions._check_audio_requirements()
+    assert mock_get.call_count == 1
 
 
 @patch("cxas_scrapi.core.sessions.requests.get")
@@ -726,11 +740,17 @@ def test_check_audio_requirements_permission_denied(
     with pytest.raises(PermissionError) as exc_info:
         sessions._check_audio_requirements()
     assert "Permission denied" in str(exc_info.value)
+    assert mock_get.call_count == 1
+
+    with pytest.raises(PermissionError):
+        sessions._check_audio_requirements()
+    assert mock_get.call_count == 1
 
 
+@patch("cxas_scrapi.core.sessions.time.sleep")
 @patch("cxas_scrapi.core.sessions.requests.get")
 def test_check_audio_requirements_api_check_failed(
-    mock_get: typing.Any,
+    mock_get: typing.Any, mock_sleep: typing.Any
 ) -> None:
     """Test _check_audio_requirements when API check fails (e.g., 500)."""
     sessions = Sessions(app_name="projects/p/locations/l/apps/a")
@@ -744,6 +764,30 @@ def test_check_audio_requirements_api_check_failed(
     with pytest.raises(RuntimeError) as exc_info:
         sessions._check_audio_requirements()
     assert "Failed to check service" in str(exc_info.value)
+    assert mock_get.call_count == 6
+    assert [c.args[0] for c in mock_sleep.call_args_list] == [1, 2, 4, 8, 16]
+    assert "test-project" not in Sessions._audio_preflight_failed
+
+
+@patch("cxas_scrapi.core.sessions.time.sleep")
+@patch("cxas_scrapi.core.sessions.requests.get")
+def test_check_audio_requirements_retries_429_then_succeeds(
+    mock_get: typing.Any, mock_sleep: typing.Any
+) -> None:
+    """Test _check_audio_requirements retries transient 429 and caches success."""
+    sessions = Sessions(app_name="projects/p/locations/l/apps/a")
+    sessions.project_id = "test-project-429"
+    sessions.creds = MagicMock()
+
+    resp_429 = MagicMock(status_code=429)
+    resp_ok = MagicMock(status_code=200)
+    resp_ok.json.return_value = {"state": "ENABLED"}
+    mock_get.side_effect = [resp_429, resp_ok, resp_ok]
+
+    sessions._check_audio_requirements()
+    assert mock_get.call_count == 3
+    mock_sleep.assert_called_once_with(1)
+    assert "test-project-429" in Sessions._audio_preflight_passed
 
 
 def test_check_audio_requirements_no_project_id_raises_error() -> None:
