@@ -97,6 +97,8 @@ def test_create_deployment_with_options(mock_client_cls: typing.Any) -> None:
         web_widget_title="My Title",
         disable_dtmf=True,
         disable_barge_in_control=True,
+        persona_property=Deployments.Persona.CONCISE,
+        noise_suppression_level="low",
     )
 
     mock_client.create_deployment.assert_called_once()
@@ -113,6 +115,10 @@ def test_create_deployment_with_options(mock_client_cls: typing.Any) -> None:
     cp = dep.channel_profile
     assert cp.disable_dtmf is True
     assert cp.disable_barge_in_control is True
+    assert cp.persona_property.persona == (
+        types.ChannelProfile.PersonaProperty.Persona.CONCISE
+    )
+    assert cp.noise_suppression_level == "low"
 
     wwc = cp.web_widget_config
     assert wwc.web_widget_title == "My Title"
@@ -228,6 +234,8 @@ def test_create_deployment_with_strings(mock_client_cls: typing.Any) -> None:
         channel_type="WEB_UI",
         modality="CHAT_ONLY",
         theme="DARK",
+        persona_property="CONCISE",
+        noise_suppression_level="low",
     )
     mock_client.create_deployment.assert_called_once()
 
@@ -240,6 +248,10 @@ def test_create_deployment_with_strings(mock_client_cls: typing.Any) -> None:
         types.ChannelProfile.WebWidgetConfig.Modality.CHAT_ONLY
     )
     assert wwc.theme == types.ChannelProfile.WebWidgetConfig.Theme.DARK
+    assert cp.persona_property.persona == (
+        types.ChannelProfile.PersonaProperty.Persona.CONCISE
+    )
+    assert cp.noise_suppression_level == "low"
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
@@ -253,6 +265,8 @@ def test_update_deployment_all_options(mock_client_cls: typing.Any) -> None:
         channel_type=Deployments.ChannelType.API,
         disable_dtmf=True,
         disable_barge_in_control=True,
+        persona_property="CONCISE",
+        noise_suppression_level="low",
     )
     mock_client.update_deployment.assert_called_once()
 
@@ -263,11 +277,17 @@ def test_update_deployment_all_options(mock_client_cls: typing.Any) -> None:
     assert cp.channel_type == types.common.ChannelProfile.ChannelType.API
     assert cp.disable_dtmf is True
     assert cp.disable_barge_in_control is True
+    assert cp.persona_property.persona == (
+        types.ChannelProfile.PersonaProperty.Persona.CONCISE
+    )
+    assert cp.noise_suppression_level == "low"
 
     mask = args.update_mask
     assert "channel_profile.channel_type" in mask.paths
     assert "channel_profile.disable_dtmf" in mask.paths
     assert "channel_profile.disable_barge_in_control" in mask.paths
+    assert "channel_profile.persona_property" in mask.paths
+    assert "channel_profile.noise_suppression_level" in mask.paths
 
 
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
@@ -465,3 +485,89 @@ def test_update_deployment_traffic_split_clear(
     assert dep.app_version == "projects/p/locations/l/apps/A/versions/v2"
     # The experiment_config should be empty
     assert len(dep.experiment_config.version_release.traffic_allocations) == 0
+
+
+def test_build_persona_property() -> None:
+    assert Deployments._build_persona_property(None) is None
+
+    p_concise = Deployments._build_persona_property("CONCISE")
+    assert (
+        p_concise.persona
+        == types.ChannelProfile.PersonaProperty.Persona.CONCISE
+    )
+
+    p_chatty = Deployments._build_persona_property("chatty")
+    assert (
+        p_chatty.persona == types.ChannelProfile.PersonaProperty.Persona.CHATTY
+    )
+
+    p_enum = Deployments._build_persona_property(Deployments.Persona.CONCISE)
+    assert (
+        p_enum.persona == types.ChannelProfile.PersonaProperty.Persona.CONCISE
+    )
+
+    msg = types.ChannelProfile.PersonaProperty(
+        persona=types.ChannelProfile.PersonaProperty.Persona.CONCISE
+    )
+    assert Deployments._build_persona_property(msg) is msg
+
+    with pytest.raises(KeyError):
+        Deployments._build_persona_property("INVALID")
+
+
+def test_validate_noise_suppression_level() -> None:
+    assert Deployments._validate_noise_suppression_level(None) is None
+    assert Deployments._validate_noise_suppression_level("low") == "low"
+    assert Deployments._validate_noise_suppression_level("LOW") == "low"
+    assert (
+        Deployments._validate_noise_suppression_level("moderate") == "moderate"
+    )
+    assert Deployments._validate_noise_suppression_level("High") == "high"
+    assert (
+        Deployments._validate_noise_suppression_level("very_high")
+        == "very_high"
+    )
+
+    with pytest.raises(ValueError, match="Invalid noise_suppression_level"):
+        Deployments._validate_noise_suppression_level("invalid_level")
+
+
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_create_deployment_invalid_noise_level(
+    mock_client_cls: typing.Any,
+) -> None:
+    deps = Deployments("projects/p/locations/l/apps/a")
+    with pytest.raises(ValueError, match="Invalid noise_suppression_level"):
+        deps.create_deployment(
+            deployment_id="dep_1",
+            display_name="Dep 1",
+            app_version="v1",
+            noise_suppression_level="extreme",
+        )
+
+
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_update_deployment_isolated_channel_settings(
+    mock_client_cls: typing.Any,
+) -> None:
+    mock_client = mock_client_cls.return_value
+    mock_client.update_deployment.return_value = MagicMock()
+
+    deps = Deployments("projects/p/locations/l/apps/a")
+
+    # Update only persona_property
+    deps.update_deployment("dep_1", persona_property="CHATTY")
+    args = mock_client.update_deployment.call_args[1]["request"]
+    assert "channel_profile.persona_property" in args.update_mask.paths
+    assert len(args.update_mask.paths) == 1
+    assert (
+        args.deployment.channel_profile.persona_property.persona
+        == types.ChannelProfile.PersonaProperty.Persona.CHATTY
+    )
+
+    # Update only noise_suppression_level (case-insensitive)
+    deps.update_deployment("dep_1", noise_suppression_level="MODERATE")
+    args = mock_client.update_deployment.call_args[1]["request"]
+    assert "channel_profile.noise_suppression_level" in args.update_mask.paths
+    assert len(args.update_mask.paths) == 1
+    assert args.deployment.channel_profile.noise_suppression_level == "moderate"
