@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import typing
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -256,6 +257,48 @@ def test_export_evaluation(mock_get_eval: typing.Any) -> None:
                 output_format=ExportFormat.JSON,
             )
             assert '"conversation": "Exported Eval"' in json_str
+
+
+@patch("cxas_scrapi.core.evaluations.Evaluations.get_evaluation_expectation")
+@patch("cxas_scrapi.core.evaluations.Evaluations.get_evaluation")
+def test_export_evaluation_sideload_keeps_display_name(
+    mock_get_eval: typing.Any,
+    mock_get_exp: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    """Sideloaded expectations keep the platform display name."""
+    exp_ref = "projects/p/locations/l/apps/a/evaluationExpectations/exp-1"
+    prompt = "Is the agent reply grounded in the tool response?"
+
+    mock_exp = MagicMock()
+    mock_exp.display_name = "grounding-check"
+    mock_exp.llm_criteria.prompt = prompt
+    mock_get_exp.return_value = mock_exp
+
+    with patch("cxas_scrapi.core.evaluations.type") as mock_type:
+        mock_type.return_value.to_dict = MagicMock(
+            return_value={
+                "display_name": "Exported Eval",
+                "golden": {
+                    "turns": [],
+                    "evaluation_expectations": [exp_ref],
+                },
+            }
+        )
+
+        evals_client = Evaluations(app_name="projects/p/locations/l/apps/a")
+        with patch("cxas_scrapi.core.evaluations.EvaluationServiceClient"):
+            evals_client.export_evaluation(
+                "projects/p/locations/l/apps/a/evaluations/e1",
+                output_path=str(tmp_path / "golden.yaml"),
+            )
+
+    sideloaded = list((tmp_path / "evaluationExpectations").glob("*.json"))
+    assert len(sideloaded) == 1
+
+    content = json.loads(sideloaded[0].read_text(encoding="utf-8"))
+    assert content["displayName"] == "grounding-check"
+    assert content["llmCriteria"]["prompt"] == prompt
 
 
 @patch("cxas_scrapi.core.evaluations.EvaluationServiceClient")
