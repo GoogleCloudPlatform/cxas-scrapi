@@ -23,6 +23,9 @@ If you're new to contributing, here's the quickest path:
 2. **[Review our code style](code-style.md)** — We use `ruff` for linting and follow Google-style docstrings.
 3. **[Submit a pull request](pull-requests.md)** — Our PR process is straightforward.
 
+If your change adds or modifies an AI skill under `.agents/skills/`, also read
+the [skill evals guide](skill-evals.md).
+
 ## Community Guidelines
 
 - Be respectful and constructive in all interactions.
