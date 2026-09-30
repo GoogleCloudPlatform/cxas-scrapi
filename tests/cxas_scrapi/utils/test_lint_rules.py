@@ -2303,6 +2303,27 @@ def test_schema_missing_required_field(
         assert "Missing required fields" in msg or "display_name" in msg
 
 
+def test_get_required_fields_distinguishes_optional_from_required() -> None:
+    from cxas_scrapi.utils.lint_rules.schema import _get_required_fields  # noqa: PLC0415,I001
+
+    class MockProto:
+        """Mock proto class docstring.
+
+        Attributes:
+            required_field (str):
+                Required. This field is required.
+            optional_field (str):
+                Optional. This field is optional.
+            optional_with_required_desc (list):
+                Optional. Required properties of Type.OBJECT.
+            api_auth (str):
+                Optional. Required if authentication is enabled.
+        """
+
+    fields = _get_required_fields(MockProto)
+    assert fields == ["required_field"]
+
+
 # ── Structure Rules ──────────────────────────────────────────────────────
 
 
