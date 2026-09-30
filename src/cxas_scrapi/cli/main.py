@@ -669,6 +669,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         progress_callback=progress_callback,
         capture_agent_audio=getattr(args, "capture_agent_audio", False),
         single_bidi_stream=getattr(args, "single_bidi_stream", False),
+        skip_playback_wait=getattr(args, "skip_playback_wait", False),
         report_format=getattr(args, "format", "html") or "html",
         vertex_location=getattr(args, "vertex_location", "global") or "global",
         naturalness=getattr(args, "naturalness", None),
@@ -1877,6 +1878,11 @@ def get_parser() -> argparse.ArgumentParser:
         "--single-bidi-stream",
         action="store_true",
         help="Keep one persistent bidi WebSocket open per audio simulation instead of one connection per turn.",
+    )
+    parser_report.add_argument(
+        "--skip-playback-wait",
+        action="store_true",
+        help="Do not wait out the real-time playback duration of each agent response before sending the next user turn. Audio modality only.",
     )
     parser_report.add_argument(
         "--vertex-location",
