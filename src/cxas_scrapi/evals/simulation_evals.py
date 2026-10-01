@@ -1438,6 +1438,7 @@ class SimulationEvals(Apps):
                     )
                     results[idx] = new_row
 
+        # Fail closed on any run still inconclusive after retries.
         still = [
             (row, why)
             for row in results
@@ -1453,9 +1454,7 @@ class SimulationEvals(Apps):
                 f"{infra_retries} retries -- counted as FAIL:"
             )
             for row, why in still:
-                print(
-                    f"        - {row.get('name')} run {row.get('run')}: {why}"
-                )
+                print(f"  - {row.get('name')} run {row.get('run')}: {why}")
 
         return results
 
