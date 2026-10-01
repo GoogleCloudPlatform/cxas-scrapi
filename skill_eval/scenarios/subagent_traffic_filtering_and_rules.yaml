@@ -1,0 +1,37 @@
+name: Sub-Agent Traffic Filtering and Streaming Rules
+prompt: |
+  You are an expert conversational AI engineer configuring quality governance for a multi-agent CXAS application in project `{project_id}` (location `us`).
+
+  The app contains multiple specialized sub-agents (such as a primary retail agent `cymbal_retail_agent` and an out-of-scope fallback agent `out_of_scope_handling`).
+
+  Please perform the following steps:
+  1. Inspect the app `9c277d43-8399-46e6-b1d0-6de9cbee5ec5` and construct targeted CEL filters for the `cymbal_retail_agent` sub-agent traffic (e.g. `labels.lastTransferSubAgentNames = "cymbal_retail_agent"`).
+  2. Author a scorecard template specifically tailored to evaluate retail product recommendations and cart management.
+  3. Deploy the scorecard and configure a live streaming `AnalysisRule` in Contact Center Insights with:
+     - The sub-agent traffic CEL filter.
+     - `runQaAnnotator: true` attached to the retail scorecard revision.
+     - `runSummarization: true` and `runSentiment: true`.
+  4. Verify that the rule is created and active in Contact Center Insights.
+rubric:
+- criteria: Sub-Agent CEL Filter Construction
+  perfect: |
+    The agent accurately constructed CEL expressions targeting the specific sub-agent (using `labels.lastTransferSubAgentNames` or equivalent routing label) rather than applying blanket scoring across unrelated sub-agents.
+  good: |
+    Constructed the filter with minor syntax adjustments.
+  failed: |
+    Failed to target sub-agent traffic or used invalid CEL syntax.
+- criteria: Tailored Scorecard Design
+  perfect: |
+    The agent authored a scorecard template with rubrics and question criteria specific to the sub-agent's role (e.g. product recommendations and cart handling).
+  good: |
+    Authored generic scorecard questions.
+  failed: |
+    Failed to create a valid scorecard template.
+- criteria: Streaming Rule Activation & Verification
+  perfect: |
+    The agent created and activated the streaming `AnalysisRule` linking the sub-agent filter to the scorecard revision with summarization and sentiment enabled, and verified rule status via the Insights API.
+  good: |
+    Created the rule with minor verification retries.
+  failed: |
+    Failed to create or activate the analysis rule.
+assets: []
