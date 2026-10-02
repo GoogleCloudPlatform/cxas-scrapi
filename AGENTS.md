@@ -32,6 +32,8 @@ Requires Python 3.10+ and [astral-uv](https://docs.astral.sh/uv/getting-started/
 ## Available Skills
 
 This workspace provides several specialized AI skills to assist with development.
+These work in Claude Code, Gemini CLI, and GitHub Copilot — each harness reads
+the same definitions from `.agents/skills/`.
 
 - **`cxas-agent-foundry`**: The primary skill for the end-to-end GECX agent lifecycle. Use this for building agents from PRDs, generating and running evals, debugging failures, and syncing code.
 - **`cxas-autolabel-rules`**: Author, validate, and manage Contact Center AI (CCAI) Insights Autolabeling Rules declaratively via YAML and CEL.

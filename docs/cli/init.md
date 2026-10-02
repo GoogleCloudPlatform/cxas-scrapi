@@ -22,6 +22,8 @@ cxas init [--target-dir DIR] [--force]
 - **`.agents/`** — Agent skill definitions that teach AI coding assistants how to build, test, and deploy CXAS agents.
 - **`.claude/`** — Claude-specific configuration for using the skills via Claude Code.
 - **`.gemini/`** — Gemini-specific configuration.
+- **`.github/agents/`** — Subagent definitions for GitHub Copilot.
+- **`.github/hooks/`** — Hook registration for GitHub Copilot in VS Code.
 - **`AGENTS.md`** — Top-level instructions for AI agents working in this repository.
 
 The exact contents depend on the version of `cxas-scrapi` you have installed. You can inspect what was bundled at `{sys.prefix}/share/cxas-scrapi/skills/`.
@@ -40,6 +42,10 @@ When `--force` is not set and a file already exists, you're prompted:
 | `a` / `all` | Overwrite this file and all remaining files without further prompting. |
 | `s` / `skip` | Keep the existing file and move on. |
 | `q` / `quit` | Abort immediately. Nothing further is installed. |
+
+Directories are merged rather than replaced. Files that `cxas-scrapi` does not
+ship are left untouched, so existing content such as `.github/workflows/` is
+preserved.
 
 ## Examples
 
