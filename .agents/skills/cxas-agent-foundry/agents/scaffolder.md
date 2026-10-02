@@ -88,6 +88,7 @@ For each callback in the TDD's Callbacks section:
 - `<app_dir>/agents/<agent>/<callback_type>/<name>/python_code.py`
 - Common callbacks: `before_agent_callback` (auth derivation), `before_model_callback` (trigger pattern), `after_model_callback` (text injection)
 - Use the template's callbacks as reference for the function signature; adapt the body to the TDD's described logic.
+- **Slot-filling & DAG task execution:** When scaffolding `before_model_callback` for slot-filling agents, implement task execution by returning `LlmResponse.from_parts([Part.from_function_call(name=..., args=...)])` when DAG inputs are ready (along with `Part.from_text(..., partial=True)` for audio agents). Do NOT default to static text preemption so the LLM can generate natural confirmation turns from the tool return.
 - Update the agent's JSON to reference the callback (e.g., `beforeAgentCallbacks: [{pythonCode: "..."}]`). **Crucial**: The callback's `"pythonCode"` path in the agent's JSON must be relative to the app root and prefixed with `"agents/<agent>/"` (e.g., `"agents/support_bot/callbacks/greet_cb.py"`).
 - Follow `references/api-reference.md` → "Callbacks" verbatim for the runtime API. The rules there cover state access, return-value contracts, type imports, and the per-turn semantics that fail only at platform-push (not at lint) — re-read it if you're not sure.
 

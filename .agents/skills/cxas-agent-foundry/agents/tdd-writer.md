@@ -116,6 +116,8 @@ In either mode, if you find yourself about to write a name or behavior you didn'
 
 **Draft mode:** Propose callbacks ONLY when a source requires data derivation, side effects, or trigger-based behavior. For each: agent, callback type (`before_agent`, `before_model`, `after_model`, `after_agent`), proposed purpose, and which source justifies it. If no source motivates any callbacks, write *"No callbacks proposed; revisit if coverage analysis surfaces a need."* Don't add callbacks for symmetry — every callback is complexity the scaffolder will need to write and maintain.
 
+**Slot-Filling & Task Execution Rule:** When designing slot-filling or multi-input collection flows in a TDD, specify that `before_model_callback` uses **`FunctionCall` delegation** (`Part.from_function_call`) when all DAG dependencies are ready, rather than hardcoding static text preemption. This ensures the LLM synthesizes natural confirmation turns from the `toolResponse`. If the app uses audio modality, note the inclusion of `Part.from_text(..., partial=True)` for streaming voice filler during API latency.
+
 ### Step 6 — Coverage Map
 
 For each distinct behavior the sources describe:
