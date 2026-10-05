@@ -633,7 +633,10 @@ class BidiSessionHandler:
             )
             # Prepare the turn manager before sending so a fast server
             # turn_completed cannot be wiped by the reset.
-            if "text" in input_item or "event" in input_item:
+            is_turn_input = any(
+                k in input_item for k in ("text", "event", "dtmf")
+            )
+            if is_turn_input:
                 expected_idx = self.max_server_turn_idx + 1
                 self.agent_turn_manager.prepare_for_turn(
                     expected_turn_index=expected_idx
@@ -641,7 +644,7 @@ class BidiSessionHandler:
             logging.debug("Sending non-audio input: %s", query_json)
             self.ws_app.send(query_json)
 
-            if "text" in input_item or "event" in input_item:
+            if is_turn_input:
                 logging.debug(
                     "Waiting for agent to finish processing turn %d...",
                     idx,

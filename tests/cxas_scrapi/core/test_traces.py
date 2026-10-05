@@ -1194,9 +1194,24 @@ def test_transcribe_user_turns(
         lambda cid: {
             "conversation_id": cid,
             "entries": [
+                {
+                    "kind": "user",
+                    "turn": 0,
+                    "text": "<event>session start</event>",
+                },
+                {
+                    "kind": "user",
+                    "turn": 1,
+                    "text": "<context>agent speaking was interrupted. user did not hear the last agent response.</context>",
+                },
                 {"kind": "user", "turn": 1, "text": "No."},
                 {"kind": "agent", "turn": 1, "text": "Okay."},
                 {"kind": "user", "turn": 2, "text": "No."},
+                {
+                    "kind": "user",
+                    "turn": 3,
+                    "text": "<context>user pressed 1 on keypad.</context>",
+                },
             ],
         },
     )
@@ -1206,12 +1221,14 @@ def test_transcribe_user_turns(
         lambda cid: {
             1: "gs://bucket/dir/user-turn-1.wav",
             2: "gs://bucket/dir/user-turn-2.wav",
+            3: "gs://bucket/dir/user-turn-3.wav",
         },
     )
 
     results = traces_obj.transcribe_user_turns("c1")
     assert len(results) == 2
     assert results[0]["turn_index"] == 1
+    assert results[0]["ces_transcript"] == "No."
     assert results[0]["reprocessed"] is True
     assert results[0]["wer"] == 0.0
     assert results[1]["turn_index"] == 2

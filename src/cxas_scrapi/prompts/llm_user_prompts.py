@@ -290,9 +290,16 @@ You must decide whether to:
    * Once the deviation is resolved on subsequent turns, you MUST resume
      using `"use_past_audio"` for any remaining unused past audio turns that
      align with the conversation.
-   * **DTMF / Silence Rules:** If the agent asks for keypad touch-tone input,
-     output `dtmf: <keys>` in `next_user_utterance`. If the guide specifies
-     silence, output `event: user_inactive`.
+   * **DTMF / Silence / Context Rules:** If the agent asks for keypad
+     touch-tone input (or when replaying a past
+     `<context>user pressed <digits> on keypad.</context>` turn), output
+     `dtmf: <keys>` in `next_user_utterance` (and set
+     `selected_past_turn_index` to the corresponding past keypad turn's
+     `turn_index` if one exists). If the guide or past turn specifies silence
+     or user inactivity (`<context>no user activity detected...</context>`),
+     output `event: user_inactive`. Never copy raw `<context>...</context>`
+     tags (such as `<context>agent speaking was interrupted...</context>`)
+     into `next_user_utterance`.
 
 3. **End Conversation When Complete (`"end_conversation"`):**
    * If all user goals / steps are completed and the agent has resolved the
@@ -304,11 +311,11 @@ You must decide whether to:
 **Output Rules:**
 * Output a single, valid JSON object matching the schema with fields:
   - `decision`: `"use_past_audio"` | `"generate_tts"` | `"end_conversation"`
-  - `selected_past_turn_index`: integer `turn_index` when `decision` is
-    `"use_past_audio"`, otherwise `null`
+  - `selected_past_turn_index`: integer `turn_index` when replaying a past turn
+    (including past audio or past keypad/DTMF turns), otherwise `null`
   - `next_user_utterance`: string utterance (exact past transcript for
-    `"use_past_audio"`, newly generated text for `"generate_tts"`, or `""`
-    for `"end_conversation"`)
+    `"use_past_audio"`, `dtmf: <keys>` for keypad turns, newly generated text
+    for `"generate_tts"`, or `""` for `"end_conversation"`)
   - `decision_justification`: concise explanation of why `"use_past_audio"`,
     `"generate_tts"`, or `"end_conversation"` was chosen
   - `step_progresses`: updated list of step progress objects
