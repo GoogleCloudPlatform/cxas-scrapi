@@ -1122,3 +1122,427 @@ def test_bidi_goodbye_close_log_is_demoted() -> None:
     )
     assert log_filter.filter(goodbye) is False
     assert log_filter.filter(other) is True
+
+
+@patch("cxas_scrapi.evals.shadow_evals.GCSUtils")
+@patch("cxas_scrapi.evals.shadow_evals.Traces")
+@patch("cxas_scrapi.evals.shadow_evals.Tools")
+@patch("cxas_scrapi.evals.shadow_evals.Sessions")
+@patch("cxas_scrapi.evals.shadow_evals.GeminiGenerate")
+def test_shadow_evals_dtmf_context_turns_replay_and_preflight(
+    mock_gemini_cls: Any,
+    mock_sessions_cls: Any,
+    mock_tools_cls: Any,
+    mock_traces_cls: Any,
+    mock_gcs_cls: Any,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Past `<context>user pressed <digits> on keypad.</context>` turns are:
+    1. Excluded from spoken-audio warnings in preflight and fetch;
+    2. Never written as empty 0-frame WAV files;
+    3. Normalized to `dtmf: <digits>` in both `use_past_audio` and
+       `generate_tts` decisions, marked `used=True`, and linked to the past
+       turn so they do not appear in `unreplayed_past_turns`.
+    """
+    mock_tools_cls.return_value.get_tools_map.return_value = {}
+    mock_traces = mock_traces_cls.return_value
+    mock_traces.get_normalized.return_value = {
+        "conversation_id": "conv-dtmf",
+        "start_time": "2026-10-02T17:00:00Z",
+        "raw": {
+            "turns": [
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "chunks": [
+                                {"text": "<event>session start</event>"}
+                            ],
+                        },
+                        {
+                            "role": "Welcome_agent",
+                            "chunks": [
+                                {
+                                    "text": "Hi there. Please enter your 10 digit phone number."
+                                }
+                            ],
+                        },
+                    ]
+                },
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "chunks": [
+                                {
+                                    "text": "<context>user pressed 5550199999 on keypad.</context>"
+                                }
+                            ],
+                        },
+                        {
+                            "role": "Welcome_agent",
+                            "chunks": [
+                                {
+                                    "text": "Got it. Please enter your 4 digit DNIS."
+                                }
+                            ],
+                        },
+                    ]
+                },
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "chunks": [
+                                {
+                                    "text": "<context>user pressed 9 on keypad.</context>"
+                                }
+                            ],
+                        },
+                        {
+                            "role": "Routing_agent",
+                            "chunks": [{"text": "Are you an existing member?"}],
+                        },
+                    ]
+                },
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "chunks": [{"transcript": "Yes."}],
+                        },
+                        {
+                            "role": "Routing_agent",
+                            "chunks": [{"text": "How can I help you today?"}],
+                        },
+                    ]
+                },
+            ]
+        },
+    }
+    # Turn 2 and 3 have 0-frame WAV headers in GCS, Turn 4 has real spoken PCM
+    mock_traces.get_user_audio_uris.return_value = {
+        2: "gs://b/c/user-turn-2.wav",
+        3: "gs://b/c/user-turn-3.wav",
+        4: "gs://b/c/user-turn-4.wav",
+    }
+    mock_traces.get_agent_audio_uris.return_value = {}
+    mock_traces._get_remote_audio_bucket.return_value = "gs://b"
+
+    spoken_pcm = b"\x11\x22" * 200
+    mock_gcs_cls.return_value.download_blob.side_effect = lambda uri: (
+        _make_wav_bytes(spoken_pcm)
+        if "user-turn-4" in uri
+        else _make_wav_bytes(b"")
+    )
+
+    evals = ShadowEvals(
+        app_name="projects/p/locations/us/apps/a", creds=MagicMock()
+    )
+    tc = ShadowTestCase(
+        name="dtmf_replay_test",
+        conversation_id="conv-dtmf",
+        expectations=["Agent greets and asks how to help."],
+    )
+
+    # 1. Preflight counts only the 1 spoken turn (Turn 4), with 1/1 audio
+    check = evals.preflight(tc, modality="audio")
+    assert check.ok
+    assert check.past_user_turns == 1
+    assert check.past_user_turns_with_audio == 1
+    assert not any(i.level == "warning" for i in check.issues)
+
+    # 2. Fetch does not emit false missing-audio warning and does not write
+    # empty WAV files for DTMF turns
+    session_dir = tmp_path / "sess"
+    with caplog.at_level("WARNING"):
+        past_turns, history, _ = evals.fetch_past_conversation_data(
+            tc, session_dir=str(session_dir)
+        )
+    assert "Only " not in caplog.text
+    assert len(past_turns) == 4
+    assert past_turns[1].has_audio is False
+    assert past_turns[1].audio_path is None
+    assert past_turns[2].has_audio is False
+    assert past_turns[2].audio_path is None
+    assert past_turns[3].has_audio is True
+    assert past_turns[3].audio_bytes == spoken_pcm
+
+    # 3. Hybrid ShadowUserConversation handles both GENERATE_TTS ("dtmf: ...")
+    # without selected_past_turn_index and USE_PAST_AUDIO on a keypad turn
+    mock_gemini = MagicMock()
+    mock_gemini.generate.side_effect = [
+        # SimTurn 1: LLM chooses generate_tts with dtmf: 5550199999 and null index
+        ShadowUserConversation.Output(
+            decision=ShadowDecisionType.GENERATE_TTS,
+            selected_past_turn_index=None,
+            next_user_utterance="dtmf: 5550199999",
+            decision_justification="Enter 10-digit phone number via DTMF.",
+        ),
+        # SimTurn 2: LLM chooses use_past_audio on Turn 3 (<context>user pressed 9...)
+        ShadowUserConversation.Output(
+            decision=ShadowDecisionType.USE_PAST_AUDIO,
+            selected_past_turn_index=3,
+            next_user_utterance="<context>user pressed 9 on keypad.</context>",
+            decision_justification="Replay past turn 3 keypad entry.",
+        ),
+        # SimTurn 3: LLM chooses use_past_audio on Turn 4 ("Yes.")
+        ShadowUserConversation.Output(
+            decision=ShadowDecisionType.USE_PAST_AUDIO,
+            selected_past_turn_index=4,
+            next_user_utterance="Yes.",
+            decision_justification="Replay past turn 4 audio.",
+        ),
+    ]
+    conv = ShadowUserConversation(
+        genai_client=mock_gemini,
+        genai_model="gemini-3.1-flash-lite",
+        test_case=tc,
+        past_turns=past_turns,
+        full_past_history=history,
+    )
+    u0, a0, _, _ = conv.next_user_turn()
+    assert u0 == "event: welcome"
+    assert a0 is None
+
+    u1, a1, _, l1 = conv.next_user_turn(
+        "Hi there. Please enter your 10 digit phone number."
+    )
+    assert u1 == "dtmf: 5550199999"
+    assert a1 is None
+    assert l1.selected_past_turn_index == 2
+    assert l1.audio_source == "DTMF"
+    assert conv.past_turns[1].used is True
+
+    u2, a2, _, l2 = conv.next_user_turn("Please enter 9.")
+    assert u2 == "dtmf: 9"
+    assert a2 is None
+    assert l2.selected_past_turn_index == 3
+    assert l2.audio_source == "DTMF"
+    assert conv.past_turns[2].used is True
+
+    u3, a3, _, l3 = conv.next_user_turn("Are you an existing member?")
+    assert u3 == "Yes."
+    assert a3 == spoken_pcm
+    assert l3.selected_past_turn_index == 4
+    assert conv.past_turns[3].used is True
+
+    # 4. Artifact report has 0 unreplayed_past_turns
+    conv.expectation_results = [
+        ExpectationResult(
+            expectation="Agent greets and asks how to help.",
+            status=ExpectationStatus.MET,
+            justification="Done.",
+        )
+    ]
+    artifacts_out = tmp_path / "artifacts"
+    evals.save_shadow_artifacts(conv, str(artifacts_out), tc, "sess-dtmf")
+    data = json.loads((artifacts_out / "shadow_result.json").read_text())
+    assert data["unreplayed_past_turns"] == []
+
+
+@patch("cxas_scrapi.evals.shadow_evals.GCSUtils")
+@patch("cxas_scrapi.evals.shadow_evals.Traces")
+@patch("cxas_scrapi.evals.shadow_evals.Tools")
+@patch("cxas_scrapi.evals.shadow_evals.Sessions")
+@patch("cxas_scrapi.evals.shadow_evals.GeminiGenerate")
+def test_shadow_evals_inactivity_and_interruption_context_turns(
+    mock_gemini_cls: Any,
+    mock_sessions_cls: Any,
+    mock_tools_cls: Any,
+    mock_traces_cls: Any,
+    mock_gcs_cls: Any,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Verifies handling of CES `<context>` and `<event>` chunks:
+    1. Turn 1: `<context>default language: English</context>` +
+       `<event>session start</event>` -> extracted as `<event>session start</event>`
+       and marked used on Turn 0 (`event: welcome`).
+    2. Turn 2: Split inactivity chunks `["<context>",
+       "No user activity detected for 5 seconds.", "</context>"]` -> excluded
+       from spoken-audio warnings and normalized to `event: user_inactive`.
+    3. Turn 3: False-positive barge-in
+       `<context>agent speaking was interrupted by background noise.</context>`
+       -> preserved in `full_past_history` but excluded from `past_turns` so it
+       is never synthesized via TTS or flagged as unreplayed.
+    4. Turn 4: True barge-in `<context>agent speaking was interrupted. user only
+       heard 'Please state' in the last agent response.</context>` paired with
+       spoken transcript `"I need to check my claim."` -> recognized as a spoken
+       turn, downloads `user-turn-4.wav`, strips the `<context>` prefix from
+       `user_transcript`, and replays the authentic caller audio.
+    """
+    mock_tools_cls.return_value.get_tools_map.return_value = {}
+    mock_traces = mock_traces_cls.return_value
+    mock_traces.get_normalized.return_value = {
+        "conversation_id": "conv-ctx",
+        "start_time": "2026-10-05T17:00:00Z",
+        "raw": {
+            "turns": [
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "chunks": [
+                                {
+                                    "text": "<context>default language: English</context>"
+                                },
+                                {"text": "<event>session start</event>"},
+                            ],
+                        },
+                        {
+                            "role": "Welcome_agent",
+                            "chunks": [{"text": "Hello! Are you there?"}],
+                        },
+                    ]
+                },
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "chunks": [
+                                {"text": "<context>"},
+                                {
+                                    "text": "No user activity detected for 5 seconds."
+                                },
+                                {"text": "</context>"},
+                            ],
+                        },
+                        {
+                            "role": "Welcome_agent",
+                            "chunks": [
+                                {
+                                    "text": "I didn't hear anything. Please state your request."
+                                }
+                            ],
+                        },
+                    ]
+                },
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "chunks": [
+                                {
+                                    "text": "<context>agent speaking was interrupted by background noise.</context>"
+                                }
+                            ],
+                        },
+                        {
+                            "role": "Welcome_agent",
+                            "chunks": [
+                                {
+                                    "text": "Please state your request when ready."
+                                }
+                            ],
+                        },
+                    ]
+                },
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "chunks": [
+                                {
+                                    "text": "<context>agent speaking was interrupted. user only heard 'Please state' in the last agent response.</context>"
+                                },
+                                {"transcript": "I need to check my claim."},
+                            ],
+                        },
+                        {
+                            "role": "Claims_agent",
+                            "chunks": [
+                                {"text": "Sure, I can help check your claim."}
+                            ],
+                        },
+                    ]
+                },
+            ]
+        },
+    }
+    spoken_pcm = b"\x33\x44" * 200
+    mock_traces.get_user_audio_uris.return_value = {
+        4: "gs://b/c/user-turn-4.wav",
+    }
+    mock_traces.get_agent_audio_uris.return_value = {}
+    mock_traces._get_remote_audio_bucket.return_value = "gs://b"
+    mock_gcs_cls.return_value.download_blob.return_value = _make_wav_bytes(
+        spoken_pcm
+    )
+
+    evals = ShadowEvals(
+        app_name="projects/p/locations/us/apps/a", creds=MagicMock()
+    )
+    tc = ShadowTestCase(
+        name="ctx_replay_test",
+        conversation_id="conv-ctx",
+        replay_mode="exact",
+        expectations=["Agent helps check the claim."],
+    )
+
+    # 1. Preflight counts 1 spoken turn (Turn 4, despite its barge-in <context>
+    # prefix) and 1/1 spoken turns with audio
+    check = evals.preflight(tc, modality="audio")
+    assert check.ok
+    assert check.past_user_turns == 1
+    assert check.past_user_turns_with_audio == 1
+    assert not any(i.level == "warning" for i in check.issues)
+
+    # 2. Fetch strips passive <context> from spoken turns, drops pure
+    # background-noise turns from `past_turns`, and preserves all context in
+    # `full_past_history`
+    session_dir = tmp_path / "sess_ctx"
+    with caplog.at_level("WARNING"):
+        past_turns, history, _ = evals.fetch_past_conversation_data(
+            tc, session_dir=str(session_dir)
+        )
+    assert "Only " not in caplog.text
+    assert "interrupted by background noise" in history
+    assert "user only heard 'Please state'" in history
+    # 3 actionable turns in past_turns: Turn 1 (welcome), Turn 2 (inactivity),
+    # Turn 3 (barge-in spoken turn from raw turn 4)
+    assert len(past_turns) == 3
+    assert past_turns[0].user_transcript == "<event>session start</event>"
+    assert (
+        past_turns[1].user_transcript
+        == "<context>No user activity detected for 5 seconds.</context>"
+    )
+    assert past_turns[1].has_audio is False
+    assert past_turns[2].user_transcript == "I need to check my claim."
+    assert past_turns[2].has_audio is True
+    assert past_turns[2].audio_bytes == spoken_pcm
+
+    # 3. Exact replay executes: Turn 0 -> event: welcome, Turn 1 ->
+    # event: user_inactive, Turn 2 -> recorded audio for "I need to check my claim."
+    conv = ShadowUserConversation(
+        genai_client=MagicMock(),
+        genai_model="gemini-3.1-flash-lite",
+        test_case=tc,
+        past_turns=past_turns,
+        full_past_history=history,
+    )
+    u0, a0, _, l0 = conv.next_user_turn()
+    assert u0 == "event: welcome"
+    assert a0 is None
+    assert l0.decision == "event"
+    assert conv.past_turns[0].used is True
+
+    u1, a1, _, l1 = conv.next_user_turn("Hello! Are you there?")
+    assert u1 == "event: user_inactive"
+    assert a1 is None
+    assert l1.selected_past_turn_index == 2
+    assert l1.audio_source == "event"
+    assert conv.past_turns[1].used is True
+
+    u2, a2, _, l2 = conv.next_user_turn("Please state your request.")
+    assert u2 == "I need to check my claim."
+    assert a2 == spoken_pcm
+    assert l2.decision == ShadowDecisionType.USE_PAST_AUDIO.value
+    assert l2.selected_past_turn_index == 3
+    assert conv.past_turns[2].used is True
+
+    u3, a3, _, l3 = conv.next_user_turn("Sure, I can help check your claim.")
+    assert u3 == ""
+    assert a3 is None
+    assert l3 is None

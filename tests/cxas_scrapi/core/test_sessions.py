@@ -1247,3 +1247,33 @@ def test_bidi_session_handler_transfer_ends_session() -> None:
     while not handler.response_queue.empty():
         drained.append(handler.response_queue.get_nowait())
     assert {"session_ended": True} in drained
+
+
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_session_handler_dtmf_waits_for_turn_completion(
+    mock_sleep: typing.Any,
+) -> None:
+    """DTMF inputs in BidiSessionHandler must prepare the turn manager, wait
+    for the agent to finish speaking, and save/increment agent audio.
+    """
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config={"session": "projects/p/locations/us/apps/a/sessions/s1"},
+        inputs=[{"dtmf": "5550199999"}],
+    )
+    handler.ws_app = MagicMock()
+    handler.max_server_turn_idx = 1
+    handler.agent_turn_manager.prepare_for_turn = MagicMock()
+    handler.agent_turn_manager.is_agent_done_talking = MagicMock(
+        side_effect=[False, True]
+    )
+    handler._save_and_increment_agent_audio = MagicMock()
+
+    handler._send_single_input({"dtmf": "5550199999"}, idx=0)
+
+    handler.agent_turn_manager.prepare_for_turn.assert_called_once_with(
+        expected_turn_index=2
+    )
+    assert handler.agent_turn_manager.is_agent_done_talking.call_count == 2
+    handler._save_and_increment_agent_audio.assert_called_once()

@@ -353,6 +353,120 @@ def pcm_to_wav_bytes(pcm_bytes: bytes) -> bytes:
         return buf.getvalue()
 
 
+_PAST_DTMF_CONTEXT_RE = re.compile(
+    r"^\s*(?:<context>\s*)?user\s+pressed\s+([0-9*#A-Da-d]+)\s+on\s+keypad\.?\s*(?:</context>)?\s*$",
+    re.IGNORECASE,
+)
+_DTMF_PREFIX_RE = re.compile(r"^\s*dtmf:\s*([0-9*#A-Da-d]+)\s*$", re.IGNORECASE)
+_PAST_INACTIVE_CONTEXT_RE = re.compile(
+    r"^\s*(?:<context>\s*)?no\s+user\s+activity\s+detected\b.*?(?:</context>)?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_PAST_EVENT_TAG_RE = re.compile(
+    r"^\s*<event>\s*(.*?)\s*</event>\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_PAST_MUST_REPLY_RE = re.compile(r"^\s*<must_reply>\s*$", re.IGNORECASE)
+_CONTEXT_BLOCK_RE = re.compile(
+    r"<context>\s*(.*?)\s*</context>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _extract_dtmf_digits(text: str | None) -> str | None:
+    """Extracts keypad digits from a `dtmf: <digits>` or `<context>user pressed
+    <digits> on keypad.</context>` transcript, or returns `None`.
+    """
+    if not text:
+        return None
+    m = _DTMF_PREFIX_RE.match(text) or _PAST_DTMF_CONTEXT_RE.match(text)
+    return m.group(1) if m else None
+
+
+def _extract_user_turn_transcript(raw_texts: list[str] | str | None) -> str:
+    """Extracts the actionable caller transcript from one turn's user chunks.
+
+    In CES traces, a user turn can contain multiple chunks or split `<context>`
+    tags:
+      - Actionable `<context>` turns: keypad DTMF (`<context>user pressed ...
+        on keypad.</context>`) and inactivity timeouts (`<context>no user
+        activity detected...</context>`), which may also be split across
+        `["<context>", "...", "</context>"]` chunks.
+      - Passive runtime `<context>` metadata prepended to a turn: barge-in /
+        interruption context (`<context>agent speaking was interrupted...
+        </context>`, `<context>agent speaking was interrupted by background
+        noise.</context>`), `<context>default language: ...</context>`, or
+        async tool result context.
+
+    Passive `<context>` blocks are stripped so that:
+      1. When paired with caller speech (e.g. barge-in + spoken transcript),
+         only the caller's spoken words remain and the turn's recorded audio
+         (`user-turn-N.wav`) is preserved and replayed.
+      2. When standalone (e.g. false-positive barge-in from background noise),
+         the turn resolves to `""` and is never synthesized aloud via TTS.
+    """
+    if not raw_texts:
+        return ""
+    if isinstance(raw_texts, str):
+        combined = raw_texts.strip()
+    else:
+        combined = " ".join(
+            t.strip() for t in raw_texts if t and t.strip()
+        ).strip()
+    if not combined:
+        return ""
+
+    def _replace_context(match: re.Match[str]) -> str:
+        inner = match.group(1).strip()
+        if _PAST_DTMF_CONTEXT_RE.match(
+            inner
+        ) or _PAST_INACTIVE_CONTEXT_RE.match(inner):
+            return f"<context>{inner}</context>"
+        return ""
+
+    cleaned = _CONTEXT_BLOCK_RE.sub(_replace_context, combined)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def _normalize_special_utterance(text: str | None) -> str:
+    """Normalizes past trace context/event strings (keypad DTMF, inactivity,
+    or `<event>`) into executable session directives (`dtmf: <digits>` or
+    `event: <name>`), stripping any passive `<context>` metadata.
+    """
+    cleaned = _extract_user_turn_transcript(text)
+    if not cleaned:
+        return ""
+    digits = _extract_dtmf_digits(cleaned)
+    if digits is not None:
+        return f"dtmf: {digits}"
+    if _PAST_INACTIVE_CONTEXT_RE.match(cleaned):
+        return "event: user_inactive"
+    event_match = _PAST_EVENT_TAG_RE.match(cleaned)
+    if event_match:
+        event_name = event_match.group(1).strip()
+        if event_name.lower() == "session start":
+            return "event: welcome"
+        return f"event: {event_name}"
+    if _PAST_MUST_REPLY_RE.match(cleaned):
+        return "event: must_reply"
+    return cleaned
+
+
+def _is_non_spoken_turn_text(text: str | None) -> bool:
+    """Returns True if `text` is a non-spoken platform `<event>` or `<context>`
+    turn (such as session start, keypad DTMF entry, inactivity timeout, or
+    passive interruption metadata) rather than spoken caller audio.
+    """
+    cleaned = _extract_user_turn_transcript(text)
+    if not cleaned:
+        return True
+    return (
+        cleaned.startswith(("<event", "<context", "<must_reply"))
+        or _extract_dtmf_digits(cleaned) is not None
+        or bool(_PAST_INACTIVE_CONTEXT_RE.match(cleaned))
+    )
+
+
 class ShadowUserConversation(Conversation):
     """Simulated user for ShadowEvals that arbitrates between replaying past
     recorded audio turns and generating new responses via TTS.
@@ -544,18 +658,52 @@ class ShadowUserConversation(Conversation):
         self, selected_index: int | None
     ) -> ShadowPastTurn | None:
         """Finds the requested past turn by `turn_index`, or falls back to the
-        next sequential unused past turn.
+        next sequential unused past turn (skipping passive-only `<context>`
+        turns).
         """
         if selected_index is not None:
             for pt in self.past_turns:
                 if pt.turn_index == selected_index and not pt.used:
-                    return pt
+                    if _extract_user_turn_transcript(pt.user_transcript):
+                        return pt
+                    pt.used = True
             for pt in self.past_turns:
-                if pt.turn_index == selected_index:
+                if pt.turn_index == selected_index and (
+                    _extract_user_turn_transcript(pt.user_transcript)
+                ):
                     return pt
 
         for pt in self.past_turns:
             if not pt.used:
+                if not _extract_user_turn_transcript(pt.user_transcript):
+                    pt.used = True
+                    continue
+                return pt
+        return None
+
+    def _match_unused_special_past_turn(
+        self, utterance: str, selected_index: int | None = None
+    ) -> ShadowPastTurn | None:
+        """Matches a `dtmf: <digits>` or `event: <name>` utterance to an unused
+        past keypad/inactivity/event turn so it is marked `used` and linked in
+        reports.
+        """
+        normalized_utt = _normalize_special_utterance(utterance)
+        if not normalized_utt.startswith(("dtmf:", "event:")):
+            return None
+
+        if selected_index is not None:
+            for pt in self.past_turns:
+                if pt.turn_index == selected_index and not pt.used:
+                    return pt
+
+        for pt in self.past_turns:
+            if pt.used:
+                continue
+            if (
+                _normalize_special_utterance(pt.user_transcript)
+                == normalized_utt
+            ):
                 return pt
         return None
 
@@ -588,17 +736,18 @@ class ShadowUserConversation(Conversation):
         if self.current_turn == 0:
             session_params = dict(self.test_case_model.session_parameters)
             if self.initial_utterance:
-                utterance = self.initial_utterance
+                utterance = _normalize_special_utterance(self.initial_utterance)
                 self._add_user_utterance(utterance)
                 # If first past turn was also an event or start,
                 # mark it used so exact replay skips it
                 if self.past_turns and not self.past_turns[0].has_audio:
-                    first_text = (
-                        self.past_turns[0].user_transcript or ""
-                    ).strip()
+                    first_text = _extract_user_turn_transcript(
+                        self.past_turns[0].user_transcript
+                    )
                     if (
                         first_text.startswith("<event")
                         or first_text == utterance
+                        or _normalize_special_utterance(first_text) == utterance
                     ):
                         self.past_turns[0].used = True
                 turn_log = ShadowTurnLog(
@@ -616,9 +765,16 @@ class ShadowUserConversation(Conversation):
             first_pt = self._find_past_turn(None)
             if first_pt is not None:
                 first_pt.used = True
-                utterance = first_pt.user_transcript
+                utterance = _normalize_special_utterance(
+                    first_pt.user_transcript
+                )
                 self._add_user_utterance(utterance)
-                has_raw = bool(first_pt.has_audio and first_pt.audio_bytes)
+                is_special = utterance.startswith(("dtmf:", "event:"))
+                has_raw = bool(
+                    not is_special
+                    and first_pt.has_audio
+                    and first_pt.audio_bytes
+                )
                 decision_str = (
                     ShadowDecisionType.USE_PAST_AUDIO.value
                     if has_raw
@@ -636,9 +792,17 @@ class ShadowUserConversation(Conversation):
                             or "past_audio"
                         )
                         if has_raw
-                        else "TTS (fallback: no past audio)"
+                        else (
+                            "DTMF"
+                            if utterance.startswith("dtmf:")
+                            else (
+                                "event"
+                                if utterance.startswith("event:")
+                                else "TTS (fallback: no past audio)"
+                            )
+                        )
                     ),
-                    user_audio_path=first_pt.audio_path,
+                    user_audio_path=first_pt.audio_path if has_raw else None,
                     decision_justification="Initial turn from past recording.",
                 )
                 self.turn_logs.append(turn_log)
@@ -665,10 +829,13 @@ class ShadowUserConversation(Conversation):
                 return "", None, {}, None
 
             next_pt.used = True
-            utterance = next_pt.user_transcript
+            utterance = _normalize_special_utterance(next_pt.user_transcript)
             self._add_user_utterance(utterance)
+            is_special = utterance.startswith(("dtmf:", "event:"))
             has_raw = bool(
-                next_pt.has_audio and next_pt.audio_bytes is not None
+                not is_special
+                and next_pt.has_audio
+                and next_pt.audio_bytes is not None
             )
             decision_str = (
                 ShadowDecisionType.USE_PAST_AUDIO.value
@@ -682,7 +849,15 @@ class ShadowUserConversation(Conversation):
                     or f"user-turn-{next_pt.turn_index}.wav"
                 )
                 if has_raw
-                else "TTS (no past audio)"
+                else (
+                    "DTMF"
+                    if utterance.startswith("dtmf:")
+                    else (
+                        "event"
+                        if utterance.startswith("event:")
+                        else "TTS (no past audio)"
+                    )
+                )
             )
             turn_log = ShadowTurnLog(
                 sim_turn=self.current_turn,
@@ -690,10 +865,12 @@ class ShadowUserConversation(Conversation):
                 selected_past_turn_index=next_pt.turn_index,
                 user_utterance=utterance,
                 audio_source=audio_src,
-                user_audio_path=next_pt.audio_path,
+                user_audio_path=next_pt.audio_path if has_raw else None,
                 decision_justification=(
                     f"Exact replay of past turn #{next_pt.turn_index} "
                     "using recorded caller audio."
+                    if has_raw
+                    else f"Exact replay of past turn #{next_pt.turn_index}."
                 ),
             )
             self.turn_logs.append(turn_log)
@@ -741,16 +918,35 @@ class ShadowUserConversation(Conversation):
             matched_pt = self._find_past_turn(output.selected_past_turn_index)
             if matched_pt is not None:
                 matched_pt.used = True
-                utterance = (
+                raw_utterance = (
                     matched_pt.user_transcript or output.next_user_utterance
                 )
+                utterance = _normalize_special_utterance(raw_utterance)
+                if utterance.startswith(("dtmf:", "event:")):
+                    self._add_user_utterance(utterance)
+                    turn_log = ShadowTurnLog(
+                        sim_turn=self.current_turn,
+                        decision=ShadowDecisionType.GENERATE_TTS.value,
+                        selected_past_turn_index=matched_pt.turn_index,
+                        user_utterance=utterance,
+                        audio_source=(
+                            "DTMF" if utterance.startswith("dtmf:") else "event"
+                        ),
+                        decision_justification=output.decision_justification,
+                    )
+                    self.turn_logs.append(turn_log)
+                    self.current_turn += 1
+                    return utterance, None, {}, turn_log
+
                 if matched_pt.has_audio and matched_pt.audio_bytes is not None:
                     return self._emit_past_audio_turn(
                         matched_pt, output.decision_justification
                     )
 
                 # Fallback to TTS if past turn had no audio file in GCS
-                utterance = utterance or output.next_user_utterance
+                utterance = _normalize_special_utterance(
+                    utterance or output.next_user_utterance
+                )
                 self._add_user_utterance(utterance)
                 turn_log = ShadowTurnLog(
                     sim_turn=self.current_turn,
@@ -770,7 +966,20 @@ class ShadowUserConversation(Conversation):
         # Guardrail: the LLM sometimes paraphrases a recorded past turn via
         # TTS instead of replaying it. If the generated text restates an
         # unused past turn that has audio, replay the authentic recording.
-        utterance = output.next_user_utterance
+        utterance = _normalize_special_utterance(output.next_user_utterance)
+        special_pt = self._match_unused_special_past_turn(
+            utterance, output.selected_past_turn_index
+        )
+        if special_pt is not None:
+            special_pt.used = True
+            selected_idx = special_pt.turn_index
+        else:
+            selected_idx = output.selected_past_turn_index
+            if selected_idx is not None:
+                explicit_pt = self._find_past_turn(selected_idx)
+                if explicit_pt is not None and not explicit_pt.has_audio:
+                    explicit_pt.used = True
+
         paraphrased_pt = self._match_unused_past_turn(utterance)
         if paraphrased_pt is not None:
             paraphrased_pt.used = True
@@ -783,14 +992,19 @@ class ShadowUserConversation(Conversation):
                 ),
             )
 
-        # Deviation mode: GENERATE_TTS
+        # Deviation mode: GENERATE_TTS (or DTMF / event)
         self._add_user_utterance(utterance)
+        audio_source = (
+            "DTMF"
+            if utterance.startswith("dtmf:")
+            else ("event" if utterance.startswith("event:") else "TTS")
+        )
         turn_log = ShadowTurnLog(
             sim_turn=self.current_turn,
             decision=ShadowDecisionType.GENERATE_TTS.value,
-            selected_past_turn_index=output.selected_past_turn_index,
+            selected_past_turn_index=selected_idx,
             user_utterance=utterance,
-            audio_source="TTS",
+            audio_source=audio_source,
             decision_justification=output.decision_justification,
         )
         self.turn_logs.append(turn_log)
@@ -1098,9 +1312,38 @@ class ShadowEvals(Apps):
         }
 
     @staticmethod
+    def _coalesce_user_entries(
+        entries: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Merges consecutive `kind == 'user'` entries from the same turn so
+        multi-chunk turns (e.g. barge-in `<context>` + transcript, or split
+        `<context>` chunks) are evaluated together as a single turn.
+        """
+        merged: list[dict[str, Any]] = []
+        for entry in entries:
+            if (
+                entry.get("kind") == "user"
+                and merged
+                and merged[-1].get("kind") == "user"
+                and merged[-1].get("turn") == entry.get("turn")
+            ):
+                prev_text = (merged[-1].get("text") or "").strip()
+                curr_text = (entry.get("text") or "").strip()
+                merged[-1] = {
+                    **merged[-1],
+                    "text": " ".join(filter(None, [prev_text, curr_text])),
+                }
+            else:
+                merged.append(dict(entry))
+        return merged
+
+    @staticmethod
     def _spoken_user_turn_numbers(normalized: dict[str, Any]) -> list[int]:
         """Returns the 1-based turn numbers in which the caller spoke
-        (session-start events excluded)."""
+        (session-start events, keypad/inactivity `<context>` turns, and
+        standalone passive `<context>` turns excluded; spoken turns with
+        prepended barge-in `<context>` included).
+        """
         numbers: list[int] = []
         raw_turns = (normalized.get("raw") or {}).get("turns") or []
         if raw_turns:
@@ -1111,13 +1354,55 @@ class ShadowEvals(Apps):
                     if (m.get("role") or "").strip().lower() == "user"
                     for c in m.get("chunks") or []
                 ]
-                texts = [t for t in texts if t]
-                if texts and not texts[0].startswith("<event"):
+                cleaned = _extract_user_turn_transcript(texts)
+                if cleaned and not _is_non_spoken_turn_text(cleaned):
                     numbers.append(turn_idx)
             return numbers
-        for entry in normalized.get("entries", []) or []:
-            text = (entry.get("text") or "").strip()
-            if entry.get("kind") == "user" and not text.startswith("<event"):
+        for entry in ShadowEvals._coalesce_user_entries(
+            normalized.get("entries", []) or []
+        ):
+            cleaned = _extract_user_turn_transcript(entry.get("text"))
+            if (
+                entry.get("kind") == "user"
+                and cleaned
+                and not _is_non_spoken_turn_text(cleaned)
+            ):
+                numbers.append(int(entry.get("turn", 0)) + 1)
+        return numbers
+
+    @staticmethod
+    def _all_replayable_user_turn_numbers(
+        normalized: dict[str, Any],
+    ) -> list[int]:
+        """Returns the 1-based turn numbers of all actionable caller turns
+        (spoken, keypad DTMF, or user inactivity timeout, excluding `<event>`
+        triggers and standalone passive `<context>` turns).
+        """
+        numbers: list[int] = []
+        raw_turns = (normalized.get("raw") or {}).get("turns") or []
+        if raw_turns:
+            for turn_idx, p_turn in enumerate(raw_turns, start=1):
+                texts = [
+                    (c.get("text") or c.get("transcript") or "").strip()
+                    for m in p_turn.get("messages", []) or []
+                    if (m.get("role") or "").strip().lower() == "user"
+                    for c in m.get("chunks") or []
+                ]
+                cleaned = _extract_user_turn_transcript(texts)
+                if cleaned and not cleaned.startswith(
+                    ("<event", "<must_reply")
+                ):
+                    numbers.append(turn_idx)
+            return numbers
+        for entry in ShadowEvals._coalesce_user_entries(
+            normalized.get("entries", []) or []
+        ):
+            cleaned = _extract_user_turn_transcript(entry.get("text"))
+            if (
+                entry.get("kind") == "user"
+                and cleaned
+                and not cleaned.startswith(("<event", "<must_reply"))
+            ):
                 numbers.append(int(entry.get("turn", 0)) + 1)
         return numbers
 
@@ -1174,8 +1459,9 @@ class ShadowEvals(Apps):
             return result
 
         spoken = self._spoken_user_turn_numbers(normalized)
-        result.past_user_turns = len(spoken)
-        if not spoken:
+        replayable = self._all_replayable_user_turn_numbers(normalized)
+        result.past_user_turns = len(spoken) or len(replayable)
+        if not replayable:
             result.add(
                 "error",
                 f"Past conversation '{tc.conversation_id}' has no caller turns "
@@ -1183,7 +1469,7 @@ class ShadowEvals(Apps):
             )
             return result
 
-        if modality == "audio":
+        if modality == "audio" and spoken:
             uris = self._list_turn_audio_uris(
                 traces_client, tc.conversation_id, normalized, "user"
             )
@@ -1211,14 +1497,14 @@ class ShadowEvals(Apps):
                     "caller turns have recorded audio; the rest will be "
                     f"synthesized via TTS. {recording_hint}",
                 )
-            if not self._target_recording_bucket():
-                result.add(
-                    "info",
-                    f"Audio recording is not enabled on {self.app_name}, so "
-                    "new calls will not be recorded to GCS. Pass "
-                    "`artifacts_dir` to keep local copies of the replayed "
-                    "audio and a side-by-side HTML report.",
-                )
+        if modality == "audio" and not self._target_recording_bucket():
+            result.add(
+                "info",
+                f"Audio recording is not enabled on {self.app_name}, so "
+                "new calls will not be recorded to GCS. Pass "
+                "`artifacts_dir` to keep local copies of the replayed "
+                "audio and a side-by-side HTML report.",
+            )
 
         if not tc.session_parameters and tc.use_tool_fakes is None:
             result.add(
@@ -1327,14 +1613,23 @@ class ShadowEvals(Apps):
                                 f"response={t_resp}"
                             )
 
-                if turn_user_texts:
+                cleaned_user_text = _extract_user_turn_transcript(
+                    turn_user_texts
+                )
+                if cleaned_user_text:
                     user_turn_counter += 1
+                    is_non_spoken = _is_non_spoken_turn_text(cleaned_user_text)
                     # Platform recordings are numbered per 1-based
                     # conversation turn (`user-turn-N` == raw turn N), so
                     # prefer `turn_idx`; fall back to the user-turn counter.
-                    audio_uri = user_audio_uris.get(
-                        turn_idx
-                    ) or user_audio_uris.get(user_turn_counter)
+                    audio_uri = (
+                        None
+                        if is_non_spoken
+                        else (
+                            user_audio_uris.get(turn_idx)
+                            or user_audio_uris.get(user_turn_counter)
+                        )
+                    )
                     audio_path = None
                     pcm_bytes = None
 
@@ -1342,7 +1637,7 @@ class ShadowEvals(Apps):
                         try:
                             raw_wav = gcs_client.download_blob(audio_uri)
                             pcm_bytes = extract_pcm_bytes_from_wav(raw_wav)
-                            if session_dir:
+                            if pcm_bytes and session_dir:
                                 os.makedirs(session_dir, exist_ok=True)
                                 audio_path = os.path.join(
                                     session_dir,
@@ -1360,13 +1655,13 @@ class ShadowEvals(Apps):
                     past_turns.append(
                         ShadowPastTurn(
                             turn_index=user_turn_counter,
-                            user_transcript=" ".join(turn_user_texts),
+                            user_transcript=cleaned_user_text,
                             preceding_agent_response=" ".join(last_agent_texts),
                             audio_uri=audio_uri,
                             audio_path=audio_path,
                             has_audio=bool(pcm_bytes),
                             used=False,
-                            audio_bytes=pcm_bytes,
+                            audio_bytes=pcm_bytes or None,
                             agent_response=" ".join(turn_agent_reply),
                             agent_audio_uri=agent_audio_uris.get(turn_idx),
                         )
@@ -1377,16 +1672,27 @@ class ShadowEvals(Apps):
                     last_agent_texts.extend(turn_agent_texts)
         else:
             # Fallback to flat `entries` if `raw.turns` is absent
-            for entry in normalized.get("entries", []) or []:
+            for entry in self._coalesce_user_entries(
+                normalized.get("entries", []) or []
+            ):
                 kind = entry.get("kind")
                 turn_num = int(entry.get("turn", 0)) + 1
                 if kind == "user":
-                    user_turn_counter += 1
                     u_text = (entry.get("text") or "").strip()
                     history_lines.append(f"[Turn {turn_num}] User: {u_text}")
-                    audio_uri = user_audio_uris.get(
-                        turn_num
-                    ) or user_audio_uris.get(user_turn_counter)
+                    cleaned_user_text = _extract_user_turn_transcript(u_text)
+                    if not cleaned_user_text:
+                        continue
+                    user_turn_counter += 1
+                    is_non_spoken = _is_non_spoken_turn_text(cleaned_user_text)
+                    audio_uri = (
+                        None
+                        if is_non_spoken
+                        else (
+                            user_audio_uris.get(turn_num)
+                            or user_audio_uris.get(user_turn_counter)
+                        )
+                    )
                     audio_path = None
                     pcm_bytes = None
                     if audio_uri and gcs_client is not None:
@@ -1402,13 +1708,13 @@ class ShadowEvals(Apps):
                     past_turns.append(
                         ShadowPastTurn(
                             turn_index=user_turn_counter,
-                            user_transcript=u_text,
+                            user_transcript=cleaned_user_text,
                             preceding_agent_response=" ".join(last_agent_texts),
                             audio_uri=audio_uri,
                             audio_path=audio_path,
                             has_audio=bool(pcm_bytes),
                             used=False,
-                            audio_bytes=pcm_bytes,
+                            audio_bytes=pcm_bytes or None,
                             agent_audio_uri=agent_audio_uris.get(turn_num),
                         )
                     )
@@ -1434,7 +1740,7 @@ class ShadowEvals(Apps):
         spoken = [
             pt
             for pt in past_turns
-            if not (pt.user_transcript or "").lstrip().startswith("<event")
+            if not _is_non_spoken_turn_text(pt.user_transcript)
         ]
         with_audio = sum(1 for pt in spoken if pt.has_audio)
         if spoken and with_audio < len(spoken):
@@ -1489,6 +1795,7 @@ class ShadowEvals(Apps):
         When `audio_bytes` is `None`, synthesizes `user_utterance` via TTS (or
         sends an event/dtmf).
         """
+        user_utterance = _normalize_special_utterance(user_utterance)
         run_kwargs: dict[str, Any] = {
             "session_id": session_id,
             "variables": variables,
@@ -1752,7 +2059,10 @@ class ShadowEvals(Apps):
                 p
                 for idx, p in past_payload.items()
                 if idx not in replayed
-                and not (p["user_text"] or "").lstrip().startswith("<event")
+                and _extract_user_turn_transcript(p["user_text"])
+                and not _extract_user_turn_transcript(
+                    p["user_text"]
+                ).startswith(("<event", "<must_reply"))
             ],
         }
         with open(

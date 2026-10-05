@@ -705,7 +705,12 @@ class Traces(Common):
         )
 
         user_entries = [
-            e for e in normalized.get("entries", []) if e.get("kind") == "user"
+            e
+            for e in normalized.get("entries", [])
+            if e.get("kind") == "user"
+            and not (e.get("text") or "")
+            .lstrip()
+            .startswith(("<context", "<event", "<must_reply"))
         ]
 
         def _eval_user_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
