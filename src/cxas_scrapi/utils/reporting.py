@@ -29,7 +29,7 @@ import jinja2
 import pandas as pd
 import yaml
 
-from cxas_scrapi.core import tools
+from cxas_scrapi.core import conversation_history, tools
 from cxas_scrapi.evals import runner as evals_runner
 from cxas_scrapi.utils import (
     base_components,
@@ -37,6 +37,7 @@ from cxas_scrapi.utils import (
     gcs_utils,
     report_components,
 )
+from cxas_scrapi.utils.latency_parser import LatencyParser
 
 _ORIG_OPEN = open
 
@@ -115,6 +116,734 @@ def _get_html_head(ts: typing.Any) -> str:
 """
 
 
+def _fmt_ms(val: float | int | None) -> str:
+    """Format milliseconds with thousands separator, e.g. '2,902 ms'."""
+    if val is None:
+        return "N/A"
+    return f"{round(float(val)):,} ms"
+
+
+def _pl_status_cls(pl_ms: float | None) -> str:
+    """Return CSS status class ('pass', 'warn', 'fail') for PL."""
+    if pl_ms is None:
+        return "meta"
+    if pl_ms <= 1500.0:
+        return "pass"
+    if pl_ms <= 2500.0:
+        return "warn"
+    return "fail"
+
+
+def _pl_turn_drawer_cls(pl_ms: float | None) -> str:
+    """Return CSS border class ('pl-fast', 'pl-warn', 'pl-slow') for a turn."""
+    if pl_ms is None or pl_ms <= 1500.0:
+        return "pl-fast"
+    if pl_ms <= 2500.0:
+        return "pl-warn"
+    return "pl-slow"
+
+
+def _render_turn_latency_drawer(turn_pl: dict[str, Any]) -> str:
+    """Render collapsed-by-default Per-Turn Perceived Latency drawer."""
+    if not isinstance(turn_pl, dict):
+        return ""
+    turn_num = turn_pl.get("turn_num", "?")
+    pl_ms = turn_pl.get("pl_ms")
+    is_silent = turn_pl.get("is_silent", False)
+    drawer_cls = _pl_turn_drawer_cls(pl_ms)
+    status_cls = _pl_status_cls(pl_ms)
+    pl_str = "Silent (No Audio)" if is_silent else _fmt_ms(pl_ms)
+
+    meta_parts = [str(turn_pl.get("category_label", "Turn"))]
+    if turn_pl.get("filler_masked"):
+        saved_str = _fmt_ms(turn_pl.get("filler_saved_ms", 0))
+        meta_parts.append(f"Masked by Filler · Saved {saved_str}")
+    elif not is_silent and turn_pl.get("pre_speech_summary"):
+        meta_parts.append(str(turn_pl["pre_speech_summary"]))
+    if turn_pl.get("bottleneck_label") and not turn_pl.get("filler_masked"):
+        meta_parts.append(f"Bottleneck: {turn_pl['bottleneck_label']}")
+    meta_str = " · ".join(meta_parts)
+
+    first_audio_pct = turn_pl.get("first_audio_pct")
+    fa_marker = (
+        f'<div class="wf-first-audio-line" style="left:{first_audio_pct}%;" '
+        f'title="First Audio: {_fmt_ms(pl_ms)}"></div>'
+        if first_audio_pct is not None
+        else ""
+    )
+
+    wf_rows_html = ""
+    wf_kind_to_seg = {
+        "vad": "pl-seg-vad",
+        "cb": "pl-seg-cb",
+        "llm": "pl-seg-sllm",
+        "tool": "pl-seg-tool",
+        "guardrail": "pl-seg-gap",
+    }
+    for idx, wf in enumerate(turn_pl.get("waterfall_spans", []), start=1):
+        seg_cls = wf_kind_to_seg.get(wf.get("kind", ""), "pl-seg-gap")
+        if wf.get("is_first_audio"):
+            seg_cls = (
+                "pl-seg-filler" if wf.get("kind") == "cb" else "pl-seg-ttfa"
+            )
+        opacity = (
+            "opacity:0.6;"
+            if (not wf.get("is_pre_speech") and wf.get("kind") != "vad")
+            else ""
+        )
+        dur_cls = (
+            "fail"
+            if wf.get("is_pre_speech") and wf.get("dur_ms", 0) > 1500
+            else ""
+        )
+        left_p = wf.get("left_pct", 0)
+        width_p = wf.get("width_pct", 2)
+        wf_dur = _fmt_ms(wf.get("dur_ms", 0))
+        cbs = wf.get("callbacks") or []
+        if wf.get("kind") == "cb" and cbs:
+            sub_rows_html = ""
+            for cb in cbs:
+                cb_seq = cb.get("seq", 1)
+                cb_nm = _escape(cb.get("cb_name", "callback"))
+                cb_cts = cb.get("child_tools") or []
+                if cb_cts:
+                    ct_str = ", ".join(
+                        f"{_escape(ct['name'])} ({round(ct['dur_ms'])}ms)"
+                        for ct in cb_cts[:3]
+                    )
+                    if len(cb_cts) > 3:
+                        ct_str += f", +{len(cb_cts) - 3} more"
+                    cb_extra = f" &rarr; {ct_str}"
+                elif cb.get("code_ms", 0) > 0:
+                    cb_extra = f" (code {round(cb['code_ms'])}ms)"
+                else:
+                    cb_extra = ""
+                cb_left = cb.get("left_pct", left_p)
+                cb_width = cb.get("width_pct", 1.5)
+                cb_dur = _fmt_ms(cb.get("dur_ms", 0))
+                sub_rows_html += (
+                    '<div class="wf-row wf-sub-row">'
+                    f'<div><span class="cb-seq-badge">#{cb_seq}</span> '
+                    f"<code>{cb_nm}</code>"
+                    f'<span class="meta">{cb_extra}</span></div>'
+                    '<div class="wf-track">'
+                    f'<div class="wf-bar {seg_cls}" '
+                    f'style="left:{cb_left}%;width:{cb_width}%;{opacity}">'
+                    f"</div>{fa_marker}</div>"
+                    f'<div class="wf-dur">{cb_dur}</div>'
+                    "</div>\n"
+                )
+            wf_rows_html += (
+                '<details class="wf-cb-details">'
+                '<summary class="wf-row wf-cb-summary">'
+                f'<div>{idx}. <span class="pl-arrow">&#9654;</span>'
+                f"<code>{_escape(wf.get('label', ''))}</code> "
+                f'<span class="meta">({_escape(wf.get("detail", ""))})'
+                "</span></div>"
+                '<div class="wf-track">'
+                f'<div class="wf-bar {seg_cls}" '
+                f'style="left:{left_p}%;width:{width_p}%;{opacity}"></div>'
+                f"{fa_marker}</div>"
+                f'<div class="wf-dur {dur_cls}">{wf_dur}</div>'
+                "</summary>"
+                f'<div class="wf-cb-list">{sub_rows_html}</div>'
+                "</details>\n"
+            )
+        else:
+            wf_rows_html += (
+                '<div class="wf-row">'
+                f"<div>{idx}. <code>{_escape(wf.get('label', ''))}</code> "
+                f'<span class="meta">({_escape(wf.get("detail", ""))})'
+                "</span></div>"
+                '<div class="wf-track">'
+                f'<div class="wf-bar {seg_cls}" '
+                f'style="left:{left_p}%;width:{width_p}%;{opacity}"></div>'
+                f"{fa_marker}</div>"
+                f'<div class="wf-dur {dur_cls}">{wf_dur}</div>'
+                "</div>\n"
+            )
+
+    return (
+        f'<details class="pl-turn-details {drawer_cls} latency-drawer">'
+        f'<summary><span class="pl-arrow">&#9654;</span>⏱ '
+        f"<b>Turn {turn_num} Perceived Latency: "
+        f'<span class="{status_cls}">{_escape(pl_str)}</span></b> '
+        f'<span class="meta">({_escape(meta_str)} — '
+        "click for waterfall)</span></summary>"
+        f'<div style="margin-top:6px;">{wf_rows_html}</div>'
+        "</details>\n"
+    )
+
+
+def _render_conv_latency_drawer(
+    conv_pl: dict[str, Any], run_label: str = ""
+) -> str:
+    """Render collapsed-by-default Per-Conversation Perceived Latency drawer."""
+    if not isinstance(conv_pl, dict) or not conv_pl.get("turns"):
+        return ""
+    avg_ms = conv_pl.get("avg_ms", 0.0)
+    p50_ms = conv_pl.get("p50_ms", 0.0)
+    p90_ms = conv_pl.get("p90_ms", 0.0)
+    slice_lbl = conv_pl.get("primary_slice_label", "Audio")
+    filler_cnt = conv_pl.get("filler_masked_count", 0)
+    total_turns = conv_pl.get("total_turns", len(conv_pl["turns"]))
+    lbl_suffix = f" ({_escape(run_label)})" if run_label else ""
+
+    rows_html = ""
+    for t in conv_pl["turns"]:
+        t_pl = t.get("pl_ms")
+        t_cls = _pl_status_cls(t_pl)
+        pl_cell = (
+            '<span class="meta">Silent</span>'
+            if t.get("is_silent")
+            else f'<b class="{t_cls}">{_fmt_ms(t_pl)}</b>'
+        )
+        bd = t.get("breakdown_ms", {})
+        if t.get("filler_masked"):
+            mask_cell = (
+                '<span class="badge pass">'
+                f"Masked (Saved {_fmt_ms(t.get('filler_saved_ms', 0))})</span>"
+            )
+        else:
+            mask_cell = _escape(t.get("bottleneck_label", "-"))
+        rows_html += (
+            "<tr>"
+            f"<td>Turn {t.get('turn_num', '?')}</td>"
+            f"<td>{_escape(t.get('category_label', ''))}</td>"
+            f"<td>{pl_cell}</td>"
+            f"<td>{_fmt_ms(bd.get('callback_ms', 0))}</td>"
+            f"<td>{_fmt_ms(bd.get('llm_ttfc_ms', 0))}</td>"
+            f"<td>{_fmt_ms(bd.get('tool_ms', 0))}</td>"
+            f"<td>{_fmt_ms(bd.get('tts_ms', 0))}</td>"
+            f"<td>{mask_cell}</td>"
+            "</tr>\n"
+        )
+
+    avg_cls = _pl_status_cls(avg_ms)
+    return (
+        '<details class="pl-conv-details latency-drawer">\n'
+        f'<summary><span class="pl-arrow">&#9654;</span>⏱ '
+        f"<b>Perceived Latency Summary{lbl_suffix}</b> — "
+        f'{_escape(slice_lbl)} Avg: <b class="{avg_cls}">{_fmt_ms(avg_ms)}</b> '
+        f'| p50: <b class="{_pl_status_cls(p50_ms)}">{_fmt_ms(p50_ms)}</b> | '
+        f'p90: <b class="{_pl_status_cls(p90_ms)}">{_fmt_ms(p90_ms)}</b> | '
+        f"Filler Masked: <b>{filler_cnt}/{total_turns} turns</b></summary>\n"
+        '<div style="margin-top:8px;">\n'
+        "<table>\n"
+        "<tr><th>Turn</th><th>Category</th><th>Perceived Latency</th>"
+        "<th>Callbacks</th><th>LLM Inference</th><th>Tools / APIs</th>"
+        "<th>TTS / Audio</th><th>Filler Masking / Bottleneck</th></tr>\n"
+        f"{rows_html}"
+        "</table>\n"
+        "</div>\n"
+        "</details>\n"
+    )
+
+
+def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
+    """Render Suite-Level Perceived Latency & Bottleneck Analysis drawer."""
+    if not isinstance(suite_pl, dict) or not suite_pl.get("primary"):
+        return ""
+    prim = suite_pl["primary"]
+    slices = suite_pl.get("slices", {})
+    active_key = suite_pl.get("primary_slice_key", "customer_audio")
+
+    p50_cls = _pl_status_cls(prim.get("p50_ms"))
+    p90_cls = _pl_status_cls(prim.get("p90_ms"))
+
+    slice_btns_html = ""
+    slice_panels_html = ""
+    slice_order = [
+        ("customer_audio", "Customer Audio Turns"),
+        ("session_start", "Session Start"),
+        ("inactivity_poll", "Inactivity / Hold Polls"),
+    ]
+    for skey, s_default_label in slice_order:
+        sdata = slices.get(skey)
+        if not sdata:
+            continue
+        is_active = skey == active_key
+        btn_cls = "pl-slice-btn active" if is_active else "pl-slice-btn"
+        disp = "block" if is_active else "none"
+        spoken_cnt = sdata.get("spoken_count", 0)
+        silent_cnt = sdata.get("silent_count", 0)
+        cnt_lbl = (
+            f"{spoken_cnt} spoken, {silent_cnt} silent"
+            if silent_cnt > 0
+            else f"{spoken_cnt}"
+        )
+        slice_btns_html += (
+            f'<button type="button" class="{btn_cls}" id="pl-btn-{skey}" '
+            f"onclick=\"switchPlSlice('{skey}')\">"
+            f"{_escape(s_default_label)} ({cnt_lbl})</button>\n"
+        )
+
+        st = sdata.get("stack", {})
+        slo_under_2s = round(100.0 - float(sdata.get("over_2s_pct", 0.0)), 1)
+        slo_cls = (
+            "pass"
+            if slo_under_2s >= 80
+            else ("warn" if slo_under_2s >= 50 else "fail")
+        )
+
+        avg_c = _pl_status_cls(sdata.get("avg_ms"))
+        p50_c = _pl_status_cls(sdata.get("p50_ms"))
+        p90_c = _pl_status_cls(sdata.get("p90_ms"))
+        avg_s = _fmt_ms(sdata.get("avg_ms"))
+        unm_s = _fmt_ms(sdata.get("unmasked_avg_ms"))
+        p50_s = _fmt_ms(sdata.get("p50_ms"))
+        p90_s = _fmt_ms(sdata.get("p90_ms"))
+        max_s = _fmt_ms(sdata.get("max_ms"))
+        u1_pct = sdata.get("under_1s_pct", 0)
+        o3_pct = sdata.get("over_3s_pct", 0)
+        f_cnt = sdata.get("filler_masked_count", 0)
+        f_sav = _fmt_ms(sdata.get("filler_saved_avg_ms", 0))
+        s_lbl = _escape(sdata.get("label", ""))
+
+        cb_w = max(0.0, st.get("callback_pct", 0))
+        cb_m = _fmt_ms(st.get("callback_ms", 0))
+        cb_p = st.get("callback_pct", 0)
+
+        tl_w = max(0.0, st.get("tool_pct", 0))
+        tl_m = _fmt_ms(st.get("tool_ms", 0))
+        tl_p = st.get("tool_pct", 0)
+
+        lm_w = max(0.0, st.get("llm_ttfc_pct", 0))
+        lm_m = _fmt_ms(st.get("llm_ttfc_ms", 0))
+        lm_p = st.get("llm_ttfc_pct", 0)
+
+        tt_w = max(0.0, st.get("tts_pct", 0))
+        tt_m = _fmt_ms(st.get("tts_ms", 0))
+        tt_p = st.get("tts_pct", 0)
+
+        ov_w = max(0.0, st.get("overhead_pct", 0))
+        ov_m = _fmt_ms(st.get("overhead_ms", 0))
+
+        slice_panels_html += (
+            f'<div class="pl-slice-panel" id="pl-slice-{skey}" '
+            f'style="display:{disp};">\n'
+            '  <div class="pl-overview-card">\n'
+            '    <div class="pl-kpi-strip">\n'
+            '      <div class="pl-kpi-item">'
+            '<span class="kpi-label">Mean PL</span> '
+            f'<b class="{avg_c}">{avg_s}</b> '
+            f'<span class="meta">(unmasked {unm_s})</span></div>\n'
+            '      <div class="pl-kpi-item">'
+            '<span class="kpi-label">p50</span> '
+            f'<b class="{p50_c}">{p50_s}</b> '
+            f'<span class="meta">(&lt;1s: {u1_pct:.0f}%)</span></div>\n'
+            '      <div class="pl-kpi-item">'
+            '<span class="kpi-label">p90 / Max</span> '
+            f'<b class="{p90_c}">{p90_s}</b> '
+            f'<span class="meta">/ {max_s}</span></div>\n'
+            '      <div class="pl-kpi-item">'
+            '<span class="kpi-label">&le;2.0s SLO</span> '
+            f'<b class="{slo_cls}">{slo_under_2s:.1f}%</b> '
+            f'<span class="meta">(&gt;3s: {o3_pct:.0f}%)</span></div>\n'
+            '      <div class="pl-kpi-item">'
+            '<span class="kpi-label">Filler Masked</span> '
+            f'<b class="pass">{f_cnt} turns</b> '
+            f'<span class="meta">(saved {f_sav})</span></div>\n'
+            "    </div>\n"
+            '    <div class="pl-stack-header">'
+            f"Pre-Speech Critical Path ({avg_s} Mean on {s_lbl})</div>\n"
+            '    <div class="pl-stack-bar">\n'
+            f'      <div class="pl-seg-cb" style="width:{cb_w}%" '
+            f'title="Callbacks: {cb_m}">Callbacks {cb_m} ({cb_p:.0f}%)</div>\n'
+            f'      <div class="pl-seg-tool" style="width:{tl_w}%" '
+            f'title="Tools/APIs: {tl_m}">Tools {tl_m} ({tl_p:.0f}%)</div>\n'
+            f'      <div class="pl-seg-sllm" style="width:{lm_w}%" '
+            f'title="LLM TTFC: {lm_m}">LLM {lm_m} ({lm_p:.0f}%)</div>\n'
+            f'      <div class="pl-seg-ttfa" style="width:{tt_w}%" '
+            f'title="TTS/Audio: {tt_m}">TTS {tt_m} ({tt_p:.0f}%)</div>\n'
+            f'      <div class="pl-seg-gap" style="width:{ov_w}%" '
+            f'title="Overhead/Gap: {ov_m}">Gap {ov_m}</div>\n'
+            "    </div>\n"
+            "  </div>\n"
+            "</div>\n"
+        )
+
+    # Table A: Pre-Speech Component Breakdown & Signals
+    table_a_rows = ""
+    for row in suite_pl.get("optimization_targets", [])[:10]:
+        type_badge = {
+            "LLM": "sim",
+            "Tool / API": "tool",
+            "Callback": "callback",
+            "Guardrail": "golden",
+        }.get(row.get("type", ""), "neutral")
+        p90_c = _pl_status_cls(row.get("p90_ms"))
+        share_pct = float(row.get("share_of_pl_pct", 0.0) or 0.0)
+        share_cls = (
+            "fail"
+            if share_pct >= 15.0
+            else ("warn" if share_pct >= 5.0 else "")
+        )
+        cpt = float(row.get("calls_per_turn", 0.0) or 0.0)
+        r_type = _escape(row.get("type", ""))
+        r_agent = _escape(row.get("agent", ""))
+        r_imp = _fmt_ms(row.get("avg_pl_impact_ms"))
+        r_obs = _escape(
+            row.get("observation", row.get("recommendation", "")) or ""
+        )
+
+        sub_cb_html = ""
+        sub_cbs = row.get("sub_callbacks") or []
+        if sub_cbs:
+            items_html = ""
+            for sc in sub_cbs:
+                sc_seq = sc.get("seq", 1)
+                sc_nm = _escape(sc.get("cb_name", "callback"))
+                sc_avg = _fmt_ms(sc.get("avg_ms", 0))
+                sc_p90 = _fmt_ms(sc.get("p90_ms", 0))
+                sc_cnt = sc.get("calls", 0)
+                sc_cts = sc.get("child_tools") or []
+                if sc_cts:
+                    ct_str = ", ".join(
+                        f"{_escape(ct['name'])} ({round(ct['avg_ms'])}ms)"
+                        for ct in sc_cts[:3]
+                    )
+                    if len(sc_cts) > 3:
+                        ct_str += f", +{len(sc_cts) - 3} more"
+                    ct_html = f' · <span class="meta">&rarr; {ct_str}</span>'
+                else:
+                    ct_html = ""
+                items_html += (
+                    '<div class="cb-sub-item">'
+                    f'<span class="cb-seq-badge">#{sc_seq}</span> '
+                    f"<code>{sc_nm}</code> — avg <b>{sc_avg}</b>, "
+                    f'p90 <b>{sc_p90}</b> <span class="meta">'
+                    f"({sc_cnt} calls)</span>{ct_html}</div>\n"
+                )
+            cb_cnt_lbl = (
+                "1 callback"
+                if len(sub_cbs) == 1
+                else f"{len(sub_cbs)} callbacks in order"
+            )
+            sub_cb_html = (
+                '<details class="cb-sub-details">'
+                f'<summary><span class="pl-arrow">&#9654;</span>'
+                f"{cb_cnt_lbl}</summary>"
+                f'<div class="cb-sub-list">{items_html}</div>'
+                "</details>"
+            )
+
+        table_a_rows += (
+            "<tr>"
+            f"<td><b><code>{_escape(row.get('component', ''))}</code></b> "
+            f'<span class="badge {type_badge}">{r_type}</span>'
+            f'<br><span class="meta">Agent: {r_agent}</span>'
+            f"{sub_cb_html}</td>"
+            f"<td>{row.get('calls', 0)} ({cpt:.2g}&times;/turn)</td>"
+            f"<td><b>{_fmt_ms(row.get('avg_ms'))}</b></td>"
+            f"<td>{_fmt_ms(row.get('p50_ms'))}</td>"
+            f'<td class="{p90_c}"><b>{_fmt_ms(row.get("p90_ms"))}</b></td>'
+            f'<td class="{share_cls}"><b>{share_pct:.1f}%</b> '
+            f"({r_imp}/turn)</td>"
+            f'<td><span class="meta">{r_obs}</span></td>'
+            "</tr>\n"
+        )
+
+    # Table B: Pre-Speech Tool Masking & Dead-Air Signals
+    table_b_rows = ""
+    for frow in suite_pl.get("filler_table", []):
+        s_cls = frow.get("status_cls", "neutral")
+        default_badge = (
+            f"{frow.get('status', '')} "
+            f"({frow.get('masked_calls', 0)}/{frow.get('calls', 0)} Masked)"
+        )
+        badge_lbl = frow.get("badge_label", default_badge)
+        if (
+            frow.get("masked_calls", 0) > 0
+            and frow.get("unmasked_calls", 0) == 0
+        ):
+            sav_s = _fmt_ms(frow.get("net_saved_ms"))
+            dead_air_html = (
+                f'<b class="pass">0 ms</b> '
+                f'<span class="meta">(Masked · Saved {sav_s})</span>'
+            )
+        elif frow.get("pl_unmasked_ms") is not None:
+            u_cls = _pl_status_cls(frow.get("pl_unmasked_ms"))
+            unm_pl = _fmt_ms(frow.get("pl_unmasked_ms"))
+            dead_air_html = (
+                f'<b class="{u_cls}">{unm_pl} PL</b> '
+                '<span class="meta">(No filler)</span>'
+            )
+        else:
+            dead_air_html = '<span class="meta">0 ms (Post-speech)</span>'
+
+        f_agent = _escape(frow.get("agent", ""))
+        f_avg = _fmt_ms(frow.get("avg_ms"))
+        f_p90 = _fmt_ms(frow.get("p90_ms"))
+        f_obs = _escape(frow.get("observation", frow.get("action", "")) or "")
+        table_b_rows += (
+            "<tr>"
+            f"<td><b><code>{_escape(frow.get('tool_name', ''))}</code></b>"
+            f' <span class="meta">({f_agent})</span></td>'
+            f"<td>{f_avg} / {f_p90}</td>"
+            f'<td><span class="badge {s_cls}">{_escape(badge_lbl)}</span></td>'
+            f"<td>{dead_air_html}</td>"
+            f'<td><span class="meta">{f_obs}</span></td>'
+            "</tr>\n"
+        )
+
+    filler_section_html = ""
+    if table_b_rows:
+        filler_section_html = (
+            "<h3>🗣️ Table B: Pre-Speech Tool Masking &amp; "
+            "Dead-Air Signals</h3>\n"
+            "<table>\n"
+            "<tr><th>Operation / Tool</th><th>Mean / p90 Dur</th>"
+            "<th>Unmasked Rate</th><th>Post-Filler Dead Air</th>"
+            "<th>Observation</th></tr>\n"
+            f"{table_b_rows}"
+            "</table>\n"
+        )
+
+    p50_m = _fmt_ms(prim.get("p50_ms"))
+    p90_m = _fmt_ms(prim.get("p90_ms"))
+    avg_m = _fmt_ms(prim.get("avg_ms"))
+    return (
+        '<details class="pl-suite-details latency-drawer" '
+        'id="section-latency">\n'
+        "  <summary>\n"
+        '    <span><span class="pl-arrow">&#9654;</span>⏱ '
+        "<b>Perceived Latency &amp; Bottleneck Analysis</b> "
+        '<span class="meta">(Click to expand pre-speech breakdown, '
+        "component observations &amp; filler signals)</span></span>\n"
+        "    <span>\n"
+        f'      <span class="badge {p50_cls}">p50: {p50_m}</span>\n'
+        f'      <span class="badge {p90_cls}">p90: {p90_m}</span>\n'
+        f'      <span class="badge tool">Mean: {avg_m}</span>\n'
+        "    </span>\n"
+        "  </summary>\n"
+        '  <div style="margin-top:10px;padding-top:8px;'
+        'border-top:1px solid var(--border-subtle);">\n'
+        '    <div style="display:flex;justify-content:space-between;'
+        'align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px;">\n'
+        '      <span class="meta">Clock: <code>VAD.endTime</code> '
+        "&rarr; First Audio (<code>startTime + TTFA</code>)</span>\n"
+        '      <div style="display:flex;gap:6px;flex-wrap:wrap;">'
+        f"{slice_btns_html}</div>\n"
+        "    </div>\n"
+        f"    {slice_panels_html}"
+        "    <h3>🔧 Table A: Pre-Speech Component Breakdown &amp; Signals "
+        "(Critical Path)</h3>\n"
+        "    <table>\n"
+        "      <tr><th>Component / Stage</th><th>Calls (Calls/Turn)</th>"
+        "<th>Mean</th><th>p50</th><th>p90</th><th>Share of Suite PL</th>"
+        "<th>Observation</th></tr>\n"
+        f"      {table_a_rows}"
+        "    </table>\n"
+        f"    {filler_section_html}"
+        "  </div>\n"
+        "</details>\n"
+    )
+
+
+def _resolve_conv_trace_dict(
+    r: dict[str, Any],
+    output_path: str = "",
+    remote_traces: dict[str, Any] | None = None,
+    traces_dir: str | None = None,
+) -> dict[str, Any] | None:
+    """Resolve conversation trace dict with per-turn root_span."""
+    if not isinstance(r, dict):
+        return None
+
+    turn_traces = r.get("turn_traces")
+    if (
+        isinstance(turn_traces, list)
+        and turn_traces
+        and any(
+            isinstance(t, dict) and (t.get("root_span") or t.get("rootSpan"))
+            for t in turn_traces
+        )
+    ):
+        return {
+            "session_id": r.get("session_id", ""),
+            "turns": turn_traces,
+        }
+
+    turns_field = r.get("turns")
+    if (
+        isinstance(turns_field, list)
+        and turns_field
+        and any(
+            isinstance(t, dict) and (t.get("root_span") or t.get("rootSpan"))
+            for t in turns_field
+        )
+    ):
+        return {
+            "session_id": r.get("session_id", ""),
+            "turns": turns_field,
+        }
+
+    sid = str(r.get("session_id", "") or "").strip()
+    if not sid:
+        return None
+
+    candidate_paths = [f"/tmp/scrapi_traces/{sid}.json"]
+    if traces_dir:
+        candidate_paths.extend(
+            [
+                os.path.join(traces_dir, f"{sid}_trace.json"),
+                os.path.join(traces_dir, f"{sid}.json"),
+            ]
+        )
+    if output_path and not output_path.startswith("gs://"):
+        abs_out = os.path.abspath(output_path)
+        out_dir = os.path.dirname(abs_out)
+        parent_dir = os.path.dirname(out_dir)
+        candidate_paths.extend(
+            [
+                os.path.join(out_dir, "traces", f"{sid}_trace.json"),
+                os.path.join(parent_dir, "traces", f"{sid}_trace.json"),
+                os.path.join(out_dir, "scratch", f"{sid}_trace.json"),
+                os.path.join(parent_dir, "scratch", f"{sid}_trace.json"),
+            ]
+        )
+    candidate_paths.extend(
+        [
+            os.path.join("reports", "traces", f"{sid}_trace.json"),
+            os.path.join("scratch", f"{sid}_trace.json"),
+        ]
+    )
+
+    for cp in candidate_paths:
+        if os.path.isfile(cp):
+            with contextlib.suppress(Exception):
+                with _ORIG_OPEN(cp, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and isinstance(
+                    data.get("turns"), list
+                ):
+                    return data
+
+    if remote_traces and sid in remote_traces:
+        rem = remote_traces[sid]
+        if isinstance(rem, dict) and isinstance(rem.get("turns"), list):
+            return rem
+
+    return None
+
+
+def _attach_perceived_latency(
+    results_list: list[dict[str, Any]],
+    app_name: str = "",
+    output_path: str = "",
+    traces_dir: str | None = None,
+) -> list[dict[str, Any]]:
+    """Resolve traces and attach latency fields to each result dict."""
+    if not results_list:
+        return []
+
+    # Check if any results need remote fetching from ConversationHistory
+    missing_sids: list[str] = []
+    for r in results_list:
+        if not isinstance(r, dict):
+            continue
+        if (
+            _resolve_conv_trace_dict(
+                r, output_path=output_path, traces_dir=traces_dir
+            )
+            is None
+        ):
+            sid = str(r.get("session_id", "") or "").strip()
+            if sid:
+                missing_sids.append(sid)
+
+    remote_traces: dict[str, Any] = {}
+    if (
+        missing_sids
+        and app_name
+        and os.environ.get("CXAS_OAUTH_TOKEN") != "mock_token_for_tests"
+    ):
+        with contextlib.suppress(Exception):
+            ch = conversation_history.ConversationHistory(app_name=app_name)
+            for sid in set(missing_sids):
+                with contextlib.suppress(Exception):
+                    conv_obj = ch.get_conversation(sid)
+                    conv_d = (
+                        type(conv_obj).to_dict(conv_obj)
+                        if not isinstance(conv_obj, dict)
+                        else conv_obj
+                    )
+                    if isinstance(conv_d, dict) and isinstance(
+                        conv_d.get("turns"), list
+                    ):
+                        remote_traces[sid] = conv_d
+
+    callback_catalog = LatencyParser.discover_callback_catalog(
+        [output_path, traces_dir or ""]
+    )
+    conv_analyses: list[dict[str, Any]] = []
+    for r in results_list:
+        if not isinstance(r, dict):
+            continue
+        conv_dict = _resolve_conv_trace_dict(
+            r,
+            output_path=output_path,
+            remote_traces=remote_traces,
+            traces_dir=traces_dir,
+        )
+        if not conv_dict:
+            continue
+        conv_pl = LatencyParser.analyze_conversation_perceived_latency(
+            conv_dict,
+            session_id=str(r.get("session_id", "") or ""),
+            conv_name=str(r.get("name", "") or ""),
+            callback_catalog=callback_catalog,
+        )
+        if conv_pl:
+            run_lbl = f"Run {r['run']}" if "run" in r else ""
+            r["_conv_latency"] = conv_pl
+            r["_conv_latency_html"] = _render_conv_latency_drawer(
+                conv_pl, run_label=run_lbl
+            )
+            r["_turn_latencies"] = conv_pl.get("turns", [])
+            # Also attach _turn_latency_html to golden turns
+            if isinstance(r.get("turns"), list):
+                for idx, gt in enumerate(r["turns"]):
+                    if isinstance(gt, dict) and idx < len(r["_turn_latencies"]):
+                        gt["_turn_latency_html"] = _render_turn_latency_drawer(
+                            r["_turn_latencies"][idx]
+                        )
+            conv_analyses.append(conv_pl)
+
+    return conv_analyses
+
+
+def _inject_turn_latency_items(
+    merged: list[Any], turn_latencies: list[dict[str, Any]] | None
+) -> list[Any]:
+    """Inject ('turn_latency', html) items at the end of each user turn."""
+    if not merged or not turn_latencies:
+        return merged
+    out: list[Any] = []
+    turn_idx = -1
+    for item in merged:
+        kind = item[0]
+        if kind == "user":
+            if 0 <= turn_idx < len(turn_latencies):
+                out.append(
+                    (
+                        "turn_latency",
+                        _render_turn_latency_drawer(turn_latencies[turn_idx]),
+                    )
+                )
+            turn_idx += 1
+        out.append(item)
+    if 0 <= turn_idx < len(turn_latencies):
+        out.append(
+            (
+                "turn_latency",
+                _render_turn_latency_drawer(turn_latencies[turn_idx]),
+            )
+        )
+    return out
+
+
 def _get_summary_block(
     passed: typing.Any,
     total: typing.Any,
@@ -123,20 +852,47 @@ def _get_summary_block(
     model: typing.Any,
     ts: typing.Any,
     wall_clock_s: typing.Any,
+    suite_pl: dict[str, Any] | None = None,
 ) -> str:
     """Return the HTML summary block."""
     pct = 100 * passed / total if total else 0
     pass_threshold = 90
     cls = "pass" if pct >= pass_threshold else "fail"
-    return f"""<h1>Simulation Eval Report</h1>
+    pl_btn = (
+        '<button id="btn-latency" onclick="toggleAllLatency()">'
+        "⏱ Expand All Latency</button>"
+        if suite_pl
+        else ""
+    )
+    controls_html = (
+        '<div class="controls">\n'
+        '  <button id="btn-failures" onclick="toggleFailures()">'
+        "Show Failures Only</button>\n"
+        '  <button onclick="expandAll()">Expand All</button>\n'
+        '  <button onclick="collapseAll()">Collapse All</button>\n'
+        f"  {pl_btn}\n"
+        "</div>\n"
+    )
+    suite_drawer = _render_suite_latency_drawer(suite_pl) if suite_pl else ""
+    rt_str = (
+        f" | Runtime: {_fmt_duration(wall_clock_s)}" if wall_clock_s else ""
+    )
+    return f"""<h1>
+  <span>Simulation Eval Report</span>
+  <button type="button" class="theme-toggle-btn" onclick="toggleTheme()">\
+🌗 Toggle Light / Dark Theme</button>
+</h1>
 <div class="summary">
-  <div class="big {cls}">{pct:.1f}%</div>
-  <div>{passed}/{total} passed | {errors} errors |
-    {modality} | model: {model}</div>
-  <div class="meta">Generated {ts}
-    {f" | Runtime: {_fmt_duration(wall_clock_s)}" if wall_clock_s else ""}</div>
+  <div class="summary-top">
+    <div class="big {cls}">{pct:.1f}%</div>
+    <div><b>{passed}/{total}</b> passed | {errors} errors |
+      {modality} | model: <code>{model}</code><br>
+      <span class="meta">Generated {ts}
+      {rt_str}</span>
+    </div>
+  </div>
 </div>
-"""
+{controls_html}{suite_drawer}"""
 
 
 def _get_results_table(eval_stats: typing.Any) -> typing.Any:
@@ -150,17 +906,22 @@ def _get_results_table(eval_stats: typing.Any) -> typing.Any:
         eval_stats.items(), key=lambda x: x[1]["pass"] / max(x[1]["total"], 1)
     ):
         score = f"{s['pass']}/{s['total']}"
-        cls = "pass" if s["pass"] == s["total"] else "fail"
+        is_all_pass = s["pass"] == s["total"]
+        cls = "pass" if is_all_pass else "fail"
+        passed_str = "true" if is_all_pass else "false"
+        safe_name = name.replace("'", "\\'")
         dots = ""
         for i, r in enumerate(s["runs"]):
             dot_cls = "p" if r.get("passed") else ("e" if "error" in r else "f")
-            safe_name = name.replace("'", "\\'")
             dots += (
                 f'<span class="run-dot {dot_cls}" title="Run {r["run"]}" '
-                f"onclick=\"jumpToRun('{safe_name}', {i})\"></span>"
+                'onclick="event.stopPropagation(); '
+                f"jumpToRun('sim', '{safe_name}', {i})\"></span>"
             )
         html += (
-            f'  <tr><td class="{cls}"><b>{score}</b></td>'
+            f'  <tr class="clickable" data-passed="{passed_str}" '
+            f"onclick=\"jumpTo('sim', '{safe_name}')\">"
+            f'<td class="{cls}"><b>{score}</b></td>'
             f"<td>{_escape(name)}</td><td>{dots}</td></tr>\n"
         )
     html += "</table>\n"
@@ -452,13 +1213,18 @@ def _render_merged_items(merged: typing.Any) -> typing.Any:
                 f'<pre class="tool-data">{_escape(item[1])}</pre>'
                 "</details>\n"
             )
+        elif kind == "turn_latency":
+            html += item[1]
         else:
             html += f'<div class="system">{_escape(item[1])}</div>\n'
     return html
 
 
 def _render_trace(
-    trace: typing.Any, tools_map: typing.Any, turns: typing.Any
+    trace: typing.Any,
+    tools_map: typing.Any,
+    turns: typing.Any,
+    turn_latencies: typing.Any = None,
 ) -> typing.Any:
     """Render the conversation trace."""
     if not trace:
@@ -472,6 +1238,8 @@ def _render_trace(
     parsed_lines = _parse_trace(trace, tools_map)
 
     merged = _merge_trace_lines(parsed_lines)
+    if turn_latencies:
+        merged = _inject_turn_latency_items(merged, turn_latencies)
 
     html += _render_merged_items(merged)
 
@@ -485,8 +1253,12 @@ def _get_run_detail(
     """Return the HTML for a single run detail."""
     html = ""
     run_cls = "pass" if r.get("passed") else "fail"
+    failed_str = "false" if r.get("passed") else "true"
+    dur_str = (
+        f" | {_fmt_duration(r['duration_s'])}" if r.get("duration_s") else ""
+    )
     session_id = r.get("session_id", "")
-    html += '<details class="run-detail">\n'
+    html += f'<details class="run-detail" data-failed="{failed_str}">\n'
     html += (
         f"<summary>Run {r['run']} — "
         f'<span class="{run_cls}">'
@@ -499,13 +1271,16 @@ def _get_run_detail(
     html += (
         f" | goals: {r.get('goals', '?')} | "
         f"expectations: {r.get('expectations', '?')} | "
-        f"turns: {r.get('turns', '?')}{naturalness_note}</summary>\n"
+        f"turns: {r.get('turns', '?')}{dur_str}{naturalness_note}</summary>\n"
     )
 
     html += _render_session_link(session_id, ces_base)
 
     sparams = r.get("session_parameters", {})
     html += _render_session_parameters(sparams)
+
+    if r.get("_conv_latency_html"):
+        html += r["_conv_latency_html"]
 
     if "error" in r:
         html += (
@@ -520,7 +1295,10 @@ def _get_run_detail(
         html += _render_naturalness_details(r.get("naturalness_details"))
 
         html += _render_trace(
-            r.get("detailed_trace", []), tools_map, r.get("turns", "?")
+            r.get("detailed_trace", []),
+            tools_map,
+            r.get("turns", "?"),
+            turn_latencies=r.get("_turn_latencies"),
         )
 
     html += "</details>\n"
@@ -573,6 +1351,15 @@ def generate_html_report(
     passed = sum(1 for r in results if r.get("passed"))
     errors = sum(1 for r in results if "error" in r)
 
+    conv_analyses = _attach_perceived_latency(
+        results, app_name=app_name, output_path=output_path
+    )
+    suite_pl = (
+        LatencyParser.analyze_suite_perceived_latency(conv_analyses)
+        if conv_analyses
+        else None
+    )
+
     eval_stats = {}
     for r in results:
         n = r["name"]
@@ -609,20 +1396,33 @@ def generate_html_report(
 
     html = _get_html_head(ts)
     html += _get_summary_block(
-        passed, total, errors, modality, model, ts, wall_clock_s
+        passed,
+        total,
+        errors,
+        modality,
+        model,
+        ts,
+        wall_clock_s,
+        suite_pl=suite_pl,
     )
 
     html += _get_results_table(eval_stats)
-    html += "\n<h2>Eval Details</h2>\n"
+    html += '\n<h2 id="section-sims">Eval Details</h2>\n'
 
     for name, s in sorted(
         eval_stats.items(), key=lambda x: x[1]["pass"] / max(x[1]["total"], 1)
     ):
         score = f"{s['pass']}/{s['total']}"
-        cls = "pass-bg" if s["pass"] == s["total"] else "fail-bg"
-        html += f'<div class="eval-card" id="eval-{name}">\n'
+        is_all_pass = s["pass"] == s["total"]
+        cls = "pass-bg" if is_all_pass else "fail-bg"
+        passed_str = "true" if is_all_pass else "false"
         html += (
-            f'<div class="eval-header {cls}">{_escape(name)} '
+            f'<div class="eval-card" id="eval-{name}" '
+            f'data-passed="{passed_str}">\n'
+        )
+        html += (
+            f'<div class="eval-header {cls}">'
+            f'<span>{_escape(name)} <span class="badge sim">sim</span></span>'
             f"<span>{score}</span></div>\n"
         )
         html += '<div class="eval-body">\n'
@@ -662,6 +1462,7 @@ def generate_combined_html_report(
     user_agent_extension: str | None = None,
     bg_noise_file: str | None = None,
     burst_noise_files: list[str] | None = None,
+    traces_dir: str | None = None,
 ) -> str:
     """Generate combined HTML report based on results from multiple sources.
 
@@ -934,6 +1735,35 @@ def generate_combined_html_report(
         except Exception:  # pylint: disable=broad-exception-caught
             pass
 
+    # Compute Perceived Latency telemetry across golden and simulation results
+    conv_analyses = []
+    if golden_results:
+        conv_analyses.extend(
+            _attach_perceived_latency(
+                golden_results,
+                app_name=app_name,
+                output_path=output_path or "",
+                traces_dir=traces_dir,
+            )
+        )
+    if sim_results:
+        conv_analyses.extend(
+            _attach_perceived_latency(
+                sim_results,
+                app_name=app_name,
+                output_path=output_path or "",
+                traces_dir=traces_dir,
+            )
+        )
+    suite_pl = (
+        LatencyParser.analyze_suite_perceived_latency(conv_analyses)
+        if conv_analyses
+        else None
+    )
+    suite_latency_html = (
+        _render_suite_latency_drawer(suite_pl) if suite_pl else ""
+    )
+
     # Process traces for simulation results to simplify template
     if sim_results:
         for r in sim_results:
@@ -976,7 +1806,9 @@ def generate_combined_html_report(
                         merged[-1] = ("tool_pair", merged[-1][1], text)
                     else:
                         merged.append((kind, text))
-                r["_processed_trace"] = merged
+                r["_processed_trace"] = _inject_turn_latency_items(
+                    merged, r.get("_turn_latencies")
+                )
 
     # Compile Tool evaluation table via Python Component
     if tool_results:
@@ -1054,6 +1886,7 @@ def generate_combined_html_report(
     template = jinja2.Template(template_content)
     html = template.render(
         failure_patterns_html=failure_patterns_html,
+        suite_latency_html=suite_latency_html,
         ts=ts,
         pct=pct,
         passed=passed,

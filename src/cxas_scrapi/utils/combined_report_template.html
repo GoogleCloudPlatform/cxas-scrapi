@@ -1,5 +1,8 @@
 {# pyre-ignore-all-errors #}
-<h1>Combined Eval Report</h1>
+<h1>
+  <span>Combined Eval Report</span>
+  <button type="button" class="theme-toggle-btn" onclick="toggleTheme()">🌗 Toggle Light / Dark Theme</button>
+</h1>
 <div class="summary">
   <div class="summary-top">
     <div class="big {{ 'pass' if pct >= 90 else 'fail' }}">{{ "%.0f" | format(pct) }}%</div>
@@ -60,7 +63,14 @@
   <button id="btn-failures" onclick="toggleFailures()">Show Failures Only</button>
   <button onclick="expandAll()">Expand All</button>
   <button onclick="collapseAll()">Collapse All</button>
+  {% if suite_latency_html %}
+    <button id="btn-latency" onclick="toggleAllLatency()">⏱ Expand All Latency</button>
+  {% endif %}
 </div>
+
+{% if suite_latency_html %}
+  {{ suite_latency_html | safe }}
+{% endif %}
 
 <h2>All Evals</h2>
 <table>
@@ -149,6 +159,10 @@
             </details>
           {% endif %}
 
+          {% if r.get('_conv_latency_html') %}
+            {{ r['_conv_latency_html'] | safe }}
+          {% endif %}
+
           <details open><summary>Conversation &amp; Comparison</summary>
             {% for turn in r.get('turns', []) %}
               {% set sem = turn.get('semantic_score') %}
@@ -220,6 +234,10 @@
                     {% endif %}
                   </div>
                 {% endfor %}
+
+                {% if turn.get('_turn_latency_html') %}
+                  {{ turn['_turn_latency_html'] | safe }}
+                {% endif %}
               </div>
             {% endfor %}
           </details>
@@ -293,6 +311,10 @@
                 <summary class="tool-summary">&#9881; <b>Session Parameters</b></summary>
                 <pre class="tool-data">{{ json.dumps(r['session_parameters'], indent=2) | escape }}</pre>
               </details>
+            {% endif %}
+
+            {% if r.get('_conv_latency_html') %}
+              {{ r['_conv_latency_html'] | safe }}
             {% endif %}
 
             {% if "error" in r %}
@@ -420,6 +442,8 @@
                             <pre class="tool-data">{{ result | escape }}</pre>
                           {% endif %}
                         </details>
+                      {% elif kind == "turn_latency" %}
+                        {{ item[1] | safe }}
                       {% else %}
                         <div class="system">{{ item[1] | escape }}</div>
                       {% endif %}

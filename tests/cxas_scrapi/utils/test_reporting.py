@@ -1563,3 +1563,184 @@ def test_sim_runner_load_sim_templates_backward_compatibility_with_list(
             assert templates["sim2"]["expectations"] == [
                 "Specific expectation 2"
             ]
+
+
+def _make_sample_turn_trace(
+    with_filler: bool = False,
+) -> dict[str, typing.Any]:
+    child_spans = [
+        {
+            "name": "VAD",
+            "startTime": "2026-10-02T14:00:00.000Z",
+            "endTime": "2026-10-02T14:00:01.000Z",
+            "duration": "1.000s",
+            "attributes": {
+                "user transcript": "My internet is down",
+            },
+        },
+        {
+            "name": "AGENT: Troubleshoting_Agent",
+            "startTime": "2026-10-02T14:00:01.000Z",
+            "endTime": "2026-10-02T14:00:03.500Z",
+            "duration": "2.500s",
+            "childSpans": [
+                {
+                    "name": "CALLBACK: before_model_callback",
+                    "startTime": "2026-10-02T14:00:01.000Z",
+                    "endTime": "2026-10-02T14:00:01.180Z",
+                    "duration": "0.180s",
+                },
+                {
+                    "name": "CALLBACK: before_model_callback",
+                    "startTime": "2026-10-02T14:00:01.180Z",
+                    "endTime": "2026-10-02T14:00:01.300Z",
+                    "duration": "0.120s",
+                },
+                {
+                    "name": "LLM",
+                    "startTime": "2026-10-02T14:00:01.300Z",
+                    "endTime": "2026-10-02T14:00:02.100Z",
+                    "duration": "0.800s",
+                    "attributes": {
+                        "model": "gemini-2.5-flash-001",
+                        "time to first token (ms)": 450,
+                        "time to first audio (ms)": 0 if with_filler else 700,
+                    },
+                },
+                {
+                    "name": "TOOL: verify_equipment_status",
+                    "startTime": "2026-10-02T14:00:01.800Z",
+                    "endTime": "2026-10-02T14:00:03.000Z",
+                    "duration": "1.200s",
+                    "attributes": {
+                        "toolDisplayName": "verify_equipment_status",
+                        "time to first audio (ms)": 150 if with_filler else 0,
+                    },
+                },
+                {
+                    "name": "LLM",
+                    "startTime": "2026-10-02T14:00:03.000Z",
+                    "endTime": "2026-10-02T14:00:03.500Z",
+                    "duration": "0.500s",
+                    "attributes": {
+                        "model": "gemini-2.5-flash-001",
+                        "time to first token (ms)": 220,
+                        "time to first audio (ms)": 400 if with_filler else 0,
+                    },
+                },
+            ],
+        },
+    ]
+    return {
+        "messages": [
+            {"role": "user", "chunks": [{"text": "My internet is down"}]},
+            {
+                "role": "agent",
+                "chunks": [{"text": "Let me check your equipment right now."}],
+            },
+        ],
+        "rootSpan": {
+            "name": "TURN",
+            "startTime": "2026-10-02T14:00:00.000Z",
+            "endTime": "2026-10-02T14:00:03.500Z",
+            "duration": "3.500s",
+            "childSpans": child_spans,
+        },
+    }
+
+
+def test_perceived_latency_rendering_in_html_reports(
+    tmp_path: typing.Any,
+) -> None:
+    # Create an agent JSON definition to verify Option 1 callback folder resolution
+    agent_dir = tmp_path / "agents" / "Troubleshoting_Agent"
+    agent_dir.mkdir(parents=True)
+    agent_json = agent_dir / "Troubleshoting_Agent.json"
+    agent_json.write_text(
+        json.dumps(
+            {
+                "displayName": "Troubleshoting_Agent",
+                "beforeModelCallbacks": [
+                    {
+                        "description": " Callback 1",
+                        "pythonCode": "agents/Troubleshoting_Agent/before_model_callbacks/before_model_callbacks_01/python_code.py",
+                    },
+                    {
+                        "description": "Disconnect Callback",
+                        "pythonCode": "agents/Troubleshoting_Agent/before_model_callbacks/before_model_callbacks_disconnect/python_code.py",
+                    },
+                ],
+            }
+        )
+    )
+
+    turn_trace = _make_sample_turn_trace(with_filler=True)
+    sim_results = [
+        {
+            "name": "test_voice_sim",
+            "passed": True,
+            "run": 1,
+            "duration_s": 3.5,
+            "goals": "1/1",
+            "expectations": "1/1",
+            "turns": 1,
+            "session_id": "sess_pl_1",
+            "detailed_trace": [
+                "User: My internet is down",
+                "Tool Call: verify_equipment_status",
+                "Tool Response: {'status': 'online'}",
+                "Agent Text: Let me check your equipment right now.",
+            ],
+            "turn_traces": [turn_trace],
+            "step_details": [],
+            "expectation_details": [],
+        }
+    ]
+
+    sim_report_path = os.path.join(tmp_path, "sim_report.html")
+    generate_html_report(
+        results=sim_results,
+        output_path=sim_report_path,
+        modality="audio",
+        model="gemini-2.5-flash",
+    )
+    with open(sim_report_path) as f:
+        sim_html = f.read()
+
+    # Verify Suite, Conversation, and Turn drawers exist and are collapsed by default
+    assert 'class="pl-suite-details latency-drawer"' in sim_html
+    assert '<span class="pl-arrow">&#9654;</span>' in sim_html
+    assert 'class="pl-conv-details latency-drawer"' in sim_html
+    assert "pl-turn-details" in sim_html
+    assert "wf-first-audio-line" in sim_html
+    assert "toggleAllLatency()" in sim_html
+    assert "verify_equipment_status" in sim_html
+    # Verify Option 1 callback folder names (without python_code.py) and collapsible views
+    assert "before_model_callbacks_01" in sim_html
+    assert "before_model_callbacks_disconnect" in sim_html
+    assert "python_code.py" not in sim_html
+    assert "cb-sub-details" in sim_html
+    assert "wf-cb-details" in sim_html
+    assert "<th>Observation</th>" in sim_html
+    assert "Actionable Guidance" not in sim_html
+
+    # Verify combined HTML report also includes all three collapsed latency drawers
+    combined_report_path = os.path.join(tmp_path, "combined_report.html")
+    generate_combined_html_report(
+        golden_results=[],
+        sim_results=sim_results,
+        tool_results=[],
+        callback_results=[],
+        output_path=combined_report_path,
+        sim_modality="audio",
+    )
+    with open(combined_report_path) as f:
+        combined_html = f.read()
+
+    assert 'class="pl-suite-details latency-drawer"' in combined_html
+    assert '<span class="pl-arrow">&#9654;</span>' in combined_html
+    assert 'class="pl-conv-details latency-drawer"' in combined_html
+    assert "pl-turn-details" in combined_html
+    assert "wf-first-audio-line" in combined_html
+    assert "before_model_callbacks_01" in combined_html
+    assert "python_code.py" not in combined_html
