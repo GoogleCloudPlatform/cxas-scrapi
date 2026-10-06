@@ -1589,12 +1589,26 @@ def _make_sample_turn_trace(
                     "startTime": "2026-10-02T14:00:01.000Z",
                     "endTime": "2026-10-02T14:00:01.180Z",
                     "duration": "0.180s",
+                    "attributes": {
+                        "[debug] detailed latency": {
+                            "total code execution latency (ms)": 60,
+                            "waiting for external calls (ms)": 0,
+                            "sandbox init latency (ms)": 5,
+                        }
+                    },
                 },
                 {
                     "name": "CALLBACK: before_model_callback",
                     "startTime": "2026-10-02T14:00:01.180Z",
                     "endTime": "2026-10-02T14:00:01.300Z",
                     "duration": "0.120s",
+                    "attributes": {
+                        "[debug] detailed latency": {
+                            "total code execution latency (ms)": 40,
+                            "waiting for external calls (ms)": 0,
+                            "sandbox init latency (ms)": 0,
+                        }
+                    },
                 },
                 {
                     "name": "LLM",
@@ -1723,6 +1737,8 @@ def test_perceived_latency_rendering_in_html_reports(
     assert "wf-cb-details" in sim_html
     assert "<th>Observation</th>" in sim_html
     assert "Actionable Guidance" not in sim_html
+    assert "Callback Time Decomposition" in sim_html
+    assert "code 60ms + sandbox 120ms" in sim_html
 
     # Verify combined HTML report also includes all three collapsed latency drawers
     combined_report_path = os.path.join(tmp_path, "combined_report.html")
@@ -1744,3 +1760,4 @@ def test_perceived_latency_rendering_in_html_reports(
     assert "wf-first-audio-line" in combined_html
     assert "before_model_callbacks_01" in combined_html
     assert "python_code.py" not in combined_html
+    assert "Callback Time Decomposition" in combined_html

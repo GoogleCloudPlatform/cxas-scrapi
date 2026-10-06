@@ -1047,6 +1047,9 @@ class LatencyParser:
             cb_desc = ""
             code_ms = 0.0
             ext_wait_ms = 0.0
+            sandbox_init_ms = 0.0
+            sandbox_overhead_ms = 0.0
+            has_detailed_latency = False
             child_tools = s.get("child_tools", []) or []
 
             if s_name == "LLM":
@@ -1092,12 +1095,20 @@ class LatencyParser:
                     callback_catalog=callback_catalog,
                 )
                 det_lat = attrs.get("[debug] detailed latency", {})
-                if isinstance(det_lat, dict):
-                    code_ms = float(
+                if isinstance(det_lat, dict) and det_lat:
+                    has_detailed_latency = True
+                    raw_code_ms = float(
                         det_lat.get("total code execution latency (ms)", 0) or 0
                     )
                     ext_wait_ms = float(
                         det_lat.get("waiting for external calls (ms)", 0) or 0
+                    )
+                    sandbox_init_ms = float(
+                        det_lat.get("sandbox init latency (ms)", 0) or 0
+                    )
+                    code_ms = max(0.0, raw_code_ms - ext_wait_ms)
+                    sandbox_overhead_ms = max(
+                        0.0, dur_ms - code_ms - ext_wait_ms
                     )
                 if ttfa_val > 0:
                     wf_detail = (
@@ -1179,6 +1190,9 @@ class LatencyParser:
                         "cb_desc": cb_desc,
                         "code_ms": code_ms,
                         "ext_wait_ms": ext_wait_ms,
+                        "sandbox_init_ms": sandbox_init_ms,
+                        "sandbox_overhead_ms": sandbox_overhead_ms,
+                        "has_detailed_latency": has_detailed_latency,
                         "child_tools": child_tools,
                         "ttfc_ms": ttfc_val,
                         "ttfa_ms": ttfa_val,
@@ -1214,6 +1228,9 @@ class LatencyParser:
                     "pre_speech_ms": round(pre_ms, 1),
                     "code_ms": round(code_ms, 1),
                     "ext_wait_ms": round(ext_wait_ms, 1),
+                    "sandbox_init_ms": round(sandbox_init_ms, 1),
+                    "sandbox_overhead_ms": round(sandbox_overhead_ms, 1),
+                    "has_detailed_latency": has_detailed_latency,
                     "ttfa_ms": round(ttfa_val, 1),
                     "child_tools": child_tools,
                     "left_pct": round(left_pct, 2),
@@ -1649,6 +1666,12 @@ class LatencyParser:
                     c_pre = [float(cr["pre_speech_ms"]) for cr in c_recs]
                     c_codes = [float(cr.get("code_ms", 0)) for cr in c_recs]
                     c_waits = [float(cr.get("ext_wait_ms", 0)) for cr in c_recs]
+                    c_sandboxes = [
+                        float(cr.get("sandbox_overhead_ms", 0)) for cr in c_recs
+                    ]
+                    c_has_detail = any(
+                        bool(cr.get("has_detailed_latency")) for cr in c_recs
+                    )
                     c_cnt = len(c_recs)
                     c_desc = next(
                         (
@@ -1690,6 +1713,10 @@ class LatencyParser:
                             "total_pre_ms": round(sum(c_pre), 1),
                             "avg_code_ms": round(sum(c_codes) / c_cnt, 1),
                             "avg_ext_wait_ms": round(sum(c_waits) / c_cnt, 1),
+                            "avg_sandbox_ms": round(
+                                sum(c_sandboxes) / c_cnt, 1
+                            ),
+                            "has_detailed_latency": c_has_detail,
                             "child_tools": child_tool_summaries,
                         }
                     )
@@ -1755,6 +1782,28 @@ class LatencyParser:
                     f"top={top_cb['cb_name']} "
                     f"(#{top_cb['seq']}, avg {round(top_cb['avg_ms'])}ms)"
                 )
+                cb_detailed = [
+                    r for r in recs if r.get("has_detailed_latency")
+                ]
+                if cb_detailed and calls > 0:
+                    avg_c_ms = round(
+                        sum(float(r.get("code_ms", 0)) for r in recs) / calls
+                    )
+                    avg_w_ms = round(
+                        sum(float(r.get("ext_wait_ms", 0)) for r in recs)
+                        / calls
+                    )
+                    avg_s_ms = round(
+                        sum(
+                            float(r.get("sandbox_overhead_ms", 0)) for r in recs
+                        )
+                        / calls
+                    )
+                    bd_items = [f"code={avg_c_ms}ms"]
+                    if avg_w_ms > 0:
+                        bd_items.append(f"ext_wait={avg_w_ms}ms")
+                    bd_items.append(f"sandbox={avg_s_ms}ms")
+                    obs_parts.append(f"breakdown=[{', '.join(bd_items)}]")
                 all_ct = [
                     ct["name"]
                     for sc in sub_callbacks
@@ -1963,6 +2012,58 @@ class LatencyParser:
         else:
             filler_table = filler_table[:10]
 
+        all_cb_recs = [
+            rec
+            for t in all_turns
+            for rec in t.get("component_records", [])
+            if rec.get("type") == "Callback"
+        ]
+        detailed_cb_recs = [
+            r for r in all_cb_recs if r.get("has_detailed_latency")
+        ]
+        callback_decomposition: dict[str, Any] | None = None
+        if detailed_cb_recs and all_cb_recs:
+            cb_total_calls = len(all_cb_recs)
+            cb_calls_per_turn = round(cb_total_calls / spoken_turn_count, 2)
+            tot_cb_dur = sum(float(r.get("dur_ms", 0)) for r in all_cb_recs)
+            tot_cb_code = sum(float(r.get("code_ms", 0)) for r in all_cb_recs)
+            tot_cb_wait = sum(
+                float(r.get("ext_wait_ms", 0)) for r in all_cb_recs
+            )
+            tot_cb_init = sum(
+                float(r.get("sandbox_init_ms", 0)) for r in all_cb_recs
+            )
+            tot_cb_sandbox = max(0.0, tot_cb_dur - tot_cb_code - tot_cb_wait)
+            denom_cb = max(1.0, tot_cb_dur)
+            code_pct = round(tot_cb_code / denom_cb * 100.0, 1)
+            ext_wait_pct = round(tot_cb_wait / denom_cb * 100.0, 1)
+            sandbox_pct = round(max(0.0, 100.0 - code_pct - ext_wait_pct), 1)
+            callback_decomposition = {
+                "total_calls": cb_total_calls,
+                "calls_per_turn": cb_calls_per_turn,
+                "avg_total_per_turn_ms": round(
+                    tot_cb_dur / spoken_turn_count, 1
+                ),
+                "avg_code_per_turn_ms": round(
+                    tot_cb_code / spoken_turn_count, 1
+                ),
+                "code_pct": code_pct,
+                "avg_ext_wait_per_turn_ms": round(
+                    tot_cb_wait / spoken_turn_count, 1
+                ),
+                "ext_wait_pct": ext_wait_pct,
+                "avg_sandbox_per_turn_ms": round(
+                    tot_cb_sandbox / spoken_turn_count, 1
+                ),
+                "sandbox_pct": sandbox_pct,
+                "avg_sandbox_per_call_ms": round(
+                    tot_cb_sandbox / cb_total_calls, 1
+                ),
+                "avg_init_per_turn_ms": round(
+                    tot_cb_init / spoken_turn_count, 1
+                ),
+            }
+
         return {
             "conversations_count": len(valid_convs),
             "total_turns": len(all_turns),
@@ -1970,5 +2071,6 @@ class LatencyParser:
             "primary": primary,
             "slices": slices,
             "optimization_targets": optimization_targets,
+            "callback_decomposition": callback_decomposition,
             "filler_table": filler_table,
         }

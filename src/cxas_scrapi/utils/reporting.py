@@ -206,7 +206,32 @@ def _render_turn_latency_drawer(turn_pl: dict[str, Any]) -> str:
                 cb_seq = cb.get("seq", 1)
                 cb_nm = _escape(cb.get("cb_name", "callback"))
                 cb_cts = cb.get("child_tools") or []
-                if cb_cts:
+                has_det = bool(
+                    cb.get("has_detailed_latency")
+                    or cb.get("code_ms", 0) > 0
+                    or cb.get("sandbox_overhead_ms", 0) > 0
+                )
+                if has_det:
+                    tot_r = round(float(cb.get("dur_ms", 0)))
+                    code_r = round(float(cb.get("code_ms", 0)))
+                    wait_r = round(float(cb.get("ext_wait_ms", 0)))
+                    sbx_r = max(0, tot_r - code_r - wait_r)
+                    bd_parts = [f"code {code_r}ms"]
+                    if wait_r > 0:
+                        if cb_cts:
+                            ct_names = ", ".join(
+                                _escape(ct["name"]) for ct in cb_cts[:2]
+                            )
+                            if len(cb_cts) > 2:
+                                ct_names += f" +{len(cb_cts) - 2}"
+                            bd_parts.append(
+                                f"ext_wait {wait_r}ms &rarr; {ct_names}"
+                            )
+                        else:
+                            bd_parts.append(f"ext_wait {wait_r}ms")
+                    bd_parts.append(f"sandbox {sbx_r}ms")
+                    cb_extra = f" ({' + '.join(bd_parts)})"
+                elif cb_cts:
                     ct_str = ", ".join(
                         f"{_escape(ct['name'])} ({round(ct['dur_ms'])}ms)"
                         for ct in cb_cts[:3]
@@ -214,8 +239,6 @@ def _render_turn_latency_drawer(turn_pl: dict[str, Any]) -> str:
                     if len(cb_cts) > 3:
                         ct_str += f", +{len(cb_cts) - 3} more"
                     cb_extra = f" &rarr; {ct_str}"
-                elif cb.get("code_ms", 0) > 0:
-                    cb_extra = f" (code {round(cb['code_ms'])}ms)"
                 else:
                     cb_extra = ""
                 cb_left = cb.get("left_pct", left_p)
@@ -498,6 +521,23 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
                 sc_p90 = _fmt_ms(sc.get("p90_ms", 0))
                 sc_cnt = sc.get("calls", 0)
                 sc_cts = sc.get("child_tools") or []
+                sc_has_det = bool(
+                    sc.get("has_detailed_latency")
+                    or sc.get("avg_code_ms", 0) > 0
+                    or sc.get("avg_sandbox_ms", 0) > 0
+                )
+                if sc_has_det:
+                    tot_r = round(float(sc.get("avg_ms", 0)))
+                    code_r = round(float(sc.get("avg_code_ms", 0)))
+                    wait_r = round(float(sc.get("avg_ext_wait_ms", 0)))
+                    sbx_r = max(0, tot_r - code_r - wait_r)
+                    sc_bd = [f"code {code_r}ms"]
+                    if wait_r > 0:
+                        sc_bd.append(f"ext_wait {wait_r}ms")
+                    sc_bd.append(f"sandbox {sbx_r}ms")
+                    bd_html = f' <span class="meta">({" + ".join(sc_bd)})</span>'
+                else:
+                    bd_html = ""
                 if sc_cts:
                     ct_str = ", ".join(
                         f"{_escape(ct['name'])} ({round(ct['avg_ms'])}ms)"
@@ -511,7 +551,7 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
                 items_html += (
                     '<div class="cb-sub-item">'
                     f'<span class="cb-seq-badge">#{sc_seq}</span> '
-                    f"<code>{sc_nm}</code> — avg <b>{sc_avg}</b>, "
+                    f"<code>{sc_nm}</code> — avg <b>{sc_avg}</b>{bd_html}, "
                     f'p90 <b>{sc_p90}</b> <span class="meta">'
                     f"({sc_cnt} calls)</span>{ct_html}</div>\n"
                 )
@@ -542,6 +582,67 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
             f"({r_imp}/turn)</td>"
             f'<td><span class="meta">{r_obs}</span></td>'
             "</tr>\n"
+        )
+
+    cb_decomp = suite_pl.get("callback_decomposition")
+    cb_decomp_html = ""
+    if isinstance(cb_decomp, dict) and cb_decomp.get("total_calls", 0) > 0:
+        tot_turn_s = _fmt_ms(cb_decomp.get("avg_total_per_turn_ms", 0))
+        cpt_val = float(cb_decomp.get("calls_per_turn", 0.0) or 0.0)
+        tot_calls_val = int(cb_decomp.get("total_calls", 0) or 0)
+        c_ms = _fmt_ms(cb_decomp.get("avg_code_per_turn_ms", 0))
+        c_pct = float(cb_decomp.get("code_pct", 0.0) or 0.0)
+        w_ms = _fmt_ms(cb_decomp.get("avg_ext_wait_per_turn_ms", 0))
+        w_pct = float(cb_decomp.get("ext_wait_pct", 0.0) or 0.0)
+        s_ms = _fmt_ms(cb_decomp.get("avg_sandbox_per_turn_ms", 0))
+        s_pct = float(cb_decomp.get("sandbox_pct", 0.0) or 0.0)
+        s_per_call = _fmt_ms(cb_decomp.get("avg_sandbox_per_call_ms", 0))
+        ext_bar_seg = (
+            f'      <div class="pl-seg-tool" style="width:{max(0.0, w_pct)}%" '
+            f'title="External Tool Wait: {w_ms}/turn ({w_pct:.1f}%)">'
+            f"ext_wait: {w_ms} ({w_pct:.0f}%)</div>\n"
+            if w_pct > 0
+            else ""
+        )
+        cb_decomp_html = (
+            '    <div class="pl-overview-card" style="margin-top:8px;">\n'
+            '      <div class="pl-stack-header">\n'
+            "        <span><b>📦 Callback Time Decomposition</b> "
+            '<span class="meta">— Why callback span duration exceeds pure '
+            "Python <code>code</code> time</span></span>\n"
+            f'        <span class="meta">Avg <b>{tot_turn_s}/turn</b> across '
+            f"{cpt_val:.2g} callbacks/turn ({tot_calls_val:,} total calls)"
+            "</span>\n"
+            "      </div>\n"
+            '      <div class="pl-stack-bar">\n'
+            f'        <div class="pl-seg-cb" style="width:{max(0.0, c_pct)}%" '
+            f'title="Pure Python Code: {c_ms}/turn ({c_pct:.1f}%)">'
+            f"code: {c_ms} ({c_pct:.0f}%)</div>\n"
+            f"{ext_bar_seg}"
+            f'        <div class="pl-seg-gap" style="width:{max(0.0, s_pct)}%" '
+            f'title="Sandbox &amp; State IPC Overhead: {s_ms}/turn ({s_pct:.1f}%)">'
+            f"sandbox: {s_ms} ({s_pct:.0f}%)</div>\n"
+            "      </div>\n"
+            '      <div style="display:grid;grid-template-columns:'
+            'repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:6px;'
+            'font-size:0.78em;">\n'
+            f'        <div><span class="badge callback">code</span> '
+            f"<b>{c_ms}/turn ({c_pct:.0f}%)</b>: Pure Python execution inside "
+            'the XBox container <span class="meta">(<code>total code execution '
+            "latency - waiting for external calls</code>)</span>.</div>\n"
+            f'        <div><span class="badge tool">ext_wait</span> '
+            f"<b>{w_ms}/turn ({w_pct:.0f}%)</b>: Time paused inside the "
+            "callback awaiting synchronous <code>ces_tools</code> / OpenAPI "
+            'calls <span class="meta">(<code>waiting for external calls'
+            "</code>)</span>.</div>\n"
+            f'        <div><span class="badge neutral">sandbox</span> '
+            f"<b>{s_ms}/turn ({s_pct:.0f}%, ~{s_per_call}/call)</b>: "
+            "Per-callback XBox container IPC, <code>session.state</code> "
+            "serialization/diffing &amp; sandbox init "
+            '<span class="meta">(<code>span_duration - code - ext_wait'
+            "</code>)</span>.</div>\n"
+            "      </div>\n"
+            "    </div>\n"
         )
 
     # Table B: Pre-Speech Tool Masking & Dead-Air Signals
@@ -635,6 +736,7 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
         "<th>Observation</th></tr>\n"
         f"      {table_a_rows}"
         "    </table>\n"
+        f"{cb_decomp_html}"
         f"    {filler_section_html}"
         "  </div>\n"
         "</details>\n"
