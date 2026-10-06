@@ -98,6 +98,8 @@ cxas = "cxas_scrapi.cli.main:main"
 ".agents" = "share/cxas-scrapi/skills/.agents"
 ".claude" = "share/cxas-scrapi/skills/.claude"
 ".gemini" = "share/cxas-scrapi/skills/.gemini"
+".github/agents" = "share/cxas-scrapi/skills/.github/agents"
+".github/hooks" = "share/cxas-scrapi/skills/.github/hooks"
 "AGENTS.md" = "share/cxas-scrapi/skills/AGENTS.md"
 "examples/cxaslint.yaml" = "share/cxas-scrapi/skills/examples/cxaslint.yaml"
 
