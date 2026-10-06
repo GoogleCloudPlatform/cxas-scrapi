@@ -442,6 +442,15 @@
                             <pre class="tool-data">{{ result | escape }}</pre>
                           {% endif %}
                         </details>
+                      {% elif kind == "callback_group" %}
+                        <details class="cb-spans-details latency-drawer">
+                          <summary><span class="pl-arrow">&#9654;</span>&#9201; <b>Callback Spans ({{ item[1] | length }})</b></summary>
+                          <div class="cb-spans-list">
+                            {% for cbl in item[1] %}
+                              <div class="system">{{ cbl | escape }}</div>
+                            {% endfor %}
+                          </div>
+                        </details>
                       {% elif kind == "turn_latency" %}
                         {{ item[1] | safe }}
                       {% else %}

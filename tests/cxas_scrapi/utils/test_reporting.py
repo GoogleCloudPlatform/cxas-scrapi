@@ -1704,6 +1704,8 @@ def test_perceived_latency_rendering_in_html_reports(
                 "Tool Call: verify_equipment_status",
                 "Tool Response: {'status': 'online'}",
                 "Agent Text: Let me check your equipment right now.",
+                "[Callback: BeforeModel (Troubleshoting_Agent)] (180.0 ms)",
+                "[Callback: BeforeModel (Troubleshoting_Agent)] (120.0 ms)",
             ],
             "turn_traces": [turn_trace],
             "step_details": [],
@@ -1739,6 +1741,8 @@ def test_perceived_latency_rendering_in_html_reports(
     assert "Actionable Guidance" not in sim_html
     assert "Callback Time Decomposition" in sim_html
     assert "code 60ms + sandbox 120ms" in sim_html
+    assert "cb-spans-details" in sim_html
+    assert "Callback Spans (2)" in sim_html
 
     # Verify combined HTML report also includes all three collapsed latency drawers
     combined_report_path = os.path.join(tmp_path, "combined_report.html")
@@ -1761,3 +1765,5 @@ def test_perceived_latency_rendering_in_html_reports(
     assert "before_model_callbacks_01" in combined_html
     assert "python_code.py" not in combined_html
     assert "Callback Time Decomposition" in combined_html
+    assert "cb-spans-details" in combined_html
+    assert "Callback Spans (2)" in combined_html

@@ -1239,6 +1239,10 @@ def _parse_trace(trace: typing.Any, tools_map: typing.Any) -> typing.Any:
                         formatted_line[len("Custom Payload:") :].strip(),
                     )
                 )
+            elif formatted_line.startswith(
+                "[Callback:"
+            ) or formatted_line.startswith("Callback:"):
+                parsed_lines.append(("callback_span", formatted_line))
             else:
                 parsed_lines.append(("system", formatted_line))
     return parsed_lines
@@ -1246,12 +1250,17 @@ def _parse_trace(trace: typing.Any, tools_map: typing.Any) -> typing.Any:
 
 def _merge_trace_lines(parsed_lines: typing.Any) -> typing.Any:
     """Merge consecutive agent lines and pair tool calls with responses."""
-    merged = []
+    merged: list[Any] = []
     for kind, text in parsed_lines:
         if kind == "agent" and merged and merged[-1][0] == "agent":
             merged[-1] = ("agent", merged[-1][1] + " " + text)
         elif kind == "tool_resp" and merged and merged[-1][0] == "tool_call":
             merged[-1] = ("tool_pair", merged[-1][1], text)
+        elif kind == "callback_span":
+            if merged and merged[-1][0] == "callback_group":
+                merged[-1][1].append(text)
+            else:
+                merged.append(("callback_group", [text]))
         else:
             merged.append((kind, text))
     return merged
@@ -1313,6 +1322,19 @@ def _render_merged_items(merged: typing.Any) -> typing.Any:
                 '<summary class="tool-summary">'
                 "&#128230; <b>Custom Payload</b></summary>"
                 f'<pre class="tool-data">{_escape(item[1])}</pre>'
+                "</details>\n"
+            )
+        elif kind == "callback_group":
+            cb_lines = item[1]
+            cb_items_html = "".join(
+                f'<div class="system">{_escape(cbl)}</div>\n'
+                for cbl in cb_lines
+            )
+            html += (
+                '<details class="cb-spans-details latency-drawer">'
+                '<summary><span class="pl-arrow">&#9654;</span>'
+                f"&#9201; <b>Callback Spans ({len(cb_lines)})</b></summary>\n"
+                f'<div class="cb-spans-list">\n{cb_items_html}</div>'
                 "</details>\n"
             )
         elif kind == "turn_latency":
@@ -1893,10 +1915,14 @@ def generate_combined_html_report(
                             parsed.append(("tool_call", line))
                         elif line.startswith("Tool Response"):
                             parsed.append(("tool_resp", line))
+                        elif line.startswith(
+                            "[Callback:"
+                        ) or line.startswith("Callback:"):
+                            parsed.append(("callback_span", line))
                         else:
                             parsed.append(("system", line))
 
-                merged = []
+                merged: list[Any] = []
                 for kind, text in parsed:
                     if kind == "agent" and merged and merged[-1][0] == "agent":
                         merged[-1] = ("agent", merged[-1][1] + " " + text)
@@ -1906,6 +1932,11 @@ def generate_combined_html_report(
                         and merged[-1][0] == "tool_call"
                     ):
                         merged[-1] = ("tool_pair", merged[-1][1], text)
+                    elif kind == "callback_span":
+                        if merged and merged[-1][0] == "callback_group":
+                            merged[-1][1].append(text)
+                        else:
+                            merged.append(("callback_group", [text]))
                     else:
                         merged.append((kind, text))
                 r["_processed_trace"] = _inject_turn_latency_items(

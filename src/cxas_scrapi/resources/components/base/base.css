@@ -1294,8 +1294,42 @@ body.dark-mode .user-bubble {
 }
 
 .wf-cb-details[open] > summary .pl-arrow,
-.cb-sub-details[open] > summary .pl-arrow {
+.cb-sub-details[open] > summary .pl-arrow,
+.cb-spans-details[open] > summary .pl-arrow {
   transform: rotate(90deg);
+}
+
+.cb-spans-details {
+  margin: 4px 0;
+}
+
+.cb-spans-details > summary {
+  cursor: pointer;
+  font-weight: normal;
+  font-size: 0.85em;
+  color: #d97706;
+  padding: 2px 0;
+  list-style: none;
+}
+
+.cb-spans-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+body.dark-mode .cb-spans-details > summary {
+  color: #ffb74d;
+}
+
+@media (prefers-color-scheme: dark) {
+  body:not(.light-mode) .cb-spans-details > summary {
+    color: #ffb74d;
+  }
+}
+
+.cb-spans-list {
+  margin: 2px 0 4px 10px;
+  padding-left: 8px;
+  border-left: 2px solid #d97706;
 }
 
 .wf-cb-list {
