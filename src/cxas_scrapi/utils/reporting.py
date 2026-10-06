@@ -177,6 +177,7 @@ def _render_turn_latency_drawer(turn_pl: dict[str, Any]) -> str:
         "vad": "pl-seg-vad",
         "cb": "pl-seg-cb",
         "llm": "pl-seg-sllm",
+        "tts": "pl-seg-ttfa",
         "tool": "pl-seg-tool",
         "guardrail": "pl-seg-gap",
     }
@@ -184,7 +185,9 @@ def _render_turn_latency_drawer(turn_pl: dict[str, Any]) -> str:
         seg_cls = wf_kind_to_seg.get(wf.get("kind", ""), "pl-seg-gap")
         if wf.get("is_first_audio"):
             seg_cls = (
-                "pl-seg-filler" if wf.get("kind") == "cb" else "pl-seg-ttfa"
+                "pl-seg-filler"
+                if (wf.get("kind") == "cb" or turn_pl.get("filler_masked"))
+                else "pl-seg-ttfa"
             )
         opacity = (
             "opacity:0.6;"

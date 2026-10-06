@@ -1767,3 +1767,108 @@ def test_perceived_latency_rendering_in_html_reports(
     assert "Callback Time Decomposition" in combined_html
     assert "cb-spans-details" in combined_html
     assert "Callback Spans (2)" in combined_html
+
+
+def test_perceived_latency_standalone_tts_and_barge_in_fallback() -> None:
+    from cxas_scrapi.utils.latency_parser import LatencyParser
+
+    # 1. Cascaded turn with standalone TTS span
+    cascaded_turn = {
+        "messages": [
+            {"role": "user", "chunks": [{"text": "Schedule a technician"}]},
+            {"role": "agent", "chunks": [{"text": "I can help with that."}]},
+        ],
+        "rootSpan": {
+            "name": "root",
+            "startTime": "2026-10-02T14:00:00.000Z",
+            "endTime": "2026-10-02T14:00:03.000Z",
+            "duration": "3.000s",
+            "attributes": {
+                "perceived latency (ms)": 1150,
+                "input types": ["audio"],
+            },
+            "childSpans": [
+                {
+                    "name": "VAD",
+                    "startTime": "2026-10-02T14:00:00.000Z",
+                    "endTime": "2026-10-02T14:00:01.000Z",
+                    "duration": "1.000s",
+                    "attributes": {},
+                },
+                {
+                    "name": "LLM",
+                    "startTime": "2026-10-02T14:00:01.100Z",
+                    "endTime": "2026-10-02T14:00:02.200Z",
+                    "duration": "1.100s",
+                    "attributes": {
+                        "model": "gemini-2.5-flash",
+                        "time to first chunk (ms)": 600,
+                    },
+                },
+                {
+                    "name": "TTS",
+                    "startTime": "2026-10-02T14:00:01.900Z",
+                    "endTime": "2026-10-02T14:00:02.400Z",
+                    "duration": "0.500s",
+                    "attributes": {
+                        "model": "gemini-composite-v1",
+                        "time to first audio (ms)": 250,
+                        "audio duration (ms)": 1800,
+                    },
+                },
+            ],
+        },
+    }
+    res_cascaded = LatencyParser.parse_turn_perceived_latency(cascaded_turn, 1)
+    assert res_cascaded is not None
+    assert round(res_cascaded["pl_ms"]) == 1150
+    assert res_cascaded["pl_source"] == "TTS (gemini-composite-v1)"
+    bd = res_cascaded["breakdown_ms"]
+    assert round(bd["llm_ttfc_ms"]) == 800
+    assert round(bd["tts_ms"]) == 250
+
+    # 2. Barged-in turn (b/568006279) where TTS span is missing from childSpans
+    barged_in_turn = {
+        "messages": [
+            {"role": "user", "chunks": [{"text": "Wait actually tomorrow"}]},
+            {"role": "agent", "chunks": [{"text": "Checking tomorrow..."}]},
+        ],
+        "rootSpan": {
+            "name": "root",
+            "startTime": "2026-10-02T14:00:05.000Z",
+            "endTime": "2026-10-02T14:00:08.000Z",
+            "duration": "3.000s",
+            "attributes": {
+                "perceived latency (ms)": 1600,
+                "agent audio uri": "gs://bucket/agent.wav",
+                "input types": ["audio"],
+            },
+            "childSpans": [
+                {
+                    "name": "VAD",
+                    "startTime": "2026-10-02T14:00:05.000Z",
+                    "endTime": "2026-10-02T14:00:06.000Z",
+                    "duration": "1.000s",
+                    "attributes": {},
+                },
+                {
+                    "name": "LLM",
+                    "startTime": "2026-10-02T14:00:06.200Z",
+                    "endTime": "2026-10-02T14:00:07.500Z",
+                    "duration": "1.300s",
+                    "attributes": {
+                        "model": "gemini-2.5-flash",
+                        "time to first chunk (ms)": 900,
+                    },
+                },
+            ],
+        },
+    }
+    res_barged = LatencyParser.parse_turn_perceived_latency(barged_in_turn, 2)
+    assert res_barged is not None
+    assert round(res_barged["pl_ms"]) == 1600
+    assert res_barged["pl_source"] == "TTS (Barged-in)"
+    bd_barged = res_barged["breakdown_ms"]
+    assert round(bd_barged["llm_ttfc_ms"]) == 900
+    assert round(bd_barged["tts_ms"]) == 500
+

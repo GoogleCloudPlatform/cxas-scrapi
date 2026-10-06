@@ -714,7 +714,7 @@ class LatencyParser:
             is_cb = name == "Callback" or name.upper().startswith("CALLBACK:")
             child_tools = _collect_child_tools(node) if is_cb else []
 
-            if depth > 0 or name != "Turn":
+            if depth > 0 or name not in ("Turn", "root", ""):
                 flat.append(
                     {
                         "name": name,
@@ -764,8 +764,9 @@ class LatencyParser:
                     _walk(ch, depth + 1, ch_agent, cur_pass_id, cur_seq)
                 else:
                     if (
-                        ch_name in ("LLM", "Tool")
+                        ch_name in ("LLM", "Tool", "TTS")
                         or ch_upper.startswith("TOOL:")
+                        or ch_upper.startswith("TTS:")
                         or ch_upper.startswith("AGENT:")
                     ):
                         cur_cb_key = None
@@ -824,7 +825,14 @@ class LatencyParser:
         if earliest_ts is None:
             return None
 
-        vad_spans = [s for s in spans if s["name"] == "VAD"]
+        root_attrs = LatencyParser._unwrap_attrs(
+            root_span.get("attributes", {})
+        )
+        all_vad_spans = [s for s in spans if s["name"] == "VAD"]
+        active_vad_spans = [
+            s for s in all_vad_spans if not s["attrs"].get("skip")
+        ]
+        vad_spans = active_vad_spans or all_vad_spans
         vad_span = vad_spans[-1] if vad_spans else None
 
         # Determine turn category & T_start
@@ -844,13 +852,22 @@ class LatencyParser:
             vad_dur_ms = 0.0
             u_clean = user_text.strip()
             u_low = u_clean.lower()
-            if u_low.startswith("event:") or not u_low:
+            if (
+                u_low.startswith(("event:", "<event>", "<context>"))
+                or not u_low
+            ):
                 category = "event_turns"
-                ev_name = (
-                    u_clean.split(":", 1)[1].strip()
-                    if ":" in u_clean
-                    else ""
-                )
+                ev_name = ""
+                if u_low.startswith("event:"):
+                    ev_name = u_clean.split(":", 1)[1].strip()
+                elif u_low.startswith("<event>"):
+                    ev_name = (
+                        u_clean.replace("<event>", "")
+                        .replace("</event>", "")
+                        .strip()
+                    )
+                elif u_low.startswith("<context>"):
+                    ev_name = "Inactivity / Context"
                 category_label = (
                     f"Event ({ev_name})" if ev_name else "Event / System"
                 )
@@ -862,22 +879,110 @@ class LatencyParser:
         audio_spans: list[dict[str, Any]] = []
         for s in spans:
             attrs = s["attrs"]
-            ttfa_ms = float(attrs.get("time to first audio (ms)", 0) or 0)
+            raw_ttfa = attrs.get("time to first audio (ms)")
+            has_ttfa = raw_ttfa is not None and raw_ttfa != ""
+            ttfa_ms = float(raw_ttfa or 0) if has_ttfa else 0.0
+            postproc_wait_ms = float(
+                attrs.get("waiting for postprocessors (ms)", 0) or 0
+            )
             audio_dur_ms = float(attrs.get("audio duration (ms)", 0) or 0)
-            if (ttfa_ms > 0 or audio_dur_ms > 0) and s["start_ts"] is not None:
+            if (
+                has_ttfa or ttfa_ms > 0 or audio_dur_ms > 0
+            ) and s["start_ts"] is not None:
+                eff_ttfa_ms = ttfa_ms + postproc_wait_ms
                 offset_s = (
-                    ttfa_ms / 1000.0 if ttfa_ms > 0 else (s["dur_ms"] / 1000.0)
+                    eff_ttfa_ms / 1000.0
+                    if (has_ttfa or eff_ttfa_ms > 0)
+                    else (s["dur_ms"] / 1000.0)
                 )
                 first_audio_ts = s["start_ts"] + offset_s
                 audio_spans.append(
                     {
                         **s,
-                        "ttfa_ms": ttfa_ms,
+                        "ttfa_ms": eff_ttfa_ms,
                         "audio_dur_ms": audio_dur_ms,
                         "first_audio_ts": first_audio_ts,
                     }
                 )
         audio_spans.sort(key=lambda x: x["first_audio_ts"])
+        post_start_audio_spans = [
+            a for a in audio_spans if a["start_ts"] >= t_start - 0.005
+        ]
+        if post_start_audio_spans:
+            audio_spans = post_start_audio_spans
+
+        # Fallback for b/568006279: when barge-in cancels synthesis before the
+        # TTS span is recorded, reconstruct the TTS span from the root span's
+        # 'perceived latency (ms)' attribute recorded by SessionTracer.
+        root_pl_ms = float(root_attrs.get("perceived latency (ms)", 0) or 0)
+        is_audio_modality = (
+            vad_span is not None
+            or bool(root_attrs.get("agent audio uri"))
+            or bool(root_attrs.get("user audio uri"))
+            or "audio" in str(root_attrs.get("input types", "")).lower()
+        )
+        if not audio_spans and is_audio_modality and root_pl_ms > 0:
+            est_first_audio_ts = t_start + (root_pl_ms / 1000.0)
+            cand_llms = [
+                s
+                for s in spans
+                if s["name"] == "LLM"
+                and s.get("start_ts") is not None
+                and s["start_ts"] <= est_first_audio_ts
+            ]
+            target_llm = cand_llms[-1] if cand_llms else None
+            if target_llm is not None:
+                llm_ttfc_s = (
+                    float(
+                        target_llm["attrs"].get(
+                            "time to first chunk (ms)",
+                            target_llm["attrs"].get(
+                                "time to first token (ms)", 0
+                            ),
+                        )
+                        or 0
+                    )
+                    / 1000.0
+                )
+                tts_start_ts = min(
+                    est_first_audio_ts,
+                    max(
+                        t_start,
+                        target_llm["start_ts"]
+                        + (
+                            llm_ttfc_s
+                            if llm_ttfc_s > 0
+                            else target_llm["dur_ms"] / 1000.0
+                        ),
+                    ),
+                )
+                rec_agent = str(target_llm["attrs"].get("agent", "") or "")
+                rec_depth = int(target_llm.get("depth", 1) or 1)
+            else:
+                tts_start_ts = t_start
+                rec_agent = ""
+                rec_depth = 1
+            rec_tts_ms = max(0.0, (est_first_audio_ts - tts_start_ts) * 1000.0)
+            rec_tts_span = {
+                "name": "TTS",
+                "depth": rec_depth,
+                "start_ts": tts_start_ts,
+                "end_ts": est_first_audio_ts,
+                "dur_ms": rec_tts_ms,
+                "attrs": {
+                    "agent": rec_agent,
+                    "time to first audio (ms)": rec_tts_ms,
+                    "reconstructed_barge_in": True,
+                },
+                "cb_pass_id": 0,
+                "cb_seq": 0,
+                "child_tools": [],
+                "ttfa_ms": rec_tts_ms,
+                "audio_dur_ms": 0.0,
+                "first_audio_ts": est_first_audio_ts,
+            }
+            spans.append(rec_tts_span)
+            audio_spans.append(rec_tts_span)
 
         # Determine T_first_audio & Perceived Latency
         is_silent = False
@@ -894,48 +999,76 @@ class LatencyParser:
             first_audio_ts = first_audio_span["first_audio_ts"]
             pl_ms = max(0.0, (first_audio_ts - t_start) * 1000.0)
             fa_name = str(first_audio_span["name"])
-            if (
+            fa_upper = fa_name.upper()
+            is_tts_span = fa_name == "TTS" or fa_upper.startswith("TTS")
+            is_cb_or_tool = (
                 fa_name == "Callback"
-                or fa_name.upper().startswith("CALLBACK")
+                or fa_upper.startswith("CALLBACK")
                 or fa_name == "Tool"
-                or fa_name.upper().startswith("TOOL")
-            ):
-                stage = first_audio_span["attrs"].get(
-                    "stage",
-                    first_audio_span["attrs"].get(
-                        "toolDisplayName", "Callback"
-                    ),
+                or fa_upper.startswith("TOOL")
+            )
+            later_work_spans = [
+                s
+                for s in spans
+                if (
+                    s["name"] in ("Tool", "LLM")
+                    or str(s["name"]).upper().startswith("TOOL")
                 )
-                pl_source = f"Filler ({stage})"
+                and s.get("start_ts") is not None
+                and s.get("end_ts") is not None
+                and s["start_ts"] > (first_audio_span["start_ts"] + 0.005)
+                and s["end_ts"] > (first_audio_ts + 0.005)
+            ]
+            is_filler_tts = is_tts_span and (
+                len(audio_spans) > 1 or bool(later_work_spans)
+            )
+            if is_cb_or_tool or is_filler_tts:
+                if is_filler_tts:
+                    pl_source = "Filler (TTS)"
+                else:
+                    stage = first_audio_span["attrs"].get(
+                        "stage",
+                        first_audio_span["attrs"].get(
+                            "toolDisplayName", "Callback"
+                        ),
+                    )
+                    pl_source = f"Filler ({stage})"
                 filler_masked = True
-                # Look for subsequent LLM audio span or end of tool+LLM chain
-                later_llm_audio = [
-                    a for a in audio_spans[1:] if a["name"] == "LLM"
+                # Look for subsequent non-filler audio span or end of tool+LLM chain
+                later_response_audio = [
+                    a
+                    for a in audio_spans[1:]
+                    if a["name"] in ("LLM", "TTS")
+                    or str(a["name"]).upper().startswith("TTS")
                 ]
-                if later_llm_audio:
-                    unmasked_ts = later_llm_audio[0]["first_audio_ts"]
+                if later_response_audio:
+                    # Use the last response audio burst's first_audio_ts
+                    unmasked_ts = later_response_audio[-1]["first_audio_ts"]
+                    unmasked_pl_ms = max(
+                        pl_ms, (unmasked_ts - t_start) * 1000.0
+                    )
+                elif later_work_spans:
+                    unmasked_ts = max(s["end_ts"] for s in later_work_spans)
                     unmasked_pl_ms = max(
                         pl_ms, (unmasked_ts - t_start) * 1000.0
                     )
                 else:
-                    later_spans = [
-                        s
-                        for s in spans
-                        if (
-                            s["name"] in ("Tool", "LLM")
-                            or str(s["name"]).upper().startswith("TOOL")
-                        )
-                        and s.get("end_ts") is not None
-                        and s["end_ts"] > first_audio_ts
-                    ]
-                    if later_spans:
-                        unmasked_ts = max(s["end_ts"] for s in later_spans)
-                        unmasked_pl_ms = max(
-                            pl_ms, (unmasked_ts - t_start) * 1000.0
-                        )
-                    else:
-                        unmasked_pl_ms = pl_ms
+                    unmasked_pl_ms = pl_ms
                 filler_saved_ms = max(0.0, (unmasked_pl_ms or pl_ms) - pl_ms)
+            elif is_tts_span:
+                if first_audio_span["attrs"].get("reconstructed_barge_in"):
+                    pl_source = "TTS (Barged-in)"
+                else:
+                    tts_model = first_audio_span["attrs"].get(
+                        "model",
+                        first_audio_span["attrs"].get("voice", "Chirp / TTS"),
+                    )
+                    pl_source = (
+                        f"TTS ({tts_model})"
+                        if tts_model and tts_model != "TTS"
+                        else "TTS"
+                    )
+                unmasked_pl_ms = pl_ms
             else:
                 model_name = first_audio_span["attrs"].get("model", "LLM")
                 pl_source = f"LLM ({model_name})"
@@ -997,7 +1130,14 @@ class LatencyParser:
         for s in spans:
             raw_s_name = str(s["name"] or "")
             s_upper = raw_s_name.upper()
-            if raw_s_name in ("VAD", "Callback", "LLM", "Tool", "Guardrail"):
+            if raw_s_name in (
+                "VAD",
+                "Callback",
+                "LLM",
+                "Tool",
+                "Guardrail",
+                "TTS",
+            ):
                 s_name = raw_s_name
                 inline_label = ""
             elif s_upper.startswith("CALLBACK:"):
@@ -1008,6 +1148,9 @@ class LatencyParser:
                 inline_label = raw_s_name.split(":", 1)[1].strip()
             elif s_upper.startswith("GUARDRAIL:"):
                 s_name = "Guardrail"
+                inline_label = raw_s_name.split(":", 1)[1].strip()
+            elif s_upper.startswith("TTS:"):
+                s_name = "TTS"
                 inline_label = raw_s_name.split(":", 1)[1].strip()
             else:
                 continue
@@ -1027,6 +1170,19 @@ class LatencyParser:
             if first_audio_ts is not None and s_name != "VAD":
                 ov_start = max(t_start, s_start)
                 ov_end = min(first_audio_ts, s_end)
+                # In cascaded mode, once the response TTS span starts, the
+                # critical path transitions from LLM token generation to TTS
+                # synthesis while LLM streams remaining sentences in parallel.
+                if (
+                    s_name == "LLM"
+                    and first_audio_span is not None
+                    and str(first_audio_span.get("name", ""))
+                    .upper()
+                    .startswith("TTS")
+                    and first_audio_span.get("start_ts") is not None
+                    and s_start <= first_audio_span["start_ts"] < ov_end
+                ):
+                    ov_end = first_audio_span["start_ts"]
                 if ov_end > ov_start:
                     pre_ms = (ov_end - ov_start) * 1000.0
                     is_pre_speech = True
@@ -1038,7 +1194,9 @@ class LatencyParser:
                 )
                 or 0
             )
-            ttfa_val = float(attrs.get("time to first audio (ms)", 0) or 0)
+            ttfa_val = float(attrs.get("time to first audio (ms)", 0) or 0) + (
+                float(attrs.get("waiting for postprocessors (ms)", 0) or 0)
+            )
             in_tok = int(float(attrs.get("input token count", 0) or 0))
             out_tok = int(float(attrs.get("output token count", 0) or 0))
 
@@ -1075,6 +1233,36 @@ class LatencyParser:
                         tts_ms += tts_part
                     else:
                         llm_ttfc_ms += pre_ms
+            elif s_name == "TTS":
+                tts_label = str(
+                    attrs.get(
+                        "model",
+                        attrs.get("voice", inline_label or "Chirp / TTS"),
+                    )
+                    or "Chirp / TTS"
+                )
+                if attrs.get("reconstructed_barge_in"):
+                    tts_label = "Barged-in (Reconstructed)"
+                comp_label = (
+                    f"TTS: {tts_label}"
+                    if tts_label != "Chirp / TTS"
+                    else "TTS: Synthesis"
+                )
+                comp_type = "TTS"
+                wf_kind = "tts"
+                audio_dur_val = float(attrs.get("audio duration (ms)", 0) or 0)
+                tts_parts = []
+                if "time to first audio (ms)" in attrs:
+                    tts_parts.append(f"TTFA {round(ttfa_val)}ms")
+                if audio_dur_val > 0:
+                    tts_parts.append(f"audio {round(audio_dur_val)}ms")
+                if attrs.get("interrupted") or attrs.get(
+                    "reconstructed_barge_in"
+                ):
+                    tts_parts.append("interrupted")
+                wf_detail = ", ".join(tts_parts) or f"{round(dur_ms)}ms"
+                if is_pre_speech:
+                    tts_ms += pre_ms
             elif s_name == "Callback":
                 stage_label = str(
                     attrs.get(
@@ -1758,6 +1946,17 @@ class LatencyParser:
                         round(sum(out_toks) / len(out_toks)) if out_toks else 0
                     )
                     obs_parts.append(f"avg_tokens={avg_in}->{avg_out}")
+                obs_parts.append(f"max={round(max_dur):,}ms")
+            elif comp_type == "TTS":
+                ttfas = [
+                    float(r.get("ttfa_ms", 0))
+                    for r in recs
+                    if float(r.get("ttfa_ms", 0)) >= 0
+                ]
+                if ttfas:
+                    obs_parts.append(
+                        f"avg_ttfa={round(sum(ttfas) / len(ttfas))}ms"
+                    )
                 obs_parts.append(f"max={round(max_dur):,}ms")
             elif comp_type == "Tool / API":
                 unm_pre = sum(
