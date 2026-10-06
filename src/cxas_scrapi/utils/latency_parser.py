@@ -712,7 +712,10 @@ class LatencyParser:
                 attrs = {**attrs, "agent": node_agent}
 
             is_cb = name == "Callback" or name.upper().startswith("CALLBACK:")
-            child_tools = _collect_child_tools(node) if is_cb else []
+            is_tool = name == "Tool" or name.upper().startswith("TOOL:")
+            child_tools = (
+                _collect_child_tools(node) if (is_cb or is_tool) else []
+            )
 
             if depth > 0 or name not in ("Turn", "root", ""):
                 flat.append(
@@ -729,10 +732,17 @@ class LatencyParser:
                     }
                 )
 
+            # Do not flatten nested tool calls inside a Callback or Tool span
+            # into top-level spans (they are already captured in child_tools
+            # and included in the parent span's wall-clock duration).
+            if is_cb or is_tool:
+                return
+
             children = node.get("child_spans", node.get("childSpans", [])) or []
             cur_cb_key: tuple[str, str] | None = None
             cur_pass_id = 0
             cur_seq = 0
+            last_child_agent = node_agent
             for ch in children:
                 if not isinstance(ch, dict):
                     continue
@@ -740,6 +750,12 @@ class LatencyParser:
                 ch_upper = ch_name.upper()
                 ch_attrs = LatencyParser._unwrap_attrs(ch.get("attributes", {}))
                 ch_agent = str(ch_attrs.get("agent", "") or node_agent or "")
+                if ch_agent:
+                    last_child_agent = ch_agent
+                elif (
+                    ch_name == "TTS" or ch_upper.startswith("TTS:")
+                ) and last_child_agent:
+                    ch_agent = last_child_agent
                 if ch_name == "Callback" or ch_upper.startswith("CALLBACK:"):
                     inl = (
                         ch_name.split(":", 1)[1].strip()
@@ -840,10 +856,15 @@ class LatencyParser:
             category = "user_turns"
             category_label = "User Turn (Audio)"
             t_start = vad_span["end_ts"]
-            t_origin = (
+            vad_start = (
                 vad_span["start_ts"]
                 if vad_span.get("start_ts") is not None
                 else t_start
+            )
+            t_origin = (
+                min(earliest_ts, vad_start)
+                if earliest_ts is not None
+                else vad_start
             )
             vad_dur_ms = vad_span["dur_ms"]
         else:
@@ -1016,6 +1037,8 @@ class LatencyParser:
                 )
                 and s.get("start_ts") is not None
                 and s.get("end_ts") is not None
+                and s["dur_ms"] >= 5.0
+                and str(s["attrs"].get("name", "")).lower() != "end_session"
                 and s["start_ts"] > (first_audio_span["start_ts"] + 0.005)
                 and s["end_ts"] > (first_audio_ts + 0.005)
             ]
@@ -1126,6 +1149,18 @@ class LatencyParser:
         )
 
         cb_pass_to_wf: dict[tuple[int, bool], dict[str, Any]] = {}
+        active_exec_intervals: list[tuple[float, float]] = [
+            (float(sp["start_ts"]), float(sp["end_ts"]))
+            for sp in spans
+            if sp.get("start_ts") is not None
+            and sp.get("end_ts") is not None
+            and (
+                str(sp.get("name", "")) in ("Callback", "LLM", "Tool", "TTS")
+                or str(sp.get("name", ""))
+                .upper()
+                .startswith(("CALLBACK:", "TOOL:", "TTS:"))
+            )
+        ]
 
         for s in spans:
             raw_s_name = str(s["name"] or "")
@@ -1170,11 +1205,12 @@ class LatencyParser:
             if first_audio_ts is not None and s_name != "VAD":
                 ov_start = max(t_start, s_start)
                 ov_end = min(first_audio_ts, s_end)
-                # In cascaded mode, once the response TTS span starts, the
-                # critical path transitions from LLM token generation to TTS
-                # synthesis while LLM streams remaining sentences in parallel.
+                # In cascaded/voice mode, once the response TTS span starts, the
+                # critical path transitions to TTS synthesis while any concurrent
+                # LLM or background Tool (e.g. escalation_call / call_wrap_up)
+                # executes in parallel.
                 if (
-                    s_name == "LLM"
+                    s_name in ("LLM", "Tool")
                     and first_audio_span is not None
                     and str(first_audio_span.get("name", ""))
                     .upper()
@@ -1183,7 +1219,35 @@ class LatencyParser:
                     and s_start <= first_audio_span["start_ts"] < ov_end
                 ):
                     ov_end = first_audio_span["start_ts"]
-                if ov_end > ov_start:
+                if s_name == "Guardrail" and ov_end > ov_start:
+                    # Guardrails (especially AfterModel policy checks in voice
+                    # mode) often run asynchronously in parallel with
+                    # BeforeModel callbacks and LLM execution. Only count the
+                    # portion of [ov_start, ov_end] where no Callback/LLM/Tool/TTS
+                    # span is actively running on the critical path.
+                    uncovered: list[tuple[float, float]] = [(ov_start, ov_end)]
+                    for a_s, a_e in active_exec_intervals:
+                        if a_e <= ov_start or a_s >= ov_end:
+                            continue
+                        next_uncovered: list[tuple[float, float]] = []
+                        for u_s, u_e in uncovered:
+                            if a_e <= u_s or a_s >= u_e:
+                                next_uncovered.append((u_s, u_e))
+                            else:
+                                if a_s > u_s:
+                                    next_uncovered.append((u_s, a_s))
+                                if a_e < u_e:
+                                    next_uncovered.append((a_e, u_e))
+                        uncovered = next_uncovered
+                        if not uncovered:
+                            break
+                    uncovered_s = sum(
+                        max(0.0, u_e - u_s) for u_s, u_e in uncovered
+                    )
+                    if uncovered_s > 0.005:
+                        pre_ms = uncovered_s * 1000.0
+                        is_pre_speech = True
+                elif ov_end > ov_start:
                     pre_ms = (ov_end - ov_start) * 1000.0
                     is_pre_speech = True
 
