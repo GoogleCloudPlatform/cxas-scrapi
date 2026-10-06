@@ -369,7 +369,7 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
         return ""
     prim = suite_pl["primary"]
     slices = suite_pl.get("slices", {})
-    active_key = suite_pl.get("primary_slice_key", "customer_audio")
+    active_key = suite_pl.get("primary_slice_key", "user_turns")
 
     p50_cls = _pl_status_cls(prim.get("p50_ms"))
     p90_cls = _pl_status_cls(prim.get("p90_ms"))
@@ -377,13 +377,13 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
     slice_btns_html = ""
     slice_panels_html = ""
     slice_order = [
-        ("customer_audio", "Customer Audio Turns"),
-        ("session_start", "Session Start"),
-        ("inactivity_poll", "Inactivity / Hold Polls"),
+        ("user_turns", "User Turns"),
+        ("event_turns", "Event / System Turns"),
+        ("all_turns", "All Turns"),
     ]
     for skey, s_default_label in slice_order:
         sdata = slices.get(skey)
-        if not sdata:
+        if not sdata or sdata.get("total_turns", 0) == 0:
             continue
         is_active = skey == active_key
         btn_cls = "pl-slice-btn active" if is_active else "pl-slice-btn"

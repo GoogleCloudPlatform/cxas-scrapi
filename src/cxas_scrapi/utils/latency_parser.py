@@ -829,8 +829,8 @@ class LatencyParser:
 
         # Determine turn category & T_start
         if vad_span and vad_span.get("end_ts") is not None:
-            category = "customer_audio"
-            category_label = "Customer Audio"
+            category = "user_turns"
+            category_label = "User Turn (Audio)"
             t_start = vad_span["end_ts"]
             t_origin = (
                 vad_span["start_ts"]
@@ -842,20 +842,21 @@ class LatencyParser:
             t_start = earliest_ts
             t_origin = earliest_ts
             vad_dur_ms = 0.0
-            u_low = user_text.lower()
-            if turn_idx == 0 or "welcome" in u_low:
-                category = "session_start"
-                category_label = "Session Start"
-            elif (
-                "inactivity" in u_low
-                or u_low.startswith("event:")
-                or not user_text
-            ):
-                category = "inactivity_poll"
-                category_label = "Inactivity / Hold Poll"
+            u_clean = user_text.strip()
+            u_low = u_clean.lower()
+            if u_low.startswith("event:") or not u_low:
+                category = "event_turns"
+                ev_name = (
+                    u_clean.split(":", 1)[1].strip()
+                    if ":" in u_clean
+                    else ""
+                )
+                category_label = (
+                    f"Event ({ev_name})" if ev_name else "Event / System"
+                )
             else:
-                category = "customer_audio"
-                category_label = "Customer Turn (Text)"
+                category = "user_turns"
+                category_label = "User Turn (Text)"
 
         # Identify audio-producing spans
         audio_spans: list[dict[str, Any]] = []
@@ -1448,13 +1449,13 @@ class LatencyParser:
         if not parsed_turns:
             return None
 
-        audio_turns = [
+        user_turns = [
             t
             for t in parsed_turns
-            if t["category"] == "customer_audio" and t["pl_ms"] is not None
+            if t["category"] == "user_turns" and t["pl_ms"] is not None
         ]
         spoken_turns = [t for t in parsed_turns if t["pl_ms"] is not None]
-        primary_turns = audio_turns if audio_turns else spoken_turns
+        primary_turns = user_turns if user_turns else spoken_turns
         pl_vals = [float(t["pl_ms"]) for t in primary_turns]
         unmasked_vals = [
             float(t["unmasked_pl_ms"] or t["pl_ms"]) for t in primary_turns
@@ -1479,9 +1480,9 @@ class LatencyParser:
             "conv_name": conv_name,
             "total_turns": len(parsed_turns),
             "spoken_turns_count": len(spoken_turns),
-            "audio_turns_count": len(audio_turns),
+            "audio_turns_count": len(user_turns),
             "primary_slice_label": (
-                "Customer Audio" if audio_turns else "All Spoken"
+                "User Turns" if user_turns else "All Turns"
             ),
             "avg_ms": round(avg_ms, 1),
             "p50_ms": round(p50_ms, 1),
@@ -1590,35 +1591,29 @@ class LatencyParser:
         if not all_turns:
             return None
 
-        audio_turns = [
-            t for t in all_turns if t["category"] == "customer_audio"
+        user_turns = [
+            t for t in all_turns if t["category"] == "user_turns"
         ]
-        session_start_turns = [
-            t for t in all_turns if t["category"] == "session_start"
-        ]
-        poll_turns = [
-            t for t in all_turns if t["category"] == "inactivity_poll"
+        event_turns = [
+            t for t in all_turns if t["category"] == "event_turns"
         ]
 
         slices = {
-            "customer_audio": LatencyParser._build_slice_metrics(
-                audio_turns if audio_turns else all_turns,
-                "Customer Audio Turns" if audio_turns else "All Spoken Turns",
+            "user_turns": LatencyParser._build_slice_metrics(
+                user_turns if user_turns else all_turns,
+                "User Turns" if user_turns else "All Turns",
             ),
-            "session_start": LatencyParser._build_slice_metrics(
-                session_start_turns, "Session Start (Welcome)"
-            ),
-            "inactivity_poll": LatencyParser._build_slice_metrics(
-                poll_turns, "Inactivity / Hold Polls"
+            "event_turns": LatencyParser._build_slice_metrics(
+                event_turns, "Event / System Turns"
             ),
             "all_turns": LatencyParser._build_slice_metrics(
-                all_turns, "All Spoken Turns"
+                all_turns, "All Turns"
             ),
         }
 
         primary_key = (
-            "customer_audio"
-            if slices["customer_audio"]["spoken_count"] > 0
+            "user_turns"
+            if slices["user_turns"]["spoken_count"] > 0
             else "all_turns"
         )
         primary = slices[primary_key]
@@ -1947,7 +1942,7 @@ class LatencyParser:
                     f"ms total ({round(avg_dur):,}ms/call)"
                 )
             else:
-                status = "Post-Speech / Silent Poll"
+                status = "Post-Speech Only"
                 status_cls = "neutral"
                 badge_label = f"0% ({calls} Post-Speech)"
                 observation = (
