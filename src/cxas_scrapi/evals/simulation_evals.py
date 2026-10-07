@@ -15,11 +15,13 @@
 
 """Eval conversation classes for CXAS Scrapi."""
 
+import contextlib
 import enum
 import functools
 import inspect
 import json
 import logging
+import os
 import re
 import shutil
 import time
@@ -908,6 +910,7 @@ class SimulationEvals(Apps):
 
             detailed_trace = []
             detailed_trace.append(f"User: {user_utterance}")
+            turn_traces: list[dict[str, Any]] = []
 
             while user_utterance:
                 if modality == "audio" and interactive_session:
@@ -958,6 +961,19 @@ class SimulationEvals(Apps):
                     self._parse_agent_response(response)
                 )
                 detailed_trace.append("\n".join(trace_chunks))
+
+                turn_root_span = ParsedSessionResponse.extract_root_span(
+                    response
+                )
+                if isinstance(turn_root_span, dict) and turn_root_span:
+                    turn_traces.append(
+                        {
+                            "turn_index": current_sim_turn,
+                            "user_utterance": user_utterance,
+                            "agent_text": agent_text,
+                            "root_span": turn_root_span,
+                        }
+                    )
 
                 if session_ended:
                     if agent_text:
@@ -1023,6 +1039,17 @@ class SimulationEvals(Apps):
             eval_conv.session_id = session_id
             eval_conv._detailed_trace = detailed_trace
             eval_conv.detailed_trace = detailed_trace
+            eval_conv._turn_traces = turn_traces
+            eval_conv.turn_traces = turn_traces
+            if turn_traces and session_id:
+                with contextlib.suppress(Exception):
+                    cache_dir = "/tmp/scrapi_traces"
+                    os.makedirs(cache_dir, exist_ok=True)
+                    cache_path = os.path.join(cache_dir, f"{session_id}.json")
+                    with open(cache_path, "w") as f:
+                        json.dump(
+                            {"session_id": session_id, "turns": turn_traces}, f
+                        )
             return eval_conv
         finally:
             if interactive_session:
@@ -1130,6 +1157,15 @@ class SimulationEvals(Apps):
                     f"{naturalness_note}"
                 )
 
+            raw_turn_traces = getattr(
+                conv,
+                "_turn_traces",
+                getattr(conv, "turn_traces", []),
+            )
+            turn_traces_out = (
+                raw_turn_traces if isinstance(raw_turn_traces, list) else []
+            )
+
             result: dict[str, Any] = {
                 "name": name,
                 "run": run_idx + 1,
@@ -1146,6 +1182,7 @@ class SimulationEvals(Apps):
                     "_detailed_trace",
                     getattr(conv, "detailed_trace", []),
                 ),
+                "turn_traces": turn_traces_out,
                 "step_details": [
                     {
                         "goal": p.step.goal,

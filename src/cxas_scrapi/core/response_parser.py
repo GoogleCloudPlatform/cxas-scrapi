@@ -123,6 +123,7 @@ class ParsedSessionResponse:
         self, response: Any, tools_map: dict[str, str] | None = None
     ) -> None:
         self.tools_map = tools_map or {}
+        self._raw_response = response
         self.outputs = []
 
         # Extract output list
@@ -145,8 +146,20 @@ class ParsedSessionResponse:
         self.session_ended = False
         self.guardrail_trigger: ParsedGuardrailTrigger | None = None
         self.detailed_trace: list[str] = []
+        self.root_spans: list[dict[str, Any]] = []
+        self.root_span: dict[str, Any] | None = None
 
         self._parse()
+
+    @classmethod
+    def extract_root_span(cls, response: Any) -> dict[str, Any] | None:
+        """Extracts the primary root_span dictionary from a session response."""
+        if response is None or type(response).__name__ == "MagicMock":
+            return None
+        try:
+            return cls(response).root_span
+        except Exception:
+            return None
 
     def _resolve_tool_name(self, name: str) -> str:
         """Resolves tool name using tools_map if provided."""
@@ -179,19 +192,44 @@ class ParsedSessionResponse:
         return None
 
     def _parse_guardrails(self, diagnostic_info: Any) -> None:
-        """Extracts guardrail triggers from diagnostic_info.root_span."""
+        """Extracts root_span and guardrail triggers from diagnostic_info."""
+        if (
+            diagnostic_info is None
+            or type(diagnostic_info).__name__ == "MagicMock"
+        ):
+            return
         root_span = getattr(diagnostic_info, "root_span", None)
-        if root_span:
+        if root_span is None and isinstance(diagnostic_info, dict):
+            root_span = diagnostic_info.get(
+                "root_span", diagnostic_info.get("rootSpan")
+            )
+        if root_span and type(root_span).__name__ != "MagicMock":
             try:
-                span_dict = (
-                    MessageToDict(root_span._pb)
-                    if hasattr(root_span, "_pb")
-                    else MessageToDict(root_span)
-                )
+                if hasattr(root_span, "_pb"):
+                    span_dict = MessageToDict(root_span._pb)
+                elif isinstance(root_span, dict):
+                    span_dict = dict(root_span)
+                else:
+                    span_dict = MessageToDict(root_span)
             except Exception:
                 span_dict = (
                     dict(root_span) if isinstance(root_span, dict) else {}
                 )
+
+            if span_dict and isinstance(span_dict, dict):
+                self.root_spans.append(span_dict)
+                if self.root_span is None or len(
+                    span_dict.get(
+                        "childSpans", span_dict.get("child_spans", [])
+                    )
+                    or []
+                ) >= len(
+                    self.root_span.get(
+                        "childSpans", self.root_span.get("child_spans", [])
+                    )
+                    or []
+                ):
+                    self.root_span = span_dict
 
             triggered_span = self._search_span_dict(span_dict)
             if triggered_span:
@@ -210,6 +248,9 @@ class ParsedSessionResponse:
                 )
 
     def _parse(self) -> None:
+        top_dim = getattr(self._raw_response, "diagnostic_info", None)
+        if top_dim is not None and self._raw_response not in self.outputs:
+            self._parse_guardrails(top_dim)
         top_level_agent_text_found = False
         for output in self.outputs:
             if output is None:
