@@ -1834,7 +1834,7 @@ def test_perceived_latency_standalone_tts_and_barge_in_fallback() -> None:
     assert round(bd["llm_ttfc_ms"]) == 800
     assert round(bd["tts_ms"]) == 250
 
-    # 2. Barged-in turn (b/568006279) where TTS span is missing from childSpans
+    # 2. Barged-in turn where TTS span is missing from childSpans
     barged_in_turn = {
         "messages": [
             {"role": "user", "chunks": [{"text": "Wait actually tomorrow"}]},

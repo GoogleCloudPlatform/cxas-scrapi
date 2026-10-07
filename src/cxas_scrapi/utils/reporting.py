@@ -704,16 +704,16 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
             'font-size:0.78em;">\n'
             f'        <div><span class="badge callback">code</span> '
             f"<b>{c_ms}/turn ({c_pct:.0f}%)</b>: Pure Python execution inside "
-            'the XBox container <span class="meta">(<code>total code execution '
+            'the callback sandbox <span class="meta">(<code>total code execution '
             "latency - waiting for external calls</code>)</span>.</div>\n"
             f'        <div><span class="badge tool">ext_wait</span> '
             f"<b>{w_ms}/turn ({w_pct:.0f}%)</b>: Time paused inside the "
-            "callback awaiting synchronous <code>ces_tools</code> / OpenAPI "
+            "callback awaiting synchronous tool / OpenAPI "
             'calls <span class="meta">(<code>waiting for external calls'
             "</code>)</span>.</div>\n"
             f'        <div><span class="badge neutral">sandbox</span> '
             f"<b>{s_ms}/turn ({s_pct:.0f}%, ~{s_per_call}/call)</b>: "
-            "Per-callback XBox container IPC, <code>session.state</code> "
+            "Per-callback sandbox IPC, <code>session.state</code> "
             "serialization/diffing &amp; sandbox init "
             '<span class="meta">(<code>span_duration - code - ext_wait'
             "</code>)</span>.</div>\n"

@@ -923,9 +923,9 @@ class LatencyParser:
         if post_start_audio_spans:
             audio_spans = post_start_audio_spans
 
-        # Fallback for b/568006279: when barge-in cancels synthesis before the
-        # TTS span is recorded, reconstruct the TTS span from the root span's
-        # 'perceived latency (ms)' attribute recorded by SessionTracer.
+        # Fallback for barged-in turns: when user barge-in cancels synthesis
+        # before the TTS span is recorded, reconstruct the TTS span from the
+        # root span's 'perceived latency (ms)' attribute.
         root_pl_ms = float(root_attrs.get("perceived latency (ms)", 0) or 0)
         is_audio_modality = (
             vad_span is not None
@@ -1075,7 +1075,7 @@ class LatencyParser:
                 else:
                     tts_model = first_audio_span["attrs"].get(
                         "model",
-                        first_audio_span["attrs"].get("voice", "Chirp / TTS"),
+                        first_audio_span["attrs"].get("voice", "TTS"),
                     )
                     pl_source = (
                         f"TTS ({tts_model})"
@@ -1208,8 +1208,7 @@ class LatencyParser:
                 ov_end = min(first_audio_ts, s_end)
                 # In cascaded/voice mode, once the response TTS span starts, the
                 # critical path transitions to TTS synthesis while any concurrent
-                # LLM or background Tool (e.g. escalation_call / call_wrap_up)
-                # executes in parallel.
+                # LLM or background Tool executes in parallel.
                 if (
                     s_name in ("Callback", "LLM", "Tool")
                     and not (
@@ -1307,15 +1306,15 @@ class LatencyParser:
                 tts_label = str(
                     attrs.get(
                         "model",
-                        attrs.get("voice", inline_label or "Chirp / TTS"),
+                        attrs.get("voice", inline_label or "TTS"),
                     )
-                    or "Chirp / TTS"
+                    or "TTS"
                 )
                 if attrs.get("reconstructed_barge_in"):
                     tts_label = "Barged-in (Reconstructed)"
                 comp_label = (
                     f"TTS: {tts_label}"
-                    if tts_label != "Chirp / TTS"
+                    if tts_label != "TTS"
                     else "TTS: Synthesis"
                 )
                 comp_type = "TTS"
