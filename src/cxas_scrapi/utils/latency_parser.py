@@ -1211,15 +1211,20 @@ class LatencyParser:
                 # LLM or background Tool (e.g. escalation_call / call_wrap_up)
                 # executes in parallel.
                 if (
-                    s_name in ("LLM", "Tool")
+                    s_name in ("Callback", "LLM", "Tool")
+                    and not (
+                        first_audio_span is not None
+                        and s_start == first_audio_span.get("start_ts")
+                        and raw_s_name == first_audio_span.get("name")
+                    )
                     and first_audio_span is not None
                     and str(first_audio_span.get("name", ""))
                     .upper()
                     .startswith("TTS")
                     and first_audio_span.get("start_ts") is not None
-                    and s_start <= first_audio_span["start_ts"] < ov_end
+                    and ov_end > first_audio_span["start_ts"]
                 ):
-                    ov_end = first_audio_span["start_ts"]
+                    ov_end = max(ov_start, first_audio_span["start_ts"])
                 if s_name == "Guardrail" and ov_end > ov_start:
                     # Guardrails (especially AfterModel policy checks in voice
                     # mode) often run asynchronously in parallel with
@@ -1248,7 +1253,7 @@ class LatencyParser:
                     if uncovered_s > 0.005:
                         pre_ms = uncovered_s * 1000.0
                         is_pre_speech = True
-                elif ov_end > ov_start:
+                elif (ov_end - ov_start) > 0.005:
                     pre_ms = (ov_end - ov_start) * 1000.0
                     is_pre_speech = True
 
