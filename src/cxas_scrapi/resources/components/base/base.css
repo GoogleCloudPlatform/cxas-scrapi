@@ -1192,6 +1192,62 @@ body.dark-mode .user-bubble {
   border-bottom: none;
 }
 
+.wf-header-row {
+  padding: 2px 0 4px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.74em;
+  color: var(--text-secondary);
+}
+
+.wf-header-col {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.wf-axis-track {
+  position: relative;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.wf-axis-zone {
+  font-size: 0.92em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.wf-axis-post {
+  margin-left: auto;
+}
+
+.wf-fa-pin {
+  position: absolute;
+  top: 1px;
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 0.92em;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  z-index: 6;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.wf-stream-bar {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.18),
+    rgba(255, 255, 255, 0.18) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
 .wf-track {
   position: relative;
   height: 12px;

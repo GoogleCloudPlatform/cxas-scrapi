@@ -173,27 +173,70 @@ def _render_turn_latency_drawer(turn_pl: dict[str, Any]) -> str:
     )
 
     wf_rows_html = ""
+    if first_audio_pct is not None:
+        pin_tx = (
+            "translateX(0%)"
+            if first_audio_pct < 18
+            else (
+                "translateX(-100%)"
+                if first_audio_pct > 82
+                else "translateX(-50%)"
+            )
+        )
+        pre_zone_html = (
+            '<span class="wf-axis-zone wf-axis-pre">'
+            "0 ms &middot; Silent Wait (Pre-Speech)</span>"
+            if first_audio_pct >= 32
+            else ""
+        )
+        post_zone_html = (
+            '<span class="wf-axis-zone wf-axis-post">'
+            "Post-Speech (Agent Speaking) &rarr;</span>"
+            if first_audio_pct <= 68
+            else ""
+        )
+        wf_rows_html += (
+            '<div class="wf-row wf-header-row">'
+            '<div class="wf-header-col">Execution Stage</div>'
+            '<div class="wf-axis-track">'
+            f"{pre_zone_html}"
+            f'<div class="wf-fa-pin" style="left:{first_audio_pct}%;'
+            f'transform:{pin_tx};">🔊 First Audio: {_fmt_ms(pl_ms)}</div>'
+            f'<div class="wf-first-audio-line" style="left:{first_audio_pct}%;">'
+            "</div>"
+            f"{post_zone_html}"
+            "</div>"
+            '<div class="wf-header-col" style="text-align:right;">Duration</div>'
+            "</div>\n"
+        )
+
     wf_kind_to_seg = {
         "vad": "pl-seg-vad",
         "cb": "pl-seg-cb",
         "llm": "pl-seg-sllm",
         "tts": "pl-seg-ttfa",
+        "audio_stream": "pl-seg-ttfa",
         "tool": "pl-seg-tool",
         "guardrail": "pl-seg-gap",
     }
     for idx, wf in enumerate(turn_pl.get("waterfall_spans", []), start=1):
-        seg_cls = wf_kind_to_seg.get(wf.get("kind", ""), "pl-seg-gap")
-        if wf.get("is_first_audio"):
+        wf_kind = wf.get("kind", "")
+        seg_cls = wf_kind_to_seg.get(wf_kind, "pl-seg-gap")
+        if wf.get("is_first_audio") or wf_kind == "audio_stream":
             seg_cls = (
                 "pl-seg-filler"
-                if (wf.get("kind") == "cb" or turn_pl.get("filler_masked"))
+                if (wf_kind == "cb" or turn_pl.get("filler_masked"))
                 else "pl-seg-ttfa"
             )
-        opacity = (
-            "opacity:0.6;"
-            if (not wf.get("is_pre_speech") and wf.get("kind") != "vad")
-            else ""
-        )
+        if wf_kind == "audio_stream":
+            seg_cls += " wf-stream-bar"
+            opacity = "opacity:0.82;"
+        else:
+            opacity = (
+                "opacity:0.6;"
+                if (not wf.get("is_pre_speech") and wf_kind != "vad")
+                else ""
+            )
         dur_cls = (
             "fail"
             if wf.get("is_pre_speech") and wf.get("dur_ms", 0) > 1500
@@ -201,9 +244,18 @@ def _render_turn_latency_drawer(turn_pl: dict[str, Any]) -> str:
         )
         left_p = wf.get("left_pct", 0)
         width_p = wf.get("width_pct", 2)
+        post_left_p = wf.get("post_left_pct")
+        post_width_p = wf.get("post_width_pct")
+        post_bar_html = (
+            f'<div class="wf-bar {seg_cls}" '
+            f'style="left:{post_left_p}%;width:{post_width_p}%;opacity:0.32;" '
+            'title="Post-speech / background continuation"></div>'
+            if post_left_p is not None and post_width_p is not None
+            else ""
+        )
         wf_dur = _fmt_ms(wf.get("dur_ms", 0))
         cbs = wf.get("callbacks") or []
-        if wf.get("kind") == "cb" and cbs:
+        if wf_kind == "cb" and cbs:
             sub_rows_html = ""
             for cb in cbs:
                 cb_seq = cb.get("seq", 1)
@@ -269,7 +321,7 @@ def _render_turn_latency_drawer(turn_pl: dict[str, Any]) -> str:
                 '<div class="wf-track">'
                 f'<div class="wf-bar {seg_cls}" '
                 f'style="left:{left_p}%;width:{width_p}%;{opacity}"></div>'
-                f"{fa_marker}</div>"
+                f"{post_bar_html}{fa_marker}</div>"
                 f'<div class="wf-dur {dur_cls}">{wf_dur}</div>'
                 "</summary>"
                 f'<div class="wf-cb-list">{sub_rows_html}</div>'
@@ -284,7 +336,7 @@ def _render_turn_latency_drawer(turn_pl: dict[str, Any]) -> str:
                 '<div class="wf-track">'
                 f'<div class="wf-bar {seg_cls}" '
                 f'style="left:{left_p}%;width:{width_p}%;{opacity}"></div>'
-                f"{fa_marker}</div>"
+                f"{post_bar_html}{fa_marker}</div>"
                 f'<div class="wf-dur {dur_cls}">{wf_dur}</div>'
                 "</div>\n"
             )

@@ -1131,11 +1131,20 @@ class LatencyParser:
             t_origin + max(root_dur_ms, pl_ms or 0.0, 100.0) / 1000.0
         )
         if first_audio_ts is not None:
-            total_timeline_end = max(total_timeline_end, first_audio_ts)
+            min_post_s = max(0.25, (first_audio_ts - t_origin) * 0.22)
+            if total_timeline_end <= first_audio_ts + 0.08:
+                total_timeline_end = first_audio_ts + min_post_s
+            else:
+                total_timeline_end = max(total_timeline_end, first_audio_ts)
         total_timeline_ms = max(100.0, (total_timeline_end - t_origin) * 1000.0)
         first_audio_rel_ms = (
             max(0.0, (first_audio_ts - t_origin) * 1000.0)
             if first_audio_ts is not None
+            else None
+        )
+        fa_pct_val = (
+            min(99.0, max(0.0, (first_audio_rel_ms / total_timeline_ms) * 100.0))
+            if first_audio_rel_ms is not None
             else None
         )
 
@@ -1459,6 +1468,57 @@ class LatencyParser:
                 and s_start == first_audio_span.get("start_ts")
                 and raw_s_name == first_audio_span.get("name")
             )
+            post_left_pct: float | None = None
+            post_width_pct: float | None = None
+            wf_display_dur_ms = dur_ms
+
+            if is_fa_span and fa_pct_val is not None:
+                # End the pre-speech bar right at the First Audio line so the
+                # transition from Pre-Speech TTFA -> Agent Audio Streaming happens
+                # directly on the red vertical line.
+                left_pct = min(left_pct, max(0.0, fa_pct_val - 0.8))
+                width_pct = max(0.8, fa_pct_val - left_pct)
+                wf_display_dur_ms = pre_ms
+                if wf_kind == "tts":
+                    wf_detail = f"TTFA {round(pre_ms)}ms"
+                elif wf_kind == "llm":
+                    tok_part = (
+                        f", {in_tok}->{out_tok} tok"
+                        if (in_tok > 0 or out_tok > 0)
+                        else ""
+                    )
+                    wf_detail = f"TTFA {round(pre_ms)}ms{tok_part}"
+            elif (
+                is_pre_speech
+                and fa_pct_val is not None
+                and first_audio_ts is not None
+                and (rel_start_ms + pre_ms + 10.0) < rel_end_ms
+            ):
+                # Span started pre-speech and continued running in parallel
+                # after its pre-speech critical-path window ended.
+                pre_end_rel_ms = rel_start_ms + pre_ms
+                pre_end_pct = min(
+                    fa_pct_val,
+                    max(
+                        left_pct + 1.0,
+                        (pre_end_rel_ms / total_timeline_ms) * 100.0,
+                    ),
+                )
+                width_pct = max(1.0, pre_end_pct - left_pct)
+                post_left_pct = round(pre_end_pct, 2)
+                post_width_pct = round(
+                    max(
+                        1.0,
+                        min(
+                            100.0 - pre_end_pct,
+                            ((rel_end_ms - pre_end_rel_ms) / total_timeline_ms)
+                            * 100.0,
+                        ),
+                    ),
+                    2,
+                )
+                wf_display_dur_ms = pre_ms
+                wf_detail = f"{wf_detail}, total {round(dur_ms)}ms"
 
             cb_item = (
                 {
@@ -1531,11 +1591,14 @@ class LatencyParser:
                     "detail": wf_detail,
                     "rel_start_ms": round(rel_start_ms, 1),
                     "rel_end_ms": round(rel_end_ms, 1),
-                    "dur_ms": round(dur_ms, 1),
+                    "dur_ms": round(wf_display_dur_ms, 1),
+                    "total_dur_ms": round(dur_ms, 1),
                     "pre_speech_ms": round(pre_ms, 1),
                     "is_pre_speech": is_pre_speech,
                     "left_pct": round(left_pct, 2),
                     "width_pct": round(width_pct, 2),
+                    "post_left_pct": post_left_pct,
+                    "post_width_pct": post_width_pct,
                     "is_first_audio": is_fa_span,
                     "cb_pass_id": cb_pass_id,
                     "callbacks": [cb_item] if cb_item is not None else [],
@@ -1543,6 +1606,84 @@ class LatencyParser:
                 waterfall_spans.append(new_wf)
                 if wf_kind == "cb" and not is_fa_span and cb_pass_id > 0:
                     cb_pass_to_wf[pass_key] = new_wf
+
+                if (
+                    is_fa_span
+                    and fa_pct_val is not None
+                    and first_audio_rel_ms is not None
+                    and first_audio_ts is not None
+                ):
+                    post_span_ms = max(0.0, (s_end - first_audio_ts) * 1000.0)
+                    audio_play_ms = float(
+                        attrs.get("audio duration (ms)", 0) or 0
+                    )
+                    stream_dur_ms = (
+                        post_span_ms
+                        if post_span_ms >= 10.0
+                        else (
+                            audio_play_ms
+                            if audio_play_ms > 0
+                            else max(0.0, dur_ms - pre_ms)
+                        )
+                    )
+                    stream_end_rel_ms = (
+                        rel_end_ms
+                        if post_span_ms >= 10.0
+                        else min(
+                            total_timeline_ms,
+                            first_audio_rel_ms
+                            + max(stream_dur_ms, total_timeline_ms * 0.18),
+                        )
+                    )
+                    stream_width_pct = max(
+                        2.0,
+                        min(
+                            100.0 - fa_pct_val,
+                            (
+                                (stream_end_rel_ms - first_audio_rel_ms)
+                                / total_timeline_ms
+                            )
+                            * 100.0,
+                        ),
+                    )
+                    stream_lbl = (
+                        "🔊 Filler Audio Streaming"
+                        if filler_masked
+                        else "🔊 Agent Audio Streaming"
+                    )
+                    stream_parts = ["starts at First Audio"]
+                    if post_span_ms >= 10.0:
+                        stream_parts.append(f"stream {round(post_span_ms)}ms")
+                    if audio_play_ms > 0:
+                        stream_parts.append(f"audio {round(audio_play_ms)}ms")
+                    if attrs.get("interrupted") or attrs.get(
+                        "reconstructed_barge_in"
+                    ):
+                        stream_parts.append("interrupted")
+                    waterfall_spans.append(
+                        {
+                            "kind": "audio_stream",
+                            "base_label": stream_lbl,
+                            "label": stream_lbl,
+                            "count": 1,
+                            "agent": agent_name,
+                            "detail": " · ".join(stream_parts),
+                            "rel_start_ms": round(first_audio_rel_ms, 1),
+                            "rel_end_ms": round(stream_end_rel_ms, 1),
+                            "dur_ms": round(stream_dur_ms, 1),
+                            "total_dur_ms": round(stream_dur_ms, 1),
+                            "pre_speech_ms": 0.0,
+                            "is_pre_speech": False,
+                            "left_pct": round(fa_pct_val, 2),
+                            "width_pct": round(stream_width_pct, 2),
+                            "post_left_pct": None,
+                            "post_width_pct": None,
+                            "is_first_audio": False,
+                            "is_audio_stream": True,
+                            "cb_pass_id": 0,
+                            "callbacks": [],
+                        }
+                    )
 
         # Normalize Pre-Speech breakdown against pl_ms
         raw_sum = (
