@@ -1746,6 +1746,8 @@ def test_perceived_latency_rendering_in_html_reports(
     assert "Customer Speech (VAD)" not in sim_html
     assert "wf-fa-pin" in sim_html
     assert "Audio Streaming" in sim_html
+    assert "pl-stack-legend" in sim_html
+    assert "pl-legend-dot" in sim_html
 
     # Verify combined HTML report also includes all three collapsed latency drawers
     combined_report_path = os.path.join(tmp_path, "combined_report.html")

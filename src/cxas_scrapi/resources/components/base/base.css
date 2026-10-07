@@ -1098,7 +1098,7 @@ body.dark-mode .user-bubble {
 
 .pl-stack-bar {
   display: flex;
-  height: 22px;
+  height: 16px;
   border-radius: 4px;
   overflow: hidden;
   font-size: 0.74em;
@@ -1106,6 +1106,51 @@ body.dark-mode .user-bubble {
   color: #ffffff;
   margin: 6px 0;
   background: var(--border-subtle);
+}
+
+.pl-stack-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 0.78em;
+  color: var(--text-primary);
+}
+
+.pl-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.pl-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.pl-legend-dot.cb {
+  background: #7c3aed;
+}
+
+.pl-legend-dot.tool {
+  background: #d97706;
+}
+
+.pl-legend-dot.sllm {
+  background: #2563eb;
+}
+
+.pl-legend-dot.ttfa {
+  background: #059669;
+}
+
+.pl-legend-dot.gap {
+  background: #64748b;
 }
 
 .pl-seg-cb {

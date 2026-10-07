@@ -496,6 +496,7 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
 
         ov_w = max(0.0, st.get("overhead_pct", 0))
         ov_m = _fmt_ms(st.get("overhead_ms", 0))
+        ov_p = st.get("overhead_pct", 0)
 
         slice_panels_html += (
             f'<div class="pl-slice-panel" id="pl-slice-{skey}" '
@@ -527,15 +528,38 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
             f"Pre-Speech Critical Path ({avg_s} Mean on {s_lbl})</div>\n"
             '    <div class="pl-stack-bar">\n'
             f'      <div class="pl-seg-cb" style="width:{cb_w}%" '
-            f'title="Callbacks: {cb_m}">Callbacks {cb_m} ({cb_p:.0f}%)</div>\n'
+            f'title="Callbacks: {cb_m} ({cb_p:.1f}%)"></div>\n'
             f'      <div class="pl-seg-tool" style="width:{tl_w}%" '
-            f'title="Tools/APIs: {tl_m}">Tools {tl_m} ({tl_p:.0f}%)</div>\n'
+            f'title="Tools / APIs: {tl_m} ({tl_p:.1f}%)"></div>\n'
             f'      <div class="pl-seg-sllm" style="width:{lm_w}%" '
-            f'title="LLM TTFC: {lm_m}">LLM {lm_m} ({lm_p:.0f}%)</div>\n'
+            f'title="LLM: {lm_m} ({lm_p:.1f}%)"></div>\n'
             f'      <div class="pl-seg-ttfa" style="width:{tt_w}%" '
-            f'title="TTS/Audio: {tt_m}">TTS {tt_m} ({tt_p:.0f}%)</div>\n'
+            f'title="TTS / Audio: {tt_m} ({tt_p:.1f}%)"></div>\n'
             f'      <div class="pl-seg-gap" style="width:{ov_w}%" '
-            f'title="Overhead/Gap: {ov_m}">Gap {ov_m}</div>\n'
+            f'title="Gap / Overhead: {ov_m} ({ov_p:.1f}%)"></div>\n'
+            "    </div>\n"
+            '    <div class="pl-stack-legend">\n'
+            '      <span class="pl-legend-item">'
+            '<span class="pl-legend-dot cb"></span>'
+            f'Callbacks <b>{cb_m}</b> <span class="meta">({cb_p:.0f}%)</span>'
+            "</span>\n"
+            '      <span class="pl-legend-item">'
+            '<span class="pl-legend-dot tool"></span>'
+            f'Tools / APIs <b>{tl_m}</b> <span class="meta">({tl_p:.0f}%)</span>'
+            "</span>\n"
+            '      <span class="pl-legend-item">'
+            '<span class="pl-legend-dot sllm"></span>'
+            f'LLM <b>{lm_m}</b> <span class="meta">({lm_p:.0f}%)</span>'
+            "</span>\n"
+            '      <span class="pl-legend-item">'
+            '<span class="pl-legend-dot ttfa"></span>'
+            f'TTS <b>{tt_m}</b> <span class="meta">({tt_p:.0f}%)</span>'
+            "</span>\n"
+            '      <span class="pl-legend-item">'
+            '<span class="pl-legend-dot gap"></span>'
+            'Gap / Overhead '
+            f'<b>{ov_m}</b> <span class="meta">({ov_p:.0f}%)</span>'
+            "</span>\n"
             "    </div>\n"
             "  </div>\n"
             "</div>\n"
@@ -654,8 +678,7 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
         s_per_call = _fmt_ms(cb_decomp.get("avg_sandbox_per_call_ms", 0))
         ext_bar_seg = (
             f'      <div class="pl-seg-tool" style="width:{max(0.0, w_pct)}%" '
-            f'title="External Tool Wait: {w_ms}/turn ({w_pct:.1f}%)">'
-            f"ext_wait: {w_ms} ({w_pct:.0f}%)</div>\n"
+            f'title="External Tool Wait: {w_ms}/turn ({w_pct:.1f}%)"></div>\n'
             if w_pct > 0
             else ""
         )
@@ -671,12 +694,10 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
             "      </div>\n"
             '      <div class="pl-stack-bar">\n'
             f'        <div class="pl-seg-cb" style="width:{max(0.0, c_pct)}%" '
-            f'title="Pure Python Code: {c_ms}/turn ({c_pct:.1f}%)">'
-            f"code: {c_ms} ({c_pct:.0f}%)</div>\n"
+            f'title="Pure Python Code: {c_ms}/turn ({c_pct:.1f}%)"></div>\n'
             f"{ext_bar_seg}"
             f'        <div class="pl-seg-gap" style="width:{max(0.0, s_pct)}%" '
-            f'title="Sandbox &amp; State IPC Overhead: {s_ms}/turn ({s_pct:.1f}%)">'
-            f"sandbox: {s_ms} ({s_pct:.0f}%)</div>\n"
+            f'title="Sandbox &amp; State IPC Overhead: {s_ms}/turn ({s_pct:.1f}%)"></div>\n'
             "      </div>\n"
             '      <div style="display:grid;grid-template-columns:'
             'repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:6px;'
