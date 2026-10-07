@@ -1743,6 +1743,7 @@ def test_perceived_latency_rendering_in_html_reports(
     assert "code 60ms + sandbox 120ms" in sim_html
     assert "cb-spans-details" in sim_html
     assert "Callback Spans (2)" in sim_html
+    assert "Customer Speech (VAD)" not in sim_html
 
     # Verify combined HTML report also includes all three collapsed latency drawers
     combined_report_path = os.path.join(tmp_path, "combined_report.html")
@@ -1822,6 +1823,8 @@ def test_perceived_latency_standalone_tts_and_barge_in_fallback() -> None:
     res_cascaded = LatencyParser.parse_turn_perceived_latency(cascaded_turn, 1)
     assert res_cascaded is not None
     assert round(res_cascaded["pl_ms"]) == 1150
+    assert round(res_cascaded["first_audio_rel_ms"]) == 1150
+    assert all(w["kind"] != "vad" for w in res_cascaded["waterfall_spans"])
     assert res_cascaded["pl_source"] == "TTS (gemini-composite-v1)"
     bd = res_cascaded["breakdown_ms"]
     assert round(bd["llm_ttfc_ms"]) == 800

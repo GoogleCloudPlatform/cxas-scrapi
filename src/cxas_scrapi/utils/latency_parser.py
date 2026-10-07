@@ -856,16 +856,7 @@ class LatencyParser:
             category = "user_turns"
             category_label = "User Turn (Audio)"
             t_start = vad_span["end_ts"]
-            vad_start = (
-                vad_span["start_ts"]
-                if vad_span.get("start_ts") is not None
-                else t_start
-            )
-            t_origin = (
-                min(earliest_ts, vad_start)
-                if earliest_ts is not None
-                else vad_start
-            )
+            t_origin = t_start
             vad_dur_ms = vad_span["dur_ms"]
         else:
             t_start = earliest_ts
@@ -1166,7 +1157,6 @@ class LatencyParser:
             raw_s_name = str(s["name"] or "")
             s_upper = raw_s_name.upper()
             if raw_s_name in (
-                "VAD",
                 "Callback",
                 "LLM",
                 "Tool",
@@ -1193,6 +1183,8 @@ class LatencyParser:
             s_start = s["start_ts"]
             s_end = s["end_ts"]
             if s_start is None or s_end is None:
+                continue
+            if vad_span and s_end <= t_start:
                 continue
 
             attrs = s["attrs"]
@@ -1421,38 +1413,34 @@ class LatencyParser:
                 wf_detail = f"{round(dur_ms)}ms"
                 if is_pre_speech:
                     guardrail_pre_ms += pre_ms
-            else:  # VAD
-                comp_label = "Customer Speech (VAD)"
-                comp_type = "VAD"
-                wf_kind = "vad"
-                wf_detail = f"{round(dur_ms)}ms"
+            else:
+                continue
 
-            if s_name != "VAD":
-                component_records.append(
-                    {
-                        "component": comp_label,
-                        "type": comp_type,
-                        "agent": agent_name,
-                        "dur_ms": dur_ms,
-                        "pre_speech_ms": pre_ms,
-                        "is_pre_speech": is_pre_speech,
-                        "masked_by_filler": filler_masked and not is_pre_speech,
-                        "turn_category": category,
-                        "cb_seq": cb_seq,
-                        "cb_name": cb_name,
-                        "cb_desc": cb_desc,
-                        "code_ms": code_ms,
-                        "ext_wait_ms": ext_wait_ms,
-                        "sandbox_init_ms": sandbox_init_ms,
-                        "sandbox_overhead_ms": sandbox_overhead_ms,
-                        "has_detailed_latency": has_detailed_latency,
-                        "child_tools": child_tools,
-                        "ttfc_ms": ttfc_val,
-                        "ttfa_ms": ttfa_val,
-                        "in_tok": in_tok,
-                        "out_tok": out_tok,
-                    }
-                )
+            component_records.append(
+                {
+                    "component": comp_label,
+                    "type": comp_type,
+                    "agent": agent_name,
+                    "dur_ms": dur_ms,
+                    "pre_speech_ms": pre_ms,
+                    "is_pre_speech": is_pre_speech,
+                    "masked_by_filler": filler_masked and not is_pre_speech,
+                    "turn_category": category,
+                    "cb_seq": cb_seq,
+                    "cb_name": cb_name,
+                    "cb_desc": cb_desc,
+                    "code_ms": code_ms,
+                    "ext_wait_ms": ext_wait_ms,
+                    "sandbox_init_ms": sandbox_init_ms,
+                    "sandbox_overhead_ms": sandbox_overhead_ms,
+                    "has_detailed_latency": has_detailed_latency,
+                    "child_tools": child_tools,
+                    "ttfc_ms": ttfc_val,
+                    "ttfa_ms": ttfa_val,
+                    "in_tok": in_tok,
+                    "out_tok": out_tok,
+                }
+            )
 
             rel_start_ms = max(0.0, (s_start - t_origin) * 1000.0)
             rel_end_ms = max(rel_start_ms, (s_end - t_origin) * 1000.0)
