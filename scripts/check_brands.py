@@ -91,6 +91,13 @@ ALLOWED_BRANDS: tuple[str, ...] = (
     # --- Standard Python ecosystem libraries ---
     "Pydantic",
     "Tenacity",
+    "pytest",
+    "numpy",
+    "scipy",
+    "pyloudnorm",
+    "Parselmouth",
+    "praat-parselmouth",
+    "Praat",
 )
 
 

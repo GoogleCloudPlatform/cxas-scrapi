@@ -55,6 +55,7 @@ from cxas_scrapi.utils.tracing.audio_analysis import (
     ANALYSIS_REGISTRY,
     AudioAnalysis,
 )
+from cxas_scrapi.utils.tracing.audio_metrics import measure_call
 from cxas_scrapi.utils.tracing.audio_transcription import (
     DEFAULT_TRANSCRIPTION_MODEL,
     AudioTranscriber,
@@ -1213,6 +1214,50 @@ class Traces(Common):
                 "files_analyzed": analysis_files,
             }
         return results
+
+    def measure_audio(
+        self,
+        conversation_id: str,
+        dest_dir: str | None = None,
+        start_time: datetime.datetime | str | None = None,
+    ) -> dict[str, Any]:
+        """Numeric voice-consistency metrics over the agent's turn audio.
+
+        The signal-measurement counterpart to :meth:`analyze_audio`: no
+        model involved. Downloads every `agent-turn-N.wav` of the
+        conversation and reports per-turn loudness (LUFS), articulation
+        rate, median pitch and within-turn loudness range, plus per-call
+        consistency scores with threshold flags (see
+        `utils.tracing.audio_metrics.DEFAULT_THRESHOLDS`).
+
+        Needs the optional dependencies:
+        `pip install "cxas-scrapi[audio-metrics]"`.
+
+        Returns `{"call": {...}, "turns": [...]}`, or `{"error": ...}`
+        when the conversation has no agent turn recordings.
+        """
+        files = self.list_audio_files(conversation_id, start_time=start_time)
+        agent_files = [f for f in files if "agent-turn" in os.path.basename(f)]
+        if not agent_files:
+            return {
+                "error": (
+                    "No agent-turn audio found for this conversation. "
+                    "Per-turn recordings require the app's audio "
+                    "recording bucket to be configured."
+                )
+            }
+        dest = dest_dir or os.path.join(".cxas", "audio", conversation_id)
+        os.makedirs(dest, exist_ok=True)
+        gcs = GCSUtils(creds=self.creds)
+        local_paths = []
+        for uri in agent_files:
+            path = os.path.join(dest, os.path.basename(uri))
+            if not os.path.exists(path):
+                gcs.download_to_file(uri, path)
+            local_paths.append(path)
+        call, turns = measure_call(local_paths)
+        call["conversation_id"] = conversation_id
+        return {"call": call, "turns": turns}
 
     def triage(
         self,
