@@ -55,6 +55,14 @@ from cxas_scrapi.utils.tracing.audio_analysis import (
     ANALYSIS_REGISTRY,
     AudioAnalysis,
 )
+from cxas_scrapi.utils.tracing.audio_drift import (
+    describe as _drift_describe,
+)
+from cxas_scrapi.utils.tracing.audio_drift import (
+    fetch_tts_spans,
+    flag_drift,
+    join_spans,
+)
 from cxas_scrapi.utils.tracing.audio_metrics import measure_call
 from cxas_scrapi.utils.tracing.audio_transcription import (
     DEFAULT_TRANSCRIPTION_MODEL,
@@ -1258,6 +1266,100 @@ class Traces(Common):
         call, turns = measure_call(local_paths)
         call["conversation_id"] = conversation_id
         return {"call": call, "turns": turns}
+
+    def audio_drift(
+        self,
+        conversation_id: str,
+        dest_dir: str | None = None,
+        loud_db: float = 3.0,
+    ) -> dict[str, Any]:
+        """Per-turn voice-drift flags for one conversation.
+
+        Combines three signal families (see `utils.tracing.audio_drift`):
+        the platform's own TTS spans (cached vs fresh clips -> vintage
+        SEAMs), the numeric loudness track (adjacent-turn steps -> LOUD),
+        and the transcript's syllable budget vs the audio (TRUNC).
+
+        Needs the optional dependencies:
+        `pip install "cxas-scrapi[audio-metrics]"`, plus
+        google-cloud-logging for the span fetch.
+
+        Returns `{"conversation_id", "rows", "drift_turns"}` where every
+        row carries turn number, tts source, flags, metrics and the
+        agent/user transcript — or `{"error": ...}` when the conversation
+        has no agent-turn recordings (text sessions have nothing to
+        measure).
+        """
+        normalized = self.get_normalized(conversation_id)
+
+        def _ts(key: str) -> datetime.datetime | None:
+            raw = normalized.get(key) or ""
+            try:
+                return datetime.datetime.fromisoformat(
+                    str(raw).replace("Z", "+00:00")
+                )
+            except ValueError:
+                return None
+
+        # The start time makes recording-folder discovery a direct lookup;
+        # without it, a call from a previous (UTC) day is simply not found.
+        measured = self.measure_audio(
+            conversation_id, dest_dir=dest_dir, start_time=_ts("start_time")
+        )
+        if "error" in measured:
+            return measured
+        agent_text: dict[int, list[str]] = {}
+        user_text: dict[int, list[str]] = {}
+        for e in normalized.get("entries", []):
+            if not e.get("text"):
+                continue
+            turn = int(e.get("turn", 0) or 0)
+            if e.get("kind") == "agent":
+                agent_text.setdefault(turn, []).append(e["text"])
+            elif e.get("kind") == "user":
+                user_text.setdefault(turn, []).append(e["text"])
+
+        rows = []
+        for t in measured["turns"]:
+            if t.get("skipped"):
+                continue
+            # `agent-turn-N.wav` is 1-based; conversation turns are 0-based.
+            conv_turn = int(t.get("turn", 0)) - 1
+            rows.append(
+                {
+                    "turn": t.get("turn"),
+                    "dur_s": t.get("dur_s"),
+                    "lufs": t.get("lufs"),
+                    "f0_median_hz": t.get("f0_median_hz"),
+                    "artic_rate": t.get("artic_rate"),
+                    "n_syl": t.get("n_syl"),
+                    "agent_text": " | ".join(agent_text.get(conv_turn, [])),
+                    "user_text": " | ".join(user_text.get(conv_turn, [])),
+                }
+            )
+        rows.sort(key=lambda r: r["turn"])
+
+        try:
+            spans = fetch_tts_spans(
+                self.project_id,
+                conversation_id,
+                start_time=_ts("start_time"),
+                end_time=_ts("end_time"),
+                credentials=self.creds,
+            )
+            join_spans(rows, spans)
+        except Exception as e:  # span fetch is best-effort; flags degrade
+            logger.warning(f"TTS span fetch failed ({e}); SEAM unavailable.")
+            for r in rows:
+                r.setdefault("tts", "")
+        flagged = flag_drift(rows, loud_db=loud_db)
+        return {
+            "conversation_id": conversation_id,
+            "rows": rows,
+            "drift_turns": [
+                {"turn": r["turn"], "why": _drift_describe(r)} for r in flagged
+            ],
+        }
 
     def triage(
         self,

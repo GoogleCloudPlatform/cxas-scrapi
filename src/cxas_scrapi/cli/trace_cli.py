@@ -332,6 +332,25 @@ def trace_audio_measure(args: argparse.Namespace) -> None:
         sys.exit(2)
 
 
+def trace_audio_drift(args: argparse.Namespace) -> None:
+    try:
+        traces = _build_traces(args)
+        results = traces.audio_drift(
+            args.conversation_id,
+            dest_dir=args.out,
+            loud_db=args.loud_db,
+        )
+    except ImportError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Audio drift detection failed: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(results, indent=2, default=str))
+    if "error" in results:
+        sys.exit(2)
+
+
 def trace_transcribe_audio(args: argparse.Namespace) -> None:
     """Reprocesses user speech from GCS audio, calculates WER, and appends to BQ."""
     try:
@@ -898,6 +917,27 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Audio cache directory (default: ./.cxas/audio/<id>/).",
     )
     p_audio_measure.set_defaults(func=trace_audio_measure)
+
+    p_audio_drift = audio_subparsers.add_parser(
+        "drift",
+        help=(
+            "Per-turn voice-drift flags: TTS vintage seams (cached vs "
+            "fresh), loudness steps, truncation."
+        ),
+    )
+    add_trace_args(p_audio_drift)
+    p_audio_drift.add_argument("conversation_id")
+    p_audio_drift.add_argument(
+        "--out",
+        help="Audio cache directory (default: ./.cxas/audio/<id>/).",
+    )
+    p_audio_drift.add_argument(
+        "--loud-db",
+        type=float,
+        default=3.0,
+        help="Adjacent-turn loudness step that flags LOUD (dB LUFS).",
+    )
+    p_audio_drift.set_defaults(func=trace_audio_drift)
 
     p_audio_transcribe = audio_subparsers.add_parser(
         "transcribe",
