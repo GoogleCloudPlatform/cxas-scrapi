@@ -58,11 +58,15 @@ if len(errors) > 10:
 print('\n'.join(lines))
 " 2>/dev/null || echo "  Lint errors found")
 
-    msg="LINT BLOCKED: ${error_count} error(s) found. Fix before pushing.\n${error_summary}\nRun 'cxas lint --fix $lint_app_arg' for suggestions."
+    msg="LINT BLOCKED: ${error_count} error(s) found. Fix before pushing.
+${error_summary}
+Run 'cxas lint --fix $lint_app_arg' for suggestions."
+    # Build the JSON with jq: lint messages contain newlines and quotes.
+    # Claude Code only blocks a PreToolUse call on permissionDecision "deny".
     if [ "$agent" = "claude" ]; then
-      echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"blockToolExecution\":true,\"additionalContext\":\"$msg\"}}"
+      jq -cn --arg msg "$msg" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $msg}}'
     else
-      echo "{\"decision\":\"block\",\"context_update\":\"$msg\"}"
+      jq -cn --arg msg "$msg" '{decision: "block", context_update: $msg}'
     fi
   else
     if [ "$agent" = "claude" ]; then
