@@ -202,11 +202,12 @@ def _render_turn_latency_drawer(turn_pl: dict[str, Any]) -> str:
             f"{pre_zone_html}"
             f'<div class="wf-fa-pin" style="left:{first_audio_pct}%;'
             f'transform:{pin_tx};">🔊 First Audio: {_fmt_ms(pl_ms)}</div>'
-            f'<div class="wf-first-audio-line" style="left:{first_audio_pct}%;">'
-            "</div>"
+            '<div class="wf-first-audio-line" '
+            f'style="left:{first_audio_pct}%;"></div>'
             f"{post_zone_html}"
             "</div>"
-            '<div class="wf-header-col" style="text-align:right;">Duration</div>'
+            '<div class="wf-header-col" style="text-align:right;">'
+            "Duration</div>"
             "</div>\n"
         )
 
@@ -545,7 +546,8 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
             "</span>\n"
             '      <span class="pl-legend-item">'
             '<span class="pl-legend-dot tool"></span>'
-            f'Tools / APIs <b>{tl_m}</b> <span class="meta">({tl_p:.0f}%)</span>'
+            f"Tools / APIs <b>{tl_m}</b> "
+            f'<span class="meta">({tl_p:.0f}%)</span>'
             "</span>\n"
             '      <span class="pl-legend-item">'
             '<span class="pl-legend-dot sllm"></span>'
@@ -557,7 +559,7 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
             "</span>\n"
             '      <span class="pl-legend-item">'
             '<span class="pl-legend-dot gap"></span>'
-            'Gap / Overhead '
+            "Gap / Overhead "
             f'<b>{ov_m}</b> <span class="meta">({ov_p:.0f}%)</span>'
             "</span>\n"
             "    </div>\n"
@@ -614,7 +616,9 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
                     if wait_r > 0:
                         sc_bd.append(f"ext_wait {wait_r}ms")
                     sc_bd.append(f"sandbox {sbx_r}ms")
-                    bd_html = f' <span class="meta">({" + ".join(sc_bd)})</span>'
+                    bd_html = (
+                        f' <span class="meta">({" + ".join(sc_bd)})</span>'
+                    )
                 else:
                     bd_html = ""
                 if sc_cts:
@@ -697,15 +701,17 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
             f'title="Pure Python Code: {c_ms}/turn ({c_pct:.1f}%)"></div>\n'
             f"{ext_bar_seg}"
             f'        <div class="pl-seg-gap" style="width:{max(0.0, s_pct)}%" '
-            f'title="Sandbox &amp; State IPC Overhead: {s_ms}/turn ({s_pct:.1f}%)"></div>\n'
+            'title="Sandbox &amp; State IPC Overhead: '
+            f'{s_ms}/turn ({s_pct:.1f}%)"></div>\n'
             "      </div>\n"
             '      <div style="display:grid;grid-template-columns:'
-            'repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:6px;'
+            "repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:6px;"
             'font-size:0.78em;">\n'
             f'        <div><span class="badge callback">code</span> '
             f"<b>{c_ms}/turn ({c_pct:.0f}%)</b>: Pure Python execution inside "
-            'the callback sandbox <span class="meta">(<code>total code execution '
-            "latency - waiting for external calls</code>)</span>.</div>\n"
+            'the callback sandbox <span class="meta">(<code>total code '
+            "execution latency - waiting for external calls</code>)"
+            "</span>.</div>\n"
             f'        <div><span class="badge tool">ext_wait</span> '
             f"<b>{w_ms}/turn ({w_pct:.0f}%)</b>: Time paused inside the "
             "callback awaiting synchronous tool / OpenAPI "
@@ -1991,9 +1997,9 @@ def generate_combined_html_report(
                             parsed.append(("tool_call", line))
                         elif line.startswith("Tool Response"):
                             parsed.append(("tool_resp", line))
-                        elif line.startswith(
-                            "[Callback:"
-                        ) or line.startswith("Callback:"):
+                        elif line.startswith("[Callback:") or line.startswith(
+                            "Callback:"
+                        ):
                             parsed.append(("callback_span", line))
                         else:
                             parsed.append(("system", line))

@@ -898,9 +898,9 @@ class LatencyParser:
                 attrs.get("waiting for postprocessors (ms)", 0) or 0
             )
             audio_dur_ms = float(attrs.get("audio duration (ms)", 0) or 0)
-            if (
-                has_ttfa or ttfa_ms > 0 or audio_dur_ms > 0
-            ) and s["start_ts"] is not None:
+            if (has_ttfa or ttfa_ms > 0 or audio_dur_ms > 0) and s[
+                "start_ts"
+            ] is not None:
                 eff_ttfa_ms = ttfa_ms + postproc_wait_ms
                 offset_s = (
                     eff_ttfa_ms / 1000.0
@@ -1048,7 +1048,7 @@ class LatencyParser:
                     )
                     pl_source = f"Filler ({stage})"
                 filler_masked = True
-                # Look for subsequent non-filler audio span or end of tool+LLM chain
+                # Look for subsequent non-filler audio span or end of tool+LLM
                 later_response_audio = [
                     a
                     for a in audio_spans[1:]
@@ -1143,7 +1143,10 @@ class LatencyParser:
             else None
         )
         fa_pct_val = (
-            min(99.0, max(0.0, (first_audio_rel_ms / total_timeline_ms) * 100.0))
+            min(
+                99.0,
+                max(0.0, (first_audio_rel_ms / total_timeline_ms) * 100.0),
+            )
             if first_audio_rel_ms is not None
             else None
         )
@@ -1206,9 +1209,9 @@ class LatencyParser:
             if first_audio_ts is not None and s_name != "VAD":
                 ov_start = max(t_start, s_start)
                 ov_end = min(first_audio_ts, s_end)
-                # In cascaded/voice mode, once the response TTS span starts, the
-                # critical path transitions to TTS synthesis while any concurrent
-                # LLM or background Tool executes in parallel.
+                # In cascaded/voice mode, once the response TTS span starts,
+                # the critical path transitions to TTS synthesis while any
+                # concurrent LLM or background Tool executes in parallel.
                 if (
                     s_name in ("Callback", "LLM", "Tool")
                     and not (
@@ -1228,8 +1231,8 @@ class LatencyParser:
                     # Guardrails (especially AfterModel policy checks in voice
                     # mode) often run asynchronously in parallel with
                     # BeforeModel callbacks and LLM execution. Only count the
-                    # portion of [ov_start, ov_end] where no Callback/LLM/Tool/TTS
-                    # span is actively running on the critical path.
+                    # portion of [ov_start, ov_end] where no active execution
+                    # span is running on the critical path.
                     uncovered: list[tuple[float, float]] = [(ov_start, ov_end)]
                     for a_s, a_e in active_exec_intervals:
                         if a_e <= ov_start or a_s >= ov_end:
@@ -1478,8 +1481,8 @@ class LatencyParser:
 
             if is_fa_span and fa_pct_val is not None:
                 # End the pre-speech bar right at the First Audio line so the
-                # transition from Pre-Speech TTFA -> Agent Audio Streaming happens
-                # directly on the red vertical line.
+                # transition from Pre-Speech TTFA -> Agent Audio Streaming
+                # happens directly on the red vertical line.
                 left_pct = min(left_pct, max(0.0, fa_pct_val - 0.8))
                 width_pct = max(0.8, fa_pct_val - left_pct)
                 wf_display_dur_ms = pre_ms
@@ -1976,12 +1979,8 @@ class LatencyParser:
         if not all_turns:
             return None
 
-        user_turns = [
-            t for t in all_turns if t["category"] == "user_turns"
-        ]
-        event_turns = [
-            t for t in all_turns if t["category"] == "event_turns"
-        ]
+        user_turns = [t for t in all_turns if t["category"] == "user_turns"]
+        event_turns = [t for t in all_turns if t["category"] == "event_turns"]
 
         slices = {
             "user_turns": LatencyParser._build_slice_metrics(
@@ -2173,9 +2172,7 @@ class LatencyParser:
                     f"top={top_cb['cb_name']} "
                     f"(#{top_cb['seq']}, avg {round(top_cb['avg_ms'])}ms)"
                 )
-                cb_detailed = [
-                    r for r in recs if r.get("has_detailed_latency")
-                ]
+                cb_detailed = [r for r in recs if r.get("has_detailed_latency")]
                 if cb_detailed and calls > 0:
                     avg_c_ms = round(
                         sum(float(r.get("code_ms", 0)) for r in recs) / calls

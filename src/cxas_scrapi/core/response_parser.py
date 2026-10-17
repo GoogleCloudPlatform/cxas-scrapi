@@ -193,22 +193,19 @@ class ParsedSessionResponse:
 
     def _parse_guardrails(self, diagnostic_info: Any) -> None:
         """Extracts root_span and guardrail triggers from diagnostic_info."""
-        if (
-            diagnostic_info is None
-            or type(diagnostic_info).__name__ == "MagicMock"
-        ):
+        if diagnostic_info is None:
             return
         root_span = getattr(diagnostic_info, "root_span", None)
         if root_span is None and isinstance(diagnostic_info, dict):
             root_span = diagnostic_info.get(
                 "root_span", diagnostic_info.get("rootSpan")
             )
-        if root_span and type(root_span).__name__ != "MagicMock":
+        if root_span:
             try:
-                if hasattr(root_span, "_pb"):
-                    span_dict = MessageToDict(root_span._pb)
-                elif isinstance(root_span, dict):
+                if isinstance(root_span, dict):
                     span_dict = dict(root_span)
+                elif hasattr(root_span, "_pb"):
+                    span_dict = MessageToDict(root_span._pb)
                 else:
                     span_dict = MessageToDict(root_span)
             except Exception:

@@ -29,6 +29,7 @@ from cxas_scrapi.utils.eval_utils import (
     COMBINED_REPORT_JSON_FILENAME,
     add_timestamp_suffix,
 )
+from cxas_scrapi.utils.latency_parser import LatencyParser
 from cxas_scrapi.utils.reporting import (
     _escape,
     _fmt_duration,
@@ -1775,8 +1776,6 @@ def test_perceived_latency_rendering_in_html_reports(
 
 
 def test_perceived_latency_standalone_tts_and_barge_in_fallback() -> None:
-    from cxas_scrapi.utils.latency_parser import LatencyParser
-
     # 1. Cascaded turn with standalone TTS span
     cascaded_turn = {
         "messages": [
@@ -1878,4 +1877,3 @@ def test_perceived_latency_standalone_tts_and_barge_in_fallback() -> None:
     bd_barged = res_barged["breakdown_ms"]
     assert round(bd_barged["llm_ttfc_ms"]) == 900
     assert round(bd_barged["tts_ms"]) == 500
-
