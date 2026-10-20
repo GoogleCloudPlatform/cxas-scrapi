@@ -31,6 +31,7 @@ import yaml
 
 from cxas_scrapi.core import conversation_history, tools
 from cxas_scrapi.evals import runner as evals_runner
+from cxas_scrapi.redaction.policy import merge_redaction_expectations
 from cxas_scrapi.utils import (
     base_components,
     eval_utils,
@@ -2559,6 +2560,11 @@ def load_golden_results(
                 "turns": turns,
                 "expectations": expectations,
                 "session_id": session_id,
+                "conversations": [
+                    t.get("conversation")
+                    for t in golden.get("turn_replay_results", [])
+                    if t.get("conversation")
+                ],
                 "session_parameters": session_params,
                 "duration_s": (
                     round(total_latency_s, 1) if total_latency_s > 0 else None
@@ -2602,6 +2608,7 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
     common_params = data.get("common_session_parameters", {}) or {}
     common_expectations = data.get("common_expectations", []) or []
     common_naturalness = data.get("common_naturalness_metric")
+    common_redaction = data.get("common_redaction_expectations")
     cases = data.get("evals", [])
     if not isinstance(cases, list):
         return []
@@ -2627,6 +2634,19 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
                     common_naturalness,
                     case_copy.get("naturalness_metric"),
                 )
+
+            # Merge the optional redaction_expectations block and remember
+            # where the file lives so relative policy paths resolve.
+            redaction = merge_redaction_expectations(
+                common_redaction, case_copy.get("redaction_expectations")
+            )
+            if redaction is not None:
+                case_copy["redaction_expectations"] = redaction
+                case_copy["_redaction_base_dir"] = os.path.dirname(
+                    os.path.abspath(yaml_path)
+                )
+            else:
+                case_copy.pop("redaction_expectations", None)
 
             merged_cases.append(case_copy)
     return merged_cases
