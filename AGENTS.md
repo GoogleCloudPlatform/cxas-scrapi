@@ -41,6 +41,7 @@ This workspace provides several specialized AI skills to assist with development
 
 ## CLI Features
 
+- **`cxas deployments`**: Manage app deployments and channel settings. Use `cxas deployments create --app-name <app> --deployment-id <id> --version-id <ver> [--channel-type <type>] [--persona-property {CONCISE,CHATTY}] [--noise-suppression-level {low,moderate,high,very_high}]` to configure channel profiles and audio settings, and `cxas deployments update` to modify them on existing deployments.
 - **`cxas help`**: Interactive terminal help documentation detailing all available CLI commands and sub-commands. Example: `cxas help llm-lint`.
 - **`cxas lint`**: Fast, deterministic static structural linter across 60+ structural, configuration, callback naming, and CES schema checks. Run this continuously while coding or in Git pre-commit hooks to ensure absolute structural validity before deployment.
 - **`cxas llm-lint`**: An AI-driven semantic prompt linter for GECX sub-agent instructions. Uses Gemini to deeply review natural language rules, tone, persona consistency, and dynamic instructions (`before_agent_callbacks`) for a single sub-agent at a time. Run this when authoring prompts or preparing qualitative reviews. Example: `cxas llm-lint --agent-dir <dir>`.

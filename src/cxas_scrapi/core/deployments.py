@@ -49,6 +49,17 @@ class Deployments(Apps):
         LIGHT = "LIGHT"
         DARK = "DARK"
 
+    class Persona(Enum):
+        CONCISE = "CONCISE"
+        CHATTY = "CHATTY"
+
+    VALID_NOISE_SUPPRESSION_LEVELS = (
+        "low",
+        "moderate",
+        "high",
+        "very_high",
+    )
+
     def __init__(
         self,
         app_name: str,
@@ -122,6 +133,44 @@ class Deployments(Apps):
 
         return wwc
 
+    @classmethod
+    def _validate_noise_suppression_level(
+        cls, noise_suppression_level: str | None
+    ) -> str | None:
+        """Validates and normalizes noise suppression level."""
+        if not noise_suppression_level:
+            return None
+        level = noise_suppression_level.lower()
+        if level not in cls.VALID_NOISE_SUPPRESSION_LEVELS:
+            raise ValueError(
+                f"Invalid noise_suppression_level: "
+                f"{noise_suppression_level!r}. "
+                f"Valid levels: {list(cls.VALID_NOISE_SUPPRESSION_LEVELS)}"
+            )
+        return level
+
+    @classmethod
+    def _build_persona_property(
+        cls,
+        persona_property: Persona
+        | types.ChannelProfile.PersonaProperty
+        | str
+        | None,
+    ) -> types.ChannelProfile.PersonaProperty | None:
+        """Helper to build PersonaProperty protobuf message."""
+        if not persona_property:
+            return None
+
+        if isinstance(persona_property, types.ChannelProfile.PersonaProperty):
+            return persona_property
+
+        if isinstance(persona_property, str):
+            persona_property = cls.Persona[persona_property.upper()]
+
+        return types.ChannelProfile.PersonaProperty(
+            persona=persona_property.value
+        )
+
     def list_deployments(self) -> list[types.Deployment]:
         """Lists deployments within a specific app."""
         request = types.ListDeploymentsRequest(parent=self.app_name)
@@ -165,9 +214,31 @@ class Deployments(Apps):
         web_widget_title: str | None = None,
         disable_dtmf: bool = False,
         disable_barge_in_control: bool = False,
+        persona_property: Persona
+        | types.ChannelProfile.PersonaProperty
+        | str
+        | None = None,
+        noise_suppression_level: str | None = None,
         traffic_split: dict[str, int] | None = None,
     ) -> types.Deployment:
         """Creates a new deployment with specified configuration.
+
+        Args:
+            deployment_id: The ID to use for the deployment.
+            display_name: The display name of the deployment.
+            app_version: App version name or ID to deploy.
+            channel_type: The channel type (e.g. ChannelType.API).
+            modality: Web widget modality (WEB_UI only).
+            theme: Web widget theme (WEB_UI only).
+            web_widget_title: Web widget title (WEB_UI only).
+            disable_dtmf: Whether DTMF is disabled.
+            disable_barge_in_control: Whether barge-in control is disabled.
+            persona_property: Persona property (CONCISE, CHATTY).
+                Accepts Deployments.Persona, string, or
+                types.ChannelProfile.PersonaProperty.
+            noise_suppression_level: Noise suppression level (low, moderate,
+                high, very_high).
+            traffic_split: Traffic split configuration between versions.
 
         Note: `modality`, `theme`, and `web_widget_title` are only applicable
         when `channel_type` is `ChannelType.WEB_UI`.
@@ -192,6 +263,16 @@ class Deployments(Apps):
 
         channel_profile.disable_dtmf = disable_dtmf
         channel_profile.disable_barge_in_control = disable_barge_in_control
+
+        if persona_property:
+            channel_profile.persona_property = self._build_persona_property(
+                persona_property
+            )
+
+        if noise_suppression_level:
+            channel_profile.noise_suppression_level = (
+                self._validate_noise_suppression_level(noise_suppression_level)
+            )
 
         if channel_type == self.ChannelType.WEB_UI:
             wwc_kwargs = {
@@ -256,7 +337,27 @@ class Deployments(Apps):
     def update_deployment(
         self, deployment_id: str, **kwargs: typing.Any
     ) -> types.Deployment:
-        """Updates specific fields of an existing Deployment."""
+        """Updates specific fields of an existing Deployment.
+
+        Args:
+            deployment_id: The ID of the deployment to update.
+            **kwargs: Fields to update. Supported fields include:
+                - display_name: New display name.
+                - app_version: New app version name or ID.
+                - channel_type: New ChannelType or string.
+                - modality: Web widget modality (WEB_UI only).
+                - theme: Web widget theme (WEB_UI only).
+                - web_widget_title: Web widget title (WEB_UI only).
+                - disable_dtmf: Whether DTMF is disabled.
+                - disable_barge_in_control: Whether barge-in control is
+                    disabled.
+                - persona_property: Persona property (CONCISE, CHATTY).
+                    Accepts Deployments.Persona, string, or
+                    types.ChannelProfile.PersonaProperty.
+                - noise_suppression_level: Noise suppression level (low,
+                    moderate, high, very_high).
+                - traffic_split: Traffic split configuration between versions.
+        """
         deployment = types.Deployment(
             name=f"{self.app_name}/deployments/{deployment_id}"
         )
@@ -269,6 +370,8 @@ class Deployments(Apps):
             "web_widget_title",
             "disable_dtmf",
             "disable_barge_in_control",
+            "persona_property",
+            "noise_suppression_level",
         ]
 
         has_channel_profile_update = any(
@@ -296,6 +399,22 @@ class Deployments(Apps):
                     "disable_barge_in_control"
                 )
                 mask_paths.append("channel_profile.disable_barge_in_control")
+
+            if "persona_property" in kwargs:
+                persona_prop = kwargs.pop("persona_property")
+                if persona_prop:
+                    channel_profile.persona_property = (
+                        self._build_persona_property(persona_prop)
+                    )
+                mask_paths.append("channel_profile.persona_property")
+
+            if "noise_suppression_level" in kwargs:
+                noise_level = kwargs.pop("noise_suppression_level")
+                if noise_level:
+                    channel_profile.noise_suppression_level = (
+                        self._validate_noise_suppression_level(noise_level)
+                    )
+                mask_paths.append("channel_profile.noise_suppression_level")
 
             wwc = self._build_web_widget_config(kwargs, mask_paths)
             if wwc:
