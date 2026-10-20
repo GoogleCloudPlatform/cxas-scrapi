@@ -106,7 +106,7 @@ $$\text{Agent TPM} = \text{Sim Requests/Min} \times (\text{Instruction Tokens} +
     1. Request a quota increase for `run_session_llm_token_consumption` in the [Google Cloud Quotas Console](https://console.cloud.google.com/iam-admin/quotas).
     2. Reduce worker parallelism in your CLI call:
        ```bash
-       cxas evals report --run --include sims --sim-parallel 2
+       cxas evals report --run --output-dir ./reports --include sims --sim-parallel 2
        ```
     3. Optimize your agent's instruction set to reduce per-turn token overhead.
 

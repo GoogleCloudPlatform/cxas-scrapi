@@ -60,7 +60,7 @@ cxas test-single-callback \
   --callback-type after_call \
   --test-file-path ./my-agent/agents/pilot/callbacks/after_call_test.py \
   --log-file /tmp/after-call-test.log \
-  --pytest-args "-v,-s"
+  --pytest-args=-v,-s
 ```
 
 **Use in a pre-push hook or quick local check:**
@@ -73,7 +73,7 @@ cxas test-single-callback \
   --agent-name pilot \
   --callback-type webhook \
   --test-file-path ./agents/pilot/callbacks/webhook_test.py \
-  --pytest-args "-v"
+  --pytest-args=-v
 ```
 
 ## Related Commands

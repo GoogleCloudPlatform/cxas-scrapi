@@ -5,7 +5,7 @@
 ## Usage
 
 ```
-cxas create <name> [--description TEXT] [--app-name ID]
+cxas create <name> [--description TEXT] [--app-id ID]
             --project-id PROJECT --location LOCATION
 ```
 
@@ -20,7 +20,7 @@ cxas create <name> [--description TEXT] [--app-name ID]
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--description TEXT` | No | — | A short human-readable description of what the app does. |
-| `--app-name ID` | No | — | Optional specific app ID to use as the resource identifier. If omitted, the platform generates one automatically. |
+| `--app-id ID` | No | — | Optional specific app ID to use as the resource identifier. If omitted, the platform generates one automatically. |
 | `--project-id PROJECT` | Yes | — | GCP project ID where the app will be created. |
 | `--location LOCATION` | Yes | — | GCP location (e.g., `global`, `us-central1`). |
 
@@ -47,7 +47,7 @@ cxas create "Billing Assistant" \
 
 ```bash
 cxas create "Billing Assistant" \
-  --app-name billing-assistant-v2 \
+  --app-id billing-assistant-v2 \
   --project-id my-gcp-project \
   --location us-central1
 ```

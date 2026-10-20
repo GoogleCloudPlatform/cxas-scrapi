@@ -394,13 +394,13 @@ The CLI exposes the same switch on `evals report`:
 
 ```bash
 # Grade every simulation, even ones that don't declare the metric
-cxas evals report --run --include sims --naturalness
+cxas evals report --run --output-dir ./reports --include sims --naturalness
 
 # Skip grading entirely, even for test cases that do declare it
-cxas evals report --run --include sims --no-naturalness
+cxas evals report --run --output-dir ./reports --include sims --no-naturalness
 
 # Omit the flag to let each test case decide
-cxas evals report --run --include sims
+cxas evals report --run --output-dir ./reports --include sims
 ```
 
 The flag is tri-state, mirroring the `naturalness` argument: `--naturalness` is `True`, `--no-naturalness` is `False`, and omitting it is `None`.

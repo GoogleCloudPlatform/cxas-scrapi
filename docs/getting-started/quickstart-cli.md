@@ -40,18 +40,19 @@ cxas apps list --project-id my-gcp-project --location us
 **Example output:**
 
 ```
-NAME                           APP ID        LOCATION
-My Customer Service Bot        abc123        us
-Internal HR Assistant          def456        us
+Apps:
+ Display Name                  Name
+ My Customer Service Bot       projects/my-gcp-project/locations/us/apps/abc123
+ Internal HR Assistant         projects/my-gcp-project/locations/us/apps/def456
 ```
 
 !!! tip "What's an App ID?"
-    The short App ID (`abc123`) is what you'll use with most `cxas` commands. Under the hood, SCRAPI converts it to the full resource name `projects/.../locations/.../apps/abc123`.
+    The short App ID (`abc123`) is the last part of the full resource name `projects/.../locations/.../apps/abc123`. Commands such as `apps get` and `pull` accept the full resource name or the app's display name.
 
-If you already know the App ID and want its details:
+If you already know the app's display name and want its details:
 
 ```sh
-cxas apps get --project-id my-gcp-project --location us --app-name abc123
+cxas apps get --project-id my-gcp-project --location us app-name
 ```
 
 ---
@@ -67,22 +68,24 @@ cxas pull projects/my-gcp-project/locations/us/apps/abc123
 This creates a local directory structure that mirrors the agent's configuration on the platform:
 
 ```
-./
+./My_Customer_Service_Bot/
+├── app.json
 ├── agents/
-│   ├── main-agent.yaml
-│   └── escalation-handler.yaml
+│   └── main-agent/
+│       ├── main-agent.json
+│       └── instruction.txt
 ├── tools/
-│   ├── check_order_status.yaml
-│   └── lookup_customer.yaml
-├── guardrails/
-│   └── safety-guardrail.yaml
-└── cxaslint.yaml          ← lint configuration (created if missing)
+│   └── check_order_status/
+│       └── check_order_status.json
+└── guardrails/
 ```
 
-Each YAML file represents a resource from the platform. This is your local "source of truth" — the files you'll edit, lint, version control, and push back.
+Each JSON file represents a resource from the platform. This is your local "source of truth" — the files you'll edit, lint, version control, and push back.
+
+Change into the exported app directory containing `app.json` before continuing. Use the directory name created by your export.
 
 !!! info "The core workflow"
-    The SCRAPI workflow is: **create resources on the platform → pull them locally → edit them → lint → push**. You don't create new resources from scratch in YAML files; you create them on the platform first, then pull them down to edit.
+    The SCRAPI workflow is: **create resources on the platform → pull them locally → edit them → lint → push**. Start by creating resources on the platform, then pull them down to edit.
 
 ---
 
@@ -94,7 +97,7 @@ Before making any changes (or as part of your CI pipeline), run the linter to ch
 cxas lint
 ```
 
-SCRAPI looks for the `cxaslint.yaml` file in your current directory to find the agent configs to lint. If you're in the directory created by `cxas pull`, it should just work.
+SCRAPI looks for an optional `cxaslint.yaml` file in your current directory to find the agent configs to lint. Pull does not create this file. If you're in the directory created by `cxas pull`, it should just work.
 
 **Example output (clean):**
 
@@ -114,8 +117,8 @@ Linting agent configuration...
 ============================================================
 Lint Results
 ============================================================
-  [WARNING] tools/check_order_status.yaml [T001] Tool is missing a description.
-  [ERROR]   agents/main-agent.yaml [A003] Agent display name exceeds 64 characters.
+  [WARNING] tools/check_order_status/python_function/python_code.py [T002] Tool is missing a docstring.
+  [ERROR]   agents/main-agent/instruction.txt [I001] Missing required XML tag: <role>.
 ============================================================
 2 issues found (1 error, 1 warning)
 ```
@@ -129,13 +132,13 @@ Errors (marked `[ERROR]`) indicate things you should fix before pushing. Warning
 
 ## Task 4 — Make a change and push
 
-Let's say the linter found a missing tool description. Open the relevant YAML file and add one:
+Let's say you want to update a tool description. Open the relevant JSON file and edit the description, keeping the other fields:
 
-```yaml
-# tools/check_order_status.yaml
-displayName: Check Order Status
-description: "Looks up the current status and estimated delivery date for a given order ID."  # ← added this
-# ... rest of the config
+```json
+{
+  "displayName": "Check Order Status",
+  "description": "Looks up the current status and estimated delivery date for a given order ID."
+}
 ```
 
 Once you're happy with your changes, run the linter one more time to make sure everything is clean:
@@ -153,12 +156,11 @@ cxas push --to projects/my-gcp-project/locations/us/apps/abc123
 **Example output:**
 
 ```
-Pushing configuration to App: projects/my-gcp-project/locations/us/apps/abc123
-
-  Updating tool: check_order_status ... OK
-  Updating agent: main-agent ... OK
-
-Push complete. 2 resource(s) updated.
+Pushing app from ....
+Pushing to existing app... Overwriting if supported.
+Uploading to CES...
+Waiting for import to complete...
+Successfully pushed to: projects/my-gcp-project/locations/us/apps/abc123
 ```
 
 Your changes are now live on the platform.
@@ -173,10 +175,10 @@ Your changes are now live on the platform.
 After pushing changes, use `cxas test-tools` to verify that your tools behave correctly:
 
 ```sh
-cxas test-tools --app-name projects/my-gcp-project/locations/us/apps/abc123
+cxas test-tools --app-name projects/my-gcp-project/locations/us/apps/abc123 --test-file tests/tool_tests.yaml
 ```
 
-This runs your tool evaluation test cases against the live platform and reports the results:
+Use the path to your local [tool test file](../guides/evaluation/tool-tests.md). This runs your tool evaluation test cases against the live platform and reports the results:
 
 **Example output:**
 
@@ -208,10 +210,13 @@ cxas apps list --project-id my-project --location us
 # 2. Pull configuration locally
 cxas pull projects/my-project/locations/us/apps/abc123
 
+# Use the exported app directory (replace with its actual name)
+cd My_Customer_Service_Bot
+
 # 3. Check for issues
 cxas lint
 
-# 4. ... edit your YAML files ...
+# 4. ... edit your JSON files ...
 
 # 5. Lint again to confirm all clear
 cxas lint
@@ -220,7 +225,7 @@ cxas lint
 cxas push --to projects/my-project/locations/us/apps/abc123
 
 # 7. Run tests
-cxas test-tools --app-name projects/my-project/locations/us/apps/abc123
+cxas test-tools --app-name projects/my-project/locations/us/apps/abc123 --test-file tests/tool_tests.yaml
 ```
 
 ---
@@ -229,10 +234,10 @@ cxas test-tools --app-name projects/my-project/locations/us/apps/abc123
 
 | Command | What it does |
 |---|---|
-| `cxas create` | Create a new resource (tool, agent, etc.) on the platform |
-| `cxas delete` | Delete a resource from the platform |
+| `cxas create` | Create a new app on the platform |
+| `cxas delete` | Delete an app from the platform |
 | `cxas branch` | Create a branch of your App for safe experimentation |
-| `cxas run` | Run a full conversation through the agent interactively |
+| `cxas run-session text APP_RESOURCE` | Run a full conversation through the agent interactively |
 | `cxas test-callbacks` | Run callback (webhook) evaluation tests |
 | `cxas push-eval` | Upload evaluation test cases to the platform |
 | `cxas export` | Export an evaluation to YAML or JSON |

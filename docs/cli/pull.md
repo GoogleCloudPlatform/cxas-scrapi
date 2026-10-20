@@ -22,23 +22,23 @@ cxas pull <app> [--target-dir DIR] [--version-id VERSION] [--project-id PROJECT]
 | `--version-id VERSION` | No | — | Optional. Export a specific app version instead of the live app. Can be a version display name (e.g., `'v1.0'`), a bare version ID (e.g., `'001'`), or a full resource name (`projects/.../locations/.../apps/.../versions/001`). |
 | `--project-id PROJECT` | No* | — | GCP project ID. Required when `app` is a display name rather than a full resource name. |
 | `--location LOCATION` | No* | — | GCP location (e.g., `global`, `us-central1`). Required when `app` is a display name. |
-| `--overwrite` | No | `False` | Overwrite destination directory without confirmation prompt. |
+| `--overwrite` | No | `False` | Remove local resource files missing from the export after extraction. |
 
 *Required when `app` is specified as a display name.
 
 ## What Gets Downloaded
 
-The pull command exports the app as a ZIP archive and extracts it locally. The resulting directory layout looks like this:
+The pull command exports the app as a ZIP archive and extracts it locally, using JSON by default. The exported app directory is created inside `--target-dir`. The resulting directory layout looks like this:
 
 ```
-my-agent/
-├── app.yaml
+my-agent/<AppName>/
+├── app.json
 ├── global_instruction.txt
 ├── environment.json
 ├── agents/
 │   └── pilot/
-│       ├── agent.yaml
-│       └── instructions.txt
+│       ├── pilot.json
+│       └── instruction.txt
 ├── tools/
 ├── guardrails/
 ├── toolsets/
@@ -46,11 +46,11 @@ my-agent/
 └── evaluationExpectations/
 ```
 
-This structure is what `cxas push` expects when you upload changes back.
+This structure is what `cxas push` expects when you upload changes back. Point `--app-dir` at the exported app directory containing `app.json`.
 
 ## Examples
 
-**Pull an app by display name into a folder called `my-agent`:**
+**Pull an app by display name under a folder called `my-agent`:**
 
 ```bash
 cxas pull "My Support Agent" \

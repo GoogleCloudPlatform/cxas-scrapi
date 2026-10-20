@@ -49,7 +49,7 @@ jobs:
       - name: Pull app for linting
         run: |
           cxas pull "${{ vars.APP_NAME }}" \
-            --project_id "${{ vars.GCP_PROJECT_ID }}" \
+            --project-id "${{ vars.GCP_PROJECT_ID }}" \
             --location "${{ vars.GCP_LOCATION }}"
 
       - name: Run linter
@@ -197,12 +197,12 @@ if bad:
 
 ## Suppressing specific rules in CI
 
-Sometimes you want to suppress a rule only in CI (e.g., a rule that requires a network call to validate). Use a CI-specific `cxaslint.yaml`:
+Sometimes you want to suppress a rule only in CI (e.g., a rule that requires a network call to validate). Use a CI-specific `cxaslint.yaml` in a separate directory:
 
 ```yaml
-# cxaslint-ci.yaml
-app_dir: cxas_app/My Support Agent
-evals_dir: evals
+# .cxas-ci/cxaslint.yaml
+app_dir: ../cxas_app/My Support Agent
+evals_dir: ../evals
 
 rules:
   # Disable rules that require platform access in CI
@@ -216,7 +216,7 @@ rules:
 ```
 
 ```bash
-cxas lint --config cxaslint-ci.yaml
+cxas lint --app-dir .cxas-ci
 ```
 
 ---

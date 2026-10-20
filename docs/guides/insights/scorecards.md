@@ -38,9 +38,8 @@ for scorecard in scorecards_list:
 ### CLI
 
 ```bash
-cxas insights list \
-  --project_id my-gcp-project \
-  --location us-central1
+cxas insights list-scorecards \
+  --parent "projects/my-gcp-project/locations/us-central1"
 ```
 
 Output:
@@ -181,10 +180,12 @@ print("Exported to scorecard-export.json")
 ### CLI
 
 ```bash
-cxas insights export \
-  --scorecard "projects/my-gcp-project/locations/us-central1/qaScorecards/qa-scorecard-agent-v1" \
-  --output scorecard-export.json
+cxas insights export-scorecard-from-insights \
+  --scorecard_name "projects/my-gcp-project/locations/us-central1/qaScorecards/qa-scorecard-agent-v1" \
+  --template scorecard-template.json
 ```
+
+The CLI exports a `qaScorecard`/`qaQuestions` template for use with the import command.
 
 ---
 
@@ -225,11 +226,9 @@ print(f"Imported scorecard: {new_scorecard['name']}")
 ### CLI
 
 ```bash
-cxas insights import \
-  --file scorecard-export.json \
-  --scorecard_id agent-quality-v2 \
-  --project_id my-gcp-project \
-  --location us-central1
+cxas insights import-scorecard-to-insights \
+  --template scorecard-template.json \
+  --parent "projects/my-gcp-project/locations/us-central1"
 ```
 
 ---
@@ -276,11 +275,9 @@ print(f"Copied to: {new_scorecard['name']}")
 ### CLI
 
 ```bash
-cxas insights copy \
-  --source "projects/source-project/locations/us-central1/qaScorecards/qa-scorecard-agent-v1" \
-  --target_project target-project \
-  --target_location us-central1 \
-  --scorecard_id agent-quality-v1
+cxas insights copy-scorecard \
+  --scorecard_name "projects/source-project/locations/us-central1/qaScorecards/qa-scorecard-agent-v1" \
+  --parent "projects/target-project/locations/us-central1"
 ```
 
 ---

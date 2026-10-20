@@ -20,7 +20,7 @@ The branch command is a three-step operation:
 Because the new app is independent of the source, changes you make to the branch don't affect the original — and vice versa.
 
 ```bash
-cxas branch <source_app> <new_app_id> [--project_id PROJECT] [--location LOCATION]
+cxas branch <source_app> --new-name NAME --project-id PROJECT --location LOCATION
 ```
 
 ---
@@ -35,21 +35,21 @@ The most common use case is maintaining a staging version of your production age
 # Create a staging branch from production
 cxas branch \
   "projects/my-project/locations/us-central1/apps/my-app-production" \
-  my-app-staging \
-  --project_id my-project \
+  --new-name my-app-staging \
+  --project-id my-project \
   --location us-central1
 ```
 
-You now have `my-app-staging` as an independent copy. Develop on staging, then when you're ready to release, use `cxas push --to` to promote:
+You now have an independent app with display name `my-app-staging`. Develop on staging, then when you're ready to release, use `cxas push --to` to promote:
 
 ```bash
 # Pull staging to local
-cxas pull "my-app-staging" --project_id my-project --location us-central1
+cxas pull "my-app-staging" --project-id my-project --location us-central1 --target-dir ./cxas_app
 
 # ... make changes, test ...
 
 # Push to production
-cxas push cxas_app/my-app-staging \
+cxas push --app-dir cxas_app/my-app-staging \
   --to projects/my-project/locations/us-central1/apps/my-app-production
 ```
 
@@ -60,32 +60,33 @@ When reviewing a pull request that changes agent behavior, you want to test the 
 ```bash
 # Create a branch for PR #42
 cxas branch \
-  "projects/my-project/locations/us-central1/apps/my-app-staging" \
-  my-app-pr-42 \
-  --project_id my-project \
+  "projects/my-project/locations/us-central1/apps/STAGING_APP_ID" \
+  --new-name my-app-pr-42 \
+  --project-id my-project \
   --location us-central1
 
 # Pull the PR's changes locally
 git checkout feature/pr-42
-cxas pull my-app-pr-42 --project_id my-project --location us-central1
+cxas pull my-app-pr-42 --project-id my-project --location us-central1 --target-dir ./cxas_app
 
 # Apply the PR's local changes
 # ... apply changes from the PR diff ...
 
 # Push to the PR branch
-cxas push cxas_app/my-app-pr-42
+cxas push --app-dir cxas_app/my-app-pr-42 \
+  --to my-app-pr-42 --project-id my-project --location us-central1
 ```
 
 After testing, the CI/CD system (or a reviewer) can clean up the PR branch:
 
 ```bash
 # Clean up the PR branch after merge
-cxas delete app my-app-pr-42 --project_id my-project --location us-central1
+cxas delete --display-name my-app-pr-42 --project-id my-project --location us-central1
 ```
 
 ### `cxas ci-test` and automatic branching
 
-The `cxas ci-test` command uses this pattern automatically. It creates a temporary branch with a deterministic name (based on the branch name and commit SHA), runs all tests against it, reports results, and then deletes the branch.
+The `cxas ci-test` command uses this pattern automatically. It creates a test app, runs tests against it, and reports results. The test app is left on the platform for inspection; delete it separately when you no longer need it.
 
 ---
 
@@ -97,36 +98,37 @@ Here's a complete example of using branching as part of an everyday development 
 # --- Initial setup (one time) ---
 
 # Create production app
-cxas create "My App" --app_name my-app --project_id my-project --location us
+cxas create "My App" --app-id my-app --project-id my-project --location us-central1
 
 # Create staging by branching from production
 cxas branch \
   projects/my-project/locations/us-central1/apps/my-app \
-  my-app-staging \
-  --project_id my-project \
+  --new-name my-app-staging \
+  --project-id my-project \
   --location us-central1
 
 # --- Development loop ---
 
 # Pull staging to work locally
-cxas pull my-app-staging --project_id my-project --location us-central1 --target_dir .
+cxas pull my-app-staging --project-id my-project --location us-central1 --target-dir ./cxas_app
 
 # Make changes to instruction or tools
 # ...
 
 # Lint and push to staging
-cxas lint
-cxas push cxas_app/my-app-staging
+cxas lint --app-dir cxas_app/my-app-staging
+cxas push --app-dir cxas_app/my-app-staging \
+  --to my-app-staging --project-id my-project --location us-central1
 
-# Test on staging
-cxas test-tools --app my-app-staging --file evals/tool_tests.yaml
-cxas push-eval --app my-app-staging --file evals/goldens.yaml
-cxas run my-app-staging --wait
+# Test on staging (replace STAGING_APP_ID with the app's ID and smoke with your eval tag)
+cxas test-tools --app-name projects/my-project/locations/us-central1/apps/STAGING_APP_ID --test-file evals/tool_tests.yaml
+cxas push-eval --app-name projects/my-project/locations/us-central1/apps/STAGING_APP_ID --file evals/goldens.yaml
+cxas run --app-name projects/my-project/locations/us-central1/apps/STAGING_APP_ID --tags smoke --wait
 
 # --- Release ---
 
 # Push staging config to production
-cxas push cxas_app/my-app-staging \
+cxas push --app-dir cxas_app/my-app-staging \
   --to projects/my-project/locations/us-central1/apps/my-app
 ```
 
@@ -165,8 +167,8 @@ print(f"Branch created: {new_app.name}")
 
 ## Tips and considerations
 
-**Branch names must be unique within a project**
-: If you try to create a branch with an ID that already exists, the command will fail. Use descriptive, collision-resistant names like `my-app-staging` or `my-app-pr-42`.
+**Use distinct display names**
+: `--new-name` sets a display name, not a resource ID. Use distinct display names within a project and location so later commands can resolve them unambiguously, or use the full resource names instead.
 
 **Branching copies the draft, not a version**
 : The branch is created from the app's current draft state. If you want to branch from a specific version, restore that version first, then branch.

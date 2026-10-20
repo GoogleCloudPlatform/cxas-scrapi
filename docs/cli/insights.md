@@ -53,14 +53,14 @@ Exports a scorecard and all its questions from the Insights API to a local JSON 
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
-| `--scorecard-name NAME` | Yes | — | Full resource name of the scorecard to export (e.g., `projects/{project}/locations/{location}/qaScorecards/{id}`). |
+| `--scorecard_name NAME` | Yes | — | Full resource name of the scorecard to export (e.g., `projects/{project}/locations/{location}/qaScorecards/{id}`). |
 | `--template PATH` | Yes | — | Local file path to write the template to. Use a `.json` or `.yaml` extension. |
 
 ### Example
 
 ```bash
 cxas insights export-scorecard-from-insights \
-  --scorecard-name "projects/my-gcp-project/locations/us-central1/qaScorecards/sc-001" \
+  --scorecard_name "projects/my-gcp-project/locations/us-central1/qaScorecards/sc-001" \
   --template ./scorecards/customer-satisfaction.json
 ```
 
@@ -77,10 +77,10 @@ Reads a scorecard template file and imports it into the Insights API, either cre
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--template PATH` | Yes | — | Path to the local scorecard template file (`.json` or `.yaml`). |
-| `--scorecard-name NAME` | No* | — | Full resource name of an existing scorecard to update with a new revision. |
+| `--scorecard_name NAME` | No* | — | Full resource name of an existing scorecard to update with a new revision. |
 | `--parent PARENT` | No* | — | Parent resource name (`projects/{project}/locations/{location}`) to create a brand-new scorecard under. |
 
-*Provide either `--scorecard-name` (to update) or `--parent` (to create new).
+*Provide either `--scorecard_name` (to update) or `--parent` (to create new).
 
 ### Examples
 
@@ -89,7 +89,7 @@ Reads a scorecard template file and imports it into the Insights API, either cre
 ```bash
 cxas insights import-scorecard-to-insights \
   --template ./scorecards/customer-satisfaction.json \
-  --scorecard-name "projects/my-gcp-project/locations/us-central1/qaScorecards/sc-001"
+  --scorecard_name "projects/my-gcp-project/locations/us-central1/qaScorecards/sc-001"
 ```
 
 **Import as a brand-new scorecard:**
@@ -110,11 +110,11 @@ Copies all questions from one scorecard into another — useful for replicating 
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
-| `--scorecard-name NAME` | Yes | — | Full resource name of the **source** scorecard to copy from. |
-| `--dst-scorecard-name NAME` | No* | — | Full resource name of the **destination** scorecard to overwrite. |
+| `--scorecard_name NAME` | Yes | — | Full resource name of the **source** scorecard to copy from. |
+| `--dst_scorecard_name NAME` | No* | — | Full resource name of the **destination** scorecard to overwrite. |
 | `--parent PARENT` | No* | — | Parent resource name to create a brand-new scorecard as the destination. |
 
-*Provide either `--dst-scorecard-name` (to copy into an existing scorecard) or `--parent` (to create a new one).
+*Provide either `--dst_scorecard_name` (to copy into an existing scorecard) or `--parent` (to create a new one).
 
 ### Examples
 
@@ -122,15 +122,15 @@ Copies all questions from one scorecard into another — useful for replicating 
 
 ```bash
 cxas insights copy-scorecard \
-  --scorecard-name "projects/my-gcp-project/locations/us-central1/qaScorecards/sc-001" \
-  --dst-scorecard-name "projects/my-other-project/locations/us-central1/qaScorecards/sc-010"
+  --scorecard_name "projects/my-gcp-project/locations/us-central1/qaScorecards/sc-001" \
+  --dst_scorecard_name "projects/my-other-project/locations/us-central1/qaScorecards/sc-010"
 ```
 
 **Copy and create a new scorecard in a different project:**
 
 ```bash
 cxas insights copy-scorecard \
-  --scorecard-name "projects/my-gcp-project/locations/us-central1/qaScorecards/sc-001" \
+  --scorecard_name "projects/my-gcp-project/locations/us-central1/qaScorecards/sc-001" \
   --parent "projects/my-other-project/locations/us-central1"
 ```
 

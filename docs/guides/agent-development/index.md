@@ -31,7 +31,7 @@ This workflow gives you the benefits of version control, code review, and local 
 
 ## Local directory structure
 
-After a `cxas pull`, your working directory looks like this:
+After a `cxas pull --target-dir ./cxas_app`, your working directory looks like this:
 
 ```
 cxas_app/<AppName>/
@@ -55,11 +55,11 @@ cxas_app/<AppName>/
 │       ├── <tool_name>.json          # Tool configuration
 │       └── python_function/
 │           └── python_code.py        # Tool implementation
-├── evaluations/                      # Platform golden YAML files
+├── evaluations/                      # Platform golden JSON files
 └── guardrails/                       # Guardrail configuration
 ```
 
-Every file you see here corresponds directly to a resource on the CX Agent Studio platform. When you push, SCRAPI reads this structure and sends the appropriate API calls to update each resource.
+Every file you see here corresponds directly to a resource on the CX Agent Studio platform. When you push, SCRAPI packages this structure and imports it into the app.
 
 ---
 
@@ -88,19 +88,19 @@ If you're starting fresh and want to get to a running agent quickly, here's the 
 
 ```bash
 # 1. Create an app
-cxas create "My App" --app-name my-app --project-id my-gcp-project --location us
+cxas create "My App" --app-id my-app --project-id my-gcp-project --location us
 
 # 2. Pull it locally
-cxas pull "my-app" --project-id my-gcp-project --location us-central1
+cxas pull projects/my-gcp-project/locations/us/apps/my-app --target-dir ./cxas_app
 
 # 3. Edit the instruction
 # (edit cxas_app/my-app/agents/root/instruction.txt)
 
 # 4. Lint
-cxas lint
+cxas lint --app-dir cxas_app/my-app
 
 # 5. Push
-cxas push cxas_app/my-app
+cxas push --app-dir cxas_app/my-app --to projects/my-gcp-project/locations/us/apps/my-app
 ```
 
 For a more complete walkthrough, start with [Creating Agents](creating-agents.md).

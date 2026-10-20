@@ -77,7 +77,7 @@ projects/my-gcp-project/locations/us/apps/abc123
 This format is consistent with how Google Cloud APIs identify resources, and SCRAPI uses it throughout because it's unambiguous — it encodes the project, location, and App ID all in one string.
 
 !!! tip "Where do I find my `app_name`?"
-    Run `cxas apps list --project_id YOUR_PROJECT --location us` to see the full `app_name` for each App. Or in Python: `app_client.list_apps()` returns objects with a `.name` attribute containing the full resource name.
+    Run `cxas apps list --project-id YOUR_PROJECT --location us` to see the full `app_name` for each App. Or in Python: `app_client.list_apps()` returns objects with a `.name` attribute containing the full resource name.
 
 Similarly, individual resources within an App follow the same pattern. For example, a Tool's full name looks like:
 
@@ -189,7 +189,7 @@ Here's the intended pattern:
 
 1. **Create resources on the platform.** Use the CX Agent Studio UI to create a new App, Agent, or Tool. The platform is the source of truth.
 
-2. **Pull them locally with `cxas pull`.** This downloads your resources as YAML files that you can read, edit, and version control.
+2. **Pull them locally with `cxas pull`.** This downloads your resources as JSON files that you can read, edit, and version control.
 
 3. **Edit locally.** Make your changes in your editor of choice. Use the linter (`cxas lint`) to catch problems early.
 

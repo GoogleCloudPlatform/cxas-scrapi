@@ -46,9 +46,9 @@ An *App* is the top-level container. Every agent, tool, and guardrail belongs to
 
     ```bash
     cxas create "My Support Agent" \
-      --app_name my-support-agent \
+      --app-id my-support-agent \
       --description "Handles customer support queries" \
-      --project_id my-gcp-project \
+      --project-id my-gcp-project \
       --location us
     ```
 
@@ -90,11 +90,13 @@ Agents are the conversational entities inside your app. Each agent has instructi
     ```bash
     # Pull the app to get the local directory structure
     cxas pull "My Support Agent" \
-      --project_id my-gcp-project \
-      --location us
+      --project-id my-gcp-project \
+      --location us \
+      --target-dir ./cxas_app
 
     # Create the agent directory and config, then push
-    cxas push cxas_app/My\ Support\ Agent
+    cxas push --app-dir cxas_app/My\ Support\ Agent \
+      --to projects/my-gcp-project/locations/us/apps/my-support-agent
     ```
 
 ---
@@ -121,11 +123,13 @@ Every app needs a *root agent* — the agent that receives the first user messag
     ```bash
     # Pull the app, edit app.json to set "rootAgent", then push
     cxas pull "My Support Agent" \
-      --project_id my-gcp-project \
-      --location us
+      --project-id my-gcp-project \
+      --location us \
+      --target-dir ./cxas_app
 
     # Edit cxas_app/My Support Agent/app.json and set "rootAgent"
-    cxas push cxas_app/My\ Support\ Agent
+    cxas push --app-dir cxas_app/My\ Support\ Agent \
+      --to projects/my-gcp-project/locations/us/apps/my-support-agent
     ```
 
 ---
@@ -170,12 +174,14 @@ Tools are the functions your agent can call during a conversation. For Python to
     ```bash
     # Pull the app to get the local directory structure
     cxas pull "My Support Agent" \
-      --project_id my-gcp-project \
-      --location us
+      --project-id my-gcp-project \
+      --location us \
+      --target-dir ./cxas_app
 
     # Create the tool directory and python_code.py, then push
     # cxas_app/My Support Agent/tools/lookup_order/python_function/python_code.py
-    cxas push cxas_app/My\ Support\ Agent
+    cxas push --app-dir cxas_app/My\ Support\ Agent \
+      --to projects/my-gcp-project/locations/us/apps/my-support-agent
     ```
 
 ---
@@ -216,7 +222,8 @@ Creating a tool doesn't automatically give it to an agent. You need to associate
     ```
 
     ```bash
-    cxas push cxas_app/My\ Support\ Agent
+    cxas push --app-dir cxas_app/My\ Support\ Agent \
+      --to projects/my-gcp-project/locations/us/apps/my-support-agent
     ```
 
 ---
@@ -266,8 +273,9 @@ concern before jumping into solutions. You never make up information.
 After editing, lint and push:
 
 ```bash
-cxas lint
-cxas push cxas_app/My\ Support\ Agent
+cxas lint --app-dir cxas_app/My\ Support\ Agent
+cxas push --app-dir cxas_app/My\ Support\ Agent \
+  --to projects/my-gcp-project/locations/us/apps/my-support-agent
 ```
 
 ---

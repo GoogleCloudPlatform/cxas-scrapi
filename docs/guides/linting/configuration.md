@@ -247,12 +247,12 @@ per_file:
 
 ---
 
-## Running with a custom config file
+## Running with a custom config directory
 
-If you want to use a config file with a non-standard name or location:
+If you want to use a config file in another location, name it `cxaslint.yaml` and select its directory:
 
 ```bash
-cxas lint --config path/to/my-lint-config.yaml
+cxas lint --app-dir path/to/project
 ```
 
 This is useful when you have different lint configurations for different environments (e.g., a stricter config for CI than for local development).

@@ -9,7 +9,7 @@ cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
           [--app-name APP] [--display-name NAME]
           [--create-version] [--version-name NAME] [--version-description DESC]
           [--overwrite]
-          --project-id PROJECT --location LOCATION
+          [--project-id PROJECT] [--location LOCATION]
 ```
 
 ## Options
@@ -25,8 +25,8 @@ cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
 | `--version-name NAME` | No | `import-TIMESTAMP` | Custom display name for the created version snapshot (used with `--create-version`). |
 | `--version-description DESC` | No | — | Description text for the created version snapshot (used with `--create-version`). |
 | `--overwrite` | No | `false` | Overwrite existing resources with imported data. Unmatched existing resources will be deleted. |
-| `--project-id PROJECT` | Yes | — | GCP project ID. |
-| `--location LOCATION` | Yes | — | GCP location (e.g., `global`, `us-central1`). |
+| `--project-id PROJECT` | No | — | GCP project ID. Required for a display-name target or when creating a new app. Inferred from a full target resource name. |
+| `--location LOCATION` | No | — | GCP location (e.g., `global`, `us-central1`). Required for a display-name target or when creating a new app. Inferred from a full target resource name. |
 
 ## What Gets Uploaded
 

@@ -58,7 +58,7 @@ cxas test-callbacks \
   --app-dir ./my-agent \
   --callback-type before_call \
   --log-file /tmp/callback-test.log \
-  --pytest-args "-v,-s"
+  --pytest-args=-v,-s
 ```
 
 **Narrow to a single callback by name:**

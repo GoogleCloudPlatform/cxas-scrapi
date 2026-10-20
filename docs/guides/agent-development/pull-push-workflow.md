@@ -11,54 +11,55 @@ The pull-push workflow is the core of how you edit agents with SCRAPI. This page
 
 ## Overview
 
-The platform is always the source of truth. When you run `cxas pull`, SCRAPI exports the app from the platform as a ZIP archive and unpacks it into a structured local directory. When you run `cxas push`, SCRAPI reads that directory and sends API calls to update each resource.
+The platform is always the source of truth. When you run `cxas pull`, SCRAPI exports the app from the platform as a ZIP archive and unpacks it into a structured local directory. When you run `cxas push`, SCRAPI reads that directory and sends an app import request.
 
 This means:
 
 - You never edit resources by calling the API directly for every field — you edit files locally and push in one go
 - The local directory is a snapshot. If someone else pushes a change while you're editing locally, your next push will overwrite their change (this is intentional — treat it like a Git branch)
-- Not every file on disk corresponds to a separate API call. The agent JSON and instruction file together map to a single agent resource update.
+- Not every file on disk corresponds to a separate API call. The app's files are packaged and imported together.
 
 ---
 
 ## Pulling an app
 
 ```bash
-cxas pull <app> [--target_dir DIR] [--project_id PROJECT] [--location LOCATION]
+cxas pull <app> [--target-dir DIR] [--project-id PROJECT] [--location LOCATION]
 ```
 
 ### Identifying the app
 
 You can identify the app in two ways:
 
-**By full resource name** (no `--project_id` or `--location` needed):
+**By full resource name** (no `--project-id` or `--location` needed):
 
 ```bash
-cxas pull projects/my-project/locations/us-central1/apps/my-app
+cxas pull projects/my-project/locations/us-central1/apps/my-app --target-dir ./cxas_app
 ```
 
-**By display name** (requires `--project_id` and `--location`):
+**By display name** (requires `--project-id` and `--location`):
 
 ```bash
 cxas pull "My Support Agent" \
-  --project_id my-project \
-  --location us-central1
+  --project-id my-project \
+  --location us-central1 \
+  --target-dir ./cxas_app
 ```
 
 Using the full resource name is slightly more robust — display names are case-sensitive and must be unique within a project.
 
 ### Target directory
 
-By default, the app is pulled into a `cxas_app/<AppName>/` subdirectory inside your current working directory. You can change this with `--target_dir`:
+By default, the app is pulled into an `<AppName>/` subdirectory inside your current working directory. You can change its parent directory with `--target-dir`:
 
 ```bash
 cxas pull "My Support Agent" \
-  --project_id my-project \
+  --project-id my-project \
   --location us-central1 \
-  --target_dir ./local-agents
+  --target-dir ./local-agents
 ```
 
-This would create `./local-agents/My Support Agent/`.
+This would create `./local-agents/<AppName>/`.
 
 ### What gets downloaded
 
@@ -72,7 +73,7 @@ The pull downloads everything in the app:
 - (and so on for other callback types)
 - `tools/<name>/<name>.json` — tool configuration
 - `tools/<name>/python_function/python_code.py` — tool implementation
-- `evaluations/` — platform golden YAML files
+- `evaluations/` — exported platform evaluations
 - `guardrails/` — guardrail configuration
 
 ---
@@ -120,16 +121,17 @@ App-level configuration including the root agent reference. You generally only e
 ## Pushing changes
 
 ```bash
-cxas push <app_dir> [--to RESOURCE_NAME]
+cxas push [--app-dir DIR] [--to RESOURCE_NAME]
 ```
 
 ### Basic push
 
 ```bash
-cxas push cxas_app/My\ Support\ Agent
+cxas push --app-dir cxas_app/My_Support_Agent \
+  --to projects/my-project/locations/us-central1/apps/my-app
 ```
 
-SCRAPI reads the directory, determines which resources have changed, and sends the appropriate API calls. Resources that haven't changed are skipped (based on a diff against the platform state).
+SCRAPI reads the directory, packages the supported files into a ZIP archive, and sends it to the app import API.
 
 ### The `--to` flag
 
@@ -137,7 +139,7 @@ The `--to` flag lets you push a local directory to a *different* app on the plat
 
 ```bash
 # Push your local staging config to the production app
-cxas push cxas_app/My\ Support\ Agent \
+cxas push --app-dir cxas_app/My_Support_Agent \
   --to projects/my-project/locations/us-central1/apps/my-app-production
 ```
 
@@ -164,12 +166,12 @@ To handle drift manually:
 ```bash
 # Pull the latest into a temp directory
 cxas pull "My Support Agent" \
-  --project_id my-project \
+  --project-id my-project \
   --location us-central1 \
-  --target_dir /tmp/platform-state
+  --target-dir /tmp/platform-state
 
 # Diff against your working copy
-diff -r cxas_app/My\ Support\ Agent /tmp/platform-state/My\ Support\ Agent
+diff -r cxas_app/My_Support_Agent /tmp/platform-state/My_Support_Agent
 ```
 
 ---
@@ -186,12 +188,13 @@ git add .
 git commit -m "Initial project setup"
 
 # Development loop
-cxas pull "My Support Agent" --project_id my-project --location us-central1
+cxas pull "My Support Agent" --project-id my-project --location us-central1 --target-dir ./cxas_app
 # ... edit files ...
-cxas lint
+cxas lint --app-dir cxas_app/My_Support_Agent
 git diff  # review changes
 git commit -m "Improve order lookup instruction"
-cxas push cxas_app/My\ Support\ Agent
+cxas push --app-dir cxas_app/My_Support_Agent \
+  --to projects/my-project/locations/us-central1/apps/my-app
 ```
 
 If you track `cxas_app/` in Git, you get:
@@ -206,13 +209,12 @@ If you track `cxas_app/` in Git, you get:
 
 Understanding what happens during a push helps you reason about partial failures:
 
-1. SCRAPI reads `app.json` and updates app-level settings
-2. For each agent directory, it reads `<agent_name>.json` and resolves any file paths in callback references
-3. It sends an `update_agent` API call with the full agent config including resolved Python code
-4. For each tool, it reads `<tool_name>.json` and the associated `python_code.py`, then sends an `update_tool` API call
-5. For guardrails and evaluations, similar file-based reads and API updates
+1. SCRAPI copies supported app files and resource directories into a temporary directory.
+2. If `--env-file` is provided, its contents replace `environment.json` in that temporary copy.
+3. It creates a ZIP archive and calls the app import API, targeting an existing app or creating a new one.
+4. It waits for the import operation and reports any resources rejected by the server.
 
-If a push fails partway through (e.g., a network error after updating agents but before updating tools), the platform will be in a partially updated state. The safest recovery is to pull again and re-push.
+If a push fails partway through, some resources may already have been imported. Review any warnings, fix the rejected resources, and re-push.
 
 ---
 
@@ -222,7 +224,7 @@ If a push fails partway through (e.g., a network error after updating agents but
 : The display name is case-sensitive. Try using the full resource name instead.
 
 **Push succeeds but changes aren't reflected**
-: Check that you're pushing to the right app. Confirm with `cxas apps` or `apps.list_apps()`.
+: Check that you're pushing to the right app. Confirm with `cxas apps list --project-id my-project --location us-central1` or `apps.list_apps()`.
 
 **Callback changes aren't picked up**
 : The `pythonCode` path in the agent JSON must match the actual file location. After a pull, these paths are set correctly; if you've moved files manually, update the JSON to match.

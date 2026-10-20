@@ -110,7 +110,7 @@ $.items.length()            # Length of a list
 ```bash
 cxas test-tools \
   --app-name "projects/my-project/locations/us/apps/my-app" \
-  --file evals/tool_tests/order_tests.yaml
+  --test-file evals/tool_tests/order_tests.yaml
 ```
 
 The CLI prints a summary table and exits with code `0` if all tests pass, `1` if any fail.
@@ -122,7 +122,7 @@ When a test fails and you're not sure why, use `--debug` to see the full tool re
 ```bash
 cxas test-tools \
   --app-name "projects/my-project/locations/us/apps/my-app" \
-  --file evals/tool_tests/order_tests.yaml \
+  --test-file evals/tool_tests/order_tests.yaml \
   --debug
 ```
 
@@ -272,7 +272,7 @@ tests:
 ```bash
 cxas test-tools \
   --app-name "projects/my-project/locations/us/apps/my-app" \
-  --file evals/tool_tests/order_management.yaml
+  --test-file evals/tool_tests/order_management.yaml
 ```
 
 Expected output:

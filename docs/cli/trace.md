@@ -53,10 +53,10 @@ cxas trace get conv-id-1 \
   --out trace.md
 ```
 
-Compare a deployed conversation against the current agent:
+Compare a deployed conversation against the current agent (diffing is enabled by default, use `--no-diff` to disable it):
 
 ```
-cxas trace replay conv-id-1 --app-name projects/p/locations/l/apps/a --diff
+cxas trace replay conv-id-1 --app-name projects/p/locations/l/apps/a
 ```
 
 Generate a 7-day stats report grouped by source, written as Markdown:

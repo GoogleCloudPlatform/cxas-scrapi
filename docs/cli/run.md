@@ -7,7 +7,7 @@
 ```
 cxas run --app-name APP
          [--evaluation-id EVAL]
-         [--display-name_prefix PREFIX]
+         [--display-name-prefix PREFIX]
          [--tags TAG ...]
          [--wait]
          [--filter-auto-metrics]
@@ -20,13 +20,13 @@ cxas run --app-name APP
 |--------|----------|---------|-------------|
 | `--app-name APP` | Yes | — | Full resource name of the app to evaluate (e.g., `projects/{project}/locations/{location}/apps/{app}`). |
 | `--evaluation-id EVAL` | No* | — | Full resource name of a specific evaluation to run. |
-| `--display-name_prefix PREFIX` | No* | — | Run all evaluations whose display name starts with this string. |
+| `--display-name-prefix PREFIX` | No* | — | Run all evaluations whose display name starts with this string. |
 | `--tags TAG ...` | No* | — | Space-separated list of tags. Runs all evaluations that have at least one of the specified tags. |
 | `--wait` | No | `false` | Block until all triggered evaluations complete and exit with code `0` on pass or `1` on fail. Without this flag the command fires the run and returns immediately. |
 | `--filter-auto-metrics` | No | `false` | When waiting for results, ignore automated LLM metrics (semantic similarity, hallucination) and only assess custom expectations and tool invocation results. Useful when you care about business-logic correctness rather than language quality scores. |
 | `--modality text\|audio` | No | `text` | The modality to use when executing the evaluation. |
 
-*You must provide at least one of `--evaluation-id`, `--display-name_prefix`, or `--tags`.
+*You must provide at least one of `--evaluation-id`, `--display-name-prefix`, or `--tags`.
 
 ## How Waiting Works
 
@@ -56,7 +56,7 @@ cxas run \
 ```bash
 cxas run \
   --app-name projects/my-gcp-project/locations/us-central1/apps/abc123 \
-  --display-name_prefix "Billing" \
+  --display-name-prefix "Billing" \
   --wait \
   --filter-auto-metrics
 ```

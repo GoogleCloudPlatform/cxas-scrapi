@@ -87,7 +87,7 @@ Bella Notte is the canonical reference implementation of the [Slot Filling Patte
     Replace `your-gcp-project` and `your-app-id` with your values. Find your app ID by running:
 
     ```bash
-    cxas apps list --project_id your-gcp-project --location us
+    cxas apps list --project-id your-gcp-project --location us
     ```
 
 ---
@@ -732,13 +732,9 @@ A golden eval checks exact tool calls and specific response content. A scenario 
     After writing your tools and callback, push to the platform and run your evals:
 
     ```bash
-    # Push the app
-    cxas push --project_id your-gcp-project --location us --app_name bella-notte
-
-    # Push evaluations
-    cxas push-eval --project_id your-gcp-project --location us \
-        --app_name bella-notte \
-        --eval_file evaluations/Happy_Path_Linear_Flow.json
+    # Push the app and evaluations
+    cxas push --app-dir cxas_app \
+      --to projects/your-gcp-project/locations/us/apps/your-app-id
 
     # Run evals using the AI skill
     python .agents/skills/cxas-agent-foundry/scripts/run-and-report.py \
@@ -751,8 +747,11 @@ A golden eval checks exact tool calls and specific response content. A scenario 
         Run 2-3 evals manually after pushing to verify the agent responds at all before investing time in a full suite run. A misconfigured callback or missing variable will fail silently — the agent simply won't respond — and a full suite run will report 0/N passing without a useful error.
 
     ```bash
-    # Run a single eval to verify the agent is live
-    cxas run --eval "Happy Path - Linear Reservation Flow" --turns 2
+    # Run matching platform evaluations and wait for results
+    cxas run \
+      --app-name projects/your-gcp-project/locations/us/apps/your-app-id \
+      --display-name-prefix "Happy Path - Linear Reservation Flow" \
+      --wait
     ```
 
 === "Reading results"
