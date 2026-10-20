@@ -182,6 +182,7 @@ nav:
       - Local Simulations: guides/evaluation/local-simulations.md
       - Tool Expectations: guides/evaluation/tool-expectations.md
       - Shadow Evals: guides/evaluation/shadow-evals.md
+      - Redaction Checks: guides/evaluation/redaction-checks.md
       - Tool Tests: guides/evaluation/tool-tests.md
       - Callback Tests: guides/evaluation/callback-tests.md
       - Turn Evals: guides/evaluation/turn-evals.md
@@ -234,6 +235,7 @@ nav:
     - cxas init: cli/init.md
     - cxas insights: cli/insights.md
     - cxas trace: cli/trace.md
+    - cxas redaction: cli/redaction.md
   - API Reference:
     - api/index.md
     - Core:
