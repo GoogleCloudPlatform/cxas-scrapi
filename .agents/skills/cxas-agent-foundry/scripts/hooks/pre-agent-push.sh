@@ -80,10 +80,11 @@ if echo "$cmd" | grep -qE 'cxas(-eval)? push'; then
       drift=$(diff -rq "$tmp_dir" "$app_dir" 2>/dev/null || true)
       if [ -n "$drift" ]; then
         msg="BLOCKED: Platform state has diverged from local files in $app_dir. Someone made changes via SCRAPI or the UI that are not in your local copy. Run 'cxas pull $app_resource --project-id $project --location $location --target-dir $app_dir' to merge platform changes first, then retry the push."
+        # Claude Code only blocks a PreToolUse call on permissionDecision "deny".
         if [ "$agent" = "claude" ]; then
-          echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"blockToolExecution\":true,\"additionalContext\":\"$msg\"}}"
+          jq -cn --arg msg "$msg" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $msg}}'
         else
-          echo "{\"decision\":\"block\",\"context_update\":\"$msg\"}"
+          jq -cn --arg msg "$msg" '{decision: "block", context_update: $msg}'
         fi
         exit 0
       fi
