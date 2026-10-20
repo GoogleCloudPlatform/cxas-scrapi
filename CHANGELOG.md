@@ -1,6 +1,13 @@
 # Changelog
 
 
+## [1.10.1](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.10.0...v1.10.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **core:** wait for turnCompleted when skip_playback_wait=True and default TTS voice_name from language_code ([acdc7b2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/acdc7b29fc7643132345f82615b547e99d483bd6))
+
 ## [1.10.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.9.1...v1.10.0) (2026-10-17)
 
 
