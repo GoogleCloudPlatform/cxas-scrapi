@@ -69,6 +69,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+audio-metrics = [
+  "pyloudnorm>=0.1.1",
+  "praat-parselmouth>=0.4.3",
+]
 dev = [
   "pytest-asyncio",
   "pytest-xdist",
