@@ -1,0 +1,10 @@
+{
+  "name": "send_sms_summary",
+  "pythonFunction": {
+    "name": "send_sms_summary",
+    "pythonCode": "tools/send_sms_summary/python_function/python_code.py",
+    "description": "Texts an order summary to the phone number on the customer's account.\n\nOnly call this after the text message terms were shared and the customer\nagreed to get the text.\n\nArgs:\n  order_number (str): The order number to summarize, as a string.\n\nReturns:\n  dict[str, Any]: Whether the text was sent."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "send_sms_summary"
+}

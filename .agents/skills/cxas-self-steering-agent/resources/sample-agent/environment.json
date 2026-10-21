@@ -1,0 +1,9 @@
+{
+  "app": {
+    "loggingSettings": {
+      "bigqueryExportSettings": {
+        "project": "ces-deployment-dev"
+      }
+    }
+  }
+}
