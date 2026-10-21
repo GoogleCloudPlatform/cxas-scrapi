@@ -1395,7 +1395,19 @@ class EvalUtils(Evaluations):
         start_time = time.time()
         while True:
             run_status = self.eval_client.get_evaluation_run(run_name)
-            if run_status.state.name in ["COMPLETED", "ERROR"]:
+            # The state can be a value the installed stubs don't define yet.
+            # proto-plus then returns the raw int, which has no `.name`, so
+            # compare by int value: anything that is not UNSPECIFIED (0) or
+            # RUNNING (1) means the run is no longer in progress.
+            state = run_status.state
+            if int(state) not in (0, 1):
+                if not hasattr(state, "name"):
+                    logger.warning(
+                        "Evaluation run %s ended in state %s, which this "
+                        "client does not recognize. Treating it as finished.",
+                        run_name,
+                        int(state),
+                    )
                 break
             if time.time() - start_time > timeout_seconds:
                 raise TimeoutError(f"Evaluation run {run_name} timed out.")

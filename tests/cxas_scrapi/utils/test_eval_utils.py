@@ -15,10 +15,13 @@
 
 """Tests for evaluation utility functions."""
 
+import enum
 import sys
 import tempfile
 import typing
 from unittest.mock import MagicMock, mock_open, patch
+
+import pytest
 
 # Mock dependencies before importing EvalUtils
 sys.modules["google.cloud.texttospeech"] = MagicMock()
@@ -685,3 +688,62 @@ def test_parse_variables_input_name_value_list() -> None:
         "a": None,
         "b": None,
     }
+
+
+def test_wait_for_run_and_get_results_raw_int_state() -> None:
+    """A state the stubs don't define (raw int) ends the wait, not crashes."""
+    with patch("cxas_scrapi.utils.eval_utils.Evaluations") as mock_evals:
+        client = mock_evals.return_value
+        client.get_evaluation_run.side_effect = [
+            MagicMock(state=1),
+            MagicMock(state=5),
+        ]
+        client.list_evaluation_results_by_run.return_value = ["result"]
+        utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
+
+        with patch("cxas_scrapi.utils.eval_utils.time.sleep") as mock_sleep:
+            results = utils.wait_for_run_and_get_results("run")
+
+    assert results == ["result"]
+    assert client.get_evaluation_run.call_count == 2
+    assert mock_sleep.call_count == 1
+
+
+def test_wait_for_run_and_get_results_enum_state() -> None:
+    """Enum member states are handled as before."""
+
+    class _State(enum.IntEnum):
+        RUNNING = 1
+        COMPLETED = 2
+        ERROR = 3
+
+    for final_state in (_State.COMPLETED, _State.ERROR):
+        with patch("cxas_scrapi.utils.eval_utils.Evaluations") as mock_evals:
+            client = mock_evals.return_value
+            client.get_evaluation_run.side_effect = [
+                MagicMock(state=_State.RUNNING),
+                MagicMock(state=final_state),
+            ]
+            client.list_evaluation_results_by_run.return_value = ["result"]
+            utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
+
+            with patch("cxas_scrapi.utils.eval_utils.time.sleep") as mock_sleep:
+                results = utils.wait_for_run_and_get_results("run")
+
+        assert results == ["result"]
+        assert client.get_evaluation_run.call_count == 2
+        assert mock_sleep.call_count == 1
+
+
+def test_wait_for_run_and_get_results_times_out_while_running() -> None:
+    """A run that stays pending still raises TimeoutError."""
+    with patch("cxas_scrapi.utils.eval_utils.Evaluations") as mock_evals:
+        client = mock_evals.return_value
+        client.get_evaluation_run.return_value = MagicMock(state=1)
+        utils = EvalUtils(app_name="projects/p/locations/l/apps/a")
+
+        with (
+            patch("cxas_scrapi.utils.eval_utils.time.sleep"),
+            pytest.raises(TimeoutError),
+        ):
+            utils.wait_for_run_and_get_results("run", timeout_seconds=-1)
