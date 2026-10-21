@@ -27,6 +27,7 @@ from google.cloud.ces_v1beta import types
 from google.protobuf import field_mask_pb2
 
 from cxas_scrapi.core.agents import Agents
+from cxas_scrapi.utils.code_security_utils import CodeSecurityUtils
 
 
 class Callbacks(Agents):
@@ -242,11 +243,17 @@ class Callbacks(Agents):
                     "code string."
                 )
 
-        # Prepare a restricted execution environment
-        exec_globals = {}
+        # 1. Validate callback AST safety before execution
+        try:
+            CodeSecurityUtils.validate_callback_ast(code_str)
+        except (ValueError, SyntaxError) as e:
+            return {"error": f"Security validation failed: {e!s}"}
+
+        # 2. Prepare a restricted execution environment with safe builtins
+        exec_globals = {"__builtins__": CodeSecurityUtils.get_safe_builtins()}
 
         try:
-            # Execute the string into our globals namespace
+            # Execute the string into our restricted globals namespace
             exec(code_str, exec_globals)
         except Exception as e:
             return {"error": f"Compilation failed: {e!s}"}
@@ -257,11 +264,15 @@ class Callbacks(Agents):
                 f"the code block."
             }
 
+        target_fn = exec_globals[func_name]
+        if not callable(target_fn):
+            return {"error": f"Function {func_name} is not callable."}
+
         # Call the function hermetically
         try:
             # The execution signature usually accepts a `session` argument
             # containing the state dict
-            result = exec_globals[func_name](mock_session_input)
+            result = target_fn(mock_session_input)
             return {"success": True, "result": result}
         except Exception as e:
             return {
