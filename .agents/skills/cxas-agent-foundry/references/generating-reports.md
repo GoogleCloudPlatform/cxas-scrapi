@@ -287,3 +287,14 @@ For each agent, produce:
 - Tool invocation correctness below 1.0 means missed or wrong tool calls
 - Compare trends across the last 10 results to spot regressions
 - When a golden eval is marked `invalid: true`, it references a deleted/changed tool -- flag prominently
+
+## Estimating Production Quotas (Trace Extrapolation)
+
+When preparing an agent for production, you can calculate the expected Gemini Enterprise conversational quotas based on past trace history and an assumed traffic volume:
+
+```bash
+# Estimate token and tool call production quotas
+cxas trace estimate-quota --app-name projects/<project_id>/locations/<location>/apps/<app_id> --peak-text-cpm 100 --peak-audio-cpm 50 --time-filter 7d
+```
+
+This will output estimated QPM (Quota per Minute) targets for `Chat/GenerateContent` (Tokens) and `Session/StreamingAnalyzeContent` (Turns).
