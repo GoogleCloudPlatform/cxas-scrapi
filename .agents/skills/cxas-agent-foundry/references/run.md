@@ -5,6 +5,7 @@ Run evals, triage failures, and generate reports for GECX conversational agents.
 ## Table of Contents
 
 - [Before Starting](#before-starting)
+- [Eval Execution Strategy](#eval-execution-strategy)
 - [Four Eval Types](#four-eval-types)
 - [Run Everything](#run-everything)
 - [Choosing Golden vs Sim](#choosing-golden-vs-sim)
@@ -32,6 +33,20 @@ Check memory for project-specific context (app ID, variable handling rules, know
 
 **CRITICAL: Evaluation Channel Enforcement**
 If the app's `gecx-config.json` specifies `"modality": "audio"`, you MUST NOT run evaluations in text mode. The runner scripts will now throw a fatal error if you attempt to bypass this. When running eval scripts, either omit the `--channel` flag to rely on the default config, or explicitly pass `--channel audio`. Never pass `--channel text` for an audio agent.
+
+## Eval Execution Strategy
+
+Prefer tight feedback loops over casting a wide net. Running the full eval suite on every iteration is slow and buries the signal you care about in noise from unrelated tests.
+
+**After building or pushing a new agent:**
+1. Run 2–3 smoke-test evals first (e.g., one happy path, one edge case) and confirm they pass.
+2. Only then run the full battery. If smoke tests fail, fix them before wasting time on the full suite.
+
+**When fixing a specific problem:**
+1. Run only the eval(s) where the problem surfaces. Iterate until they pass.
+2. Once the targeted evals pass, run the full suite to check for regressions.
+
+The goal is to minimize the time between "make a change" and "see whether it worked." A 2-minute targeted run that tells you exactly what broke is worth more than a 15-minute full run where you have to hunt for the relevant result.
 
 ## Four Eval Types
 
