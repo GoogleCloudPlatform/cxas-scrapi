@@ -27,6 +27,7 @@ import shutil
 import time
 import typing
 import uuid
+import wave
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -451,7 +452,10 @@ class LLMUserConversation(Conversation):
 
 
 def cleanup_session_dir(func: typing.Any) -> typing.Any:
-    """Decorator to ensure session temporary directory is deleted on exit."""
+    """Decorator ensuring session temporary directory is deleted on exit.
+
+    Preserves any recorded turn audio files before directory deletion.
+    """
     sig = inspect.signature(func)
 
     @functools.wraps(func)
@@ -464,12 +468,193 @@ def cleanup_session_dir(func: typing.Any) -> typing.Any:
             session_id = str(uuid.uuid4())
             bound.arguments["session_id"] = session_id
 
+        result = None
         try:
-            return func(*bound.args, **bound.kwargs)
+            result = func(*bound.args, **bound.kwargs)
+            return result
         finally:
-            shutil.rmtree(f"/tmp/scrapi_evals/{session_id}", ignore_errors=True)
+            temp_dir = f"/tmp/scrapi_evals/{session_id}"
+            persistent_audio_dir = f"/tmp/scrapi_audio/{session_id}"
+            if os.path.isdir(temp_dir):
+                try:
+                    wav_files = [
+                        f for f in os.listdir(temp_dir) if f.endswith(".wav")
+                    ]
+                    if wav_files:
+                        os.makedirs(persistent_audio_dir, exist_ok=True)
+                        for wav_file in wav_files:
+                            src_wav = os.path.join(temp_dir, wav_file)
+                            dst_wav = os.path.join(
+                                persistent_audio_dir, wav_file
+                            )
+                            if os.path.abspath(src_wav) != os.path.abspath(
+                                dst_wav
+                            ):
+                                shutil.copy2(src_wav, dst_wav)
+
+                        if result is not None:
+                            agent_audio_paths = getattr(
+                                result, "agent_audio_paths", None
+                            )
+                            if agent_audio_paths is None and isinstance(
+                                result, dict
+                            ):
+                                agent_audio_paths = result.get(
+                                    "agent_audio_paths"
+                                )
+                            if isinstance(agent_audio_paths, dict):
+                                for k, v in list(agent_audio_paths.items()):
+                                    if isinstance(v, str) and temp_dir in v:
+                                        agent_audio_paths[k] = v.replace(
+                                            temp_dir, persistent_audio_dir
+                                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to preserve session audio for %s: %s",
+                        session_id,
+                        exc,
+                    )
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     return wrapper
+
+
+def persist_simulation_audio(
+    session_id: str,
+    audio_paths: dict[int, str] | None,
+    output_dir: str = "",
+) -> dict[str, Any]:
+    """Persists turn audio files and concatenates them into a full scenario WAV.
+
+    Copies per-turn agent audio WAV files into a session audio directory
+    under `output_dir/audio/<session_id>/` and stitches them in turn order
+    into `full-scenario.wav` for playback in evaluation reports.
+
+    Args:
+        session_id: Unique session identifier for the simulation.
+        audio_paths: Mapping of turn indices to source audio file paths.
+        output_dir: Base directory where the audio folder will be created.
+            Defaults to current working directory if empty.
+
+    Returns:
+        A dict containing:
+            - "agent_audio_paths": dict of turn indices to persisted WAV paths.
+            - "full_audio_path": path to concatenated full-scenario.wav or None.
+    """
+    if not session_id:
+        return {"agent_audio_paths": {}, "full_audio_path": None}
+
+    base_dir = output_dir if output_dir else "."
+    audio_dir = os.path.join(base_dir, "audio", session_id)
+
+    src_files: dict[int, str] = {}
+
+    if isinstance(audio_paths, dict):
+        items = sorted(audio_paths.items(), key=lambda item: int(item[0]))
+    elif isinstance(audio_paths, (list, tuple)):
+        items = list(enumerate(audio_paths))
+    else:
+        items = []
+
+    for turn_idx, src_path in items:
+        turn_int = int(turn_idx)
+        if isinstance(src_path, str) and os.path.isfile(src_path):
+            src_files[turn_int] = src_path
+
+    # Fallback to persistent audio cache if no valid paths were found
+    if not src_files:
+        fallback_dirs = [
+            f"/tmp/scrapi_audio/{session_id}",
+            f"/tmp/scrapi_evals/{session_id}",
+        ]
+        for fallback_dir in fallback_dirs:
+            if os.path.isdir(fallback_dir):
+                candidate_files = [
+                    f
+                    for f in os.listdir(fallback_dir)
+                    if f.endswith(".wav") and f != "full-scenario.wav"
+                ]
+                for fname in sorted(candidate_files):
+                    match = re.search(
+                        r"(?:turn_(\d+)_agent|agent-turn-(\d+))", fname
+                    )
+                    if match:
+                        turn_int = (
+                            int(match.group(1))
+                            if match.group(1) is not None
+                            else max(0, int(match.group(2)) - 1)
+                        )
+                    else:
+                        digits = re.findall(r"\d+", fname)
+                        turn_int = int(digits[0]) if digits else len(src_files)
+
+                    src_wav = os.path.join(fallback_dir, fname)
+                    if os.path.isfile(src_wav):
+                        src_files[turn_int] = src_wav
+
+                if src_files:
+                    break
+
+    if not src_files:
+        return {"agent_audio_paths": {}, "full_audio_path": None}
+
+    os.makedirs(audio_dir, exist_ok=True)
+
+    persisted_turn_paths: dict[int, str] = {}
+    for turn_int, src_path in sorted(src_files.items()):
+        dest_turn_file = os.path.join(audio_dir, f"turn_{turn_int}_agent.wav")
+        if os.path.abspath(src_path) != os.path.abspath(dest_turn_file):
+            shutil.copy2(src_path, dest_turn_file)
+        persisted_turn_paths[turn_int] = dest_turn_file
+
+        agent_turn_file = os.path.join(
+            audio_dir, f"agent-turn-{turn_int + 1}.wav"
+        )
+        if not os.path.exists(agent_turn_file):
+            shutil.copy2(dest_turn_file, agent_turn_file)
+
+    full_scenario_path = None
+    if persisted_turn_paths:
+        sorted_turns = sorted(persisted_turn_paths.keys())
+        turn_files = [
+            persisted_turn_paths[t]
+            for t in sorted_turns
+            if os.path.isfile(persisted_turn_paths[t])
+        ]
+        if turn_files:
+            target_full_path = os.path.join(audio_dir, "full-scenario.wav")
+            try:
+                with wave.open(turn_files[0], "rb") as first_wav:
+                    nchannels = first_wav.getnchannels()
+                    sampwidth = first_wav.getsampwidth()
+                    framerate = first_wav.getframerate()
+                    comptype = first_wav.getcomptype()
+                    compname = first_wav.getcompname()
+
+                with wave.open(target_full_path, "wb") as out_wav:
+                    out_wav.setnchannels(nchannels)
+                    out_wav.setsampwidth(sampwidth)
+                    out_wav.setframerate(framerate)
+                    out_wav.setcomptype(comptype, compname)
+                    for wav_path in turn_files:
+                        with wave.open(wav_path, "rb") as w:
+                            nframes = w.getnframes()
+                            if nframes > 0:
+                                out_wav.writeframes(w.readframes(nframes))
+                full_scenario_path = target_full_path
+            except Exception as exc:
+                logger.warning(
+                    "Failed to concatenate simulation audio for session %s: %s",
+                    session_id,
+                    exc,
+                )
+                if os.path.exists(target_full_path):
+                    full_scenario_path = target_full_path
+
+    return {
+        "agent_audio_paths": persisted_turn_paths,
+        "full_audio_path": full_scenario_path,
+    }
 
 
 class SimulationEvals(Apps):
@@ -1081,6 +1266,7 @@ class SimulationEvals(Apps):
         use_tool_fakes: bool = False,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
+        output_dir: str = "",
     ) -> dict[str, Any]:
         """Runs a single simulation job and returns the results.
 
@@ -1166,6 +1352,17 @@ class SimulationEvals(Apps):
                 raw_turn_traces if isinstance(raw_turn_traces, list) else []
             )
 
+            agent_audio = getattr(conv, "agent_audio_paths", {}) or {}
+            persisted = persist_simulation_audio(
+                session_id=session_id,
+                audio_paths=agent_audio,
+                output_dir=output_dir,
+            )
+            if persisted.get("agent_audio_paths"):
+                conv.agent_audio_paths = persisted["agent_audio_paths"]
+            if persisted.get("full_audio_path"):
+                conv.full_audio_path = persisted["full_audio_path"]
+
             result: dict[str, Any] = {
                 "name": name,
                 "run": run_idx + 1,
@@ -1183,6 +1380,8 @@ class SimulationEvals(Apps):
                     getattr(conv, "detailed_trace", []),
                 ),
                 "turn_traces": turn_traces_out,
+                "agent_audio_paths": persisted.get("agent_audio_paths", {}),
+                "full_audio_path": persisted.get("full_audio_path"),
                 "step_details": [
                     {
                         "goal": p.step.goal,
@@ -1219,6 +1418,8 @@ class SimulationEvals(Apps):
                 "run": run_idx + 1,
                 "passed": False,
                 "error": str(e),
+                "agent_audio_paths": {},
+                "full_audio_path": None,
             }
 
     @staticmethod
@@ -1270,9 +1471,14 @@ class SimulationEvals(Apps):
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
+        output_dir: str = "",
     ) -> list[dict[str, Any]]:
         """Aggregates results from multiple simulation jobs."""
         results = []
+        job_kwargs: dict[str, Any] = {}
+        if output_dir:
+            job_kwargs["output_dir"] = output_dir
+
         with Progress() as progress:
             task_id = progress.add_task("Running Simulations", total=len(jobs))
 
@@ -1294,6 +1500,7 @@ class SimulationEvals(Apps):
                             use_tool_fakes=use_tool_fakes,
                             skip_playback_wait=skip_playback_wait,
                             single_bidi_stream=single_bidi_stream,
+                            **job_kwargs,
                         )
                     )
                     progress.update(task_id, advance=1)
@@ -1319,6 +1526,7 @@ class SimulationEvals(Apps):
                             use_tool_fakes=use_tool_fakes,
                             skip_playback_wait=skip_playback_wait,
                             single_bidi_stream=single_bidi_stream,
+                            **job_kwargs,
                         ): (tc["name"], run_idx)
                         for tc, run_idx in jobs
                     }
@@ -1351,6 +1559,7 @@ class SimulationEvals(Apps):
         infra_retries: int = 0,
         retry_parallel: int | None = None,
         retry_cooldown: float = 60.0,
+        output_dir: str = "",
     ) -> list[dict[str, Any]]:
         if expectations_only is not None:
             self.expectations_only = expectations_only
@@ -1377,6 +1586,10 @@ class SimulationEvals(Apps):
             # aggregation loop still see the override.
             self.naturalness = naturalness
         jobs = self._prepare_simulation_jobs(test_cases, runs)
+        agg_kwargs: dict[str, Any] = {}
+        if output_dir:
+            agg_kwargs["output_dir"] = output_dir
+
         results = self._aggregate_simulation_results(
             jobs,
             runs,
@@ -1392,6 +1605,7 @@ class SimulationEvals(Apps):
             skip_playback_wait=skip_playback_wait,
             single_bidi_stream=single_bidi_stream,
             progress_callback=progress_callback,
+            **agg_kwargs,
         )
 
         declared_by_name = {
@@ -1454,6 +1668,7 @@ class SimulationEvals(Apps):
                 use_tool_fakes=use_tool_fakes,
                 skip_playback_wait=skip_playback_wait,
                 single_bidi_stream=single_bidi_stream,
+                **agg_kwargs,
             )
             fresh_by_key: dict[tuple[Any, Any], list[dict[str, Any]]] = {}
             for r in fresh_rows or []:

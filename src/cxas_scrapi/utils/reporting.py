@@ -21,6 +21,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import typing
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -31,6 +32,7 @@ import yaml
 
 from cxas_scrapi.core import conversation_history, tools
 from cxas_scrapi.evals import runner as evals_runner
+from cxas_scrapi.evals.simulation_evals import persist_simulation_audio
 from cxas_scrapi.utils import (
     base_components,
     eval_utils,
@@ -1693,6 +1695,96 @@ def generate_combined_html_report(
     """
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    if sim_modality != "audio" and sim_results:
+        has_audio = any(
+            bool(
+                r.get("agent_audio_paths")
+                or r.get("full_audio_path")
+                or r.get("audio")
+                or str(r.get("modality", "")).lower() == "audio"
+                or r.get("naturalness")
+                or (
+                    r.get("session_id")
+                    and os.path.exists(
+                        f"/tmp/scrapi_audio/{r.get('session_id')}"
+                    )
+                )
+            )
+            for r in sim_results
+            if isinstance(r, dict)
+        )
+        if has_audio:
+            sim_modality = "audio"
+
+    report_dir = (
+        os.path.dirname(output_path)
+        if output_path and not output_path.startswith("gs://")
+        else "."
+    ) or "."
+
+    if sim_results:
+        for r in sim_results:
+            if not isinstance(r, dict):
+                continue
+            session_id = r.get("session_id")
+            if session_id:
+                target_audio_dir = os.path.join(report_dir, "audio", session_id)
+                target_full_wav = os.path.join(
+                    target_audio_dir, "full-scenario.wav"
+                )
+                if not os.path.exists(target_full_wav):
+                    if r.get("full_audio_path") and os.path.exists(
+                        r["full_audio_path"]
+                    ):
+                        os.makedirs(target_audio_dir, exist_ok=True)
+                        if os.path.abspath(
+                            r["full_audio_path"]
+                        ) != os.path.abspath(target_full_wav):
+                            shutil.copy2(r["full_audio_path"], target_full_wav)
+                    elif r.get("agent_audio_paths") or os.path.isdir(
+                        f"/tmp/scrapi_audio/{session_id}"
+                    ):
+                        persisted = persist_simulation_audio(
+                            session_id,
+                            r.get("agent_audio_paths"),
+                            output_dir=report_dir,
+                        )
+                        if persisted.get("full_audio_path"):
+                            r["full_audio_path"] = persisted.get(
+                                "full_audio_path"
+                            )
+                        if persisted.get("agent_audio_paths") and not r.get(
+                            "agent_audio_paths"
+                        ):
+                            r["agent_audio_paths"] = persisted.get(
+                                "agent_audio_paths"
+                            )
+
+                if r.get("agent_audio_paths") and isinstance(
+                    r["agent_audio_paths"], dict
+                ):
+                    for t_idx, src_wav in r["agent_audio_paths"].items():
+                        if isinstance(src_wav, str) and os.path.exists(src_wav):
+                            t_int = int(t_idx)
+                            os.makedirs(target_audio_dir, exist_ok=True)
+                            dst_t1 = os.path.join(
+                                target_audio_dir, f"turn_{t_int}_agent.wav"
+                            )
+                            dst_t2 = os.path.join(
+                                target_audio_dir, f"agent-turn-{t_int + 1}.wav"
+                            )
+                            if not os.path.exists(dst_t1) and os.path.abspath(
+                                src_wav
+                            ) != os.path.abspath(dst_t1):
+                                shutil.copy2(src_wav, dst_t1)
+                            if not os.path.exists(dst_t2):
+                                shutil.copy2(
+                                    dst_t1
+                                    if os.path.exists(dst_t1)
+                                    else src_wav,
+                                    dst_t2,
+                                )
+
     g_total = len(golden_results) if golden_results else 0
     g_passed = (
         sum(1 for r in golden_results if r.get("passed"))
@@ -2158,6 +2250,9 @@ def generate_combined_html_report(
             else:
                 output_path = mtls_url
         else:
+            parent_dir = os.path.dirname(output_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
             with open(output_path, "w") as f:
                 f.write(html_out)
 
@@ -2208,6 +2303,27 @@ def generate_combined_json_report(
     sim_results = sim_results or []
     tool_results = tool_results or []
     callback_results = callback_results or []
+
+    if sim_modality != "audio" and sim_results:
+        has_audio = any(
+            bool(
+                r.get("agent_audio_paths")
+                or r.get("full_audio_path")
+                or r.get("audio")
+                or str(r.get("modality", "")).lower() == "audio"
+                or r.get("naturalness")
+                or (
+                    r.get("session_id")
+                    and os.path.exists(
+                        f"/tmp/scrapi_audio/{r.get('session_id')}"
+                    )
+                )
+            )
+            for r in sim_results
+            if isinstance(r, dict)
+        )
+        if has_audio:
+            sim_modality = "audio"
 
     def _counts(results: typing.Any) -> typing.Any:
         return {
@@ -2264,6 +2380,9 @@ def generate_combined_json_report(
             else:
                 output_path = mtls_url
         else:
+            parent_dir = os.path.dirname(output_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
             with open(output_path, "w") as f:
                 f.write(json_out)
 
