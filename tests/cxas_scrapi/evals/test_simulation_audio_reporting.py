@@ -354,3 +354,24 @@ def test_simulation_job_enriches_audio_paths(tmp_path: typing.Any) -> None:
                 "full_audio_path should not be None"
             )
             assert os.path.isfile(res["full_audio_path"])
+
+
+def test_persist_simulation_audio_no_wav_files_does_not_create_empty_dir(
+    tmp_path: typing.Any,
+) -> None:
+    """Verifies persist_simulation_audio does not create audio/<session_id> when no WAVs exist."""
+    assert persist_simulation_audio is not None, (
+        "persist_simulation_audio must be available"
+    )
+    session_id = f"text-sess-{uuid.uuid4().hex[:8]}"
+    out_dir = str(tmp_path / "text_eval_out")
+    res = persist_simulation_audio(
+        session_id=session_id,
+        audio_paths={},
+        output_dir=out_dir,
+    )
+    assert not res.get("agent_audio_paths")
+    assert not res.get("full_audio_path")
+    assert not os.path.exists(os.path.join(out_dir, "audio", session_id)), (
+        "Text simulation with no WAV files must not create empty audio/<session_id> directory"
+    )

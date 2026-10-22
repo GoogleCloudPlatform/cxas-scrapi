@@ -546,31 +546,23 @@ def persist_simulation_audio(
 
     base_dir = output_dir if output_dir else "."
     audio_dir = os.path.join(base_dir, "audio", session_id)
-    os.makedirs(audio_dir, exist_ok=True)
 
-    persisted_turn_paths: dict[int, str] = {}
+    src_files: dict[int, str] = {}
 
-    if audio_paths:
-        for turn_idx, src_path in sorted(
-            audio_paths.items(), key=lambda item: int(item[0])
-        ):
-            turn_int = int(turn_idx)
-            if isinstance(src_path, str) and os.path.isfile(src_path):
-                dest_turn_file = os.path.join(
-                    audio_dir, f"turn_{turn_int}_agent.wav"
-                )
-                if os.path.abspath(src_path) != os.path.abspath(dest_turn_file):
-                    shutil.copy2(src_path, dest_turn_file)
-                persisted_turn_paths[turn_int] = dest_turn_file
+    if isinstance(audio_paths, dict):
+        items = sorted(audio_paths.items(), key=lambda item: int(item[0]))
+    elif isinstance(audio_paths, (list, tuple)):
+        items = list(enumerate(audio_paths))
+    else:
+        items = []
 
-                agent_turn_file = os.path.join(
-                    audio_dir, f"agent-turn-{turn_int + 1}.wav"
-                )
-                if not os.path.exists(agent_turn_file):
-                    shutil.copy2(dest_turn_file, agent_turn_file)
+    for turn_idx, src_path in items:
+        turn_int = int(turn_idx)
+        if isinstance(src_path, str) and os.path.isfile(src_path):
+            src_files[turn_int] = src_path
 
-    # Fallback to persistent audio cache if no valid paths were copied
-    if not persisted_turn_paths:
+    # Fallback to persistent audio cache if no valid paths were found
+    if not src_files:
         fallback_dirs = [
             f"/tmp/scrapi_audio/{session_id}",
             f"/tmp/scrapi_evals/{session_id}",
@@ -594,30 +586,32 @@ def persist_simulation_audio(
                         )
                     else:
                         digits = re.findall(r"\d+", fname)
-                        turn_int = (
-                            int(digits[0])
-                            if digits
-                            else len(persisted_turn_paths)
-                        )
+                        turn_int = int(digits[0]) if digits else len(src_files)
 
                     src_wav = os.path.join(fallback_dir, fname)
-                    dest_turn_file = os.path.join(
-                        audio_dir, f"turn_{turn_int}_agent.wav"
-                    )
-                    if os.path.abspath(src_wav) != os.path.abspath(
-                        dest_turn_file
-                    ):
-                        shutil.copy2(src_wav, dest_turn_file)
-                    persisted_turn_paths[turn_int] = dest_turn_file
+                    if os.path.isfile(src_wav):
+                        src_files[turn_int] = src_wav
 
-                    agent_turn_file = os.path.join(
-                        audio_dir, f"agent-turn-{turn_int + 1}.wav"
-                    )
-                    if not os.path.exists(agent_turn_file):
-                        shutil.copy2(dest_turn_file, agent_turn_file)
-
-                if persisted_turn_paths:
+                if src_files:
                     break
+
+    if not src_files:
+        return {"agent_audio_paths": {}, "full_audio_path": None}
+
+    os.makedirs(audio_dir, exist_ok=True)
+
+    persisted_turn_paths: dict[int, str] = {}
+    for turn_int, src_path in sorted(src_files.items()):
+        dest_turn_file = os.path.join(audio_dir, f"turn_{turn_int}_agent.wav")
+        if os.path.abspath(src_path) != os.path.abspath(dest_turn_file):
+            shutil.copy2(src_path, dest_turn_file)
+        persisted_turn_paths[turn_int] = dest_turn_file
+
+        agent_turn_file = os.path.join(
+            audio_dir, f"agent-turn-{turn_int + 1}.wav"
+        )
+        if not os.path.exists(agent_turn_file):
+            shutil.copy2(dest_turn_file, agent_turn_file)
 
     full_scenario_path = None
     if persisted_turn_paths:
