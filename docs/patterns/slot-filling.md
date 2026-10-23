@@ -420,14 +420,39 @@ The `requires` field on `selected_time` enforces the dependency at two levels:
 1. The question is skipped in `_next_question` until `available_times` is filled.
 2. The setter tool is **hidden** from the LLM's tool list until the dependency is met — so the LLM structurally cannot call `set_selected_time` before availability is known.
 
----
+## The callback preemption mechanism & FunctionCall delegation
 
-## The callback preemption mechanism
+When all required task inputs are ready, the callback has two execution paths:
 
-!!! warning "Callback Preemption — the most critical architectural detail"
-    When the callback fires a task and preempts the LLM, **the LLM does not get a turn**. Any setter tools the LLM had queued in the current response but not yet called are **permanently lost**. This is why the agent instruction must require all setter tools to be called in the **same response** — deferring any setter to a later turn creates a race condition with the callback.
+### 1. FunctionCall Delegation (Recommended for Natural Responses)
 
-Preemption uses `LlmResponse.from_parts()` to bypass LLM generation entirely:
+Rather than executing the task inside the callback and returning static text, the callback returns a `Part.from_function_call()`. The platform executes the tool and feeds the `toolResponse` back to the LLM in the same turn, allowing the model to generate a warm, persona-aligned confirmation:
+
+```python
+if dag_all_inputs_ready:
+    return LlmResponse.from_parts(parts=[
+        # Optional: Conversational audio filler
+        Part.from_text(text="Locking in your reservation now...", partial=True),
+        Part.from_function_call(
+            name="book_reservation",
+            args={
+                "party_size": sm["filled"]["party_size"],
+                "preferred_date": sm["filled"]["preferred_date"],
+                "selected_time": sm["filled"]["selected_time"],
+                "guest_name": sm["filled"]["guest_name"],
+            }
+        )
+    ])
+```
+
+See [before_model_callback for DAG and slot-filling](https://googlecloudplatform.github.io/cxas-scrapi/stable/design-guide/callbacks/#before_model_callback-for-dag-and-slot-filling) for full details on this lifecycle.
+
+### 2. Callback Preemption (Static Text)
+
+!!! warning "Callback Preemption — architectural detail"
+    When the callback fires a task and preempts the LLM with text, **the LLM does not get a turn**. Any setter tools the LLM had queued in the current response but not yet called are **permanently lost**. This is why the agent instruction must require all setter tools to be called in the **same response** — deferring any setter to a later turn creates a race condition with the callback.
+
+Preemption uses `LlmResponse.from_parts()` with text to bypass LLM generation entirely:
 
 ```python
 if task_fired and llm_request.contents and len(llm_request.contents) > 1:
@@ -445,10 +470,9 @@ User message
     → LLM calls setter tool(s) in one response
     → before_model_callback fires
         → Check DAG: are all task inputs now satisfied?
-            YES → fire task, store result in sm
-                → If multi-content (not first turn): PREEMPT
-                    → LlmResponse returned directly — LLM skipped
-                    → Task result delivered verbatim
+            YES →
+                Option A (Delegation): Return FunctionCall part → Tool runs → LLM generates natural confirmation
+                Option B (Preemption): Execute in Python → Return LlmResponse with text → LLM skipped
             NO → compute next question
                 → Set sm['_system_message']
                 → Return OK → LLM generates response using _system_message
