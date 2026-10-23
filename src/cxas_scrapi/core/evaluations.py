@@ -598,8 +598,12 @@ class Evaluations(Common):
                                     eval_exp_dir, f"{exp_id}.json"
                                 )
 
+                                exp_display_name = (
+                                    getattr(exp_obj, "display_name", None)
+                                    or exp_id
+                                )
                                 exp_content = {
-                                    "displayName": exp_id,
+                                    "displayName": exp_display_name,
                                     "llmCriteria": {"prompt": prompt_text},
                                 }
                                 with open(
