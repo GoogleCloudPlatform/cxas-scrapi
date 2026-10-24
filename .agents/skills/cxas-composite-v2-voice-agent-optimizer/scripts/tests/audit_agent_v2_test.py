@@ -491,3 +491,127 @@ def test_remediation_is_idempotent(tmp_path: pathlib.Path) -> None:
     aud.VoiceAgentV2Auditor(app).remediate()
     second = aud.VoiceAgentV2Auditor(app).remediate()
     assert second["status"] == "NO_CHANGES_NEEDED"
+
+
+def test_translated_tags_are_audited_and_migrated(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = _make_app(
+        tmp_path,
+        global_instruction=GLOBAL_OK
+        + "Always keep tags in English (<short pause>, never <pausa corta>).\n",
+        agent_instruction=(
+            'Say "<empático> Lo siento, <pausa corta> déjeme revisar."\n'
+            'In Mandarin, say "<短暂停顿> 稍等一下。"\n'
+            'In Hindi, say "[छोटा विराम] जी, एक सेकंड रुकिए।"\n'
+        ),
+    )
+    issues = [i for i in _issues(app) if i["code"] == "TRANSLATED_AUDIO_TAG"]
+    assert len(issues) == 4
+    assert not any(i["file"] == "global_instruction.txt" for i in issues)
+
+    aud.VoiceAgentV2Auditor(app).remediate()
+    migrated = (app / "agents" / "root" / "instruction.txt").read_text()
+    assert (
+        migrated
+        == 'Say "<empathetic> Lo siento, <short pause> déjeme revisar."\n'
+        'In Mandarin, say "<short pause> 稍等一下。"\n'
+        'In Hindi, say "<short pause> जी, एक सेकंड रुकिए।"\n'
+    )
+    assert "TRANSLATED_AUDIO_TAG" not in _codes(app)
+
+
+def test_mixed_latin_in_devanagari_utterance_is_reported(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = _make_app(
+        tmp_path,
+        global_instruction=GLOBAL_OK
+        + "- Hindi: write acronyms in Devanagari (e.g., 'वाई-फाई' instead of 'WiFi', 'सिम' instead of 'SIM').\n",
+        agent_instruction=(
+            'Bad: "नमस्ते! <short pause> मैं आज आपके WiFi राउटर या SIM कार्ड में आपकी कैसे मदद कर सकता हूँ?"\n'
+            'Good: "नमस्ते! <short pause> मैं आज आपके वाई-फाई राउटर या सिम कार्ड में कैसे मदद कर सकती हूँ?"\n'
+        ),
+    )
+    issues = [
+        i
+        for i in _issues(app)
+        if i["code"] == "MIXED_LATIN_IN_DEVANAGARI_UTTERANCE"
+    ]
+    assert len(issues) == 1
+    assert issues[0]["file"] == "agents/root/instruction.txt"
+    assert issues[0]["line"] == 1
+    assert "SIM" in issues[0]["message"]
+    assert "WiFi" in issues[0]["message"]
+
+
+def test_multilingual_support_and_locale_accent_mismatch(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = _make_app(
+        tmp_path,
+        supported=("es-US", "hi-IN"),
+        speech={
+            "en-AU": {
+                "voice": "en-AU-Chirp3-HD-Aoede",
+                "instruction": "Australian woman in her early 30s, warm mid-pitch voice",
+            },
+            "es-US": {
+                "voice": "es-US-Chirp3-HD-Aoede",
+                "instruction": "Australian woman in her early 30s, warm mid-pitch voice",
+            },
+            "hi-IN": {
+                "voice": "hi-IN-Chirp3-HD-Aoede",
+                "instruction": "",
+            },
+        },
+    )
+    codes = _codes(app)
+    assert "MULTILINGUAL_SUPPORT_NOT_ENABLED" in codes
+    assert "LOCALE_SPEAKER_PROFILE_ACCENT_MISMATCH" in codes
+
+    mismatch = [
+        i
+        for i in _issues(app)
+        if i["code"] == "LOCALE_SPEAKER_PROFILE_ACCENT_MISMATCH"
+    ]
+    assert len(mismatch) == 1
+    assert "'es-US'" in mismatch[0]["message"]
+
+    aud.VoiceAgentV2Auditor(app).remediate()
+    out = json.loads((app / "app.json").read_text())
+    assert out["languageSettings"]["enableMultilingualSupport"] is True
+    assert "MULTILINGUAL_SUPPORT_NOT_ENABLED" not in _codes(app)
+
+
+def test_multilingual_sentence_boundaries_and_pause_commas() -> None:
+    # Multi-part tone transitions after CJK (。) and Devanagari (।) sentence
+    # endings must stay at the start of sentence 2, not lift to sentence 1.
+    cjk = '"<calm><empathetic> 很抱歉您的航班取消了。<positive> 好消息是我已经帮您改签了。"'
+    assert aud.migrate_text_to_v2(cjk)[0] == cjk
+
+    hindi = '"<calm><empathetic> मुझे खेद है। <positive> अच्छी खबर यह है।"'
+    assert aud.migrate_text_to_v2(hindi)[0] == hindi
+
+    # Mid-sentence pause after an accented Spanish letter gets a comma.
+    es_pause = '"Ya revisé <short pause> todo está bien."'
+    assert (
+        aud.migrate_text_to_v2(es_pause)[0]
+        == '"Ya revisé, <short pause> todo está bien."'
+    )
+
+    # All-caps placeholders ([PAUSA]) and label contexts (sentiment: [Positivo])
+    # are untouched.
+    keep = "Read [PAUSA] and check if sentiment: [Positivo]."
+    assert aud.migrate_text_to_v2(keep)[0] == keep
+
+
+def test_english_apostrophes_do_not_false_positive_devanagari_check(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = _make_app(
+        tmp_path,
+        global_instruction=GLOBAL_OK
+        + "When the caller's language is Hindi, say 'मैं आपकी मदद कर सकती हूँ' so it doesn't sound stiff.\n",
+    )
+    assert "MIXED_LATIN_IN_DEVANAGARI_UTTERANCE" not in _codes(app)

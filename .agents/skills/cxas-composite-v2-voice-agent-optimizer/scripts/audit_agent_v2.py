@@ -20,18 +20,22 @@ Customer Engagement Suite (CES) applications for Gemini Composite V2
 (`gemini-composite-v2`):
 - Upgrades older Composite models in `app.json` and agent overrides to
   `gemini-composite-v2` (other models are only reported), clears legacy V1
-  Director's Notes and over-long speaking styles to an empty style, and adds
+  Director's Notes and over-long speaking styles to an empty style, enables
+  `languageSettings.enableMultilingualSupport` for multi-locale apps, and adds
   missing locales with the default locale's Chirp 3 HD voice persona.
-- Migrates inline `[tag]` syntax to `<tag>`, remaps low-performing tags to
-  validated Composite V2 equivalents (`<slow>` -> `<prosody rate="65%">`),
-  deduplicates tag lists, rewrites `</prosody>` as a `<prosody rate="100%">`
-  reset, puts prosody first in tag stacks, inserts commas before mid-sentence
-  pause tags, relocates mid-sentence style tags in quoted utterances to
-  sentence start, and removes closing audio tags.
+- Migrates inline `[tag]` syntax to `<tag>`, converts translated non-English
+  audio tags (`<pausa corta>`, `<短暂停顿>`, etc.) to canonical English `<...>`
+  tags, remaps low-performing tags to validated Composite V2 equivalents
+  (`<slow>` -> `<prosody rate="65%">`), deduplicates tag lists, rewrites
+  `</prosody>` as a `<prosody rate="100%">` reset, puts prosody first in tag
+  stacks, inserts commas before mid-sentence pause tags, relocates mid-sentence
+  style tags in quoted utterances to sentence start, and removes closing audio
+  tags.
 - Audits unevaluated tags, misspelled bracket tags, `<sigh>`/`<exhales>` on
   ending or transfer turns, tool-scoped spoken text normalization (`Scope:`
-  guard), ALL-CAPS lexical stress, contradictory legacy rules,
-  `after_model_callback` tag coverage, and cross-app hand-offs.
+  guard), ALL-CAPS lexical stress, cross-locale speaker profile accent
+  mismatches, mixed Latin words in Devanagari utterances, contradictory legacy
+  rules, `after_model_callback` tag coverage, and cross-app hand-offs.
 
 Run with `uv run python` so the cxas_scrapi structural lint pass is included;
 use `--remediate --dry-run` to preview changes and `--backup` to keep copies.
@@ -235,6 +239,154 @@ REMAP_V2: dict[str, tuple[str, str]] = {
 }
 
 ALL_RECOGNIZED_AUDIO_TAGS: set[str] = ALLOWED_V2_AUDIO_TAGS | set(REMAP_V2)
+
+# Common non-English translations of Composite V2 tags (Spanish, Mandarin,
+# Hindi, Korean, Japanese, French, German, Portuguese). Composite V2 requires
+# English tag keywords in every spoken language; translated tags are read aloud.
+TRANSLATED_TAG_MAP: dict[str, str] = {
+    # Spanish
+    "pausa corta": "short pause",
+    "pausa breve": "short pause",
+    "pausa larga": "long pause",
+    "pausa": "short pause",
+    "suspiro": "sigh",
+    "suspira": "sighs",
+    "exhala": "exhales",
+    "aliento": "breath",
+    "respiración": "breath",
+    "respiracion": "breath",
+    "risa": "laugh",
+    "risas": "chuckles",
+    "risita": "chuckle",
+    "jadeo": "gasp",
+    "calma": "calm",
+    "calmado": "calm",
+    "calmada": "calm",
+    "empático": "empathetic",
+    "empatica": "empathetic",
+    "empática": "empathetic",
+    "empatico": "empathetic",
+    "cálido": "warm",
+    "calido": "warm",
+    "cálida": "warm",
+    "calida": "warm",
+    "positivo": "positive",
+    "positiva": "positive",
+    "entusiasmo": "enthusiasm",
+    "claro": "clear",
+    "clara": "clear",
+    "alivio": "relief",
+    "susurro": "whispers",
+    "susurros": "whispers",
+    "susurrando": "whispering",
+    # Mandarin Chinese
+    "短暂停顿": "short pause",
+    "短停顿": "short pause",
+    "长停顿": "long pause",
+    "停顿": "short pause",
+    "叹气": "sigh",
+    "呼吸": "breath",
+    "吸气": "breath",
+    "呼气": "exhales",
+    "轻笑": "chuckles",
+    "笑": "laugh",
+    "倒吸一口气": "gasp",
+    "平静": "calm",
+    "冷静": "calm",
+    "共情": "empathetic",
+    "同情": "sympathetic",
+    "温暖": "warm",
+    "温和": "warm",
+    "积极": "positive",
+    "热情": "enthusiasm",
+    "清晰": "clear",
+    "坚定": "determination",
+    "耳语": "whispers",
+    "低语": "whispers",
+    # Hindi
+    "छोटा विराम": "short pause",
+    "लंबा विराम": "long pause",
+    "विराम": "short pause",
+    "आह": "sigh",
+    "साँस": "breath",
+    "सांस": "breath",
+    "हँसी": "chuckles",
+    "शांत": "calm",
+    "सहानुभूति": "empathetic",
+    "गर्मजोशी": "warm",
+    "सकारात्मक": "positive",
+    "स्पष्ट": "clear",
+    "राहत": "relief",
+    # Korean
+    "짧은 휴지": "short pause",
+    "짧은 멈춤": "short pause",
+    "긴 휴지": "long pause",
+    "긴 멈춤": "long pause",
+    "일시중지": "short pause",
+    "한숨": "sigh",
+    "숨": "breath",
+    "웃음": "chuckles",
+    "차분하게": "calm",
+    "차분함": "calm",
+    "공감": "empathetic",
+    "따뜻하게": "warm",
+    "따뜻함": "warm",
+    "긍정적": "positive",
+    # Japanese
+    "短い間": "short pause",
+    "長い間": "long pause",
+    "ポーズ": "short pause",
+    "ため息": "sigh",
+    "息": "breath",
+    "笑い": "chuckles",
+    "穏やか": "calm",
+    "共感": "empathetic",
+    "温かい": "warm",
+    "ポジティブ": "positive",
+    # French / German / Portuguese
+    "courte pause": "short pause",
+    "longue pause": "long pause",
+    "soupir": "sigh",
+    "calme": "calm",
+    "empathique": "empathetic",
+    "chaleureux": "warm",
+    "positif": "positive",
+    "kurze pause": "short pause",
+    "lange pause": "long pause",
+    "seufzer": "sigh",
+    "ruhig": "calm",
+    "empathisch": "empathetic",
+    "pausa curta": "short pause",
+    "pausa longa": "long pause",
+    "calmo": "calm",
+}
+
+TRANSLATED_AUDIO_TAG_RE = re.compile(
+    r"(?:<\s*|\[\s*)("
+    + "|".join(
+        re.escape(k) for k in sorted(TRANSLATED_TAG_MAP, key=len, reverse=True)
+    )
+    + r")(?:\s*>|\s*\])",
+    re.IGNORECASE,
+)
+
+# English-locale nationality/accent descriptors that should not be copied into
+# non-English synthesizeSpeechConfigs.<locale>.instruction speaker profiles.
+ENGLISH_ACCENT_IN_STYLE_RE = re.compile(
+    r"\b(?:american|australian|aussie|british|scottish|irish|canadian|"
+    r"new\s+zealand|kiwi|cockney|english\s+accent|us\s+accent|uk\s+accent|"
+    r"au\s+accent)\b",
+    re.IGNORECASE,
+)
+
+# Quoted utterance spans (single or double quotes) for script-purity checks.
+# Single quotes require non-word boundaries so English apostrophes (caller's,
+# don't) never pair with single-quoted phrases.
+UTTERANCE_SPAN_RE = re.compile(
+    r'"[^"\n]{3,400}"|(?<![\w])\'[^\'\n]{3,400}\'(?![\w])'
+)
+DEVANAGARI_CHAR_RE = re.compile(r"[\u0900-\u097F]")
+LATIN_WORD_RE = re.compile(r"\b[A-Za-z]{2,}\b")
 
 # Closest evaluated tag to suggest for common unevaluated tags. Suggestions
 # are report-only: swap a tag only when the user agrees.
@@ -730,21 +882,26 @@ def _relocate_utterance_tags_and_punctuate_pauses(
     style_moves = 0
 
     # 1. Insert comma before mid-sentence <short pause> / <long pause> when
-    # preceded directly by an alphanumeric character without punctuation.
+    # preceded directly by a word character (including accented Latin,
+    # Devanagari, Hangul, Kana, or Hanzi) without punctuation.
     def _punct_pause(m: re.Match[str]) -> str:
         nonlocal pause_commas
         pause_commas += 1
         return f"{m.group(1)}, {m.group(2)}"
 
     inner = re.sub(
-        r"([A-Za-z0-9])[ \t]+(<(?:short|long)\s+pause>)",
+        r"([A-Za-z0-9\u00C0-\u024F\u0900-\u0963\u0966-\u097F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF])[ \t]+(<(?:short|long)\s+pause>)",
         _punct_pause,
         inner,
         flags=re.IGNORECASE,
     )
 
     # 2. Move mid-sentence style/tone tags to the start of their sentence.
-    sentences = re.split(r"([.!?]+(?:\s+|$))", inner)
+    # Recognize ASCII (.!?), Devanagari danda, and CJK sentence boundaries.
+    sentences = re.split(
+        r"([.!?]+(?:\s+|$)|[\u0964\u0965]+(?:\s+|$)|[\u3002\uff01\uff1f]+\s*)",
+        inner,
+    )
     rebuilt_parts: list[str] = []
     for idx in range(0, len(sentences), 2):
         sent = sentences[idx]
@@ -847,6 +1004,7 @@ def migrate_text_to_v2(
     notes: list[str] = []
     syntax_count = 0
     remap_count = 0
+    translated_count = 0
     closing_count = 0
     reset_count = 0
     prosody_moves = 0
@@ -916,6 +1074,31 @@ def migrate_text_to_v2(
         pieces.append(cur_line[cursor:])
         cur_line = "".join(pieces)
 
+        # 3b. Convert translated non-English audio tags (<pausa corta>, <短暂停顿>)
+        # to their canonical English Composite V2 tag unless negated.
+        cursor = 0
+        pieces = []
+        for match in TRANSLATED_AUDIO_TAG_RE.finditer(cur_line):
+            if cur_line[match.end() : match.end() + 1] == "(":
+                continue
+            if match.group(0).startswith("[") and (
+                match.group(1).isupper()
+                or _is_label_context(cur_line[: match.start()])
+            ):
+                continue
+            if _is_negated(cur_line, match.start()):
+                continue
+            norm_inner = " ".join(match.group(1).split()).lower()
+            target = TRANSLATED_TAG_MAP.get(norm_inner)
+            if not target:
+                continue
+            translated_count += 1
+            pieces.append(cur_line[cursor : match.start()])
+            pieces.append(f"<{target}>")
+            cursor = match.end()
+        pieces.append(cur_line[cursor:])
+        cur_line = "".join(pieces)
+
         # 4. Put <prosody rate="N%"> first in tag stacks, then deduplicate
         # tag lists on the line
         cur_line, moves = _reorder_prosody_first(cur_line)
@@ -949,6 +1132,10 @@ def migrate_text_to_v2(
         notes.append(f"converted {syntax_count} [tag] -> <tag>")
     if remap_count:
         notes.append(f"remapped {remap_count} low-performing tag(s)")
+    if translated_count:
+        notes.append(
+            f"converted {translated_count} translated audio tag(s) to English"
+        )
     if closing_count:
         notes.append(f"removed {closing_count} closing audio tag(s)")
     if reset_count:
@@ -1353,6 +1540,25 @@ class VoiceAgentV2Auditor:
             default_lang,
             *[lang for lang in supported if isinstance(lang, str)],
         ]
+        if any(
+            isinstance(lang, str) and lang != default_lang for lang in supported
+        ) and not lang_settings.get("enableMultilingualSupport"):
+            issues.append(
+                {
+                    "code": "MULTILINGUAL_SUPPORT_NOT_ENABLED",
+                    "file": rel_app,
+                    "priority": "P1",
+                    "message": (
+                        "languageSettings.supportedLanguageCodes declares "
+                        f"additional locales ({supported}), but "
+                        "languageSettings.enableMultilingualSupport is not true."
+                    ),
+                    "recommended": (
+                        "Set languageSettings.enableMultilingualSupport to true "
+                        "(--remediate does this automatically)."
+                    ),
+                }
+            )
 
         audio_cfg = app_data.get("audioProcessingConfig") or {}
         speech_cfgs = audio_cfg.get("synthesizeSpeechConfigs") or {}
@@ -1472,6 +1678,31 @@ class VoiceAgentV2Auditor:
                         ),
                     }
                 )
+            elif (
+                inst
+                and not lang.lower().startswith("en")
+                and ENGLISH_ACCENT_IN_STYLE_RE.search(inst)
+            ):
+                accent_match = ENGLISH_ACCENT_IN_STYLE_RE.search(inst)
+                accent_term = (
+                    accent_match.group(0) if accent_match else "English"
+                )
+                issues.append(
+                    {
+                        "code": "LOCALE_SPEAKER_PROFILE_ACCENT_MISMATCH",
+                        "file": rel_app,
+                        "priority": "P1",
+                        "message": (
+                            f"Non-English locale '{lang}' speaking style instruction "
+                            f"contains an English-locale descriptor ('{accent_term}'), "
+                            f"which forces a foreign English accent onto '{lang}' speech."
+                        ),
+                        "recommended": (
+                            f"Set synthesizeSpeechConfigs['{lang}'].instruction to \"\" "
+                            f"(empty default) or use a native speaker profile for '{lang}'."
+                        ),
+                    }
+                )
 
             voice = str(cfg.get("voice") or "").strip()
             if not voice:
@@ -1577,6 +1808,7 @@ class VoiceAgentV2Auditor:
                 name = _normalize_tag_inner(m.group(1))
                 if (
                     name in ALL_RECOGNIZED_AUDIO_TAGS
+                    or name in TRANSLATED_TAG_MAP
                     or name in NON_AUDIO_ELEMENT_NAMES
                     or name in closed
                     or _is_negated(seg, m.start())
@@ -1618,6 +1850,7 @@ class VoiceAgentV2Auditor:
                 line = seg[line_start : line_end if line_end != -1 else None]
                 if (
                     LEGACY_SQUARE_TAG_RE.fullmatch(f"[{inner}]")
+                    or inner.lower() in TRANSLATED_TAG_MAP
                     or seg[m.end() : m.end() + 1] == "("
                     or _is_label_context(seg[line_start : m.start()])
                     or _is_meta_documentation_line(line)
@@ -1836,6 +2069,75 @@ class VoiceAgentV2Auditor:
                             ),
                         }
                     )
+
+                for match in TRANSLATED_AUDIO_TAG_RE.finditer(line):
+                    if line[match.end() : match.end() + 1] == "(":
+                        continue
+                    if match.group(0).startswith("[") and (
+                        match.group(1).isupper()
+                        or _is_label_context(line[: match.start()])
+                    ):
+                        continue
+                    if _is_negated(line, match.start()):
+                        continue
+                    norm_inner = " ".join(match.group(1).split()).lower()
+                    target = TRANSLATED_TAG_MAP.get(norm_inner, "short pause")
+                    issues.append(
+                        {
+                            "code": "TRANSLATED_AUDIO_TAG",
+                            "file": rel,
+                            "line": lineno,
+                            "priority": "P0",
+                            "message": (
+                                f"Found translated non-English audio tag '{match.group(0)}' "
+                                f"in {rel}:{lineno}. Composite V2 only recognizes English tag "
+                                "keywords and reads translated tags aloud."
+                            ),
+                            "recommended": (
+                                f"Run `audit_agent_v2.py --remediate` or replace "
+                                f"'{match.group(0)}' with '<{target}>'."
+                            ),
+                        }
+                    )
+
+                if (
+                    "instead of" not in lower_line
+                    and "rather than" not in lower_line
+                ):
+                    masked_line = _mask_tag_quotes(line)
+                    for span_match in UTTERANCE_SPAN_RE.finditer(masked_line):
+                        if _is_negated(line, span_match.start()):
+                            continue
+                        span_inner = _unmask_tag_quotes(
+                            span_match.group(0)[1:-1]
+                        )
+                        cleaned_span = re.sub(r"<[^<>]+>", " ", span_inner)
+                        cleaned_span = re.sub(r"\{[^{}]+\}", " ", cleaned_span)
+                        cleaned_span = re.sub(r"/[^/\s]+/", " ", cleaned_span)
+                        if len(DEVANAGARI_CHAR_RE.findall(cleaned_span)) >= 3:
+                            latin_words = LATIN_WORD_RE.findall(cleaned_span)
+                            if latin_words:
+                                words_str = ", ".join(sorted(set(latin_words)))
+                                issues.append(
+                                    {
+                                        "code": "MIXED_LATIN_IN_DEVANAGARI_UTTERANCE",
+                                        "file": rel,
+                                        "line": lineno,
+                                        "priority": "P1",
+                                        "message": (
+                                            f"Quoted Devanagari (Hindi) utterance in {rel}:{lineno} "
+                                            f"mixes Latin script word(s) ({words_str}) with Devanagari. "
+                                            "In Composite V2, Latin acronyms or words inside Devanagari "
+                                            "sentences can trigger mid-sentence English code-switching "
+                                            "when the session starts in an English locale."
+                                        ),
+                                        "recommended": (
+                                            "Write brand names and acronyms phonetically in Devanagari "
+                                            "script (e.g., 'वाई-फाई' instead of 'Wi-Fi', 'सिम' instead "
+                                            "of 'SIM') so the spoken clause stays in one script."
+                                        ),
+                                    }
+                                )
 
                 if "never" not in lower_line:
                     for match in CLOSING_AUDIO_TAG_RE.finditer(line):
@@ -2389,6 +2691,17 @@ class VoiceAgentV2Auditor:
                 default_lang,
                 *[lang for lang in supported if isinstance(lang, str)],
             ]
+            if any(
+                isinstance(lang, str) and lang != default_lang
+                for lang in supported
+            ) and not lang_settings.get("enableMultilingualSupport"):
+                app_data.setdefault("languageSettings", {})[
+                    "enableMultilingualSupport"
+                ] = True
+                changes.append(
+                    "Enabled languageSettings.enableMultilingualSupport for multi-locale app."
+                )
+                app_changed = True
 
             audio_cfg = app_data.setdefault("audioProcessingConfig", {})
             speech_cfgs = audio_cfg.setdefault("synthesizeSpeechConfigs", {})
