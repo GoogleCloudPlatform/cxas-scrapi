@@ -1829,8 +1829,9 @@ class VoiceAgentV2Auditor:
                         ),
                         "recommended": (
                             f"Set synthesizeSpeechConfigs['{lang}'].instruction "
-                            'to "" when using a custom cloned voice, and steer '
-                            "emotion with inline <...> tags."
+                            'to "" when using a custom cloned voice (--remediate '
+                            "does this automatically), and steer emotion with "
+                            "inline <...> tags."
                         ),
                     }
                 )
@@ -2908,14 +2909,16 @@ class VoiceAgentV2Auditor:
                     )
                     app_changed = True
                 inst = str(cfg.get("instruction") or "")
+                voice_val = str(cfg.get("voice") or "").strip()
                 if inst.strip() and (
                     _has_legacy_v1_directors_note(inst)
                     or len(inst.split()) > MAX_RECOMMENDED_STYLE_WORDS
+                    or voice_val in custom_voice_names
                 ):
                     cfg["instruction"] = EMPTY_V2_STYLE
                     removed_styles.append(f"[{lang}] {inst.strip()}")
                     changes.append(
-                        f"Cleared the legacy/long speaking style for '{lang}' "
+                        f"Cleared the speaking style for '{lang}' "
                         "(removed text is listed under removed_styles)."
                     )
                     app_changed = True

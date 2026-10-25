@@ -667,7 +667,9 @@ def test_custom_voice_audit_and_remediation(tmp_path: pathlib.Path) -> None:
     assert samples[1]["voiceInstructionMode"] == "NO_INSTRUCTION"
     assert any("agent_voice" in s for s in res["removed_styles"])
 
-    # Missing es-US locale inherits the custom voice key instead of Chirp3-HD-Zephyr
+    # Missing es-US locale inherits the custom voice key instead of Chirp3-HD-Zephyr,
+    # and en-AU's conflicting short speaking style is cleared to ""
     speech = out["audioProcessingConfig"]["synthesizeSpeechConfigs"]
+    assert speech["en-AU"]["instruction"] == ""
     assert speech["es-US"]["voice"] == "OptusClonedVoice"
     assert speech["es-US"]["instruction"] == ""
