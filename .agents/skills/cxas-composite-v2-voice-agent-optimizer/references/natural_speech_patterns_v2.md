@@ -10,13 +10,14 @@ ______________________________________________________________________
 
 Many Composite V1 (`gemini-composite-v1`) agents use a long **Director's Note** (`# AUDIO PROFILE`, `# THE SCENE`, `# DIRECTOR'S NOTES`, and trailing `## Transcript:`) as the speaking style in `audioProcessingConfig.synthesizeSpeechConfigs.<locale>.instruction`. **Remove it before switching to `gemini-composite-v2`.** Long instructions can make the voice drift over a call and conflict with inline tags.
 
-The auditor's `--remediate` mode clears V1 Director's Notes, and any speaking style longer than 25 words, to an empty style (`""`). It also clears Director's Notes in custom voice samples (`audioProcessingConfig.customVoiceSamples[].voiceInstruction`); an over-long custom voice instruction without a Director's Note is reported (`CUSTOM_VOICE_INSTRUCTION_TOO_LONG`) but not changed. Remediation prints the removed text so a person can write a short speaker profile from it, and it never injects a style.
+The auditor's `--remediate` mode clears V1 Director's Notes, and any speaking style longer than 25 words, to an empty style (`""`). For custom voice samples (`audioProcessingConfig.customVoiceSamples[]`), `--remediate` also clears any `voiceInstruction` (including V1 Director's Notes and auto-generated `<agent_voice>` DSP blocks) to `""` and sets `"voiceInstructionMode": "NO_INSTRUCTION"`. Remediation prints all removed text under `removed_styles` so a person can write a short speaker profile for prebuilt voices from it, and it never injects a style.
 
 ### How to Write a Composite V2 Speaking Style
 
-1. **Primary recommendation — a short vertical speaker profile (~12 words):** Write a description of **about a dozen words** (≤ 25 words max) about **who the speaker is**: age, vocal timbre, pitch, accent, and pace, adapted from the vertical industry examples below to match the app's domain, Chirp 3 HD voice gender, and locale. Don't describe how the speaker feels; use inline tags for moment-to-moment emotion.
-1. **Secondary alternative — empty style (`""`):** Leave `instruction` empty (`"instruction": ""`) if you prefer the voice's unstyled default (`--remediate` also clears legacy V1 Director's Notes and > 25-word styles to `""` and prints the removed text so you can craft a ~12-word speaker profile).
-1. **Avoid feeling words as a style:** A style such as `"warm, friendly, natural, professional"` describes how the speaker feels, not who the speaker is. Replace it with a ~12-word speaker profile from the table below (or `""` as a secondary alternative).
+1. **Prebuilt Voices (`*-Chirp3-HD-*`) — Primary recommendation: a short vertical speaker profile (~12 words):** Write a description of **about a dozen words** (≤ 25 words max) about **who the speaker is**: age, vocal timbre, pitch, accent, and pace, adapted from the vertical industry examples below to match the app's domain, Chirp 3 HD voice gender, and locale. Don't describe how the speaker feels; use inline tags for moment-to-moment emotion.
+1. **Prebuilt Voices (`*-Chirp3-HD-*`) — Secondary alternative: empty style (`""`):** Leave `instruction` empty (`"instruction": ""`) if you prefer the voice's unstyled default (`--remediate` also clears legacy V1 Director's Notes and > 25-word styles to `""` and prints the removed text so you can craft a ~12-word speaker profile).
+1. **Custom Cloned Voices (`audioProcessingConfig.customVoiceSamples[]`) — Primary recommendation: empty style (`""`) + `"voiceInstructionMode": "NO_INSTRUCTION"`:** Because the 10–20s reference `.wav` (`voiceSampleGcsUri`) already supplies the speaker's acoustic identity and CES concatenates `synthesizeSpeechConfigs.<locale>.instruction` + `customVoiceSamples[].voiceInstruction` into `speechMetadata.style`, leave **both** fields empty (`""`) and set `"voiceInstructionMode": "NO_INSTRUCTION"` (see the Custom Voice subsection below).
+1. **Avoid feeling words as a style:** A style such as `"warm, friendly, natural, professional"` describes how the speaker feels, not who the speaker is. For prebuilt voices, replace it with a ~12-word speaker profile from the table below (or `""` as a secondary alternative).
 
 | Use Case                        | V2 Speaking Style (`instruction`)                                                               | Sample Line                                                                                                  |
 | :------------------------------ | :---------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------- |
@@ -41,10 +42,8 @@ The auditor's `--remediate` mode clears V1 Director's Notes, and any speaking st
 
 In gendered languages (such as Hindi `सकती हूँ` vs. `सकता हूँ`, Spanish `encantada` vs. `encantado`, French, or Portuguese), match first-person verb and adjective gender in prompts and callbacks to your configured Chirp 3 HD persona:
 
-| Vocal Gender        | Chirp 3 HD Voice Names                                                                                                                                                                |
-| :------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Female Personas** | `Aoede`, `Zephyr`, `Kore`, `Leda`, `Callirrhoe`, `Autonoe`, `Erinome`, `Laomedeia`, `Pulcherrima`, `Vindemiatrix`, `Despina`, `Gacrux`, `Achernar`, `Sulafat`                         |
-| **Male Personas**   | `Puck`, `Charon`, `Fenrir`, `Orus`, `Enceladus`, `Iapetus`, `Umbriel`, `Algieba`, `Algenib`, `Rasalgethi`, `Alnilam`, `Schedar`, `Achird`, `Zubenelgenubi`, `Sadachbia`, `Sadaltager` |
+- **Female Personas:** `Aoede`, `Zephyr`, `Kore`, `Leda`, `Callirrhoe`, `Autonoe`, `Erinome`, `Laomedeia`, `Pulcherrima`, `Vindemiatrix`, `Despina`, `Gacrux`, `Achernar`, `Sulafat`
+- **Male Personas:** `Puck`, `Charon`, `Fenrir`, `Orus`, `Enceladus`, `Iapetus`, `Umbriel`, `Algieba`, `Algenib`, `Rasalgethi`, `Alnilam`, `Schedar`, `Achird`, `Zubenelgenubi`, `Sadachbia`, `Sadaltager`
 
 ### Example `app.json` for `gemini-composite-v2`
 
@@ -74,16 +73,6 @@ In gendered languages (such as Hindi `सकती हूँ` vs. `सकता 
         "voice": "hi-IN-Chirp3-HD-Aoede",
         "speakingRate": 1.0,
         "instruction": "Woman in her early 30s, warm mid-pitch voice, relaxed conversational pace"
-      },
-      "cmn-CN": {
-        "voice": "cmn-CN-Chirp3-HD-Aoede",
-        "speakingRate": 1.0,
-        "instruction": "Woman in her early 30s, warm mid-pitch voice, relaxed conversational pace"
-      },
-      "ko-KR": {
-        "voice": "ko-KR-Chirp3-HD-Aoede",
-        "speakingRate": 1.0,
-        "instruction": "Woman in her early 30s, warm mid-pitch voice, relaxed conversational pace"
       }
     },
     "bargeInConfig": {
@@ -95,6 +84,55 @@ In gendered languages (such as Hindi `सकती हूँ` vs. `सकता 
 ```
 
 The example omits temperature because it isn't a V2 requirement. It shows `speakingRate` only because most exported apps include it; keep whatever value your app already uses. Notice that `en-US` uses a ~12-word speaker profile with the local accent, while non-English locales omit `"American"` (or use `""` as a secondary alternative) so they don't force an English accent onto non-English speech.
+
+### Custom Cloned Voices (`customVoiceSamples[]`) with `gemini-composite-v2`
+
+When using a custom cloned voice (`audioProcessingConfig.customVoiceSamples[]`):
+
+- **Required `gs://` URIs (`CUSTOM_VOICE_MISSING_GCS_URI`):** Every entry in `customVoiceSamples[]` MUST set valid `gs://...` URIs for **both** `voiceSampleGcsUri` (a clean 10–20s, 24kHz mono WAV reference recording without long pauses or heavy breaths) and `consentAudioGcsUri` (the voice actor's recorded consent statement). If either URI is missing or if the deprecated inline `synthesizeSpeechConfigs.<locale>.voiceSampleGcsUri` field is used (`DEPRECATED_INLINE_VOICE_SAMPLE_URI`), CES silently falls back to a prebuilt voice at runtime.
+- **Disable Auto-Generated `<agent_voice>` DSP Instructions (`CUSTOM_VOICE_INSTRUCTION_MODE_NOT_DISABLED`):** Always set `"voiceInstructionMode": "NO_INSTRUCTION"` and `"voiceInstruction": ""` on every `customVoiceSamples[]` entry (`--remediate` sets both automatically). If `voiceInstructionMode` is `"GENERATE_INSTRUCTION"` or omitted when `cxas push` updates the app, CES either auto-generates a multi-sentence `<agent_voice>` DSP block or restores a cached `priorVoiceInstruction` from Spanner.
+- **Leave `synthesizeSpeechConfigs.<locale>.instruction` Empty (`CUSTOM_VOICE_LOCALE_STYLE_CONFLICT`):** Set `"instruction": ""` on every locale bound to the custom voice so no text speaker description competes with the reference `.wav` embedding over 20+ turn calls.
+- **Match Grammatical Gender to the Voice Actor:** In gendered languages (Hindi, Spanish, French, Portuguese), match first-person verb and adjective gender in prompts and callbacks to the human voice actor's gender.
+
+```json
+{
+  "modelSettings": {
+    "model": "gemini-composite-v2"
+  },
+  "languageSettings": {
+    "defaultLanguageCode": "en-AU",
+    "supportedLanguageCodes": ["es-US", "hi-IN", "cmn-CN", "ko-KR"],
+    "enableMultilingualSupport": true
+  },
+  "audioProcessingConfig": {
+    "customVoiceSamples": [
+      {
+        "name": "BrandAdvisorVoice",
+        "voiceSampleGcsUri": "gs://my-brand-voice-bucket/reference_sample_24khz.wav",
+        "consentAudioGcsUri": "gs://my-brand-voice-bucket/actor_consent_24khz.wav",
+        "voiceInstruction": "",
+        "voiceInstructionMode": "NO_INSTRUCTION"
+      }
+    ],
+    "synthesizeSpeechConfigs": {
+      "en-AU": {
+        "voice": "BrandAdvisorVoice",
+        "speakingRate": 1.0,
+        "instruction": ""
+      },
+      "es-US": {
+        "voice": "BrandAdvisorVoice",
+        "speakingRate": 1.0,
+        "instruction": ""
+      }
+    },
+    "bargeInConfig": {
+      "bargeInAwareness": true
+    },
+    "inactivityTimeout": "20s"
+  }
+}
+```
 
 ______________________________________________________________________
 
@@ -147,29 +185,23 @@ In CX Agent Studio, opening a sentence with a tone tag shifts the delivery style
 
 Evaluations on Composite V2 showed that certain legacy V1 tags are frequently ignored, spoken out loud, or outperformed by a sibling tag. The auditor's `--remediate` mode automatically replaces these and deduplicates any resulting tag lists. Rows marked *standardization added by this skill* are conventions of this skill rather than evaluation findings.
 
-| Legacy / Weak Tag   | Use Instead in Composite V2                 | Why                                                                                                          |
-| :------------------ | :------------------------------------------ | :----------------------------------------------------------------------------------------------------------- |
-| `reassuring`        | `<empathetic>`                              | Frequently spoken aloud mid-sentence; `<empathetic>` is reliably followed                                    |
-| `curiosity`         | `<interest>`                                | Often ignored or spoken aloud; `<interest>` performs significantly better                                    |
-| `professional`      | `<clear>`                                   | `<clear>` produces cleaner, more articulate customer-service delivery                                        |
-| `cautious`          | `<calm>`                                    | `<calm>` steadies delivery reliably                                                                          |
-| `alarm`             | `<calm>`                                    | Rarely changes delivery; `<calm>` is reliable                                                                |
-| `nervousness`       | `<calm>`                                    | `<calm>` is reliable and avoids vocal instability                                                            |
-| `happy`             | `<positive>`                                | `<positive>` produces a clearer upbeat lift                                                                  |
-| `admiration`        | `<positive>`                                | Acoustically indistinct from `<warm>` / `<positive>`                                                         |
-| `hope`              | `<warm>`                                    | Frequently ignored or spoken aloud; `<warm>` is reliable                                                     |
-| `adoration`         | `<warm>`                                    | Unreliable; `<warm>` is reliable                                                                             |
-| `crying`            | `<sympathetic>`                             | Renders as unstable pitch; `<sympathetic>` conveys gentle support                                            |
-| `laughs`            | `<chuckles>`                                | `<chuckles>` is more reliable and warmer on customer support calls                                           |
-| `annoyance`         | `<determination>`                           | `<determination>` sounds firm and focused rather than irritated                                              |
-| `aggression`        | `<determination>`                           | `<determination>` conveys firm resolve without hostility                                                     |
-| `slow` / `slower`   | `<prosody rate="65%">`                      | Read aloud as a word; use prosody for slower pacing                                                          |
-| `exhale`            | `<exhales>`                                 | Canonical spelling of the tag                                                                                |
-| `whisper`           | `<whispers>`                                | Canonical spelling of the tag                                                                                |
-| `clears throat`     | `<throat-clearing>`                         | Canonical spelling of the tag                                                                                |
-| `medium pause`      | `<short pause>`                             | *Standardization added by this skill:* standardize mid-sentence pauses to `<short pause>` or `<long pause>`  |
-| `neutral`           | *Delete tag* (or use `<warm>`)              | No longer recommended as an inline tag; leave untagged or open with `<warm>`                                 |
-| `uhm` / `um` / `uh` | *Delete tag* (use `...` or `<short pause>`) | *Standardization added by this skill:* write hesitation as ellipses (`...`) or words instead of a filler tag |
+| Legacy / Weak Tag                    | Use Instead in Composite V2             | Why                                                                    |
+| :----------------------------------- | :-------------------------------------- | :--------------------------------------------------------------------- |
+| `reassuring`                         | `<empathetic>`                          | Frequently spoken aloud mid-sentence; `<empathetic>` is reliable       |
+| `curiosity`                          | `<interest>`                            | Often ignored or spoken aloud; `<interest>` performs better            |
+| `professional`                       | `<clear>`                               | `<clear>` produces cleaner, more articulate customer-service delivery  |
+| `cautious` / `alarm` / `nervousness` | `<calm>`                                | `<calm>` steadies delivery reliably and avoids vocal instability       |
+| `happy` / `admiration`               | `<positive>`                            | `<positive>` produces a clearer upbeat lift                            |
+| `hope` / `adoration`                 | `<warm>`                                | Frequently ignored or spoken aloud; `<warm>` is reliable               |
+| `crying`                             | `<sympathetic>`                         | Renders as unstable pitch; `<sympathetic>` conveys gentle support      |
+| `laughs`                             | `<chuckles>`                            | `<chuckles>` is more reliable and warmer on customer support calls     |
+| `annoyance` / `aggression`           | `<determination>`                       | `<determination>` conveys firm resolve without irritation or hostility |
+| `slow` / `slower`                    | `<prosody rate="65%">`                  | Read aloud as a word; use prosody for slower pacing                    |
+| `exhale` / `whisper`                 | `<exhales>` / `<whispers>`              | Canonical plural spelling of the tag                                   |
+| `clears throat`                      | `<throat-clearing>`                     | Canonical spelling of the tag                                          |
+| `medium pause`                       | `<short pause>`                         | *Skill convention:* standardize mid-sentence pauses to `<short pause>` |
+| `neutral`                            | *Delete tag* (or `<warm>`)              | No longer recommended as an inline tag; leave untagged or use `<warm>` |
+| `uhm` / `um` / `uh`                  | *Delete tag* (`...` or `<short pause>`) | *Skill convention:* write hesitation as ellipses (`...`) instead       |
 
 **Tags outside these lists:** Tags outside the tiers listed in A–C have unknown behavior on Composite V2. The auditor reports them as `UNEVALUATED_V2_TAG` with a suggested closest tag; swap a tag only if the user agrees.
 
@@ -284,13 +316,7 @@ Scope: These rules apply ONLY to the words you speak aloud to the caller. They N
 </Affective Delivery and Voice Guidelines>
 ```
 
-**Template notes:**
-
-- **Declare `{user_language}`:** The template uses `{user_language}`, which must be declared in `app.json` `variableDeclarations` (lint rule `V104`). `{current_date}` is built in.
-- **Keep the full normalization example list:** The examples are the instruction, so keep every example when you adapt the block. Swap the currency examples to the local currency, and adjust date order for day-first locales (e.g., en-AU, en-GB: `"11/04/2026"` → `"the eleventh of April, twenty twenty-six"`).
-- **Sigh and exhale limits are optional tuning:** Using `<sigh>` at most once per call and `<exhales>` at most twice per call is a sensible default for customer care; tune it per brand.
-- **Keep the ending and transfer rule:** Never use `<sigh>`, `<sighs>`, or `<exhales>` in a turn that ends the session or escalates/transfers the call; open those turns with a tone tag such as `<calm><empathetic>`. The auditor reports violations as `SIGH_ON_ENDING_OR_TRANSFER_TURN`.
-- **Prosody is opt-in:** Add the optional pacing line from Section 2C only if the app already uses prosody or the user asks for it.
+**Template notes:** Declare `{user_language}` in `app.json` `variableDeclarations` (lint rule `V104`; `{current_date}` is built in). Keep the full normalization example list, swapping currency examples to the local currency and adjusting date order for day-first locales (e.g., en-AU, en-GB: `"11/04/2026"` → `"the eleventh of April, twenty twenty-six"`). Add the optional `<prosody rate>` line from Section 2C only if the app already uses prosody or the user asks for it.
 
 ______________________________________________________________________
 
@@ -298,19 +324,7 @@ ______________________________________________________________________
 
 ### A. Three-Pass Contradiction Check (Mandatory After Migration)
 
-Contradictions between legacy prompt rules and newly added Composite V2 rules are a common cause of residual tag readouts and tool-argument failures. Check tag rules and normalization rules in three passes:
-
-1. **Pass 1 (Within `global_instruction.txt`):** Compare every voice/tag rule and number-reading rule against every other rule in `global_instruction.txt`.
-1. **Pass 2 (`global_instruction.txt` vs. Sub-Agents & Tools):** Compare `global_instruction.txt` against each sub-agent's `agents/*/instruction.txt` and its tool descriptions/docstrings.
-1. **Pass 3 (Callbacks & Eval/Test Assertions):** Compare the rules against callbacks and eval/test assertions. For example, a test that forbids adjacent or stacked tags blocks `<calm><empathetic>`.
-
-**Resolution protocol (surface, offer, apply what the user chooses):**
-
-1. **Surface every conflict.** For each one, report the kind (tag or normalization), the tags or value types involved, every file and line where it appears, and the conflicting sentences, quoted.
-1. **Offer options:** keep one rule, narrow one rule's scope, or use a different tag.
-1. **Apply only what the user chooses.** The only exception: rules that require closing tags are removed, because Composite V2 has no closing tags.
-
-Example conflict report:
+Run the three-pass contradiction check in [SKILL.md P1.5](../SKILL.md) across (1) `global_instruction.txt`, (2) `global_instruction.txt` vs. `agents/*/instruction.txt` and tool docstrings, and (3) callbacks and eval/test assertions. Surface every conflict with file/line citations and options, and apply only what the user chooses (except rules requiring closing tags, which are removed automatically):
 
 ```text
 Conflict 1 (tag): stacked tone tags such as <calm><empathetic>
@@ -322,20 +336,11 @@ Options: (a) keep one rule: allow stacking at sentence start and drop "Never sta
          (c) use a different tag: open angry turns with <empathetic> alone
 ```
 
-**Common Contradictions to Surface:**
-
-- **Tag Syntax & Placement Conflicts:** Leftover rules saying *"wrap tags in square brackets"*, *"never stack tags"*, *"do not bunch all tags at the front of a sentence"*, *"never use XML/angle-bracket markup in responses"*, or rules requiring closing tags (`</prosody>`). Rules that require closing tags are the one kind that is removed without asking.
-- **Number & Date Normalization Conflicts:** A blanket *"read every number digit by digit"* rule fighting cardinal number reading (reserve digit-by-digit for IDs, account numbers, reference codes, and postal codes), conflicting spoken date/currency formats, or a tool instruction that tells the model to pass a spoken form (`"one two three four"`) into a tool parameter.
-- **Casual Currency Readouts:** An example that reads a price casually (for example, `"$16.66"` as `"sixteen sixty-six"`) without saying it's an exception to the currency rule.
-- **Sighs on Transfer or Goodbye Turns:** A rule that opens transfer or goodbye turns with `<sigh>` or `<exhales>`, which conflicts with the rule against them on those turns.
-- **Test Assertions That Block Valid Tags:** Eval or test assertions that forbid adjacent or stacked tags, which blocks `<calm><empathetic>`.
-- **Explicit Agent Overrides:** A sub-agent may intentionally override global delivery rules if it states so explicitly (e.g., `"In this agent, these rules override the global Affective Delivery and Voice Guidelines"`). Keep explicit overrides intact, convert their tags to `<...>`, and list them under **Agent overrides** in the migration summary.
-
-Report the results with the summary format in [SKILL.md](../SKILL.md#summary-format).
+- **Common conflicts:** Leftover V1 tag rules (*"wrap tags in square brackets"*, *"never stack tags"*, *"do not bunch all tags at the front of a sentence"*, *"no XML/angle-bracket markup"*); blanket *"read every number digit by digit"* vs. cardinal quantities; casual currency examples (`"$16.66"` → `"sixteen sixty-six"`) not marked as exceptions; `<sigh>` / `<exhales>` on transfer or goodbye turns; and test regexes that reject stacked tags. Keep explicit sub-agent overrides intact, convert their tags to `<...>`, and list them under **Agent overrides** in the [SKILL.md summary format](../SKILL.md#summary-format).
 
 ### B. Cross-App & External Hand-Offs (`transferToNga`, `transferToDialogflow`, `telephonyTransferCall`, `liveAgentHandoff`)
 
-When an agent hands a call to another CX Agent Studio app (`transferToNga`), a Dialogflow CX agent (`transferToDialogflow`), a phone number (`telephonyTransferCall`), or a human queue (`liveAgentHandoff`), the destination runs in a **separate session with its own voice, TTS model, speaking style, and prompts**. `audit_agent_v2.py` automatically detects and lists these hand-offs (as informational `handoff` / `app_reference` entries) so you can inform the application owner if any target app needs its own Composite V2 migration.
+When an agent hands a call to another CX Agent Studio app (`transferToNga`), a Dialogflow CX agent (`transferToDialogflow`), a phone number (`telephonyTransferCall`), or a human queue (`liveAgentHandoff`), the destination runs in a separate session with its own voice, TTS model, speaking style, and prompts (`audit_agent_v2.py` lists these as informational `handoff` / `app_reference` entries).
 
 ______________________________________________________________________
 
@@ -343,17 +348,16 @@ ______________________________________________________________________
 
 During turn-by-turn `.wav` ear-auditing, watch for these empirical acoustic failure modes and apply their verified remedies:
 
-| Acoustic Symptom in `.wav` Audio                                                       | Root Cause in Prompt / Config                                                                                                       | Verified Composite V2 Fix                                                                                                                                                                                                                     |
-| :------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **0. Voice drifts over a call or conflicts with inline tags**                          | Leftover V1 multi-paragraph `# AUDIO PROFILE` / `# DIRECTOR'S NOTES` in `synthesizeSpeechConfigs.<locale>.instruction`              | Replace the V1 Director's Note with a ~12-word speaker profile describing **who the speaker is** (age, timbre, pitch, accent, pace; see Section 1), or clear to `""` as a secondary alternative (`--remediate` clears legacy blocks to `""`). |
-| **1. Double-stutter / unnatural double pause mid-turn**                                | Stacking an ellipsis before a pause tag (`"... <short pause>"`) or placing `<short pause>` mid-clause without punctuation           | Never stack `...` and `<short pause>`. Place `<short pause>` only at sentence start or after `,` / `.` (`", <short pause>"` or `". <short pause>"`).                                                                                          |
-| **2. Loud barked opening syllable or clipped leading `"I"` / `"We"`**                  | Placing an ALL-CAPS word or leading pronoun right after `<exhales>` or `<sigh>` (`"<exhales> SOLID green..."`)                      | Keep the first word after `<exhales>` or `<sigh>` normal case and move ALL-CAPS stress later: `"<exhales> Solid green on the status light means you're ONLINE."`                                                                              |
-| **3. Number normalizer reads `"X of your 100"` as `"X percent"`**                      | Writing raw digits `"42 of your 100 gigs"` causes `"42 / 100"` to be read as `"forty-two percent"`                                  | Write both numbers in words: `"FORTY-TWO of your hundred gigs"`.                                                                                                                                                                              |
-| **4. Pronounceable prefix spelled out or tricky name mispronounced**                   | Writing pronounceable prefixes in all-caps triggers acronym spelling; unusual proper nouns lack phonetic hints                      | Write pronounceable prefixes in mixed case, or provide **IPA spelling in slashes** (e.g., `/niːv/`) for tricky names.                                                                                                                         |
-| **5. Mouth-click / literal tag readout (`"...warm, your refund..."`)**                 | Using legacy V1 square-bracket tags (`[uhm]`, `[warm]`), unremapped tags (`<reassuring>`), or mid-sentence style tags               | Run `--remediate` to convert `[...]` to `<...>`, remap `<reassuring>` → `<empathetic>`, and move style tags to sentence start.                                                                                                                |
-| **6. Tool lookup fails after adding spoken text normalization**                        | Model passes spelled-out words (`"one two three four"`) into a tool argument expecting `"1234"`                                     | Include the **`Scope:`** paragraph in `<instruction id="text normalization for speech">` restricting normalization to spoken output only.                                                                                                     |
-| **7. Heavy sigh on a routine turn or call-ending/transfer turn**                       | Model inserts `<sigh>` or `<exhales>` when answering a routine question or transferring/ending the call                             | Forbid `<sigh>`, `<sighs>`, and `<exhales>` on session-ending/transfer turns (`SIGH_ON_ENDING_OR_TRANSFER_TURN`; open with `<calm><empathetic>` instead) and cap `<sigh>` to genuine frustration.                                             |
-| **8. Mid-sentence English code-switching in Hindi (`"in your"`) or wrong verb gender** | Mixing Latin acronyms (`Wi-Fi`, `SIM`) or dense English loanwords separated by `और` in Devanagari, or omitting voice-persona gender | Write brand names/acronyms in native script (`'वाई-फाई'`, `'सिम'`; `MIXED_LATIN_IN_DEVANAGARI_UTTERANCE`), use native phrasing, and match verb gender to the Chirp 3 HD persona (`सकती हूँ` female / `सकता हूँ` male).                            |
+- **0. Voice drifts over a call or conflicts with inline tags:** Caused by leftover V1 `# AUDIO PROFILE` / `# DIRECTOR'S NOTES` in `synthesizeSpeechConfigs.<locale>.instruction`. **Fix:** Replace with a ~12-word speaker profile for prebuilt voices (see Section 1), or clear to `""` (`--remediate` clears legacy blocks to `""`).
+- **1. Double-stutter / unnatural double pause mid-turn:** Caused by stacking `"... <short pause>"` or placing `<short pause>` mid-clause without punctuation. **Fix:** Never stack `...` and `<short pause>`. Place `<short pause>` only at sentence start or after `,` / `.` (`", <short pause>"`).
+- **2. Loud barked opening syllable or clipped leading `"I"` / `"We"`:** Caused by placing an ALL-CAPS word or leading pronoun right after `<exhales>` or `<sigh>`. **Fix:** Keep the first word after `<exhales>` or `<sigh>` normal case and move ALL-CAPS stress later in the clause.
+- **3. Number normalizer reads `"X of your 100"` as `"X percent"`:** Caused by writing raw digits `"42 of your 100 gigs"`, which triggers `"42 / 100"` → `"forty-two percent"`. **Fix:** Write both numbers in words: `"FORTY-TWO of your hundred gigs"`.
+- **4. Pronounceable prefix spelled out or tricky name mispronounced:** Caused by writing pronounceable prefixes in all-caps or omitting phonetic hints on unusual proper nouns. **Fix:** Write pronounceable prefixes in mixed case, or provide **IPA spelling in slashes** (e.g., `/niːv/`).
+- **5. Mouth-click / literal tag readout (`"...warm, your refund..."`):** Caused by legacy V1 square-bracket tags (`[uhm]`, `[warm]`), unremapped tags (`<reassuring>`), or mid-sentence style tags. **Fix:** Run `--remediate` to convert `[...]` to `<...>`, remap `<reassuring>` → `<empathetic>`, and move style tags to sentence start.
+- **6. Tool lookup fails after adding spoken text normalization:** Caused by passing spelled-out words (`"one two three four"`) into a tool argument expecting `"1234"`. **Fix:** Include the **`Scope:`** paragraph in `<instruction id="text normalization for speech">` restricting normalization to spoken output only.
+- **7. Heavy sigh on a routine turn or call-ending/transfer turn:** Caused by inserting `<sigh>` or `<exhales>` on routine or session-ending/transfer turns. **Fix:** Forbid `<sigh>`, `<sighs>`, and `<exhales>` on session-ending/transfer turns (`SIGH_ON_ENDING_OR_TRANSFER_TURN`; open with `<calm><empathetic>`) and cap `<sigh>` to genuine frustration.
+- **8. Mid-sentence English code-switching in Hindi or wrong verb gender:** Caused by mixing Latin acronyms (`Wi-Fi`, `SIM`) or dense loanwords separated by `और` in Devanagari, or omitting voice-persona gender. **Fix:** Write acronyms in native script (`'वाई-फाई'`, `'सिम'`; `MIXED_LATIN_IN_DEVANAGARI_UTTERANCE`) and match verb gender to the persona (`सकती हूँ` female / `सकता हूँ` male).
+- **9. Custom cloned voice silently falls back to a prebuilt voice, or drifts over 20+ turns:** Caused by missing `consentAudioGcsUri`/`voiceSampleGcsUri` or deprecated inline `voiceSampleGcsUri`; `voiceInstructionMode != "NO_INSTRUCTION"`; or non-empty `instruction`/`voiceInstruction` competing with the reference `.wav`. **Fix:** Define the voice in `audioProcessingConfig.customVoiceSamples[]` with valid `gs://` URIs for both `voiceSampleGcsUri` and `consentAudioGcsUri`, set `"voiceInstructionMode": "NO_INSTRUCTION"`, and set both `voiceInstruction` and `synthesizeSpeechConfigs.<locale>.instruction` to `""`.
 
 ______________________________________________________________________
 

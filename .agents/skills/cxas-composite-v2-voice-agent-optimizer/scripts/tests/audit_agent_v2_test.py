@@ -139,8 +139,7 @@ def test_closing_prosody_becomes_reset_when_speech_continues() -> None:
         '"[prosody rate="65%"] I understand. </prosody> Let\'s try again."'
     )
     assert out == (
-        '"<prosody rate="65%"> I understand. <prosody rate="100%"> '
-        "Let's try again.\""
+        '"<prosody rate="65%"> I understand. <prosody rate="100%"> Let\'s try again."'
     )
     assert any("reset" in n for n in notes)
 
@@ -615,3 +614,60 @@ def test_english_apostrophes_do_not_false_positive_devanagari_check(
         + "When the caller's language is Hindi, say 'मैं आपकी मदद कर सकती हूँ' so it doesn't sound stiff.\n",
     )
     assert "MIXED_LATIN_IN_DEVANAGARI_UTTERANCE" not in _codes(app)
+
+
+def test_custom_voice_audit_and_remediation(tmp_path: pathlib.Path) -> None:
+    app = _make_app(
+        tmp_path,
+        supported=("es-US",),
+        extra_app={
+            "audioProcessingConfig": {
+                "synthesizeSpeechConfigs": {
+                    "en-AU": {
+                        "voice": "OptusClonedVoice",
+                        "speakingRate": 1.0,
+                        "instruction": "Australian woman in her early 30s",
+                        "voiceSampleGcsUri": "gs://legacy-bucket/inline.wav",
+                    }
+                },
+                "customVoiceSamples": [
+                    {
+                        "name": "OptusClonedVoice",
+                        "voiceSampleGcsUri": "gs://bucket/sample.wav",
+                        "consentAudioGcsUri": "",
+                        "voiceInstruction": "<agent_voice>Warm mid-pitch voice</agent_voice>",
+                        "voiceInstructionMode": "GENERATE_INSTRUCTION",
+                    },
+                    {
+                        "name": "UnusedBrandVoice",
+                        "voiceSampleGcsUri": "gs://bucket/unused.wav",
+                        "consentAudioGcsUri": "gs://bucket/consent.wav",
+                        "voiceInstruction": "Friendly advisor",
+                        "voiceInstructionMode": "NO_INSTRUCTION",
+                    },
+                ],
+            }
+        },
+    )
+    codes = _codes(app)
+    assert "CUSTOM_VOICE_MISSING_GCS_URI" in codes
+    assert "CUSTOM_VOICE_DIRECTORS_NOTE" in codes
+    assert "CUSTOM_VOICE_INSTRUCTION_MODE_NOT_DISABLED" in codes
+    assert "CUSTOM_VOICE_INSTRUCTION_TOO_LONG" in codes
+    assert "UNBOUND_CUSTOM_VOICE_SAMPLE" in codes
+    assert "DEPRECATED_INLINE_VOICE_SAMPLE_URI" in codes
+    assert "CUSTOM_VOICE_LOCALE_STYLE_CONFLICT" in codes
+
+    res = aud.VoiceAgentV2Auditor(app).remediate()
+    out = json.loads((app / "app.json").read_text())
+    samples = out["audioProcessingConfig"]["customVoiceSamples"]
+    assert samples[0]["voiceInstruction"] == ""
+    assert samples[0]["voiceInstructionMode"] == "NO_INSTRUCTION"
+    assert samples[1]["voiceInstruction"] == ""
+    assert samples[1]["voiceInstructionMode"] == "NO_INSTRUCTION"
+    assert any("agent_voice" in s for s in res["removed_styles"])
+
+    # Missing es-US locale inherits the custom voice key instead of Chirp3-HD-Zephyr
+    speech = out["audioProcessingConfig"]["synthesizeSpeechConfigs"]
+    assert speech["es-US"]["voice"] == "OptusClonedVoice"
+    assert speech["es-US"]["instruction"] == ""

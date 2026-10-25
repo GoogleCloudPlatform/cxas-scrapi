@@ -651,18 +651,26 @@ def get_default_v2_voice(locale: str) -> str:
     return f"{locale}-Chirp3-HD-Zephyr"
 
 
-def derive_locale_voice(locale: str, persona_voice: str | None) -> str:
-    """Returns a Chirp 3 HD voice for `locale` that keeps the app's persona.
+def derive_locale_voice(
+    locale: str,
+    persona_voice: str | None,
+    custom_voice_names: set[str] | None = None,
+) -> str:
+    """Returns a voice for `locale` that keeps the app's prebuilt or custom persona.
 
     If the default locale uses `en-AU-Chirp3-HD-Aoede`, a new `es-US` locale
     gets `es-US-Chirp3-HD-Aoede`, so every language sounds like the same
-    speaker. Falls back to the Zephyr default when no Chirp 3 HD persona is
-    configured. Always verify that the voice exists for the locale.
+    speaker. If the default locale uses a custom voice from `customVoiceSamples`,
+    reuses that custom voice key. Falls back to the Zephyr default when no
+    Chirp 3 HD or custom persona is configured.
     """
-    match = CHIRP3_VOICE_RE.match(str(persona_voice or "").strip())
+    clean_persona = str(persona_voice or "").strip()
+    match = CHIRP3_VOICE_RE.match(clean_persona)
     if match:
         fallback_locale = get_default_v2_voice(locale).split("-Chirp3-HD-")[0]
         return f"{fallback_locale}-Chirp3-HD-{match.group('name')}"
+    if custom_voice_names and clean_persona in custom_voice_names:
+        return clean_persona
     return get_default_v2_voice(locale)
 
 
@@ -753,13 +761,14 @@ def _python_string_segments(source: str) -> list[tuple[int, str]]:
 
 
 def _has_legacy_v1_directors_note(inst: str) -> bool:
-    """Returns True if instruction contains legacy V1 Director's Note headers."""
+    """Returns True if instruction contains legacy V1 Director's Note headers or <agent_voice> DSP block."""
     lower = inst.lower()
     return (
         "# audio profile" in lower
         or "# the scene" in lower
         or "# director" in lower
         or "## transcript" in lower
+        or "<agent_voice" in lower
     )
 
 
@@ -1438,17 +1447,23 @@ class VoiceAgentV2Auditor:
         return handoffs
 
     def _persona_voice(
-        self, speech_cfgs: dict[str, Any], default_lang: str
+        self,
+        speech_cfgs: dict[str, Any],
+        default_lang: str,
+        custom_voice_names: set[str] | None = None,
     ) -> str:
         """Returns the default locale's voice (the app's voice persona)."""
         default_cfg = speech_cfgs.get(default_lang)
         if isinstance(default_cfg, dict) and default_cfg.get("voice"):
             return str(default_cfg["voice"])
         for cfg in speech_cfgs.values():
-            if isinstance(cfg, dict) and CHIRP3_VOICE_RE.match(
-                str(cfg.get("voice") or "")
+            if not isinstance(cfg, dict):
+                continue
+            voice = str(cfg.get("voice") or "").strip()
+            if CHIRP3_VOICE_RE.match(voice) or (
+                custom_voice_names and voice in custom_voice_names
             ):
-                return str(cfg["voice"])
+                return voice
         return ""
 
     def audit_app_speech_style_v2(
@@ -1570,9 +1585,41 @@ class VoiceAgentV2Auditor:
         custom_voice_names = {
             str(s.get("name")).strip() for s in custom_samples if s.get("name")
         }
+        referenced_voices = {
+            str(cfg.get("voice")).strip()
+            for cfg in speech_cfgs.values()
+            if isinstance(cfg, dict) and cfg.get("voice")
+        }
         for sample in custom_samples:
+            sample_name = str(sample.get("name") or "").strip()
+            label = sample_name or "customVoiceSamples[]"
+            sample_uri = str(sample.get("voiceSampleGcsUri") or "").strip()
+            consent_uri = str(sample.get("consentAudioGcsUri") or "").strip()
+            missing_uris: list[str] = []
+            if not sample_uri.startswith("gs://"):
+                missing_uris.append("voiceSampleGcsUri")
+            if not consent_uri.startswith("gs://"):
+                missing_uris.append("consentAudioGcsUri")
+            if missing_uris:
+                issues.append(
+                    {
+                        "code": "CUSTOM_VOICE_MISSING_GCS_URI",
+                        "file": rel_app,
+                        "priority": "P0",
+                        "message": (
+                            f"Custom voice '{label}' is missing a valid 'gs://' URI "
+                            f"for {', '.join(missing_uris)}. At runtime, CES silently "
+                            "falls back to a prebuilt voice when either URI is missing."
+                        ),
+                        "recommended": (
+                            f"Set valid 'gs://...' URIs for {', '.join(missing_uris)} "
+                            f"on custom voice '{label}' in "
+                            "audioProcessingConfig.customVoiceSamples."
+                        ),
+                    }
+                )
+
             voice_inst = str(sample.get("voiceInstruction") or "").strip()
-            label = sample.get("name") or "customVoiceSamples[]"
             if _has_legacy_v1_directors_note(voice_inst):
                 issues.append(
                     {
@@ -1580,29 +1627,84 @@ class VoiceAgentV2Auditor:
                         "file": rel_app,
                         "priority": "P0",
                         "message": (
-                            f"Custom voice '{label}' has a V1 Director's Note in "
-                            "voiceInstruction. Long voice instructions make the "
-                            "voice drift and conflict with inline tags."
+                            f"Custom voice '{label}' has a V1 Director's Note or "
+                            "<agent_voice> DSP block in voiceInstruction. Long voice "
+                            "instructions fight the reference audio embedding and "
+                            "make the voice drift and conflict with inline tags."
                         ),
                         "recommended": (
-                            "Clear voiceInstruction (--remediate does this) and "
-                            "steer delivery with inline tags."
+                            'Clear voiceInstruction to "" and set '
+                            '"voiceInstructionMode": "NO_INSTRUCTION" (--remediate '
+                            "does this automatically) and steer delivery with "
+                            "inline <...> tags."
                         ),
                     }
                 )
-            elif len(voice_inst.split()) > MAX_RECOMMENDED_STYLE_WORDS:
+            elif voice_inst:
                 issues.append(
                     {
                         "code": "CUSTOM_VOICE_INSTRUCTION_TOO_LONG",
                         "file": rel_app,
                         "priority": "P1",
                         "message": (
-                            f"Custom voice '{label}' has a "
-                            f"{len(voice_inst.split())}-word voiceInstruction."
+                            f"Custom voice '{label}' has a non-empty "
+                            f"({len(voice_inst.split())}-word) voiceInstruction. "
+                            "Because the reference WAV already defines the speaker's "
+                            "vocal identity, text descriptions in voiceInstruction "
+                            "compete with the voice embedding and cause drift on "
+                            "long calls."
                         ),
                         "recommended": (
-                            "Describe the speaker in about a dozen words "
-                            "(or leave it empty as a secondary alternative)."
+                            'Clear voiceInstruction to "" and set '
+                            '"voiceInstructionMode": "NO_INSTRUCTION" (--remediate '
+                            "does this automatically); steer emotion with inline "
+                            "<...> tags."
+                        ),
+                    }
+                )
+
+            mode = str(sample.get("voiceInstructionMode") or "").strip()
+            if mode != "NO_INSTRUCTION":
+                issues.append(
+                    {
+                        "code": "CUSTOM_VOICE_INSTRUCTION_MODE_NOT_DISABLED",
+                        "file": rel_app,
+                        "priority": "P0",
+                        "message": (
+                            f"Custom voice '{label}' has voiceInstructionMode="
+                            f"'{mode or 'unspecified'}' instead of 'NO_INSTRUCTION'. "
+                            "On cxas push (UpdateApp), CES either auto-generates an "
+                            "<agent_voice> DSP block (GENERATE_INSTRUCTION) or "
+                            "restores a cached priorVoiceInstruction from Spanner "
+                            "when voiceInstructionMode is not 'NO_INSTRUCTION'."
+                        ),
+                        "recommended": (
+                            'Set "voiceInstructionMode": "NO_INSTRUCTION" and '
+                            '"voiceInstruction": "" on customVoiceSamples[] '
+                            "(--remediate does this automatically)."
+                        ),
+                    }
+                )
+
+            if (
+                sample_name
+                and speech_cfgs
+                and sample_name not in referenced_voices
+            ):
+                issues.append(
+                    {
+                        "code": "UNBOUND_CUSTOM_VOICE_SAMPLE",
+                        "file": rel_app,
+                        "priority": "P2",
+                        "message": (
+                            f"Custom voice '{sample_name}' in customVoiceSamples is "
+                            "not referenced by any "
+                            "synthesizeSpeechConfigs.<locale>.voice."
+                        ),
+                        "recommended": (
+                            "Bind synthesizeSpeechConfigs.<locale>.voice to "
+                            f"'{sample_name}' or remove the unused entry from "
+                            "customVoiceSamples."
                         ),
                     }
                 )
@@ -1623,10 +1725,14 @@ class VoiceAgentV2Auditor:
             )
             return {"passed": False, "issues": issues}
 
-        persona_voice = self._persona_voice(speech_cfgs, default_lang)
+        persona_voice = self._persona_voice(
+            speech_cfgs, default_lang, custom_voice_names
+        )
         for lang in declared_langs:
             cfg = speech_cfgs.get(lang)
-            suggested_voice = derive_locale_voice(lang, persona_voice)
+            suggested_voice = derive_locale_voice(
+                lang, persona_voice, custom_voice_names
+            )
             if not isinstance(cfg, dict):
                 issues.append(
                     {
@@ -1644,6 +1750,31 @@ class VoiceAgentV2Auditor:
                 )
                 continue
 
+            if str(cfg.get("voiceSampleGcsUri") or "").strip():
+                issues.append(
+                    {
+                        "code": "DEPRECATED_INLINE_VOICE_SAMPLE_URI",
+                        "file": rel_app,
+                        "priority": "P0",
+                        "message": (
+                            f"Locale '{lang}' sets deprecated inline "
+                            "synthesizeSpeechConfigs.voiceSampleGcsUri. CES "
+                            "runtime ignores inline voiceSampleGcsUri and falls "
+                            "back to a prebuilt voice."
+                        ),
+                        "recommended": (
+                            "Move the custom voice into "
+                            "audioProcessingConfig.customVoiceSamples[] with name, "
+                            "voiceSampleGcsUri, consentAudioGcsUri, and "
+                            '"voiceInstructionMode": "NO_INSTRUCTION", and '
+                            "reference its name in "
+                            "synthesizeSpeechConfigs.<locale>.voice."
+                        ),
+                    }
+                )
+
+            voice = str(cfg.get("voice") or "").strip()
+            is_custom_voice = bool(voice and voice in custom_voice_names)
             inst = str(cfg.get("instruction") or "").strip()
             if _has_legacy_v1_directors_note(inst):
                 issues.append(
@@ -1682,6 +1813,27 @@ class VoiceAgentV2Auditor:
                         ),
                     }
                 )
+            elif is_custom_voice and inst:
+                issues.append(
+                    {
+                        "code": "CUSTOM_VOICE_LOCALE_STYLE_CONFLICT",
+                        "file": rel_app,
+                        "priority": "P1",
+                        "message": (
+                            f"Locale '{lang}' uses custom cloned voice '{voice}' "
+                            "with a non-empty speaking style instruction "
+                            f"('{inst}'). TextToSpeechProcessor concatenates this "
+                            "instruction into speechMetadata.style, competing with "
+                            "the reference WAV embedding and causing "
+                            "speaker-similarity drift over long calls."
+                        ),
+                        "recommended": (
+                            f"Set synthesizeSpeechConfigs['{lang}'].instruction "
+                            'to "" when using a custom cloned voice, and steer '
+                            "emotion with inline <...> tags."
+                        ),
+                    }
+                )
             elif (
                 inst
                 and not lang.lower().startswith("en")
@@ -1709,7 +1861,6 @@ class VoiceAgentV2Auditor:
                     }
                 )
 
-            voice = str(cfg.get("voice") or "").strip()
             if not voice:
                 issues.append(
                     {
@@ -2710,7 +2861,19 @@ class VoiceAgentV2Auditor:
 
             audio_cfg = app_data.setdefault("audioProcessingConfig", {})
             speech_cfgs = audio_cfg.setdefault("synthesizeSpeechConfigs", {})
-            persona_voice = self._persona_voice(speech_cfgs, default_lang)
+            custom_samples = [
+                s
+                for s in (audio_cfg.get("customVoiceSamples") or [])
+                if isinstance(s, dict)
+            ]
+            custom_voice_names = {
+                str(s.get("name")).strip()
+                for s in custom_samples
+                if s.get("name")
+            }
+            persona_voice = self._persona_voice(
+                speech_cfgs, default_lang, custom_voice_names
+            )
             default_cfg = speech_cfgs.get(default_lang)
             default_rate = (
                 default_cfg.get("speakingRate")
@@ -2720,7 +2883,9 @@ class VoiceAgentV2Auditor:
             for lang in declared_langs:
                 if not isinstance(speech_cfgs.get(lang), dict):
                     new_cfg: dict[str, Any] = {
-                        "voice": derive_locale_voice(lang, persona_voice)
+                        "voice": derive_locale_voice(
+                            lang, persona_voice, custom_voice_names
+                        )
                     }
                     if default_rate is not None:
                         new_cfg["speakingRate"] = default_rate
@@ -2735,7 +2900,9 @@ class VoiceAgentV2Auditor:
                     continue
                 cfg = speech_cfgs[lang]
                 if not str(cfg.get("voice") or "").strip():
-                    cfg["voice"] = derive_locale_voice(lang, persona_voice)
+                    cfg["voice"] = derive_locale_voice(
+                        lang, persona_voice, custom_voice_names
+                    )
                     changes.append(
                         f"Set missing voice for '{lang}' to '{cfg['voice']}'."
                     )
@@ -2756,13 +2923,21 @@ class VoiceAgentV2Auditor:
             for sample in audio_cfg.get("customVoiceSamples") or []:
                 if not isinstance(sample, dict):
                     continue
+                label = sample.get("name") or "customVoiceSamples[]"
                 voice_inst = str(sample.get("voiceInstruction") or "")
-                if _has_legacy_v1_directors_note(voice_inst):
-                    label = sample.get("name") or "customVoiceSamples[]"
+                if voice_inst.strip():
                     sample["voiceInstruction"] = EMPTY_V2_STYLE
                     removed_styles.append(f"[{label}] {voice_inst.strip()}")
                     changes.append(
-                        f"Cleared the V1 Director's Note in custom voice '{label}'."
+                        f"Cleared voiceInstruction in custom voice '{label}' "
+                        "(removed text is listed under removed_styles)."
+                    )
+                    app_changed = True
+                if sample.get("voiceInstructionMode") != "NO_INSTRUCTION":
+                    sample["voiceInstructionMode"] = "NO_INSTRUCTION"
+                    changes.append(
+                        "Set voiceInstructionMode to 'NO_INSTRUCTION' on "
+                        f"custom voice '{label}'."
                     )
                     app_changed = True
 
