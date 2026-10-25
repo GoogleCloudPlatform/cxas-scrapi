@@ -14,18 +14,18 @@ The auditor's `--remediate` mode clears V1 Director's Notes, and any speaking st
 
 ### How to Write a Composite V2 Speaking Style
 
-1. **Default (empty style):** Use an empty `instruction` (`"instruction": ""`). Composite V2 reads punctuation and context well out of the box.
-1. **Only if needed, a short speaker profile (~12 words):** Write a description of **about a dozen words** (≤ 25 words max) about **who the speaker is**: age, vocal timbre, pitch, accent, and pace. Don't describe how the speaker feels; use inline tags for moment-to-moment emotion.
-1. **Avoid feeling words as a style:** A style such as `"warm, friendly, natural, professional"` describes how the speaker feels, not who the speaker is. If an app already uses one, suggest `""` (or a short speaker profile) instead.
+1. **Primary recommendation — a short vertical speaker profile (~12 words):** Write a description of **about a dozen words** (≤ 25 words max) about **who the speaker is**: age, vocal timbre, pitch, accent, and pace, adapted from the vertical industry examples below to match the app's domain, Chirp 3 HD voice gender, and locale. Don't describe how the speaker feels; use inline tags for moment-to-moment emotion.
+1. **Secondary alternative — empty style (`""`):** Leave `instruction` empty (`"instruction": ""`) if you prefer the voice's unstyled default (`--remediate` also clears legacy V1 Director's Notes and > 25-word styles to `""` and prints the removed text so you can craft a ~12-word speaker profile).
+1. **Avoid feeling words as a style:** A style such as `"warm, friendly, natural, professional"` describes how the speaker feels, not who the speaker is. Replace it with a ~12-word speaker profile from the table below (or `""` as a secondary alternative).
 
-| Use Case                   | V2 Speaking Style (`instruction`)                                                               | Sample Line                                                                                                  |
-| :------------------------- | :---------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------- |
-| **Default (any use case)** | `""` (empty style default)                                                                      | `"Right, let me check your account... everything looks SOLID on our end."`                                   |
-| **General Support**        | `"Friendly American woman in her early 30s, warm mid-pitch voice, relaxed conversational pace"` | `"Hi there, I'd be happy to look into that for you right away."`                                             |
-| **Retail Support**         | `"Upbeat woman in her late 20s, bright mid-range voice, quick, friendly cadence"`               | `"Thanks for calling. <breath> I can help you track that order. What's your order number?"`                  |
-| **Banking**                | `"Calm man in his 40s, steady low baritone, measured and unhurried delivery"`                   | `"I can see the charge you're asking about, <short pause> and I'll walk you through exactly what happened."` |
-| **Telecom**                | `"Friendly Southern US woman in her 50s, warm alto, relaxed, patient drawl"`                    | `"Alright, let's get your internet back up. <short pause> Go ahead and unplug your router for me."`          |
-| **Travel**                 | `"Young British man, crisp diction, clear tenor voice, brisk yet polite pace"`                  | `"Good news, <short pause> I found you a seat on the six forty to Heathrow. Shall I book it?"`               |
+| Use Case                        | V2 Speaking Style (`instruction`)                                                               | Sample Line                                                                                                  |
+| :------------------------------ | :---------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------- |
+| **General Support**             | `"Friendly American woman in her early 30s, warm mid-pitch voice, relaxed conversational pace"` | `"Hi there, I'd be happy to look into that for you right away."`                                             |
+| **Retail Support**              | `"Upbeat woman in her late 20s, bright mid-range voice, quick, friendly cadence"`               | `"Thanks for calling. <breath> I can help you track that order. What's your order number?"`                  |
+| **Banking**                     | `"Calm man in his 40s, steady low baritone, measured and unhurried delivery"`                   | `"I can see the charge you're asking about, <short pause> and I'll walk you through exactly what happened."` |
+| **Telecom**                     | `"Friendly Southern US woman in her 50s, warm alto, relaxed, patient drawl"`                    | `"Alright, let's get your internet back up. <short pause> Go ahead and unplug your router for me."`          |
+| **Travel**                      | `"Young British man, crisp diction, clear tenor voice, brisk yet polite pace"`                  | `"Good news, <short pause> I found you a seat on the six forty to Heathrow. Shall I book it?"`               |
+| **Secondary Alternative (any)** | `""` (empty style)                                                                              | `"Right, let me check your account... everything looks SOLID on our end."`                                   |
 
 > [!TIP]
 > Prefer full stops over exclamation marks in spoken replies and in the sample lines you write into prompts. Use a tone tag such as `<positive>` when a reply needs more energy.
