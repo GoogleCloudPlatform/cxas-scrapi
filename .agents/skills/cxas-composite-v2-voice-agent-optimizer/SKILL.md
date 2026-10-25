@@ -2,15 +2,15 @@
 name: cxas-composite-v2-voice-agent-optimizer
 description: >-
   Audits, migrates, and optimizes CXAS / CES conversational voice agents for Gemini Composite V2
-  (gemini-composite-v2) with prebuilt Chirp 3 HD or custom cloned voices (customVoiceSamples). Covers
-  V1-to-V2 migration (clearing V1 Director's Notes, converting [tag] to <tag>, remapping low-performing
-  tags, and relocating mid-sentence style tags), ~12-word vertical speaker-identity speaking styles (or
-  empty style + NO_INSTRUCTION for custom voices), angle-bracket <...> sound/pause and sentence-opening
-  tone transition tags, optional <prosody rate> pacing, ALL-CAPS lexical stress, ... ellipses, /IPA/
-  pronunciation, tool-scoped spoken text normalization, multi-language naturalness, prompt contradiction
-  checks, cross-app handoff detection, and .wav ear-audits.
-  Use when an app targets or migrates to gemini-composite-v2. Don't use for gemini-composite-v1 tuning
-  (use cxas-composite-voice-agent-optimizer).
+  (gemini-composite-v2 / 3.8 TTS) with prebuilt Chirp 3 HD or custom cloned voices (customVoiceSamples).
+  Covers V1-to-V2 migration (clearing V1 Director's Notes, converting [tag] to <tag>, remapping
+  low-performing tags, and relocating mid-sentence style tags), ~12-word vertical speaker-identity
+  speaking styles (or empty style + NO_INSTRUCTION for custom voices), angle-bracket <...> sound/pause
+  and sentence-opening tone transition tags, optional <prosody rate> pacing, ALL-CAPS lexical stress,
+  ... ellipses, /IPA/ pronunciation, tool-scoped spoken text normalization, multi-language naturalness,
+  prompt contradiction checks, cross-app handoff detection, and .wav ear-audits.
+  Use when an app targets or migrates to gemini-composite-v2 (3.8 TTS). Don't use for gemini-composite-v1
+  tuning (use cxas-composite-voice-agent-optimizer).
 ---
 
 # CXAS Composite V2 Voice Optimizer (`gemini-composite-v2`)
@@ -38,14 +38,14 @@ ______________________________________________________________________
 
 ## Key Differences: Gemini Composite V1 vs. Gemini Composite V2
 
-| Dimension                        | Legacy Composite V1                                                                                  | Composite V2 (`gemini-composite-v2`)                                                                                                                                                                                                                                                                       |
-| :------------------------------- | :--------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Model Identifier**             | `"model": "gemini-composite-v1"`                                                                     | **`"model": "gemini-composite-v2"`** (temperature and `speakingRate` are not V2 requirements).                                                                                                                                                                                                             |
-| **`app.json` Speaking Style**    | Multi-paragraph `# AUDIO PROFILE` + `# THE SCENE` + `# DIRECTOR'S NOTES` + `## Transcript:\n`        | **Clear V1 Director's Notes.** **Prebuilt voices (`*-Chirp3-HD-*`):** ~12-word speaker profile by default (`""` as secondary alternative). **Custom cloned voices (`customVoiceSamples[]`):** `""` for both `voiceInstruction` and locale `instruction`, plus `"voiceInstructionMode": "NO_INSTRUCTION"`.  |
-| **Inline Non-Verbal Audio Tags** | Square brackets (`[short pause]`, `[medium pause]`, `[sigh]`, `[uhm]`, `[prosody rate="66%"]`)       | **Angle brackets (`<...>`) ONLY — zero `[...]` and zero closing tags (`</...>`)**: `<breath>`, `<exhales>`, `<sigh>`, `<laugh>`, `<chuckle>`, `<gasp>`, `<throat-clearing>`, `<short pause>`, `<long pause>`, and optional `<prosody rate="N%">` (first in stack).                                         |
-| **Multi-Part Tone Transitions**  | Square-bracket `[positive]`, `[neutral]`, `[reassuring]`, `[curiosity]`, `[professional]`            | **Sentence-opening tone tags in angle brackets**: `<calm>`, `<empathetic>`, `<warm>`, `<positive>`, `<enthusiasm>`, `<clear>`, `<determination>`, `<interest>`, `<relief>`, `<sympathetic>` (point markers staying in effect until the next tone tag).                                                     |
-| **Tag Remapping (V1 → V2)**      | Used `[reassuring]`, `[curiosity]`, `[professional]`, `[cautious]`, `[happy]`, `[neutral]`, `[slow]` | Automatically remaps low-performing tags (`reassuring` → `<empathetic>`, `curiosity` → `<interest>`, `professional` → `<clear>`, `medium pause` → `<short pause>`, `slow` → `<prosody rate="65%">`, removes `<neutral>` / `[uhm]`; full table in P1.2 and `references/natural_speech_patterns_v2.md` §2D). |
-| **Emphasis & Normalization**     | Square-bracket `[prosody rate=...]`, `[uhm]`; unscoped number rules                                  | **ALL CAPS** on 1–2 words per turn (Latin-script languages), **`...`** for hesitation, **`/IPA/`** in slashes for tricky names, and **tool-scoped spoken normalization** (`<instruction id="text normalization for speech">` with an explicit `Scope:` guard).                                             |
+| Dimension              | Legacy Composite V1                                       | Composite V2 (`gemini-composite-v2`)                                                                                                                                                                                                                      |
+| :--------------------- | :-------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Model ID**           | `"model": "gemini-composite-v1"`                          | **`"model": "gemini-composite-v2"`** (temperature and `speakingRate` are not V2 requirements).                                                                                                                                                            |
+| **Speaking Style**     | `# AUDIO PROFILE` + `# THE SCENE` + `# DIRECTOR'S NOTES`  | **Prebuilt (`*-Chirp3-HD-*`):** ~12-word speaker profile (`""` secondary). **Custom (`customVoiceSamples[]`):** `""` + `"voiceInstructionMode": "NO_INSTRUCTION"`.                                                                                        |
+| **Sound & Pause Tags** | Square brackets (`[short pause]`, `[sigh]`, `[uhm]`)      | **Angle brackets (`<...>`) ONLY — zero `[...]` and zero `</...>`**: `<breath>`, `<exhales>`, `<sigh>`, `<laugh>`, `<chuckle>`, `<gasp>`, `<throat-clearing>`, `<short pause>`, `<long pause>`, optional `<prosody rate="N%">`.                            |
+| **Tone Transitions**   | Square-bracket `[positive]`, `[neutral]`, `[reassuring]`  | **Sentence-opening tone tags**: `<calm>`, `<empathetic>`, `<warm>`, `<positive>`, `<enthusiasm>`, `<clear>`, `<determination>`, `<interest>`, `<relief>`, `<sympathetic>`.                                                                                |
+| **Tag Remapping**      | `[reassuring]`, `[curiosity]`, `[professional]`, `[slow]` | Remaps `reassuring` → `<empathetic>`, `curiosity` → `<interest>`, `professional` → `<clear>`, `medium pause` → `<short pause>`, `slow` → `<prosody rate="65%">`, drops `<neutral>` / `[uhm]` (see P1.2 & `references/natural_speech_patterns_v2.md` §2D). |
+| **Emphasis & Norm.**   | `[prosody rate=...]`; unscoped number rules               | **ALL CAPS** (1–2 words/turn in Latin scripts), **`...`** hesitation, **`/IPA/`** in slashes, and **tool-scoped normalization** (`<instruction id="text normalization for speech">` with `Scope:` guard).                                                 |
 
 ______________________________________________________________________
 
@@ -131,50 +131,50 @@ ______________________________________________________________________
 
 Each auditor finding carries one of these codes (shown in the `--report` output and its `--json` form):
 
-| Code                                         | Priority | Fixed by `--remediate`?                                                         |
-| :------------------------------------------- | :------- | :------------------------------------------------------------------------------ |
-| `MODEL_NOT_COMPOSITE_V2`                     | P0       | Yes (only for older Composite or missing model; other models are reported)      |
-| `AGENT_MODEL_NOT_COMPOSITE_V2`               | P0       | Yes (for older Composite overrides)                                             |
-| `MISSING_SYNTHESIZE_SPEECH_CONFIGS`          | P0       | No                                                                              |
-| `MISSING_LOCALE_SPEECH_CONFIG`               | P0       | Yes                                                                             |
-| `MISSING_VOICE_ID`                           | P0       | Yes                                                                             |
-| `LEGACY_V1_DIRECTORS_NOTE_IN_V2_STYLE`       | P0       | Yes (cleared)                                                                   |
-| `CUSTOM_VOICE_DIRECTORS_NOTE`                | P0       | Yes (clears `voiceInstruction` and sets `voiceInstructionMode: NO_INSTRUCTION`) |
-| `CUSTOM_VOICE_INSTRUCTION_MODE_NOT_DISABLED` | P0       | Yes (sets `voiceInstructionMode: NO_INSTRUCTION`)                               |
-| `CUSTOM_VOICE_MISSING_GCS_URI`               | P0       | No (missing `gs://` on `voiceSampleGcsUri` or `consentAudioGcsUri`)             |
-| `DEPRECATED_INLINE_VOICE_SAMPLE_URI`         | P0       | No (deprecated inline `synthesizeSpeechConfigs.<locale>.voiceSampleGcsUri`)     |
-| `LEGACY_V1_SQUARE_BRACKET_TAG`               | P0       | Yes                                                                             |
-| `TRANSLATED_AUDIO_TAG`                       | P0       | Yes (converts translated tags to canonical English `<...>` tags)                |
-| `CLOSING_AUDIO_TAG_FORBIDDEN`                | P0       | Yes                                                                             |
-| `MISSING_INSTRUCTION_FILE`                   | P0       | No                                                                              |
-| `NO_INSTRUCTIONS_FOUND`                      | P0       | No                                                                              |
-| `I015` / `V104` (structural lint)            | P0       | No                                                                              |
-| `NON_CHIRP3_HD_VOICE`                        | P1       | No                                                                              |
-| `MULTILINGUAL_SUPPORT_NOT_ENABLED`           | P1       | Yes (sets `languageSettings.enableMultilingualSupport: true`)                   |
-| `LOCALE_SPEAKER_PROFILE_ACCENT_MISMATCH`     | P1       | No (English-locale accent copied into non-English `synthesizeSpeechConfigs`)    |
-| `SPEAKING_STYLE_TOO_LONG`                    | P1       | Yes (cleared)                                                                   |
-| `CUSTOM_VOICE_INSTRUCTION_TOO_LONG`          | P1       | Yes (clears `voiceInstruction` and sets `voiceInstructionMode: NO_INSTRUCTION`) |
-| `CUSTOM_VOICE_LOCALE_STYLE_CONFLICT`         | P1       | Yes (clears non-empty locale `instruction` on custom-voice locales)             |
-| `STALE_V2_AUDIO_TAG`                         | P1       | Yes                                                                             |
-| `MIXED_LATIN_IN_DEVANAGARI_UTTERANCE`        | P1       | No (Latin words/acronyms mixed inside Devanagari Hindi spoken utterances)       |
-| `UNEVALUATED_V2_TAG`                         | P1       | No (suggestion only)                                                            |
-| `UNRECOGNIZED_BRACKET_TOKEN`                 | P1       | No                                                                              |
-| `PROSODY_NOT_FIRST_IN_STACK`                 | P1       | Yes                                                                             |
-| `MID_SENTENCE_TAG_PLACEMENT`                 | P1       | Yes (adds comma before mid-sentence pause tags; moves style tags to start)      |
-| `SIGH_ON_ENDING_OR_TRANSFER_TURN`            | P1       | No (product decision)                                                           |
-| `CONTRADICTORY_LEGACY_TAG_RULE`              | P1       | No                                                                              |
-| `ELLIPSIS_PAUSE_TAG_COLLISION`               | P1       | No                                                                              |
-| `ALL_CAPS_IMMEDIATELY_AFTER_VOCAL_TAG`       | P1       | No                                                                              |
-| `MISSING_GLOBAL_INSTRUCTION`                 | P1       | No                                                                              |
-| `MISSING_V2_AUDIO_TAG_GUIDANCE`              | P1       | No                                                                              |
-| `MISSING_TEXT_NORMALIZATION_BLOCK`           | P1       | No                                                                              |
-| `UNSCOPED_TEXT_NORMALIZATION`                | P1       | No                                                                              |
-| `MISSING_ALL_CAPS_LEXICAL_STRESS_RULE`       | P1       | No                                                                              |
-| `TEMPERATURE_ADVISORY`                       | P2       | No (advisory)                                                                   |
-| `UNBOUND_CUSTOM_VOICE_SAMPLE`                | P2       | Yes with `--bind-custom-voice <name\|auto>`                                     |
-| `CUSTOM_VOICE_STALE_PREVIEW_AUDIO_BLOB`      | P2       | Yes (strips transient `previewAudioContent` base64 blob from `app.json`)        |
-| `CALLBACK_MISSING_V2_TAG_REGEX`              | P2       | No                                                                              |
-| `handoff` / `app_reference`                  | Info     | No (informational: cross-app hand-offs)                                         |
+| Code                                         | Priority | Fixed by `--remediate`?                                  |
+| :------------------------------------------- | :------- | :------------------------------------------------------- |
+| `MODEL_NOT_COMPOSITE_V2`                     | P0       | Yes (older Composite or missing model)                   |
+| `AGENT_MODEL_NOT_COMPOSITE_V2`               | P0       | Yes (older Composite overrides)                          |
+| `MISSING_SYNTHESIZE_SPEECH_CONFIGS`          | P0       | No                                                       |
+| `MISSING_LOCALE_SPEECH_CONFIG`               | P0       | Yes                                                      |
+| `MISSING_VOICE_ID`                           | P0       | Yes                                                      |
+| `LEGACY_V1_DIRECTORS_NOTE_IN_V2_STYLE`       | P0       | Yes (cleared)                                            |
+| `CUSTOM_VOICE_DIRECTORS_NOTE`                | P0       | Yes (clears `voiceInstruction`, sets `NO_INSTRUCTION`)   |
+| `CUSTOM_VOICE_INSTRUCTION_MODE_NOT_DISABLED` | P0       | Yes (sets `voiceInstructionMode: NO_INSTRUCTION`)        |
+| `CUSTOM_VOICE_MISSING_GCS_URI`               | P0       | No (missing `gs://` on sample or consent URI)            |
+| `DEPRECATED_INLINE_VOICE_SAMPLE_URI`         | P0       | No (deprecated inline `voiceSampleGcsUri`)               |
+| `LEGACY_V1_SQUARE_BRACKET_TAG`               | P0       | Yes                                                      |
+| `TRANSLATED_AUDIO_TAG`                       | P0       | Yes (converts to English `<...>` tags)                   |
+| `CLOSING_AUDIO_TAG_FORBIDDEN`                | P0       | Yes                                                      |
+| `MISSING_INSTRUCTION_FILE`                   | P0       | No                                                       |
+| `NO_INSTRUCTIONS_FOUND`                      | P0       | No                                                       |
+| `I015` / `V104` (structural lint)            | P0       | No                                                       |
+| `NON_CHIRP3_HD_VOICE`                        | P1       | No                                                       |
+| `MULTILINGUAL_SUPPORT_NOT_ENABLED`           | P1       | Yes (enables `enableMultilingualSupport`)                |
+| `LOCALE_SPEAKER_PROFILE_ACCENT_MISMATCH`     | P1       | No (English accent in non-English locale)                |
+| `SPEAKING_STYLE_TOO_LONG`                    | P1       | Yes (cleared)                                            |
+| `CUSTOM_VOICE_INSTRUCTION_TOO_LONG`          | P1       | Yes (clears `voiceInstruction`, sets `NO_INSTRUCTION`)   |
+| `CUSTOM_VOICE_LOCALE_STYLE_CONFLICT`         | P1       | Yes (clears non-empty custom-voice locale `instruction`) |
+| `STALE_V2_AUDIO_TAG`                         | P1       | Yes                                                      |
+| `MIXED_LATIN_IN_DEVANAGARI_UTTERANCE`        | P1       | No (Latin words inside Devanagari utterance)             |
+| `UNEVALUATED_V2_TAG`                         | P1       | No (suggestion only)                                     |
+| `UNRECOGNIZED_BRACKET_TOKEN`                 | P1       | No                                                       |
+| `PROSODY_NOT_FIRST_IN_STACK`                 | P1       | Yes                                                      |
+| `MID_SENTENCE_TAG_PLACEMENT`                 | P1       | Yes (adds comma before pause; moves style tag to start)  |
+| `SIGH_ON_ENDING_OR_TRANSFER_TURN`            | P1       | No (product decision)                                    |
+| `CONTRADICTORY_LEGACY_TAG_RULE`              | P1       | No                                                       |
+| `ELLIPSIS_PAUSE_TAG_COLLISION`               | P1       | No                                                       |
+| `ALL_CAPS_IMMEDIATELY_AFTER_VOCAL_TAG`       | P1       | No                                                       |
+| `MISSING_GLOBAL_INSTRUCTION`                 | P1       | No                                                       |
+| `MISSING_V2_AUDIO_TAG_GUIDANCE`              | P1       | No                                                       |
+| `MISSING_TEXT_NORMALIZATION_BLOCK`           | P1       | No                                                       |
+| `UNSCOPED_TEXT_NORMALIZATION`                | P1       | No                                                       |
+| `MISSING_ALL_CAPS_LEXICAL_STRESS_RULE`       | P1       | No                                                       |
+| `TEMPERATURE_ADVISORY`                       | P2       | No (advisory)                                            |
+| `UNBOUND_CUSTOM_VOICE_SAMPLE`                | P2       | Yes with `--bind-custom-voice <name\|auto>`              |
+| `CUSTOM_VOICE_STALE_PREVIEW_AUDIO_BLOB`      | P2       | Yes (strips `previewAudioContent` from `app.json`)       |
+| `CALLBACK_MISSING_V2_TAG_REGEX`              | P2       | No                                                       |
+| `handoff` / `app_reference`                  | Info     | No (informational cross-app hand-offs)                   |
 
 ______________________________________________________________________
 
@@ -212,12 +212,7 @@ uv run python .agents/skills/cxas-composite-v2-voice-agent-optimizer/scripts/aud
 1. **Batch All User Decisions in One Turn (If Any Require Confirmation):**
    - Present a recommended **~12-word vertical speaker profile** from [`references/natural_speech_patterns_v2.md` §1](references/natural_speech_patterns_v2.md) adapted to the app's vertical, Chirp 3 HD voice gender, and locale (or offer `""` as the secondary alternative) when replacing a legacy V1 Director's Note or feeling-word style.
    - Surface any **P1.5 prompt contradictions** (quoting the conflicting lines and offering options), any **`UNEVALUATED_V2_TAG`** swap suggestions, and ask before adding `<prosody rate>` where the app had none.
-1. **Run Automated In-Place Migration & Remediation** (`--backup` saves `<file>.bak` before changing each file; pass `--bind-custom-voice auto` when binding a single `customVoiceSamples[]` voice across all declared locales in one pass). `--remediate`:
-   - upgrades `app.json` and agent overrides to `"model": "gemini-composite-v2"` only when they use an older Composite model or no model (other models are reported for the owner to decide), and never changes temperature or `speakingRate`;
-   - clears legacy V1 `# Audio Profile` / `# Director's note` blocks, speaking styles over 25 words, and any non-empty locale `instruction` bound to a custom voice (`CUSTOM_VOICE_LOCALE_STYLE_CONFLICT`) to `""`, clears `customVoiceSamples[].voiceInstruction` to `""` with `"voiceInstructionMode": "NO_INSTRUCTION"`, strips transient `previewAudioContent` base64 WAV blobs from `customVoiceSamples[]`, and prints the removed text so you can set the chosen ~12-word speaker profile for prebuilt voices (or keep `""`);
-   - adds missing locale entries by reusing the default locale's Chirp 3 HD persona or custom voice key and copying its `speakingRate`, enables `languageSettings.enableMultilingualSupport: true` when `supportedLanguageCodes` declares additional locales, fills missing voice IDs, and never replaces a non-Chirp voice;
-   - converts `[tag]` → `<tag>` (keeping every `prosody rate` exactly as written) while skipping placeholders and control-logic labels, converts translated non-English audio tags to canonical English `<...>` tags, remaps low-performing tags per P1.2, deduplicates tag lists, and moves prosody to the front of a tag stack;
-   - inserts commas before mid-sentence pause tags inside utterances, relocates mid-sentence style tags in quoted utterances to sentence start, and strips forbidden closing audio tags (a `</prosody>` followed by more speech becomes `<prosody rate="100%">`).
+1. **Run Automated In-Place Migration & Remediation** (`--backup` saves `<file>.bak` before changing each file; add `--bind-custom-voice auto` when binding a single `customVoiceSamples[]` voice across all declared locales in one pass). This applies all `Yes` items in [Auditor Finding Codes](#auditor-finding-codes) (`app.json` model/locale/custom-voice remediation per P0.1/P1.1 and `[tag]` → `<tag>` / remap / placement fixes per P0.2/P1.2) and prints any removed speaking styles so you can set the chosen ~12-word speaker profile for prebuilt voices:
    ```bash
    uv run python .agents/skills/cxas-composite-v2-voice-agent-optimizer/scripts/audit_agent_v2.py \
      --workspace="<PATH_TO_CXAS_APP_DIR>" \
@@ -260,15 +255,17 @@ Report the migration to the user in this order:
 
 After static checks pass, verify actual synthesized voice quality on an E2E multi-turn simulation:
 
-1. **Run an Audio Simulation with Agent Audio Capture** (pass `GECX_PROJECT="<PROJECT_FOLDER>"` so the runner resolves the right project even if `.active-project` points elsewhere):
+1. **Run an Audio Simulation with Agent Audio Capture** (pass `GECX_PROJECT="<PROJECT_FOLDER>"` so the runner resolves the right project, and mirror `/tmp/scrapi_evals` during execution because `scrapi-sim-runner.py` cleans up `/tmp/scrapi_evals/<session_id>` on exit):
    ```bash
+   mkdir -p /tmp/ear_audit_wavs && (while true; do cp -ru /tmp/scrapi_evals/* /tmp/ear_audit_wavs/ 2>/dev/null || true; sleep 1; done) &
+   WATCHER_PID=$!; trap "kill $WATCHER_PID 2>/dev/null || true" EXIT
    GECX_PROJECT="<PROJECT_FOLDER>" uv run python .agents/skills/cxas-agent-foundry/scripts/scrapi-sim-runner.py run \
      --eval "<SCENARIO_NAME>" \
      --channel audio \
      --capture-agent-audio
    ```
 1. **Extract & Inspect Turn-by-Turn Audio (`.wav`)**:
-   - Per-turn WAV files are written to `/tmp/scrapi_evals/<session_id>/turn_<N>_agent.wav` during execution (or captured directly via `Sessions(app_name).run(..., modality="audio", capture_agent_audio=True, turn_num=i)`).
+   - Per-turn WAV files are preserved in `/tmp/ear_audit_wavs/<session_id>/turn_<N>_agent.wav` (or captured directly via `Sessions(app_name).run(..., modality="audio", capture_agent_audio=True, turn_num=i)`).
    - Inspect each turn's transcript and listen to key `.wav` files directly (Greeting Turn 0, Troubleshooting Turn, Resolution Turn, Account Readout Turn, Multi-Part Empathy-to-Solution Transition Turn, Multilingual Turn, Warm Transfer Turn).
 1. **Score Against the 6-Dimension Composite V2 Human-Likeness Rubric** (target ≥ 9.0 / 10):
    1. **Vocal Timbre, Warmth & Speaker Consistency** (Stable ~12-word speaker profile without V1 Director's Note drift, authentic regional accent)
