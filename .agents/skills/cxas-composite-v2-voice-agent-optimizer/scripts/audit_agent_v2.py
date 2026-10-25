@@ -363,7 +363,9 @@ TRANSLATED_TAG_MAP: dict[str, str] = {
 
 TRANSLATED_AUDIO_TAG_RE = re.compile(
     r"(?:<\s*|\[\s*)("
-    + "|".join(re.escape(k) for k in sorted(TRANSLATED_TAG_MAP, key=len, reverse=True))
+    + "|".join(
+        re.escape(k) for k in sorted(TRANSLATED_TAG_MAP, key=len, reverse=True)
+    )
     + r")(?:\s*>|\s*\])",
     re.IGNORECASE,
 )
@@ -380,7 +382,9 @@ ENGLISH_ACCENT_IN_STYLE_RE = re.compile(
 # Quoted utterance spans (single or double quotes) for script-purity checks.
 # Single quotes require non-word boundaries so English apostrophes (caller's,
 # don't) never pair with single-quoted phrases.
-UTTERANCE_SPAN_RE = re.compile(r'"[^"\n]{3,400}"|(?<![\w])\'[^\'\n]{3,400}\'(?![\w])')
+UTTERANCE_SPAN_RE = re.compile(
+    r'"[^"\n]{3,400}"|(?<![\w])\'[^\'\n]{3,400}\'(?![\w])'
+)
 DEVANAGARI_CHAR_RE = re.compile(r"[\u0900-\u097F]")
 LATIN_WORD_RE = re.compile(r"\b[A-Za-z]{2,}\b")
 
@@ -523,7 +527,9 @@ NORMALIZED_DEFAULT_VOICES: dict[str, str] = {
     k.lower().replace("_", "-"): v for k, v in DEFAULT_V2_VOICES.items()
 }
 
-PROSODY_RE = re.compile(r'^prosody\s+rate\s*=\s*"?(\d{1,3})\s*%"?$', re.IGNORECASE)
+PROSODY_RE = re.compile(
+    r'^prosody\s+rate\s*=\s*"?(\d{1,3})\s*%"?$', re.IGNORECASE
+)
 
 # Regex matching legacy Composite V1 square-bracket tags
 LEGACY_SQUARE_TAG_RE = re.compile(
@@ -557,7 +563,8 @@ CLOSING_AUDIO_TAG_RE = re.compile(
     r"[ \t]*</\s*(?:"
     r"prosody|"
     + "|".join(
-        re.escape(t) for t in sorted(ALL_RECOGNIZED_AUDIO_TAGS, key=len, reverse=True)
+        re.escape(t)
+        for t in sorted(ALL_RECOGNIZED_AUDIO_TAGS, key=len, reverse=True)
     )
     + r")\s*>",
     re.IGNORECASE,
@@ -580,13 +587,16 @@ ELLIPSIS_PAUSE_COLLISION_RE = re.compile(
 )
 
 # Regex matching an ALL-CAPS word (>=2 letters) right after <exhales>/<sigh(s)>
-ALL_CAPS_AFTER_VOCAL_TAG_RE = re.compile(r"<(?:exhales|sighs?)>\s+([A-Z]{2,})\b")
+ALL_CAPS_AFTER_VOCAL_TAG_RE = re.compile(
+    r"<(?:exhales|sighs?)>\s+([A-Z]{2,})\b"
+)
 
 # Regex matching any V2 angle-bracket audio/tone tag in instructions
 V2_ANGLE_TAG_RE = re.compile(
     r"<(?:"
     + "|".join(
-        re.escape(t) for t in sorted(ALLOWED_V2_AUDIO_TAGS, key=len, reverse=True)
+        re.escape(t)
+        for t in sorted(ALLOWED_V2_AUDIO_TAGS, key=len, reverse=True)
     )
     + r")>",
     re.IGNORECASE,
@@ -671,7 +681,8 @@ def _has_ending_context(line: str) -> bool:
         ):
             return True
     return any(
-        not _is_negated(line, m.start()) for m in ENDING_PHRASE_RE.finditer(line)
+        not _is_negated(line, m.start())
+        for m in ENDING_PHRASE_RE.finditer(line)
     )
 
 
@@ -764,7 +775,8 @@ def _normalize_tag_inner(inner: str) -> str:
 def _is_label_context(line_prefix: str) -> bool:
     """Returns True if a bracketed token sits in a control-logic label context."""
     return bool(
-        ATTRIBUTE_VALUE_RE.search(line_prefix) or LABEL_CONTEXT_RE.search(line_prefix)
+        ATTRIBUTE_VALUE_RE.search(line_prefix)
+        or LABEL_CONTEXT_RE.search(line_prefix)
     )
 
 
@@ -780,10 +792,15 @@ def _is_meta_documentation_line(line: str) -> bool:
     )
 
 
-def _rebuild_tag_list(line: str, items: list[re.Match[str]], drop: list[bool]) -> str:
+def _rebuild_tag_list(
+    line: str, items: list[re.Match[str]], drop: list[bool]
+) -> str:
     """Rewrites one separator-joined tag list without items flagged in `drop`."""
     texts = [item.group(0) for item in items]
-    seps = [line[prev.end() : nxt.start()] for prev, nxt in itertools.pairwise(items)]
+    seps = [
+        line[prev.end() : nxt.start()]
+        for prev, nxt in itertools.pairwise(items)
+    ]
     remove = list(drop)
     i = 0
     while i < len(texts):
@@ -812,7 +829,9 @@ def _deduplicate_tag_lists_in_line(line: str) -> str:
         inner = _normalize_tag_inner(match.group(2))
         if inner not in ALL_RECOGNIZED_AUDIO_TAGS:
             continue
-        if current and TAG_LIST_SEP_RE.match(line[current[-1].end() : match.start()]):
+        if current and TAG_LIST_SEP_RE.match(
+            line[current[-1].end() : match.start()]
+        ):
             current.append(match)
             continue
         if len(current) > 1:
@@ -939,7 +958,8 @@ def _reorder_prosody_first(line: str) -> tuple[str, int]:
         nonlocal moved
         before_tags = re.findall(r"<([^<>]+)>", m.group("before"))
         if not all(
-            _normalize_tag_inner(t) in ALL_RECOGNIZED_AUDIO_TAGS for t in before_tags
+            _normalize_tag_inner(t) in ALL_RECOGNIZED_AUDIO_TAGS
+            for t in before_tags
         ):
             return m.group(0)
         moved += 1
@@ -970,7 +990,9 @@ def _replace_closing_prosody(line: str) -> tuple[str, int, int]:
     return CLOSING_PROSODY_RE.sub(_sub, line), resets, removed
 
 
-def migrate_text_to_v2(text: str, fix_placement: bool = True) -> tuple[str, list[str]]:
+def migrate_text_to_v2(
+    text: str, fix_placement: bool = True
+) -> tuple[str, list[str]]:
     """Migrates `[tag]` -> `<tag>`, remaps stale tags, and fixes placement.
 
     Args:
@@ -1060,7 +1082,8 @@ def migrate_text_to_v2(text: str, fix_placement: bool = True) -> tuple[str, list
             if cur_line[match.end() : match.end() + 1] == "(":
                 continue
             if match.group(0).startswith("[") and (
-                match.group(1).isupper() or _is_label_context(cur_line[: match.start()])
+                match.group(1).isupper()
+                or _is_label_context(cur_line[: match.start()])
             ):
                 continue
             if _is_negated(cur_line, match.start()):
@@ -1093,7 +1116,9 @@ def migrate_text_to_v2(text: str, fix_placement: bool = True) -> tuple[str, list
 
     def _rewrite_utterance(m: re.Match[str]) -> str:
         nonlocal pause_commas_total, style_moves_total
-        rewritten, pc, sm = _relocate_utterance_tags_and_punctuate_pauses(m.group(0))
+        rewritten, pc, sm = _relocate_utterance_tags_and_punctuate_pauses(
+            m.group(0)
+        )
         pause_commas_total += pc
         style_moves_total += sm
         return rewritten
@@ -1108,7 +1133,9 @@ def migrate_text_to_v2(text: str, fix_placement: bool = True) -> tuple[str, list
     if remap_count:
         notes.append(f"remapped {remap_count} low-performing tag(s)")
     if translated_count:
-        notes.append(f"converted {translated_count} translated audio tag(s) to English")
+        notes.append(
+            f"converted {translated_count} translated audio tag(s) to English"
+        )
     if closing_count:
         notes.append(f"removed {closing_count} closing audio tag(s)")
     if reset_count:
@@ -1116,7 +1143,9 @@ def migrate_text_to_v2(text: str, fix_placement: bool = True) -> tuple[str, list
             f'rewrote {reset_count} </prosody> as a <prosody rate="100%"> reset'
         )
     if prosody_moves:
-        notes.append(f"moved {prosody_moves} prosody tag(s) to the front of a stack")
+        notes.append(
+            f"moved {prosody_moves} prosody tag(s) to the front of a stack"
+        )
     if pause_commas_total:
         notes.append(
             f"inserted {pause_commas_total} comma(s) before mid-sentence pause tag(s)"
@@ -1205,7 +1234,8 @@ class VoiceAgentV2Auditor:
         raw = path.read_text(encoding="utf-8") if path.is_file() else ""
         self._write_text(
             path,
-            json.dumps(data, indent=self._json_indent(raw), ensure_ascii=False) + "\n",
+            json.dumps(data, indent=self._json_indent(raw), ensure_ascii=False)
+            + "\n",
         )
 
     def _write_app_json(self, data: dict[str, Any]) -> None:
@@ -1328,7 +1358,11 @@ class VoiceAgentV2Auditor:
         return [s["path"] for s in self._instruction_sources() if "path" in s]
 
     def _agent_json_files(self) -> list[pathlib.Path]:
-        return [p for p in sorted(self.app_root.glob("agents/*/*.json")) if p.is_file()]
+        return [
+            p
+            for p in sorted(self.app_root.glob("agents/*/*.json"))
+            if p.is_file()
+        ]
 
     def _tool_and_callback_files(self) -> list[pathlib.Path]:
         files: list[pathlib.Path] = []
@@ -1358,7 +1392,9 @@ class VoiceAgentV2Auditor:
                 candidates.append((source["label"], source["text"]))
         for path in file_paths:
             try:
-                candidates.append((self._rel(path), path.read_text(encoding="utf-8")))
+                candidates.append(
+                    (self._rel(path), path.read_text(encoding="utf-8"))
+                )
             except OSError:
                 continue
 
@@ -1401,7 +1437,9 @@ class VoiceAgentV2Auditor:
                     )
         return handoffs
 
-    def _persona_voice(self, speech_cfgs: dict[str, Any], default_lang: str) -> str:
+    def _persona_voice(
+        self, speech_cfgs: dict[str, Any], default_lang: str
+    ) -> str:
         """Returns the default locale's voice (the app's voice persona)."""
         default_cfg = speech_cfgs.get(default_lang)
         if isinstance(default_cfg, dict) and default_cfg.get("voice"):
@@ -1413,7 +1451,9 @@ class VoiceAgentV2Auditor:
                 return str(cfg["voice"])
         return ""
 
-    def audit_app_speech_style_v2(self, app_data: dict[str, Any]) -> dict[str, Any]:
+    def audit_app_speech_style_v2(
+        self, app_data: dict[str, Any]
+    ) -> dict[str, Any]:
         """Audits app.json and agent overrides for gemini-composite-v2 and V2 styles."""
         issues: list[dict[str, Any]] = []
         rel_app = self._rel(self.app_json_path)
@@ -1421,9 +1461,9 @@ class VoiceAgentV2Auditor:
         model_settings = app_data.get("modelSettings") or {}
         current_model = model_settings.get("model")
         if current_model != TARGET_COMPOSITE_MODEL:
-            older_composite = not current_model or str(current_model).startswith(
-                COMPOSITE_MODEL_PREFIX
-            )
+            older_composite = not current_model or str(
+                current_model
+            ).startswith(COMPOSITE_MODEL_PREFIX)
             issues.append(
                 {
                     "code": "MODEL_NOT_COMPOSITE_V2",
@@ -1648,7 +1688,9 @@ class VoiceAgentV2Auditor:
                 and ENGLISH_ACCENT_IN_STYLE_RE.search(inst)
             ):
                 accent_match = ENGLISH_ACCENT_IN_STYLE_RE.search(inst)
-                accent_term = accent_match.group(0) if accent_match else "English"
+                accent_term = (
+                    accent_match.group(0) if accent_match else "English"
+                )
                 issues.append(
                     {
                         "code": "LOCALE_SPEAKER_PROFILE_ACCENT_MISMATCH",
@@ -1746,7 +1788,9 @@ class VoiceAgentV2Auditor:
         pause_commas = 0
         style_moves = 0
         for m in QUOTED_SPAN_RE.finditer(_mask_tag_quotes(text)):
-            _, pc, sm = _relocate_utterance_tags_and_punctuate_pauses(m.group(0))
+            _, pc, sm = _relocate_utterance_tags_and_punctuate_pauses(
+                m.group(0)
+            )
             pause_commas += pc
             style_moves += sm
         return pause_commas, style_moves
@@ -1758,7 +1802,9 @@ class VoiceAgentV2Auditor:
         rel = unit["label"]
         closed = {
             " ".join(n.split()).lower()
-            for n in re.findall(r"</\s*([A-Za-z][\w \-]{0,30})\s*>", unit["text"])
+            for n in re.findall(
+                r"</\s*([A-Za-z][\w \-]{0,30})\s*>", unit["text"]
+            )
         }
         seen_angle: dict[str, dict[str, Any]] = {}
         seen_bracket: dict[str, dict[str, Any]] = {}
@@ -1872,7 +1918,9 @@ class VoiceAgentV2Auditor:
             ),
         }
 
-    def _ending_turn_sound_issues(self, unit: dict[str, Any]) -> list[dict[str, Any]]:
+    def _ending_turn_sound_issues(
+        self, unit: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Finds <sigh>/<sighs>/<exhales> on ending or transfer turns."""
         issues: list[dict[str, Any]] = []
         rel = unit["label"]
@@ -2007,7 +2055,9 @@ class VoiceAgentV2Auditor:
                 for match in STALE_ANGLE_TAG_RE.finditer(line):
                     raw_tag = _normalize_tag_inner(match.group(1))
                     target, reason = REMAP_V2[raw_tag]
-                    replacement_desc = f"<{target}>" if target else "removing the tag"
+                    replacement_desc = (
+                        f"<{target}>" if target else "removing the tag"
+                    )
                     issues.append(
                         {
                             "code": "STALE_V2_AUDIO_TAG",
@@ -2055,12 +2105,17 @@ class VoiceAgentV2Auditor:
                         }
                     )
 
-                if "instead of" not in lower_line and "rather than" not in lower_line:
+                if (
+                    "instead of" not in lower_line
+                    and "rather than" not in lower_line
+                ):
                     masked_line = _mask_tag_quotes(line)
                     for span_match in UTTERANCE_SPAN_RE.finditer(masked_line):
                         if _is_negated(line, span_match.start()):
                             continue
-                        span_inner = _unmask_tag_quotes(span_match.group(0)[1:-1])
+                        span_inner = _unmask_tag_quotes(
+                            span_match.group(0)[1:-1]
+                        )
                         cleaned_span = re.sub(r"<[^<>]+>", " ", span_inner)
                         cleaned_span = re.sub(r"\{[^{}]+\}", " ", cleaned_span)
                         cleaned_span = re.sub(r"/[^/\s]+/", " ", cleaned_span)
@@ -2179,7 +2234,10 @@ class VoiceAgentV2Auditor:
                             }
                         )
 
-                if PROSODY_TAG_RE.search(line) and _reorder_prosody_first(line)[1]:
+                if (
+                    PROSODY_TAG_RE.search(line)
+                    and _reorder_prosody_first(line)[1]
+                ):
                     issues.append(
                         {
                             "code": "PROSODY_NOT_FIRST_IN_STACK",
@@ -2382,7 +2440,9 @@ class VoiceAgentV2Auditor:
                 continue
             flags = 0
             flag_src = " ".join(ast.unparse(a) for a in node.value.args[1:])
-            flag_src += " ".join(ast.unparse(k.value) for k in node.value.keywords)
+            flag_src += " ".join(
+                ast.unparse(k.value) for k in node.value.keywords
+            )
             if "IGNORECASE" in flag_src or re.search(r"\bre\.I\b", flag_src):
                 flags |= re.IGNORECASE
             try:
@@ -2400,7 +2460,9 @@ class VoiceAgentV2Auditor:
                 name = _normalize_tag_inner(m.group(1))
                 if name in ALLOWED_V2_AUDIO_TAGS:
                     used.add(name)
-        for cb in sorted(self.app_root.glob("agents/*/after_model_callbacks/*/*.py")):
+        for cb in sorted(
+            self.app_root.glob("agents/*/after_model_callbacks/*/*.py")
+        ):
             rel = self._rel(cb)
             text = cb.read_text(encoding="utf-8")
             if "INLINE_TAG" not in text:
@@ -2408,10 +2470,14 @@ class VoiceAgentV2Auditor:
             pattern = self._inline_tag_pattern(text)
             if pattern is None:
                 missing = [
-                    t for t in ("short pause", "empathetic", "breath") if t not in text
+                    t
+                    for t in ("short pause", "empathetic", "breath")
+                    if t not in text
                 ]
             else:
-                missing = sorted(t for t in used if not pattern.search(f"<{t}>"))
+                missing = sorted(
+                    t for t in used if not pattern.search(f"<{t}>")
+                )
             if missing:
                 issues.append(
                     {
@@ -2556,14 +2622,20 @@ class VoiceAgentV2Auditor:
                     )
                     lines.append(f"- **Issue:** {item['message']}")
                     if item.get("recommended"):
-                        lines.append(f"- **Recommended Fix:** {item['recommended']}")
+                        lines.append(
+                            f"- **Recommended Fix:** {item['recommended']}"
+                        )
                     lines.append("")
 
         if handoffs:
-            lines.append("\n## ℹ️ Cross-App & External Hand-Offs (Informational)\n")
+            lines.append(
+                "\n## ℹ️ Cross-App & External Hand-Offs (Informational)\n"
+            )
             for h in handoffs:
                 loc = f"{h['file']}:{h['line']}"
-                lines.append(f"- **`{h['target_kind']}`** (`{loc}`): {h['message']}")
+                lines.append(
+                    f"- **`{h['target_kind']}`** (`{loc}`): {h['message']}"
+                )
             lines.append("")
 
         if not (p0 or p1 or p2):
@@ -2600,7 +2672,8 @@ class VoiceAgentV2Auditor:
             model_settings = app_data.setdefault("modelSettings", {})
             current_model = str(model_settings.get("model") or "")
             if current_model != TARGET_COMPOSITE_MODEL and (
-                not current_model or current_model.startswith(COMPOSITE_MODEL_PREFIX)
+                not current_model
+                or current_model.startswith(COMPOSITE_MODEL_PREFIX)
             ):
                 model_settings["model"] = TARGET_COMPOSITE_MODEL
                 changes.append(
@@ -2624,7 +2697,8 @@ class VoiceAgentV2Auditor:
                 *[lang for lang in supported if isinstance(lang, str)],
             ]
             if any(
-                isinstance(lang, str) and lang != default_lang for lang in supported
+                isinstance(lang, str) and lang != default_lang
+                for lang in supported
             ) and not lang_settings.get("enableMultilingualSupport"):
                 app_data.setdefault("languageSettings", {})[
                     "enableMultilingualSupport"
@@ -2697,7 +2771,9 @@ class VoiceAgentV2Auditor:
                     migrated, notes = migrate_text_to_v2(source["text"])
                     if migrated != source["text"]:
                         app_data[source["json_key"]] = migrated
-                        changes.append(f"{source['label']}: {', '.join(notes)}.")
+                        changes.append(
+                            f"{source['label']}: {', '.join(notes)}."
+                        )
                         app_changed = True
             if app_changed:
                 self._write_app_json(app_data)
@@ -2728,7 +2804,9 @@ class VoiceAgentV2Auditor:
                     migrated, notes = migrate_text_to_v2(source["text"])
                     if migrated != source["text"]:
                         agent_data[source["json_key"]] = migrated
-                        changes.append(f"{source['label']}: {', '.join(notes)}.")
+                        changes.append(
+                            f"{source['label']}: {', '.join(notes)}."
+                        )
                         agent_changed = True
             if agent_changed:
                 self._write_json(agent_json, agent_data)
@@ -2738,7 +2816,9 @@ class VoiceAgentV2Auditor:
         # across instruction files and tool files.
         text_targets = [
             *(s["path"] for s in sources if "path" in s),
-            *sorted(self.app_root.glob("tools/*/python_function/python_code.py")),
+            *sorted(
+                self.app_root.glob("tools/*/python_function/python_code.py")
+            ),
             *sorted(self.app_root.glob("tools/*/*.json")),
         ]
         for path in text_targets:
@@ -2758,7 +2838,9 @@ class VoiceAgentV2Auditor:
             if migrated != source_text:
                 self._write_text(
                     path,
-                    _encode_json_angle_escapes(migrated) if escaped else migrated,
+                    _encode_json_angle_escapes(migrated)
+                    if escaped
+                    else migrated,
                 )
                 changes.append(f"{self._rel(path)}: {', '.join(notes)}.")
 
@@ -2859,7 +2941,9 @@ def main() -> None:
     elif args.report:
         rep = auditor.generate_prioritized_report()
         _emit(
-            json.dumps(rep, indent=2) if args.json_output else rep["markdown_report"],
+            json.dumps(rep, indent=2)
+            if args.json_output
+            else rep["markdown_report"],
             args.output,
         )
         if rep["overall_status"] != "PASSED":
