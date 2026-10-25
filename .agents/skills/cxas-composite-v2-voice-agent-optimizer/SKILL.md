@@ -3,16 +3,13 @@ name: cxas-composite-v2-voice-agent-optimizer
 description: >-
   Audits, migrates, and optimizes CXAS / CES conversational voice agents for Gemini Composite V2
   (gemini-composite-v2). Covers V1-to-V2 migration (clearing V1 Director's Notes, converting [tag] to
-  <tag>, remapping low-performing tags, and relocating mid-sentence style tags), empty or ~12-word
-  speaker-identity speaking styles, angle-bracket <...> inline non-verbal sound/pause tags, multi-part
-  tone transition tags (<calm>, <empathetic>, <warm>, <positive>), optional <prosody rate> pacing,
-  ALL-CAPS lexical stress, ... ellipses, /IPA/ pronunciation notation, tool-scoped spoken text
-  normalization, multi-language naturalness (translated tag conversion, non-Latin script purity,
-  voice-persona gender agreement, and locale accent checks), prompt contradiction checks, cross-app
-  handoff detection, and .wav ear-audits.
-  Use when an app targets or migrates to gemini-composite-v2: V1-to-V2 tag migration, speaking style
-  cleanup, tag placement, tool-scoped text normalization, multi-language tuning, contradiction checks,
-  or audio ear-audits. Don't use for gemini-composite-v1 tuning (use cxas-composite-voice-agent-optimizer).
+  <tag>, remapping low-performing tags, and relocating mid-sentence style tags), ~12-word vertical
+  speaker-identity speaking styles (or empty style), angle-bracket <...> sound/pause and sentence-opening
+  tone transition tags, optional <prosody rate> pacing, ALL-CAPS lexical stress, ... ellipses, /IPA/
+  pronunciation, tool-scoped spoken text normalization, multi-language naturalness, prompt contradiction
+  checks, cross-app handoff detection, and .wav ear-audits.
+  Use when an app targets or migrates to gemini-composite-v2. Don't use for gemini-composite-v1 tuning
+  (use cxas-composite-voice-agent-optimizer).
 ---
 
 # CXAS Composite V2 Voice Optimizer (`gemini-composite-v2`)
@@ -34,20 +31,20 @@ All adaptations must be strictly **additive and non-destructive**:
 
 1. **Preserve Full Domain Instruction Sets:** Retain all existing domain instructions, guardrails, step transitions, and business logic verbatim.
 1. **Replace Only Legacy V1 Voice Markup:** Clear V1 `# Audio Profile` / `# Director's note` blocks in `app.json` (`synthesizeSpeechConfigs.<locale>.instruction` and `customVoiceSamples[].voiceInstruction`) and replace them with a ~12-word speaker profile describing **who the speaker is** (age, vocal timbre, pitch, accent, pace — adapted from the vertical industry examples in `references/natural_speech_patterns_v2.md` §1), or leave `""` as a secondary alternative (`--remediate` clears legacy blocks to `""` and prints the removed text so the agent/developer can craft the ~12-word profile). Migrate inline `[...]` audio tags to Composite V2 `<...>` tags, keeping every original `prosody rate` value exactly as written.
-1. **Rephrase Prohibited Platform XML Tags Without Deleting Logic:** If any prohibited platform XML tags (`<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`, `<call_tool>`, `<parameter_update>`, `<variable_update>`, `<voice_lock>`, `<voice_output>`, `<state>`, `<transition>`, `<transitions>`) appear in instructions, rephrase the tag names into plain natural language or standard XML tags without deleting the surrounding rules.
+1. **Rephrase Prohibited Platform XML Tags Without Deleting Logic:** If any prohibited platform XML tags (listed in P0.3 / `I015`) appear in instructions, rephrase the tag names into plain natural language or standard XML tags without deleting the surrounding rules.
 
 ______________________________________________________________________
 
 ## Key Differences: Gemini Composite V1 vs. Gemini Composite V2
 
-| Dimension                                                                      | Legacy Composite V1 (`cxas-composite-voice-agent-optimizer`)                                                               | Composite V2 (`cxas-composite-v2-voice-agent-optimizer`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| :----------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Model Identifier**                                                           | `"model": "gemini-composite-v1"`                                                                                           | **`"model": "gemini-composite-v2"`**. Temperature and `speakingRate` are not V2 requirements (the auditor reports temperature only as a P2 advisory).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| **`app.json` Speaking Style (`synthesizeSpeechConfigs.<locale>.instruction`)** | Multi-paragraph `# AUDIO PROFILE` + `# THE SCENE` + `# DIRECTOR'S NOTES` + trailing `## Transcript:\n` hook                | **Clear V1 Director's Notes. Primary recommendation: a ~12-word speaker profile** describing **who the speaker is** (age, vocal timbre, pitch, accent, pace — e.g., `"Friendly American woman in her early 30s, warm mid-pitch voice, relaxed conversational pace"`, adapted from the vertical industry examples in `references/natural_speech_patterns_v2.md` §1), not how they feel. **Secondary alternative:** an empty style (`""`).                                                                                                                                                                                                        |
-| **Inline Non-Verbal Audio Tags**                                               | Square brackets: `[short pause]`, `[medium pause]`, `[sigh]`, `[uhm]`, `[laughs]`, `[prosody rate="66%"]`                  | **Angle brackets (`<...>`) ONLY — zero square brackets (`[...]`) and zero closing tags (`</...>`)**:<br>• **Breathing:** `<breath>`, `<heavy breath>`, `<exhales>`, `<pant>`, `<sigh>`, `<sighs>`<br>• **Laughter:** `<laugh>`, `<chuckle>`, `<chuckles>`, `<giggle>`, `<snicker>`, `<cackle>`<br>• **Reactions:** `<gasp>`, `<cough>`, `<sneeze>`, `<throat-clearing>`, `<snort>`, `<tsk>`, `<argh>`<br>• **Sounds:** `<sob>`, `<cry>`, `<whimper>`, `<groan>`, `<yawn>`<br>• **Pauses:** `<short pause>`, `<long pause>`<br>• **Pacing (optional):** `<prosody rate="N%">`, first in a tag stack, with original rates kept exactly as written |
-| **Multi-Part Tone & Style Transitions**                                        | Square-bracket `[positive]`, `[neutral]`, `[reassuring]`, `[curiosity]`, `[professional]`, `[cautious]`                    | **Sentence-opening tone tags in angle brackets**: `<calm>`, `<empathetic>`, `<warm>`, `<positive>`, `<enthusiasm>`, `<clear>`, `<determination>`, `<interest>`, `<relief>` (plus supported `<sympathetic>`). A tone tag is a point marker that stays in effect until the next tone tag; never write closing tags (`</warm>`, `</prosody>`).                                                                                                                                                                                                                                                                                                     |
-| **Tag Remapping (V1 → V2)**                                                    | Used `[reassuring]`, `[curiosity]`, `[professional]`, `[cautious]`, `[happy]`, `[hope]`, `[laughs]`, `[neutral]`, `[slow]` | Automatically remaps low-performing and non-canonical tags: `reassuring` → `<empathetic>`, `curiosity` → `<interest>`, `professional` → `<clear>`, `cautious`/`alarm`/`nervousness` → `<calm>`, `happy`/`admiration` → `<positive>`, `hope`/`adoration` → `<warm>`, `crying` → `<sympathetic>`, `laughs` → `<chuckles>`, `annoyance`/`aggression` → `<determination>`, `medium pause` → `<short pause>`, `slow`/`slower` → `<prosody rate="65%">`, `exhale` → `<exhales>`, `whisper` → `<whispers>`, `clears throat` → `<throat-clearing>`, and deletes `<neutral>` / `[uhm]`.                                                                  |
-| **Emphasis, Hesitation & Spoken Text Normalization**                           | Square-bracket `[prosody rate=...]`, `[uhm]`; unscoped number rules                                                        | • **ALL CAPS** on 1–2 key words per turn for word stress (`NO outages`, `SOLID green`)<br>• **Ellipsis (`...`)** for a light hesitation beat; **never use `[uhm]`**<br>• **IPA spelling in slashes** (`/niːv/`) for tricky names<br>• **Tool-scoped spoken normalization** (`<instruction id="text normalization for speech">` with an explicit **`Scope:`** guard so normalized words are spoken to the caller but raw values like `"1234"` are passed to tools).                                                                                                                                                                              |
+| Dimension                        | Legacy Composite V1                                                                                  | Composite V2 (`gemini-composite-v2`)                                                                                                                                                                                                                                                                       |
+| :------------------------------- | :--------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Model Identifier**             | `"model": "gemini-composite-v1"`                                                                     | **`"model": "gemini-composite-v2"`** (temperature and `speakingRate` are not V2 requirements).                                                                                                                                                                                                             |
+| **`app.json` Speaking Style**    | Multi-paragraph `# AUDIO PROFILE` + `# THE SCENE` + `# DIRECTOR'S NOTES` + `## Transcript:\n`        | **Clear V1 Director's Notes. Primary recommendation: a ~12-word speaker profile** describing **who the speaker is** (age, timbre, pitch, accent, pace — see vertical examples in `references/natural_speech_patterns_v2.md` §1). **Secondary alternative:** `""`.                                          |
+| **Inline Non-Verbal Audio Tags** | Square brackets (`[short pause]`, `[medium pause]`, `[sigh]`, `[uhm]`, `[prosody rate="66%"]`)       | **Angle brackets (`<...>`) ONLY — zero `[...]` and zero closing tags (`</...>`)**: `<breath>`, `<exhales>`, `<sigh>`, `<laugh>`, `<chuckle>`, `<gasp>`, `<throat-clearing>`, `<short pause>`, `<long pause>`, and optional `<prosody rate="N%">` (first in stack).                                         |
+| **Multi-Part Tone Transitions**  | Square-bracket `[positive]`, `[neutral]`, `[reassuring]`, `[curiosity]`, `[professional]`            | **Sentence-opening tone tags in angle brackets**: `<calm>`, `<empathetic>`, `<warm>`, `<positive>`, `<enthusiasm>`, `<clear>`, `<determination>`, `<interest>`, `<relief>`, `<sympathetic>` (point markers staying in effect until the next tone tag).                                                     |
+| **Tag Remapping (V1 → V2)**      | Used `[reassuring]`, `[curiosity]`, `[professional]`, `[cautious]`, `[happy]`, `[neutral]`, `[slow]` | Automatically remaps low-performing tags (`reassuring` → `<empathetic>`, `curiosity` → `<interest>`, `professional` → `<clear>`, `medium pause` → `<short pause>`, `slow` → `<prosody rate="65%">`, removes `<neutral>` / `[uhm]`; full table in P1.2 and `references/natural_speech_patterns_v2.md` §2D). |
+| **Emphasis & Normalization**     | Square-bracket `[prosody rate=...]`, `[uhm]`; unscoped number rules                                  | **ALL CAPS** on 1–2 words per turn (Latin-script languages), **`...`** for hesitation, **`/IPA/`** in slashes for tricky names, and **tool-scoped spoken normalization** (`<instruction id="text normalization for speech">` with an explicit `Scope:` guard).                                             |
 
 ______________________________________________________________________
 
@@ -61,7 +58,7 @@ Run through this prioritized checklist (P0 → P1 → P2) whenever auditing, mig
   - `modelSettings.model` in `app.json` is `"gemini-composite-v2"`, and any agent-level `modelSettings.model` override in `agents/*/*.json` that still points to an older Composite model is upgraded too. `--remediate` upgrades only an older Composite model or a missing model; any other model is reported for the app owner to decide.
   - Temperature and `speakingRate` are **not** Composite V2 requirements: the auditor reports temperature only as a P2 advisory, and `--remediate` never changes temperature or `speakingRate`.
   - Every declared language (`defaultLanguageCode` + `supportedLanguageCodes`) has a matching entry in `audioProcessingConfig.synthesizeSpeechConfigs` with a `voice` set (the voice choice itself is checked in P1.1).
-  - **Zero V1 Director's Notes:** `synthesizeSpeechConfigs.<locale>.instruction` and `customVoiceSamples[].voiceInstruction` contain **no** `# Audio Profile`, `# The Scene`, `# Director's note`, or `## Transcript:` headers. `--remediate` clears them to an empty style (`""`) and prints the removed text so a person can write a short speaker profile if one is needed; it never injects a style.
+  - **Zero V1 Director's Notes:** `synthesizeSpeechConfigs.<locale>.instruction` and `customVoiceSamples[].voiceInstruction` contain **no** `# Audio Profile`, `# The Scene`, `# Director's note`, or `## Transcript:` headers. `--remediate` clears them to an empty style (`""`) and prints the removed text so you can replace it with a ~12-word vertical speaker profile (see P1.1) or keep `""` as a secondary alternative; `--remediate` never injects a style automatically.
 - [ ] **P0.2 (Angle-Bracket `<...>` Tag Syntax, Zero `[...]` Tags, Zero Translated Tags & Zero Closing Tags):**
   - Zero legacy square-bracket tags (`[prosody...]`, `[uhm]`, `[short pause]`, `[medium pause]`, `[sigh]`, `[positive]`, `[neutral]`, `[reassuring]`, `[slow]`, `[whispers]`, `[seriousness]`) remain anywhere in `global_instruction.txt`, `agents/*/instruction.txt`, `tools/*/python_function/python_code.py`, `tools/*/*.json`, or callbacks.
   - Zero translated non-English audio tags (`<pausa corta>`, `<empático>`, `<短暂停顿>`, `<छोटा विराम>`, etc.; `TRANSLATED_AUDIO_TAG`, P0) exist in instructions or examples. Composite V2 only recognizes English tag keywords and reads translated tags aloud; `--remediate` converts them to canonical English `<...>` tags.
@@ -192,32 +189,36 @@ uv run python .agents/skills/cxas-composite-v2-voice-agent-optimizer/scripts/aud
 
 ### Mode 2: Automated + Semantic Composite V2 Migration & Remediation
 
-1. **Snapshot a Version Before Changing Anything:**
+1. **Snapshot a Version Before Changing Anything (When Connected to a Live CES App):**
    ```bash
    uv run cxas versions create --app-name "<APP_RESOURCE_NAME>" --display-name "pre-composite-v2"
    ```
-1. **Preview the Automated Migration** (`--dry-run` prints a unified diff and writes nothing):
+1. **Preview the Automated Migration & Run the Three-Pass Contradiction Check** (`--dry-run` prints a unified diff and writes nothing):
    ```bash
    uv run python .agents/skills/cxas-composite-v2-voice-agent-optimizer/scripts/audit_agent_v2.py \
      --workspace="<PATH_TO_CXAS_APP_DIR>" \
      --remediate --dry-run
    ```
+   - Inspect `global_instruction.txt`, `agents/*/instruction.txt`, tool descriptions/docstrings, callbacks, and eval/test assertions across all three passes of the **Contradiction Check** (P1.5).
+1. **Batch All User Decisions in One Turn (If Any Require Confirmation):**
+   - Present a recommended **~12-word vertical speaker profile** from [`references/natural_speech_patterns_v2.md` §1](references/natural_speech_patterns_v2.md) adapted to the app's vertical, Chirp 3 HD voice gender, and locale (or offer `""` as the secondary alternative) when replacing a legacy V1 Director's Note or feeling-word style.
+   - Surface any **P1.5 prompt contradictions** (quoting the conflicting lines and offering options), any **`UNEVALUATED_V2_TAG`** swap suggestions, and ask before adding `<prosody rate>` where the app had none.
 1. **Run Automated In-Place Migration & Remediation** (`--backup` saves `<file>.bak` before changing each file). `--remediate`:
    - upgrades `app.json` and agent overrides to `"model": "gemini-composite-v2"` only when they use an older Composite model or no model (other models are reported for the owner to decide), and never changes temperature or `speakingRate`;
-   - clears legacy V1 `# Audio Profile` / `# Director's note` blocks and speaking styles over 25 words to `""` (including Director's Notes in `customVoiceSamples[].voiceInstruction`) and prints the removed text so a person can write a short speaker profile; it never injects a style;
+   - clears legacy V1 `# Audio Profile` / `# Director's note` blocks and speaking styles over 25 words to `""` (including Director's Notes in `customVoiceSamples[].voiceInstruction`) and prints the removed text so you can set the chosen ~12-word speaker profile (or keep `""`);
    - adds missing locale entries by reusing the default locale's Chirp 3 HD persona and copying its `speakingRate`, enables `languageSettings.enableMultilingualSupport: true` when `supportedLanguageCodes` declares additional locales, fills missing voice IDs, and never replaces a non-Chirp voice;
-   - converts `[tag]` → `<tag>` (keeping every `prosody rate` exactly as written) while skipping placeholders and control-logic labels, converts translated non-English audio tags (`<pausa corta>`, `<短暂停顿>`, etc.) to canonical English `<...>` tags, remaps low-performing tags (including `<slow>` / `<slower>` → `<prosody rate="65%">`), deduplicates tag lists, and moves prosody to the front of a tag stack;
+   - converts `[tag]` → `<tag>` (keeping every `prosody rate` exactly as written) while skipping placeholders and control-logic labels, converts translated non-English audio tags to canonical English `<...>` tags, remaps low-performing tags per P1.2, deduplicates tag lists, and moves prosody to the front of a tag stack;
    - inserts commas before mid-sentence pause tags inside utterances, relocates mid-sentence style tags in quoted utterances to sentence start, and strips forbidden closing audio tags (a `</prosody>` followed by more speech becomes `<prosody rate="100%">`).
    ```bash
    uv run python .agents/skills/cxas-composite-v2-voice-agent-optimizer/scripts/audit_agent_v2.py \
      --workspace="<PATH_TO_CXAS_APP_DIR>" \
      --remediate --backup
    ```
-1. **Apply Semantic Prompt & Callback Optimizations** using the canonical templates in [`references/natural_speech_patterns_v2.md`](references/natural_speech_patterns_v2.md):
-   - Add (or merge into an existing equivalent block) `<instruction id="audio tag format">` (covering V2 non-verbal sound/pause tags and multi-part `<calm>`, `<empathetic>`, `<warm>`, `<positive>`, `<clear>`, `<determination>`, `<interest>`, `<relief>` tone tags) and `<instruction id="text normalization for speech">` (including the mandatory **`Scope:`** tool-call guard and `/IPA/` pronunciation notation) to `global_instruction.txt`.
-   - Refactor `<persona>`, `<Affective Delivery and Voice Guidelines>`, `<response_protocol>`, and `<taskflow>` examples non-destructively to enforce concise single-paragraph turns, 1–2 ALL-CAPS stress words, pre-tool bridges + post-tool soft connectors, and clean tag placement.
-   - Ask the user before adding prosody where the app had none, and record the decision.
-   - Run the three-pass **Contradiction Check** (P1.5) across `global_instruction.txt`, `agents/*/instruction.txt`, tool instructions, callbacks, and eval/test assertions. Surface every conflict to the user and apply only the resolution they choose.
+1. **Apply Semantic Prompt, Speaking Style & Callback Optimizations** using the canonical templates in [`references/natural_speech_patterns_v2.md`](references/natural_speech_patterns_v2.md):
+   - Set `synthesizeSpeechConfigs.<locale>.instruction` to the chosen ~12-word vertical speaker profile (without copying English-locale accents into non-English locales) or `""`.
+   - Add (or merge into an existing equivalent block) `<instruction id="audio tag format">` and `<instruction id="text normalization for speech">` (including the mandatory **`Scope:`** tool-call guard, target-language number words, and `/IPA/` pronunciation notation) to `global_instruction.txt`.
+   - Refactor `<persona>`, `<Affective Delivery and Voice Guidelines>`, `<response_protocol>`, and `<taskflow>` examples non-destructively to enforce concise single-paragraph turns, 1–2 ALL-CAPS stress words (in Latin-script languages), pre-tool bridges + post-tool soft connectors, voice-persona gender agreement, non-Latin script purity, and clean tag placement.
+   - Apply the user's chosen resolutions for any P1.5 contradictions and `UNEVALUATED_V2_TAG` items.
    - Add or update `after_model_callback` for V2 tag preservation, contractions, silent-lookup bridge injection, and warm-transfer speech ordering.
 1. **Run Verification & Structural Linter:**
    ```bash
@@ -227,7 +228,7 @@ uv run python .agents/skills/cxas-composite-v2-voice-agent-optimizer/scripts/aud
 
    uv run cxas lint --app-dir "<PATH_TO_CXAS_APP_DIR>"
    ```
-1. **Push & Snapshot Again:** First delete the `.bak` files (or move them out of the app directory), because `cxas push` uploads everything inside `agents/` and `tools/`. Always pass `--to` with the full app resource name; without it, `cxas push` creates a new app.
+1. **Push & Snapshot Again (When Targeting a Live CES App):** First delete the `.bak` files (or move them out of the app directory), because `cxas push` uploads everything inside `agents/` and `tools/`. Always pass `--to` with the full app resource name; without it, `cxas push` creates a new app.
    ```bash
    uv run cxas push --app-dir "<PATH_TO_CXAS_APP_DIR>" --to "<APP_RESOURCE_NAME>"
    uv run cxas versions create --app-name "<APP_RESOURCE_NAME>" --display-name "composite-v2" --description "Optimized for Gemini Composite V2"
@@ -250,26 +251,26 @@ Report the migration to the user in this order:
 
 After static checks pass, verify actual synthesized voice quality on an E2E multi-turn simulation:
 
-1. **Run an Audio Simulation with Agent Audio Capture** from the project root that holds `gecx-config.json` (or from the workspace root when `.active-project` points to that project):
+1. **Run an Audio Simulation with Agent Audio Capture** (pass `GECX_PROJECT="<PROJECT_FOLDER>"` so the runner resolves the right project even if `.active-project` points elsewhere):
    ```bash
-   uv run python .agents/skills/cxas-agent-foundry/scripts/scrapi-sim-runner.py run \
+   GECX_PROJECT="<PROJECT_FOLDER>" uv run python .agents/skills/cxas-agent-foundry/scripts/scrapi-sim-runner.py run \
      --eval "<SCENARIO_NAME>" \
      --channel audio \
      --capture-agent-audio
    ```
 1. **Extract & Inspect Turn-by-Turn Audio (`.wav`)**:
-   - The per-turn WAV paths are recorded in the results (`agent_audio_paths`) that the runner saves under the project's `eval-reports/` folder.
-   - Inspect each turn's transcript and listen to key `.wav` files directly (Greeting Turn 0, Troubleshooting Turn, Resolution Turn, Account Readout Turn, Multi-Part Empathy-to-Solution Transition Turn, Warm Transfer Turn).
+   - Per-turn WAV files are written to `/tmp/scrapi_evals/<session_id>/turn_<N>_agent.wav` during execution (or captured directly via `Sessions(app_name).run(..., modality="audio", capture_agent_audio=True, turn_num=i)`).
+   - Inspect each turn's transcript and listen to key `.wav` files directly (Greeting Turn 0, Troubleshooting Turn, Resolution Turn, Account Readout Turn, Multi-Part Empathy-to-Solution Transition Turn, Multilingual Turn, Warm Transfer Turn).
 1. **Score Against the 6-Dimension Composite V2 Human-Likeness Rubric** (target ≥ 9.0 / 10):
-   1. **Vocal Timbre, Warmth & Speaker Consistency** (Stable persona without V1 Director's Note drift, authentic regional accent)
+   1. **Vocal Timbre, Warmth & Speaker Consistency** (Stable ~12-word speaker profile without V1 Director's Note drift, authentic regional accent)
    1. **Inline Sound & Multi-Part Tone Tag Execution** (`<breath>`, `<exhales>`, `<sigh>`, `<short pause>`, `<calm><empathetic> ... <positive>` placed cleanly at boundaries, zero `... <short pause>` double-stutter, zero `<exhales> ALL-CAPS` bark, zero `<sigh>`/`<exhales>` on call-ending/transfer turns)
-   1. **Lexical Stress (ALL-CAPS) & Rhythm** (Natural pitch lift on 1–2 capitalized words per turn)
+   1. **Lexical Stress (ALL-CAPS) & Rhythm** (Natural pitch lift on 1–2 capitalized words per turn in Latin-script languages)
    1. **Conversational Pacing, Bridges & Turn Length** (2–5 word varied pre-tool bridges, soft post-tool connectors, no noun echo, ≤ 45 words/turn)
    1. **Phonetic Accuracy, `/IPA/` & Alphanumeric Readout** (Accurate tracking/phone/address readout, `/IPA/` slash notation for tricky names, zero `"42%"` hallucination, raw written arguments passed to tools)
-   1. **Emotional Attunement & Empathy Restraint** (Smooth multi-part tone transitions from empathy to resolution, natural warm transfer confirmation before `end_session`)
+   1. **Emotional Attunement, Multilingual Fluency & Empathy Restraint** (Smooth multi-part tone transitions, native non-Latin script purity and voice-persona gender agreement, natural warm transfer confirmation before `end_session`)
 
 ______________________________________________________________________
 
 ## Reference Documentation
 
-- **[Composite V2 Natural Speech Patterns, Prompt Templates & Callback Reference](references/natural_speech_patterns_v2.md)**: Complete production templates for `gemini-composite-v2`, including speaking style guidance (empty by default, optional short speaker profile), voice persona rules, full V2 inline sound/pause and multi-part tone tag reference, optional `<prosody rate>` pacing, empirical V1-to-V2 tag replacement table, tool-scoped text normalization block, three-pass contradiction protocol & cross-app hand-off guide, `after_model_callback`, web widget tag-stripping regexes, and the acoustic troubleshooting table.
+- **[Composite V2 Natural Speech Patterns, Prompt Templates & Callback Reference](references/natural_speech_patterns_v2.md)**: Complete production templates for `gemini-composite-v2`, including speaking style guidance (~12-word vertical speaker profile by default, or empty as a secondary alternative), voice persona rules, full V2 inline sound/pause and multi-part tone tag reference, optional `<prosody rate>` pacing, empirical V1-to-V2 tag replacement table, tool-scoped text normalization block, three-pass contradiction protocol & cross-app hand-off guide, `after_model_callback`, web widget tag-stripping regexes, and the acoustic troubleshooting table.
