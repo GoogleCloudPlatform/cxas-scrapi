@@ -1174,6 +1174,7 @@ class VoiceAgentV2Auditor:
         workspace_dir: pathlib.Path | str = ".",
         dry_run: bool = False,
         backup: bool = False,
+        bind_custom_voice: str | None = None,
     ):
         self.workspace_path = pathlib.Path(workspace_dir).resolve()
         self.app_json_path = self._find_app_json()
@@ -1184,6 +1185,9 @@ class VoiceAgentV2Auditor:
         )
         self.dry_run = dry_run
         self.backup = backup
+        self.bind_custom_voice = (
+            bind_custom_voice.strip() if bind_custom_voice else None
+        )
         self.planned_diffs: list[str] = []
 
     def _find_app_json(self) -> pathlib.Path:
@@ -1703,8 +1707,27 @@ class VoiceAgentV2Auditor:
                         ),
                         "recommended": (
                             "Bind synthesizeSpeechConfigs.<locale>.voice to "
-                            f"'{sample_name}' or remove the unused entry from "
-                            "customVoiceSamples."
+                            f"'{sample_name}' (--remediate --bind-custom-voice "
+                            f"'{sample_name}' or 'auto' does this automatically) "
+                            "or remove the unused entry from customVoiceSamples."
+                        ),
+                    }
+                )
+
+            if str(sample.get("previewAudioContent") or "").strip():
+                issues.append(
+                    {
+                        "code": "CUSTOM_VOICE_STALE_PREVIEW_AUDIO_BLOB",
+                        "file": rel_app,
+                        "priority": "P2",
+                        "message": (
+                            f"Custom voice '{label}' embeds a base64 "
+                            "previewAudioContent WAV blob in app.json, bloating "
+                            "version control with a transient console preview."
+                        ),
+                        "recommended": (
+                            "Remove previewAudioContent from customVoiceSamples[] "
+                            "(--remediate strips this automatically)."
                         ),
                     }
                 )
@@ -2872,7 +2895,16 @@ class VoiceAgentV2Auditor:
                 for s in custom_samples
                 if s.get("name")
             }
-            persona_voice = self._persona_voice(
+            target_custom_voice: str | None = None
+            if self.bind_custom_voice:
+                if (
+                    self.bind_custom_voice.lower() == "auto"
+                    and len(custom_voice_names) == 1
+                ):
+                    target_custom_voice = next(iter(custom_voice_names))
+                elif self.bind_custom_voice in custom_voice_names:
+                    target_custom_voice = self.bind_custom_voice
+            persona_voice = target_custom_voice or self._persona_voice(
                 speech_cfgs, default_lang, custom_voice_names
             )
             default_cfg = speech_cfgs.get(default_lang)
@@ -2900,7 +2932,20 @@ class VoiceAgentV2Auditor:
                     app_changed = True
                     continue
                 cfg = speech_cfgs[lang]
-                if not str(cfg.get("voice") or "").strip():
+                if (
+                    target_custom_voice
+                    and str(cfg.get("voice") or "").strip()
+                    != target_custom_voice
+                ):
+                    old_v = str(cfg.get("voice") or "").strip()
+                    cfg["voice"] = target_custom_voice
+                    changes.append(
+                        f"Bound '{lang}' voice to custom voice "
+                        f"'{target_custom_voice}'"
+                        + (f" (was '{old_v}')." if old_v else ".")
+                    )
+                    app_changed = True
+                elif not str(cfg.get("voice") or "").strip():
                     cfg["voice"] = derive_locale_voice(
                         lang, persona_voice, custom_voice_names
                     )
@@ -2940,6 +2985,13 @@ class VoiceAgentV2Auditor:
                     sample["voiceInstructionMode"] = "NO_INSTRUCTION"
                     changes.append(
                         "Set voiceInstructionMode to 'NO_INSTRUCTION' on "
+                        f"custom voice '{label}'."
+                    )
+                    app_changed = True
+                if "previewAudioContent" in sample:
+                    sample.pop("previewAudioContent", None)
+                    changes.append(
+                        "Removed transient previewAudioContent blob from "
                         f"custom voice '{label}'."
                     )
                     app_changed = True
@@ -3085,6 +3137,16 @@ def main() -> None:
         help="With --remediate: save <file>.bak before changing a file.",
     )
     parser.add_argument(
+        "--bind-custom-voice",
+        type=str,
+        default=None,
+        help=(
+            "With --remediate: bind synthesizeSpeechConfigs.<locale>.voice "
+            "across declared locales to the given customVoiceSamples name "
+            "(or 'auto' when exactly one custom voice exists)."
+        ),
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -3105,10 +3167,15 @@ def main() -> None:
 
     args = parser.parse_args()
     auditor = VoiceAgentV2Auditor(
-        workspace_dir=args.workspace, dry_run=args.dry_run, backup=args.backup
+        workspace_dir=args.workspace,
+        dry_run=args.dry_run,
+        backup=args.backup,
+        bind_custom_voice=args.bind_custom_voice,
     )
 
     if args.lint_report:
+        if args.remediate and not args.dry_run:
+            auditor.remediate()
         report = auditor.to_lint_report()
         if hasattr(report, "to_json") and args.json_output:
             print(report.to_json())
@@ -3116,18 +3183,19 @@ def main() -> None:
             report.print_and_exit(json_output=args.json_output)
         else:
             print(json.dumps(report, indent=2))
-    elif args.report:
-        rep = auditor.generate_prioritized_report()
-        _emit(
-            json.dumps(rep, indent=2)
-            if args.json_output
-            else rep["markdown_report"],
-            args.output,
-        )
-        if rep["overall_status"] != "PASSED":
-            sys.exit(1)
     elif args.remediate:
         res = auditor.remediate()
+        if args.report and not args.dry_run:
+            rep = auditor.generate_prioritized_report()
+            _emit(
+                json.dumps(rep, indent=2)
+                if args.json_output
+                else rep["markdown_report"],
+                args.output,
+            )
+            if rep["overall_status"] != "PASSED":
+                sys.exit(1)
+            return
         if args.json_output:
             _emit(json.dumps(res, indent=2), args.output)
         elif args.dry_run:
@@ -3149,6 +3217,16 @@ def main() -> None:
             _emit("\n".join(out), args.output)
         post = res.get("post_remediation_audit")
         if post and post["overall_status"] != "PASSED":
+            sys.exit(1)
+    elif args.report:
+        rep = auditor.generate_prioritized_report()
+        _emit(
+            json.dumps(rep, indent=2)
+            if args.json_output
+            else rep["markdown_report"],
+            args.output,
+        )
+        if rep["overall_status"] != "PASSED":
             sys.exit(1)
     else:
         res = auditor.audit()

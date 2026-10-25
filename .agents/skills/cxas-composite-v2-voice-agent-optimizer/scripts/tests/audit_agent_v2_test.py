@@ -637,6 +637,7 @@ def test_custom_voice_audit_and_remediation(tmp_path: pathlib.Path) -> None:
                         "consentAudioGcsUri": "",
                         "voiceInstruction": "<agent_voice>Warm mid-pitch voice</agent_voice>",
                         "voiceInstructionMode": "GENERATE_INSTRUCTION",
+                        "previewAudioContent": "UklGRiQAAABXQVZFZm10IBAAAA==",
                     },
                     {
                         "name": "UnusedBrandVoice",
@@ -655,6 +656,7 @@ def test_custom_voice_audit_and_remediation(tmp_path: pathlib.Path) -> None:
     assert "CUSTOM_VOICE_INSTRUCTION_MODE_NOT_DISABLED" in codes
     assert "CUSTOM_VOICE_INSTRUCTION_TOO_LONG" in codes
     assert "UNBOUND_CUSTOM_VOICE_SAMPLE" in codes
+    assert "CUSTOM_VOICE_STALE_PREVIEW_AUDIO_BLOB" in codes
     assert "DEPRECATED_INLINE_VOICE_SAMPLE_URI" in codes
     assert "CUSTOM_VOICE_LOCALE_STYLE_CONFLICT" in codes
 
@@ -663,6 +665,7 @@ def test_custom_voice_audit_and_remediation(tmp_path: pathlib.Path) -> None:
     samples = out["audioProcessingConfig"]["customVoiceSamples"]
     assert samples[0]["voiceInstruction"] == ""
     assert samples[0]["voiceInstructionMode"] == "NO_INSTRUCTION"
+    assert "previewAudioContent" not in samples[0]
     assert samples[1]["voiceInstruction"] == ""
     assert samples[1]["voiceInstructionMode"] == "NO_INSTRUCTION"
     assert any("agent_voice" in s for s in res["removed_styles"])
@@ -673,3 +676,48 @@ def test_custom_voice_audit_and_remediation(tmp_path: pathlib.Path) -> None:
     assert speech["en-AU"]["instruction"] == ""
     assert speech["es-US"]["voice"] == "OptusClonedVoice"
     assert speech["es-US"]["instruction"] == ""
+
+
+def test_bind_custom_voice_auto_one_pass(tmp_path: pathlib.Path) -> None:
+    app = _make_app(
+        tmp_path,
+        supported=("es-US",),
+        extra_app={
+            "audioProcessingConfig": {
+                "synthesizeSpeechConfigs": {
+                    "en-AU": {
+                        "voice": "en-AU-Chirp3-HD-Aoede",
+                        "speakingRate": 1.0,
+                        "instruction": "warm, friendly, natural, professional",
+                    },
+                    "es-US": {
+                        "voice": "es-US-Chirp3-HD-Aoede",
+                        "speakingRate": 1.0,
+                        "instruction": "warm, friendly, natural, professional",
+                    },
+                },
+                "customVoiceSamples": [
+                    {
+                        "name": "Claire",
+                        "voiceSampleGcsUri": "gs://bucket/claire.wav",
+                        "consentAudioGcsUri": "gs://bucket/claire_consent.wav",
+                        "voiceInstruction": "<agent_voice>Bright voice</agent_voice>",
+                        "voiceInstructionMode": "GENERATE_INSTRUCTION",
+                        "previewAudioContent": "UklGRiQAAABXQVZFZm10IBAAAA==",
+                    }
+                ],
+            }
+        },
+    )
+    res = aud.VoiceAgentV2Auditor(app, bind_custom_voice="auto").remediate()
+    assert res["post_remediation_audit"]["overall_status"] == "PASSED"
+    out = json.loads((app / "app.json").read_text())
+    speech = out["audioProcessingConfig"]["synthesizeSpeechConfigs"]
+    assert speech["en-AU"]["voice"] == "Claire"
+    assert speech["en-AU"]["instruction"] == ""
+    assert speech["es-US"]["voice"] == "Claire"
+    assert speech["es-US"]["instruction"] == ""
+    sample = out["audioProcessingConfig"]["customVoiceSamples"][0]
+    assert sample["voiceInstruction"] == ""
+    assert sample["voiceInstructionMode"] == "NO_INSTRUCTION"
+    assert "previewAudioContent" not in sample
