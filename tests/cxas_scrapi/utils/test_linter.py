@@ -242,9 +242,9 @@ def test_reset_registry() -> None:
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    # 65 baseline + 11 cross-surface V100-V104 registrations
+    # 57 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + T014 + E012.
-    assert len(registry_restored.all_rules()) == 79  # noqa: PLR2004
+    assert len(registry_restored.all_rules()) == 71  # noqa: PLR2004
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -264,7 +264,7 @@ def test_lint_config_load_from_yaml(tmp_path: typing.Any) -> None:
         "evals_dir: my_evals/\n"
         "rules:\n"
         "  I008: off\n"
-        "  I003: error\n"
+        "  I012: error\n"
         "ignore:\n"
         "  - '**/__pycache__/**'\n"
     )
@@ -272,7 +272,7 @@ def test_lint_config_load_from_yaml(tmp_path: typing.Any) -> None:
     assert config.app_dir == "my_app/"
     assert config.evals_dir == "my_evals/"
     assert config.rules["I008"] == Severity.OFF
-    assert config.rules["I003"] == Severity.ERROR
+    assert config.rules["I012"] == Severity.ERROR
     assert "**/__pycache__/**" in config.ignore
 
 
@@ -546,9 +546,9 @@ def test_discovery_filtering(tmp_path: typing.Any) -> None:
 def test_build_registry_all_rules() -> None:
     registry = build_registry()
     all_rules = registry.all_rules()
-    # 65 baseline + 11 cross-surface V100-V104 registrations
+    # 57 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + T014 + E012.
-    assert len(all_rules) == 79  # noqa: PLR2004
+    assert len(all_rules) == 71  # noqa: PLR2004
 
 
 def test_build_context(tmp_path: typing.Any) -> None:
