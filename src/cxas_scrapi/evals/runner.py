@@ -29,6 +29,10 @@ from cxas_scrapi.evals.callback_evals import CallbackEvals
 from cxas_scrapi.evals.shadow_evals import ShadowEvals
 from cxas_scrapi.evals.simulation_evals import SimulationEvals
 from cxas_scrapi.evals.tool_evals import ToolEvals
+from cxas_scrapi.redaction.evals import (
+    check_golden_results,
+    golden_redaction_expectations,
+)
 from cxas_scrapi.utils.eval_utils import (
     CALLBACK_RESULTS_FILENAME,
     SHADOW_RESULTS_FILENAME,
@@ -101,6 +105,8 @@ def run_all_evals(
 
     # 1. Platform goldens (Trigger async)
     evaluations_to_run = []
+    # Goldens that opted into redaction checks: display name -> spec.
+    golden_redaction: dict[str, dict[str, typing.Any]] = {}
     if "goldens" in include:
         if not goldens_dir:
             goldens_dir = "evals/goldens/"
@@ -128,6 +134,7 @@ def run_all_evals(
 
             for gf in golden_files:
                 print(f"Pushing golden file {gf}")
+                golden_redaction.update(golden_redaction_expectations(gf))
                 evals = eval_utils.load_golden_evals_from_yaml(gf)
                 for eval_dict in evals:
                     if filter_tags:
@@ -467,5 +474,14 @@ def run_all_evals(
                     f"    ERROR: Failed to resolve run name for batch "
                     f"{idx + 1}. Skipping."
                 )
+
+        # Golden conversations are not redacted by the platform; replay the
+        # opted-in ones through the app's DLP templates.
+        if golden_redaction and results["golden"]:
+            print(
+                f"\nChecking redaction for {len(golden_redaction)} golden "
+                "eval(s) via DLP replay..."
+            )
+            check_golden_results(app_name, results["golden"], golden_redaction)
 
     return results

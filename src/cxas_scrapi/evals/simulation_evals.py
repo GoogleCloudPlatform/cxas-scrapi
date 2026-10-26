@@ -50,6 +50,12 @@ from cxas_scrapi.evals.naturalness import (
     parse_naturalness_config,
 )
 from cxas_scrapi.prompts import llm_user_prompts
+from cxas_scrapi.redaction.live import (
+    LiveRedactionCheck,
+    LiveSessionCapture,
+    response_to_turn_messages,
+)
+from cxas_scrapi.redaction.policy import RedactionExpectations
 from cxas_scrapi.utils.eval_utils import (
     Conversation as GoldenConversation,
 )
@@ -1004,6 +1010,11 @@ class SimulationEvals(Apps):
             detailed_trace = []
             detailed_trace.append(f"User: {user_utterance}")
             turn_traces: list[dict[str, Any]] = []
+            # Raw (unredacted) messages per turn, used by redaction checks.
+            turn_messages: list[list[dict[str, Any]]] = []
+            capture_turn_messages = bool(
+                test_case.get("redaction_expectations")
+            )
 
             while user_utterance:
                 barge_in_offset = (
@@ -1131,6 +1142,9 @@ class SimulationEvals(Apps):
                 if not response:
                     break
 
+                if capture_turn_messages:
+                    turn_messages.append(response_to_turn_messages(response))
+
                 # Extract and save the agent turn audio WAV if present
                 # in response.
                 if response and getattr(response, "agent_audio_paths", None):
@@ -1226,6 +1240,7 @@ class SimulationEvals(Apps):
             eval_conv.detailed_trace = detailed_trace
             eval_conv._turn_traces = turn_traces
             eval_conv.turn_traces = turn_traces
+            eval_conv.turn_messages = turn_messages
             if turn_traces and session_id:
                 with contextlib.suppress(Exception):
                     cache_dir = "/tmp/scrapi_traces"
@@ -1332,6 +1347,22 @@ class SimulationEvals(Apps):
                 if naturalness_result.passed is not None:
                     passed = passed and naturalness_result.passed
 
+            # Optional redaction check: compare the live (raw) turns with
+            # the persisted, redacted conversation for this session.
+            redaction_summary = self._check_redaction(tc, conv, session_id)
+            redaction_note = ""
+            if redaction_summary is not None:
+                ok = redaction_summary.get("passed", False)
+                passed = passed and ok
+                counts = redaction_summary.get("summary", {})
+                redaction_note = f" | redaction: {'ok' if ok else 'FAILED'}" + (
+                    f" (leaks {counts.get('leak', 0)}, partial "
+                    f"{counts.get('partial_leak', 0)}, over-redacted "
+                    f"{counts.get('over_redaction', 0)})"
+                    if counts
+                    else f" ({redaction_summary.get('error')})"
+                )
+
             status = "PASS" if passed else "FAIL"
             if parallel > 1 or not verbose:
                 print(
@@ -1339,7 +1370,7 @@ class SimulationEvals(Apps):
                     f"{goals_completed}/{total_goals} | "
                     f"expectations: {expectations_met}/{total_exp} | "
                     f"turns: {conv.current_turn} | {duration_s}s"
-                    f"{naturalness_note}"
+                    f"{naturalness_note}{redaction_note}"
                 )
 
             raw_turn_traces = getattr(
@@ -1396,6 +1427,9 @@ class SimulationEvals(Apps):
                 )
                 result["naturalness_details"] = naturalness_result.model_dump()
 
+            if redaction_summary is not None:
+                result["redaction"] = redaction_summary
+
             return result
         except Exception as e:
             print(f"  ERROR  {label}: {e}")
@@ -1405,6 +1439,37 @@ class SimulationEvals(Apps):
                 "passed": False,
                 "error": str(e),
             }
+
+    def _check_redaction(
+        self, tc: dict[str, Any], conv: Any, session_id: str
+    ) -> dict[str, Any] | None:
+        """Runs the optional ``redaction_expectations`` check for a sim.
+
+        Returns ``None`` when the test case does not opt in, otherwise the
+        redaction report as a dict (or ``{"passed": False, "error": ...}``).
+        """
+        raw = tc.get("redaction_expectations")
+        if not raw:
+            return None
+        try:
+            expectations = RedactionExpectations.parse(raw)
+            if expectations is None:
+                return None
+            policy = expectations.resolve_policy(tc.get("_redaction_base_dir"))
+            capture = LiveSessionCapture(
+                session_id=session_id,
+                turn_messages=list(getattr(conv, "turn_messages", []) or []),
+            )
+            check = LiveRedactionCheck(
+                app_name=self.app_name, policy=policy, creds=self.creds
+            )
+            report = check.check_capture(
+                capture, require=expectations.require, source=tc["name"]
+            )
+            return report.to_dict()
+        except Exception as e:
+            logger.warning("Redaction check failed for %s: %s", tc["name"], e)
+            return {"passed": False, "error": str(e)}
 
     @staticmethod
     def _declared_expectations_count(

@@ -116,11 +116,14 @@ class Conversation(BaseModel):
     tags: list[str] = []
     session_parameters: VariableMap = {}
     turns: list[Turn]
+    # Optional local-only redaction check (not sent to the platform).
+    redaction_expectations: Any = None
 
 
 class Conversations(BaseModel):
     common_session_parameters: dict[str, Any] = {}
     common_expectations: list[str] = []
+    common_redaction_expectations: Any = None
     conversations: list[Conversation]
 
 
