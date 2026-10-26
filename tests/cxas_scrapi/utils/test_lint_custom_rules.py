@@ -28,6 +28,7 @@ from cxas_scrapi.utils.linter import (
     _REGISTERED_IDS,
     _RULE_REGISTRY,
     CustomRuleError,
+    LintConfig,
     Rule,
     build_registry,
     get_registered_rules,
@@ -291,6 +292,117 @@ def test_rule_decorator_registers_again_after_a_source_fails(
     assert "TST099" in registered
 
 
+# ── cxaslint.yaml custom_rules ───────────────────────────────────────────
+
+
+def _configure(project: Path, custom_rules: list[str]) -> LintConfig:
+    project.mkdir(exist_ok=True)
+    (project / "cxaslint.yaml").write_text(
+        "custom_rules:\n" + "".join(f"  - {p}\n" for p in custom_rules)
+    )
+    return LintConfig.load(project)
+
+
+def test_config_rule_file_is_registered(rules_root: Path) -> None:
+    project = rules_root / "project"
+    (project / "lint_rules").mkdir(parents=True)
+    _write_rules(project / "lint_rules", "tst_file_rules")
+    config = _configure(project, ["lint_rules/tst_file_rules.py"])
+
+    registry = build_registry(config)
+
+    assert registry.get("TST001").source == "tst_file_rules.py"
+
+
+def test_config_rule_package_is_registered(rules_root: Path) -> None:
+    package = rules_root / "project" / "tst_pkg"
+    package.mkdir(parents=True)
+    # The package imports its own module by absolute name.
+    (package / "__init__.py").write_text("from tst_pkg import rules  # noqa\n")
+    _write_rules(package, "rules")
+    config = _configure(rules_root / "project", ["tst_pkg"])
+
+    registry = build_registry(config)
+
+    assert registry.get("TST001").source == "tst_pkg"
+
+
+def test_building_twice_with_config_rules_registers_them_once(
+    rules_root: Path,
+) -> None:
+    project = rules_root / "project"
+    project.mkdir()
+    _write_rules(project, "tst_file_rules")
+    config = _configure(project, ["tst_file_rules.py"])
+
+    build_registry(config)
+    registry = build_registry(config)
+
+    assert [r.id for r in registry.all_rules()].count("TST001") == 1
+
+
+def test_missing_config_rule_file_is_rejected(rules_root: Path) -> None:
+    config = _configure(rules_root / "project", ["lint_rules/missing.py"])
+
+    with pytest.raises(CustomRuleError, match=r"'missing.py'"):
+        build_registry(config)
+
+
+def test_config_rule_file_that_shadows_a_loaded_module_is_rejected(
+    rules_root: Path,
+) -> None:
+    project = rules_root / "project"
+    project.mkdir()
+    _write_rules(project, "json")
+    config = _configure(project, ["json.py"])
+
+    with pytest.raises(CustomRuleError, match=r"'json.py'.*already"):
+        build_registry(config)
+
+
+def test_config_rule_file_that_fails_to_import_fails_on_every_build(
+    rules_root: Path,
+) -> None:
+    project = rules_root / "project"
+    project.mkdir()
+    (project / "tst_flaky.py").write_text("raise RuntimeError('broken')\n")
+    config = _configure(project, ["tst_flaky.py"])
+
+    for _ in range(2):
+        with pytest.raises(CustomRuleError, match="RuntimeError: broken"):
+            build_registry(config)
+
+
+def test_config_rule_file_that_is_not_python_is_rejected(
+    rules_root: Path,
+) -> None:
+    project = rules_root / "project"
+    project.mkdir()
+    (project / "rules.txt").write_text("not python\n")
+    config = _configure(project, ["rules.txt"])
+
+    with pytest.raises(CustomRuleError, match="not a Python file"):
+        build_registry(config)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "custom_rules: team_rules.py\n",  # A string, not a list.
+        "custom_rules:\n  - 123\n",  # An entry that is not a path.
+    ],
+)
+def test_custom_rules_must_be_a_list_of_paths(
+    rules_root: Path, value: str
+) -> None:
+    project = rules_root / "project"
+    project.mkdir()
+    (project / "cxaslint.yaml").write_text(value)
+
+    with pytest.raises(ValueError, match="custom_rules"):
+        LintConfig.load(project)
+
+
 # ── cxas lint ────────────────────────────────────────────────────────────
 
 
@@ -371,3 +483,45 @@ def test_lint_reports_rejected_custom_rules_as_text(
 
     assert code == 1
     assert "[SETUP] Custom rule T002 from 'tst'" in capsys.readouterr().out
+
+
+def test_lint_runs_config_rules(
+    rules_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = rules_root / "project"
+    _make_app(project, "<role>TODO</role>")
+    _write_rules(project, "tst_file_rules")
+    _configure(project, ["tst_file_rules.py"])
+
+    code = _lint(project, json_output=True, rule="TST001")
+
+    assert code == 1
+    results = json.loads(capsys.readouterr().out)
+    assert [r["rule_id"] for r in results] == ["TST001"]
+
+
+def test_list_rules_includes_config_rules(
+    rules_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = rules_root / "project"
+    project.mkdir()
+    _write_rules(project, "tst_file_rules")
+    _configure(project, ["tst_file_rules.py"])
+
+    code = _lint(project, list_rules=True)
+
+    assert code == 0
+    assert "[custom: tst_file_rules.py]" in capsys.readouterr().out
+
+
+def test_config_severity_override_applies_to_custom_rules(
+    rules_root: Path,
+) -> None:
+    project = rules_root / "project"
+    _make_app(project, "<role>TODO</role>")
+    _write_rules(project, "tst_file_rules")
+    (project / "cxaslint.yaml").write_text(
+        "custom_rules:\n  - tst_file_rules.py\nrules:\n  TST001: off\n"
+    )
+
+    assert _lint(project, rule="TST001") == 0

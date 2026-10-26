@@ -572,9 +572,10 @@ def app_lint(args: argparse.Namespace) -> None:
     show_fixes = getattr(args, "fix", False)
 
     project_root = Path(getattr(args, "app_dir", ".")).resolve()
+    config = LintConfig.load(project_root)
 
     try:
-        registry = build_registry()
+        registry = build_registry(config)
     except CustomRuleError as e:
         # Report it as a lint error, so a hook that counts errors blocks.
         report = LintReport()
@@ -620,8 +621,6 @@ def app_lint(args: argparse.Namespace) -> None:
         return
 
     # Full app lint
-    config = LintConfig.load(project_root)
-
     app_dir = project_root / config.app_dir
     evals_dir = project_root / config.evals_dir
 

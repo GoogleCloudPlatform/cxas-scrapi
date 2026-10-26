@@ -5,7 +5,10 @@ description: Write lint rules for your own team, and run them with the built-in 
 
 # Custom Rules
 
-`cxas lint` can run lint rules that you write yourself, next to the built-in rules. You write them in Python, in the same form as the built-in rules, and install them as a package that declares an entry point in the `cxas_scrapi.lint_rules` group.
+`cxas lint` can run lint rules that you write yourself, next to the built-in rules. You write them in Python, in the same form as the built-in rules. The linter loads custom rules from two places:
+
+- **Files and package directories** that `cxaslint.yaml` lists under `custom_rules`.
+- **An installed package** that declares an entry point in the `cxas_scrapi.lint_rules` group. Use this to share rules across projects.
 
 Custom rules behave like built-in rules. `cxaslint.yaml` can change their severity, pass them options and override them per file. `--rule`, `--only` and `--list-rules` include them, and `--list-rules` marks each custom rule with `[custom: <source>]`.
 
@@ -56,11 +59,28 @@ class NoTodo(Rule):
 - **ID:** pick a prefix that the built-in rules do not use, such as `TEAM001`. The linter refuses a rule with no ID, an ID that a built-in rule or another source already uses, and an ID defined twice in one category. Like some built-in rules, one rule ID may appear in several categories.
 - **Options:** read the rule's options from `context.options.get(self.id, {})`. Users set them under `options` in `cxaslint.yaml`.
 
-A package of rules must import each of its rule modules, for example from its `__init__.py`. Importing a module runs its `@rule` decorators, which register the rules.
+Put rules that span several modules in a package directory, and import each rule module from its `__init__.py`. Importing a module runs its `@rule` decorators, which register the rules. Modules in the package can import each other. A single-file source cannot import a module beside it.
 
 ---
 
-## Install rules as a package
+## Load rules from cxaslint.yaml
+
+List the file or package directory under `custom_rules`. Paths are relative to the directory that holds `cxaslint.yaml`:
+
+```yaml
+custom_rules:
+  - lint_rules/team_rules.py   # A single module
+  - lint_rules/billing_rules   # A package directory with __init__.py
+```
+
+The linter imports each entry under its own name: `team_rules` and `billing_rules` here. It refuses a name that another imported module already uses, so choose distinctive names.
+
+!!! warning
+    `cxas lint` runs the code in every file and package listed under `custom_rules`. Only lint projects whose custom rules you trust.
+
+---
+
+## Share rules as an installed package
 
 Declare the module that holds your rules as an entry point in your package's `pyproject.toml`:
 

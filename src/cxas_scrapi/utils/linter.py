@@ -25,7 +25,9 @@ Configuration lives in ``cxaslint.yaml``.
 
 import fnmatch
 import importlib.metadata
+import importlib.util
 import json
+import sys
 import typing
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -183,8 +185,9 @@ class Rule(ABC):
       their category.
     - models: optional list of model names/patterns this rule applies to.
       If None or empty, the rule is model-agnostic and applies to all models.
-    - source: where a custom rule came from (its entry-point name). Set
-      when the custom rules load; empty for built-in rules.
+    - source: where a custom rule came from (an entry-point name, or the
+      file or package listed under ``custom_rules``). Set when the
+      custom rules load; empty for built-in rules.
     """
 
     id: str = ""
@@ -443,6 +446,8 @@ class LintConfig:
     options: dict[str, dict] = field(default_factory=dict)
     ignore: list[str] = field(default_factory=list)
     per_file: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Custom rule files and packages, resolved against the project root.
+    custom_rules: list[Path] = field(default_factory=list)
 
     @classmethod
     def load(cls, project_root: Path) -> "LintConfig":
@@ -463,6 +468,14 @@ class LintConfig:
             config.options = data.get("options") or {}
             config.ignore = data.get("ignore") or []
             config.per_file = data.get("per_file") or {}
+            custom_rules = data.get("custom_rules") or []
+            if not isinstance(custom_rules, list) or not all(
+                isinstance(p, str) for p in custom_rules
+            ):
+                raise ValueError(
+                    "custom_rules in cxaslint.yaml must be a list of paths"
+                )
+            config.custom_rules = [project_root / p for p in custom_rules]
 
         # Fall back to gecx-config.json for app_dir if not set by cxaslint.yaml
         if config.app_dir == ".":
@@ -832,17 +845,44 @@ def _register_custom_rules(source: str, load: Callable[[], object]) -> None:
         _RULE_REGISTRY[r.category].append(r)
 
 
+def _import_path(path: Path) -> None:
+    """Import a module file or package directory under its own name."""
+    location = (path / "__init__.py" if path.is_dir() else path).resolve()
+    if not location.is_file():
+        raise FileNotFoundError(f"{location} does not exist")
+    loaded = sys.modules.get(path.stem)
+    if loaded is not None:
+        if getattr(loaded, "__file__", None) == str(location):
+            return
+        raise ImportError(
+            f"the module name '{path.stem}' is already used by {loaded!r}"
+        )
+    spec = importlib.util.spec_from_file_location(path.stem, location)
+    if spec is None:
+        raise ImportError(f"{location} is not a Python file")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[path.stem] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        # Forget the half-run module, so the next build fails again.
+        del sys.modules[path.stem]
+        raise
+
+
 # ── Runner ───────────────────────────────────────────────────────────────
 
 
-def build_registry() -> RuleRegistry:
+def build_registry(config: LintConfig | None = None) -> RuleRegistry:
     """Build the rule registry by importing all rule modules.
 
     Importing ``cxas_scrapi.utils.lint_rules`` triggers the ``@rule``
     decorator on every rule class, populating ``_RULE_REGISTRY``.  We
-    then load custom rules from the modules that installed packages
+    then load custom rules: from the modules that installed packages
     declare under the ``cxas_scrapi.lint_rules`` entry-point group, and
-    copy all rules into a ``RuleRegistry`` for config-aware lookups.
+    from the files and packages that ``config.custom_rules`` lists.
+    Finally we copy all rules into a ``RuleRegistry`` for config-aware
+    lookups.
     """
     import cxas_scrapi.utils.lint_rules  # noqa: F401,PLC0415
 
@@ -850,6 +890,8 @@ def build_registry() -> RuleRegistry:
         group=CUSTOM_RULES_ENTRY_POINT_GROUP
     ):
         _register_custom_rules(entry_point.name, entry_point.load)
+    for path in config.custom_rules if config else []:
+        _register_custom_rules(path.name, lambda path=path: _import_path(path))
 
     registry = RuleRegistry()
     for _category, rules in get_registered_rules().items():
