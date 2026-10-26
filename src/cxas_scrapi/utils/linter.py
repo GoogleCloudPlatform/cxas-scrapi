@@ -24,10 +24,12 @@ Configuration lives in ``cxaslint.yaml``.
 """
 
 import fnmatch
+import importlib.metadata
 import json
 import typing
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -181,6 +183,8 @@ class Rule(ABC):
       their category.
     - models: optional list of model names/patterns this rule applies to.
       If None or empty, the rule is model-agnostic and applies to all models.
+    - source: where a custom rule came from (its entry-point name). Set
+      when the custom rules load; empty for built-in rules.
     """
 
     id: str = ""
@@ -190,6 +194,7 @@ class Rule(ABC):
     category: str = ""
     target: str = ""
     models: list[str] | None = None
+    source: str = ""
 
     def is_applicable_for_model(self, model: str | None) -> bool:
         """Check if this rule is applicable for the given model.
@@ -241,6 +246,9 @@ _RULE_REGISTRY: dict[str, list[Rule]] = defaultdict(list)
 # multiple categories (e.g. V100 across callbacks/tools/evals) while
 # repeated imports of the same rule still no-op.
 _REGISTERED_IDS: set[tuple[str, str]] = set()
+# While custom rules load, @rule appends each rule to the last list here
+# instead of registering it, so the loader can check the rules first.
+_CAPTURE: list[list[Rule]] = []
 
 
 def rule(
@@ -275,7 +283,9 @@ def rule(
             cls.models = [cls.models]
         instance = cls()
         key = (instance.id, category)
-        if key not in _REGISTERED_IDS:
+        if _CAPTURE:
+            _CAPTURE[-1].append(instance)
+        elif key not in _REGISTERED_IDS:
             _REGISTERED_IDS.add(key)
             _RULE_REGISTRY[category].append(instance)
         return cls
@@ -412,8 +422,10 @@ class RuleRegistry:
                 print(f"\n  {current_cat.upper()}")
             sev = r.default_severity.value.upper()
             model_info = f" [models: {', '.join(r.models)}]" if r.models else ""
+            source_info = f" [custom: {r.source}]" if r.source else ""
             print(
-                f"    {r.id}  [{sev:7s}]{model_info}  {r.name}: {r.description}"
+                f"    {r.id}  [{sev:7s}]{model_info}{source_info}  "
+                f"{r.name}: {r.description}"
             )
 
 
@@ -736,6 +748,90 @@ SINGLE_RESOURCE_RULES = {
 }
 
 
+# ── Custom Rules ─────────────────────────────────────────────────────────
+
+CUSTOM_RULES_ENTRY_POINT_GROUP = "cxas_scrapi.lint_rules"
+
+
+class CustomRuleError(Exception):
+    """Custom rules failed to load, or clash with registered rules."""
+
+
+def _capture_rules(load: Callable[[], object]) -> list[Rule]:
+    """Call ``load`` and return every rule that ``@rule`` decorated.
+
+    Nothing is registered, and duplicates are kept, so the caller can
+    check the rules before it registers them.
+    """
+    captured: list[Rule] = []
+    _CAPTURE.append(captured)
+    try:
+        load()
+    finally:
+        _CAPTURE.pop()
+    return captured
+
+
+def _register_custom_rules(source: str, load: Callable[[], object]) -> None:
+    """Load the custom rules from one source and add them to the registry.
+
+    Raises ``CustomRuleError``, and registers nothing from the source,
+    when the source fails to import or one of its rules cannot run
+    cleanly: it has no ID, defines its ID twice in one category, reuses a
+    registered ID, or names a category or target that no built-in rule
+    uses (``run_rules`` would never run it).
+    """
+    try:
+        rules = _capture_rules(load)
+    except Exception as e:
+        raise CustomRuleError(
+            f"Custom rules from '{source}' failed to load: "
+            f"{type(e).__name__}: {e}"
+        ) from e
+
+    registered = [r for rs in _RULE_REGISTRY.values() for r in rs]
+    taken_ids = {r.id for r in registered}
+    builtin = [r for r in registered if not r.source]
+    categories = {r.category for r in builtin}
+    # run_rules hands files to these categories by Rule.target.
+    target_categories = {r.category for r in builtin if r.target}
+    targets = {r.target for r in builtin if r.target}
+    seen: set[tuple[str, str]] = set()
+    for r in rules:
+        if not r.id:
+            raise CustomRuleError(
+                f"A custom rule from '{source}' has no rule ID."
+            )
+        if (r.id, r.category) in seen:
+            raise CustomRuleError(
+                f"Custom rule {r.id} from '{source}' is defined twice in "
+                f"the '{r.category}' category."
+            )
+        seen.add((r.id, r.category))
+        if r.id in taken_ids:
+            raise CustomRuleError(
+                f"Custom rule {r.id} from '{source}' reuses a rule ID "
+                "that is already registered."
+            )
+        if r.category not in categories:
+            raise CustomRuleError(
+                f"Custom rule {r.id} from '{source}' is in the unknown "
+                f"category '{r.category}'. Use one of: "
+                f"{', '.join(sorted(categories))}."
+            )
+        if r.category in target_categories and r.target not in targets:
+            raise CustomRuleError(
+                f"Custom rule {r.id} from '{source}' is in the "
+                f"'{r.category}' category, so it needs a target. Use one "
+                f"of: {', '.join(sorted(targets))}."
+            )
+
+    for r in rules:
+        r.source = source
+        _REGISTERED_IDS.add((r.id, r.category))
+        _RULE_REGISTRY[r.category].append(r)
+
+
 # ── Runner ───────────────────────────────────────────────────────────────
 
 
@@ -744,9 +840,16 @@ def build_registry() -> RuleRegistry:
 
     Importing ``cxas_scrapi.utils.lint_rules`` triggers the ``@rule``
     decorator on every rule class, populating ``_RULE_REGISTRY``.  We
-    then copy those into a ``RuleRegistry`` for config-aware lookups.
+    then load custom rules from the modules that installed packages
+    declare under the ``cxas_scrapi.lint_rules`` entry-point group, and
+    copy all rules into a ``RuleRegistry`` for config-aware lookups.
     """
     import cxas_scrapi.utils.lint_rules  # noqa: F401,PLC0415
+
+    for entry_point in importlib.metadata.entry_points(
+        group=CUSTOM_RULES_ENTRY_POINT_GROUP
+    ):
+        _register_custom_rules(entry_point.name, entry_point.load)
 
     registry = RuleRegistry()
     for _category, rules in get_registered_rules().items():

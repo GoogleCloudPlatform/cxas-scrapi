@@ -96,7 +96,7 @@ The linter has 7 categories covering every file type in your agent app:
 | Structure | `S` | Cross-reference checks between files |
 | Schema | `V` | JSON schema validation against CES protos |
 
-For the complete rule reference, see [Rule Reference](rules.md). For configuration options, see [Configuration](configuration.md).
+For the complete rule reference, see [Rule Reference](rules.md). For configuration options, see [Configuration](configuration.md). To add rules of your own, see [Custom Rules](custom-rules.md).
 
 ---
 

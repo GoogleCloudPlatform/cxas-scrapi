@@ -556,16 +556,37 @@ def app_lint(args: argparse.Namespace) -> None:
     """Handles the 'lint' command."""
     from cxas_scrapi.utils.linter import (  # noqa: PLC0415
         SINGLE_RESOURCE_RULES,
+        CustomRuleError,
         Discovery,
         LintConfig,
         LintContext,
         LintReport,
+        LintResult,
+        Severity,
         build_context,
         build_registry,
         run_rules,
     )
 
-    registry = build_registry()
+    json_output = getattr(args, "json_output", False)
+    show_fixes = getattr(args, "fix", False)
+
+    project_root = Path(getattr(args, "app_dir", ".")).resolve()
+
+    try:
+        registry = build_registry()
+    except CustomRuleError as e:
+        # Report it as a lint error, so a hook that counts errors blocks.
+        report = LintReport()
+        report.add(
+            LintResult(
+                file=str(project_root),
+                rule_id="SETUP",
+                severity=Severity.ERROR,
+                message=str(e),
+            )
+        )
+        report.print_and_exit(json_output, show_fixes)
 
     model_override = getattr(args, "model", None)
     model_only = getattr(args, "model_only", False)
@@ -575,9 +596,6 @@ def app_lint(args: argparse.Namespace) -> None:
         print("=" * 60)
         registry.list_rules(model=model_override, model_only=model_only)
         sys.exit(0)
-
-    json_output = getattr(args, "json_output", False)
-    show_fixes = getattr(args, "fix", False)
 
     # Per-resource validation (--agent, --tool, etc.)
     for flag, rule_id in SINGLE_RESOURCE_RULES.items():
@@ -602,7 +620,6 @@ def app_lint(args: argparse.Namespace) -> None:
         return
 
     # Full app lint
-    project_root = Path(getattr(args, "app_dir", ".")).resolve()
     config = LintConfig.load(project_root)
 
     app_dir = project_root / config.app_dir

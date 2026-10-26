@@ -192,6 +192,7 @@ nav:
       - guides/linting/index.md
       - Configuration: guides/linting/configuration.md
       - Rule Reference: guides/linting/rules.md
+      - Custom Rules: guides/linting/custom-rules.md
       - CI Integration: guides/linting/ci-integration.md
     - Slot Filling:
       - guides/slot-filling/index.md
