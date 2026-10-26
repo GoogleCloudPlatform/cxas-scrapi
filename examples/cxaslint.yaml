@@ -28,10 +28,6 @@ evals_dir: evals/
 # Rule severity overrides (error, warning, info, off)
 rules:
   # Instruction rules
-  # I003: error      # Excessive IF/ELSE logic
-  # I004: error      # Negative conditions in triggers
-  # I005: error      # conditional_logic block
-  # I006: error      # Hardcoded data (phone numbers, prices)
   # I007: info       # Instruction too long (>3000 words)
   # I008: error      # Invalid {@AGENT: ...} reference
   # I010: error      # Wrong agent reference syntax
@@ -43,7 +39,6 @@ rules:
   # C002: error      # Wrong argument count
   # C003: error      # camelCase function name
   # C004: error      # Returns dict instead of LlmResponse
-  # C005: error      # Hardcoded phrase list for intent detection
   # C006: error      # Bare except without logging
   # C007: info       # tools.* call naming convention
 
@@ -51,8 +46,6 @@ rules:
   # T002: error      # Missing docstring
   # T003: info       # Missing type hints
   # T004: error      # Function name doesn't match tool directory
-  # T005: info       # High-cardinality input arguments
-  # T006: info       # Excessive return data
   # T008: error      # Tool displayName not referenced by any agent
 
   # Eval rules
@@ -93,10 +86,6 @@ rules:
 options:
   I007:
     max_words: 3000
-  I006:
-    patterns:
-      - '\b\d{3}[-.]?\d{3}[-.]?\d{4}\b'
-      - '\$\d+(\.\d{2})?'
 
 # File patterns to skip
 ignore:

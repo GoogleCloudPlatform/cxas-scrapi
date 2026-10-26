@@ -223,63 +223,6 @@ class ReturnsDictNotLlmResponse(Rule):
 
 
 @rule("callbacks")
-class HardcodedPhraseList(Rule):
-    id = "C005"
-    name = "callback-hardcoded-phrases"
-    description = (
-        "Hardcoded phrase lists for intent"
-        " detection — keep detection in"
-        " instructions"
-    )
-    default_severity = Severity.WARNING
-
-    PATTERNS = [
-        r'\[.*"[^"]+",\s*"[^"]+",\s*"[^"]+".*\]',
-        r"if\s+.*\bin\s+\[",
-        r"any\(\s*\w+\s+in\s+",
-    ]
-    DETECTION_KEYWORDS = [
-        "detect",
-        "intent",
-        "phrase",
-        "keyword",
-        "profan",
-        "escalat",
-        "frustrat",
-    ]
-
-    def _is_detection_line(self, line: str) -> bool:
-        lower = line.lower()
-        return any(re.search(p, line) for p in self.PATTERNS) and any(
-            kw in lower for kw in self.DETECTION_KEYWORDS
-        )
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        rel = str(file_path.relative_to(context.project_root))
-        return [
-            self.make_result(
-                file=rel,
-                line=i,
-                message=(
-                    "Hardcoded phrase list for"
-                    " intent detection"
-                    " — misses natural variations"
-                ),
-                fix=(
-                    "Keep detection in instructions"
-                    " (LLM understands intent)."
-                    " Use callbacks for"
-                    " execution only."
-                ),
-            )
-            for i, line in enumerate(content.split("\n"), 1)
-            if self._is_detection_line(line)
-        ]
-
-
-@rule("callbacks")
 class BareExcept(Rule):
     id = "C006"
     name = "callback-bare-except"

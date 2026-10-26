@@ -15,60 +15,13 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     | ID | Name | Default | Description |
     |----|------|---------|-------------|
-    | I003 | `excessive-if-else` | Warning | 3 or more `IF/ELSE` blocks in an instruction |
-    | I004 | `negative-triggers` | Warning | Negative conditions in `<trigger>` elements |
-    | I005 | `conditional-logic-block` | Warning | `<conditional_logic>` block used for intent classification |
-    | I006 | `hardcoded-data` | Warning | Hardcoded phone numbers, prices, or other dynamic data |
     | I007 | `instruction-too-long` | Info | Instruction exceeds word count threshold (default 3000 words) |
     | I008 | `invalid-agent-ref` | Error | `{@AGENT: Name}` references an agent that doesn't exist |
     | I010 | `wrong-agent-syntax` | Error | Wrong agent reference syntax (e.g., `${AGENT:...}` instead of `{@AGENT:...}`) |
     | I011 | `wrong-tool-syntax` | Error | Wrong tool reference syntax (e.g., `{TOOL:...}` instead of `{@TOOL:...}`) |
     | I012 | `unused-tool-in-config` | Warning | Tool is in the agent's JSON config but never referenced in the instruction |
-    | I014 | `missing-current-date` | Warning | Instruction (or global instruction) should reference `{current_date}` |
     | I015 | `banned-legacy-xml-tags` | Error | Instruction uses a banned legacy XML tag |
     | I016 | `prose-state-machine` | Warning | Instruction encodes a state machine in prose (named-step GOTOs, retry counters, STOP tokens, state writes, orchestrator `agent_action` traversal) |
-
-    ---
-
-    **I003 — excessive-if-else**
-
-    Putting lots of `IF/ELSE` logic in instructions makes the LLM less reliable. LLMs are good at understanding intent, not at executing imperative logic trees. Move branching logic to callbacks.
-
-    *Triggers:* 3 or more lines matching `IF ... ELSE` pattern (case-insensitive).
-
-    *Fix:* Move deterministic branching into a `before_model_callback` or `after_model_callback`. Keep the instruction focused on goals, not conditional flows.
-
-    ---
-
-    **I004 — negative-triggers**
-
-    Negative conditions in `<trigger>` elements confuse the LLM. "Trigger when NOT X" is harder for the model to reason about reliably than "Trigger when Y (the positive case)".
-
-    *Triggers:* `<trigger>` element containing `NOT`, `is NOT`, or similar negations.
-
-    *Fix:* Rewrite as a positive trigger. If you need to exclude a case, use a separate, earlier `<step>` that captures that case explicitly.
-
-    ---
-
-    **I005 — conditional-logic-block**
-
-    `<conditional_logic>` blocks with priority-ordered conditionals are a pattern that confuses models because they require the model to evaluate conditions in order and pick the first match.
-
-    *Triggers:* Presence of `<conditional_logic>` in the instruction.
-
-    *Fix:* Use separate `<step>` elements with distinct triggers instead.
-
-    ---
-
-    **I006 — hardcoded-data**
-
-    Phone numbers, prices, and other frequently-changing data in instructions create maintenance problems and risk the agent giving outdated information.
-
-    *Triggers:* Patterns matching phone numbers or dollar amounts in non-template lines.
-
-    *Fix:* Move dynamic data to tool responses. The agent should call a tool to get the current value, not read it from the instruction.
-
-    *Configurable:* You can add custom patterns in `cxaslint.yaml` under `options.I006.patterns`.
 
     ---
 
@@ -124,16 +77,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     ---
 
-    **I014 — missing-current-date**
-
-    Instructions should reference `{current_date}` or `{{current_date}}` so the agent knows the current date at runtime. This is important for date-sensitive tasks. If the global instruction or all agent instructions reference it, the warning is suppressed.
-
-    *Triggers:* No `current_date` reference found in `instruction.txt` or `global_instruction.txt`.
-
-    *Fix:* Add `{current_date}` or `{{current_date}}` to the instruction or global instruction.
-
-    ---
-
     **I015 — banned-legacy-xml-tags**
 
     Instructions must not contain legacy CamelCase or state-machine XML tags that diverge from the canonical lowercase taskflow schema.
@@ -164,7 +107,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C002 | `callback-args` | Error | Callback must have correct argument count for its type |
     | C003 | `callback-camelcase` | Error | CES requires snake_case function names, not camelCase |
     | C004 | `callback-return-type` | Warning | Model callbacks should return `LlmResponse`, not `dict` |
-    | C005 | `callback-hardcoded-phrases` | Warning | Hardcoded phrase lists for intent detection |
     | C006 | `callback-bare-except` | Warning | Bare `except:` without logging swallows errors silently |
     | C007 | `callback-tool-naming` | Info | Verify `tools.*` call uses correct naming convention |
     | C010 | `callback-python-syntax` | Error | Callback Python file must have valid syntax |
@@ -221,14 +163,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     ---
 
-    **C005 — callback-hardcoded-phrases**
-
-    Hardcoded lists of phrases for intent detection in callbacks miss natural language variations. The LLM in the instruction is better at this.
-
-    *Fix:* Keep intent detection in the instruction. Use callbacks for execution only.
-
-    ---
-
     **C006 — callback-bare-except**
 
     A bare `except:` catches everything — including platform-internal exceptions that should propagate. Always catch specific exceptions or use `except Exception as e:` with logging.
@@ -252,8 +186,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | T002 | `tool-docstring` | Warning | Tool missing docstring |
     | T003 | `tool-type-hints` | Info | Tool function arguments lack type hints |
     | T004 | `tool-fn-name` | Warning | Tool function name should match tool directory name |
-    | T005 | `tool-high-cardinality` | Info | High-cardinality input arguments |
-    | T006 | `tool-return-explosion` | Info | Tool returning excessive data |
     | T008 | `tool-displayname-unreferenced` | Warning | Tool displayName not referenced by any agent |
     | T009 | `tool-kwargs-signature` | Error | Tool function uses `**kwargs` |
     | T010 | `tool-python-syntax` | Error | Tool Python file must have valid syntax |
@@ -273,14 +205,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     **T004 — tool-fn-name**
 
     The tool function name should match the directory name for consistency. CES uses the function name for certain routing.
-
-    ---
-
-    **T005 — tool-high-cardinality**
-
-    Arguments like `timestamp`, `latitude/longitude`, or internal `session_id`/`request_id` values are hard for users to express, especially in voice mode.
-
-    *Fix:* Design arguments that a human can express naturally (e.g., `region`, `category`, `last_n_days`).
 
     ---
 
