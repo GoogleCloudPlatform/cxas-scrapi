@@ -3050,3 +3050,233 @@ def test_simulation_evals_infra_retries_default_and_half_parallel() -> None:
     assert mock_agg.call_args_list[1].args[2] == 3
     assert mock_agg.call_args_list[2].args[2] == 3
     assert all(r["passed"] is True and r["infra_retries"] == 2 for r in results)
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulate_conversation_with_background_noise_config(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("I need help", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello, how can I help?"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {
+        "name": "noise_test",
+        "steps": [],
+        "config": {
+            "background_noise": {
+                "preset": "call_center",
+                "snr": 12.0,
+            }
+        },
+    }
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+    )
+
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        turn_num=0,
+        capture_agent_audio=False,
+        background_noise_file="call_center",
+        burst_noise_files=None,
+        use_tool_fakes=False,
+        bg_noise_snr=12.0,
+    )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulate_conversation_with_background_noise_opt_out(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("I need help", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello!"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {
+        "name": "noise_opt_out",
+        "steps": [],
+        "config": {
+            "background_noise": False,
+        },
+    }
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+        background_noise_file="traffic",
+        bg_noise_snr=10.0,
+    )
+
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        turn_num=0,
+        capture_agent_audio=False,
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
+    )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulate_conversation_single_bidi_stream_with_noise_config(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("I want coffee", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_interactive_session = MagicMock()
+    mock_sessions.create_interactive_session.return_value = (
+        mock_interactive_session
+    )
+
+    mock_response = MagicMock()
+    mock_output = MagicMock()
+    mock_chunk = MagicMock()
+    mock_chunk.text = "Sure, one coffee!"
+    mock_output.diagnostic_info.messages = [MagicMock(chunks=[mock_chunk])]
+    mock_response.outputs = [mock_output]
+    mock_interactive_session.send_turn.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {
+        "name": "cafe_noise",
+        "steps": [],
+        "config": {
+            "background_noise": {
+                "preset": "cafe",
+                "snr": 8.0,
+            }
+        },
+    }
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+        modality="audio",
+        single_bidi_stream=True,
+    )
+
+    mock_sessions.create_interactive_session.assert_called_once_with(
+        session_id="123",
+        capture_agent_audio=False,
+        background_noise_file="cafe",
+        use_tool_fakes=False,
+        skip_playback_wait=False,
+        voice_config=None,
+        bg_noise_snr=8.0,
+    )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulate_conversation_with_background_noise_level(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello!"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    # Test shorthand "cafe:HIGH"
+    test_case = {
+        "name": "level_test",
+        "steps": [],
+        "config": {
+            "background_noise": "cafe:HIGH",
+        },
+    }
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+    )
+
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        turn_num=0,
+        capture_agent_audio=False,
+        background_noise_file="cafe",
+        burst_noise_files=None,
+        use_tool_fakes=False,
+        bg_noise_snr=5.0,
+    )

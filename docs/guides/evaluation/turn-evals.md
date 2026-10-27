@@ -127,6 +127,27 @@ conversations:
             value: "lookup_order"
 ```
 
+### Background & Acoustic Noise in Audio Modality
+
+Turn Evals support the 13 built-in acoustic presets (`cafe`, `call_center`, `traffic`, `cross_talk`, `baby_crying`, `kids_noise`, `dog_barking`, `tv_radio`, `kitchen`, `wind`, `white`, `pink`, `brown`) and custom noise WAV files when evaluating in `audio` modality:
+
+```yaml
+config:
+  background_noise: "call_center:MEDIUM"  # Shorthand preset:level or path
+  burst_noise:
+    files: ["dog_barking"]
+    snr: "HIGH"                           # Categorical ("LOW"=20dB, "MEDIUM"=12dB, "HIGH"=5dB) or float dB
+  voice_config:
+    prompt: "Speak hurriedly with background urgency"
+
+conversations:
+  - conversation: order_lookup_with_noise
+    user: "Where is order ORD-12345?"
+    expectations:
+      - type: tool_called
+        value: "lookup_order"
+```
+
 ### Running tests programmatically
 
 ```python

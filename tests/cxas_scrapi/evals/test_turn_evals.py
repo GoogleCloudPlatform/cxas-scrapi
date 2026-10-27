@@ -541,3 +541,166 @@ def test_turn_evals_custom_vertex_location(
         location="us-central1",
         credentials=None,
     )
+
+
+@patch("cxas_scrapi.evals.turn_evals.MessageToDict")
+def test_run_turn_tests_with_background_noise_config(
+    mock_message_to_dict: typing.Any, mock_turn_evals: typing.Any
+) -> None:
+    mock_message_to_dict.return_value = {"text": "Hello!"}
+    mock_turn_evals.sessions_client.run.return_value = MagicMock()
+
+    cases = [
+        TurnTestCase(
+            name="test_call_center_noise",
+            user="hi",
+            expectations=[
+                TurnExpectation(type=TurnOperator.CONTAINS, value="Hello")
+            ],
+            config={
+                "background_noise": {
+                    "preset": "call_center",
+                    "snr": 12.0,
+                }
+            },
+        )
+    ]
+
+    df = mock_turn_evals.run_turn_tests(cases)
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) == 1
+    assert df.iloc[0]["status"] == "SUCCESS"
+
+    mock_turn_evals.sessions_client.run.assert_called_once()
+    call_kwargs = mock_turn_evals.sessions_client.run.call_args.kwargs
+    assert call_kwargs["background_noise_file"] == "call_center"
+    assert call_kwargs["bg_noise_snr"] == 12.0
+
+
+def test_run_turn_tests_interactive_with_background_noise_config(
+    mock_turn_evals: typing.Any,
+) -> None:
+    mock_interactive = MagicMock()
+    mock_turn_evals.sessions_client.create_interactive_session.return_value = (
+        mock_interactive
+    )
+    mock_interactive.send_turn.return_value = {
+        "text": "Hello!",
+        "outputs": [{"text": "Hello!"}],
+    }
+
+    cases = [
+        TurnTestCase(
+            name="test_bidi_noise",
+            turns=[
+                TurnStep(
+                    turn="1",
+                    user="hi",
+                    expectations=[
+                        TurnExpectation(
+                            type=TurnOperator.CONTAINS, value="Hello"
+                        )
+                    ],
+                )
+            ],
+            config={
+                "single_bidi_stream": True,
+                "background_noise": {
+                    "preset": "traffic",
+                    "snr": 8.0,
+                },
+            },
+        )
+    ]
+
+    with patch("cxas_scrapi.evals.turn_evals.MessageToDict") as mock_m2d:
+        mock_m2d.return_value = {"text": "Hello!"}
+        df = mock_turn_evals.run_turn_tests(cases)
+
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) == 1
+    assert df.iloc[0]["status"] == "SUCCESS"
+
+    mock_turn_evals.sessions_client.create_interactive_session.assert_called_once()
+    create_kwargs = mock_turn_evals.sessions_client.create_interactive_session.call_args.kwargs
+    assert create_kwargs["background_noise_file"] == "traffic"
+    assert create_kwargs["bg_noise_snr"] == 8.0
+
+
+@patch("cxas_scrapi.evals.turn_evals.MessageToDict")
+def test_run_turn_tests_with_background_noise_level(
+    mock_message_to_dict: typing.Any, mock_turn_evals: typing.Any
+) -> None:
+    mock_message_to_dict.return_value = {"text": "Hello!"}
+    mock_turn_evals.sessions_client.run.return_value = MagicMock()
+
+    cases = [
+        TurnTestCase(
+            name="test_level_noise",
+            user="hi",
+            expectations=[
+                TurnExpectation(type=TurnOperator.CONTAINS, value="Hello")
+            ],
+            config={
+                "background_noise": "cafe:LOW",
+            },
+        )
+    ]
+
+    df = mock_turn_evals.run_turn_tests(cases)
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) == 1
+
+    mock_turn_evals.sessions_client.run.assert_called_once()
+    call_kwargs = mock_turn_evals.sessions_client.run.call_args.kwargs
+    assert call_kwargs["background_noise_file"] == "cafe"
+    assert call_kwargs["bg_noise_snr"] == 20.0
+
+
+def test_load_turn_test_cases_from_yaml_with_common_noise_and_params(
+    mock_turn_evals: typing.Any,
+) -> None:
+    yaml_text = """
+common_background_noise: "call_center"
+common_bg_noise_level: "MEDIUM"
+common_params:
+  burst_noise: ["dog_barking"]
+  burst_noise_level: "HIGH"
+  custom_flag: true
+tests:
+  - name: test_inherits_all
+    user: "Hello"
+    expectations:
+      - type: contains
+        value: "Hi"
+  - name: test_overrides_noise
+    config:
+      background_noise: "cafe:LOW"
+    user: "Help"
+    expectations:
+      - type: contains
+        value: "Sure"
+  - name: test_opts_out
+    config:
+      background_noise: false
+    user: "Cancel"
+    expectations:
+      - type: contains
+        value: "Done"
+"""
+    test_cases = mock_turn_evals.load_turn_test_cases_from_yaml(yaml_text)
+    assert len(test_cases) == 3
+
+    tc0 = test_cases[0]
+    assert tc0.config["background_noise"] == "call_center"
+    assert tc0.config["bg_noise_level"] == "MEDIUM"
+    assert tc0.config["burst_noise"] == ["dog_barking"]
+    assert tc0.config["burst_noise_level"] == "HIGH"
+    assert tc0.config["custom_flag"] is True
+
+    tc1 = test_cases[1]
+    assert tc1.config["background_noise"] == "cafe:LOW"
+    assert tc1.config["bg_noise_level"] == "MEDIUM"
+
+    tc2 = test_cases[2]
+    assert tc2.config["background_noise"] is False

@@ -808,6 +808,20 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
             sys.stderr.flush()
 
     extra_report_kwargs = {}
+    bg_snr_raw = getattr(args, "bg_noise_level", None) or getattr(
+        args, "bg_noise_snr", None
+    )
+    if bg_snr_raw is not None:
+        from cxas_scrapi.core.audio_transformer import parse_noise_snr
+
+        extra_report_kwargs["bg_noise_snr"] = parse_noise_snr(bg_snr_raw)
+    burst_snr_raw = getattr(args, "burst_noise_level", None) or getattr(
+        args, "burst_noise_snr", None
+    )
+    if burst_snr_raw is not None:
+        from cxas_scrapi.core.audio_transformer import parse_noise_snr
+
+        extra_report_kwargs["burst_noise_snr"] = parse_noise_snr(burst_snr_raw)
     if getattr(args, "audio_analysis", None) is not None:
         extra_report_kwargs["audio_analysis"] = args.audio_analysis
     if getattr(args, "infra_retries", 2) != 2:
@@ -2063,7 +2077,27 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_report.add_argument(
         "--bg-noise-file",
-        help="Optional: Path to continuous background noise audio file.",
+        help=(
+            "Optional: Path to continuous background noise audio file or preset "
+            "(white, pink, brown, cafe, call_center, traffic, cross_talk, "
+            "baby_crying, kids_noise, dog_barking, tv_radio, kitchen, wind)."
+        ),
+    )
+    parser_report.add_argument(
+        "--bg-noise-snr",
+        type=str,
+        default=None,
+        help=(
+            "Optional: Signal-to-noise ratio in dB or level ('LOW', 'MEDIUM', 'HIGH') "
+            "for continuous background noise (default: 15.0 dB / MEDIUM)."
+        ),
+    )
+    parser_report.add_argument(
+        "--bg-noise-level",
+        type=str,
+        default=None,
+        choices=["LOW", "MEDIUM", "HIGH", "low", "medium", "high"],
+        help="Optional: Alias for --bg-noise-snr level ('LOW', 'MEDIUM', 'HIGH').",
     )
     parser_report.add_argument(
         "--burst-noise-files",
@@ -2071,6 +2105,22 @@ def get_parser() -> argparse.ArgumentParser:
             "Optional: Comma-separated list of paths to burst noise audio "
             "files."
         ),
+    )
+    parser_report.add_argument(
+        "--burst-noise-snr",
+        type=str,
+        default=None,
+        help=(
+            "Optional: Signal-to-noise ratio in dB or level ('LOW', 'MEDIUM', 'HIGH') "
+            "for burst noise (default: 5.0 dB / HIGH)."
+        ),
+    )
+    parser_report.add_argument(
+        "--burst-noise-level",
+        type=str,
+        default=None,
+        choices=["LOW", "MEDIUM", "HIGH", "low", "medium", "high"],
+        help="Optional: Alias for --burst-noise-snr level ('LOW', 'MEDIUM', 'HIGH').",
     )
     parser_report.add_argument(
         "--use-tool-fakes",

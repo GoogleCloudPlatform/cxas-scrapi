@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import typing
+import wave
 from unittest.mock import ANY, mock_open, patch
 
 import pandas as pd
@@ -409,6 +410,40 @@ def test_generate_combined_html_report(tmp_path: typing.Any) -> None:
         assert "test_sim" in content
         assert "test_tool" in content
         assert "test_callback" in content
+
+
+def test_generate_combined_html_report_renders_background_noise(
+    tmp_path: typing.Any,
+) -> None:
+    output_path = os.path.join(tmp_path, "report_noise.html")
+    sim_results = [
+        {
+            "name": "sim_noise",
+            "run": 1,
+            "passed": True,
+            "turns": 1,
+        }
+    ]
+    generate_combined_html_report(
+        golden_results=[],
+        sim_results=sim_results,
+        tool_results=[],
+        callback_results=[],
+        output_path=output_path,
+        app_name="projects/test-proj/locations/global/apps/test-app",
+        bg_noise_file="call_center",
+        bg_noise_snr=12.0,
+    )
+    assert os.path.exists(output_path)
+    with open(output_path) as f:
+        content = f.read()
+        assert "BG: call_center (MEDIUM &middot; 12.0 dB SNR)" in content
+        assert (
+            "Continuous preset/file <code>call_center</code> at <b>MEDIUM</b> (12.0 dB SNR)"
+            in content
+        )
+        assert "Background Noise Injection:" in content
+        assert "toggleBgNoiseSample" not in content
 
 
 def test_generate_combined_html_report_renders_naturalness(
@@ -1221,7 +1256,9 @@ def test_run_all_evals_dict_based_simulations(
         eval_model=None,
         modality="text",
         background_noise_file=None,
+        bg_noise_snr=None,
         burst_noise_files=None,
+        burst_noise_snr=None,
         use_tool_fakes=False,
         skip_playback_wait=False,
         single_bidi_stream=False,
@@ -1418,6 +1455,33 @@ evals:
     }
     # An explicit false opts a single eval out of the file-wide metric.
     assert cases[2]["naturalness_metric"] is False
+
+
+def test_load_sim_test_cases_merges_common_background_noise() -> None:
+    yaml_data = """
+common_background_noise:
+  preset: cafe
+  snr: 10.0
+evals:
+  - name: inherits
+  - name: overrides
+    background_noise:
+      preset: call_center
+      snr: 12.0
+  - name: opts_out
+    background_noise: false
+"""
+    with patch("builtins.open", mock_open(read_data=yaml_data)):
+        cases = _load_sim_test_cases("dummy.yaml")
+
+    assert len(cases) == 3
+    assert cases[0]["background_noise"] == {"preset": "cafe", "snr": 10.0}
+    assert cases[1]["background_noise"] == {
+        "preset": "call_center",
+        "snr": 12.0,
+    }
+    assert cases[2]["background_noise"] is False
+    assert cases[2]["config"]["background_noise"] is False
 
 
 def test_generate_combined_report_from_dir_timestamped(
@@ -2514,6 +2578,9 @@ def test_audio_conversations_section_and_drawer(tmp_path: typing.Any) -> None:
         "Extended silence detected"
         in gld_checks["no_long_pauses"]["justification"]
     )
+    assert "audio_src" in rows["conv-0"]
+    assert "audio_src" in rows["conv-1"]
+    assert "Full Conversation" in comb_html
 
     # 2. Standalone simulation report
     out_sim = tmp_path / "sim_convs.html"
@@ -3541,4 +3608,132 @@ def test_write_eval_stamp_and_github_step_summary_and_publish_bundle(
     md_text = summary_md.read_text()
     assert "### sims-text" in md_text
     assert "**1 / 1 cases passed**" in md_text
-    assert "Open HTML Report" in md_text
+
+
+def test_aggregate_suite_audio_auto_measures_when_agent_wavs_exist(
+    tmp_path: typing.Any,
+) -> None:
+    session_id = "test-session-123"
+    wav_file = tmp_path / f"turn_0_agent_{session_id}.wav"
+
+    with wave.open(str(wav_file), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(b"\x00\x00" * 16000)  # 1s silence
+
+    sim_results = [
+        {
+            "name": "auto_measure_sim",
+            "session_id": session_id,
+            "agent_audio_paths": {0: str(wav_file)},
+            "runs": [
+                {
+                    "run": 1,
+                    "passed": True,
+                    "session_id": session_id,
+                    "agent_audio_paths": {0: str(wav_file)},
+                }
+            ],
+        }
+    ]
+
+    fake_call = {
+        "conversation_id": session_id,
+        "lufs_mean": -18.5,
+        "rate_mean": 3.8,
+        "f0_median_sd_st": 1.2,
+        "max_seam_st": 2.0,
+        "flags": [],
+        "drift_reasons": [],
+    }
+    fake_turns = [
+        {
+            "turn_index": 0,
+            "duration_s": 1.0,
+            "lufs": -18.5,
+            "rate_syl_per_s": 3.8,
+            "f0_median_hz": 180.0,
+            "flags": [],
+        }
+    ]
+    with patch(
+        "cxas_scrapi.utils.tracing.audio_metrics.measure_call",
+        return_value=(fake_call, fake_turns),
+    ):
+        agg = _aggregate_suite_audio_analysis(sim_results=sim_results)
+    assert agg is not None
+    conv_data = json.loads(agg["conv_data_json"])
+    run_entry = conv_data["run_rows"][0]
+    assert run_entry.get("acoustic_measured") is True
+    assert sim_results[0]["runs"][0].get("audio_metrics") is not None
+
+
+def test_load_sim_test_cases_with_common_params_and_background_noise(
+    tmp_path: typing.Any,
+) -> None:
+    yaml_content = """
+common_background_noise: "cafe"
+common_bg_noise_level: "MEDIUM"
+common_params:
+  user_type: "premium"
+  session_timeout: 30
+common_expectations:
+  - "Common expectation 1"
+evals:
+  - name: "case_inherits_common"
+    steps:
+      - goal: "Check status"
+  - name: "case_overrides_level"
+    bg_noise_level: "HIGH"
+    steps:
+      - goal: "Check status"
+  - name: "case_overrides_preset"
+    background_noise: "traffic"
+    steps:
+      - goal: "Check status"
+  - name: "case_opts_out"
+    background_noise: false
+    steps:
+      - goal: "Check status"
+  - name: "case_dict_merge"
+    background_noise:
+      preset: "call_center"
+      level: "LOW"
+    steps:
+      - goal: "Check status"
+"""
+    yaml_file = tmp_path / "sims.yaml"
+    yaml_file.write_text(yaml_content)
+
+    cases = _load_sim_test_cases(str(yaml_file))
+    assert len(cases) == 5
+
+    # Case 0: inherits common
+    c0 = cases[0]
+    assert c0["background_noise"] == "cafe"
+    assert c0["bg_noise_level"] == "MEDIUM"
+    assert c0["session_parameters"]["user_type"] == "premium"
+    assert c0["session_parameters"]["session_timeout"] == 30
+    assert "Common expectation 1" in c0["expectations"]
+
+    # Case 1: overrides level
+    c1 = cases[1]
+    assert c1["background_noise"] == "cafe"
+    assert c1["bg_noise_level"] == "HIGH"
+
+    # Case 2: overrides preset
+    c2 = cases[2]
+    assert c2["background_noise"] == "traffic"
+    assert c2["bg_noise_level"] == "MEDIUM"
+
+    # Case 3: opts out
+    c3 = cases[3]
+    assert c3["background_noise"] is False
+    assert "bg_noise_level" not in c3
+
+    # Case 4: dict merge
+    c4 = cases[4]
+    assert isinstance(c4["background_noise"], dict)
+    assert c4["background_noise"]["preset"] == "call_center"
+    assert c4["background_noise"]["level"] == "LOW"

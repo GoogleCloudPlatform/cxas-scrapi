@@ -133,3 +133,24 @@ conversations:
           # Standard turn expectations can be combined with barge-in assertions
           - type: "contains"
             value: "cancel"
+
+  # ----------------------------------------------------------------------------
+  # 8. Background Noise Evaluation (Acoustic Resilience Testing)
+  # Supported presets: white, pink, brown, cafe, call_center, traffic,
+  # cross_talk (other_people_speaking), baby_crying, kids_noise, dog_barking,
+  # tv_radio, kitchen, wind. Custom audio files (.wav, .mp3) are also supported.
+  # ----------------------------------------------------------------------------
+  - conversation: "Call Center Noise Resilience Check"
+    tags: [voice, noise]
+    config:
+      modality: "AUDIO"
+      background_noise:
+        preset: "call_center"
+        level: "MEDIUM"   # Categorical level: LOW (20dB), MEDIUM (12dB), HIGH (5dB)
+      single_bidi_stream: true
+    turns:
+      - turn: "1"
+        user: "Can you check the balance on account 12345?"
+        expectations:
+          - type: "contains"
+            value: "12345"
