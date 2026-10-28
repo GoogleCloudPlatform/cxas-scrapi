@@ -13,23 +13,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CXAS Voice Agent Configuration Auditor and Auto-Remediator.
+"""CXAS Voice Agent Auditor and Auto-Remediator for Gemini Composite v2.
 
-Audits, inspects, and remediates Google Cloud CX Agent Studio (CXAS) and
-Customer Engagement Suite (CES) applications for Gemini Composite V1 voice
-naturalness, vocal persona stability, tool pacing, and Multilingual Coverage &
-Language Drift Prevention.
+Audits and remediates Google Cloud CX Agent Studio (CXAS) and Customer
+Engagement Suite (CES) applications for the Gemini Composite v2 voice stack:
 
+- ``modelSettings.model`` is ``gemini-composite-v2``.
+- Speaking style instructions (``synthesizeSpeechConfigs.<lang>.instruction``,
+  ``customVoiceSamples[].voiceInstruction``) are cleared or kept below 12
+  words, and Director's Notes are cleared; long style prompts conflict with
+  inline audio tags.
+- Inline audio tags use angle brackets (``<warm>``), not square brackets, and
+  poorly performing tags are replaced with better-performing ones.
+
+The cxas-scrapi linter supplies discovery, context, reporting, and the
+model-agnostic rules reused here (I015, V104, T014).
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import pathlib
 import re
 import sys
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 # Auto-resolve src/ for cxas_scrapi when executed directly
 _current_dir = pathlib.Path(__file__).resolve().parent
@@ -40,1425 +53,1243 @@ for _candidate in [_current_dir, *list(_current_dir.parents)]:
             sys.path.insert(0, str(_src))
         break
 
-# Import of cxas-scrapi linter primitives and utilities
-try:
-    from cxas_scrapi.utils.linter import (
-        Discovery,
-        LintConfig,
-        LintContext,
-        LintReport,
-        LintResult,
-        Rule,
-        RuleRegistry,
-        Severity,
-        build_context,
-        build_registry,
-        rule,
-        run_rules,
-    )
-except (ImportError, ModuleNotFoundError):
-    import importlib.util
+from cxas_scrapi.utils.linter import (  # noqa: E402
+    Discovery,
+    LintConfig,
+    LintContext,
+    LintReport,
+    LintResult,
+    Rule,
+    RuleRegistry,
+    Severity,
+    build_context,
+    build_registry,
+    rule,
+    run_rules,
+)
 
-    _linter_path = None
-    _cur = pathlib.Path(__file__).resolve().parent
-    for _cand in [_cur, *list(_cur.parents)]:
-        _candidate_linter = (
-            _cand / "src" / "cxas_scrapi" / "utils" / "linter.py"
-        )
-        if _candidate_linter.is_file():
-            _linter_path = _candidate_linter
-            break
+TARGET_MODEL = "gemini-composite-v2"
+COMPOSITE_MODEL_PREFIX = "gemini-composite"
+TARGET_TEMPERATURE = 1.0
 
-    if _linter_path and _linter_path.is_file():
-        _spec = importlib.util.spec_from_file_location(
-            "cxas_scrapi_linter", str(_linter_path)
-        )
-        _mod = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_mod)
-        Discovery = _mod.Discovery
-        LintConfig = _mod.LintConfig
-        LintContext = _mod.LintContext
-        LintReport = _mod.LintReport
-        LintResult = _mod.LintResult
-        Rule = _mod.Rule
-        RuleRegistry = _mod.RuleRegistry
-        Severity = _mod.Severity
-        build_context = _mod.build_context
-        build_registry = _mod.build_registry
-        rule = _mod.rule
-        run_rules = _mod.run_rules
-    else:
-        raise ImportError("Could not find cxas_scrapi.utils.linter") from None
+# ── Audio tag vocabulary (see references/tag_reference.md) ───────────────
 
+PAUSE_TAGS: frozenset[str] = frozenset({"short pause", "long pause"})
 
-# Locale code to Natural Language Accent mapping
-LOCALE_TO_ACCENT: dict[str, str] = {
-    # Base 2-letter languages
-    "en": "American English",
-    "es": "Spanish accent",
-    "fr": "Metropolitan French",
-    "de": "German",
-    "ja": "Japanese",
-    "pt": "Brazilian Portuguese",
-    "it": "Italian",
-    "zh": "Mandarin Chinese",
-    "ko": "Korean",
-    "nl": "Dutch",
-    "hi": "Hindi",
-    "sv": "Swedish",
-    "da": "Danish",
-    "fi": "Finnish",
-    "pl": "Polish",
-    "tr": "Turkish",
-    "id": "Indonesian",
-    "mr": "Marathi",
-    "ro": "Romanian",
-    "ta": "Tamil",
-    "te": "Telugu",
-    "vi": "Vietnamese",
-    # English regional dialects & blends
-    "en-US": "American English",
-    "en-GB": "British English",
-    "en-AU": "Australian English",
-    "en-CA": "Canadian English",
-    "en-IN": "Indian English",
-    "en-hi": "Hinglish",
-    "en-es": "Spanglish",
-    # Spanish regional dialects
-    "es-US": "Spanish accent",
-    "es-ES": "Castilian Spanish",
-    "es-MX": "Latin American Spanish",
-    # French regional dialects
-    "fr-FR": "Metropolitan French",
-    "fr-CA": "French Canadian",
-    # German regional dialects
-    "de-DE": "German",
-    # Portuguese regional dialects
-    "pt-BR": "Brazilian Portuguese",
-    # Italian
-    "it-IT": "Italian",
-    # Dutch regional dialects
-    "nl-NL": "Dutch",
-    "nl-BE": "Flemish Dutch",
-    # Other regional locales
-    "zh-CN": "Mandarin Chinese",
-    "da-DK": "Danish",
-    "fi-FI": "Finnish",
-    "hi-IN": "Hindi",
-    "id-ID": "Indonesian",
-    "ja-JP": "Japanese",
-    "ko-KR": "Korean",
-    "mr-IN": "Marathi",
-    "pl-PL": "Polish",
-    "ro-RO": "Romanian",
-    "sv-SE": "Swedish",
-    "ta-IN": "Tamil",
-    "te-IN": "Telugu",
-    "tr-TR": "Turkish",
-    "vi-VN": "Vietnamese",
+# Reliably followed and essentially never spoken aloud.
+RECOMMENDED_TAGS: frozenset[str] = frozenset(
+    {
+        "sigh",
+        "sighs",
+        "chuckles",
+        "exhales",
+        "whispers",
+        "whispering",
+        "fast",
+        "faster",
+        "short pause",
+        "long pause",
+        "empathetic",
+        "warm",
+        "calm",
+        "clear",
+        "positive",
+        "determination",
+        "interest",
+        "enthusiasm",
+        "relief",
+    }
+)
+
+# Usually followed; keep at a sentence start.
+SUPPORTED_TAGS: frozenset[str] = frozenset(
+    {
+        "sympathetic",
+        "tension",
+        "anxiety",
+        "awe",
+        "surprised",
+        "fearful",
+        "negative",
+        "disgusted",
+    }
+)
+
+# Poorly performing tag -> better-performing tag ("" deletes the tag).
+REMAP: dict[str, str] = {
+    "happy": "positive",
+    "hope": "warm",
+    "adoration": "warm",
+    "curiosity": "interest",
+    "reassuring": "empathetic",
+    "admiration": "positive",
+    "crying": "sympathetic",
+    "laughs": "chuckles",
+    "neutral": "",
+    "professional": "clear",
+    "cautious": "calm",
+    "alarm": "calm",
+    "nervousness": "calm",
+    "annoyance": "determination",
+    "aggression": "determination",
+    "slow": 'prosody rate="65%"',
+    "slower": 'prosody rate="65%"',
 }
 
-# Default Chirp3 HD voice mapping
+# Tags the evaluation did not cover -> closest evaluated tag. Converted to
+# angle brackets like any audio tag; the swap needs user confirmation.
+SUGGESTIONS: dict[str, str] = {
+    "seriousness": "clear",
+    "serious": "clear",
+    "formal": "clear",
+    "uhm": "short pause",
+    "um": "short pause",
+    "medium pause": "short pause",
+    "pause": "short pause",
+    "breath": "exhales",
+    "deep breath": "exhales",
+    "excited": "enthusiasm",
+    "excitement": "enthusiasm",
+    "celebratory": "positive",
+    "amusement": "chuckles",
+    "laughing": "chuckles",
+    "sad": "sympathetic",
+    "apologetic": "empathetic",
+    "friendly": "warm",
+    "urgent": "determination",
+    "confident": "determination",
+    "confusion": "calm",
+    "confused": "calm",
+    "concerned": "calm",
+    "panic": "calm",
+    "anger": "determination",
+    "frustration": "determination",
+    "agitation": "determination",
+    "curious": "interest",
+    "extremely fast": "faster",
+}
+
+# Audio-tag-like words with no evaluated substitute.
+UNEVALUATED_WORDS: frozenset[str] = frozenset(
+    {
+        "bored",
+        "clears throat",
+        "deadpan",
+        "gasp",
+        "gasps",
+        "robotic",
+        "sarcasm",
+        "scared",
+        "shouting",
+        "sleepy",
+        "yelling",
+    }
+)
+
+UNEVALUATED_TAGS: frozenset[str] = frozenset(SUGGESTIONS) | UNEVALUATED_WORDS
+KNOWN_TAGS: frozenset[str] = (
+    RECOMMENDED_TAGS | SUPPORTED_TAGS | frozenset(REMAP) | UNEVALUATED_TAGS
+)
+
+PROSODY_RE = re.compile(r'^prosody\s+rate\s*=\s*"?\s*([^"\s]+?)\s*"?$', re.I)
+BRACKET_TAG_RE = re.compile(r"\[(/?)([^\[\]\n]{1,40})\]")
+ANGLE_TAG_RE = re.compile(r"<(/?)([^<>\n]{1,40})>")
+# Bracketed labels for control logic, e.g. `user intent is [Negative]`.
+LABEL_CONTEXT_RE = re.compile(
+    r"\b(?:intents?|labels?|category|categories|classification|classified"
+    r"\s+as|sentiment)\s*(?:is|was|are|=|==|:|of)?\s*$",
+    re.I,
+)
+# A bracketed token inside a markup attribute value.
+ATTRIBUTE_VALUE_RE = re.compile(
+    r"<[A-Za-z_][\w:.\-]*\s[^<>\n]*=\s*(?:\"[^\"<>\n]*|'[^'<>\n]*)$"
+)
+DIRECTORS_NOTE_RE = re.compile(
+    r"^\s*#+\s*(?:director'?s\s+notes?|audio\s+profile|transcript\s*:)",
+    re.I | re.M,
+)
+OLD_FORMAT_RULE_RE = re.compile(
+    r"square[\s-]+brackets?|bracketed\s+(?:delivery\s+|audio\s+)?tags?|"
+    r"never\s+stack\s+(?:audio\s+|delivery\s+)?tags|do\s+not\s+bunch",
+    re.I,
+)
+ANGLE_GUIDANCE_RE = re.compile(r"angle[\s-]+brackets?", re.I)
+# The audio tag format block's own "never write a closing tag" bullet.
+NO_CLOSING_RULE_RE = re.compile(
+    r"never\s+(?:write|use|emit|add)\s+(?:a\s+|any\s+)?closing", re.I
+)
+
+TEXT_SUFFIXES = (".txt", ".json", ".jsonl", ".md", ".py", ".yaml", ".yml")
+EXCLUDED_DIRS = frozenset(
+    {
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "venv",
+    }
+)
+
+# SDK lint rules reused for Composite v2 -> priority.
+SDK_RULE_PRIORITY: dict[str, str] = {"I015": "P0", "V104": "P0", "T014": "P2"}
+
 DEFAULT_VOICES: dict[str, str] = {
-    # Base 2-letter languages
     "en": "en-US-Chirp3-HD-Aoede",
+    "en-au": "en-AU-Chirp3-HD-Aoede",
+    "en-ca": "en-CA-Chirp3-HD-Aoede",
+    "en-gb": "en-GB-Chirp3-HD-Aoede",
+    "en-in": "en-IN-Chirp3-HD-Aoede",
     "es": "es-US-Chirp3-HD-Aoede",
+    "es-es": "es-ES-Chirp3-HD-Aoede",
     "fr": "fr-FR-Chirp3-HD-Aoede",
+    "fr-ca": "fr-CA-Chirp3-HD-Aoede",
     "de": "de-DE-Chirp3-HD-Aoede",
-    "ja": "ja-JP-Chirp3-HD-Aoede",
-    "pt": "pt-BR-Chirp3-HD-Aoede",
     "it": "it-IT-Chirp3-HD-Aoede",
-    "zh": "cmn-CN-Chirp3-HD-Aoede",
+    "ja": "ja-JP-Chirp3-HD-Aoede",
     "ko": "ko-KR-Chirp3-HD-Aoede",
+    "pt": "pt-BR-Chirp3-HD-Aoede",
+    "zh": "cmn-CN-Chirp3-HD-Aoede",
     "nl": "nl-NL-Chirp3-HD-Aoede",
+    "nl-be": "nl-BE-Chirp3-HD-Aoede",
     "hi": "hi-IN-Chirp3-HD-Aoede",
-    "sv": "sv-SE-Chirp3-HD-Aoede",
-    "da": "da-DK-Chirp3-HD-Aoede",
-    "fi": "fi-FI-Chirp3-HD-Aoede",
-    "pl": "pl-PL-Chirp3-HD-Aoede",
-    "tr": "tr-TR-Chirp3-HD-Aoede",
-    "id": "id-ID-Chirp3-HD-Aoede",
-    "mr": "mr-IN-Chirp3-HD-Aoede",
-    "ro": "ro-RO-Chirp3-HD-Aoede",
-    "ta": "ta-IN-Chirp3-HD-Aoede",
-    "te": "te-IN-Chirp3-HD-Aoede",
-    "vi": "vi-VN-Chirp3-HD-Aoede",
-    # Specific locales
-    "zh-CN": "cmn-CN-Chirp3-HD-Aoede",
-    "da-DK": "da-DK-Chirp3-HD-Aoede",
-    "nl-NL": "nl-NL-Chirp3-HD-Aoede",
-    "nl-BE": "nl-BE-Chirp3-HD-Aoede",
-    "en-AU": "en-AU-Chirp3-HD-Aoede",
-    "en-CA": "en-CA-Chirp3-HD-Aoede",
-    "en-IN": "en-IN-Chirp3-HD-Aoede",
-    "en-GB": "en-GB-Chirp3-HD-Aoede",
-    "en-US": "en-US-Chirp3-HD-Aoede",
-    "en-hi": "en-IN-Chirp3-HD-Aoede",
-    "en-es": "es-US-Chirp3-HD-Aoede",
-    "fi-FI": "fi-FI-Chirp3-HD-Aoede",
-    "fr-CA": "fr-CA-Chirp3-HD-Aoede",
-    "fr-FR": "fr-FR-Chirp3-HD-Aoede",
-    "de-DE": "de-DE-Chirp3-HD-Aoede",
-    "hi-IN": "hi-IN-Chirp3-HD-Aoede",
-    "id-ID": "id-ID-Chirp3-HD-Aoede",
-    "it-IT": "it-IT-Chirp3-HD-Aoede",
-    "ja-JP": "ja-JP-Chirp3-HD-Aoede",
-    "ko-KR": "ko-KR-Chirp3-HD-Aoede",
-    "mr-IN": "mr-IN-Chirp3-HD-Aoede",
-    "pl-PL": "pl-PL-Chirp3-HD-Aoede",
-    "pt-BR": "pt-BR-Chirp3-HD-Aoede",
-    "ro-RO": "ro-RO-Chirp3-HD-Aoede",
-    "es-MX": "es-US-Chirp3-HD-Aoede",
-    "es-ES": "es-ES-Chirp3-HD-Aoede",
-    "es-US": "es-US-Chirp3-HD-Aoede",
-    "sv-SE": "sv-SE-Chirp3-HD-Aoede",
-    "ta-IN": "ta-IN-Chirp3-HD-Aoede",
-    "te-IN": "te-IN-Chirp3-HD-Aoede",
-    "tr-TR": "tr-TR-Chirp3-HD-Aoede",
-    "vi-VN": "vi-VN-Chirp3-HD-Aoede",
 }
 
-NORMALIZED_LOCALE_TO_ACCENT: dict[str, str] = {
-    k.lower().replace("_", "-"): v for k, v in LOCALE_TO_ACCENT.items()
-}
-NORMALIZED_DEFAULT_VOICES: dict[str, str] = {
-    k.lower().replace("_", "-"): v for k, v in DEFAULT_VOICES.items()
-}
 
-PROHIBITED_XML_TAGS: list[str] = [
-    "state_update",
-    "context",
-    "reasoning",
-    "thought",
-    "internal",
-    "call_tool",
-    "parameter_update",
-    "variable_update",
-    "voice_lock",
-    "voice_output",
-]
-
-WORKING_TAGS: list[str] = [
-    # Non-Speech Vocal Sounds (Mode 1)
-    "whispers",
-    "whispering",
-    "sigh",
-    "sighs",
-    "chuckles",
-    "laughs",
-    "laughing",
-    "gasp",
-    "exhales",
-    "clears throat",
-    "uhm",
-    # Style & Delivery Modifiers (Mode 2)
-    "sarcasm",
-    "robotic",
-    "shouting",
-    "yelling",
-    "deadpan",
-    "extremely fast",
-    "slow",
-    "slower",
-    "fast",
-    "faster",
-    # Explicit Pacing & Pause Controls (Mode 4)
-    "short pause",
-    "medium pause",
-    "long pause",
-    # Expressive & Emotional Delivery Tags
-    "positive",
-    "happy",
-    "enthusiasm",
-    "amusement",
-    "adoration",
-    "admiration",
-    "interest",
-    "celebratory",
-    "excitement",
-    "excited",
-    "relief",
-    "hope",
-    "determination",
-    "neutral",
-    "seriousness",
-    "serious",
-    "curiosity",
-    "curious",
-    "sleepy",
-    "bored",
-    "cautious",
-    "alarm",
-    "confusion",
-    "panic",
-    "anxiety",
-    "nervousness",
-    "tension",
-    "negative",
-    "annoyance",
-    "frustration",
-    "agitation",
-    "anger",
-    "aggression",
-    "scared",
-    "awe",
-]
-
-
-def get_locale_accent(locale: str) -> str:
-    """Returns the natural language accent description for a given locale code."""
-    normalized = locale.strip().lower().replace("_", "-")
-    if normalized in NORMALIZED_LOCALE_TO_ACCENT:
-        return NORMALIZED_LOCALE_TO_ACCENT[normalized]
-    lang_prefix = normalized.split("-")[0]
-    if lang_prefix in NORMALIZED_LOCALE_TO_ACCENT:
-        return NORMALIZED_LOCALE_TO_ACCENT[lang_prefix]
-    if any(
-        kw in locale.lower()
-        for kw in [
-            "english",
-            "spanish",
-            "french",
-            "german",
-            "accent",
-            "italian",
-        ]
-    ):
-        return locale.strip()
-    return LOCALE_TO_ACCENT.get(locale, f"{locale} accent")
+def _norm_locale(locale: str) -> str:
+    return locale.strip().lower().replace("_", "-")
 
 
 def get_default_voice(locale: str) -> str:
-    """Returns the default Chirp3-HD voice identifier for a given locale code."""
-    normalized = locale.strip().lower().replace("_", "-")
-    if normalized in NORMALIZED_DEFAULT_VOICES:
-        return NORMALIZED_DEFAULT_VOICES[normalized]
-    lang_prefix = normalized.split("-")[0]
-    if lang_prefix in NORMALIZED_DEFAULT_VOICES:
-        return NORMALIZED_DEFAULT_VOICES[lang_prefix]
-    return DEFAULT_VOICES.get(locale, f"{locale}-Chirp3-HD-Aoede")
-
-
-def _find_speech_config(
-    speech_configs: dict[str, Any], locale: str
-) -> tuple[str, dict[str, Any]] | None:
-    """Finds matching speech configuration for a locale in synthesizeSpeechConfigs."""
-    if not isinstance(speech_configs, dict):
-        return None
-    if locale in speech_configs and isinstance(speech_configs[locale], dict):
-        return locale, speech_configs[locale]
-
-    norm_locale = locale.strip().lower().replace("_", "-")
-    for k, v in speech_configs.items():
-        if (
-            isinstance(k, str)
-            and isinstance(v, dict)
-            and k.strip().lower().replace("_", "-") == norm_locale
-        ):
-            return k, v
-
-    root_lang = norm_locale.split("-")[0]
-    for k, v in speech_configs.items():
-        if (
-            isinstance(k, str)
-            and isinstance(v, dict)
-            and k.strip().lower().replace("_", "-") == root_lang
-        ):
-            return k, v
-
-    return None
-
-
-def generate_golden_directors_note(locale: str) -> str:
-    """Generates a golden-standard Director's Note prompt for the specified locale."""
-    accent = get_locale_accent(locale)
-    normalized_locale = locale.strip().lower().replace("_", "-")
-
-    if normalized_locale.startswith("es") or normalized_locale == "en-es":
-        bridge_words = 'bridge words (like "eh," "ah," or "veamos")'
-    elif normalized_locale.startswith("fr"):
-        bridge_words = 'bridge words (like "euh," "bah," or "voyons")'
-    elif normalized_locale.startswith("de"):
-        bridge_words = 'bridge words (like "äh," "öh," or "schauen wir mal")'
-    elif normalized_locale.startswith("pt"):
-        bridge_words = 'bridge words (like "é," "hum," or "vejamos")'
-    elif normalized_locale.startswith("it"):
-        bridge_words = 'bridge words (like "eh," "ehm," or "vediamo")'
-    elif normalized_locale.startswith("ja"):
-        bridge_words = 'bridge words (like "ええと," "あの," or "そうですね")'
-    elif normalized_locale == "en-gb":
-        bridge_words = 'bridge words (like "um," "er," or "ah")'
-    elif normalized_locale == "en-au":
-        bridge_words = 'bridge words (like "um," "ah," or "yeah")'
-    else:
-        bridge_words = 'bridge words (like "um," "ah," or "hmm")'
-
-    return (
-        "Read the following transcript based on the audio profile and director's"
-        " note. You must read the entire transcript strictly verbatim.\n\n# Audio"
-        " Profile\nYou are a real human being working in customer"
-        " care—warm, patient, and highly empathetic. You are sitting at your"
-        " desk, answering a live phone call. This delivery must sound 100%"
-        " unscripted, like a genuine, spontaneous conversation with someone you"
-        " truly want to help.\n\n# Director's note\n* Persona & Tone: Friendly,"
-        " grounded, and authentically conversational. Imagine you are helping a"
-        ' neighbor. Speak with a subtle "smile" in your voice, keeping the'
-        " energy upbeat but deeply reassuring.\n* Pacing: Keep the pace brisk and"
-        " efficient, like a busy but highly competent agent quickly relaying"
-        " information. Do not over-exaggerate pauses. Keep filler words"
-        " incredibly brief.\n* Intonation & Emotion: Use natural, dynamic pitch"
-        " variations to express active listening and engagement. Avoid sounding"
-        " monotone, rigid, or like an automated recording. Let genuine human"
-        " warmth guide your vocal melody.\n* Realism & Imperfections: If"
-        f" {bridge_words} are in the text, deliver them naturally and"
-        " thoughtfully, exactly as a human does when searching for information or"
-        " gathering their thoughts.\n* Consistency: Maintain your natural, human"
-        " conversational style throughout the entire read. When reading phone"
-        " numbers, account IDs, or digits, group them naturally with slight"
-        " pauses (e.g., reading a phone number in clusters), just as you would"
-        " when reading numbers off a screen to a friend.\n*"
-        f" Accent: {accent}\n\n## Transcript:\n"
+    """Returns the default Chirp3-HD voice for a locale code."""
+    norm = _norm_locale(locale)
+    return DEFAULT_VOICES.get(
+        norm,
+        DEFAULT_VOICES.get(norm.split("-")[0], f"{locale}-Chirp3-HD-Aoede"),
     )
 
 
-class InstructionTarget:
-    """Represents an agent instruction file or JSON configuration target."""
+def normalize_tag(inner: str) -> str:
+    """Lowercases a tag body and collapses whitespace and JSON escapes."""
+    return re.sub(r"\s+", " ", inner.replace('\\"', '"')).strip().lower()
 
-    def __init__(self, file_path: pathlib.Path, workspace_path: pathlib.Path):
-        self.file_path = file_path
-        self.workspace_path = workspace_path
-        try:
-            self.rel_path = str(file_path.relative_to(workspace_path))
-        except ValueError:
-            self.rel_path = str(file_path)
-        self.is_json = (
-            file_path.name == "agent.json" or file_path.name.endswith(".json")
+
+def is_audio_tag(name: str) -> bool:
+    return name in KNOWN_TAGS or bool(PROSODY_RE.match(name))
+
+
+def _line_of(content: str, offset: int) -> int:
+    return content.count("\n", 0, offset) + 1
+
+
+def _is_label_context(content: str, start: int) -> bool:
+    prefix = content[content.rfind("\n", 0, start) + 1 : start]
+    return bool(
+        LABEL_CONTEXT_RE.search(prefix) or ATTRIBUTE_VALUE_RE.search(prefix)
+    )
+
+
+def _speech_configs(app_data: dict[str, Any]) -> dict[str, Any]:
+    audio = app_data.get("audioProcessingConfig")
+    if not isinstance(audio, dict):
+        return {}
+    cfgs = audio.get("synthesizeSpeechConfigs")
+    return cfgs if isinstance(cfgs, dict) else {}
+
+
+def _declared_languages(app_data: dict[str, Any]) -> list[str]:
+    settings = app_data.get("languageSettings")
+    if not isinstance(settings, dict):
+        return []
+    langs = [settings.get("defaultLanguageCode")]
+    supported = settings.get("supportedLanguageCodes")
+    if isinstance(supported, list):
+        langs.extend(supported)
+    seen: dict[str, str] = {}
+    for lang in langs:
+        if isinstance(lang, str) and lang.strip():
+            seen.setdefault(_norm_locale(lang), lang)
+    return list(seen.values())
+
+
+def _find_speech_config(cfgs: dict[str, Any], locale: str) -> Any:
+    norm = _norm_locale(locale)
+    for key in (norm, norm.split("-")[0]):
+        for k, v in cfgs.items():
+            if isinstance(k, str) and _norm_locale(k) == key:
+                return v
+    return None
+
+
+def _style_fields(app_data: dict[str, Any]) -> Iterator[tuple[str, dict, str]]:
+    """Yields (label, owner, key) for every speaking-style field."""
+    for lang, cfg in _speech_configs(app_data).items():
+        if isinstance(cfg, dict) and "instruction" in cfg:
+            yield (
+                f"synthesizeSpeechConfigs['{lang}'].instruction",
+                cfg,
+                "instruction",
+            )
+    audio = app_data.get("audioProcessingConfig")
+    samples = audio.get("customVoiceSamples") if isinstance(audio, dict) else []
+    for i, sample in enumerate(samples if isinstance(samples, list) else []):
+        if isinstance(sample, dict) and "voiceInstruction" in sample:
+            yield (
+                f"customVoiceSamples[{i}].voiceInstruction",
+                sample,
+                "voiceInstruction",
+            )
+    stack: list[tuple[str, Any]] = [("", app_data)]
+    while stack:
+        path, node = stack.pop()
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in ("directorsNote", "directors_note"):
+                    yield f"{path}{k}", node, k
+                else:
+                    stack.append((f"{path}{k}.", v))
+        elif isinstance(node, list):
+            stack.extend((path, v) for v in node)
+
+
+def _load_json(content: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _scalar_edits(
+    old: Any, new: Any, key: str = ""
+) -> Iterator[tuple[str, Any, Any]] | None:
+    """Yields (key, old, new) for changed scalars; None if keys were added."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        if set(old) != set(new):
+            return None
+        edits = []
+        for k in old:
+            sub = _scalar_edits(old[k], new[k], k)
+            if sub is None:
+                return None
+            edits.extend(sub)
+        return iter(edits)
+    if isinstance(old, list) and isinstance(new, list):
+        if len(old) != len(new):
+            return None
+        edits = []
+        for o, n in zip(old, new, strict=True):
+            sub = _scalar_edits(o, n, key)
+            if sub is None:
+                return None
+            edits.extend(sub)
+        return iter(edits)
+    return iter([(key, old, new)] if old != new else [])
+
+
+def _minimal_json_edit(raw: str, old: Any, new: Any) -> str:
+    """Rewrites only the changed JSON values, keeping the file's formatting.
+
+    Falls back to a full 2-space re-serialization when a value cannot be
+    located unambiguously or keys were added.
+    """
+    edits = _scalar_edits(old, new)
+    patched = raw
+    for key, old_val, new_val in edits or []:
+        # Match the key and its scalar token, then compare decoded values so
+        # that escaping differences (e.g. \u0027) don't matter.
+        pattern = re.compile(
+            r'("' + re.escape(key) + r'"\s*:\s*)'
+            r'("(?:[^"\\]|\\.)*"|-?[\d.eE+-]+|true|false|null)'
         )
-        self.referenced_file_path: pathlib.Path | None = None
-
-    def _resolve_referenced_txt_path(self, inst_path_str: str) -> pathlib.Path:
-        """Resolves a referenced relative .txt path against workspace and file directory."""
-        clean = inst_path_str.strip()
-        candidate1 = self.workspace_path / clean
-        if candidate1.is_file():
-            return candidate1
-        candidate2 = self.file_path.parent / clean
-        if candidate2.is_file():
-            return candidate2
-        return candidate1
-
-    def get_content(self) -> str | None:
-        """Reads and returns the instruction string from the target file."""
-        if not self.file_path.exists():
-            return None
+        hits = (
+            [
+                m
+                for m in pattern.finditer(patched)
+                if json.loads(m.group(2)) == old_val
+            ]
+            if key
+            else []
+        )
+        if len(hits) != 1:
+            patched = None
+            break
+        m = hits[0]
+        patched = (
+            patched[: m.start(2)]
+            + json.dumps(new_val, ensure_ascii=False)
+            + patched[m.end(2) :]
+        )
+    if edits is not None and patched is not None:
         try:
-            raw = self.file_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return None
-        if self.is_json:
-            try:
-                data = json.loads(raw)
-                if isinstance(data, dict):
-                    inst = data.get("instruction")
-                    if isinstance(inst, str):
-                        if inst.strip().endswith(".txt"):
-                            ref_path = self._resolve_referenced_txt_path(inst)
-                            self.referenced_file_path = ref_path
-                            if ref_path.is_file():
-                                return ref_path.read_text(encoding="utf-8")
-                            return None
-                        return inst
-                    return None
-                return None
-            except json.JSONDecodeError:
-                return None
-        return raw
+            if json.loads(patched) == new:
+                return patched
+        except json.JSONDecodeError:
+            pass
+    return json.dumps(new, indent=2, ensure_ascii=False) + "\n"
 
-    def set_content(self, new_content: str) -> bool:
-        """Writes updated instruction content back to the target file."""
-        if not self.file_path.exists():
-            return False
-        try:
-            if self.is_json:
-                raw = self.file_path.read_text(encoding="utf-8")
-                data = json.loads(raw)
-                if isinstance(data, dict):
-                    inst = data.get("instruction")
-                    if isinstance(inst, str) and inst.strip().endswith(".txt"):
-                        ref_path = self._resolve_referenced_txt_path(inst)
-                        self.referenced_file_path = ref_path
-                        ref_path.parent.mkdir(parents=True, exist_ok=True)
-                        ref_path.write_text(new_content, encoding="utf-8")
-                        return True
-                    data["instruction"] = new_content
-                    self.file_path.write_text(
-                        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                        encoding="utf-8",
+
+def _rel(file_path: pathlib.Path, context: LintContext) -> str:
+    try:
+        return str(file_path.relative_to(context.project_root))
+    except ValueError:
+        return str(file_path)
+
+
+# ── Audio tag scanning ───────────────────────────────────────────────────
+
+
+@dataclass
+class TagMatch:
+    """An audio tag found in a file."""
+
+    start: int
+    end: int
+    name: str
+    bracket: bool
+    closing: bool
+
+
+def iter_audio_tags(content: str) -> Iterator[TagMatch]:
+    """Yields audio tags in square or angle brackets, skipping non-tags."""
+    for pattern, bracket in ((BRACKET_TAG_RE, True), (ANGLE_TAG_RE, False)):
+        for m in pattern.finditer(content):
+            name = normalize_tag(m.group(2))
+            closing = bool(m.group(1))
+            if not (is_audio_tag(name) or (closing and name == "prosody")):
+                continue
+            prev = content[m.start() - 1] if m.start() else ""
+            nxt = content[m.end()] if m.end() < len(content) else ""
+            if bracket and (prev.isalnum() or prev in ("_", ")") or nxt == "("):
+                continue  # code subscript or markdown link
+            if _is_label_context(content, m.start()):
+                continue
+            yield TagMatch(m.start(), m.end(), name, bracket, closing)
+
+
+def _target_tag(name: str) -> str:
+    """Returns the Composite v2 tag body for a tag ("" means delete)."""
+    prosody = PROSODY_RE.match(name)
+    if prosody:
+        # Never change a rate; only the brackets and quoting change.
+        return f'prosody rate="{prosody.group(1)}"'
+    return REMAP.get(name, name)
+
+
+def _inside_double_quotes(
+    content: str, start: int, escaped: bool = False
+) -> bool:
+    """Whether `start` sits inside a "..." span on its line.
+
+    Args:
+      content: File content.
+      start: Offset to test.
+      escaped: Count only JSON-escaped quotes (a quote inside a JSON string).
+    """
+    line = content[content.rfind("\n", 0, start) + 1 : start]
+    pattern = r'\\"' if escaped else r'(?<!\\)["\u201c\u201d]'
+    return len(re.findall(pattern, line)) % 2 == 1
+
+
+def migrate_tags(content: str, json_escaped: bool) -> tuple[str, list[str]]:
+    """Converts square-bracket audio tags and remaps poor tags.
+
+    Args:
+      content: File content.
+      json_escaped: Whether the content is JSON, so quotes in tags are escaped.
+
+    Returns:
+      The migrated content and a list of change descriptions.
+    """
+    changes: list[str] = []
+    out: list[str] = []
+    pos = 0
+    for tag in sorted(iter_audio_tags(content), key=lambda t: t.start):
+        if tag.closing or (not tag.bracket and tag.name not in REMAP):
+            continue
+        start, end = tag.start, tag.end
+        target = _target_tag(tag.name)
+        if tag.name not in REMAP and not PROSODY_RE.match(tag.name):
+            target = content[start + 1 : end - 1]  # keep the original case
+        if '"' in target and (
+            json_escaped or _inside_double_quotes(content, start)
+        ):
+            target = target.replace('"', '\\"')
+        new = f"<{target}>" if target else ""
+        if not new and content[end : end + 1] == " ":
+            end += 1  # drop the space a deleted tag leaves behind
+        changes.append(
+            f"L{_line_of(content, start)}: {content[tag.start : tag.end]}"
+            f" -> {new or '(removed)'}"
+        )
+        out.append(content[pos:start])
+        out.append(new)
+        pos = end
+    out.append(content[pos:])
+    # Drop duplicates a remap creates: `<calm>, <calm>` or `<calm><calm>`.
+    migrated = re.sub(
+        r"<([a-z ]{2,30})>(?:\s*(?:,|/|\bor\b|\band\b)?\s*<\1>)+",
+        r"<\1>",
+        "".join(out),
+    )
+    return migrated, changes
+
+
+# ── Composite v2 lint rules ──────────────────────────────────────────────
+#
+# Registered with the scrapi linter. They are model-agnostic so that they
+# also flag apps (and agent-level overrides) still on Composite v1.
+
+
+@rule("config")
+class CompositeV2Model(Rule):
+    id = "CV201"
+    name = "composite-v2-model"
+    description = f"modelSettings.model must be {TARGET_MODEL}"
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: pathlib.Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        data = _load_json(content)
+        if data is None:
+            return []
+        settings = data.get("modelSettings") or {}
+        model = settings.get("model") if isinstance(settings, dict) else None
+        is_app = file_path.name == "app.json"
+        if model == TARGET_MODEL or (model is None and not is_app):
+            return []
+        rel = _rel(file_path, context)
+        if isinstance(model, str) and not model.startswith(
+            COMPOSITE_MODEL_PREFIX
+        ):
+            return [
+                self.make_result(
+                    file=rel,
+                    message=(
+                        f"modelSettings.model is '{model}', a non-Composite"
+                        " model. Confirm with the user before upgrading."
+                    ),
+                    severity=Severity.WARNING,
+                    fix=f"Ask the user; then set it to '{TARGET_MODEL}'",
+                )
+            ]
+        return [
+            self.make_result(
+                file=rel,
+                message=f"modelSettings.model is '{model}'.",
+                fix=f"Set modelSettings.model to '{TARGET_MODEL}'",
+            )
+        ]
+
+
+@rule("config")
+class CompositeV2Temperature(Rule):
+    id = "CV202"
+    name = "composite-v2-temperature"
+    description = "modelSettings.temperature must be 1.0"
+    default_severity = Severity.WARNING
+
+    def check(
+        self, file_path: pathlib.Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        data = _load_json(content)
+        if file_path.name != "app.json" or data is None:
+            return []
+        settings = data.get("modelSettings") or {}
+        temp = (
+            settings.get("temperature") if isinstance(settings, dict) else None
+        )
+        if temp == TARGET_TEMPERATURE:
+            return []
+        return [
+            self.make_result(
+                file=_rel(file_path, context),
+                message=(
+                    f"modelSettings.temperature is {temp}; 1.0 avoids"
+                    " acoustic repetition loops."
+                ),
+                fix="Set modelSettings.temperature to 1.0",
+            )
+        ]
+
+
+SPEAKING_STYLE_WORD_LIMIT = 12
+
+
+def _invalid_style_reason(key: str, value: Any) -> str | None:
+    """Returns why a speaking-style value is invalid on Composite v2, or None."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    if key in ("directorsNote", "directors_note") or DIRECTORS_NOTE_RE.search(
+        value
+    ):
+        return "holds a Director's Note"
+    word_count = len(value.split())
+    if word_count >= SPEAKING_STYLE_WORD_LIMIT:
+        return (
+            f"has {word_count} words (must be empty or below"
+            f" {SPEAKING_STYLE_WORD_LIMIT} words)"
+        )
+    return None
+
+
+@rule("config")
+class CompositeV2SpeakingStyle(Rule):
+    id = "CV203"
+    name = "composite-v2-speaking-style"
+    description = (
+        "Speaking style instructions must be empty or below 12 words;"
+        " Director's Notes must be cleared"
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: pathlib.Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        data = _load_json(content)
+        if data is None:
+            return []
+        results = []
+        for label, owner, key in _style_fields(data):
+            reason = _invalid_style_reason(key, owner.get(key))
+            if not reason:
+                continue
+            fix = (
+                f'Clear {label} to ""'
+                if key in ("directorsNote", "directors_note")
+                else f'Clear {label} to "" or keep it below 12 words'
+            )
+            results.append(
+                self.make_result(
+                    file=_rel(file_path, context),
+                    message=(
+                        f"{label} {reason}. Long speaking style instructions"
+                        " and Director's Notes conflict with inline audio"
+                        " tags on Composite v2."
+                    ),
+                    fix=fix,
+                )
+            )
+        return results
+
+
+@rule("config")
+class CompositeV2VoiceParity(Rule):
+    id = "CV204"
+    name = "composite-v2-voice-parity"
+    description = (
+        "Every declared language needs a synthesizeSpeechConfigs voice"
+    )
+    default_severity = Severity.WARNING
+
+    def check(
+        self, file_path: pathlib.Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        data = _load_json(content)
+        if file_path.name != "app.json" or data is None:
+            return []
+        cfgs = _speech_configs(data)
+        results = []
+        for lang in _declared_languages(data):
+            cfg = _find_speech_config(cfgs, lang)
+            if not isinstance(cfg, dict) or not cfg.get("voice"):
+                results.append(
+                    self.make_result(
+                        file=_rel(file_path, context),
+                        message=(
+                            f"Declared language '{lang}' has no"
+                            " synthesizeSpeechConfigs voice."
+                        ),
+                        fix=f"Add a voice, e.g. '{get_default_voice(lang)}'",
                     )
-                    return True
-                return False
-            else:
-                self.file_path.write_text(new_content, encoding="utf-8")
-                return True
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            return False
+                )
+        return results
+
+
+class _AudioTagRule(Rule):
+    """Base for rules that inspect inline audio tags in any text file."""
+
+    def findings(
+        self, tag: TagMatch, content: str, file_path: pathlib.Path
+    ) -> tuple[str, str] | None:
+        """Returns (message, fix) for a tag this rule flags, else None."""
+        raise NotImplementedError
+
+    def check(
+        self, file_path: pathlib.Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        results = []
+        for tag in iter_audio_tags(content):
+            found = self.findings(tag, content, file_path)
+            if found:
+                results.append(
+                    self.make_result(
+                        file=_rel(file_path, context),
+                        line=_line_of(content, tag.start),
+                        message=found[0],
+                        fix=found[1],
+                    )
+                )
+        return results
+
+
+@rule("instructions")
+class CompositeV2BracketTag(_AudioTagRule):
+    id = "CV210"
+    name = "composite-v2-bracket-tag"
+    description = "Audio tags must use angle brackets"
+    default_severity = Severity.ERROR
+
+    def findings(
+        self, tag: TagMatch, content: str, file_path: pathlib.Path
+    ) -> tuple[str, str] | None:
+        if not tag.bracket or tag.closing:
+            return None
+        target = _target_tag(tag.name)
+        return (
+            f"Square-bracket audio tag {content[tag.start : tag.end]}.",
+            f"Replace with <{target}>" if target else "Remove the tag",
+        )
+
+
+@rule("instructions")
+class CompositeV2TagToReplace(_AudioTagRule):
+    id = "CV211"
+    name = "composite-v2-tag-to-replace"
+    description = "Poorly performing audio tags must be replaced"
+    default_severity = Severity.ERROR
+
+    def findings(
+        self, tag: TagMatch, content: str, file_path: pathlib.Path
+    ) -> tuple[str, str] | None:
+        if tag.bracket or tag.closing or tag.name not in REMAP:
+            return None
+        target = REMAP[tag.name]
+        return (
+            f"<{tag.name}> performs poorly on Composite v2.",
+            f"Replace with <{target}>" if target else "Remove the tag",
+        )
+
+
+@rule("instructions")
+class CompositeV2UnevaluatedTag(_AudioTagRule):
+    id = "CV212"
+    name = "composite-v2-unevaluated-tag"
+    description = "Unevaluated audio tags need user confirmation"
+    default_severity = Severity.WARNING
+
+    def findings(
+        self, tag: TagMatch, content: str, file_path: pathlib.Path
+    ) -> tuple[str, str] | None:
+        if tag.bracket or tag.closing or tag.name not in UNEVALUATED_TAGS:
+            return None
+        suggestion = SUGGESTIONS.get(tag.name)
+        return (
+            f"<{tag.name}> was not evaluated on Composite v2.",
+            f"Ask the user; closest evaluated tag is <{suggestion}>"
+            if suggestion
+            else "Ask the user whether to keep it",
+        )
+
+
+@rule("instructions")
+class CompositeV2ClosingTag(_AudioTagRule):
+    id = "CV213"
+    name = "composite-v2-closing-tag"
+    description = "Audio tags are point markers; never write closing tags"
+    default_severity = Severity.WARNING
+
+    def findings(
+        self, tag: TagMatch, content: str, file_path: pathlib.Path
+    ) -> tuple[str, str] | None:
+        line_start = content.rfind("\n", 0, tag.start) + 1
+        line_end = content.find("\n", tag.end)
+        line = content[line_start : line_end if line_end != -1 else None]
+        if not tag.closing or NO_CLOSING_RULE_RE.search(line):
+            return None
+        return (
+            f"Closing audio tag {content[tag.start : tag.end]}.",
+            'Delete it; use <prosody rate="100%"> to reset the pace',
+        )
+
+
+@rule("instructions")
+class CompositeV2TagPlacement(_AudioTagRule):
+    id = "CV214"
+    name = "composite-v2-tag-placement"
+    description = (
+        "Style tags go at a sentence start; pause tags follow punctuation"
+    )
+    default_severity = Severity.WARNING
+
+    def findings(
+        self, tag: TagMatch, content: str, file_path: pathlib.Path
+    ) -> tuple[str, str] | None:
+        if tag.bracket or tag.closing:
+            return None
+        before = content[content.rfind("\n", 0, tag.start) + 1 : tag.start]
+        after = content[tag.end : tag.end + 2]
+        escaped = file_path.suffix in (".json", ".jsonl")
+        # Only flag tags mid-sentence inside a quoted utterance.
+        if (
+            not re.search(r"[A-Za-z0-9] $", before)
+            or not re.match(r" [A-Za-z]", after)
+            or not _inside_double_quotes(content, tag.start, escaped)
+        ):
+            return None
+        if tag.name in PAUSE_TAGS:
+            return (
+                f"<{tag.name}> follows a word without punctuation.",
+                "Add a comma or other punctuation before the pause tag",
+            )
+        return (
+            f"<{tag.name}> sits mid-sentence in a quoted utterance.",
+            "Move the tag to the start of the sentence it colors",
+        )
+
+
+@rule("instructions")
+class CompositeV2PromptStyle(Rule):
+    id = "CV215"
+    name = "composite-v2-prompt-style"
+    description = (
+        "Prompts must not carry Director's Notes or old tag-format rules"
+    )
+    default_severity = Severity.WARNING
+
+    def check(
+        self, file_path: pathlib.Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        results = []
+        for m in DIRECTORS_NOTE_RE.finditer(content):
+            results.append(
+                self.make_result(
+                    file=_rel(file_path, context),
+                    line=_line_of(content, m.start()),
+                    message=(
+                        "Director's Note / Audio Profile text in a prompt:"
+                        f" '{m.group(0).strip()}'."
+                    ),
+                    fix="Remove speaking-style presets from the prompt",
+                )
+            )
+        for m in OLD_FORMAT_RULE_RE.finditer(content):
+            results.append(
+                self.make_result(
+                    file=_rel(file_path, context),
+                    line=_line_of(content, m.start()),
+                    message=f"Rule written for the old tag format: '{m[0]}'.",
+                    fix="Rewrite it to match the audio tag format block",
+                )
+            )
+        return results
+
+
+@rule("instructions")
+class CompositeV2GlobalGuidelines(Rule):
+    id = "CV216"
+    name = "composite-v2-global-guidelines"
+    description = "Global instruction must carry the audio tag format block"
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: pathlib.Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if ANGLE_GUIDANCE_RE.search(content):
+            return []
+        return [
+            self.make_result(
+                file=_rel(file_path, context),
+                message=(
+                    "Global instruction has no angle-bracket audio tag"
+                    " guidance."
+                ),
+                fix=(
+                    "Merge the Affective Delivery and Voice Guidelines /"
+                    " audio tag format block"
+                ),
+            )
+        ]
+
+
+CONFIG_RULES: list[Rule] = [
+    CompositeV2Model(),
+    CompositeV2Temperature(),
+    CompositeV2SpeakingStyle(),
+    CompositeV2VoiceParity(),
+]
+TEXT_RULES: list[Rule] = [
+    CompositeV2BracketTag(),
+    CompositeV2TagToReplace(),
+    CompositeV2UnevaluatedTag(),
+    CompositeV2ClosingTag(),
+    CompositeV2TagPlacement(),
+]
+PROMPT_RULES: list[Rule] = [CompositeV2PromptStyle()]
+
+RULE_PRIORITY: dict[str, str] = {
+    **SDK_RULE_PRIORITY,
+    "CV201": "P0",
+    "CV202": "P0",
+    "CV203": "P0",
+    "CV204": "P1",
+    "CV210": "P0",
+    "CV211": "P0",
+    "CV212": "P1",
+    "CV213": "P1",
+    "CV214": "P2",
+    "CV215": "P0",
+    "CV216": "P0",
+}
+
+PRIORITY_TITLES: dict[str, str] = {
+    "P0": "🔴 Priority P0: Critical Voice & Synthesis Blockers (Fix First)",
+    "P1": "🟡 Priority P1: Multi-Language, Stability & Tag Review",
+    "P2": "🟢 Priority P2: Placement Review & Tool Pacing (User-Approved)",
+}
 
 
 class VoiceAgentAuditor:
-    """Audits and remediates CXAS voice configurations and speech architectures.
-
-    Integrated with cxas-scrapi discovery and core services.
-    """
+    """Audits and remediates CXAS voice configurations for Composite v2."""
 
     def __init__(
         self,
         workspace_dir: pathlib.Path | str = ".",
         app_name: str | None = None,
-        project_id: str | None = None,
-        location: str | None = None,
     ):
         self.workspace_path = pathlib.Path(workspace_dir).resolve()
         self.app_name = app_name
-        self.project_id = project_id
-        self.location = location
-        self._instruction_targets_cache: list[InstructionTarget] | None = None
-
-        # Scrapi discovery helper
         self.discovery = Discovery(
             app_dir=self.workspace_path,
             evals_dir=self.workspace_path / "evals",
         )
-        self.app_json_path = self._find_app_json()
-
-    def _find_app_json(self) -> pathlib.Path:
-        """Locates the primary app.json configuration in the workspace via Discovery."""
-        discovered = self.discovery.discover_app_config()
-        if discovered is not None and discovered.is_file():
-            return discovered
-
-        direct = self.workspace_path / "app.json"
-        if direct.is_file():
-            return direct
-
-        for p in self.workspace_path.glob("**/app.json"):
-            if p.is_file() and not any(
-                part.startswith(".") or part == "build"
-                for part in p.relative_to(self.workspace_path).parts
-            ):
-                return p
-
-        return direct
-
-    def _find_instruction_targets(
-        self, refresh: bool = False
-    ) -> list[InstructionTarget]:
-        """Discovers all agent instruction and configuration files in the workspace.
-
-        Reuses Discovery to locate canonical global_instruction.txt and sub-agent
-        instructions/configs, while maintaining fallback scanning for non-standard layouts.
-
-        Caches discovered targets on the instance to avoid redundant recursive
-        filesystem globs across repeated audit and remediation passes.
-
-        Args:
-          refresh: Whether to refresh cached targets from filesystem.
-
-        Returns:
-          List of InstructionTarget objects found in the workspace.
-        """
-        if self._instruction_targets_cache is not None and not refresh:
-            return self._instruction_targets_cache
-
-        targets: list[InstructionTarget] = []
-        seen_paths: set[pathlib.Path] = set()
-
-        # 1. Canonical Discovery: global_instruction.txt
-        global_inst = self.discovery.discover_global_instruction()
-        if global_inst is not None and global_inst.is_file():
-            p_resolved = global_inst.resolve()
-            seen_paths.add(p_resolved)
-            targets.append(InstructionTarget(global_inst, self.workspace_path))
-
-        # 2. Canonical Discovery: agent instruction files and configs
-        discovered_agents = self.discovery.discover_agents()
-        for _agent_name, agent_path in discovered_agents.items():
-            if agent_path.is_file():
-                p_resolved = agent_path.resolve()
-                if p_resolved not in seen_paths:
-                    target = InstructionTarget(agent_path, self.workspace_path)
-                    content = target.get_content()
-                    if content is not None:
-                        if (
-                            target.referenced_file_path is not None
-                            and target.referenced_file_path.resolve()
-                            in seen_paths
-                        ):
-                            continue
-                        seen_paths.add(p_resolved)
-                        if target.referenced_file_path is not None:
-                            seen_paths.add(
-                                target.referenced_file_path.resolve()
-                            )
-                        targets.append(target)
-
-        # 3. Supplemental fallback for non-standard workspaces or multi-level layouts
-        patterns = [
-            "**/global_instruction.txt",
-            "**/instruction.txt",
-        ]
-        for pattern in patterns:
-            for p in sorted(self.workspace_path.glob(pattern)):
-                if p.is_file() and not any(
-                    part.startswith(".") or part == "build"
-                    for part in p.relative_to(self.workspace_path).parts
-                ):
-                    p_resolved = p.resolve()
-                    if p_resolved not in seen_paths:
-                        seen_paths.add(p_resolved)
-                        targets.append(
-                            InstructionTarget(p, self.workspace_path)
-                        )
-
-        for p in sorted(self.workspace_path.glob("**/agent.json")):
-            if p.is_file() and not any(
-                part.startswith(".") or part == "build"
-                for part in p.relative_to(self.workspace_path).parts
-            ):
-                if (p.parent / "instruction.txt").is_file():
-                    continue
-                p_resolved = p.resolve()
-                if p_resolved not in seen_paths:
-                    target = InstructionTarget(p, self.workspace_path)
-                    content = target.get_content()
-                    if content is not None:
-                        if (
-                            target.referenced_file_path is not None
-                            and target.referenced_file_path.resolve()
-                            in seen_paths
-                        ):
-                            continue
-                        seen_paths.add(p_resolved)
-                        if target.referenced_file_path is not None:
-                            seen_paths.add(
-                                target.referenced_file_path.resolve()
-                            )
-                        targets.append(target)
-
-        for p in sorted(self.workspace_path.glob("agents/*/*.json")):
-            if p.is_file() and not any(
-                part.startswith(".") or part == "build"
-                for part in p.relative_to(self.workspace_path).parts
-            ):
-                if (p.parent / "instruction.txt").is_file():
-                    continue
-                p_resolved = p.resolve()
-                if p_resolved not in seen_paths and p.name != "agent.json":
-                    target = InstructionTarget(p, self.workspace_path)
-                    content = target.get_content()
-                    if content is not None:
-                        if (
-                            target.referenced_file_path is not None
-                            and target.referenced_file_path.resolve()
-                            in seen_paths
-                        ):
-                            continue
-                        seen_paths.add(p_resolved)
-                        if target.referenced_file_path is not None:
-                            seen_paths.add(
-                                target.referenced_file_path.resolve()
-                            )
-                        targets.append(target)
-
-        self._instruction_targets_cache = targets
-        return targets
-
-    def _read_app_json(self) -> dict[str, Any]:
-        """Reads and parses the app.json configuration file."""
-        if not self.app_json_path.exists():
-            return {}
-        try:
-            with open(self.app_json_path, encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            return {}
-
-    def _write_app_json(self, data: dict[str, Any]) -> None:
-        """Writes updated configuration dictionary back to app.json."""
-        self.app_json_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.app_json_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-
-    def _get_root_agent_name(
-        self, app_data: dict[str, Any] | None = None
-    ) -> str:
-        """Extracts the root agent name/identifier from app.json or defaults to 'root_agent'."""
-        if app_data is None:
-            app_data = self._read_app_json()
-        if isinstance(app_data, dict):
-            root_agent = app_data.get("rootAgent")
-            if isinstance(root_agent, str) and root_agent.strip():
-                clean = root_agent.strip().rstrip("/")
-                return clean.split("/")[-1]
-        return "root_agent"
-
-    def _is_root_agent(
-        self,
-        target: InstructionTarget,
-        app_data: dict[str, Any] | None = None,
-    ) -> bool:
-        """Determines whether an instruction target belongs to the configured root agent."""
-        if target.file_path.name == "global_instruction.txt":
-            return True
-
-        root_name = self._get_root_agent_name(app_data).lower()
-        rel_lower = target.rel_path.lower()
-        rel_parts = [p.lower() for p in pathlib.Path(target.rel_path).parts]
-
-        # Workspace top-level single-file agent targets (e.g. instruction.txt).
-        if len(rel_parts) == 1:
-            return True
-
-        if root_name in rel_parts:
-            return True
-
-        if target.file_path.stem.lower() == root_name:
-            return True
-
-        if f"agents/{root_name}/" in rel_lower or rel_lower.startswith(
-            f"{root_name}/"
-        ):
-            return True
-
-        if f"agents/{root_name}." in rel_lower:
-            return True
-
-        return "root_agent" in rel_parts or "root_agent" in rel_lower
-
-    def _run_lint_rules(
-        self, specific_rules: set[str] | None = None
-    ) -> list[LintResult]:
-        """Runs cxas lint rules configured for Gemini Composite V1."""
-        config = LintConfig.load(self.workspace_path)
-        context = build_context(
-            project_root=self.workspace_path,
-            config=config,
-            discovery=self.discovery,
-            model_override="gemini-composite-v1",
+        self.app_root = self.discovery.app_root or self.workspace_path
+        self.app_json_path = self.discovery.discover_app_config() or (
+            self.app_root / "app.json"
         )
-        registry = build_registry()
+        self.config = LintConfig.load(self.workspace_path)
+
+    # ── Discovery helpers ──
+
+    def _context(self) -> LintContext:
+        return build_context(
+            project_root=self.workspace_path,
+            config=self.config,
+            discovery=self.discovery,
+            model_override=TARGET_MODEL,
+        )
+
+    def config_files(self) -> list[pathlib.Path]:
+        files = [self.app_json_path] if self.app_json_path.is_file() else []
+        files.extend(self.discovery.discover_agent_configs().values())
+        return files
+
+    def prompt_files(self) -> list[pathlib.Path]:
+        files = [
+            p
+            for p in self.discovery.discover_agents().values()
+            if p.name == "instruction.txt"
+        ]
+        global_inst = self.discovery.discover_global_instruction()
+        if global_inst:
+            files.insert(0, global_inst)
+        return files
+
+    def text_files(self) -> list[pathlib.Path]:
+        """Every app file that may carry audio tags."""
+        files = []
+        for p in sorted(self.app_root.rglob("*")):
+            parts = p.relative_to(self.app_root).parts
+            if (
+                p.is_file()
+                and p.suffix in TEXT_SUFFIXES
+                and not any(
+                    part.startswith(".") or part in EXCLUDED_DIRS
+                    for part in parts
+                )
+            ):
+                files.append(p)
+        return files
+
+    # ── Audit ──
+
+    def _run_sdk_rules(self, context: LintContext) -> list[LintResult]:
+        """Runs reused SDK lint rules, enabled for Composite v2."""
+        sdk = build_registry()
+        registry = RuleRegistry()
+        for rule_id in SDK_RULE_PRIORITY:
+            sdk_rule = sdk.get(rule_id)
+            if sdk_rule is not None:
+                reused = copy.copy(sdk_rule)
+                reused.models = None
+                registry.register(reused)
         report = LintReport()
         run_rules(
             registry=registry,
-            config=config,
+            config=self.config,
             context=context,
             discovery=self.discovery,
             report=report,
-            specific_rules=specific_rules,
         )
+        for result in report.results:
+            result.message = result.message.replace(
+                "Gemini Composite V1", "Gemini Composite v2"
+            )
         return report.results
 
-    def audit_audio_profile(
-        self, app_data: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Audits synthesizeSpeechConfigs, Audio Profile headers, and transcript hooks."""
-        results = self._run_lint_rules(specific_rules={"A007"})
-        issues = [
-            {
-                "code": r.rule_id,
-                "file": r.file,
-                "line": r.line,
-                "message": r.message,
-                "recommended": r.fix_suggestion,
-                "priority": "P0",
-            }
-            for r in results
-        ]
-        return {
-            "passed": len(issues) == 0,
-            "issues": issues,
-        }
+    def _apply(
+        self,
+        rules: list[Rule],
+        files: list[pathlib.Path],
+        context: LintContext,
+    ) -> list[LintResult]:
+        results = []
+        for path in files:
+            if self.config.is_ignored(_rel(path, context)):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for r in rules:
+                results.extend(r.check(path, content, context))
+        return results
 
-    def audit_accent_specifications(
-        self, app_data: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Audits Accent directives to ensure natural language names instead of locale codes."""
-        results = self._run_lint_rules(specific_rules={"A008"})
-        issues = [
-            {
-                "code": r.rule_id,
-                "file": r.file,
-                "line": r.line,
-                "message": r.message,
-                "recommended": r.fix_suggestion,
-                "priority": "P0",
-            }
-            for r in results
-        ]
-        return {
-            "passed": len(issues) == 0,
-            "issues": issues,
-        }
-
-    def audit_multilang_coverage(
-        self, app_data: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Audits multi-language voice parity across all declared languages."""
-        results = self._run_lint_rules(specific_rules={"A009"})
-        issues = [
-            {
-                "code": r.rule_id,
-                "file": r.file,
-                "line": r.line,
-                "message": r.message,
-                "recommended": r.fix_suggestion,
-                "priority": "P1",
-            }
-            for r in results
-        ]
-        return {
-            "passed": len(issues) == 0,
-            "issues": issues,
-        }
-
-    def audit_prohibited_xml_tags(self) -> dict[str, Any]:
-        """Audits instruction files for prohibited internal platform XML tags."""
-        results = self._run_lint_rules(specific_rules={"I015"})
-        issues = [
-            {
-                "code": r.rule_id,
-                "file": r.file,
-                "line": r.line,
-                "message": r.message,
-                "recommended": r.fix_suggestion,
-                "priority": "P0",
-            }
-            for r in results
-        ]
-        return {
-            "passed": len(issues) == 0,
-            "files_scanned": len(self._find_instruction_targets()),
-            "issues": issues,
-        }
-
-    def audit_unregistered_template_variables(
-        self, app_data: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Verifies that all {{var}} references in instructions are declared in app.json."""
-        results = self._run_lint_rules(specific_rules={"V104"})
-        issues = [
-            {
-                "code": r.rule_id,
-                "file": r.file,
-                "line": r.line,
-                "message": r.message,
-                "recommended": r.fix_suggestion,
-                "priority": "P0",
-            }
-            for r in results
-        ]
-        return {
-            "passed": len(issues) == 0,
-            "issues": issues,
-        }
-
-    def audit_anti_looping_and_stability(
-        self, app_data: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Audits sampling temperature for composite models."""
-        results = self._run_lint_rules(specific_rules={"A010"})
-        issues = [
-            {
-                "code": r.rule_id,
-                "file": r.file,
-                "line": r.line,
-                "message": r.message,
-                "recommended": r.fix_suggestion,
-                "priority": "P0",
-            }
-            for r in results
-        ]
-        return {
-            "passed": len(issues) == 0,
-            "issues": issues,
-        }
-
-    def audit_tool_conversational_pacing(self) -> dict[str, Any]:
-        """Audits active tools for conversational pacing directives."""
-        results = self._run_lint_rules(specific_rules={"T014"})
-        issues = [
-            {
-                "code": r.rule_id,
-                "file": r.file,
-                "line": r.line,
-                "message": r.message,
-                "recommended": r.fix_suggestion,
-                "priority": "P2",
-            }
-            for r in results
-        ]
-        return {
-            "passed": len(issues) == 0,
-            "issues": issues,
-        }
+    def lint_results(self) -> list[LintResult]:
+        """Runs every Composite v2 check and returns linter results."""
+        context = self._context()
+        results = self._apply(CONFIG_RULES, self.config_files(), context)
+        results += self._apply(TEXT_RULES, self.text_files(), context)
+        results += self._apply(PROMPT_RULES, self.prompt_files(), context)
+        global_inst = self.discovery.discover_global_instruction()
+        if global_inst:
+            results += self._apply(
+                [CompositeV2GlobalGuidelines()], [global_inst], context
+            )
+        else:
+            results.append(
+                CompositeV2GlobalGuidelines().make_result(
+                    file=_rel(self.app_json_path, context),
+                    message="App has no global instruction.",
+                    fix=(
+                        "Create global_instruction.txt with the Affective"
+                        " Delivery and Voice Guidelines and reference it"
+                        " from app.json"
+                    ),
+                )
+            )
+        results += self._run_sdk_rules(context)
+        return results
 
     def audit(self) -> dict[str, Any]:
-        """Executes all audit passes and returns a complete compliance audit report."""
-        app_data = self._read_app_json()
-
-        passes = {
-            "app_audio_profile": self.audit_audio_profile(app_data),
-            "accent_specifications": self.audit_accent_specifications(app_data),
-            "multilang_coverage": self.audit_multilang_coverage(app_data),
-            "prohibited_xml_tags": self.audit_prohibited_xml_tags(),
-            "unregistered_template_variables": (
-                self.audit_unregistered_template_variables(app_data)
-            ),
-            "anti_looping_and_stability": self.audit_anti_looping_and_stability(
-                app_data
-            ),
-            "tool_conversational_pacing": (
-                self.audit_tool_conversational_pacing()
-            ),
+        """Returns all findings grouped by priority."""
+        by_priority: dict[str, list[dict[str, Any]]] = {
+            "P0": [],
+            "P1": [],
+            "P2": [],
         }
-
-        total_issues = sum(len(p.get("issues", [])) for p in passes.values())
-
+        for r in self.lint_results():
+            priority = RULE_PRIORITY.get(r.rule_id, "P2")
+            by_priority[priority].append(
+                {
+                    "code": r.rule_id,
+                    "file": r.file,
+                    "line": r.line,
+                    "message": r.message,
+                    "recommended": r.fix_suggestion,
+                    "priority": priority,
+                }
+            )
+        total = sum(len(v) for v in by_priority.values())
         return {
             "workspace": str(self.workspace_path),
             "app_json": (
-                str(self.app_json_path) if self.app_json_path.exists() else None
+                str(self.app_json_path)
+                if self.app_json_path.is_file()
+                else None
             ),
-            "overall_status": "PASSED" if total_issues == 0 else "FAILED",
-            "total_issues": total_issues,
-            "passes": passes,
+            "target_model": TARGET_MODEL,
+            "overall_status": "PASSED" if total == 0 else "FAILED",
+            "total_issues": total,
+            "priority_counts": {k: len(v) for k, v in by_priority.items()},
+            "issues": by_priority,
         }
 
     def to_lint_report(self) -> LintReport:
-        """Converts voice audit issues to a cxas-scrapi standard LintReport."""
-        audit_res = self.audit()
         report = LintReport()
-
-        for _pass_name, pass_data in audit_res.get("passes", {}).items():
-            for issue in pass_data.get("issues", []):
-                file_path = issue.get("file", str(self.app_json_path))
-                line = issue.get("line")
-                code = issue.get("code", "VOICE_RULE")
-                msg = issue.get("message", "")
-                fix = issue.get("recommended", "")
-
-                issue_priority = issue.get("priority")
-                if issue_priority in ("P0", "P1"):
-                    is_error = True
-                elif issue_priority == "P2":
-                    is_error = False
-                else:
-                    # P0/P1 map to ERROR, P2 maps to WARNING
-                    is_error = code in {
-                        "A007",
-                        "A008",
-                        "A009",
-                        "A010",
-                        "I015",
-                        "V104",
-                        "REFLEXIVE_CLOSING_LOOP",
-                        "MISSING_SYNTHESIZE_SPEECH_CONFIGS",
-                        "MISSING_DIRECTORS_NOTE",
-                        "MISSING_AUDIO_PROFILE_HEADER",
-                        "MISSING_DIRECTORS_NOTE_HEADER",
-                        "MISSING_TRANSCRIPT_HOOK",
-                        "LOCALE_CODE_IN_ACCENT",
-                        "PROHIBITED_XML_TAG_FOUND",
-                        "PERMISSIVE_CONTRADICTION_FOUND",
-                        "UNREGISTERED_TEMPLATE_VARIABLE",
-                        "MISSING_DECLARED_TOOL_FILE",
-                        "MISSING_SYNTHESIZE_SPEECH_CONFIG_LANG",
-                        "MISSING_VOICE_IDENTIFIER",
-                        "MISSING_DIRECTORS_NOTE_INSTRUCTION",
-                        "ACCENT_DIRECTIVE_MISMATCH",
-                        "MISSING_LANGUAGE_SESSION_VAR",
-                        "A007_FAIL_MISSING_LANG",
-                        "A007_FAIL_MISSING_VOICE",
-                        "A007_FAIL_MISSING_INSTRUCTION",
-                        "A007_FAIL_ACCENT_MISMATCH",
-                        "A007_FAIL_MISSING_VAR",
-                        "LOW_SAMPLING_TEMPERATURE",
-                        "CONVERSATIONAL_SHELL_AGENT_FOUND",
-                        "MISSING_TOOL_DOCSTRING",
-                        "MISSING_TOOL_WHEN_TO_CALL",
-                        "MISSING_TOOL_WHEN_NOT_TO_CALL",
-                    }
-                sev = (
-                    getattr(Severity, "ERROR", "error")
-                    if is_error
-                    else getattr(Severity, "WARNING", "warning")
-                )
-
-                result = LintResult(
-                    file=file_path,
-                    rule_id=code,
-                    severity=sev,
-                    message=msg,
-                    line=line,
-                    fix_suggestion=fix,
-                )
-                report.add(result)
-
+        report.add_all(self.lint_results())
         return report
 
-    def generate_prioritized_report(self) -> dict[str, Any]:
-        """Generates a prioritized report of suggested agent improvements focusing on voice and conversational naturalness."""
-        audit_res = self.audit()
-
-        p0_issues: list[dict[str, Any]] = []
-        p1_issues: list[dict[str, Any]] = []
-        p2_issues: list[dict[str, Any]] = []
-
-        p0_codes = {
-            "A007",
-            "A008",
-            "A010",
-            "I015",
-            "V104",
-            "MISSING_SYNTHESIZE_SPEECH_CONFIGS",
-            "MISSING_DIRECTORS_NOTE",
-            "MISSING_AUDIO_PROFILE_HEADER",
-            "MISSING_DIRECTORS_NOTE_HEADER",
-            "MISSING_TRANSCRIPT_HOOK",
-            "LOCALE_CODE_IN_ACCENT",
-            "PROHIBITED_XML_TAG_FOUND",
-            "PERMISSIVE_CONTRADICTION_FOUND",
-            "UNREGISTERED_TEMPLATE_VARIABLE",
-            "UNSAFE_CALLBACK_STATE_ACCESS",
-            "UNCONDITIONAL_CALLBACK_STATE_OVERWRITE",
-            "MISSING_DECLARED_TOOL_FILE",
-        }
-
-        p1_codes = {
-            "A009",
-            "REFLEXIVE_CLOSING_LOOP",
-            "MISSING_SYNTHESIZE_SPEECH_CONFIG_LANG",
-            "MISSING_VOICE_IDENTIFIER",
-            "MISSING_DIRECTORS_NOTE_INSTRUCTION",
-            "ACCENT_DIRECTIVE_MISMATCH",
-            "MISSING_LANGUAGE_SESSION_VAR",
-            "A007_FAIL_MISSING_LANG",
-            "A007_FAIL_MISSING_VOICE",
-            "A007_FAIL_MISSING_INSTRUCTION",
-            "A007_FAIL_ACCENT_MISMATCH",
-            "A007_FAIL_MISSING_VAR",
-            "LOW_SAMPLING_TEMPERATURE",
-            "CONVERSATIONAL_SHELL_AGENT_FOUND",
-            "MISSING_TOOL_DOCSTRING",
-            "MISSING_TOOL_WHEN_TO_CALL",
-            "MISSING_TOOL_WHEN_NOT_TO_CALL",
-        }
-
-        for pass_name, pass_data in audit_res.get("passes", {}).items():
-            for issue in pass_data.get("issues", []):
-                code = issue.get("code")
-                item = {
-                    "pass": pass_name,
-                    "code": code,
-                    "message": issue.get("message"),
-                    "details": issue,
-                }
-                issue_priority = issue.get("priority")
-                if issue_priority == "P0" or (
-                    not issue_priority and code in p0_codes
-                ):
-                    item["priority"] = "P0"
-                    item["category"] = "Critical Voice & Synthesis Blocker"
-                    p0_issues.append(item)
-                elif issue_priority == "P1" or (
-                    not issue_priority and code in p1_codes
-                ):
-                    item["priority"] = "P1"
-                    item["category"] = "High Impact Multi-Language & Stability"
-                    p1_issues.append(item)
-                else:
-                    item["priority"] = "P2"
-                    item["category"] = (
-                        "Medium Impact Hygiene & Conversational Texture"
-                    )
-                    p2_issues.append(item)
-
-        markdown_report = self._format_markdown_report(
-            audit_res, p0_issues, p1_issues, p2_issues
-        )
-
-        return {
-            "workspace": str(self.workspace_path),
-            "overall_status": audit_res["overall_status"],
-            "total_issues": audit_res["total_issues"],
-            "priority_counts": {
-                "P0": len(p0_issues),
-                "P1": len(p1_issues),
-                "P2": len(p2_issues),
-            },
-            "p0_critical_voice_blockers": p0_issues,
-            "p1_multilang_and_stability": p1_issues,
-            "p2_hygiene_and_texture": p2_issues,
-            "markdown_report": markdown_report,
-        }
-
-    def _format_markdown_report(
-        self,
-        audit_res: dict[str, Any],
-        p0: list[dict[str, Any]],
-        p1: list[dict[str, Any]],
-        p2: list[dict[str, Any]],
-    ) -> str:
-        """Formats prioritized audit results into a readable Markdown report."""
-        lines = []
-        lines.append(
-            "# CXAS Voice & Conversational Optimization Prioritized Report\n"
-        )
-        lines.append(f"**Workspace:** `{self.workspace_path}`")
-        lines.append(
-            "**Overall Compliance Status:**"
-            f" `{audit_res['overall_status']}` ({audit_res['total_issues']} Issues"
-            " Detected)\n"
-        )
-        lines.append("### Summary of Prioritized Improvements")
-        lines.append(
-            "- 🔴 **Priority P0 (Critical Voice Naturalness & Synthesis"
-            f" Blockers):** {len(p0)}"
-        )
-        lines.append(
-            "- 🟡 **Priority P1 (High Impact Multi-Language & Stability):**"
-            f" {len(p1)}"
-        )
-        lines.append(
-            "- 🟢 **Priority P2 (Medium Impact Hygiene & Speech Texture):**"
-            f" {len(p2)}\n"
-        )
-        lines.append("---")
-
-        if p0:
-            lines.append(
-                "\n## 🔴 Priority P0: Critical Voice & Synthesis Blockers (Fix"
-                " First)\n"
-            )
-            lines.append(
-                "These issues directly degrade speech synthesis quality, cause"
-                " Director's Note prompt leakage into spoken audio, trigger platform"
-                " safety abortions, or distort vocal persona accents.\n"
-            )
-            for idx, item in enumerate(p0, start=1):
-                lines.append(f"### P0.{idx} {item['code']}")
-                lines.append(f"- **Message:** {item['message']}")
-                lines.append(f"- **Audit Pass:** `{item['pass']}`")
-                lines.append("")
-
-        if p1:
-            lines.append(
-                "\n## 🟡 Priority P1: High Impact Multi-Language & Stability"
-                " Improvements\n"
-            )
-            lines.append(
-                "These issues break Multilingual Coverage & Language Drift Prevention,"
-                " risk speaker drift during long calls, or cause deterministic acoustic"
-                " repetition loops.\n"
-            )
-            for idx, item in enumerate(p1, start=1):
-                lines.append(f"### P1.{idx} {item['code']}")
-                lines.append(f"- **Message:** {item['message']}")
-                lines.append(f"- **Audit Pass:** `{item['pass']}`")
-                lines.append("")
-
-        if p2:
-            lines.append(
-                "\n## 🟢 Priority P2: Medium Impact Hygiene & Conversational"
-                " Texture\n"
-            )
-            lines.append(
-                "These issues waste context tokens or"
-                " introduce IVR-style conversational dead-ends.\n"
-            )
-            for idx, item in enumerate(p2, start=1):
-                lines.append(f"### P2.{idx} {item['code']}")
-                lines.append(f"- **Message:** {item['message']}")
-                lines.append(f"- **Audit Pass:** `{item['pass']}`")
-                lines.append("")
-
-        if not (p0 or p1 or p2):
-            lines.append(
-                "\n🎉 **No issues detected! Application is 100% compliant with"
-                " Composite Voice Best Practices.**"
-            )
-
+    def format_markdown_report(self, audit_res: dict[str, Any]) -> str:
+        counts = audit_res["priority_counts"]
+        lines = [
+            "# CXAS Composite v2 Voice Readiness Report\n",
+            f"**Workspace:** `{self.workspace_path}`",
+            f"**Target model:** `{TARGET_MODEL}`",
+            f"**Overall Status:** `{audit_res['overall_status']}`"
+            f" ({audit_res['total_issues']} issues)\n",
+            "### Summary",
+            f"- 🔴 **P0:** {counts['P0']}",
+            f"- 🟡 **P1:** {counts['P1']}",
+            f"- 🟢 **P2:** {counts['P2']}\n",
+            "---",
+        ]
+        for priority, issues in audit_res["issues"].items():
+            if not issues:
+                continue
+            lines += [
+                f"\n## {PRIORITY_TITLES[priority]}\n",
+                "| Code | Location | Issue | Recommended |",
+                "| :--- | :--- | :--- | :--- |",
+            ]
+            for item in issues:
+                loc = item["file"] + (
+                    f":{item['line']}" if item["line"] else ""
+                )
+                cells = [
+                    item["code"],
+                    f"`{loc}`",
+                    item["message"],
+                    item["recommended"] or "",
+                ]
+                lines.append(
+                    "| "
+                    + " | ".join(c.replace("|", "\\|") for c in cells)
+                    + " |"
+                )
+        if not audit_res["total_issues"]:
+            lines.append("\n🎉 **No issues detected.**")
         return "\n".join(lines)
 
-    def remediate_audio_profile_and_multilang(
-        self, app_data: dict[str, Any] | None = None
-    ) -> tuple[dict[str, Any], list[str]]:
-        """Remediates audioProcessingConfig, Director's Notes, and Multilingual Coverage in app.json."""
-        if app_data is None:
-            app_data = self._read_app_json()
-        if not isinstance(app_data, dict):
-            app_data = {}
+    # ── Remediation ──
 
-        changes: list[str] = []
+    def _patch_json(
+        self,
+        path: pathlib.Path,
+        mutate: Callable[[dict[str, Any]], list[str]],
+        dry_run: bool,
+    ) -> list[str]:
+        raw = path.read_text(encoding="utf-8")
+        data = _load_json(raw)
+        if data is None:
+            return []
+        old = copy.deepcopy(data)
+        changes = mutate(data)
+        if changes and not dry_run:
+            path.write_text(
+                _minimal_json_edit(raw, old, data), encoding="utf-8"
+            )
+        return changes
 
-        if not isinstance(app_data.get("modelSettings"), dict):
-            app_data["modelSettings"] = {}
-            changes.append("Initialized modelSettings dictionary.")
-        model_settings = app_data["modelSettings"]
+    @staticmethod
+    def _upgrade_model(data: dict[str, Any], is_app: bool) -> list[str]:
+        settings = data.get("modelSettings")
+        if not isinstance(settings, dict):
+            if not is_app:
+                return []
+            settings = data["modelSettings"] = {}
+        changes = []
+        model = settings.get("model")
+        if model != TARGET_MODEL and (
+            (model is None and is_app)
+            or (
+                isinstance(model, str)
+                and model.startswith(COMPOSITE_MODEL_PREFIX)
+            )
+        ):
+            settings["model"] = TARGET_MODEL
+            changes.append(f"modelSettings.model: {model} -> {TARGET_MODEL}")
+        if is_app and settings.get("temperature") != TARGET_TEMPERATURE:
+            changes.append(
+                f"modelSettings.temperature: {settings.get('temperature')}"
+                f" -> {TARGET_TEMPERATURE}"
+            )
+            settings["temperature"] = TARGET_TEMPERATURE
+        return changes
 
-        if model_settings.get("model") != "gemini-composite-v1":
-            model_settings["model"] = "gemini-composite-v1"
-            changes.append("Set modelSettings.model to 'gemini-composite-v1'.")
-        if model_settings.get("temperature") != 1.0:
-            model_settings["temperature"] = 1.0
-            changes.append("Set modelSettings.temperature to 1.0.")
+    @staticmethod
+    def _clear_style(data: dict[str, Any]) -> list[str]:
+        changes = []
+        for label, owner, key in list(_style_fields(data)):
+            if _invalid_style_reason(key, owner.get(key)):
+                owner[key] = ""
+                changes.append(f'Cleared {label} to ""')
+        return changes
 
-        if not isinstance(app_data.get("languageSettings"), dict):
-            app_data["languageSettings"] = {}
-            changes.append("Initialized languageSettings dictionary.")
-        lang_settings = app_data["languageSettings"]
+    def remediate(self, dry_run: bool = False) -> dict[str, Any]:
+        """Applies the deterministic Composite v2 fixes in place."""
+        changes: dict[str, list[str]] = {}
+        context = self._context()
 
-        default_lang = lang_settings.get("defaultLanguageCode")
-        if not default_lang or not isinstance(default_lang, str):
-            default_lang = "en-US"
-        lang_settings["defaultLanguageCode"] = default_lang
+        for path in self.config_files():
+            is_app = path == self.app_json_path
 
-        supported_langs = lang_settings.get("supportedLanguageCodes")
-        if not isinstance(supported_langs, list):
-            supported_langs = []
-            lang_settings["supportedLanguageCodes"] = supported_langs
+            def mutate(data: dict[str, Any], is_app: bool = is_app) -> list:
+                found = self._upgrade_model(data, is_app)
+                return found + self._clear_style(data)
 
-        valid_supported = [
-            lang for lang in supported_langs if isinstance(lang, str)
-        ]
-        all_langs = set([default_lang, *valid_supported])
+            found = self._patch_json(path, mutate, dry_run)
+            if found:
+                changes.setdefault(_rel(path, context), []).extend(found)
 
-        if not isinstance(app_data.get("audioProcessingConfig"), dict):
-            app_data["audioProcessingConfig"] = {}
-            changes.append("Initialized audioProcessingConfig dictionary.")
-        audio_cfg = app_data["audioProcessingConfig"]
-
-        if not isinstance(audio_cfg.get("synthesizeSpeechConfigs"), dict):
-            audio_cfg["synthesizeSpeechConfigs"] = {}
-            changes.append("Initialized synthesizeSpeechConfigs dictionary.")
-        speech_cfgs = audio_cfg["synthesizeSpeechConfigs"]
-
-        for k in list(speech_cfgs.keys()):
-            if isinstance(k, str):
-                norm_k = k.strip().lower().replace("_", "-")
-                # Do not append root prefixes (e.g. "es") to supportedLanguageCodes
-                if "-" not in norm_k:
-                    continue
-                matching_declared = [
-                    lang
-                    for lang in all_langs
-                    if lang.strip().lower().replace("_", "-") == norm_k
-                ]
-                if not matching_declared:
-                    all_langs.add(k)
-                    if k != default_lang and k not in supported_langs:
-                        supported_langs.append(k)
-                        changes.append(
-                            f"Added '{k}' to languageSettings.supportedLanguageCodes."
-                        )
-
-        for lang in sorted(all_langs):
-            golden_note = generate_golden_directors_note(lang)
-            default_voice = get_default_voice(lang)
-            target_accent = get_locale_accent(lang)
-
-            norm_lang = lang.strip().lower().replace("_", "-")
-            matched_key = None
-            cfg = None
-            if lang in speech_cfgs and isinstance(speech_cfgs[lang], dict):
-                matched_key = lang
-                cfg = speech_cfgs[lang]
-            else:
-                for k, v in speech_cfgs.items():
-                    if (
-                        isinstance(k, str)
-                        and isinstance(v, dict)
-                        and k.strip().lower().replace("_", "-") == norm_lang
-                    ):
-                        matched_key = k
-                        cfg = v
-                        break
-
-            if matched_key is None or cfg is None:
-                speech_cfgs[lang] = {
-                    "voice": default_voice,
-                    "speakingRate": 1.0,
-                    "instruction": golden_note,
-                }
-                changes.append(
-                    f"Injected golden synthesizeSpeechConfigs for language '{lang}'."
-                )
-            else:
-                if not cfg.get("voice") or not isinstance(
-                    cfg.get("voice"), str
-                ):
-                    cfg["voice"] = default_voice
-                    changes.append(
-                        f"Set default voice '{default_voice}' for '{matched_key}'."
-                    )
-                if "speakingRate" not in cfg or not isinstance(
-                    cfg.get("speakingRate"), (int, float)
-                ):
-                    cfg["speakingRate"] = 1.0
-                    changes.append(f"Set speakingRate 1.0 for '{matched_key}'.")
-
-                current_inst = cfg.get("instruction")
-                if not isinstance(current_inst, str):
-                    current_inst = ""
-
-                if re.search(
-                    r"\bAccent:\s*[^\n\r]+", current_inst, flags=re.IGNORECASE
-                ):
-                    fixed_accent = re.sub(
-                        r"\bAccent:\s*[^\n\r]+",
-                        f"Accent: {target_accent}",
-                        current_inst,
-                        flags=re.IGNORECASE,
-                    )
-                    if fixed_accent != current_inst:
-                        cfg["instruction"] = fixed_accent
-                        changes.append(
-                            f"Normalized Accent directive to 'Accent: {target_accent}' for"
-                            f" '{matched_key}'."
-                        )
-                        current_inst = fixed_accent
-
-                has_directors_note = bool(
-                    re.search(
-                        r"^#+\s*director'?s\s*notes?",
-                        current_inst,
-                        re.IGNORECASE | re.MULTILINE,
-                    )
-                )
-                has_audio_profile = bool(
-                    re.search(
-                        r"^#+\s*audio\s*profile",
-                        current_inst,
-                        re.IGNORECASE | re.MULTILINE,
-                    )
-                )
-
-                if not has_directors_note or not has_audio_profile:
-                    cfg["instruction"] = golden_note
-                    changes.append(
-                        f"Updated '{matched_key}' instruction with complete Golden"
-                        " Director's Note."
-                    )
-
-                # Check if transcript hook strictly concludes the prompt
-                elif not re.search(
-                    r"#{2,3}\s*transcript\s*:\s*$",
-                    current_inst.strip(),
-                    re.IGNORECASE,
-                ):
-                    if re.search(
-                        r"(?i)\n*(?:#{1,3}\s*)?transcript\s*:?\s*$",
-                        current_inst,
-                    ):
-                        fixed_inst = re.sub(
-                            r"(?i)\n*(?:#{1,3}\s*)?transcript\s*:?\s*$",
-                            "\n\n## Transcript:\n",
-                            current_inst,
-                        )
-                    else:
-                        fixed_inst = (
-                            current_inst.rstrip() + "\n\n## Transcript:\n"
-                        )
-                    cfg["instruction"] = fixed_inst
-                    changes.append(
-                        "Appended missing '## Transcript:' hook to"
-                        f" '{matched_key}' instruction."
-                    )
-                    current_inst = fixed_inst
-
-        for k in list(speech_cfgs.keys()):
-            if isinstance(k, str):
-                norm_k = k.strip().lower().replace("_", "-")
-                matching_declared = [
-                    lang
-                    for lang in all_langs
-                    if lang.strip().lower().replace("_", "-") == norm_k
-                ]
-                if not matching_declared and "-" not in norm_k:
-                    del speech_cfgs[k]
-                    changes.append(
-                        f"Removed root language key '{k}' from synthesizeSpeechConfigs"
-                        " in favor of declared locale configs."
-                    )
-
-        return app_data, changes
-
-    # Backwards-compatible alias
-    remediate_audio_profile_and_rule_a007 = (
-        remediate_audio_profile_and_multilang
-    )
-
-    def remediate(self, auto_fix: bool = True) -> dict[str, Any]:
-        """Performs automated in-place remediation on workspace audio configuration in app.json."""
-        if not auto_fix:
-            return {"status": "SKIPPED", "changes": []}
-
-        all_changes: list[str] = []
-
-        app_data, app_changes = self.remediate_audio_profile_and_multilang()
-        if app_changes:
-            self._write_app_json(app_data)
-            all_changes.extend(app_changes)
+        for path in self.text_files():
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            migrated, found = migrate_tags(
+                content, json_escaped=path.suffix in (".json", ".jsonl")
+            )
+            if migrated != content:
+                if not dry_run:
+                    path.write_text(migrated, encoding="utf-8")
+                changes.setdefault(_rel(path, context), []).extend(found)
 
         return {
-            "status": "REMEDIATED" if all_changes else "NO_CHANGES_NEEDED",
-            "changes_applied": all_changes,
+            "status": (
+                ("DRY_RUN" if dry_run else "REMEDIATED")
+                if changes
+                else "NO_CHANGES_NEEDED"
+            ),
+            "changes_applied": changes,
             "post_remediation_audit": self.audit(),
         }
 
 
-# Backwards compatible alias classes
-CXASVoiceAuditor = VoiceAgentAuditor
-AuditAgent = VoiceAgentAuditor
-
-
 def main() -> None:
-    """Main CLI entrypoint for CXAS Voice Configuration Auditor and Auto-Remediator."""
+    """CLI entrypoint."""
     parser = argparse.ArgumentParser(
-        description="CXAS Voice Configuration Auditor and Auto-Remediator."
+        description=(
+            "CXAS Composite v2 voice auditor and auto-remediator."
+            " Without flags, prints an audit summary."
+        )
     )
     parser.add_argument(
         "--workspace",
         "--app-dir",
         dest="workspace",
-        type=str,
         default=".",
-        help="Path to CXAS workspace directory.",
+        help="Path to the CXAS app directory (the one with app.json).",
     )
     parser.add_argument(
         "--app-name",
-        type=str,
         default=None,
         help="Optional CXAS / CES application full resource name.",
     )
     parser.add_argument(
-        "--audit-only",
-        action="store_true",
-        help="Perform audit without modifying files.",
-    )
-    parser.add_argument(
         "--report",
         action="store_true",
-        help=(
-            "Generate a prioritized report of all suggested voice and"
-            " conversational naturalness improvements."
-        ),
+        help="Print the prioritized (P0/P1/P2) Markdown readiness report.",
     )
     parser.add_argument(
         "--remediate",
         action="store_true",
-        help="Apply automated in-place remediation to local workspace files.",
+        help="Apply deterministic fixes to local workspace files.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --remediate, list the changes without writing files.",
     )
     parser.add_argument(
         "--json-output",
@@ -1472,65 +1303,49 @@ def main() -> None:
         action="store_true",
         help="Output in standard cxas lint format.",
     )
-
     args = parser.parse_args()
-    auditor = VoiceAgentAuditor(
-        workspace_dir=args.workspace,
-        app_name=args.app_name,
-    )
+    auditor = VoiceAgentAuditor(args.workspace, app_name=args.app_name)
 
     if args.lint_report:
         report = auditor.to_lint_report()
         if args.json_output:
             print(report.to_json())
-        elif hasattr(report, "print_and_exit"):
-            report.print_and_exit(json_output=args.json_output)
-        else:
-            print(report.to_json())
-    elif args.report:
-        prioritized_report = auditor.generate_prioritized_report()
-        if args.json_output:
-            print(json.dumps(prioritized_report, indent=2))
-        else:
-            print(prioritized_report["markdown_report"])
-    elif args.remediate:
-        result = auditor.remediate(auto_fix=True)
+            sys.exit(1 if report.errors else 0)
+        report.print_and_exit(show_fixes=True)
+
+    if args.remediate:
+        result = auditor.remediate(dry_run=args.dry_run)
+        audit_res = result["post_remediation_audit"]
         if args.json_output:
             print(json.dumps(result, indent=2))
         else:
             print(f"=== Remediation Status: {result['status']} ===")
-            for change in result["changes_applied"]:
-                print(f" - {change}")
-            print(
-                "\nPost-remediation audit status:"
-                f" {result['post_remediation_audit']['overall_status']}"
-            )
-            if result["post_remediation_audit"]["overall_status"] != "PASSED":
-                prioritized_report = auditor.generate_prioritized_report()
-                print("\n" + "=" * 60)
-                print(
-                    "=== Unremediated Issues Requiring Prompt/Variable Refactoring ==="
-                )
-                print("=" * 60 + "\n")
-                print(prioritized_report["markdown_report"])
-
-        if result["post_remediation_audit"]["overall_status"] != "PASSED":
-            sys.exit(1)
+            for file, file_changes in result["changes_applied"].items():
+                print(f"\n{file}")
+                for change in file_changes:
+                    print(f"  - {change}")
+            print(f"\nPost-remediation audit: {audit_res['overall_status']}")
+            if audit_res["total_issues"]:
+                print("\n=== Remaining Issues (manual fixes) ===\n")
+                print(auditor.format_markdown_report(audit_res))
     else:
-        report = auditor.audit()
+        audit_res = auditor.audit()
         if args.json_output:
-            print(json.dumps(report, indent=2))
+            print(json.dumps(audit_res, indent=2))
+        elif args.report:
+            print(auditor.format_markdown_report(audit_res))
         else:
-            print(f"=== CXAS Voice Audit: {report['overall_status']} ===")
-            print(f"Total Issues Found: {report['total_issues']}")
-            for pass_name, pass_data in report["passes"].items():
-                status = "PASS" if pass_data["passed"] else "FAIL"
-                print(f"\n[{status}] {pass_name}:")
-                for issue in pass_data.get("issues", []):
-                    print(f"  * {issue.get('message')}")
+            print(f"=== CXAS Composite v2 Audit: {audit_res['overall_status']}")
+            for priority, issues in audit_res["issues"].items():
+                for item in issues:
+                    loc = item["file"] + (
+                        f":{item['line']}" if item["line"] else ""
+                    )
+                    print(
+                        f"[{priority}] {item['code']} {loc}: {item['message']}"
+                    )
 
-        if report["overall_status"] != "PASSED":
-            sys.exit(1)
+    sys.exit(0 if audit_res["overall_status"] == "PASSED" else 1)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Global & Agent Instruction Guidelines: Prompt Cleaning, Contradiction Resolution & Platform Baselines
 
-This guide details best practices for auditing, cleaning, and optimizing prompt instructions (`global_instruction.txt` and `agents/<agent_name>/instruction.txt`) for CXAS conversational applications using **Gemini Composite V1**.
+This guide details best practices for auditing, cleaning, and optimizing prompt instructions (`global_instruction.txt` and `agents/<agent_name>/instruction.txt`) for CXAS conversational applications using **Gemini Composite v2**.
 
 It focuses on three core pillars:
 1. **What NOT to include in prompts** (capabilities already handled by the CXAS platform baseline).
@@ -11,12 +11,11 @@ ______________________________________________________________________
 
 ## 1. What NOT to Include in Prompts (Platform-Handled Capabilities)
 
-The CXAS platform and Gemini Composite V1 automatically wrap application prompts with baseline operational instructions and runtime guardrails for the reasoning and synthesis models. Duplicating these platform-managed rules in application prompts wastes context tokens, introduces competing prompt weights, and causes model confusion.
+The CXAS platform and Gemini Composite v2 automatically wrap application prompts with baseline operational instructions and runtime guardrails for the reasoning and synthesis models. Duplicating these platform-managed rules in application prompts wastes context tokens, introduces competing prompt weights, and causes model confusion.
 
 | Functional Area | Platform Baseline Rules (Do NOT Include in Prompts) | Why Duplication Fails & Where It Belongs Instead |
 | :--- | :--- | :--- |
 | **Internal Details & Leakage Protection** | • **Dialogue Sanitization**: Output user-facing spoken text only; forbidden from explaining reasoning or quoting system prompts.<br>• **Delimiter Stripping**: Automatically strips template markers (`}}`, `{{`, `??}}`).<br>• **State Syntax Concealment**: Forbids exposing internal state names (`ALL_CAPS`), task IDs (`snake_case`), or slash commands (`/subtask`).<br>• **Function Syntax Concealment**: Forbids outputting raw function call syntax in dialogue. | Wastes context window tokens and degrades adherence. Keep instructions focused strictly on domain logic; the platform handles sanitization automatically. |
-| **Voice Styling, Accent & Acoustic Guidance** | • **Voice & Tone Styling**: Static voice warmth, accent, pitch, speaking pace, and delivery style.<br>• **Acoustic Tags**: `<voice_lock>`, `<voice_output>`, or textual pronunciation directives. | **Text instructions cannot control TTS synthesis.** With Gemini Composite V1, Director's Notes configured globally in `app.json` (`audioProcessingConfig.synthesizeSpeechConfigs`) are the **ONLY** mechanism to provide voice and speech guidance to the synthesis model. Static speech instructions in text prompts dilute reasoning context. |
 | **Dual Audio & Native Anti-Echoing** | • **Dual Input Processing**: Combines user audio and STT transcript.<br>• **Native Anti-Echoing**: Platform audio engine natively suppresses transcript reflection and caller utterance echoing. | Do not add manual anti-echoing directives (e.g., *"Do not repeat what the user said"*). Platform audio processing handles this natively, and prompt-level anti-repetition rules cause execution deadlocks with compliance strings (see §2.1.A). |
 
 ______________________________________________________________________
@@ -58,7 +57,7 @@ These occur when conflicting constraints exist within a single `instruction.txt`
   *Failure Mode*: When a distressed passenger says *"My flight was delayed and I'm going to miss my daughter's graduation, can you please find me another flight?"*, the agent is barred from naturally acknowledging (*"I understand how stressful that is, let's see what flights we have available..."*) before calling `search_flights`. The resulting output is either an abrupt tool call with zero empathy or an awkward refusal.
 * **Resolution**:
   * Strip negative conversational micro-bans on connective words (`"Sure"`, `"Okay"`, `"Let's see"`, `"I understand"`).
-  * Let Director's Notes, audio profiles, and tool pacing directives govern conversational texture.
+  * Let the affective delivery guidelines, inline audio tags, and tool pacing directives govern conversational texture.
 
 #### C. Dynamic Parameterization vs. Hardcoded Static Templates
 * **The Conflict**: A global rule mandates dynamic branding or entity resolution, but specific subtask response templates hardcode a static string.
@@ -137,7 +136,8 @@ Use this actionable checklist when auditing and cleaning agent instructions (all
 - [ ] **Harmonize Dynamic Parameterization**: Ensure response templates consistently use dynamic variables (`{airline_name}`, `{flight_number}`) rather than hardcoded static fallbacks.
 - [ ] **Decouple Global Loop Prohibitions from Local Escalation Ladders**: Remove blunt turn-count repetition caps; let deterministic multi-strike ladders govern escalation cleanly.
 - [ ] **Prune Monolithic Few-Shot `<examples>` Debt**: Remove large legacy dialog transcripts from prompt text. Legacy examples accumulate format drift, violate newer negative operational rules, and bloat the context window. Maintain vetted golden test cases in evaluation suites instead.
-- [ ] **Relocate Voice & Speech Directives to Director's Notes**: Strip all static voice styling, accent directives, vocal tone, delivery style, pronunciation, and `<voice_lock>` blocks from `instruction.txt`. Migrate them to `app.json` (`synthesizeSpeechConfigs`).
+- [ ] **Remove Speaking Style Presets**: Remove pasted Audio Profile / Director's Note text, static accent and pitch presets, and `<voice_lock>` blocks from `instruction.txt` (with user confirmation). Do not move full Director's Notes to `app.json`; speaking style instructions in `app.json` must be either empty or below 12 words.
+- [ ] **Migrate Audio Tags**: Convert every `[tag]` to `<tag>`, replace poorly performing tags, and rewrite rules written for the old square-bracket format (see [Tag Reference](tag_reference.md)).
 - [ ] **Sanitize Prohibited XML Tags Non-Destructively**: Rephrase internal platform tags strictly restricted to the prohibited list (`<state_update>`, `<context>`, `<reasoning>`, `<thought>`, `<internal>`, `<call_tool>`, `<parameter_update>`, `<variable_update>`, `<voice_lock>`, `<voice_output>`, `<state>`, `<transition>`, `<transitions>`, and legacy CamelCase tags like `<Agent>`, `<Role>`, `<Persona>`) into plain natural language descriptions without deleting the surrounding domain logic. Do not flag or modify standard taskflow XML tags outside this explicit list.
 - [ ] **Replace Text Variable Mutations with Tools**: Remove text-based `"Set variable = value"` lines; use structured tool invocations (e.g., `update_booking_status`) to modify state.
 - [ ] **Remove Redundant Platform Formatting Rules**: Remove instructions mandating plaintext, forbidding markdown headers, or instructing digit spacing; these are handled automatically by the platform baseline.
