@@ -98,8 +98,8 @@ In addition to running locally via the Sessions API, SCRAPI can convert your sim
 When converting simulation test cases to CXAS 2.0 Milestone YAML (`EvalUtils.convert_sim_evals_to_milestone_yaml` or `SimulationEvals.to_milestone_yaml`):
 
 - Each evaluation and step is sanitized against the CES platform `MilestoneYamlTranslator` whitelists (`MILESTONE_ALLOWED_ROOT_KEYS`, `MILESTONE_ALLOWED_EVAL_KEYS`, `MILESTONE_ALLOWED_STEP_KEYS`).
-- Client-only keys (`audio_expectations`, `naturalness_metric`, `barge_in_after_ms`, `use_tool_fakes`, `modality`) are stripped automatically.
-- Step-level `inject_variables` on `step 0` are preserved, while `inject_variables` on later steps (`step_idx > 0`) are automatically hoisted into `session_parameters`.
+- Client-only keys (`audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, `barge_in_after_ms`, `modality`) are stripped automatically with logging warnings.
+- Step-level `inject_variables` on `step 0` are preserved, while `inject_variables` on later steps (`step_idx > 0`) are automatically hoisted into `session_parameters` with a warning.
 - When converting a directory of YAML files, file-level `common_session_parameters`, `common_expectations`, and `initial_event` are merged into each test case.
 - The sanitized YAML is imported via the CES REST `:importEvaluations` (`yamlContent`) endpoint, where each milestone is scored by the platform as `COMPLETED` (Pass), `IN_PROGRESS` (Fail), or `NOT_STARTED` (Fail) with a `justification`.
 
@@ -156,7 +156,7 @@ results = sim_evals.run_simulations(
 ```
 
 !!! info "Automatic hybrid routing (`run_on_platform=True`)"
-    When `run_on_platform=True` (or `--platform-sims` on the CLI) is enabled, `SimulationEvals.requires_local_execution(test_case)` inspects each test case. Standard text simulations run on the platform as CXAS 2.0 Milestone evaluations, while test cases that require local-only features (`modality: "audio"`, `audio_expectations`, `naturalness_metric`, `use_tool_fakes`, or `barge_in_after_ms`) are automatically partitioned and executed locally.
+    When `run_on_platform=True` (or `--platform-sims` on the CLI) is enabled, `SimulationEvals.requires_local_execution(test_case)` inspects each test case. Standard text simulations (including those with `use_tool_fakes=True`, executed via platform `EvaluationConfig.tool_call_behaviour = FAKE`) run on the platform as CXAS 2.0 Milestone evaluations, while test cases that require local-only features (`modality: "audio"`, `audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, or `barge_in_after_ms`) are automatically partitioned and executed locally.
 
 ---
 

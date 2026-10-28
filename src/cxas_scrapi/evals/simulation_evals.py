@@ -617,10 +617,12 @@ class SimulationEvals(Apps):
             return True, "Audio modality requires local client simulation"
         if test_case.get("audio_expectations"):
             return True, "audio_expectations requires local client simulation"
+        if test_case.get("audio_analysis"):
+            return True, "audio_analysis requires local client simulation"
+        if test_case.get("voice_config"):
+            return True, "voice_config requires local client simulation"
         if test_case.get("naturalness_metric") or test_case.get("naturalness"):
             return True, "naturalness_metric requires local client evaluation"
-        if test_case.get("use_tool_fakes"):
-            return True, "use_tool_fakes requires local simulation session"
         if test_case.get("barge_in_after_ms") is not None:
             return True, "barge_in_after_ms requires local audio bidi session"
         for step in test_case.get("steps", []):
@@ -666,6 +668,7 @@ class SimulationEvals(Apps):
         test_cases: list[dict[str, Any]],
         runs: int = 1,
         timeout_seconds: int = 600,
+        use_tool_fakes: bool | None = None,
     ) -> list[dict[str, Any]]:
         """Pushes and runs simulations on the CES platform via RunEvaluation,
         returning results formatted as simulation result dictionaries.
@@ -703,13 +706,17 @@ class SimulationEvals(Apps):
         if not eval_names:
             return []
 
+        run_eval_kwargs: dict[str, Any] = {
+            "evaluations": eval_names,
+            "app_name": self.app_name,
+            "modality": "text",
+            "run_count": runs,
+        }
+        if use_tool_fakes is not None:
+            run_eval_kwargs["use_tool_fakes"] = use_tool_fakes
+
         try:
-            run_op = eval_client.run_evaluation(
-                evaluations=eval_names,
-                app_name=self.app_name,
-                modality="text",
-                run_count=runs,
-            )
+            run_op = eval_client.run_evaluation(**run_eval_kwargs)
         except Exception:
             resolved_names = []
             evals_map = None
@@ -726,12 +733,15 @@ class SimulationEvals(Apps):
                     ) or evals_map.get("goldens", {}).get(e_name)
                     if r_name:
                         resolved_names.append(r_name)
-            run_op = eval_client.run_evaluation_rest(
-                evaluations=resolved_names or eval_names,
-                app_name=self.app_name,
-                modality="text",
-                run_count=runs,
-            )
+            rest_kwargs: dict[str, Any] = {
+                "evaluations": resolved_names or eval_names,
+                "app_name": self.app_name,
+                "modality": "text",
+                "run_count": runs,
+            }
+            if use_tool_fakes is not None:
+                rest_kwargs["use_tool_fakes"] = use_tool_fakes
+            run_op = eval_client.run_evaluation_rest(**rest_kwargs)
 
         meta_run = getattr(
             getattr(run_op, "metadata", None), "evaluation_run", None
@@ -2384,6 +2394,16 @@ class SimulationEvals(Apps):
                 if naturalness is not None
                 else getattr(self, "naturalness", False)
             )
+            effective_audio_analysis = (
+                audio_analysis
+                if audio_analysis is not None
+                else getattr(self, "audio_analysis", False)
+            )
+            has_audio_capture_or_noise = bool(
+                capture_agent_audio
+                or background_noise_file
+                or burst_noise_files
+            )
             for tc in test_cases:
                 effective_tc = dict(tc) if isinstance(tc, dict) else {}
                 if (
@@ -2392,8 +2412,10 @@ class SimulationEvals(Apps):
                     and "modality" not in effective_tc
                 ):
                     effective_tc["modality"] = modality
-                if use_tool_fakes and not effective_tc.get("use_tool_fakes"):
-                    effective_tc["use_tool_fakes"] = True
+                if (
+                    effective_audio_analysis or has_audio_capture_or_noise
+                ) and not effective_tc.get("audio_analysis"):
+                    effective_tc["audio_analysis"] = True
                 if effective_naturalness and not effective_tc.get(
                     "naturalness_metric"
                 ):
@@ -2413,13 +2435,36 @@ class SimulationEvals(Apps):
 
             results: list[dict[str, Any]] = []
             if platform_cases:
-                results.extend(
-                    self.run_simulations_on_platform(
-                        platform_cases,
-                        runs=runs,
-                        timeout_seconds=platform_timeout,
+                fakes_cases: list[dict[str, Any]] = []
+                non_fakes_cases: list[dict[str, Any]] = []
+                for ptc in platform_cases:
+                    case_fakes = (
+                        ptc.get("use_tool_fakes")
+                        if ptc.get("use_tool_fakes") is not None
+                        else use_tool_fakes
                     )
-                )
+                    if case_fakes:
+                        fakes_cases.append(ptc)
+                    else:
+                        non_fakes_cases.append(ptc)
+
+                if fakes_cases:
+                    results.extend(
+                        self.run_simulations_on_platform(
+                            fakes_cases,
+                            runs=runs,
+                            timeout_seconds=platform_timeout,
+                            use_tool_fakes=True,
+                        )
+                    )
+                if non_fakes_cases:
+                    results.extend(
+                        self.run_simulations_on_platform(
+                            non_fakes_cases,
+                            runs=runs,
+                            timeout_seconds=platform_timeout,
+                        )
+                    )
             if local_cases:
                 results.extend(
                     self.run_simulations(

@@ -33,6 +33,8 @@ sys.modules.setdefault("google.cloud.secretmanager", MagicMock())
 sys.modules.setdefault("google.cloud.bigquery", MagicMock())
 sys.modules.setdefault("pandas_gbq", MagicMock())
 
+from google.cloud.ces_v1beta import types  # noqa: E402
+
 from cxas_scrapi.cli.main import (  # noqa: E402
     push_eval,
     run_eval,
@@ -365,6 +367,40 @@ def test_simulation_evals_requires_local_execution() -> None:
     )
     assert requires_local
     assert "Step barge_in_after_ms" in reason
+
+    # use_tool_fakes -> platform compatible
+    fakes_tc = {
+        "name": "fakes_case",
+        "use_tool_fakes": True,
+        "steps": [{"goal": "Check balance"}],
+    }
+    requires_local, reason = SimulationEvals.requires_local_execution(fakes_tc)
+    assert not requires_local
+    assert reason == ""
+
+    # audio_analysis -> requires local
+    audio_analysis_tc = {
+        "name": "audio_analysis_case",
+        "audio_analysis": True,
+        "steps": [],
+    }
+    requires_local, reason = SimulationEvals.requires_local_execution(
+        audio_analysis_tc
+    )
+    assert requires_local
+    assert "audio_analysis" in reason
+
+    # voice_config -> requires local
+    voice_config_tc = {
+        "name": "voice_config_case",
+        "voice_config": {"voice_id": "alloy"},
+        "steps": [],
+    }
+    requires_local, reason = SimulationEvals.requires_local_execution(
+        voice_config_tc
+    )
+    assert requires_local
+    assert "voice_config" in reason
 
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
@@ -1149,3 +1185,193 @@ def test_run_simulations_docstring_present() -> None:
     """Verify SimulationEvals.run_simulations has a valid Python docstring."""
     assert SimulationEvals.run_simulations.__doc__ is not None
     assert "run_on_platform" in SimulationEvals.run_simulations.__doc__
+
+
+def test_sanitize_milestone_eval_dict_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that sanitize_milestone_eval_dict logs warnings for stripped fields and hoisted inject_variables."""
+    raw_data = {
+        "evals": [
+            {
+                "name": "warning_eval",
+                "audio_analysis": True,
+                "voice_config": {"voice": "alloy"},
+                "steps": [
+                    {
+                        "goal": "Step 0",
+                        "inject_variables": {"v0": "val0"},
+                    },
+                    {
+                        "goal": "Step 1",
+                        "barge_in_after_ms": 100,
+                        "inject_variables": {"v1": "val1"},
+                    },
+                ],
+            }
+        ]
+    }
+    with caplog.at_level("WARNING"):
+        sanitized = EvalUtils.sanitize_milestone_eval_dict(raw_data)
+
+    assert "Stripping unsupported client-only field(s)" in caplog.text
+    assert "audio_analysis" in caplog.text
+    assert "voice_config" in caplog.text
+    assert "barge_in_after_ms" in caplog.text
+    assert (
+        "Hoisting inject_variables from step 1 to session_parameters"
+        in caplog.text
+    )
+    assert sanitized["evals"][0]["session_parameters"]["v1"] == "val1"
+
+
+def test_evaluations_run_evaluation_tool_fakes(mock_app_name: str) -> None:
+    """Test Evaluations.run_evaluation and run_evaluation_rest with use_tool_fakes."""
+    eval_client = Evaluations(app_name=mock_app_name)
+    eval_client.client = MagicMock()
+    eval_id = f"{mock_app_name}/evaluations/ev-1"
+
+    eval_client.run_evaluation(
+        evaluations=[eval_id],
+        use_tool_fakes=True,
+    )
+    call_args = eval_client.client.run_evaluation.call_args[1]
+    req = call_args["request"]
+    assert (
+        req.config.tool_call_behaviour == types.EvaluationToolCallBehaviour.FAKE
+    )
+
+    eval_client.run_evaluation(
+        evaluations=[eval_id],
+        use_tool_fakes=False,
+    )
+    call_args = eval_client.client.run_evaluation.call_args[1]
+    req = call_args["request"]
+    assert (
+        req.config.tool_call_behaviour == types.EvaluationToolCallBehaviour.REAL
+    )
+
+    mock_session = MagicMock()
+    mock_session.post.return_value.json.return_value = {"name": "op1"}
+    with patch.object(
+        eval_client, "_get_rest_session", return_value=mock_session
+    ):
+        eval_client.run_evaluation_rest(
+            evaluations=[eval_id],
+            use_tool_fakes=True,
+        )
+        post_kwargs = mock_session.post.call_args[1]
+        assert post_kwargs["json"]["config"]["toolCallBehaviour"] == "FAKE"
+
+        eval_client.run_evaluation_rest(
+            evaluations=[eval_id],
+            use_tool_fakes=False,
+        )
+        post_kwargs = mock_session.post.call_args[1]
+        assert post_kwargs["json"]["config"]["toolCallBehaviour"] == "REAL"
+
+        eval_client.run_evaluation_rest(
+            evaluations=[eval_id],
+            use_tool_fakes=None,
+        )
+        post_kwargs = mock_session.post.call_args[1]
+        assert "toolCallBehaviour" not in post_kwargs["json"]["config"]
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.Tools")
+@patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate")
+def test_simulation_evals_run_simulations_platform_tool_fakes(
+    mock_genai: Any,
+    mock_tools: Any,
+    mock_sessions: Any,
+    mock_app_name: str,
+) -> None:
+    """Test SimulationEvals.run_simulations with platform routing and tool fakes."""
+    sim = SimulationEvals(app_name=mock_app_name)
+    tc1 = {
+        "name": "case_fakes",
+        "use_tool_fakes": True,
+        "steps": [{"goal": "Goal 1"}],
+    }
+    tc2 = {
+        "name": "case_normal",
+        "steps": [{"goal": "Goal 2"}],
+    }
+
+    with patch.object(
+        sim, "run_simulations_on_platform", return_value=[]
+    ) as mock_plat:
+        sim.run_simulations(
+            test_cases=[tc2],
+            runs=1,
+            run_on_platform=True,
+            use_tool_fakes=True,
+        )
+        mock_plat.assert_called_once_with(
+            [tc2],
+            runs=1,
+            timeout_seconds=600,
+            use_tool_fakes=True,
+        )
+
+    with patch.object(
+        sim, "run_simulations_on_platform", return_value=[]
+    ) as mock_plat:
+        sim.run_simulations(
+            test_cases=[tc1, tc2],
+            runs=1,
+            run_on_platform=True,
+        )
+        assert mock_plat.call_count == 2
+        mock_plat.assert_any_call(
+            [tc1],
+            runs=1,
+            timeout_seconds=600,
+            use_tool_fakes=True,
+        )
+        mock_plat.assert_any_call(
+            [tc2],
+            runs=1,
+            timeout_seconds=600,
+        )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.Tools")
+@patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate")
+def test_simulation_evals_run_level_audio_routing(
+    mock_genai: Any,
+    mock_tools: Any,
+    mock_sessions: Any,
+    mock_app_name: str,
+) -> None:
+    """Test that run-level audio parameters force local client execution."""
+    sim = SimulationEvals(app_name=mock_app_name)
+    tc = {
+        "name": "text_case",
+        "steps": [{"goal": "Goal 1"}],
+    }
+
+    for kwarg in [
+        {"audio_analysis": True},
+        {"capture_agent_audio": True},
+        {"background_noise_file": "cafe.wav"},
+        {"burst_noise_files": ["click.wav"]},
+    ]:
+        with (
+            patch.object(sim, "run_simulations_on_platform") as mock_plat,
+            patch.object(
+                sim,
+                "_aggregate_simulation_results",
+                return_value=[{"name": "text_case", "passed": True}],
+            ) as mock_local,
+        ):
+            sim.run_simulations(
+                test_cases=[tc],
+                runs=1,
+                run_on_platform=True,
+                **kwarg,
+            )
+            mock_plat.assert_not_called()
+            mock_local.assert_called_once()

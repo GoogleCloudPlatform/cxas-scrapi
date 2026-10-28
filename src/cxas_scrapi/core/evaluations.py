@@ -193,6 +193,7 @@ class Evaluations(Common):
         modality: str = "text",
         run_count: int | None = None,
         golden_run_method: str = "STABLE",
+        use_tool_fakes: bool | None = None,
     ) -> dict[str, Any]:
         """Triggers an evaluation run via the REST endpoint."""
         app_name = app_name or self.app_name
@@ -201,13 +202,18 @@ class Evaluations(Common):
         session = self._get_rest_session()
         base_url = self._get_rest_base_url()
         url = f"{base_url}/v1beta/{app_name.lstrip('/')}:runEvaluation"
+        config: dict[str, Any] = {
+            "evaluationChannel": (
+                "AUDIO" if modality.lower() == "audio" else "TEXT"
+            )
+        }
+        if use_tool_fakes is True:
+            config["toolCallBehaviour"] = "FAKE"
+        elif use_tool_fakes is False:
+            config["toolCallBehaviour"] = "REAL"
         body: dict[str, Any] = {
             "evaluations": list(evaluations),
-            "config": {
-                "evaluationChannel": (
-                    "AUDIO" if modality.lower() == "audio" else "TEXT"
-                )
-            },
+            "config": config,
         }
         if run_count:
             body["runCount"] = run_count
@@ -1291,6 +1297,7 @@ class Evaluations(Common):
         modality: str = "text",
         run_count: int | None = None,
         golden_run_method: str = "STABLE",
+        use_tool_fakes: bool | None = None,
     ) -> Any:
         """Runs an evaluation on the specified app.
 
@@ -1303,6 +1310,9 @@ class Evaluations(Common):
             modality: "text" (default) or "audio".
             run_count: Number of times to run the evaluation. Default is 1
                 per golden, 5 per scenario.
+            golden_run_method: Golden run replay strategy (STABLE or NAIVE).
+            use_tool_fakes: If True, executes with mock/fake tool behaviour.
+                If False, executes with real tool behaviour. Defaults to None.
         """
         app_name = app_name or self.app_name
         if not app_name:
@@ -1397,6 +1407,15 @@ class Evaluations(Common):
         if modality.lower() == "audio":
             request.config.evaluation_channel = (
                 types.EvaluationConfig.EvaluationChannel.AUDIO
+            )
+
+        if use_tool_fakes is True:
+            request.config.tool_call_behaviour = (
+                types.EvaluationToolCallBehaviour.FAKE
+            )
+        elif use_tool_fakes is False:
+            request.config.tool_call_behaviour = (
+                types.EvaluationToolCallBehaviour.REAL
             )
 
         return self.client.run_evaluation(request=request)
