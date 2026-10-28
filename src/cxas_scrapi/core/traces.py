@@ -67,7 +67,7 @@ from cxas_scrapi.utils.tracing.audio_drift import (
 )
 from cxas_scrapi.utils.tracing.audio_metrics import (
     measure_call,
-    render_join_steps,
+    try_render_join_steps,
 )
 from cxas_scrapi.utils.tracing.audio_transcription import (
     DEFAULT_TRANSCRIPTION_MODEL,
@@ -80,18 +80,6 @@ from cxas_scrapi.utils.tracing.cloud_logging import CloudLogsClient
 from cxas_scrapi.utils.tracing.trace_config import TraceConfig
 
 logger = logging.getLogger(__name__)
-
-
-def _render_joins(path: str | None, parts: list[str]) -> list[dict | None]:
-    """Voice steps at a turn's render joins; [] for one part, no audio, or
-    when the measurement can't run (it is best-effort, like the span fetch)."""
-    if not path or len([p for p in parts if p and p.strip()]) < 2:
-        return []
-    try:
-        return render_join_steps(path, parts)
-    except Exception as e:  # missing extra or unreadable audio: no JUMP
-        logger.warning(f"render join measurement failed for {path} ({e})")
-        return []
 
 
 REPROCESSED_TRANSCRIPTS_SCHEMA = [
@@ -1402,7 +1390,7 @@ class Traces(Common):
                     "seams": t.get("seams", []),
                     "agent_text": " | ".join(agent_text.get(conv_turn, [])),
                     "agent_parts": agent_text.get(conv_turn, []),
-                    "joins": _render_joins(
+                    "joins": try_render_join_steps(
                         t.get("path"), agent_text.get(conv_turn, [])
                     ),
                     "user_text": " | ".join(user_text.get(conv_turn, [])),

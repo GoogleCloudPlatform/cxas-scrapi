@@ -490,6 +490,19 @@ def render_join_steps(
     return out
 
 
+def try_render_join_steps(
+    path: str | None, parts: list[str]
+) -> list[dict | None]:
+    """`render_join_steps`, best-effort: [] for one part, no audio, or when
+    the measurement can't run (missing extra, unreadable audio)."""
+    if not path or len([p for p in parts if p and p.strip()]) < 2:
+        return []
+    try:
+        return render_join_steps(path, parts)
+    except Exception:  # noqa: BLE001 - optional signal; no JUMP then
+        return []
+
+
 def turn_metrics(path: str, meter_cache: dict | None = None) -> dict:
     """Per-turn features for one agent recording. See the module docstring."""
     if parselmouth is None or pyloudnorm is None:

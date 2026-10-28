@@ -3116,6 +3116,60 @@ def test_audio_analysis_acoustic_metrics_and_drift_aggregation(
     assert "audio_truncation" in html_text
 
 
+def test_voice_jumps_are_a_top_line_metric(tmp_path: typing.Any) -> None:
+    jump = {
+        "part": 2,
+        "t_s": 6.3,
+        "pause_s": 0.4,
+        "d_st": 7.8,
+        "d_db": 7.7,
+        "jump": True,
+    }
+    smooth = dict(jump, d_st=1.7, d_db=8.5, jump=False)
+
+    def run(name: str, joins: list, flags: list) -> dict:
+        return {
+            "name": name,
+            "run": 1,
+            "passed": True,
+            "modality": "audio",
+            "audio_metrics": {
+                "call": {"lufs_mean": -21.0, "max_adj_dlufs": 1.0, "flags": []},
+                "turns": [],
+            },
+            "audio_drift": {
+                "rows": [
+                    {"turn": 1, "flags": flags, "joins": joins, "dur_s": 6.0},
+                ],
+            },
+        }
+
+    runs = [
+        run("sim_jump", [jump], ["JUMP"]),
+        run("sim_smooth_join", [smooth], []),
+        run("sim_one_part", [], []),
+    ]
+    suite_audio = _aggregate_suite_audio_analysis(
+        sim_results=runs, golden_results=[]
+    )
+    ac_sum = suite_audio["acoustic_summary"]
+    assert ac_sum["join_runs"] == 2
+    assert ac_sum["jump_runs"] == 1
+    assert ac_sum["jump_turns"] == 1
+    assert ac_sum["jump_free_pct"] == 50
+    # a voice jump is an acoustic defect: the jump run isn't clean
+    assert ac_sum["clean_runs"] == 2
+    rows = {r["eval_name"]: r for r in suite_audio["run_rows"]}
+    assert "voice_jump" in rows["sim_jump"]["issue_keys"]
+    assert "voice_jump" not in rows["sim_smooth_join"]["issue_keys"]
+
+    out_html = tmp_path / "voice_jumps.html"
+    generate_combined_html_report(sim_results=runs, output_path=str(out_html))
+    html_text = out_html.read_text(encoding="utf-8")
+    assert 'id="ov-tile-voice-jump"' in html_text
+    assert "1 / 2 runs jump-free" in html_text
+
+
 def test_audio_analysis_barge_in_eval_fields(tmp_path: typing.Any) -> None:
     run = {
         "name": "sim_barge_in_evaluation",

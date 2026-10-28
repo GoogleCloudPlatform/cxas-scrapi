@@ -1029,6 +1029,16 @@
     </div>
   {% endif %}
 
+  {% if suite_audio and suite_audio.has_audio_analysis and suite_audio.acoustic_summary and (suite_audio.acoustic_summary.join_runs or 0) > 0 %}
+    {% set ac = suite_audio.acoustic_summary %}
+    {% set jump_cls = "pass" if (ac.jump_free_pct or 0) >= 90 else ("warn" if (ac.jump_free_pct or 0) >= 70 else "fail") %}
+    <div class="tile clickable" id="ov-tile-voice-jump" onclick="filterAudioRunsByIssue('voice_jump')" data-tip="{{ suite_audio.tooltips.voice_jump | escape }}">
+      <div class="t-lbl"><span>Voice Jumps</span><span class="tip-badge" data-tip="{{ suite_audio.tooltips.voice_jump | escape }}">?</span></div>
+      <div class="t-val {{ jump_cls }}">{{ ac.jump_free_pct }}%</div>
+      <div class="t-sub">{{ ac.join_runs - ac.jump_runs }} / {{ ac.join_runs }} runs jump-free &middot; {{ ac.jump_turns }} jump turn{{ "" if ac.jump_turns == 1 else "s" }}</div>
+    </div>
+  {% endif %}
+
   {% if suite_audio and suite_audio.has_audio_analysis and suite_audio.wer_summary and suite_audio.wer_summary.total_count > 0 and suite_audio.wer_summary.mean_wer is not none %}
     {% set ws = suite_audio.wer_summary %}
     {% set wer_cls = "pass" if ws.mean_wer <= 0.10 else ("warn" if ws.mean_wer <= 0.25 else "fail") %}
