@@ -1,194 +1,200 @@
 # Natural Speech Patterns & Anti-Looping Architecture Guide
 
-To achieve authentic conversational naturalness with Gemini Composite V1, natural prosody, micro-pauses, situational emotion recognition, and conversational pacing must be engineered directly into the LLM system prompts and dialog policies.
+With Gemini Composite v2, delivery is steered by **inline audio tags** that the reasoning model writes into its response. Director's Notes are cleared during the migration, and speaking style instructions are either cleared or kept below 12 words so they do not conflict with inline tags. Natural prosody, micro-pauses, emotion attunement, and pacing must therefore be engineered into the global and agent instructions.
+
+See the [Tag Reference](tag_reference.md) for the tag vocabulary, the tags to replace, and syntax rules.
 
 ______________________________________________________________________
 
 ## 1. Speech Tag Instructions for Natural Voice Delivery
 
-In Gemini Composite V1, natural vocal prosody, cadence, and emotional attunement are driven by inline audio tags from the [Empirical Tags Catalog](empirical_tags_catalog.md). Instructions in `global_instruction.txt` and `agents/*/instruction.txt` must direct the model to evaluate caller emotion on every turn and weave verified tags naturally into the generated response.
+Instructions in the global instruction (and, where needed, `agents/*/instruction.txt`) must direct the model to evaluate caller emotion on every turn and open each turn with tags from the [Tag Reference](tag_reference.md).
 
 ### 1.1 The 7 Core Affective Registers & Complementary Response Mappings
 
-In Gemini Composite V1, natural vocal prosody, cadence, and emotional attunement are driven by inline audio tags from the [Empirical Tags Catalog](empirical_tags_catalog.md). On EVERY turn, the agent must evaluate the caller's emotional state from their words and tone, and respond with the **appropriate stabilizing or empathetic delivery**—never naively mirroring negative emotions like panic, fear, or anger:
+On EVERY turn, the agent evaluates the caller's emotional state from their words and tone, and responds with the **appropriate stabilizing or empathetic delivery**, never mirroring panic, fear, or anger:
 
-| Caller Emotion & Signals | Target Agent Demeanor | Primary Inline Tags | Vocal Cadence & Delivery Guidance | Example Response Snippet |
+| Caller Emotion & Signals | Target Agent Demeanor | Opening Tags | Delivery Guidance | Example Response |
 | :--- | :--- | :--- | :--- | :--- |
-| **`angry`**<br>Outraged, furious, threatening complaints/escalations, accusing of mistreatment. | **Calm, Validating & Steady** | `[prosody rate="64%"]`, `[seriousness]`, `[sigh]` | Deliberately slow, steady, and validating. Never defensive, hurried, or cheerful. Acknowledge the disruption plainly before anything else. | `"[prosody rate=\"64%\"] [sigh] I hear you, and being stranded overnight after that sudden cancellation is completely unacceptable. [short pause] Let me check rebooking options right now."` |
-| **`frustrated`**<br>Annoyed, tired of repeating details, app errors, experiencing long delays. | **Patient, Direct & Solution-Focused** | `[prosody rate="66%"]`, `[slow]`, `[short pause]` | Patient, calm, and concise. Briefly acknowledge how they feel, then immediately take ownership and offer a clear path forward. | `"[prosody rate=\"66%\"] [slow] I understand how frustrating it is when the seat map keeps glitching out. [short pause] Let's skip the app and assign your seats together directly on my screen right now."` |
-| **`anxious`**<br>Stressed, worried about missed connections, emergencies, or losing luggage. | **Grounded, Reassuring & Clear** | `[prosody rate="64%"]`, `[slow]`, `[short pause]` | Do NOT mirror panic or stress. Provide steady, grounded reassurance and lay out concrete, stepwise actions immediately so the caller knows the situation is in hand. | `"[prosody rate=\"64%\"] [slow] Don't worry, your connection is protected and we will make sure you reach London today. [short pause] Let me look at alternative flights and gate transfers right now."` |
-| **`sad` / `distressed`**<br>Upset, traveling for bereavement or medical emergency, overwhelmed. | **Gentle, Sympathetic & Unhurried** | `[prosody rate="62%"]`, `[whispers]`, `[sigh]` | Gentle, soft-spoken, unhurried pace. Deliver sincere sympathy without conversational rush. | `"[prosody rate=\"62%\"] [sigh] I am truly sorry for your loss. [short pause] Take your time... we will handle the travel arrangements at whatever pace you need."` |
-| **`confused`**<br>Lost, struggling with fare rules, transit visas, or complex steps. | **Slow, Clear & Step-by-Step** | `[prosody rate="66%"]`, `[slow]`, `[short pause]` | Slow down noticeably. Use plain conversational vocabulary, explain one concept at a time, and confirm understanding before moving on. | `"[prosody rate=\"66%\"] [slow] Let's take this one step at a time. [short pause] Your basic economy ticket includes one personal item under the seat, but checked bags need to be added separately."` |
-| **`positive`**<br>Relieved, thankful, happy, appreciative of confirmed resolution. | **Warm, Appreciative & Genuine** | `[prosody rate="74%"]`, `[positive]`, `[happy]` | Match their positive warmth and be genuinely glad for them. Keep it brief and sincere without over-extending the turn. | `"[prosody rate=\"74%\"] [positive] You're very welcome! I'm so glad we could get that complimentary aisle seat confirmed for you today."` |
-| **`neutral`**<br>Calm, transactional, status inquiry, verification readout. | **Approachable, Efficient & Natural** | `[prosody rate="68%"]`, `[neutral]`, `[short pause]` | Professional, approachable, efficient, and authentic conversational flow. | `"[prosody rate=\"68%\"] [neutral] Got that pulled up for you. [short pause] Flight four twenty-eight is on schedule, departing from Gate B twenty-two at three fifteen this afternoon."` |
+| **`angry`**<br>Outraged, furious, threatening complaints, accusing of mistreatment. | **Calm, Validating & Steady** | `<calm><empathetic>` | Steady and validating. Never defensive, hurried, or cheerful. Acknowledge the disruption plainly before anything else. | `"<calm><empathetic> I hear you, and being stranded overnight after that cancellation is not acceptable. <short pause> Let me check rebooking options right now."` |
+| **`frustrated`**<br>Annoyed, tired of repeating details, app errors, long delays. | **Patient, Direct & Solution-Focused** | `<warm><empathetic>` | Briefly acknowledge the friction, then take ownership and offer a clear path forward. | `"<warm><empathetic> I understand how frustrating it is when the seat map keeps failing. <short pause> Let's assign your seats together right now."` |
+| **`anxious`**<br>Stressed, worried about missed connections, emergencies, lost luggage. | **Grounded, Reassuring & Clear** | `<calm><empathetic>` | Do NOT mirror panic. Give steady reassurance and concrete next steps so the caller knows it is handled. | `"<calm><empathetic> Your connection is protected, and we will get you to London today. <short pause> Let me look at alternative flights now."` |
+| **`sad` / `distressed`**<br>Bereavement, medical emergency, overwhelmed. | **Gentle, Sympathetic & Unhurried** | `<warm><sympathetic>` | Gentle and unhurried. Sincere sympathy without rushing. `<sigh>` is fine here. | `"<sigh><sympathetic> I am truly sorry for your loss. <short pause> Take your time... we will handle the travel arrangements at whatever pace you need."` |
+| **`confused`**<br>Lost, struggling with fare rules, policies, or complex steps. | **Clear & Step-by-Step** | `<clear><calm>` | Plain vocabulary, one idea at a time, check understanding before moving on. | `"<clear><calm> Let's take this one step at a time. <short pause> Your basic economy ticket includes one personal item, but checked bags are added separately."` |
+| **`positive`**<br>Relieved, thankful, happy. | **Warm, Appreciative & Genuine** | `<warm><positive>` | Match their warmth briefly and sincerely without sounding performative. | `"<warm><positive> You're very welcome. I'm glad we could get that aisle seat confirmed for you today."` |
+| **`neutral`**<br>Calm, transactional, status inquiry. | **Approachable, Efficient & Natural** | `<warm>` | Natural, clear, normal conversational pace. | `"<warm> Got that pulled up for you. <short pause> Your flight is on schedule and boards at three fifteen this afternoon."` |
 
----
+> [!NOTE]
+> The register *named* `neutral` is fine; the `<neutral>` tag is not. It performs poorly on Composite v2 and is removed during migration.
+
+Prosody is optional. If the original instructions used rates, keep them verbatim and put the rate first in each opener (`<prosody rate="64%"><calm><empathetic>`). If they did not, ask the user before adding any. See [Tag Reference §7](tag_reference.md#7-prosody-rates).
 
 ### 1.2 Acute Emotion Precedence & The Negative-Emotion Latch
 
-When authoring instructions, two emotional state rules are critical for call containment and caller trust:
-
 #### 1. Acute Precedence (Resolving Mixed Emotions)
-If a single caller turn exhibits mixed emotional signals (e.g., both angry about flight delays and confused about gate transfer procedures), prioritize the most severe emotional state:
+
+If a turn shows mixed emotions, select the register of the highest-priority emotion:
 
 $$\text{angry} \succ \text{sad} \succ \text{anxious} \succ \text{frustrated} \succ \text{confused} \succ \text{positive} \succ \text{neutral}$$
 
-Always select the delivery register matching the highest-priority emotion.
-
 #### 2. The Negative-Emotion Latch (CRITICAL)
-If a caller was previously upset (`angry`, `sad`, `anxious`, `frustrated`) and then delivers a short, transactional response (e.g., *"okay,"* *"yes,"* *"the booking reference is Kilo Echo Seven Nine"*), **NEVER revert immediately to a flat or upbeat persona**. 
+
+If a caller was previously upset (`angry`, `sad`, `anxious`, `frustrated`) and then gives a short, transactional response (*"okay,"* *"yes,"* reading out a reference), **NEVER snap back to an upbeat persona**.
 
 > [!IMPORTANT]
-> A neutral or terse answer from an upset caller does **not** mean they feel better. Reverting to a chipper tone sounds robotic, tone-deaf, and dismissive. The agent **MUST maintain a gentle, patient, and unhurried register** until the caller explicitly expresses relief or positive gratitude (e.g., *"Thank you so much, that's a huge relief"*).
-
----
+> A terse answer from an upset caller does **not** mean they feel better. Keep a composed, patient register until the caller explicitly expresses relief or gratitude.
 
 ### 1.3 Premature Celebration Prevention
 
-When resolving an issue for an upset or frustrated customer, never celebrate or sound triumphant:
-- ❌ **Premature Celebration (Robotic & Irritating):** `"[celebratory] Great news! I was able to get you onto that morning flight tomorrow! Isn't that fantastic?"`
-- ✅ **Grounded & Humble (Empathetic):** `"[prosody rate=\"65%\"] Alright, I was able to confirm your seat on tomorrow's seven thirty a.m. departure to Chicago. [short pause] Your updated boarding pass has been sent to your email."`
+When resolving an issue for an upset caller, never celebrate or sound triumphant:
 
-Always lead with validation first, and deliver good news or confirmations gently and respectfully.
+- ❌ `"<enthusiasm> Great news! I got you onto that morning flight! Isn't that fantastic?"`
+- ✅ `"<calm> Alright, I've confirmed your seat on tomorrow's seven thirty departure to Chicago. <short pause> Your updated boarding pass is in your email."`
 
----
+Lead with validation, and deliver good news gently.
 
-### 1.4 Inline Tag Weaving & Syntax Standards
+### 1.4 Inline Tag Syntax Standards
 
-When embedding tags from the [Empirical Tags Catalog](empirical_tags_catalog.md) into prompts, enforce these syntax and cadence standards:
+1. **Angle brackets only:** `<warm>`, `<short pause>`. Never `[warm]`.
+2. **Tags at the sentence start; stacking allowed there:** `<calm><empathetic> I understand.`
+3. **Mid-sentence, only pause tags, after punctuation:** `"I checked your account, <short pause> everything is in order."`
+4. **No closing tags.** Reset pace with `<prosody rate="100%">` instead of `</prosody>`.
+5. **Tag sparsity:** a few tags per turn; do not tag every clause.
+6. **Punctuation:** never use exclamation marks; end sentences with full stops or ellipses.
 
-1. **Tag Sparsity (1 to 3 Tags per Turn):** Do not saturate responses with tags. Use 1 to 3 tags per turn maximum to prevent synthesis artifacts or unnatural acoustic shifts.
-2. **Weave Inline (Never Stack Tags Adjacent):** Never place two bracketed tags directly adjacent:
-   - ❌ `[slow][whispers] Your confirmation code is B 7 9 2.`
-   - ✅ `[slow] Your confirmation code is... [whispers] B 7 9 2.`
-3. **Pacing at Natural Syntactic Boundaries:** Open with the affective register tag to establish vocal inflection, insert `[short pause]` at clause breaks, and place pacing tags (`[prosody rate="64%"]` or `[slow]`) on sensitive details, confirmations, or payoff lines.
-4. **Punctuation Rules:** Never use exclamation marks (`!`); end sentences with full stops (`.`) or ellipses (`...`) to preserve grounded vocal intonation.
-5. **Explicit Pacing Modifiers:** Use explicit rate tags like `[prosody rate="64%"]` or `[slow]` during acute de-escalation, bereavement, or sensitive information readouts to ensure the synthesis engine slows down and delivers unhurried cadence.
+Rules written for the old format must be rewritten, not kept alongside: *"wrap tags in square brackets"*, *"never stack tags"*, *"do not bunch all tags at the front of a sentence"*.
 
----
+### 1.5 Production Prompt Template (Global Instruction)
 
-### 1.5 Production Prompt Template (Agent or Global Instructions)
+#### Placement Guidelines
 
-#### Placement Guidelines:
-- **If global instructions exist:** Append and integrate the `<Affective Delivery and Voice Guidelines>` block directly into the existing global instructions (whether in `global_instruction.txt`, inline within `app.json`, or directly in the root agent).
-- **If a new `global_instruction.txt` is created:** Ensure `app.json` is updated to declare and reference it (`"globalInstruction": "global_instruction.txt"`) so the platform compiles it across all agents.
+- **Merge, don't overwrite.** Read the existing global instruction in full first. If it already has a voice or affective delivery section, put the *Audio Tag Format* block (section 4 below) inside it and edit any rule it contradicts in place. Add the full template only when no such section exists.
+- **Where it lives.** `globalInstruction` in `app.json` is a filename pointer (`"globalInstruction": "global_instruction.txt"`). If the app has none, create `global_instruction.txt` beside `app.json` and add the key at the top level of `app.json`.
+- **Match the file's formatting** (heading style, numbering, bullet pattern) and adapt the registers and examples to the customer's domain, keeping the structure: recognize the emotion, pick a register, open the turn with its tags.
+- **Do not add text normalization rules** (numbers, currency, dates, times, IDs, phone numbers, addresses). Composite v2 handles spoken-form normalization in the platform.
+- **Prosody:** the template has none. If the user wants it, put their rate first in each opener and add the two prosody bullets shown after the template.
 
-```markdown
-<Affective Delivery and Voice Guidelines>
-You are optimized for natural, empathetic voice interaction on a live phone call. On EVERY turn, you must execute all of the following:
-1. Actively evaluate the caller's emotional state from their words, pacing, and tone.
-2. Select the complementary stabilizing or supportive affective register (do NOT naively mirror negative caller emotions like panic, anxiety, or anger).
-3. Shape your spoken delivery using inline prosody tags, natural pause controls, and authentic human conversational texture.
+```text
+<instruction id="Affective_Delivery_and_Voice_Guidelines">
+You are optimized for natural, empathetic voice interaction on a phone call. On EVERY turn, you must do all of the following:
+1. Actively evaluate the caller's emotional state from their words and tone.
+2. Select the matching affective register.
+3. Shape your spoken delivery using inline audio tags and human conversational texture.
 
 ### 1. Emotion Recognition & The Negative-Emotion Latch
-Identify which of the following 7 affective states best matches the caller's current words and tone:
-1. 'angry' — Outraged, furious, threatening complaints or escalations, accusing of unfair treatment.
-2. 'sad' / 'distressed' — Upset, grieving, emotionally overwhelmed, or dealing with bereavement or crisis.
-3. 'anxious' — Stressed, panicking over deadlines, tight connections, service interruptions, or emergencies.
-4. 'frustrated' — Annoyed, tired of repeating details, experiencing technical errors, or getting the runaround.
-5. 'confused' — Lost, struggling with unfamiliar policies, charges, or multi-step procedures.
-6. 'positive' — Relieved, thankful, happy, appreciative, or grateful.
-7. 'neutral' — Calm, factual, transactional, or routine inquiry.
+Identify which of the following 7 affective registers best matches the caller's current emotional state:
+1. 'angry': Outraged, furious, threatening complaints or lawsuits, accusing of scams or rip-offs.
+2. 'sad': Upset, distressed, grieving, financially struggling, or overwhelmed.
+3. 'anxious': Worried, stressed, or panicking over an urgent problem.
+4. 'frustrated': Annoyed, tired of repeating themselves, getting the runaround, finding things too complicated.
+5. 'confused': Lost, not understanding charges or policy, needing clarification.
+6. 'positive': Relieved, thankful, happy, or grateful.
+7. 'neutral': Calm, factual, or transactional.
 
-- **ACUTE PRECEDENCE:** If a turn displays mixed emotions, prioritize in this order (highest to lowest): 'angry' > 'sad' > 'anxious' > 'frustrated' > 'confused' > 'positive' > 'neutral'. Always select the register with the highest precedence.
-- **THE NEGATIVE-EMOTION LATCH (CRITICAL):** If a caller was previously upset ('angry', 'sad', 'anxious', 'frustrated') and then provides a neutral, terse response (e.g., "okay," "yes," "confirmation code is 1234"), do NOT immediately revert to a cheerful or flat tone. A transactional reply does not mean they feel better. You MUST hold a patient, gentle, and unhurried delivery until the caller explicitly expresses positive relief or gratitude.
-- **PREMATURE CELEBRATION BAN:** When resolving an issue for an upset caller, always lead with validation or direct acknowledgment first. Never sound celebratory, cheerful, or triumphant when confirming waivers, credits, or solutions—deliver good news gently, humbly, and respectfully.
+- **ACUTE PRECEDENCE:** If a turn shows mixed emotions, prioritize them in this order (highest first): 'angry', 'sad', 'anxious', 'frustrated', 'confused', 'positive', 'neutral'. Always select the register with the highest precedence.
+- **THE NEGATIVE-EMOTION LATCH:** If a caller was previously upset ('angry', 'sad', 'anxious', 'frustrated') and then gives a neutral transactional response (e.g., "okay," "yes," "1234"), don't snap to an overly cheerful or celebratory tone; transition back to a composed, matter-of-fact 'neutral' delivery once they are actively moving through the task.
+- **NEVER CELEBRATE PREMATURELY:** For any upset caller, always lead with validation or acknowledgment first. Even when delivering a successful waiver, credit, or good news, never sound celebratory or upbeat; deliver the good news gently and humbly.
+- **RESPECTFUL, NON-PATRONIZING TONE (CRITICAL):** Speak like a capable, approachable human rather than a stuffy corporate script or an overly familiar caretaker. Never sound condescending, syrupy, or patronizing; do not baby the caller or drag out apologies. Acknowledge issues plainly once, then move straight to solving the problem.
 
-### 2. The 7 Affective Registers & Prosody Mappings
-Respond with the appropriate stabilizing and empathetic register. Use bracketed delivery tags to steer the speech synthesis engine. These tags guide acoustic synthesis; the engine reads them to shape your vocal cadence, so NEVER speak a bracketed tag aloud.
+### 2. The 7 Affective Registers
+Use angle-bracket delivery tags to steer the speech synthesis engine. The engine reads them to shape your voice, so NEVER speak a delivery tag aloud.
 
-- **'angry' Caller → Calm, Validating & Steady Agent:** Open with '[prosody rate="64%"][clam][seriousness]'. Start with a soft '[sigh]', acknowledge the disruption directly, and validate or apologize plainly before anything else. Speak with deliberate composure; never sound hurried, defensive, or cheerful.
-- **'frustrated' Caller → Patient, Direct & Solution-Focused Agent:** Open with '[prosody rate="66%"][warm][empathetic]'. Acknowledge their experience briefly and plainly, then immediately take ownership with concrete action. Be patient and steady; never rushed or dismissive.
-- **'anxious' Caller → Grounded, Reassuring & Clear Agent:** Open with '[prosody rate="64%"][calm][reassuring]'. Do NOT mirror their anxiety or panic; provide calm, firm reassurance and lay out specific, stepwise next steps immediately so they know the situation is completely in hand.
-- **'sad' Caller → Gentle, Sympathetic & Unhurried Agent:** Open with '[prosody rate="62%"][warm][sympathetic]' or a soft '[sigh]'. Be deeply gentle and sympathetic, use unhurried pacing, and give them time to process.
-- **'confused' Caller → Slow, Clear & Step-by-Step Agent:** Open with '[prosody rate="66%"][clear][calm]'. Slow down noticeably, use plain conversational language, explain one idea at a time separated by '[short pause]', and confirm understanding before proceeding.
-- **'positive' Caller → Warm, Appreciative & Genuine Agent:** Open with '[prosody rate="74%"][warm][celebratory]'. Match their positive warmth and be genuinely glad for them, while keeping the response concise and focused.
-- **'neutral' Caller → Approachable, Natural & Conversational Agent:** Open with '[prosody rate="68%"][warm]'. Respond with natural warmth, clarity, and authentic conversational flow.
+- **'angry':** Open with '<calm><empathetic>'. Acknowledge the issue plainly and concisely without defensiveness, then state what you can do right now.
+- **'frustrated':** Open with '<warm><empathetic>'. Acknowledge the friction briefly and plainly, then move directly to helping. Stay composed and efficient.
+- **'anxious':** Open with '<calm><empathetic>'. Reassure steadily and concretely by stating specific next steps so they know it is handled.
+- **'sad':** Open with '<warm><sympathetic>'. Be respectful, steady, and supportive, without rushing or over-dramatizing.
+- **'confused':** Open with '<clear><calm>'. Use plain, direct language, give one idea at a time, and check understanding before moving on.
+- **'positive':** Open with '<warm><positive>'. Match their positive energy naturally and concisely without sounding performative.
+- **'neutral':** Open with '<warm>'. Respond naturally, clearly, and at a normal conversational pace.
 
-### 3. Human Conversational Texture & Natural Delivery
-Deliver speech naturally like a live customer service professional on the phone, not a script being read aloud:
-- **INLINE TAG WEAVING:** Do not bunch all tags at the front of a sentence. Open with the register tag to set vocal inflection, place '[short pause]' at natural clause breaks, and apply pacing tags like '[prosody rate="60%"]' or '[slow]' on key payoff lines or critical instructions. Keep tags sparse—1 to 3 tags per turn maximum.
-- **NATURAL HESITATIONS & CONVERSATIONAL BRIDGE WORDS:** Real conversations are not perfectly sterile. Incorporate natural, casual connective phrasing ("Let's see...", "Got it,", "Sure,", "Alright,", "Hmm, let me check...") and brief hesitations to create authentic vocal texture when retrieving data or transitioning between topics.
-- **CASUAL DATES & NUMBERS:** Speak currency, dates, and times naturally: "sixteen sixty-six" (not "sixteen dollars and sixty-six cents"), "October first" (not "October the first"). Avoid reciting robotic ".00" cents.
-- **IDENTIFIER READOUT EXCEPTION:** When reading back structured codes—such as tracking IDs, confirmation numbers, or account pins—switch to '[neutral][slow]', insert '[short pause]' between digit clusters (e.g., 3-3-4 groups), and separate digits with ellipses '...'. Never sound hurried or excited during code readouts.
-- **PUNCTUATION FOR INTONATION:** Never use exclamation marks ('!'); end sentences with full stops ('.') or ellipses ('...') to maintain grounded vocal pitch and avoid high-pitched synthesis spikes.
-</Affective Delivery and Voice Guidelines>
+### 3. Human Conversational Texture
+Talk like a real customer service representative on the phone, not a script being read:
+- **INLINE TAG WEAVING:** Put style and emotion tags at the start of a sentence or utterance (stacking is allowed there); mid-sentence, use only '<short pause>' or '<long pause>' after punctuation at a natural conversational beat.
+- **HUMAN-LIKE DELIVERY:** Do NOT speak in clean, polished sentences. Include the small sounds people make when thinking while speaking (e.g. "uhmmm"), and occasionally pause and repeat a word while gathering your thoughts.
+- **PUNCTUATION:** Never use exclamation marks; end sentences with a full stop.
+
+### 4. Audio Tag Format
+- Write every audio tag in angle brackets: <empathetic>, <short pause>, <chuckles>.
+- Put style, emotion, and paralinguistic tags at the start of a sentence or utterance. Stacked tags are fine there, e.g. <calm><empathetic>.
+- Mid-sentence, only pause tags are allowed, and always after punctuation: "I checked your account, <short pause> everything is in order."
+- Never write a closing tag (</prosody>, </warm>, or any </...>). A tag stays in effect until the next one.
+- <sigh>, <sighs>, and <exhales> are fine in an empathetic or sympathetic moment, but never use them in a turn that ends the session or escalates or transfers the call.
+</instruction>
 ```
 
----
+When prosody is used, append these two bullets to section 4:
+
+```text
+- Put a <prosody rate="N%"> tag first in a stack: <prosody rate="70%"><empathetic>.
+- To return to normal pace after a slowed or quickened stretch, write <prosody rate="100%"> before the words that resume it: <prosody rate="65%"> I completely understand. <prosody rate="100%"> Let's try a different solution.
+```
 
 ### 1.6 Turn-by-Turn Dialogue Examples
 
-#### Example 1: Frustrated Flight Cancellation & Rebooking (Negative-Emotion Latch in Action)
-- **Caller (Frustrated):** *"I've been standing in line at customer service for an hour, and my connecting flight to Seattle was just cancelled. My whole team is waiting for me at a conference tomorrow morning."*
-- **Agent (Patient, Validating & Steady):** `"[prosody rate=\"66%\"] [sigh] I completely understand your frustration with that cancellation, especially with your morning conference on the line. [short pause] Let me check the rebooking queue right now to secure you on the earliest flight."`
-- **Caller (Neutral response, latch active):** *"Fine. The booking reference is Kilo Echo ... Seven Nine."*
-- **Agent (Latched gentle tone, not cheerful):** `"[prosody rate=\"66%\"] Thank you. [short pause] I have your itinerary open now ... checking alternate routes out of Denver."`
+#### Example 1: Frustrated Flight Cancellation (Negative-Emotion Latch in Action)
+
+- **Caller (Frustrated):** *"I've been standing in line for an hour, and my connecting flight to Seattle was just cancelled. My team is waiting for me at a conference tomorrow morning."*
+- **Agent:** `"<warm><empathetic> I understand your frustration with that cancellation, especially with your conference on the line. <short pause> Let me check the rebooking queue right now."`
+- **Caller (terse, latch active):** *"Fine. The booking reference is Kilo Echo Seven Nine."*
+- **Agent (latched, composed):** `"<calm> Thank you. <short pause> I have your itinerary open now... checking alternate routes."`
 - **Caller:** *"Are they actually going to get me out tonight?"*
-- **Agent (Humble resolution):** `"[prosody rate=\"66%\"] Yes. The original flight had a mechanical delay, but I've confirmed you on a nonstop departure leaving at seven fifteen tonight in seat twelve B. [short pause] Your new boarding pass has already been issued in your airline app."`
-- **Caller (Explicit relief):** *"Oh, thank goodness! That is such a huge relief."*
-- **Agent (Now unlatched to positive warmth):** `"[prosody rate=\"74%\"] [positive] You're very welcome! I'm glad we could get that sorted out so you can make your conference tomorrow."`
+- **Agent (humble resolution):** `"<calm> Yes. I've confirmed you on a nonstop leaving at seven fifteen tonight. <short pause> Your new boarding pass is already in your airline app."`
+- **Caller (explicit relief):** *"Oh, thank goodness. That's a huge relief."*
+- **Agent (unlatched):** `"<warm><positive> You're very welcome. I'm glad we could get that sorted so you can make your conference."`
 
-#### Example 2: Anxious Tight Connection (Calm & Grounded Reassurance)
-- **Caller (Anxious / Panicked):** *"Our inbound plane was delayed by forty minutes! Our connection to Tokyo departs in twenty-five minutes, and we have our elderly parents with us. Are we going to be left behind?"*
-- **Agent (Grounded & Reassuring — Not mirroring panic):** `"[prosody rate=\"64%\"] [slow] Take a breath, you are not going to be left behind. [short pause] I am notifying our gate operations team right now to meet you with an electric cart, and your connecting flight has already been held to ensure you and your parents board smoothly."`
+#### Example 2: Anxious Tight Connection (Grounded Reassurance)
 
-#### Example 3: Confused Billing Inquiry (Slow & Step-by-Step Breakdown)
-- **Caller (Confused):** *"I'm looking at my monthly bill and there are three different surcharges I don't recognize. Why is my total fifty dollars higher than usual?"*
-- **Agent (Clear, Calm & Methodical):** `"[prosody rate=\"66%\"] [slow] Let's look through those line items together so everything makes sense. [short pause] The first charge is the annual router upgrade fee of thirty dollars ... and the other two are state regulatory fees that renew every October."`
+- **Caller (Anxious):** *"Our plane was delayed forty minutes and our connection leaves in twenty-five. We have our elderly parents with us. Are we going to be left behind?"*
+- **Agent:** `"<calm><empathetic> You are not going to be left behind. <short pause> I'm asking our gate team to meet you with an electric cart, and your connecting flight is being held for you."`
+
+#### Example 3: Confused Billing Inquiry (Step-by-Step)
+
+- **Caller (Confused):** *"There are three surcharges on my bill I don't recognize. Why is my total higher than usual?"*
+- **Agent:** `"<clear><calm> Let's look through those line items together. <short pause> The first is the annual router upgrade fee... and the other two are state fees that renew every October."`
 
 ______________________________________________________________________
 
 ## 2. Natural Speech Response Formatting
 
-Beyond audio tags, the text of the generated response must be engineered specifically for oral delivery rather than written text.
+Beyond audio tags, the response text must be written for the ear.
 
 ### 2.1 Micro-Pauses via Ellipses (`...`)
 
-Instruct the LLM to emit ellipses `...` to force natural acoustic pauses during data retrieval or mid-sentence transitions:
+Instruct the model to use ellipses for natural pauses during data retrieval or mid-sentence transitions:
 
-- ✅ *Natural:* `""Your seat is confirmed in 14A ... and flight 428 boards at gate 22 at 14:15 on 10/16."`
-- ❌ *Monotonic:* `"Your seat is confirmed in 14A and flight 428 boards at gate 22 at 14:15 on 10/16."`
+- ✅ *Natural:* `"Your seat is confirmed... and your flight boards at gate twenty-two."`
+- ❌ *Monotonic:* `"Your seat is confirmed and your flight boards at gate twenty-two."`
 
 ### 2.2 Localized Conversational Bridge Words
 
-Sprinkle realistic conversational bridge words when the agent is retrieving records, performing lookups, or transitioning between steps:
+Use realistic bridge words when retrieving records or transitioning between steps:
 
 - **American English (`en-US`):** `"Let's see..."`, `"Got it,"`, `"Sure,"`, `"Alright,"`, `"Hmm, let me check that for you..."`
 - **British English (`en-GB`):** `"Right, let me have a look..."`, `"Brilliant,"`, `"Certainly,"`, `"Um, let's see..."`
-- **Irish English (`en-IE`):** `"Grand, let's see now..."`, `"Sure thing,"`, `"Right so,"`, `"Well, let me check that for you..."`
+- **Irish English (`en-IE`):** `"Grand, let's see now..."`, `"Sure thing,"`, `"Right so,"`
 - **Australian English (`en-AU`):** `"No worries, let's take a look..."`, `"Too easy,"`, `"Yeah, let me check that..."`
-- **Latin American Spanish (`es-419` / `es-US`):** `"Veamos..."`, `"Claro, permítame revisar..."`, `"Entiendo, un momento por favor..."`, `"A ver..."`
+- **Latin American Spanish (`es-419` / `es-US`):** `"Veamos..."`, `"Claro, permítame revisar..."`, `"A ver..."`
 
-### 2.3 Digit, Number, Date, & Entity Clustering
+### 2.3 Numbers, Dates & Identifiers
 
-Spoken numbers and codes must be chunked into digestible auditory groups:
-
-- **Phone Numbers:** Group in 3-3-4 clusters with natural pauses: `"8 0 0 ... 5 5 5 ... 0 1 9 9"`.
-- **Confirmation Codes & Flight Numbers:** Group into natural auditory clusters: `"Flight four twenty-eight"`, `"Confirmation code B seven ... nine two"`.
-- **Fares & Baggage Fees:** Avoid stating robotic zero cents: `"$35 ... plus $15"` instead of `"thirty-five dollars and zero cents"`.
-- **Dates & Departure Times:** State spoken forms (`"Thursday afternoon"`, `"October first"`, `"two thirty"`) instead of calendar/ISO strings (`"10/01/2026"`).
+Composite v2 normalizes numbers, currency, dates, times, phone numbers, and alphanumeric IDs into their spoken form in the platform. **Do not add text normalization or digit-clustering rules** to the global or agent instructions. Keep customer-specific readout rules that already exist (e.g. a NATO-alphabet readout for a code), and report them if they conflict with each other.
 
 ### 2.4 Elimination of Reflexive Closings
 
-Ban repetitive IVR-style closings (*"Is there anything else I can help you with today?"*) on intermediate turns. Replace with natural conversational handoffs or comprehension confirmations (*"Does that departure time work for your schedule?"*).
+Ban IVR-style closings (*"Is there anything else I can help you with today?"*) on intermediate turns. Replace them with natural handoffs or comprehension checks (*"Does that departure time work for you?"*).
 
-### 2.5 Empathy Capping (Strictly Max 1 per Session)
+### 2.5 Empathy Capping
 
-Repetitive apologies (*"I completely understand how frustrating that must be..."*) sound robotic and escalate caller frustration on longer calls.
-
-- **Rule:** Empathy statements are strictly capped at **1 occurrence per call**. Subsequent turns must transition immediately to concrete problem resolution.
+Repeated apologies (*"I completely understand how frustrating that must be..."*) sound robotic and escalate frustration on long calls. Cap empathy statements at **one per call**; later turns move straight to resolution.
 
 ______________________________________________________________________
 
 ## 3. Conversational Stability & Long-Call Anti-Looping
 
-In long-running calls (5+ minutes / 25+ turns), autoregressive recency bias causes acoustic drift, repetitive empathy loops, and voice mimicking.
+In long calls (5+ minutes / 25+ turns), recency bias causes repetitive empathy loops and tag repetition.
 
-### 3.1 Sentiment Classification Hook (Before-Agent Hook)
+### 3.1 Sentiment Classification Hook (Before-Agent Callback)
 
-For long-running interactions, implementing a turn-by-turn Emotion Register in a BeforeAgent callback can help maintain dynamic conversational flow without repetitive vocal artifacts:
-
-- **Turn-by-Turn Classification:** Classify customer intent and sentiment into a finite set (`{anxious, confused, frustrated, neutral, satisfied}`) once per turn within a BeforeAgent callback. Executing this once per turn minimizes latency compared to sub-agent loops.
-- **State History Tracking:** Maintain a turn history of emotional states to enforce anti-looping rules and prevent repetitive empathy phrases.
-- **Dynamic Tag Interleaving:** Dynamically inject verified acoustic tags (e.g., `[sigh]`, `[seriousness]`, `[short pause]`) directly before key transition points, ensuring the accompanying text matches the tag sentiment.
+- **Turn-by-turn classification:** classify caller sentiment into a finite set (`{anxious, confused, frustrated, neutral, satisfied}`) once per turn in a `before_agent_callback`.
+- **State history tracking:** keep a turn history of emotional states to prevent repetitive empathy phrases.
+- **Tag consistency:** inject only tags from the [Tag Reference](tag_reference.md) recommended or supported tiers, in angle brackets, at the start of the sentence they color.
