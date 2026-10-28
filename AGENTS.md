@@ -37,6 +37,7 @@ This workspace provides several specialized AI skills to assist with development
 - **`cxas-autolabel-rules`**: Author, validate, and manage Contact Center AI (CCAI) Insights Autolabeling Rules declaratively via YAML and CEL.
 - **`cxas-composite-voice-agent-optimizer`**: Audits, optimizes, and remediates CXAS agent configurations for Gemini Composite V1 voice naturalness, persona styling, and multi-language coverage.
 - **`cxas-configurable-dashboards`**: Author, validate, and manage CCAI Insights Configurable Dashboards declaratively via YAML, Vega-Lite specs, and SQL metrics queries.
+- **`cxas-self-steering-agent`**: Builds and refactors self-steering CXAS conversational agents with one root agent, Jinja progressive disclosure (`open_playbook` and `load_task`, dynamic tool hiding), and deterministic actions (`set_next_agent_actions`).
 - **`cxas-sim-eval`**: A utility skill for converting CXAS golden evaluations to SCRAPI SimulationEvals test cases.
 
 ## CLI Features

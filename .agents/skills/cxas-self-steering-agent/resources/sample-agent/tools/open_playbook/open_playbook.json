@@ -1,0 +1,10 @@
+{
+  "name": "open_playbook",
+  "pythonFunction": {
+    "name": "open_playbook",
+    "pythonCode": "tools/open_playbook/python_function/python_code.py",
+    "description": "Opens the playbook that covers the customer's request.\n\nArgs:\n  playbook_name (str): Exact name of the playbook to open, from the playbook\n    list.\n  rationale (str): Why this playbook is being opened. Kept in the conversation\n    history so later turns know what prompted it. One short sentence (max 15\n    words) stating the customer's need or the tool result that led here, e.g.\n    \"Customer wants to know when their order will arrive.\" Do not restate the\n    playbook name or include personal data.\n\nReturns:\n  dict[str, Any]: Success status and the opened playbook."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "open_playbook"
+}

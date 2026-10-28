@@ -1,0 +1,25 @@
+{
+  "name": "Support_Agent",
+  "displayName": "Support_Agent",
+  "description": "Sample support agent for chat or voice. Uses playbooks and tasks in a Jinja instruction, dynamic tool hiding, and deterministic actions.",
+  "instruction": "agents/Support_Agent/instruction.txt",
+  "tools": [
+    "create_return",
+    "end_session",
+    "execute_live_agent_handover",
+    "graceful_end_session",
+    "load_task",
+    "lookup_order",
+    "open_playbook",
+    "play_sms_legal_disclosure",
+    "send_sms_summary",
+    "set_next_agent_actions",
+    "submit_cancellation"
+  ],
+  "beforeModelCallbacks": [
+    {
+      "pythonCode": "agents/Support_Agent/before_model_callbacks/before_model_callbacks_01/python_code.py",
+      "description": "Plays actions queued by set_next_agent_actions, sends the greeting on the first model call, and hides tools the current instruction doesn't mention."
+    }
+  ]
+}

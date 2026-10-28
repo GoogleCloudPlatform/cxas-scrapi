@@ -1,0 +1,9 @@
+# Rules that don't fit this design. Everything else stays on.
+rules:
+  I001: "off"  # The instruction uses <role> and <constraints>; there's no <persona> block.
+  T001: "off"  # Tools return error details and the instruction says what to do; no agent_action.
+  T011: "off"  # Optional[...] = None parameters import and run fine (graceful_end_session has one).
+  I012: "off"  # Code-only tools like set_next_agent_actions are never named in the instruction. check_tool_visibility.py flags real leftovers.
+  A007: "off"  # Channel-neutral sample (chat or voice); no voice Director's Note in app.json.
+  A009: "off"  # Channel-neutral sample (chat or voice); no voice Director's Note in app.json.
+  T014: "off"  # Routing, disclosure and handoff tools are called without speaking first.

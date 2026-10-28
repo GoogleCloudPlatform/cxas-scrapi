@@ -1,0 +1,10 @@
+{
+  "name": "play_sms_legal_disclosure",
+  "pythonFunction": {
+    "name": "play_sms_legal_disclosure",
+    "pythonCode": "tools/play_sms_legal_disclosure/python_function/python_code.py",
+    "description": "Shares the text message terms word for word and asks the customer if we can text them.\n\nCall this directly without replying to the customer first.\n\nReturns:\n  dict[str, Any]: Whether the terms were shared."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "play_sms_legal_disclosure"
+}
