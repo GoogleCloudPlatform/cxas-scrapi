@@ -15,10 +15,15 @@
 
 """Utility functions for generating reports."""
 
+import base64
+import concurrent.futures
 import contextlib
+import dataclasses
 import datetime
 import glob
+import io
 import json
+import logging
 import math
 import os
 import pathlib
@@ -26,8 +31,9 @@ import re
 import statistics
 import typing
 import wave
+import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, Protocol
 
 import jinja2
 import numpy as np
@@ -52,6 +58,13 @@ from cxas_scrapi.utils.tracing import (
     audio_metrics,
     audio_transcription,
 )
+
+try:
+    from pydub import AudioSegment
+except ImportError:  # pragma: no cover
+    AudioSegment = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
 
 _ORIG_OPEN = open
 
@@ -4092,6 +4105,10 @@ def generate_combined_html_report(
     burst_noise_files: list[str] | None = None,
     traces_dir: str | None = None,
     audio_analysis: bool | None = None,
+    recordings_bucket: str | None = None,
+    enriched_report: bool = False,
+    gcs: Any | None = None,
+    audio_encoder: Callable[[Any], Any] | None = None,
 ) -> str:
     """Generate combined HTML report based on results from multiple sources.
 
@@ -4397,6 +4414,19 @@ def generate_combined_html_report(
         audio_analysis=audio_analysis,
     )
     suite_audio_html = _render_suite_audio_analysis(suite_audio)
+
+    # Enrich simulation results with CES server-side stereo recordings & VAD
+    if sim_results and (enriched_report or recordings_bucket):
+        rec_bucket = resolve_recordings_bucket(
+            app_id=app_name, explicit_bucket=recordings_bucket
+        )
+        if rec_bucket:
+            enrich_sim_results_with_recordings(
+                sim_results,
+                recordings_bucket=rec_bucket,
+                gcs=gcs,
+                encoder=audio_encoder or encode_opus,
+            )
 
     # Process traces for simulation results to simplify template
     if sim_results:
@@ -5105,18 +5135,23 @@ def _merge_naturalness(common: Any, case: Any) -> Any:
 
 
 def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
-    """Loads sim files and merges common params and expectations.
+    """Loads sim files (.yaml, .yml, .json) and merges common params.
 
     Args:
-      yaml_path: Path to the YAML test cases file.
+      yaml_path: Path to the YAML or JSON test cases file.
 
     Returns:
       List of merged evaluation test case dicts.
     """
     with open(yaml_path) as f:
-        data = yaml.safe_load(f) or {}
+        if str(yaml_path).lower().endswith(".json"):
+            data = json.load(f) or {}
+        else:
+            data = yaml.safe_load(f) or {}
     if isinstance(data, list):
         return data
+    if not isinstance(data, dict):
+        return []
 
     common_session_params = (
         data.get("common_session_parameters")
@@ -5208,7 +5243,12 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
         ["common_burst_noise_snr", "burst_noise_snr"]
     )
 
-    cases = data.get("evals", [])
+    cases = (
+        data.get("evals")
+        or data.get("test_cases")
+        or data.get("scenarios")
+        or []
+    )
     if not isinstance(cases, list):
         return []
 
@@ -5329,9 +5369,14 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
                     ):
                         case_copy["burst_noise_snr"] = common_burst_snr
 
-            # Merge expectations
+            # Merge expectations (respecting exclude_common_expectations)
             case_expectations = case_copy.get("expectations", []) or []
-            case_copy["expectations"] = common_expectations + case_expectations
+            if case_copy.get("exclude_common_expectations"):
+                case_copy["expectations"] = list(case_expectations)
+            else:
+                case_copy["expectations"] = (
+                    common_expectations + case_expectations
+                )
 
             # Merge the optional naturalness metric block. A per-eval block
             # wins key-by-key, and an explicit `false` opts that eval out.
@@ -5481,13 +5526,39 @@ def summarize_and_gate_evals(
                 passes = sum(1 for r in runs if r.get("passed"))
                 total_runs = len(runs)
             passed = passes >= min_run_passes
+            durations = [
+                float(r["duration_s"])
+                for r in runs
+                if isinstance(r.get("duration_s"), (int, float))
+            ]
+            avg_duration_s = (
+                round(sum(durations) / len(durations), 2) if durations else 0.0
+            )
             failed_expectations: list[str] = []
+            errors: list[str] = []
+            session_ids: list[str] = []
             for r in runs:
-                for exp in r.get("expectations", []) or []:
-                    if exp.get("status") != "Met":
+                sid = str(r.get("session_id") or "")
+                if sid and sid not in session_ids:
+                    session_ids.append(sid)
+                err = str(r.get("error") or r.get("errors") or "")
+                if err and err not in errors:
+                    errors.append(err)
+                exp_list = (
+                    r.get("expectation_details")
+                    if isinstance(r.get("expectation_details"), list)
+                    else (
+                        r.get("expectations")
+                        if isinstance(r.get("expectations"), list)
+                        else []
+                    )
+                )
+                for exp in exp_list or []:
+                    if isinstance(exp, dict) and exp.get("status") != "Met":
                         exp_name = exp.get("expectation", "")
                         if exp_name and exp_name not in failed_expectations:
                             failed_expectations.append(exp_name)
+            rep_exp = runs[-1].get("expectations", "") if runs else ""
             all_cases.append(
                 {
                     "name": name,
@@ -5495,7 +5566,17 @@ def summarize_and_gate_evals(
                     "passed": passed,
                     "passes": passes,
                     "runs": total_runs,
+                    "required_passes": min_run_passes,
+                    "avg_duration_s": avg_duration_s,
                     "failed_expectations": failed_expectations,
+                    "errors": errors,
+                    "session_ids": session_ids,
+                    "representative_goals": (
+                        runs[-1].get("goals", "") if runs else ""
+                    ),
+                    "representative_expectations": (
+                        rep_exp if isinstance(rep_exp, str) else ""
+                    ),
                 }
             )
 
@@ -5547,6 +5628,37 @@ def summarize_and_gate_evals(
         "gate_passed": gate_passed,
         "gate_reason": gate_reason,
         "cases": all_cases,
+        "sim_reconciled": [
+            c for c in all_cases if c.get("category") == "simulation"
+        ],
+    }
+
+
+def resolve_provenance_info() -> dict[str, str]:
+    """Resolve git/CI/Guitar provenance from environment variables."""
+    git_sha = (
+        os.environ.get("GITHUB_SHA")
+        or os.environ.get("KOKORO_GIT_COMMIT")
+        or os.environ.get("GUITAR_CHANGELIST")
+        or os.environ.get("CITC_CL")
+        or "local"
+    )
+    git_ref = (
+        os.environ.get("GITHUB_REF_NAME")
+        or os.environ.get("KOKORO_GOB_BRANCH")
+        or os.environ.get("CITC_CLIENT")
+        or "local"
+    )
+    run_id = (
+        os.environ.get("GITHUB_RUN_ID")
+        or os.environ.get("GUITAR_WORKFLOW_ID")
+        or os.environ.get("KOKORO_BUILD_ID")
+        or "local"
+    )
+    return {
+        "git_sha": str(git_sha),
+        "git_ref": str(git_ref),
+        "run_id": str(run_id),
     }
 
 
@@ -5556,6 +5668,7 @@ def write_eval_stamp(
     gate_summary: dict[str, Any],
     modality: str = "text",
     runs: int = 1,
+    published_urls: dict[str, str] | None = None,
 ) -> str:
     """Write an EVAL_STAMP-<suite>.txt metadata file into output_dir."""
     safe_suite = (
@@ -5565,6 +5678,7 @@ def write_eval_stamp(
     now_utc = datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
+    prov = resolve_provenance_info()
     lines = [
         f"suite:         {suite_name}",
         f"modality:      {modality}",
@@ -5577,14 +5691,1246 @@ def write_eval_stamp(
         ),
         f"pass_rate:     {gate_summary.get('pass_rate', 0.0):.2%}",
         f"gate_passed:   {gate_summary.get('gate_passed', True)}",
-        f"git_sha:       {os.environ.get('GITHUB_SHA', 'local')}",
-        f"git_ref:       {os.environ.get('GITHUB_REF_NAME', 'local')}",
-        f"run_id:        {os.environ.get('GITHUB_RUN_ID', 'local')}",
+        f"git_sha:       {prov['git_sha']}",
+        f"git_ref:       {prov['git_ref']}",
+        f"run_id:        {prov['run_id']}",
         f"timestamp_utc: {now_utc}",
     ]
+    if published_urls:
+        if published_urls.get("report_url"):
+            lines.append(f"report_url:    {published_urls['report_url']}")
+        if published_urls.get("latest_url"):
+            lines.append(f"latest_url:    {published_urls['latest_url']}")
     with _ORIG_OPEN(stamp_path, "w") as f:
         f.write("\n".join(lines) + "\n")
     return stamp_path
+
+
+def write_junit_xml(
+    junit_path: str,
+    suite_name: str,
+    gate_summary: dict[str, Any],
+    published_urls: dict[str, str] | None = None,
+    testsuite_prefix: str = "cxas_evals",
+) -> str:
+    """Write a JUnit XML report with per-scenario <testcase> elements."""
+    safe_suite = (
+        re.sub(r"[^a-zA-Z0-9._-]+", "_", suite_name).strip("_") or "evals"
+    )
+    cases: list[dict[str, Any]] = list(gate_summary.get("cases") or [])
+    failures_count = sum(1 for c in cases if not c.get("passed"))
+    if not gate_summary.get("gate_passed", True) and failures_count == 0:
+        failures_count = 1
+    total_duration = sum(
+        float(c.get("avg_duration_s", 0.0) or 0.0) for c in cases
+    )
+
+    suite_el = ET.Element(
+        "testsuite",
+        attrib={
+            "name": f"{testsuite_prefix}_{safe_suite}",
+            "tests": str(max(len(cases), 1)),
+            "failures": str(failures_count),
+            "errors": "0",
+            "time": f"{total_duration:.2f}",
+        },
+    )
+
+    if published_urls:
+        props_el = ET.SubElement(suite_el, "properties")
+        for key, val in sorted(published_urls.items()):
+            if val:
+                ET.SubElement(
+                    props_el, "property", attrib={"name": key, "value": val}
+                )
+
+    for case in cases:
+        category = str(case.get("category") or "simulation")
+        tc_el = ET.SubElement(
+            suite_el,
+            "testcase",
+            attrib={
+                "classname": f"{testsuite_prefix}.{safe_suite}.{category}",
+                "name": str(case.get("name", "unnamed")),
+                "time": f"{float(case.get('avg_duration_s', 0.0) or 0.0):.2f}",
+            },
+        )
+        passes = case.get("passes", 1 if case.get("passed") else 0)
+        runs = case.get("runs", 1)
+        req_passes = case.get(
+            "required_passes", gate_summary.get("min_run_passes", 1)
+        )
+        out_lines = [
+            f"Category: {category}",
+            f"Runs passed: {passes}/{runs} (required: {req_passes})",
+        ]
+        if case.get("representative_goals"):
+            out_lines.append(f"Goals: {case['representative_goals']}")
+        if case.get("representative_expectations"):
+            out_lines.append(
+                f"Expectations: {case['representative_expectations']}"
+            )
+        if case.get("session_ids"):
+            out_lines.append(f"Session IDs: {', '.join(case['session_ids'])}")
+        if published_urls and published_urls.get("report_url"):
+            out_lines.append(f"Report URL: {published_urls['report_url']}")
+        sys_out = ET.SubElement(tc_el, "system-out")
+        sys_out.text = "\n".join(out_lines)
+
+        if not case.get("passed"):
+            fail_reasons: list[str] = []
+            for exp in case.get("failed_expectations") or []:
+                fail_reasons.append(f"NOT MET: {exp}")
+            for err in case.get("errors") or []:
+                fail_reasons.append(f"ERROR: {err}")
+            msg = (
+                f"Scenario failed ({passes}/{runs} runs passed; "
+                f"needed {req_passes})"
+            )
+            fail_el = ET.SubElement(
+                tc_el,
+                "failure",
+                attrib={"message": msg, "type": "EvalAssertionFailure"},
+            )
+            fail_el.text = "\n".join([msg, *fail_reasons])
+
+    if not gate_summary.get("gate_passed", True):
+        gate_tc = ET.SubElement(
+            suite_el,
+            "testcase",
+            attrib={
+                "classname": f"{testsuite_prefix}.{safe_suite}",
+                "name": "__suite_pass_rate_gate__",
+                "time": "0.00",
+            },
+        )
+        reason = gate_summary.get("gate_reason") or "Suite gate failed"
+        fail_el = ET.SubElement(
+            gate_tc,
+            "failure",
+            attrib={"message": reason, "type": "EvalSuiteGateFailure"},
+        )
+        fail_el.text = reason
+
+    parent_dir = os.path.dirname(os.path.abspath(junit_path))
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+    tree = ET.ElementTree(suite_el)
+    ET.indent(tree, space="  ")
+    tree.write(junit_path, encoding="utf-8", xml_declaration=True)
+    return junit_path
+
+
+FRAME_S = 0.02
+VAD_DBFS = -42.0
+MIN_SPAN_S = 0.12
+MERGE_GAP_S = 0.35
+
+_DEAD_AIR_WARN_S = 2.5
+_DEAD_AIR_BAD_S = 4.0
+_MAX_DEAD_AIR_WARN_S = 3.0
+_MAX_DEAD_AIR_BAD_S = 5.0
+_SLOWEST_ROWS = 12
+_PRE_ROLL_S = 1.5
+
+_OPUS_BITRATE = "24k"
+_FALLBACK_SAMPLE_RATE = 8000
+_MAX_EMBEDDED_AUDIO_BYTES = 80 * 1024 * 1024
+_FETCH_WORKERS = 8
+
+_RECORDING_PREFIX = "audio-recording"
+_TURN_FILE_RE = re.compile(r"/full-session(?:\((\d+)\))?\.wav$")
+_CES_CONSOLE = "https://ces.cloud.google.com"
+
+
+class GcsClient(Protocol):
+    """The subset of `cxas_scrapi.utils.gcs_utils.GCSUtils` used here."""
+
+    def list_with_prefix(
+        self, gcs_bucket_uri: str, prefix: str
+    ) -> list[str]: ...
+
+    def download_blob(self, gcs_uri: str) -> bytes: ...
+
+
+@dataclasses.dataclass(frozen=True)
+class PcmAudio:
+    """Interleaved signed 16-bit little-endian PCM."""
+
+    data: bytes
+    sample_rate: int
+    channels: int
+
+    @property
+    def duration_s(self) -> float:
+        return len(self.data) / (2 * self.channels * self.sample_rate)
+
+
+@dataclasses.dataclass(frozen=True)
+class EncodedAudio:
+    data: bytes
+    mime_type: str
+
+
+@dataclasses.dataclass
+class TurnAudioInfo:
+    """VAD analysis of one stereo `full-session(k).wav` turn recording."""
+
+    duration_s: float
+    caller_spans: list[tuple[float, float]] = dataclasses.field(
+        default_factory=list
+    )
+    agent_spans: list[tuple[float, float]] = dataclasses.field(
+        default_factory=list
+    )
+    caller_start_s: float | None = None
+    caller_end_s: float | None = None
+    agent_start_s: float | None = None
+    agent_end_s: float | None = None
+    dead_air_s: float | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class SessionRecording:
+    """Per-turn recordings of one CES session, ordered by turn number."""
+
+    gcs_dir: str
+    turns: dict[int, PcmAudio]
+
+
+@dataclasses.dataclass
+class TraceEvent:
+    kind: str  # "tool", "transfer" or "system".
+    text: str
+    tool_input: str = ""
+    tool_output: str = ""
+
+
+@dataclasses.dataclass
+class TraceTurn:
+    user: str
+    agent: list[str] = dataclasses.field(default_factory=list)
+    events: list[TraceEvent] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class RunAudio:
+    """The embedded full-call track and per-turn analysis of one run."""
+
+    gcs_dir: str
+    encoded: EncodedAudio | None
+    duration_s: float
+    chapter_offsets: dict[int, float]
+    turns: dict[int, TurnAudioInfo]
+
+
+@dataclasses.dataclass
+class RunView:
+    """Everything needed to render one simulation run."""
+
+    result: Mapping[str, Any]
+    anchor: str
+    trace_turns: list[TraceTurn]
+    audio: RunAudio | None = None
+    audio_note: str = ""
+    setup_s: float | None = None
+    avg_dead_air_s: float | None = None
+    max_dead_air_s: float | None = None
+
+    @property
+    def name(self) -> str:
+        return str(self.result.get("name", "unknown"))
+
+    @property
+    def run_no(self) -> int:
+        return int(self.result.get("run", 1) or 1)
+
+    @property
+    def passed(self) -> bool:
+        return bool(self.result.get("passed"))
+
+    @property
+    def voice(self) -> str:
+        return str(self.result.get("sim_user_voice") or "default")
+
+
+def read_wav(wav_bytes: bytes) -> PcmAudio:
+    """Parses a 16-bit PCM WAV file."""
+    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+        if w.getsampwidth() != 2:
+            raise ValueError(
+                f"expected 16-bit PCM, got {8 * w.getsampwidth()}-bit"
+            )
+        return PcmAudio(
+            data=w.readframes(w.getnframes()),
+            sample_rate=w.getframerate(),
+            channels=w.getnchannels(),
+        )
+
+
+def write_wav(audio: PcmAudio) -> bytes:
+    """Serializes `PcmAudio` to 16-bit WAV bytes."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(audio.channels)
+        w.setsampwidth(2)
+        w.setframerate(audio.sample_rate)
+        w.writeframes(audio.data)
+    return buf.getvalue()
+
+
+def _samples(audio: PcmAudio) -> np.ndarray:
+    n = len(audio.data) // (2 * audio.channels)
+    return np.frombuffer(
+        audio.data[: n * 2 * audio.channels], dtype="<i2"
+    ).reshape(n, audio.channels)
+
+
+def channel_dbfs_frames(audio: PcmAudio, channel: int) -> list[float]:
+    """Returns the RMS level (dBFS) of `channel` per FRAME_S frame."""
+    x = _samples(audio)[:, channel].astype(np.float64)
+    if not x.size:
+        return []
+    frame_len = max(1, int(audio.sample_rate * FRAME_S))
+    starts = np.arange(0, x.size, frame_len)
+    sums = np.add.reduceat(x * x, starts)
+    counts = np.diff(np.append(starts, x.size))
+    rms = np.sqrt(sums / counts)
+    with np.errstate(divide="ignore"):
+        db = np.where(rms > 0, 20 * np.log10(rms / 32768.0), -120.0)
+    return db.tolist()
+
+
+def spans_from_frames(
+    frames: Sequence[float], threshold_dbfs: float = VAD_DBFS
+) -> list[tuple[float, float]]:
+    """Merges frames above `threshold_dbfs` into speech spans (seconds)."""
+    spans = []
+    cur = None
+    for i, level in enumerate(frames):
+        t = i * FRAME_S
+        if level > threshold_dbfs:
+            if cur is None:
+                cur = [t, t + FRAME_S]
+            else:
+                cur[1] = t + FRAME_S
+        elif cur is not None and t - cur[1] > MERGE_GAP_S:
+            spans.append(cur)
+            cur = None
+    if cur is not None:
+        spans.append(cur)
+    return [(round(a, 2), round(b, 2)) for a, b in spans if b - a >= MIN_SPAN_S]
+
+
+def analyze_turn(audio: PcmAudio) -> TurnAudioInfo:
+    """Runs VAD on a stereo turn recording (ch0 = caller, ch1 = agent)."""
+    info = TurnAudioInfo(duration_s=round(audio.duration_s, 2))
+    if audio.channels < 2:
+        return info
+    caller = spans_from_frames(channel_dbfs_frames(audio, 0))
+    agent = spans_from_frames(channel_dbfs_frames(audio, 1))
+    info.caller_spans, info.agent_spans = caller, agent
+    if caller:
+        info.caller_start_s = caller[0][0]
+        first_agent = agent[0][0] if agent else info.duration_s
+        before_agent = [s for s in caller if s[0] < first_agent]
+        info.caller_end_s = (
+            before_agent[-1][1] if before_agent else caller[0][1]
+        )
+    if agent:
+        info.agent_start_s = agent[0][0]
+        info.agent_end_s = agent[-1][1]
+    if info.caller_end_s is not None and info.agent_start_s is not None:
+        info.dead_air_s = round(
+            max(0.0, info.agent_start_s - info.caller_end_s), 2
+        )
+    return info
+
+
+def call_setup_s(info: TurnAudioInfo) -> float | None:
+    """Returns the time before the agent's greeting in turn 1."""
+    if info.agent_start_s is None:
+        return None
+    return round(info.agent_start_s - (info.caller_end_s or 0.0), 2)
+
+
+def concat_turns(
+    turns: Mapping[int, PcmAudio],
+) -> tuple[PcmAudio | None, dict[int, float]]:
+    """Concatenates turn recordings in order, returning chapter offsets."""
+    offsets = {}
+    chunks = []
+    first = None
+    t = 0.0
+    for k in sorted(turns):
+        audio = turns[k]
+        if first is None:
+            first = audio
+        elif (audio.sample_rate, audio.channels) != (
+            first.sample_rate,
+            first.channels,
+        ):
+            logger.warning(
+                "Skipping turn %d with a mismatched audio format.", k
+            )
+            continue
+        offsets[k] = round(t, 2)
+        chunks.append(audio.data)
+        t += audio.duration_s
+    if first is None:
+        return None, {}
+    full = PcmAudio(b"".join(chunks), first.sample_rate, first.channels)
+    return full, offsets
+
+
+def encode_opus(audio: PcmAudio) -> EncodedAudio:
+    """Encodes PCM to Ogg/Opus with the sandboxed ffmpeg behind pydub."""
+    if AudioSegment is None:
+        raise RuntimeError("pydub is not installed")
+    segment = AudioSegment(
+        data=audio.data,
+        sample_width=2,
+        frame_rate=audio.sample_rate,
+        channels=audio.channels,
+    )
+    buf = io.BytesIO()
+    segment.export(buf, format="ogg", codec="libopus", bitrate=_OPUS_BITRATE)
+    data = buf.getvalue()
+    if not data.startswith(b"OggS"):
+        raise ValueError("ffmpeg did not produce an Ogg stream")
+    return EncodedAudio(data=data, mime_type="audio/ogg")
+
+
+def downsample_wav(
+    audio: PcmAudio, target_rate: int = _FALLBACK_SAMPLE_RATE
+) -> EncodedAudio:
+    """Encodes PCM as WAV, box-filter downsampled to `target_rate`."""
+    factor = audio.sample_rate // target_rate
+    if factor <= 1 or audio.sample_rate % target_rate:
+        return EncodedAudio(data=write_wav(audio), mime_type="audio/wav")
+    x = _samples(audio)
+    n = (x.shape[0] // factor) * factor
+    y = x[:n].reshape(-1, factor, audio.channels).astype(np.int32).mean(axis=1)
+    pcm = y.round().astype("<i2").tobytes()
+    return EncodedAudio(
+        data=write_wav(PcmAudio(pcm, target_rate, audio.channels)),
+        mime_type="audio/wav",
+    )
+
+
+def encode_audio(
+    audio: PcmAudio,
+    encoder: Callable[[PcmAudio], EncodedAudio] = encode_opus,
+) -> EncodedAudio:
+    """Encodes with `encoder`, falling back to 8 kHz WAV if it fails."""
+    try:
+        return encoder(audio)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning("Audio encoding failed (%r); embedding 8 kHz WAV.", e)
+        return downsample_wav(audio)
+
+
+def _candidate_dates(run_date: datetime.date) -> list[datetime.date]:
+    one_day = datetime.timedelta(days=1)
+    return [run_date, run_date - one_day, run_date + one_day]
+
+
+def fetch_session_recording(
+    gcs: GcsClient,
+    bucket: str,
+    session_id: str,
+    run_date: datetime.date,
+) -> SessionRecording | None:
+    """Downloads the per-turn stereo recordings of a CES session."""
+    clean_bucket = bucket.removeprefix("gs://").strip("/")
+    bucket_name, _, custom_prefix = clean_bucket.partition("/")
+    candidate_prefixes = [
+        f"{_RECORDING_PREFIX}/{day.isoformat()}/{session_id}/"
+        for day in _candidate_dates(run_date)
+    ]
+    if custom_prefix:
+        candidate_prefixes.append(f"{custom_prefix.strip('/')}/{session_id}/")
+    for prefix in candidate_prefixes:
+        uris = gcs.list_with_prefix(f"gs://{bucket_name}", prefix)
+        turn_uris = {}
+        for uri in uris:
+            m = _TURN_FILE_RE.search(uri)
+            if m:
+                turn_uris[int(m.group(1) or 1)] = uri
+        if not turn_uris:
+            continue
+        turns = {}
+        for k, uri in sorted(turn_uris.items()):
+            try:
+                turns[k] = read_wav(gcs.download_blob(uri))
+            except (ValueError, EOFError, wave.Error) as e:
+                logger.warning("Skipping unreadable recording %s: %r", uri, e)
+        if turns:
+            return SessionRecording(
+                gcs_dir=f"gs://{bucket_name}/{prefix}", turns=turns
+            )
+    return None
+
+
+def _tool_label(line: str) -> tuple[str, str]:
+    head, _, rest = line.partition(" with ")
+    name = head.split(":", 1)[-1].strip().split("/")[-1]
+    rest = rest.removeprefix("args ").removeprefix("result ")
+    return name, rest
+
+
+def parse_trace_turns(detailed_trace: Sequence[str]) -> list[TraceTurn]:
+    """Groups a `detailed_trace` into turns, each started by a user line."""
+    turns = []
+    cur = None
+    for entry in detailed_trace or []:
+        for raw in str(entry).split("\n"):
+            line = raw.strip()
+            if not line or line.startswith(
+                ("Agent Text (Diag):", "User Query:")
+            ):
+                continue
+            if line.startswith("User:"):
+                cur = TraceTurn(user=line.removeprefix("User:").strip())
+                turns.append(cur)
+                continue
+            if cur is None:
+                cur = TraceTurn(user="")
+                turns.append(cur)
+            if line.startswith("Agent Text:"):
+                cur.agent.append(line.removeprefix("Agent Text:").strip())
+            elif line.startswith("Tool Call"):
+                name, args = _tool_label(line)
+                cur.events.append(TraceEvent("tool", name, tool_input=args))
+            elif line.startswith("Tool Response"):
+                name, result = _tool_label(line)
+                last = cur.events[-1] if cur.events else None
+                if last and last.kind == "tool" and last.text == name:
+                    last.tool_output = result
+                else:
+                    cur.events.append(
+                        TraceEvent("tool", name, tool_output=result)
+                    )
+            elif line.startswith("Agent Transfer:"):
+                text = line.removeprefix("Agent Transfer:").strip()
+                cur.events.append(TraceEvent("transfer", text))
+            else:
+                cur.events.append(TraceEvent("system", line))
+    return turns
+
+
+def percentile(values: Sequence[float], p: float) -> float | None:
+    """Nearest-rank percentile, or None for no values."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    k = round(p / 100.0 * (len(ordered) - 1))
+    return ordered[max(0, min(len(ordered) - 1, k))]
+
+
+def _anchor(name: str, run_no: int, used: set[str]) -> str:
+    base = re.sub(r"[^A-Za-z0-9_-]", "_", f"{name}__run{run_no}")
+    anchor, i = base, 2
+    while anchor in used:
+        anchor, i = f"{base}_{i}", i + 1
+    used.add(anchor)
+    return anchor
+
+
+def build_run_audio(
+    recording: SessionRecording,
+    encoder: Callable[[PcmAudio], EncodedAudio] = encode_opus,
+) -> RunAudio:
+    """Analyzes and encodes the full-call track of one run."""
+    full, offsets = concat_turns(recording.turns)
+    infos = {k: analyze_turn(a) for k, a in recording.turns.items()}
+    encoded = encode_audio(full, encoder) if full else None
+    return RunAudio(
+        gcs_dir=recording.gcs_dir,
+        encoded=encoded,
+        duration_s=round(full.duration_s, 2) if full else 0.0,
+        chapter_offsets=offsets,
+        turns=infos,
+    )
+
+
+def _apply_metrics(view: RunView) -> None:
+    """Fills setup and dead-air summary fields from the run's audio."""
+    if not view.audio:
+        return
+    first = view.audio.turns.get(1)
+    if first:
+        view.setup_s = call_setup_s(first)
+    dead = [
+        i.dead_air_s
+        for k, i in view.audio.turns.items()
+        if k > 1 and i.dead_air_s is not None
+    ]
+    if dead:
+        view.avg_dead_air_s = round(statistics.mean(dead), 2)
+        view.max_dead_air_s = max(dead)
+
+
+def _lat_cls(
+    x: float | None,
+    warn: float = _DEAD_AIR_WARN_S,
+    bad: float = _DEAD_AIR_BAD_S,
+) -> str:
+    if x is None:
+        return "lat-neutral"
+    if x < warn:
+        return "lat-good"
+    return "lat-warn" if x < bad else "lat-bad"
+
+
+def _ces_base(app_id: str) -> str:
+    return f"{_CES_CONSOLE}/{app_id}" if app_id.startswith("projects/") else ""
+
+
+def _prepare_ces_turn_vad(
+    info: TurnAudioInfo | None, turn_no: int
+) -> dict[str, Any] | None:
+    """Prepares template context dict for one turn's VAD timeline & badge."""
+    if info is None:
+        return None
+    dur = info.duration_s
+    segs: list[dict[str, Any]] = []
+    if dur and (info.caller_spans or info.agent_spans):
+        t = 0.0
+
+        def add_seg(kind: str, a: float, b: float, label: str) -> None:
+            nonlocal t
+            if b <= a:
+                return
+            width = 100.0 * (b - a) / dur
+            title = f"{label}: {a:.2f}s–{b:.2f}s ({b - a:.2f}s)"
+            text = f"{label} ({b - a:.2f}s)" if label else ""
+            segs.append(
+                {
+                    "kind": kind,
+                    "width_pct": width,
+                    "title": title,
+                    "text": text,
+                }
+            )
+            t = b
+
+        if info.caller_start_s is not None and info.caller_end_s is not None:
+            add_seg("tl-lead", 0.0, info.caller_start_s, "lead")
+            add_seg(
+                "tl-caller", info.caller_start_s, info.caller_end_s, "Caller"
+            )
+        if info.agent_start_s is not None and info.agent_end_s is not None:
+            wait = info.agent_start_s - t
+            if turn_no == 1:
+                kind, label = "tl-wait-init", "Setup"
+            else:
+                kind = (
+                    "tl-wait-short"
+                    if wait < _DEAD_AIR_WARN_S
+                    else "tl-wait-long"
+                )
+                label = "Dead air"
+            add_seg(kind, t, info.agent_start_s, label)
+            add_seg("tl-agent", info.agent_start_s, info.agent_end_s, "Agent")
+        add_seg("tl-tail", t, dur, "")
+
+    return {
+        "turn_no": turn_no,
+        "duration_s": dur,
+        "setup_s": call_setup_s(info) if turn_no == 1 else None,
+        "dead_air_s": info.dead_air_s if turn_no > 1 else None,
+        "dead_air_cls": (
+            _lat_cls(info.dead_air_s) if turn_no > 1 else "lat-neutral"
+        ),
+        "segments": segs,
+    }
+
+
+def _prepare_ces_audio_view(view: RunView) -> dict[str, Any]:
+    """Prepares template context dict for a run's CES audio player & VAD."""
+    audio = view.audio
+    has_audio = bool(audio and audio.encoded)
+    b64 = (
+        base64.b64encode(audio.encoded.data).decode("ascii")
+        if (audio and audio.encoded)
+        else ""
+    )
+    mime = audio.encoded.mime_type if (audio and audio.encoded) else ""
+    chapters = []
+    if audio:
+        for k, off in sorted(audio.chapter_offsets.items()):
+            info = audio.turns.get(k)
+            da = info.dead_air_s if (info and k > 1) else None
+            chapters.append({"turn": k, "offset_s": off, "dead_air_s": da})
+    turns_map = {
+        k: _prepare_ces_turn_vad(info, k)
+        for k, info in (audio.turns if audio else {}).items()
+    }
+    return {
+        "anchor": view.anchor,
+        "has_audio": has_audio,
+        "b64_data": b64,
+        "mime_type": mime,
+        "duration_s": audio.duration_s if audio else 0.0,
+        "gcs_dir": audio.gcs_dir if audio else "",
+        "audio_note": (
+            view.audio_note
+            or "No server-side recording found for this session."
+        ),
+        "chapter_offsets": dict(audio.chapter_offsets) if audio else {},
+        "chapters": chapters,
+        "turns": turns_map,
+        "setup_s": view.setup_s,
+        "avg_dead_air_s": view.avg_dead_air_s,
+        "avg_dead_air_cls": _lat_cls(view.avg_dead_air_s),
+        "max_dead_air_s": view.max_dead_air_s,
+        "max_dead_air_cls": _lat_cls(
+            view.max_dead_air_s, _MAX_DEAD_AIR_WARN_S, _MAX_DEAD_AIR_BAD_S
+        ),
+    }
+
+
+def _failure_reason(result: Mapping[str, Any]) -> str:
+    """Summarizes why a run failed."""
+    if "error" in result:
+        return f"error: {result['error']}"
+    reasons = [
+        f"expectation not met: {e.get('expectation')}"
+        for e in result.get("expectation_details") or []
+        if e.get("status") != "Met"
+    ]
+    reasons += [
+        f"goal {s.get('status')}: {s.get('goal')}"
+        for s in result.get("step_details") or []
+        if s.get("status") != "Completed"
+    ]
+    return "; ".join(reasons) or "see details"
+
+
+def _prepare_tags(tags: Sequence[Any]) -> list[dict[str, str]]:
+    out = []
+    for tag in tags:
+        t = str(tag)
+        cls = t.lower() if t.lower() in ("p0", "p1") else ""
+        out.append({"text": t, "cls": cls})
+    return out
+
+
+def render_report(
+    views: Sequence[RunView],
+    *,
+    title: str,
+    app_id: str,
+    sim_user_model: str,
+    eval_model: str,
+    modality: str,
+    recordings_uri: str,
+    source_report_uri: str = "",
+    tags_by_name: Mapping[str, Sequence[Any]] | None = None,
+    now: datetime.datetime | None = None,
+) -> str:
+    """Renders the enriched report page using the shared report templates."""
+    tags_by_name = tags_by_name or {}
+    now = now or datetime.datetime.now()
+    ces_base = _ces_base(app_id)
+    total = len(views)
+    passed = sum(1 for v in views if v.passed)
+    failed = [v for v in views if not v.passed]
+    with_audio = sum(1 for v in views if v.audio)
+    setups = [v.setup_s for v in views if v.setup_s is not None]
+    worst = []
+    for v in views:
+        if not v.audio:
+            continue
+        for k, info in v.audio.turns.items():
+            if k > 1 and info.dead_air_s is not None:
+                worst.append((info.dead_air_s, v, k, info))
+    dead = [d for d, *_ in worst]
+    worst.sort(key=lambda w: w[0], reverse=True)
+    ordered = sorted(views, key=lambda v: (v.passed, v.name, v.run_no))
+
+    over = sum(1 for d in dead if d > _DEAD_AIR_BAD_S)
+    dead_sub = ""
+    if dead:
+        dead_sub = (
+            f"p50 {percentile(dead, 50):.2f}s · p95 {percentile(dead, 95):.2f}s"
+            f" · max {max(dead):.2f}s · n={len(dead)}"
+        )
+    voices = sorted({v.voice for v in views}) or ["default"]
+    kpis = [
+        {
+            "label": "Pass rate",
+            "value": f"{100.0 * passed / total:.1f}%" if total else "—",
+            "sub": f"{passed}/{total} runs · {len(failed)} failed",
+        },
+        {
+            "label": "Sessions with server audio",
+            "value": f"{with_audio}/{total}",
+            "sub": recordings_uri,
+        },
+        {
+            "label": "Dead air after caller (turn ≥2)",
+            "value": f"avg {statistics.mean(dead):.2f}s" if dead else "—",
+            "sub": dead_sub,
+        },
+        {
+            "label": f"Turns with dead air > {_DEAD_AIR_BAD_S:.0f}s",
+            "value": f"{over} / {len(dead)}",
+            "sub": (
+                f"{100.0 * over / len(dead):.0f}% of post-greeting turns"
+                if dead
+                else ""
+            ),
+        },
+        {
+            "label": "Call setup before greeting",
+            "value": f"avg {statistics.mean(setups):.2f}s" if setups else "—",
+            "sub": f"p95 {percentile(setups, 95):.2f}s" if setups else "",
+        },
+        {
+            "label": "Sim user / judge model",
+            "value": f"{sim_user_model} / {eval_model}",
+            "sub": f"{modality} modality · TTS voice {', '.join(voices)}",
+        },
+    ]
+
+    toc_rows = []
+    for i, v in enumerate(ordered, 1):
+        toc_rows.append(
+            {
+                "idx": i,
+                "anchor": v.anchor,
+                "name": v.name,
+                "tags": _prepare_tags(tags_by_name.get(v.name, [])),
+                "passed": v.passed,
+                "goals": str(v.result.get("goals", "—")),
+                "expectations": str(v.result.get("expectations", "—")),
+                "turns": str(v.result.get("turns", "—")),
+                "avg_dead_air_s": v.avg_dead_air_s,
+                "avg_dead_air_cls": _lat_cls(v.avg_dead_air_s),
+                "max_dead_air_s": v.max_dead_air_s,
+                "max_dead_air_cls": _lat_cls(
+                    v.max_dead_air_s, _MAX_DEAD_AIR_WARN_S, _MAX_DEAD_AIR_BAD_S
+                ),
+                "setup_s": v.setup_s,
+            }
+        )
+
+    failures = [
+        {
+            "anchor": v.anchor,
+            "name": v.name,
+            "run_no": v.run_no,
+            "reason": _failure_reason(v.result),
+        }
+        for v in failed
+    ]
+
+    worst_rows = []
+    for i, (d, v, k, info) in enumerate(worst[:_SLOWEST_ROWS], 1):
+        seek_at = None
+        if v.audio and v.audio.encoded and k in v.audio.chapter_offsets:
+            seek_at = v.audio.chapter_offsets[k] + max(
+                0.0, (info.caller_end_s or 0.0) - _PRE_ROLL_S
+            )
+        worst_rows.append(
+            {
+                "idx": i,
+                "anchor": v.anchor,
+                "name": v.name,
+                "run_no": v.run_no,
+                "turn_no": k,
+                "dead_air_s": d,
+                "cls": _lat_cls(d, _MAX_DEAD_AIR_WARN_S, _MAX_DEAD_AIR_BAD_S),
+                "seek_at": seek_at,
+            }
+        )
+
+    runs_ctx = []
+    for i, v in enumerate(ordered, 1):
+        r = v.result
+        sid = str(r.get("session_id") or "")
+        session_link = (
+            f"{ces_base}?panel=conversation_list&id={sid}&source=EVAL"
+            if (sid and ces_base)
+            else ""
+        )
+        ces_audio = _prepare_ces_audio_view(v)
+        audio_turns = v.audio.turns if v.audio else {}
+        offsets = v.audio.chapter_offsets if v.audio else {}
+        n_turns = max([len(v.trace_turns), *list(audio_turns), 0])
+        turn_rows = []
+        for k in range(1, n_turns + 1):
+            turn = v.trace_turns[k - 1] if k <= len(v.trace_turns) else None
+            seek_offset_s = (
+                offsets[k]
+                if (k in offsets and v.audio and v.audio.encoded)
+                else None
+            )
+            turn_rows.append(
+                {
+                    "turn_no": k,
+                    "user": turn.user if turn else "",
+                    "agent_lines": list(turn.agent) if turn else [],
+                    "seek_offset_s": seek_offset_s,
+                    "turn_vad": ces_audio["turns"].get(k),
+                    "events": list(turn.events) if turn else [],
+                }
+            )
+        step_details = []
+        for s in r.get("step_details") or []:
+            status = str(s.get("status", ""))
+            if status == "Completed":
+                cls = "met"
+            elif status == "In Progress":
+                cls = "in-progress"
+            else:
+                cls = "not-met"
+            step_details.append(
+                {
+                    "goal": str(s.get("goal") or ""),
+                    "success_criteria": str(s.get("success_criteria") or ""),
+                    "status": status,
+                    "cls": cls,
+                    "justification": str(s.get("justification") or ""),
+                }
+            )
+        expectation_details = []
+        for e in r.get("expectation_details") or []:
+            status = str(e.get("status", ""))
+            cls = "met" if status == "Met" else "not-met"
+            expectation_details.append(
+                {
+                    "expectation": str(e.get("expectation") or ""),
+                    "status": status,
+                    "cls": cls,
+                    "justification": str(e.get("justification") or ""),
+                }
+            )
+        runs_ctx.append(
+            {
+                "idx": i,
+                "anchor": v.anchor,
+                "name": v.name,
+                "passed": v.passed,
+                "tags": _prepare_tags(tags_by_name.get(v.name, [])),
+                "run_no": v.run_no,
+                "goals": str(r.get("goals", "?")),
+                "expectations": str(r.get("expectations", "?")),
+                "turns": str(r.get("turns", "?")),
+                "voice": v.voice,
+                "session_id": sid,
+                "session_link": session_link,
+                "ces_audio": ces_audio,
+                "error": str(r["error"]) if "error" in r else None,
+                "turn_rows": turn_rows,
+                "step_details": step_details,
+                "expectation_details": expectation_details,
+                "session_parameters_json": json.dumps(
+                    r.get("session_parameters") or {}, indent=1
+                ),
+            }
+        )
+
+    data = {
+        "title": title,
+        "source_report_uri": source_report_uri,
+        "generated_at": f"{now:%Y-%m-%d %H:%M}",
+        "app_id": app_id,
+        "ces_base": ces_base,
+        "recordings_uri": recordings_uri,
+        "kpis": kpis,
+        "vad_dbfs": f"{VAD_DBFS:.0f}",
+        "frame_ms": f"{FRAME_S * 1000:.0f}",
+        "failures": failures,
+        "worst_rows": worst_rows,
+        "toc_rows": toc_rows,
+        "runs": runs_ctx,
+    }
+    mod = _get_combined_template_module()
+    body_html = str(mod.render_enriched_sim_report(data))
+    return report_components.BaseShell(
+        title=title,
+        body_content=[base_components.Raw(body_html)],
+    ).render()
+
+
+def enrich_sim_results_with_recordings(
+    results: Sequence[dict[str, Any] | Mapping[str, Any]],
+    *,
+    recordings_bucket: str,
+    gcs: GcsClient | None = None,
+    run_date: datetime.date | None = None,
+    encoder: Callable[[PcmAudio], EncodedAudio] = encode_opus,
+) -> list[RunView]:
+    """Fetches CES stereo recordings & attaches `_ces_audio` to `results`."""
+    if gcs is None:
+        gcs = gcs_utils.GCSUtils()
+    run_date = run_date or datetime.datetime.now(datetime.timezone.utc).date()
+    used: set[str] = set()
+    views = [
+        RunView(
+            result=r,
+            anchor=_anchor(
+                str(r.get("name", "run")), int(r.get("run", 1) or 1), used
+            ),
+            trace_turns=parse_trace_turns(r.get("detailed_trace") or []),
+        )
+        for r in results
+    ]
+
+    def load_audio(view: RunView) -> RunAudio | None:
+        if isinstance(view.result, dict) and isinstance(
+            view.result.get("_run_audio_obj"), RunAudio
+        ):
+            return view.result["_run_audio_obj"]
+        sid = view.result.get("session_id")
+        if not sid or "error" in view.result:
+            return None
+        try:
+            recording = fetch_session_recording(
+                gcs, recordings_bucket, str(sid), run_date
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Failed to fetch recordings for session %s: %r", sid, e
+            )
+            view.audio_note = f"Failed to fetch server-side recording: {e}"
+            return None
+        return (
+            build_run_audio(recording, encoder=encoder) if recording else None
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(_FETCH_WORKERS) as pool:
+        audios = list(pool.map(load_audio, views))
+
+    embedded = 0
+    for r, view, audio in zip(results, views, audios, strict=False):
+        if audio is not None:
+            if audio.encoded:
+                if (
+                    embedded + len(audio.encoded.data)
+                    > _MAX_EMBEDDED_AUDIO_BYTES
+                ):
+                    audio.encoded = None
+                    view.audio_note = (
+                        "Audio not embedded: report audio size limit reached."
+                    )
+                else:
+                    embedded += len(audio.encoded.data)
+            view.audio = audio
+            _apply_metrics(view)
+        if isinstance(r, dict):
+            r["_ces_audio"] = _prepare_ces_audio_view(view)
+            if audio is not None:
+                r["_run_audio_obj"] = audio
+
+    logger.info(
+        "Enriched report: %d runs, %d with audio, %.1f MB embedded audio.",
+        len(views),
+        sum(1 for v in views if v.audio),
+        embedded / 1e6,
+    )
+    return views
+
+
+def build_enriched_report(
+    results: Sequence[Mapping[str, Any]],
+    *,
+    gcs: GcsClient,
+    recordings_bucket: str,
+    app_id: str,
+    sim_user_model: str,
+    eval_model: str,
+    modality: str,
+    title: str = "Enriched Simulation Report",
+    run_date: datetime.date | None = None,
+    source_report_uri: str = "",
+    tags_by_name: Mapping[str, Sequence[Any]] | None = None,
+    encoder: Callable[[PcmAudio], EncodedAudio] = encode_opus,
+) -> str:
+    """Fetches recordings for `results` and renders the enriched HTML report."""
+    views = enrich_sim_results_with_recordings(
+        results,
+        recordings_bucket=recordings_bucket,
+        gcs=gcs,
+        run_date=run_date,
+        encoder=encoder,
+    )
+    return render_report(
+        views,
+        title=title,
+        app_id=app_id,
+        sim_user_model=sim_user_model,
+        eval_model=eval_model,
+        modality=modality,
+        recordings_uri=f"gs://{recordings_bucket}/{_RECORDING_PREFIX}",
+        source_report_uri=source_report_uri,
+        tags_by_name=tags_by_name,
+    )
+
+
+def enriched_report_uri(report_uri: str) -> str:
+    """Returns `<base>_enriched.html` for a `<base>.html` report URI."""
+    base = report_uri.removesuffix(".html")
+    return f"{base}_enriched.html"
+
+
+def resolve_recordings_bucket(
+    app_id: str | None = None,
+    explicit_bucket: str | None = None,
+    *,
+    app_name: str | None = None,
+) -> str | None:
+    """Resolves the GCS bucket holding CES session audio recordings."""
+    if explicit_bucket and explicit_bucket.strip():
+        return explicit_bucket.strip().removeprefix("gs://").strip("/")
+    target_app = app_id or app_name or ""
+    if not target_app:
+        return None
+    try:
+        from cxas_scrapi.core.traces import Traces  # noqa: PLC0415
+
+        traces_client = Traces(agent_id=target_app)
+        discovered = traces_client._get_audio_bucket(target_app)
+        if discovered:
+            return str(discovered).strip().removeprefix("gs://").strip("/")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Auto-discovery of recordings bucket failed: %r", exc)
+    return None
+
+
+def enrich_html_report(
+    results: Sequence[Mapping[str, Any]] | None = None,
+    *,
+    output_path: str | None = None,
+    output_html_path: str | None = None,
+    report_html_path: str | None = None,
+    sim_results: Sequence[Mapping[str, Any]] | None = None,
+    sim_results_path: str | None = None,
+    recordings_bucket: str | None = None,
+    app_id: str = "",
+    sim_user_model: str = "",
+    eval_model: str = "",
+    modality: str = "audio",
+    title: str = "Enriched Simulation Report",
+    source_report_uri: str = "",
+    tags_by_name: Mapping[str, Sequence[Any]] | None = None,
+    gcs: GcsClient | None = None,
+) -> str | None:
+    """Builds and writes the enriched HTML report to `output_path`."""
+    effective_results = results if results is not None else (sim_results or [])
+    if (
+        not effective_results
+        and sim_results_path
+        and os.path.isfile(sim_results_path)
+    ):
+        with _ORIG_OPEN(sim_results_path, encoding="utf-8") as sf:
+            loaded_data = json.load(sf)
+            effective_results = (
+                loaded_data.get("results", [])
+                if isinstance(loaded_data, dict)
+                else loaded_data
+            )
+    target_out = (
+        output_path
+        or output_html_path
+        or (enriched_report_uri(report_html_path) if report_html_path else None)
+    )
+    if not target_out:
+        return None
+    resolved_bucket = resolve_recordings_bucket(app_id, recordings_bucket)
+    if not resolved_bucket:
+        logger.warning(
+            "Cannot build enriched report: no recordings_bucket discovered."
+        )
+        return None
+    if gcs is None:
+        gcs = gcs_utils.GCSUtils()
+    html_content = build_enriched_report(
+        effective_results,
+        gcs=gcs,
+        recordings_bucket=resolved_bucket,
+        app_id=app_id,
+        sim_user_model=sim_user_model or "default",
+        eval_model=eval_model or "default",
+        modality=modality,
+        title=title,
+        source_report_uri=source_report_uri or (report_html_path or ""),
+        tags_by_name=tags_by_name,
+    )
+    parent = os.path.dirname(os.path.abspath(target_out))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with _ORIG_OPEN(target_out, "w", encoding="utf-8") as f:
+        f.write(html_content)
+    return target_out
+
+
+def render_index_html(
+    entries: list[dict[str, Any]],
+    title: str = "CXAS Evaluation Dashboard",
+) -> str:
+    """Render a self-contained HTML index page from manifest entries."""
+    latest_by_suite: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        sname = str(entry.get("suite") or "evals")
+        if sname not in latest_by_suite:
+            latest_by_suite[sname] = entry
+
+    cards = []
+    for sname, entry in sorted(latest_by_suite.items()):
+        cards.append(
+            {
+                "suite": sname,
+                "gate_passed": bool(entry.get("gate_passed", True)),
+                "passed_cases": entry.get("passed_cases", 0),
+                "total_cases": entry.get("total_cases", 0),
+                "pass_rate_pct_str": (
+                    f"{float(entry.get('pass_rate', 0.0)):.0%}"
+                ),
+                "timestamp_utc": str(entry.get("timestamp_utc", "")),
+                "latest_url": str(
+                    entry.get("latest_url") or entry.get("report_url") or "#"
+                ),
+                "latest_enriched_url": str(
+                    entry.get("latest_enriched_url") or ""
+                ),
+            }
+        )
+
+    rows = []
+    for entry in entries:
+        rows.append(
+            {
+                "timestamp_utc": str(entry.get("timestamp_utc", "")),
+                "suite": str(entry.get("suite", "")),
+                "gate_passed": bool(entry.get("gate_passed", True)),
+                "passed_cases": entry.get("passed_cases", 0),
+                "total_cases": entry.get("total_cases", 0),
+                "pass_rate_pct_str": (
+                    f"{float(entry.get('pass_rate', 0.0)):.1%}"
+                ),
+                "git_sha_short": str(entry.get("git_sha", ""))[:12],
+                "run_id": str(entry.get("run_id", "")),
+                "report_url": str(entry.get("report_url") or "#"),
+                "enriched_report_url": str(
+                    entry.get("enriched_report_url") or ""
+                ),
+            }
+        )
+
+    mod = _get_combined_template_module()
+    body_html = str(
+        mod.render_eval_index_dashboard(
+            {"title": title, "cards": cards, "rows": rows}
+        )
+    )
+    return report_components.BaseShell(
+        title=title,
+        body_content=[base_components.Raw(body_html)],
+    ).render()
 
 
 def publish_eval_report_bundle(
@@ -5592,8 +6938,11 @@ def publish_eval_report_bundle(
     report_path: str,
     gcs_bundle_uri: str,
     suite_name: str | None = None,
+    gate_summary: dict[str, Any] | None = None,
+    report_title: str | None = None,
+    enriched_report_path: str | None = None,
 ) -> dict[str, str]:
-    """Upload report HTML, raw artifacts, and latest pointer to GCS."""
+    """Upload report HTML, artifacts, and rolling index.html to GCS."""
     base_uri = gcs_bundle_uri.rstrip("/")
     uploader = gcs_utils.GCSUtils()
     uploaded: dict[str, str] = {}
@@ -5607,6 +6956,15 @@ def publish_eval_report_bundle(
         )
         uploaded["report_gcs_uri"] = report_uri
 
+    if enriched_report_path and os.path.isfile(enriched_report_path):
+        enriched_uri = f"{base_uri}/report_enriched.html"
+        uploaded["enriched_report_url"] = uploader.upload_file(
+            enriched_uri,
+            enriched_report_path,
+            content_type="text/html; charset=utf-8",
+        )
+        uploaded["enriched_report_gcs_uri"] = enriched_uri
+
     patterns = [
         "sim_results*.json",
         "ces_results*.json",
@@ -5616,28 +6974,32 @@ def publish_eval_report_bundle(
         "callback_test_results*.csv",
         "callback_test_results*.json",
         "EVAL_STAMP*.txt",
+        "junit*.xml",
     ]
     for pat in patterns:
         for local_file in sorted(glob.glob(os.path.join(output_dir, pat))):
             if os.path.isfile(local_file):
                 fname = os.path.basename(local_file)
                 dest_uri = f"{base_uri}/{fname}"
-                ctype = (
-                    "application/json"
-                    if fname.endswith(".json")
-                    else "text/plain; charset=utf-8"
-                )
+                if fname.endswith(".json"):
+                    ctype = "application/json"
+                elif fname.endswith(".xml"):
+                    ctype = "application/xml"
+                else:
+                    ctype = "text/plain; charset=utf-8"
                 uploader.upload_file(dest_uri, local_file, content_type=ctype)
+
+    parent_uri = "/".join(base_uri.split("/")[:-1])
+    has_parent = parent_uri.startswith("gs://") and len(parent_uri) > len(
+        "gs://"
+    )
+    root_uri = parent_uri if has_parent else base_uri
 
     if suite_name and os.path.isfile(report_path):
         safe_suite = (
             re.sub(r"[^a-zA-Z0-9._-]+", "-", suite_name).strip("-") or "evals"
         )
-        parent_uri = "/".join(base_uri.split("/")[:-1])
-        if parent_uri.startswith("gs://") and len(parent_uri) > len("gs://"):
-            latest_uri = f"{parent_uri}/latest-{safe_suite}.html"
-        else:
-            latest_uri = f"{base_uri}/latest-{safe_suite}.html"
+        latest_uri = f"{root_uri}/latest-{safe_suite}.html"
         uploaded["latest_url"] = uploader.upload_file(
             latest_uri,
             report_path,
@@ -5645,6 +7007,87 @@ def publish_eval_report_bundle(
             cache_control="no-cache, max-age=0",
         )
         uploaded["latest_gcs_uri"] = latest_uri
+
+        if enriched_report_path and os.path.isfile(enriched_report_path):
+            latest_enriched_uri = (
+                f"{root_uri}/latest-{safe_suite}_enriched.html"
+            )
+            uploaded["latest_enriched_url"] = uploader.upload_file(
+                latest_enriched_uri,
+                enriched_report_path,
+                content_type="text/html; charset=utf-8",
+                cache_control="no-cache, max-age=0",
+            )
+            uploaded["latest_enriched_gcs_uri"] = latest_enriched_uri
+
+        stamp_local = os.path.join(output_dir, f"EVAL_STAMP-{safe_suite}.txt")
+        if os.path.isfile(stamp_local):
+            latest_stamp_uri = f"{root_uri}/latest-EVAL_STAMP-{safe_suite}.txt"
+            uploaded["latest_stamp_url"] = uploader.upload_file(
+                latest_stamp_uri,
+                stamp_local,
+                content_type="text/plain; charset=utf-8",
+                cache_control="no-cache, max-age=0",
+            )
+
+    if gate_summary is not None:
+        manifest_uri = f"{root_uri}/runs_manifest.json"
+        existing_entries: list[dict[str, Any]] = []
+        with contextlib.suppress(Exception):
+            if uploader.exists(manifest_uri):
+                raw_manifest = uploader.download_string(manifest_uri)
+                if isinstance(raw_manifest, str) and raw_manifest.strip():
+                    loaded = json.loads(raw_manifest)
+                    if isinstance(loaded, list):
+                        existing_entries = loaded
+
+        prov = resolve_provenance_info()
+        now_utc = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        new_entry = {
+            "timestamp_utc": now_utc,
+            "suite": suite_name or "evals",
+            "passed_cases": gate_summary.get("passed_cases", 0),
+            "total_cases": gate_summary.get("total_cases", 0),
+            "pass_rate": round(float(gate_summary.get("pass_rate", 0.0)), 4),
+            "gate_passed": bool(gate_summary.get("gate_passed", True)),
+            "git_sha": prov["git_sha"],
+            "git_ref": prov["git_ref"],
+            "run_id": prov["run_id"],
+            "report_url": uploaded.get("report_url", ""),
+            "latest_url": uploaded.get("latest_url", ""),
+            "enriched_report_url": uploaded.get("enriched_report_url", ""),
+            "latest_enriched_url": uploaded.get("latest_enriched_url", ""),
+            "bundle_gcs_uri": base_uri,
+        }
+        updated_entries = [new_entry, *existing_entries][:100]
+        with contextlib.suppress(Exception):
+            manifest_local = os.path.join(output_dir, "runs_manifest.json")
+            with _ORIG_OPEN(manifest_local, "w", encoding="utf-8") as mf:
+                json.dump(updated_entries, mf, indent=2)
+            uploaded["manifest_url"] = uploader.upload_file(
+                manifest_uri,
+                manifest_local,
+                content_type="application/json",
+                cache_control="no-cache, max-age=0",
+            )
+
+            index_local = os.path.join(output_dir, "index.html")
+            with _ORIG_OPEN(index_local, "w", encoding="utf-8") as idx_f:
+                idx_f.write(
+                    render_index_html(
+                        updated_entries,
+                        title=report_title or "CXAS Evaluation Dashboard",
+                    )
+                )
+            index_uri = f"{root_uri}/index.html"
+            uploaded["index_url"] = uploader.upload_file(
+                index_uri,
+                index_local,
+                content_type="text/html; charset=utf-8",
+                cache_control="no-cache, max-age=0",
+            )
 
     return uploaded
 
@@ -5714,6 +7157,171 @@ def write_github_step_summary(
     return target_path
 
 
+def discover_eval_suite(
+    *,
+    app_dir: str | None = None,
+    simulation_dir: str | None = None,
+    goldens_dir: str | None = None,
+    tool_test_file: str | None = None,
+    shadow_dir: str | None = None,
+    include: list[str] | None = None,
+    filter_files: list[str] | None = None,
+    exclude_files: list[str] | None = None,
+    filter_tags: list[str] | None = None,
+    filter_names: list[str] | None = None,
+    suite_name: str | None = None,
+) -> dict[str, Any]:
+    """Discover and filter evaluation files/cases without GCP calls."""
+    effective_include = (
+        ["sims", "goldens", "tools", "callbacks"]
+        if include is None or "all" in include
+        else list(include)
+    )
+
+    sim_files: list[str] = []
+    sim_cases: list[dict[str, Any]] = []
+    if "sims" in effective_include:
+        sim_target = simulation_dir or (
+            os.path.join(app_dir, "evals", "simulations")
+            if app_dir
+            else "evals/simulations/"
+        )
+        if sim_target and os.path.exists(sim_target):
+            if not os.path.isdir(sim_target):
+                raw_sim_files = [sim_target]
+            else:
+                raw_sim_files = evals_runner._discover_yaml_and_extra_files(
+                    sim_target
+                )
+            sim_files = evals_runner._filter_file_list(
+                raw_sim_files, filter_files, exclude_files
+            )
+            for sf in sim_files:
+                loaded = _load_sim_test_cases(sf)
+                if filter_tags:
+                    loaded = [
+                        c
+                        for c in loaded
+                        if any(t in filter_tags for t in c.get("tags", []))
+                    ]
+                if filter_names:
+                    loaded = [
+                        c for c in loaded if c.get("name") in filter_names
+                    ]
+                sim_cases.extend(loaded)
+
+    golden_files: list[str] = []
+    if "goldens" in effective_include:
+        golden_target = goldens_dir or (
+            os.path.join(app_dir, "evals", "goldens")
+            if app_dir
+            else "evals/goldens/"
+        )
+        if golden_target and os.path.exists(golden_target):
+            raw_golden_files = (
+                [golden_target]
+                if not os.path.isdir(golden_target)
+                else evals_runner._discover_yaml_and_extra_files(golden_target)
+            )
+            golden_files = evals_runner._filter_file_list(
+                raw_golden_files, filter_files, exclude_files
+            )
+
+    tool_files: list[str] = []
+    if "tools" in effective_include:
+        tool_target = tool_test_file or (
+            os.path.join(app_dir, "evals", "tool_tests")
+            if app_dir
+            else "evals/tool_tests/"
+        )
+        if tool_target and os.path.exists(tool_target):
+            raw_tool_files = (
+                [tool_target]
+                if not os.path.isdir(tool_target)
+                else evals_runner._discover_yaml_and_extra_files(tool_target)
+            )
+            tool_files = evals_runner._filter_file_list(
+                raw_tool_files, filter_files, exclude_files
+            )
+
+    callback_files: list[str] = []
+    if "callbacks" in effective_include:
+        if app_dir and os.path.exists(app_dir):
+            callback_files.extend(
+                sorted(
+                    glob.glob(
+                        os.path.join(app_dir, "agents", "**", "test_*.py"),
+                        recursive=True,
+                    )
+                )
+            )
+        py_tool_dir = tool_test_file or (
+            os.path.join(app_dir, "evals", "tool_tests")
+            if app_dir
+            else "evals/tool_tests/"
+        )
+        if py_tool_dir and os.path.exists(py_tool_dir):
+            py_files = (
+                [py_tool_dir]
+                if os.path.isfile(py_tool_dir)
+                else sorted(glob.glob(os.path.join(py_tool_dir, "test_*.py")))
+            )
+            callback_files.extend(
+                evals_runner._filter_file_list(
+                    py_files, filter_files, exclude_files
+                )
+            )
+
+    shadow_files: list[str] = []
+    if "shadows" in effective_include:
+        shadow_target = shadow_dir or (
+            os.path.join(app_dir, "evals", "shadows")
+            if app_dir
+            else "evals/shadows/"
+        )
+        if shadow_target and os.path.exists(shadow_target):
+            raw_shadow_files = (
+                [shadow_target]
+                if not os.path.isdir(shadow_target)
+                else sorted(
+                    f
+                    for ext in ("*.yaml", "*.yml")
+                    for f in glob.glob(
+                        os.path.join(shadow_target, "**", ext), recursive=True
+                    )
+                )
+            )
+            shadow_files = evals_runner._filter_file_list(
+                raw_shadow_files, filter_files, exclude_files
+            )
+
+    print(
+        f"DRY RUN | suite={suite_name or 'default'} | "
+        f"app_dir={app_dir or '(none)'} | "
+        f"sim_files={len(sim_files)} | "
+        f"sim_cases={len(sim_cases)} | "
+        f"golden_files={len(golden_files)} | "
+        f"tool_files={len(tool_files)} | "
+        f"callback_files={len(callback_files)} | "
+        f"shadow_files={len(shadow_files)}"
+    )
+    for tc in sim_cases:
+        print(f"  [sim] {tc.get('name', 'unnamed')}")
+
+    return {
+        "dry_run": True,
+        "gate_passed": True,
+        "suite": suite_name or "default",
+        "app_dir": app_dir,
+        "sim_files": sim_files,
+        "sim_cases": [c.get("name", "unnamed") for c in sim_cases],
+        "golden_files": golden_files,
+        "tool_files": tool_files,
+        "callback_files": callback_files,
+        "shadow_files": shadow_files,
+    }
+
+
 def generate_combined_report_from_dir(
     output_dir: str,
     golden_run: str | None = None,
@@ -5761,6 +7369,14 @@ def generate_combined_report_from_dir(
     github_step_summary: bool = False,
     return_gate_status: bool = False,
     platform_sims: bool = False,
+    exclude_files: list[str] | None = None,
+    sim_user_voices: list[str] | None = None,
+    junit_xml: str | None = None,
+    testsuite_prefix: str = "cxas_evals",
+    report_title: str | None = None,
+    dry_run: bool = False,
+    enriched_report: bool = False,
+    recordings_bucket: str | None = None,
 ) -> str | tuple[str, dict[str, Any]]:
     """Load results from directory and generate a combined report.
 
@@ -5799,6 +7415,23 @@ def generate_combined_report_from_dir(
     Returns:
       The resolved output path or URL where the report was saved.
     """
+    if dry_run:
+        dry_summary = discover_eval_suite(
+            app_dir=app_dir,
+            simulation_dir=simulation_dir,
+            goldens_dir=goldens_dir,
+            tool_test_file=tool_test_file,
+            include=include,
+            filter_files=filter_files,
+            exclude_files=exclude_files,
+            filter_tags=filter_tags,
+            filter_names=filter_names,
+            suite_name=suite_name,
+        )
+        if return_gate_status:
+            return "", dry_summary
+        return ""
+
     if not os.path.isdir(output_dir):
         raise ValueError(f"{output_dir} is not a directory.")
 
@@ -5828,6 +7461,10 @@ def generate_combined_report_from_dir(
             extra_run_kwargs["retry_cooldown"] = retry_cooldown
         if golden_run_method != "STABLE":
             extra_run_kwargs["golden_run_method"] = golden_run_method
+        if exclude_files:
+            extra_run_kwargs["exclude_files"] = exclude_files
+        if sim_user_voices:
+            extra_run_kwargs["sim_user_voices"] = sim_user_voices
         run_results = run_all_evals(
             app_name=app_name,
             app_dir=app_dir,
@@ -6041,6 +7678,11 @@ def generate_combined_report_from_dir(
             audio_analysis=audio_analysis,
         )
     else:
+        extra_html_kwargs: dict[str, Any] = {}
+        if enriched_report:
+            extra_html_kwargs["enriched_report"] = True
+        if recordings_bucket:
+            extra_html_kwargs["recordings_bucket"] = recordings_bucket
         actual_path = generate_combined_html_report(
             golden_results=golden_results,
             sim_results=sim_results,
@@ -6053,7 +7695,44 @@ def generate_combined_report_from_dir(
             bg_noise_file=bg_noise_file,
             burst_noise_files=burst_noise_files,
             audio_analysis=audio_analysis,
+            **extra_html_kwargs,
         )
+
+    enriched_report_path: str | None = None
+    if (
+        enriched_report
+        and report_format == "html"
+        and actual_path
+        and not actual_path.startswith(("gs://", "http://", "https://"))
+        and os.path.isfile(actual_path)
+    ):
+        rec_bucket = resolve_recordings_bucket(
+            app_name=app_name, explicit_bucket=recordings_bucket
+        )
+        if rec_bucket:
+            stem, ext = os.path.splitext(actual_path)
+            candidate_enriched = f"{stem}_enriched{ext or '.html'}"
+            sim_json_candidates = sorted(
+                glob.glob(os.path.join(output_dir, "sim_results*.json")),
+                key=os.path.getmtime,
+            )
+            latest_sim_json = (
+                sim_json_candidates[-1] if sim_json_candidates else None
+            )
+            try:
+                enriched_report_path = enrich_html_report(
+                    report_html_path=actual_path,
+                    sim_results=sim_results,
+                    sim_results_path=latest_sim_json,
+                    recordings_bucket=rec_bucket,
+                    output_html_path=candidate_enriched,
+                    app_id=app_name or "",
+                    sim_user_model=sim_user_model or "",
+                    eval_model=eval_model or "",
+                    modality=modality,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"Warning: Failed to generate enriched report: {exc}")
 
     should_gate_or_publish = any(
         [
@@ -6063,6 +7742,7 @@ def generate_combined_report_from_dir(
             suite_name is not None,
             github_step_summary,
             return_gate_status,
+            junit_xml is not None,
         ]
     )
     if should_gate_or_publish:
@@ -6074,6 +7754,8 @@ def generate_combined_report_from_dir(
             min_run_passes=min_run_passes or 1,
             min_pass_rate=min_pass_rate,
         )
+        if enriched_report_path:
+            gate_summary["enriched_report_path"] = enriched_report_path
         if suite_name:
             write_eval_stamp(
                 output_dir=output_dir,
@@ -6084,13 +7766,38 @@ def generate_combined_report_from_dir(
             )
         published_urls: dict[str, str] = {}
         if gcs_bundle_uri:
-            published_urls = publish_eval_report_bundle(
-                output_dir=output_dir,
-                report_path=actual_path,
-                gcs_bundle_uri=gcs_bundle_uri,
-                suite_name=suite_name,
-            )
+            publish_kwargs: dict[str, Any] = {
+                "output_dir": output_dir,
+                "report_path": actual_path,
+                "gcs_bundle_uri": gcs_bundle_uri,
+                "suite_name": suite_name,
+            }
+            if gate_summary is not None:
+                publish_kwargs["gate_summary"] = gate_summary
+            if report_title is not None:
+                publish_kwargs["report_title"] = report_title
+            if enriched_report_path is not None:
+                publish_kwargs["enriched_report_path"] = enriched_report_path
+            published_urls = publish_eval_report_bundle(**publish_kwargs)
             gate_summary["published_urls"] = published_urls
+            if suite_name:
+                write_eval_stamp(
+                    output_dir=output_dir,
+                    suite_name=suite_name,
+                    gate_summary=gate_summary,
+                    modality=modality,
+                    runs=runs,
+                    published_urls=published_urls,
+                )
+        if junit_xml:
+            write_junit_xml(
+                junit_path=junit_xml,
+                suite_name=suite_name or "evals",
+                gate_summary=gate_summary,
+                published_urls=published_urls,
+                testsuite_prefix=testsuite_prefix,
+            )
+            gate_summary["junit_xml"] = junit_xml
         if github_step_summary:
             write_github_step_summary(
                 gate_summary=gate_summary,
@@ -6140,6 +7847,8 @@ def run_all_evals(
     retry_cooldown: float = 60.0,
     golden_run_method: str = "STABLE",
     platform_sims: bool = False,
+    exclude_files: list[str] | None = None,
+    sim_user_voices: list[str] | None = None,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -6193,6 +7902,10 @@ def run_all_evals(
         extra_kwargs["golden_run_method"] = golden_run_method
     if platform_sims:
         extra_kwargs["platform_sims"] = platform_sims
+    if exclude_files:
+        extra_kwargs["exclude_files"] = exclude_files
+    if sim_user_voices:
+        extra_kwargs["sim_user_voices"] = sim_user_voices
     return evals_runner.run_all_evals(
         app_name=app_name,
         modality=modality,

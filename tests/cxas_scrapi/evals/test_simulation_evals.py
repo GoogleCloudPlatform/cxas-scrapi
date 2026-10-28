@@ -3280,3 +3280,114 @@ def test_simulate_conversation_with_background_noise_level(
         use_tool_fakes=False,
         bg_noise_snr=5.0,
     )
+
+
+def test_voice_config_for_deterministic_and_locale_aware() -> None:
+    from cxas_scrapi.evals.simulation_evals import (  # noqa: PLC0415
+        _scenario_locale,
+        _voice_locale,
+    )
+
+    assert _voice_locale("en-US-Journey-D") == "en-US"
+    assert _voice_locale("es-US-Chirp3-HD-Aoede") == "es-US"
+    assert _scenario_locale(None) == "en-US"
+    assert _scenario_locale({"locale": "es-US"}) == "es-US"
+    assert _scenario_locale({"user_lang": "S"}) == "es-US"
+    assert _scenario_locale({"user_lang": "ES"}) == "es-US"
+    assert _scenario_locale({"user_lang": "E"}) == "en-US"
+
+    evals = _naturalness_evals(
+        sim_user_voices=[
+            "en-US-Journey-D",
+            "en-US-Journey-F",
+            "es-US-Journey-D",
+            "es-US-Journey-F",
+        ]
+    )
+    en_tc = {
+        "name": "check_appointment_en",
+        "session_parameters": {"user_lang": "E"},
+    }
+    es_tc = {
+        "name": "check_appointment_es",
+        "session_parameters": {"user_lang": "S"},
+    }
+    explicit_tc = {
+        "name": "custom_voice_case",
+        "voice_config": {
+            "voice_name": "en-GB-Neural2-A",
+            "language_code": "en-GB",
+        },
+    }
+
+    vc_en_1 = evals._voice_config_for(en_tc)
+    vc_en_2 = evals._voice_config_for(en_tc)
+    assert vc_en_1 == vc_en_2
+    assert vc_en_1 is not None
+    assert vc_en_1["language_code"] == "en-US"
+    assert vc_en_1["voice_name"].startswith("en-US-")
+
+    vc_es = evals._voice_config_for(es_tc)
+    assert vc_es is not None
+    assert vc_es["language_code"] == "es-US"
+    assert vc_es["voice_name"].startswith("es-US-")
+
+    vc_explicit = evals._voice_config_for(explicit_tc)
+    assert vc_explicit == {
+        "voice_name": "en-GB-Neural2-A",
+        "language_code": "en-GB",
+    }
+
+
+def test_inconclusive_reason_detects_zero_caller_turns_and_retries() -> None:
+    from cxas_scrapi.evals.simulation_evals import (  # noqa: PLC0415
+        actual_caller_turns,
+        expected_caller_turns,
+    )
+
+    tc = {"name": "audio_case", "steps": [{"goal": "Ask about order"}]}
+    assert expected_caller_turns(tc) == 1
+
+    zero_turn_row = {
+        "name": "audio_case",
+        "run": 1,
+        "passed": False,
+        "turns": 0,
+        "transcript": "User: event: welcome\nAgent: Hello, how can I help?",
+    }
+    assert actual_caller_turns(zero_turn_row) == 0
+
+    reason = SimulationEvals._inconclusive_reason(
+        row=zero_turn_row,
+        declared_by_name={"audio_case": 1},
+        expected_turns_by_name={"audio_case": 1},
+    )
+    assert reason == "caller turns never reached agent (0 turns)"
+
+    evals = _naturalness_evals(expectations_only=True)
+    ok_row = {
+        "name": "audio_case",
+        "run": 1,
+        "passed": True,
+        "turns": 2,
+        "expectations": "1/1",
+        "transcript": "User: event: welcome\nAgent: Hi\nUser: Where is my order?",
+    }
+    with patch.object(
+        evals,
+        "_aggregate_simulation_results",
+        side_effect=[[zero_turn_row], [ok_row]],
+    ) as mock_agg:
+        results = evals.run_simulations(
+            test_cases=[tc],
+            runs=1,
+            parallel=2,
+            infra_retries=1,
+            retry_cooldown=0,
+        )
+    assert mock_agg.call_count == 2
+    assert results[0]["passed"] is True
+    assert (
+        results[0]["retried_because"]
+        == "caller turns never reached agent (0 turns)"
+    )

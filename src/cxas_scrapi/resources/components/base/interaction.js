@@ -178,11 +178,13 @@ function toggleFailures() {
       row.classList.remove("hidden-row");
     }
   });
-  document.querySelectorAll(".eval-card[data-passed]").forEach(function(card) {
+  document.querySelectorAll(".eval-card[data-passed], .card[data-passed]").forEach(function(card) {
     if (failuresOnly && card.dataset.passed === "true") {
       card.classList.add("hidden-card");
+      card.classList.add("hidden-row");
     } else {
       card.classList.remove("hidden-card");
+      card.classList.remove("hidden-row");
     }
   });
 }
@@ -1802,3 +1804,95 @@ window.addEventListener("DOMContentLoaded", function() {
   window.addEventListener("resize", syncAudioTableTop);
   syncAudioTableTop();
 });
+
+// CES stereo audio player (lazy Blob URL decoding, channel solo, chapter seek)
+var _cesAudioCtx = null;
+var _cesAudioGraphs = {};
+
+function audioEl(id) {
+  var el = document.getElementById("aud_" + id);
+  if (el && !el.getAttribute("src")) {
+    var s = document.getElementById("blob_" + id);
+    if (s) {
+      var bin = atob(s.textContent.trim());
+      var a = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) {
+        a[i] = bin.charCodeAt(i);
+      }
+      el.src = URL.createObjectURL(new Blob([a], { type: s.dataset.mime }));
+    }
+  }
+  return el;
+}
+
+function seekAudio(id, sec) {
+  var el = audioEl(id);
+  if (!el) return;
+  var go = function() {
+    el.currentTime = sec;
+    el.play();
+  };
+  if (el.readyState >= 1) {
+    go();
+  } else {
+    el.addEventListener("loadedmetadata", go, { once: true });
+    el.load();
+  }
+}
+
+function setChannel(id, mode) {
+  var el = audioEl(id);
+  if (!el) return;
+  if (!_cesAudioCtx) {
+    _cesAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  var g = _cesAudioGraphs[id];
+  if (!g) {
+    var src = _cesAudioCtx.createMediaElementSource(el);
+    var sp = _cesAudioCtx.createChannelSplitter(2);
+    var m = _cesAudioCtx.createChannelMerger(2);
+    var l = _cesAudioCtx.createGain();
+    var r = _cesAudioCtx.createGain();
+    src.connect(sp);
+    sp.connect(l, 0);
+    sp.connect(r, 1);
+    [l, r].forEach(function(n) {
+      n.connect(m, 0, 0);
+      n.connect(m, 0, 1);
+    });
+    m.connect(_cesAudioCtx.destination);
+    g = _cesAudioGraphs[id] = { l: l, r: r };
+  }
+  _cesAudioCtx.resume();
+  g.l.gain.value = (mode === "agent") ? 0 : 1;
+  g.r.gain.value = (mode === "caller") ? 0 : 1;
+  document.querySelectorAll('[data-chan-for="' + id + '"]').forEach(function(b) {
+    b.classList.toggle("active", b.dataset.mode === mode);
+  });
+}
+
+function initCesAudioObservers() {
+  var cards = document.querySelectorAll("[data-audio-id]");
+  if (!cards.length) return;
+  if (!("IntersectionObserver" in window)) {
+    cards.forEach(function(c) {
+      audioEl(c.dataset.audioId);
+    });
+    return;
+  }
+  var io = new IntersectionObserver(function(es) {
+    es.forEach(function(e) {
+      if (e.isIntersecting) {
+        audioEl(e.target.dataset.audioId);
+        io.unobserve(e.target);
+      }
+    });
+  }, { rootMargin: "400px" });
+  cards.forEach(function(c) {
+    io.observe(c);
+  });
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("DOMContentLoaded", initCesAudioObservers);
+}

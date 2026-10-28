@@ -774,6 +774,16 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         if getattr(args, "filter_names", None)
         else []
     )
+    exclude_files_list = (
+        [x.strip() for x in args.exclude_files.split(",") if x.strip()]
+        if getattr(args, "exclude_files", None)
+        else []
+    )
+    sim_user_voices_list = (
+        [x.strip() for x in args.sim_user_voices.split(",") if x.strip()]
+        if getattr(args, "sim_user_voices", None)
+        else []
+    )
 
     if getattr(args, "input_dir", None):
         if args.tool_test_file == "evals/tool_tests/":
@@ -842,6 +852,25 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         extra_report_kwargs["suite_name"] = args.suite_name
     if getattr(args, "github_step_summary", False):
         extra_report_kwargs["github_step_summary"] = True
+    if exclude_files_list:
+        extra_report_kwargs["exclude_files"] = exclude_files_list
+    if sim_user_voices_list:
+        extra_report_kwargs["sim_user_voices"] = sim_user_voices_list
+    if getattr(args, "junit_xml", None):
+        extra_report_kwargs["junit_xml"] = args.junit_xml
+    if (
+        getattr(args, "testsuite_prefix", "cxas_evals")
+        and getattr(args, "testsuite_prefix", "cxas_evals") != "cxas_evals"
+    ):
+        extra_report_kwargs["testsuite_prefix"] = args.testsuite_prefix
+    if getattr(args, "report_title", None):
+        extra_report_kwargs["report_title"] = args.report_title
+    if getattr(args, "dry_run", False):
+        extra_report_kwargs["dry_run"] = True
+    if getattr(args, "enriched_report", False):
+        extra_report_kwargs["enriched_report"] = True
+    if getattr(args, "recordings_bucket", None):
+        extra_report_kwargs["recordings_bucket"] = args.recordings_bucket
     if any(
         k in extra_report_kwargs
         for k in (
@@ -850,6 +879,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
             "gcs_bundle_uri",
             "suite_name",
             "github_step_summary",
+            "junit_xml",
         )
     ):
         extra_report_kwargs["return_gate_status"] = True
@@ -2264,6 +2294,51 @@ def get_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Append a Markdown pass/fail table and report links to GITHUB_STEP_SUMMARY.",
+    )
+    parser_report.add_argument(
+        "--exclude-files",
+        default=None,
+        help="Optional: Comma-separated list of file name substrings to exclude.",
+    )
+    parser_report.add_argument(
+        "--sim-user-voices",
+        default=None,
+        help=(
+            "Optional: Comma-separated list of Google Cloud TTS voice names "
+            "for simulated callers (e.g. en-US-Journey-D,es-US-Journey-F)."
+        ),
+    )
+    parser_report.add_argument(
+        "--junit-xml",
+        default=None,
+        help="Optional path to write a JUnit XML report with per-scenario <testcase> results.",
+    )
+    parser_report.add_argument(
+        "--testsuite-prefix",
+        default="cxas_evals",
+        help="Prefix for JUnit XML testsuite/classname attributes. Defaults to 'cxas_evals'.",
+    )
+    parser_report.add_argument(
+        "--report-title",
+        default=None,
+        help="Optional custom title for the GCS index.html dashboard.",
+    )
+    parser_report.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Discover and filter evaluation files/cases locally without making GCP/CES API calls.",
+    )
+    parser_report.add_argument(
+        "--enriched-report",
+        action="store_true",
+        default=False,
+        help="Generate an enriched HTML report (<report>_enriched.html) with CES audio players and VAD dead-air analysis.",
+    )
+    parser_report.add_argument(
+        "--recordings-bucket",
+        default=None,
+        help="Optional GCS bucket/URI override for CES call audio recordings used by --enriched-report.",
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 

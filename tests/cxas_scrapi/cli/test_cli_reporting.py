@@ -543,3 +543,63 @@ def test_combined_evals_report_cmd_exits_nonzero_when_gate_fails(
         assert mock_report.call_args[1]["min_run_passes"] == 2
         assert mock_report.call_args[1]["min_pass_rate"] == 0.8
         assert mock_report.call_args[1]["return_gate_status"] is True
+
+
+def test_combined_evals_report_cmd_new_upstream_flags(
+    tmp_path: typing.Any,
+) -> None:
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+
+    class Args(argparse.Namespace):
+        def __init__(self) -> None:
+            self.output_dir = str(evals_dir)
+            self.output = None
+            self.gcs_path = None
+            self.golden_run = None
+            self.app_name = "projects/p/locations/l/apps/a"
+            self.run = True
+            self.app_dir = None
+            self.tool_test_file = None
+            self.goldens_dir = None
+            self.simulation_dir = None
+            self.include = "sims"
+            self.input_dir = None
+            self.modality = "audio"
+            self.runs = 1
+            self.use_tool_fakes = False
+            self.sim_user_model = None
+            self.eval_model = None
+            self.exclude_files = "broken.yaml,wip.json"
+            self.sim_user_voices = "en-US-Journey-D,es-US-Journey-F"
+            self.junit_xml = str(evals_dir / "sponge_log.xml")
+            self.testsuite_prefix = "custom_evals"
+            self.report_title = "Custom Eval Dashboard"
+            self.dry_run = True
+            self.enriched_report = True
+            self.recordings_bucket = "gs://my-ces-recordings/prefix"
+
+    args = Args()
+
+    with patch(
+        "cxas_scrapi.utils.reporting.generate_combined_report_from_dir",
+        return_value=("", {"gate_passed": True, "dry_run": True}),
+    ) as mock_report:
+        combined_evals_report_cmd(args)
+
+        mock_report.assert_called_once()
+        call_kwargs = mock_report.call_args[1]
+        assert call_kwargs["exclude_files"] == ["broken.yaml", "wip.json"]
+        assert call_kwargs["sim_user_voices"] == [
+            "en-US-Journey-D",
+            "es-US-Journey-F",
+        ]
+        assert call_kwargs["junit_xml"] == str(evals_dir / "sponge_log.xml")
+        assert call_kwargs["testsuite_prefix"] == "custom_evals"
+        assert call_kwargs["report_title"] == "Custom Eval Dashboard"
+        assert call_kwargs["dry_run"] is True
+        assert call_kwargs["enriched_report"] is True
+        assert (
+            call_kwargs["recordings_bucket"] == "gs://my-ces-recordings/prefix"
+        )
+        assert call_kwargs["return_gate_status"] is True

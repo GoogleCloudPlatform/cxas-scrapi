@@ -844,6 +844,90 @@
 {% endif %}
 {% endmacro %}
 
+{% macro render_ces_audio_player(ces_audio) %}
+{% if not ces_audio or not ces_audio.has_audio %}
+<div class="no-audio">{{ (ces_audio.audio_note if ces_audio else "No server-side recording found for this session.") | escape }}</div>
+{% else %}
+{% set aid = ces_audio.anchor %}
+<script type="application/octet-stream" id="blob_{{ aid }}" data-mime="{{ ces_audio.mime_type | escape }}">{{ ces_audio.b64_data }}</script>
+<div class="audio-wrap"><span class="audio-lbl">🎧 Full call (L=caller, R=agent):</span><audio id="aud_{{ aid }}" controls preload="metadata"></audio><span class="dur-tag">{{ "%.2f" | format(ces_audio.duration_s) }}s</span></div>
+<div class="chap-row"><span class="chap-lbl">Listen to:</span><button type="button" class="chap-btn active" data-chan-for="{{ aid }}" data-mode="both" onclick="setChannel('{{ aid }}','both')">Both</button><button type="button" class="chap-btn" data-chan-for="{{ aid }}" data-mode="caller" onclick="setChannel('{{ aid }}','caller')">Caller track</button><button type="button" class="chap-btn" data-chan-for="{{ aid }}" data-mode="agent" onclick="setChannel('{{ aid }}','agent')">Agent track</button></div>
+<div class="chap-row"><span class="chap-lbl">Jump to:</span>{% for ch in ces_audio.chapters %}<button type="button" class="chap-btn" onclick="seekAudio('{{ aid }}',{{ '%.2f' | format(ch.offset_s) }})">▶ T{{ ch.turn }} ({{ "%.1f" | format(ch.offset_s) }}s{% if ch.dead_air_s is not none %} | ⏱{{ "%.1f" | format(ch.dead_air_s) }}s{% endif %})</button>{% endfor %}</div>
+{% endif %}
+{% endmacro %}
+
+{% macro render_ces_turn_vad(turn_vad) %}
+{% if turn_vad %}
+{% if turn_vad.turn_no == 1 and turn_vad.setup_s is not none %}<span class="lat-badge lat-neutral">⏱ call setup before greeting: {{ "%.2f" | format(turn_vad.setup_s) }}s</span>{% elif turn_vad.turn_no > 1 and turn_vad.dead_air_s is not none %}<span class="lat-badge {{ turn_vad.dead_air_cls }}">⏱ dead air {{ "%.2f" | format(turn_vad.dead_air_s) }}s</span>{% endif %}{% if turn_vad.segments %}<div class="tl-bar">{% for seg in turn_vad.segments %}<div class="tl-seg {{ seg.kind }}" style="width:{{ '%.1f' | format(seg.width_pct) }}%" title="{{ seg.title | escape }}"><span>{{ seg.text | escape }}</span></div>{% endfor %}</div>{% endif %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_enriched_sim_report(data) %}
+<header class="card"><h1>{{ data.title | escape }}</h1>
+<div class="subhead">{% if data.source_report_uri %}Source report: <code>{{ data.source_report_uri | escape }}</code> &nbsp;|&nbsp; {% endif %}Generated {{ data.generated_at | escape }} &nbsp;|&nbsp; App: {% if data.ces_base %}<a href="{{ data.ces_base | escape }}" target="_blank"><code>{{ data.app_id | escape }}</code> ↗</a>{% else %}<code>{{ data.app_id | escape }}</code>{% endif %}
+&nbsp;|&nbsp; Audio: <code>{{ data.recordings_uri | escape }}/&lt;date&gt;/&lt;session_id&gt;/</code></div>
+<div class="kpi-grid">{% for kpi in data.kpis %}<div class="kpi"><div class="label">{{ kpi.label | escape }}</div><div class="val">{{ kpi.value | escape }}</div><div class="sub">{{ kpi.sub | escape }}</div></div>{% endfor %}</div>
+<p class="sess-meta" style="margin-top:12px">Dead air = silence between the end
+of the caller's utterance (channel 0) and the first agent audio (channel 1) in
+the server-recorded <code>full-session(k).wav</code>. Turn 1 is reported
+separately as call setup (bootstrap before greeting). Timelines use a simple
+RMS VAD ({{ data.vad_dbfs }} dBFS, {{ data.frame_ms }} ms frames).</p></header>
+<div class="card"><h2>Failures ({{ data.failures | length }})</h2><ul class="fail-list">
+{% for f in data.failures %}<li><a class="toc-link" href="#{{ f.anchor }}"><b>{{ f.name | escape }}</b></a> (run {{ f.run_no }}) — {{ f.reason | escape }}</li>{% else %}<li>None 🎉</li>{% endfor %}</ul></div>
+<div class="card"><h2>Slowest agent responses (dead air)</h2><table><thead><tr>
+<th>#</th><th>Scenario · turn</th><th>Dead air</th><th></th></tr></thead>
+<tbody>{% for w in data.worst_rows %}<tr><td>{{ w.idx }}</td><td><a class="toc-link" href="#{{ w.anchor }}">{{ w.name | escape }}</a> · run {{ w.run_no }} · turn {{ w.turn_no }}</td><td><span class="lat-badge {{ w.cls }}">{{ "%.2f" | format(w.dead_air_s) }}s</span></td><td>{% if w.seek_at is not none %}<button class="chap-btn" onclick="seekAudio('{{ w.anchor }}',{{ '%.2f' | format(w.seek_at) }})">▶ play</button>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+<div class="card"><h2>All runs</h2><button id="btn-failures" class="btn"
+onclick="toggleFailures()">Failures only</button>
+<table style="margin-top:8px"><thead><tr><th>#</th><th>Scenario</th><th>Tags</th>
+<th>Status</th><th>Goals</th><th>Expect.</th><th>Turns</th><th>Avg dead air</th>
+<th>Max dead air</th><th>Setup</th></tr></thead><tbody>{% for row in data.toc_rows %}<tr data-passed="{{ 'true' if row.passed else 'false' }}"><td>{{ row.idx }}</td><td><a class="toc-link" href="#{{ row.anchor }}">{{ row.name | escape }}</a></td><td>{% for tag in row.tags %}<span class="pill {{ tag.cls }}">{{ tag.text | escape }}</span>{% endfor %}</td><td><span class="status-{{ 'pass' if row.passed else 'fail' }}">{{ 'PASS' if row.passed else 'FAIL' }}</span></td><td>{{ row.goals | escape }}</td><td>{{ row.expectations | escape }}</td><td>{{ row.turns | escape }}</td><td>{% if row.avg_dead_air_s is not none %}<span class="lat-badge {{ row.avg_dead_air_cls }}">{{ "%.2f" | format(row.avg_dead_air_s) }}s</span>{% else %}—{% endif %}</td><td>{% if row.max_dead_air_s is not none %}<span class="lat-badge {{ row.max_dead_air_cls }}">{{ "%.2f" | format(row.max_dead_air_s) }}s</span>{% else %}—{% endif %}</td><td>{% if row.setup_s is not none %}{{ "%.1f" | format(row.setup_s) }}s{% else %}—{% endif %}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% for run in data.runs %}<div class="card" id="{{ run.anchor }}" data-passed="{{ 'true' if run.passed else 'false' }}"{% if run.ces_audio and run.ces_audio.has_audio %} data-audio-id="{{ run.anchor }}"{% endif %}><div class="scenario-header"><div><h2>{{ run.idx }}. {{ run.name | escape }} <span class="status-{{ 'pass' if run.passed else 'fail' }}">{{ 'PASS' if run.passed else 'FAIL' }}</span></h2><div>{% for tag in run.tags %}<span class="pill {{ tag.cls }}">{{ tag.text | escape }}</span>{% endfor %}</div><div class="sess-meta">Run {{ run.run_no }} · goals {{ run.goals | escape }} · expectations {{ run.expectations | escape }} · {{ run.turns | escape }} turns · voice <code>{{ run.voice | escape }}</code> · {% if run.session_link %}Session <a href="{{ run.session_link | escape }}" target="_blank"><code>{{ run.session_id | escape }}</code> ↗</a>{% else %}Session <code>{{ (run.session_id or 'n/a') | escape }}</code>{% endif %}{% if run.ces_audio and run.ces_audio.gcs_dir %} · <code>{{ run.ces_audio.gcs_dir | escape }}</code>{% endif %}</div></div><div style="text-align:right">{% if run.ces_audio and run.ces_audio.avg_dead_air_s is not none %}<span class="lat-badge {{ run.ces_audio.avg_dead_air_cls }}">⏱ avg dead air {{ "%.2f" | format(run.ces_audio.avg_dead_air_s) }}s</span>{% endif %}{% if run.ces_audio and run.ces_audio.max_dead_air_s is not none %}<span class="lat-badge {{ run.ces_audio.max_dead_air_cls }}">max {{ "%.2f" | format(run.ces_audio.max_dead_air_s) }}s</span>{% endif %}{% if run.ces_audio and run.ces_audio.setup_s is not none %}<span class="lat-badge lat-neutral">setup {{ "%.2f" | format(run.ces_audio.setup_s) }}s</span>{% endif %}</div></div>{% if run.error is not none %}<div class="error-box"><b>Error:</b> {{ run.error | escape }}</div>{% else %}{{ render_ces_audio_player(run.ces_audio) }}<table style="margin-top:12px"><thead><tr><th>Caller</th><th>Agent (server-recorded full-session(k).wav — exact dead air)</th></tr></thead><tbody>{% for tr in run.turn_rows %}<tr><td style="width:26%"><div class="turn-badge">Turn {{ tr.turn_no }}</div>{% if tr.seek_offset_s is not none %} <button type="button" class="chap-btn" onclick="seekAudio('{{ run.anchor }}',{{ '%.2f' | format(tr.seek_offset_s) }})">▶</button>{% endif %}<div class="caller-block"><div class="user-utt">🗣 "{{ tr.user | escape }}"</div></div></td><td><div class="agent-text">🤖 {% if tr.agent_lines %}{% for line in tr.agent_lines %}{{ line | escape }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}<span class="no-audio">(no agent text)</span>{% endif %}</div>{{ render_ces_turn_vad(tr.turn_vad) }}{% for ev in tr.events %}{% if ev.kind == "tool" %}<details class="tool"><summary>🔧 <b>{{ ev.text | escape }}</b></summary><div>{% if ev.tool_input %}<b>Input</b><pre>{{ ev.tool_input | escape }}</pre>{% endif %}{% if ev.tool_output %}<b>Output</b><pre>{{ ev.tool_output | escape }}</pre>{% endif %}</div></details>{% elif ev.kind == "transfer" %}<div class="evt">🔀 <code>{{ ev.text | escape }}</code></div>{% else %}<div class="evt">{{ ev.text | escape }}</div>{% endif %}{% endfor %}</td></tr>{% endfor %}</tbody></table><details style="margin-top:10px"{% if not run.passed %} open{% endif %}><summary><b>Goals &amp; expectations</b> — goals {{ run.goals | escape }}, expectations {{ run.expectations | escape }}</summary>{% for s in run.step_details %}<div class="step"><b>Goal:</b> {{ s.goal | escape }}<br><b>Criteria:</b> {{ s.success_criteria | escape }}<br><b>Status:</b> <span class="badge {{ s.cls }}">{{ s.status | escape }}</span><br><span class="meta">{{ s.justification | escape }}</span></div>{% endfor %}{% for e in run.expectation_details %}<div class="expectation"><span class="badge {{ e.cls }}">{{ e.status | escape }}</span> {{ e.expectation | escape }}<br><span class="meta">{{ e.justification | escape }}</span></div>{% endfor %}</details><details><summary>Session parameters</summary><pre style="font-size:11px">{{ run.session_parameters_json | escape }}</pre></details>{% endif %}</div>{% endfor %}
+{% endmacro %}
+
+{% macro render_eval_index_dashboard(data) %}
+<main class="report-main">
+  <h1>{{ data.title | escape }}</h1>
+  <div class="subhead">Rolling evaluation runs in Google Cloud Storage</div>
+  <div class="eval-dashboard-cards">
+    {% for card in data.cards %}
+      <div class="eval-dashboard-card">
+        <div class="card-title">{{ card.suite | escape }} <span class="badge {{ 'pass' if card.gate_passed else 'fail' }}">{{ 'PASS' if card.gate_passed else 'FAIL' }}</span></div>
+        <div class="card-stat">{{ card.passed_cases }}/{{ card.total_cases }} cases ({{ card.pass_rate_pct_str }})</div>
+        <div class="card-meta">{{ card.timestamp_utc | escape }} &middot; <a href="{{ card.latest_url | escape }}">Latest Report</a>{% if card.latest_enriched_url %} &middot; <a href="{{ card.latest_enriched_url | escape }}">Latest Enriched</a>{% endif %}</div>
+      </div>
+    {% endfor %}
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp (UTC)</th>
+        <th>Suite</th>
+        <th>Gate</th>
+        <th>Cases Passed</th>
+        <th>Changelist / SHA</th>
+        <th>Run ID</th>
+        <th>Artifact</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in data.rows %}
+        <tr>
+          <td>{{ row.timestamp_utc | escape }}</td>
+          <td><code>{{ row.suite | escape }}</code></td>
+          <td><span class="badge {{ 'pass' if row.gate_passed else 'fail' }}">{{ 'PASS' if row.gate_passed else 'FAIL' }}</span></td>
+          <td>{{ row.passed_cases }}/{{ row.total_cases }} ({{ row.pass_rate_pct_str }})</td>
+          <td><code>{{ row.git_sha_short | escape }}</code></td>
+          <td><code>{{ row.run_id | escape }}</code></td>
+          <td><a href="{{ row.report_url | escape }}">Open Report</a>{% if row.enriched_report_url %} &middot; <a href="{{ row.enriched_report_url | escape }}">Enriched (Audio+VAD)</a>{% endif %}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</main>
+{% endmacro %}
+
 <header class="top">
   <div class="top-in">
     <div class="top-row">
@@ -1313,8 +1397,9 @@
           {% set run_burst_snr = r.get("burst_noise_snr") if r.get("burst_noise_snr") is not none else r_bg_dict.get("burst_snr") %}
           {% set run_burst_level = r.get("burst_noise_level") or (snr_to_noise_level(run_burst_snr) if snr_to_noise_level and run_burst_snr is not none else "") %}
 
-          <details class="run-detail" data-failed="{{ failed_str }}">
-            <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }} | turns: {{ r.get('turns','?') }}{% if r.get('naturalness') %} | naturalness: {{ r['naturalness'] }}{% endif %}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}</summary>
+          {% set ces_aud = r.get("_ces_audio") %}
+          <details class="run-detail" data-failed="{{ failed_str }}"{% if ces_aud and ces_aud.get("has_audio") %} data-audio-id="{{ ces_aud.get('anchor') }}"{% endif %}>
+            <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }} | turns: {{ r.get('turns','?') }}{% if r.get('naturalness') %} | naturalness: {{ r['naturalness'] }}{% endif %}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}{% if r.get('sim_user_voice') %} | voice: <code>{{ r['sim_user_voice'] | escape }}</code>{% endif %}{% if ces_aud and ces_aud.get('avg_dead_air_s') is not none %} <span class="lat-badge {{ ces_aud.get('avg_dead_air_cls', 'lat-neutral') }}">⏱ avg dead air {{ "%.2f" | format(ces_aud['avg_dead_air_s']) }}s</span>{% endif %}{% if ces_aud and ces_aud.get('max_dead_air_s') is not none %} <span class="lat-badge {{ ces_aud.get('max_dead_air_cls', 'lat-neutral') }}">max {{ "%.2f" | format(ces_aud['max_dead_air_s']) }}s</span>{% endif %}{% if ces_aud and ces_aud.get('setup_s') is not none %} <span class="lat-badge lat-neutral">setup {{ "%.2f" | format(ces_aud['setup_s']) }}s</span>{% endif %}</summary>
 
             {% if run_bg or run_burst %}
               <div class="expectation" style="border-left: 3px solid #e67e22; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
@@ -1328,11 +1413,13 @@
 
             {% if r.get('session_id') %}
               {% if ces_base %}
-                <div class="session-link">Session: <a href="{{ ces_base }}?panel=conversation_list&id={{ r['session_id'] }}&source=EVAL" target="_blank"><code>{{ r['session_id'] }}</code></a></div>
+                <div class="session-link">Session: <a href="{{ ces_base }}?panel=conversation_list&id={{ r['session_id'] }}&source=EVAL" target="_blank"><code>{{ r['session_id'] }}</code></a>{% if ces_aud and ces_aud.get('gcs_dir') %} &middot; <code>{{ ces_aud['gcs_dir'] | escape }}</code>{% endif %}</div>
               {% else %}
-                <div class="session-link">Session: <code>{{ r['session_id'] }}</code></div>
+                <div class="session-link">Session: <code>{{ r['session_id'] }}</code>{% if ces_aud and ces_aud.get('gcs_dir') %} &middot; <code>{{ ces_aud['gcs_dir'] | escape }}</code>{% endif %}</div>
               {% endif %}
-              {% if sim_modality == "audio" %}
+              {% if ces_aud %}
+                {{ render_ces_audio_player(ces_aud) }}
+              {% elif sim_modality == "audio" %}
                 <div class="audio-player">
                   <span class="audio-label">Full Conversation</span>
                   <audio controls preload="none" src="audio/{{ r['session_id'] }}/full-scenario.wav"></audio>
@@ -1441,14 +1528,18 @@
                       {% if kind == "user" %}
                         {% set ns.user_turn = ns.user_turn + 1 %}
                         <div class="user"><b>User:</b> {{ item[1] | escape }}
-                          {% if sim_modality == "audio" and r.get('session_id') and not item[1].startswith("event:") and not item[1].startswith("dtmf:") %}
+                          {% if ces_aud and ces_aud.get('has_audio') and ns.user_turn in (ces_aud.get('chapter_offsets') or {}) %}
+                            <button type="button" class="chap-btn" onclick="seekAudio('{{ ces_aud.get('anchor') }}',{{ '%.2f' | format(ces_aud['chapter_offsets'][ns.user_turn]) }})">▶</button>
+                          {% elif sim_modality == "audio" and r.get('session_id') and not item[1].startswith("event:") and not item[1].startswith("dtmf:") %}
                             <audio controls preload="none" class="turn-audio" src="audio/{{ r['session_id'] }}/user-turn-{{ ns.user_turn }}.wav"></audio>
                           {% endif %}
                         </div>
                       {% elif kind == "agent" %}
                         {% set ns.agent_turn = ns.agent_turn + 1 %}
                         <div class="agent"><b>Agent:</b> {{ item[1] | escape }}
-                          {% if sim_modality == "audio" and r.get('session_id') %}
+                          {% if ces_aud and ns.agent_turn in (ces_aud.get('turns') or {}) %}
+                            <div>{{ render_ces_turn_vad(ces_aud['turns'][ns.agent_turn]) }}</div>
+                          {% elif sim_modality == "audio" and r.get('session_id') %}
                             <audio controls preload="none" class="turn-audio" src="audio/{{ r['session_id'] }}/agent-turn-{{ ns.agent_turn }}.wav"></audio>
                           {% endif %}
                         </div>

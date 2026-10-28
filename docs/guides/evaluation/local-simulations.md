@@ -23,9 +23,9 @@ Because the user is simulated by a language model, the conversation is non-deter
 
 ---
 
-## YAML format
+## YAML & JSON format
 
-Simulation files use the `evals:` key at the top level:
+Simulation files (`.yaml`, `.yml`, or `.json`) use `evals:` (or `test_cases:` / `scenarios:`) at the top level, and support file-level `common_session_parameters` and `common_expectations` (individual cases can opt out via `exclude_common_expectations: true`):
 
 ```yaml
 evals:
@@ -59,6 +59,8 @@ evals:
 | `session_parameters` | dict | Variables injected at session start |
 | `steps` | list | Ordered sequence of conversational goals |
 | `expectations` | list | Post-conversation quality assertions evaluated by Gemini |
+| `exclude_common_expectations` | bool | When `true`, skips merging file-level `common_expectations` into this test case |
+| `voice_config` | dict | Optional per-case TTS voice override (`{"voice_name": "...", "language_code": "..."}`); otherwise selected deterministically from `--sim-user-voices` |
 
 ### Step fields
 

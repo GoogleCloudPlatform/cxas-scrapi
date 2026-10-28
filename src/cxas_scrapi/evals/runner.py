@@ -15,6 +15,7 @@
 
 """High-level orchestration runner for CXAS evaluations."""
 
+import contextlib
 import glob
 import json
 import os
@@ -22,6 +23,7 @@ import time
 import typing
 from collections.abc import Callable
 
+import pandas as pd
 import yaml
 from google.cloud.ces_v1beta.types import RunEvaluationOperationMetadata
 
@@ -46,6 +48,51 @@ def _chunked(lst: typing.Any, n: typing.Any) -> typing.Any:
         yield lst[i : i + n]
 
 
+def _filter_file_list(
+    files: list[str],
+    filter_files: list[str] | None = None,
+    exclude_files: list[str] | None = None,
+) -> list[str]:
+    """Applies case-insensitive basename inclusion and exclusion filters."""
+    out = list(files)
+    if filter_files:
+        out = [
+            f
+            for f in out
+            if any(
+                pattern.lower() in os.path.basename(f).lower()
+                for pattern in filter_files
+            )
+        ]
+    if exclude_files:
+        out = [
+            f
+            for f in out
+            if not any(
+                pattern.lower() in os.path.basename(f).lower()
+                for pattern in exclude_files
+            )
+        ]
+    return out
+
+
+def _discover_yaml_and_extra_files(
+    dir_path: str,
+    extra_exts: tuple[str, ...] = (".yml", ".json"),
+) -> list[str]:
+    """Discovers *.yaml via glob plus additional extensions on disk."""
+    files = list(glob.glob(os.path.join(dir_path, "*.yaml")))
+    existing_set = set(files)
+    with contextlib.suppress(OSError):
+        for entry in sorted(os.listdir(dir_path)):
+            if entry.lower().endswith(extra_exts):
+                full_path = os.path.join(dir_path, entry)
+                if full_path not in existing_set and os.path.isfile(full_path):
+                    files.append(full_path)
+                    existing_set.add(full_path)
+    return files
+
+
 def run_all_evals(
     app_name: str,
     modality: str = "text",
@@ -59,6 +106,7 @@ def run_all_evals(
     app_dir: str | None = None,
     output_dir: str | None = None,
     filter_files: list[str] | None = None,
+    exclude_files: list[str] | None = None,
     filter_tags: list[str] | None = None,
     filter_names: list[str] | None = None,
     parallel: int = 1,
@@ -86,6 +134,7 @@ def run_all_evals(
     retry_cooldown: float = 60.0,
     golden_run_method: str = "STABLE",
     platform_sims: bool = False,
+    sim_user_voices: list[str] | None = None,
 ) -> typing.Any:
     """Runs all evaluations and returns aggregated results.
 
@@ -128,15 +177,9 @@ def run_all_evals(
             else:
                 golden_files = [goldens_dir]
 
-            if filter_files:
-                golden_files = [
-                    f
-                    for f in golden_files
-                    if any(
-                        pattern.lower() in os.path.basename(f).lower()
-                        for pattern in filter_files
-                    )
-                ]
+            golden_files = _filter_file_list(
+                golden_files, filter_files, exclude_files
+            )
 
             for gf in golden_files:
                 print(f"Pushing golden file {gf}")
@@ -173,21 +216,70 @@ def run_all_evals(
                 ):
                     evaluations_to_run.append(eval_obj.name)
 
-    # 2. Callback tests
+    # 2. Callback tests (and standalone Python tool unit tests)
     if "callbacks" in include:
         if not app_dir and app_name:
             app_dir = f"cxas_app/{app_name.rsplit('/', 1)[-1]}"
+        callback_evals: CallbackEvals | None = None
+        dfs: list[typing.Any] = []
         if app_dir and os.path.exists(app_dir):
             print(f"Running callback tests in {app_dir}")
             if progress_callback:
                 progress_callback("callbacks", 0, 1)
             callback_evals = CallbackEvals()
             df = callback_evals.test_all_callbacks_in_app_dir(app_dir=app_dir)
-            results["callback"] = df.to_dict(orient="records")
+            dfs.append(df)
             if progress_callback:
                 progress_callback("callbacks", 1, 1)
+
+        candidate_py_dirs: list[str] = []
+        if tool_test_file:
+            candidate_py_dirs.append(tool_test_file)
+        else:
+            candidate_py_dirs.append("evals/tool_tests/")
+            if app_dir:
+                candidate_py_dirs.append(
+                    os.path.join(app_dir, "evals", "tool_tests")
+                )
+
+        seen_py_dirs: set[str] = set()
+        for py_dir in candidate_py_dirs:
+            norm_dir = os.path.abspath(py_dir)
+            if norm_dir in seen_py_dirs:
+                continue
+            has_py_tests = False
+            with contextlib.suppress(OSError):
+                if (
+                    os.path.isfile(py_dir)
+                    and os.path.basename(py_dir).startswith("test_")
+                    and py_dir.endswith(".py")
+                ):
+                    has_py_tests = True
+                else:
+                    for entry in os.listdir(py_dir):
+                        if entry.startswith("test_") and entry.endswith(".py"):
+                            has_py_tests = True
+                            break
+            if not has_py_tests:
+                continue
+            seen_py_dirs.add(norm_dir)
+            if callback_evals is None:
+                callback_evals = CallbackEvals()
+            py_df = callback_evals.run_python_unit_tests_in_dir(
+                py_dir,
+                filter_files=filter_files,
+                exclude_files=exclude_files,
+            )
+            if isinstance(py_df, pd.DataFrame) and not py_df.empty:
+                dfs.append(py_df)
+
+        if dfs:
+            combined_df = (
+                dfs[0] if len(dfs) == 1 else pd.concat(dfs, ignore_index=True)
+            )
+            results["callback"] = combined_df.to_dict(orient="records")
             if output_dir:
-                df.to_csv(
+                combined_df.to_csv(
                     os.path.join(
                         output_dir,
                         add_timestamp_suffix(
@@ -213,15 +305,9 @@ def run_all_evals(
             else:
                 tool_files = [tool_test_file]
 
-            if filter_files:
-                tool_files = [
-                    f
-                    for f in tool_files
-                    if any(
-                        pattern.lower() in os.path.basename(f).lower()
-                        for pattern in filter_files
-                    )
-                ]
+            tool_files = _filter_file_list(
+                tool_files, filter_files, exclude_files
+            )
 
             test_cases = []
             for tf in tool_files:
@@ -239,6 +325,24 @@ def run_all_evals(
                                 else (getattr(c, "tags", None) or [])
                             )
                         )
+                    ]
+                if filter_names:
+                    cases = [
+                        c
+                        for c in cases
+                        if (
+                            (
+                                c.get("name")
+                                or c.get("display_name")
+                                or c.get("test_name")
+                            )
+                            if isinstance(c, dict)
+                            else (
+                                getattr(c, "name", None)
+                                or getattr(c, "display_name", None)
+                            )
+                        )
+                        in filter_names
                     ]
                 test_cases.extend(cases)
 
@@ -266,16 +370,16 @@ def run_all_evals(
         if not simulation_dir:
             simulation_dir = "evals/simulations/"
         if app_name and os.path.exists(simulation_dir):
-            sim_files = glob.glob(os.path.join(simulation_dir, "*.yaml"))
-            if filter_files:
-                sim_files = [
-                    f
-                    for f in sim_files
-                    if any(
-                        pattern.lower() in os.path.basename(f).lower()
-                        for pattern in filter_files
-                    )
-                ]
+            is_sim_file = not os.path.isdir(
+                simulation_dir
+            ) and simulation_dir.lower().endswith((".yaml", ".yml", ".json"))
+            if is_sim_file:
+                sim_files = [simulation_dir]
+            else:
+                sim_files = _discover_yaml_and_extra_files(simulation_dir)
+            sim_files = _filter_file_list(
+                sim_files, filter_files, exclude_files
+            )
 
             if sim_files:
                 sim_eval_kwargs: dict[str, typing.Any] = {
@@ -288,6 +392,8 @@ def run_all_evals(
                 }
                 if audio_analysis:
                     sim_eval_kwargs["audio_analysis"] = audio_analysis
+                if sim_user_voices:
+                    sim_eval_kwargs["sim_user_voices"] = sim_user_voices
                 sim_evals = SimulationEvals(**sim_eval_kwargs)
                 test_cases = []
                 for sf in sim_files:
@@ -324,6 +430,8 @@ def run_all_evals(
                         sim_kwargs["audio_analysis"] = audio_analysis
                     if platform_sims:
                         sim_kwargs["run_on_platform"] = platform_sims
+                    if sim_user_voices:
+                        sim_kwargs["sim_user_voices"] = sim_user_voices
                     sim_results = sim_evals.run_simulations(
                         test_cases,
                         runs=runs,
@@ -386,15 +494,9 @@ def run_all_evals(
                 )
             else:
                 shadow_files = [shadow_dir]
-            if filter_files:
-                shadow_files = [
-                    f
-                    for f in shadow_files
-                    if any(
-                        pattern.lower() in os.path.basename(f).lower()
-                        for pattern in filter_files
-                    )
-                ]
+            shadow_files = _filter_file_list(
+                shadow_files, filter_files, exclude_files
+            )
             if shadow_files:
                 shadow_evals = ShadowEvals(
                     app_name=app_name,
