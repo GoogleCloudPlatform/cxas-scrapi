@@ -57,11 +57,25 @@ LlmResponse.from_parts(parts=[
     Part.from_text(text="Let me look that up for you.", partial=True),
     Part.from_function_call(name="lookup_account", args={"id": "123"}),
 ])
+
+# 3. Slot-Filling / DAG Task Delegation (Executes task when inputs ready, LLM synthesizes natural confirmation):
+LlmResponse.from_parts(parts=[
+    Part.from_text(text="Locking in your reservation now...", partial=True),
+    Part.from_function_call(
+        name="create_booking",
+        args={
+            "date": sm["filled"]["date"],
+            "time": sm["filled"]["time"],
+            "party_size": sm["filled"]["party_size"],
+        },
+    ),
+])
 ```
 
 **LLM Lifecycle Decision Matrix:**
-- **Text-Only Parts (`Part.from_text`)**: CXAS sends speech to user and closes bot turn. **LLM is bypassed.**
-- **FunctionCall Parts (`Part.from_function_call`)**: CXAS executes tool and feeds `toolResponse` back to LLM. **LLM is invoked.**
+- **Text-Only Parts (`Part.from_text`)**: CXAS sends speech/text to user and closes bot turn. **LLM is bypassed.**
+- **FunctionCall Parts (`Part.from_function_call`)**: CXAS executes tool and feeds `toolResponse` back to LLM. **LLM is invoked** to generate the final response turn based on persona and instructions.
+  - See [before_model_callback for DAG and slot-filling](https://googlecloudplatform.github.io/cxas-scrapi/stable/design-guide/callbacks/#before_model_callback-for-dag-and-slot-filling).
 - **Gotcha (`EMPTY_RESPONSE`)**: If you need to speak a prompt deterministically and wait for user speech, do NOT return a `FunctionCall` part in the same response. Execute the tool synchronously via `tools.<tool_name>()` in Python and return only `Part.from_text(...)`.
 
 **Reading responses** (in after_model callbacks):
