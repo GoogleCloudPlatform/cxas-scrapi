@@ -945,26 +945,160 @@ def test_tools(args: argparse.Namespace) -> None:
 
 def test_callbacks(args: argparse.Namespace) -> None:
     """Handles the 'test-callbacks' command."""
+    import pandas as pd
+
     from cxas_scrapi.evals.callback_evals import CallbackEvals
 
     print(f"Running callback tests in App directory: {args.app_dir}")
     callback_evals = CallbackEvals()
 
     try:
-        results = callback_evals.test_all_callbacks_in_app_dir(
-            app_dir=args.app_dir,
-            agent_name=args.agent_name,
-            callback_type=args.callback_type,
-            callback_name=args.callback_name,
-            log_file=args.log_file,
-            pytest_args=args.pytest_args,
-        )
-        if results.empty:
-            print(f"No valid callback tests found in {args.app_dir}")
-            sys.exit(1)
+        mode = getattr(args, "mode", "per_callback") or "per_callback"
+        no_chain_flag = bool(getattr(args, "no_chain", False))
+        include_chain = not no_chain_flag
+        chain_only = bool(getattr(args, "chain_only", False))
+        lint_flag = bool(getattr(args, "lint", False))
+        lint_only = bool(getattr(args, "lint_only", False))
+        compare_modes_flag = bool(getattr(args, "compare_modes", False))
+        record_fixtures_flag = bool(getattr(args, "record_fixtures", False))
+        update_snapshots_flag = bool(getattr(args, "update_snapshots", False))
+        fixtures_dir = getattr(args, "fixtures_dir", None)
+        llm_arg = getattr(args, "llm", None)
+        raw_fail_on = getattr(args, "fail_on", None) or "failed,error,risk"
+        fail_on_statuses = {
+            tok.strip().upper()
+            for tok in str(raw_fail_on).split(",")
+            if tok.strip()
+        }
 
-        # Check overall status
-        failed_count = sum(1 for r in results["status"] if r != "PASSED")
+        if lint_only and compare_modes_flag:
+            msg = (
+                "Error: --lint-only and --compare-modes are mutually exclusive."
+            )
+            print(msg, file=sys.stderr)
+            sys.exit(2)
+
+        if lint_only or compare_modes_flag:
+            active_mode_flag = "--lint-only" if lint_only else "--compare-modes"
+            incompatible: list[str] = []
+            if chain_only:
+                incompatible.append("--chain-only")
+            if no_chain_flag:
+                incompatible.append("--no-chain")
+            if getattr(args, "pytest_args", None):
+                incompatible.append("--pytest-args")
+            if getattr(args, "callback_name", None):
+                incompatible.append("--callback-name")
+            if record_fixtures_flag:
+                incompatible.append("--record-fixtures")
+            if update_snapshots_flag:
+                incompatible.append("--update-snapshots")
+            if lint_only and fixtures_dir is not None:
+                incompatible.append("--fixtures-dir")
+            if mode != "per_callback":
+                incompatible.append(f"--mode={mode}")
+            if lint_only and lint_flag:
+                incompatible.append("--lint")
+            if llm_arg:
+                incompatible.append("--llm")
+            if incompatible:
+                msg = (
+                    f"Error: {active_mode_flag} cannot be combined with "
+                    f"pytest-only flags: {', '.join(incompatible)}."
+                )
+                print(msg, file=sys.stderr)
+                sys.exit(2)
+
+        if lint_only:
+            results = callback_evals.lint_all_callbacks_in_app_dir(
+                app_dir=args.app_dir,
+                agent_name=args.agent_name or "*",
+                callback_type=args.callback_type or "*",
+            )
+            if results.empty:
+                print("\nFINAL RESULT: PASS (0 lint findings)")
+                sys.exit(0)
+        elif compare_modes_flag:
+            cmp_kwargs = {
+                "app_dir": args.app_dir,
+                "agent_name": args.agent_name or "*",
+                "callback_type": args.callback_type or "*",
+            }
+            if fixtures_dir is not None:
+                cmp_kwargs["fixtures_dir"] = fixtures_dir
+            results = callback_evals.compare_all_callbacks_in_app_dir(
+                **cmp_kwargs
+            )
+            if lint_flag:
+                prior_findings = list(callback_evals.last_lint_findings)
+                lint_df = callback_evals.lint_all_callbacks_in_app_dir(
+                    app_dir=args.app_dir,
+                    agent_name=args.agent_name or "*",
+                    callback_type=args.callback_type or "*",
+                )
+                for pf in prior_findings:
+                    if pf not in callback_evals.last_lint_findings:
+                        callback_evals.last_lint_findings.append(pf)
+                if not lint_df.empty:
+                    results = pd.concat([results, lint_df], ignore_index=True)
+            if results.empty:
+                print(f"No valid callbacks found in {args.app_dir}")
+                sys.exit(1)
+        else:
+            eff_pytest_args = (
+                list(args.pytest_args) if args.pytest_args else None
+            )
+            if update_snapshots_flag:
+                eff_pytest_args = list(eff_pytest_args or [])
+                if "--cxas-update-snapshots" not in eff_pytest_args:
+                    eff_pytest_args.append("--cxas-update-snapshots")
+            run_kwargs = {
+                "app_dir": args.app_dir,
+                "agent_name": args.agent_name,
+                "callback_type": args.callback_type,
+                "callback_name": args.callback_name,
+                "log_file": args.log_file,
+                "pytest_args": eff_pytest_args,
+                "mode": mode,
+                "include_chain": include_chain,
+                "chain_only": chain_only,
+            }
+            if record_fixtures_flag:
+                run_kwargs["record_fixtures"] = True
+            if fixtures_dir is not None:
+                run_kwargs["fixtures_dir"] = fixtures_dir
+            if llm_arg:
+                run_kwargs["llm"] = llm_arg
+            results = callback_evals.test_all_callbacks_in_app_dir(**run_kwargs)
+            if lint_flag:
+                lint_df = callback_evals.lint_all_callbacks_in_app_dir(
+                    app_dir=args.app_dir,
+                    agent_name=args.agent_name or "*",
+                    callback_type=args.callback_type or "*",
+                )
+                if not lint_df.empty:
+                    results = pd.concat([results, lint_df], ignore_index=True)
+            if results.empty:
+                print(f"No valid callback tests found in {args.app_dir}")
+                sys.exit(1)
+
+        for _, row in results.iterrows():
+            if row.get("status") in (
+                "FAILED",
+                "ERROR",
+                "RISK",
+                "WARNING",
+                "INCONCLUSIVE",
+            ) and row.get("error_message"):
+                print(
+                    f"[{row['status']}] {row['agent_name']}/{row['callback_type']} "
+                    f"({row['test_name']}): {row['error_message']}"
+                )
+
+        # Check overall status against --fail-on (default: FAILED, ERROR, RISK)
+        failed_count = sum(
+            1 for r in results["status"] if str(r).upper() in fail_on_statuses
+        )
 
         if failed_count > 0:
             print(f"\nFINAL RESULT: FAIL ({failed_count} callbacks failed)")
@@ -1002,8 +1136,10 @@ def test_single_callback(args: argparse.Namespace) -> None:
             print(f"No valid callback tests found at {args.test_file_path}")
             sys.exit(1)
 
-        # Check overall status
-        failed_count = sum(1 for r in results["status"] if r != "PASSED")
+        # Check overall status (SKIPPED is not a failure)
+        failed_count = sum(
+            1 for r in results["status"] if r not in ("PASSED", "SKIPPED")
+        )
 
         if failed_count > 0:
             print(f"\nFINAL RESULT: FAIL ({failed_count} callbacks failed)")
@@ -2315,6 +2451,36 @@ def get_parser() -> argparse.ArgumentParser:
         help="Optional: The name of the callback to run tests for.",
     )
     parser_test_callbacks.add_argument(
+        "--mode",
+        choices=["per_callback", "combined", "both"],
+        default="per_callback",
+        help=(
+            "Execution mode for pytest multi-callback chain tests (test_chain.py): "
+            "'per_callback' (default), 'combined', or 'both'. "
+            "Not compatible with --lint-only or --compare-modes."
+        ),
+    )
+    chain_scope_group = parser_test_callbacks.add_mutually_exclusive_group()
+    chain_scope_group.add_argument(
+        "--chain-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Run only multi-callback chain tests (test_chain.py) via pytest. "
+            "Not compatible with --lint-only or --compare-modes."
+        ),
+    )
+    chain_scope_group.add_argument(
+        "--no-chain",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip multi-callback chain tests and run only per-callback "
+            "unit tests (test.py) via pytest. "
+            "Not compatible with --lint-only or --compare-modes."
+        ),
+    )
+    parser_test_callbacks.add_argument(
         "--log-file",
         required=False,
         help="Optional: Path to a file to log pytest output to.",
@@ -2323,6 +2489,85 @@ def get_parser() -> argparse.ArgumentParser:
         "--pytest-args",
         type=lambda s: [item for item in s.split(",")],
         help='Comma-separated list (e.g., "-v,-s")',
+    )
+    parser_test_callbacks.add_argument(
+        "--record-fixtures",
+        action="store_true",
+        default=False,
+        help=(
+            "Automatically record pre-execution stage inputs during pytest chain "
+            "runs into agents/<agent>/compare_fixtures/<stage>/*.json (or "
+            "--fixtures-dir) for later use with --compare-modes."
+        ),
+    )
+    parser_test_callbacks.add_argument(
+        "--fixtures-dir",
+        required=False,
+        default=None,
+        help=(
+            "Optional directory for recording or reading compare_modes fixtures "
+            "(defaults to agents/<agent>/compare_fixtures/)."
+        ),
+    )
+    parser_test_callbacks.add_argument(
+        "--fail-on",
+        required=False,
+        default="failed,error,risk",
+        help=(
+            "Comma-separated list of statuses that cause a non-zero exit code "
+            "(default: 'failed,error,risk'; e.g. 'failed,error' to ignore RISK)."
+        ),
+    )
+    parser_test_callbacks.add_argument(
+        "--lint",
+        action="store_true",
+        default=False,
+        help=(
+            "Run static cross-callback chain linter (C011-C019) in addition to "
+            "pytest callback tests (or in addition to --compare-modes)."
+        ),
+    )
+    parser_test_callbacks.add_argument(
+        "--llm",
+        required=False,
+        default=None,
+        help=(
+            "Optional LLM snapshot JSON path or registered adapter identifier to inject "
+            "via CXAS_CALLBACK_LLM (live model strings require register_llm_resolver)."
+        ),
+    )
+    parser_test_callbacks.add_argument(
+        "--update-snapshots",
+        "--cxas-update-snapshots",
+        dest="update_snapshots",
+        action="store_true",
+        default=False,
+        help=(
+            "Update stored .snap.json snapshots with current trace outputs "
+            "(forwards --cxas-update-snapshots to pytest)."
+        ),
+    )
+    action_mode_group = parser_test_callbacks.add_mutually_exclusive_group()
+    action_mode_group.add_argument(
+        "--lint-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Run only static cross-callback chain linter (C011-C019) instead of "
+            "executing pytest. Mutually exclusive with --compare-modes."
+        ),
+    )
+    action_mode_group.add_argument(
+        "--compare-modes",
+        action="store_true",
+        default=False,
+        help=(
+            "Run dual-mode ('per_callback' vs 'combined') comparison across all "
+            "configured callback chains (using compare_fixtures/<stage>/*.json "
+            "when available) instead of executing pytest, reporting root-cause "
+            "explanations on divergence and C012 aliasing risks. "
+            "Mutually exclusive with --lint-only."
+        ),
     )
 
     parser_test_callbacks.set_defaults(func=test_callbacks)

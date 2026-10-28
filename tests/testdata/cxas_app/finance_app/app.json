@@ -1,0 +1,36 @@
+{
+  "displayName": "finance-app",
+  "timeZoneSettings": {
+    "timeZone": "Europe/Berlin"
+  },
+  "variableDeclarations": [
+    {
+      "name": "complaint_agent_execution_stack",
+      "schema": {
+        "type": "ARRAY",
+        "default": []
+      }
+    },
+    {
+      "name": "budget_all_accounts",
+      "schema": {
+        "type": "OBJECT",
+        "default": {}
+      }
+    },
+    {
+      "name": "budget_account_identifiers",
+      "schema": {
+        "type": "OBJECT",
+        "default": {}
+      }
+    },
+    {
+      "name": "budget_current_account",
+      "schema": {
+        "type": "OBJECT",
+        "default": {}
+      }
+    }
+  ]
+}

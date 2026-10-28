@@ -229,6 +229,7 @@ def test_reset_registry() -> None:
     # (reload the rule modules so decorators fire again)
     import importlib  # noqa: PLC0415
 
+    import cxas_scrapi.utils.lint_rules.callback_chain as mod_cc  # noqa: PLC0415
     import cxas_scrapi.utils.lint_rules.callbacks as mod_c  # noqa: PLC0415
     import cxas_scrapi.utils.lint_rules.config as mod_a  # noqa: PLC0415
     import cxas_scrapi.utils.lint_rules.evals as mod_e  # noqa: PLC0415
@@ -238,13 +239,24 @@ def test_reset_registry() -> None:
     import cxas_scrapi.utils.lint_rules.tools as mod_t  # noqa: PLC0415
     import cxas_scrapi.utils.lint_rules.variables as mod_var  # noqa: PLC0415
 
-    for mod in [mod_i, mod_c, mod_t, mod_e, mod_a, mod_s, mod_v, mod_var]:
+    for mod in [
+        mod_i,
+        mod_c,
+        mod_cc,
+        mod_t,
+        mod_e,
+        mod_a,
+        mod_s,
+        mod_v,
+        mod_var,
+    ]:
         importlib.reload(mod)
 
     registry_restored = build_registry()
     # 65 baseline + 11 cross-surface V100-V104 registrations
-    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + T014 + E012.
-    assert len(registry_restored.all_rules()) == 79  # noqa: PLR2004
+    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + T014 + E012
+    # + C011-C019 (9).
+    assert len(registry_restored.all_rules()) == 88  # noqa: PLR2004
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -547,8 +559,9 @@ def test_build_registry_all_rules() -> None:
     registry = build_registry()
     all_rules = registry.all_rules()
     # 65 baseline + 11 cross-surface V100-V104 registrations
-    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + T014 + E012.
-    assert len(all_rules) == 79  # noqa: PLR2004
+    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + T014 + E012
+    # + C011-C019 (9).
+    assert len(all_rules) == 88  # noqa: PLR2004
 
 
 def test_build_context(tmp_path: typing.Any) -> None:
