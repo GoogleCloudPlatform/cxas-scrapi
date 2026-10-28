@@ -20,7 +20,7 @@ different sampling run, a different conversational context, and possibly
 an older model build than today's fresh clips. Splicing vintages into one
 call is what listeners report as "the agent's voice changed".
 
-This module turns that into per-turn flags, from four independent
+This module turns that into per-turn flags, from five independent
 signal families:
 
   SEAM   provenance — this turn's TTS source (cached vs fresh, read from
@@ -41,7 +41,16 @@ signal families:
          change) or by 7 to 11 (MIDDRIFT, listen to confirm). Typical
          causes are two renders spliced into one turn, or a line spoken
          by a different synthesis path than the rest of the turn. Read
-         from `seams` in the `audio_metrics` turn rows.
+         from `seams` in the `audio_metrics` turn rows. A pitch-only drift
+         (loudness flat or falling) is marked as such: in a listening test
+         a listener heard none of them.
+  JUMP   a render join — the turn was sent as several response parts, and
+         where the next part starts the voice is suddenly louder AND higher
+         (pitch >= 3 st and loudness >= 5 dB, `audio_metrics.JUMP_*`).
+         Each part is a fresh TTS render that starts louder and higher than
+         the last one ended; that combination is what a listener reports as
+         "the voice changed" (a gradual fade within a turn is not). Read
+         from `joins` (`audio_metrics.render_join_steps`).
 
 The flag logic here is dependency-light on purpose; the acoustic numbers
 per turn come from `audio_metrics` (optional `audio-metrics` extra), and
@@ -186,11 +195,12 @@ def join_spans(
 def flag_drift(
     rows: list[dict[str, Any]], loud_db: float = DEFAULT_LOUD_DB
 ) -> list[dict[str, Any]]:
-    """Adds `flags` (SEAM / LOUD / TRUNC / MIDTURN / MIDDRIFT) per row.
+    """Adds `flags` (SEAM / LOUD / TRUNC / MIDTURN / MIDDRIFT / JUMP) per row.
 
     Expects rows ordered by turn, each carrying what `audio_metrics` and
-    `join_spans` produce: `dur_s`, `lufs`, `n_syl`, `seams`, `tts`, and the
-    turn's `agent_text`. Returns the flagged rows.
+    `join_spans` produce: `dur_s`, `lufs`, `n_syl`, `seams`, `tts`, the
+    turn's `agent_text`, and `joins` (`audio_metrics.render_join_steps`)
+    when the turn was spoken in several parts. Returns the flagged rows.
     """
     prev_src: str | None = None
     prev_lufs: float | None = None
@@ -217,6 +227,8 @@ def flag_drift(
             flags.append("MIDTURN")
         elif "drift" in tiers:
             flags.append("MIDDRIFT")
+        if any(j and j.get("jump") for j in row.get("joins") or ()):
+            flags.append("JUMP")
         row["flags"] = flags
         if flags:
             flagged.append(row)
@@ -240,9 +252,28 @@ def describe(row: dict[str, Any]) -> str:
     ):
         if flag in row.get("flags", ()):
             at = ", ".join(
-                f"{s['t_s']:.2f}s ({s['shift_st']:+.1f} st)"
+                f"{s['t_s']:.2f}s ({s['shift_st']:+.1f} st"
+                + (
+                    f", pitch only: loudness {s['level_db']:+.1f} dB"
+                    if flag == "MIDDRIFT"
+                    and isinstance(s.get("level_db"), (int, float))
+                    and s["level_db"] < 2.0
+                    else ""
+                )
+                + ")"
                 for s in row.get("seams") or ()
                 if s.get("tier") == tier
             )
             parts.append(f"{label} inside the turn at {at}")
+    if "JUMP" in row.get("flags", ()):
+        at = ", ".join(
+            f"part {j['part']} at {j['t_s']:.2f}s "
+            f"({j['d_st']:+.1f} st, {j['d_db']:+.1f} dB)"
+            for j in row.get("joins") or ()
+            if j and j.get("jump")
+        )
+        parts.append(
+            "voice jumps louder and higher where a new rendered part "
+            f"starts: {at} (send the turn as one part)"
+        )
     return " + ".join(parts)

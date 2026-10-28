@@ -186,3 +186,68 @@ def test_call_flags_name_the_turns_with_seams(tmp_path: Path) -> None:
     assert "intra_turn_speaker_change" in call["flags"]
     assert "intra_turn_voice_drift" in call["flags"]
     assert call["max_seam_st"] == pytest.approx(12.7, abs=0.6)
+
+
+def _write_render_join_wav(
+    path: Path, f0_b: float, gain_b: float, f0_a: float = 150.0
+) -> str:
+    """Two rendered parts: the second at pitch `f0_b` and `gain_b` times
+    the first part's level, after a 0.3 s pause."""
+
+    def part(f0: float, gain: float) -> np.ndarray:
+        t = np.arange(int(1.8 * SR)) / SR
+        y = sum(np.sin(2 * math.pi * k * f0 * t) / k for k in range(1, 6))
+        envelope = 0.6 + 0.4 * np.sin(2 * math.pi * 4.0 * t)
+        return 0.15 * gain * y / np.max(np.abs(y)) * envelope
+
+    y = np.concatenate(
+        [part(f0_a, 1.0), np.zeros(int(0.3 * SR)), part(f0_b, gain_b)]
+    )
+    pcm = (np.clip(y, -1, 1) * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as fh:
+        fh.setnchannels(1)
+        fh.setsampwidth(2)
+        fh.setframerate(SR)
+        fh.writeframes(pcm.tobytes())
+    return str(path)
+
+
+PARTS = [
+    "One two three four five six seven.",
+    "Eight nine ten eleven twelve thirteen fourteen.",
+]
+
+
+def test_a_render_join_rising_in_pitch_and_loudness_is_a_jump(
+    tmp_path: Path,
+) -> None:
+    # +5.8 st and about +6 dB where the second part starts.
+    p = _write_render_join_wav(tmp_path / "agent-turn-1.wav", 210.0, 2.0)
+    (join,) = am.render_join_steps(p, PARTS)
+    assert join["jump"]
+    assert join["part"] == 2
+    assert join["d_st"] == pytest.approx(5.8, abs=0.6)
+    assert join["d_db"] == pytest.approx(6.0, abs=1.0)
+
+
+def test_pitch_or_loudness_alone_at_a_join_is_not_a_jump(
+    tmp_path: Path,
+) -> None:
+    (pitch,) = am.render_join_steps(
+        _write_render_join_wav(tmp_path / "p.wav", 230.0, 1.0), PARTS
+    )
+    (loud,) = am.render_join_steps(
+        _write_render_join_wav(tmp_path / "l.wav", 150.0, 2.5), PARTS
+    )
+    assert pitch["d_st"] > 6
+    assert not pitch["jump"]
+    assert loud["d_db"] > 6
+    assert not loud["jump"]
+
+
+def test_a_single_part_turn_has_no_joins(tmp_path: Path) -> None:
+    p = _write_render_join_wav(tmp_path / "agent-turn-1.wav", 210.0, 2.0)
+    assert am.render_join_steps(p, [" ".join(PARTS)]) == []
+    assert am.render_join_shares(["Hello.", "", "Goodbye now."]) == [
+        pytest.approx(2 / 5)
+    ]

@@ -65,7 +65,10 @@ from cxas_scrapi.utils.tracing.audio_drift import (
     flag_drift,
     join_spans,
 )
-from cxas_scrapi.utils.tracing.audio_metrics import measure_call
+from cxas_scrapi.utils.tracing.audio_metrics import (
+    measure_call,
+    render_join_steps,
+)
 from cxas_scrapi.utils.tracing.audio_transcription import (
     DEFAULT_TRANSCRIPTION_MODEL,
     AudioTranscriber,
@@ -77,6 +80,19 @@ from cxas_scrapi.utils.tracing.cloud_logging import CloudLogsClient
 from cxas_scrapi.utils.tracing.trace_config import TraceConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _render_joins(path: str | None, parts: list[str]) -> list[dict | None]:
+    """Voice steps at a turn's render joins; [] for one part, no audio, or
+    when the measurement can't run (it is best-effort, like the span fetch)."""
+    if not path or len([p for p in parts if p and p.strip()]) < 2:
+        return []
+    try:
+        return render_join_steps(path, parts)
+    except Exception as e:  # missing extra or unreadable audio: no JUMP
+        logger.warning(f"render join measurement failed for {path} ({e})")
+        return []
+
 
 REPROCESSED_TRANSCRIPTS_SCHEMA = [
     bigquery.SchemaField("conversation_id", "STRING", mode="REQUIRED"),
@@ -1322,12 +1338,13 @@ class Traces(Common):
     ) -> dict[str, Any]:
         """Per-turn voice-drift flags for one conversation.
 
-        Combines four signal families (see `utils.tracing.audio_drift`):
+        Combines five signal families (see `utils.tracing.audio_drift`):
         the platform's own TTS spans (cached vs fresh clips -> vintage
         SEAMs), the numeric loudness track (adjacent-turn steps -> LOUD),
-        the transcript's syllable budget vs the audio (TRUNC), and pitch
+        the transcript's syllable budget vs the audio (TRUNC), pitch
         seams inside a turn (MIDTURN for an apparent speaker change,
-        MIDDRIFT for audible drift).
+        MIDDRIFT for audible drift), and the voice stepping up louder and
+        higher where a turn's next rendered part starts (JUMP).
 
         Needs the optional dependencies:
         `pip install "cxas-scrapi[audio-metrics]"`, plus
@@ -1384,6 +1401,10 @@ class Traces(Common):
                     "n_syl": t.get("n_syl"),
                     "seams": t.get("seams", []),
                     "agent_text": " | ".join(agent_text.get(conv_turn, [])),
+                    "agent_parts": agent_text.get(conv_turn, []),
+                    "joins": _render_joins(
+                        t.get("path"), agent_text.get(conv_turn, [])
+                    ),
                     "user_text": " | ".join(user_text.get(conv_turn, [])),
                 }
             )
