@@ -139,6 +139,9 @@ uv run cxas run \
   --wait
 ```
 
+> [!NOTE]
+> Tool fakes (`use_tool_fakes: true`) are supported on platform Milestone evaluations via `EvaluationConfig.tool_call_behaviour = FAKE`. When executing via `SimulationEvals.run_simulations(..., run_on_platform=True)`, text simulations with tool fakes run directly on the platform, while local-only features (`audio_analysis`, `voice_config`, `audio_expectations`, `barge_in_after_ms`, `naturalness_metric`) automatically route to local client simulation.
+
 ## Interpreting Cognitive Diagnostics
 
 When running evaluations with the `intercept_and_score_reasoning` tool enabled, the system extracts diagnostics to help you identify issues in agent reasoning.
