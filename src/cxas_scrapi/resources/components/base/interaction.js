@@ -876,7 +876,40 @@ function openAudioConv(id) {
 
   var drB = document.getElementById("dr-b");
   if (drB) {
+    var prevAudios = document.querySelectorAll("#audio-conv-drawer audio");
+    prevAudios.forEach(function(a) {
+      try { a.pause(); } catch (e) {}
+    });
+
     var bHtml = "";
+
+    // Resolve Full Conversation audio player src
+    var audioSrc = "";
+    var safeEval = (r.eval_name || "").replace(/[^a-zA-Z0-9_-]/g, "_");
+    var card = document.getElementById("eval-" + r.eval_type + "-" + r.eval_name) ||
+        document.getElementById("eval-" + r.eval_name) ||
+        document.getElementById("eval-" + r.eval_type + "-" + safeEval);
+    if (card) {
+      var details = card.querySelectorAll("details.run-detail");
+      var targetDetail = (r.run_idx != null && details[r.run_idx]) ? details[r.run_idx] : (details[0] || card);
+      var audEl = targetDetail.querySelector(".audio-player audio") || card.querySelector(".audio-player audio");
+      if (audEl && audEl.getAttribute("src")) {
+        audioSrc = audEl.getAttribute("src");
+      }
+    }
+    if (!audioSrc && r.audio_src) {
+      audioSrc = r.audio_src;
+    }
+    if (!audioSrc && r.session_id) {
+      audioSrc = "audio/" + r.session_id + "/" + (r.eval_type === "golden" ? "full-session.wav" : "full-scenario.wav");
+    }
+
+    if (audioSrc) {
+      bHtml += '<div class="audio-player" style="margin-bottom:12px;">\n' +
+        '  <span class="audio-label">Full Conversation</span>\n' +
+        '  <audio controls preload="none" src="' + escapeHtml(audioSrc) + '"></audio>\n' +
+        '</div>\n';
+    }
 
     // Summary
     bHtml += '<h4>Summary</h4><div class="conv-summary">' + hlText(r.summary_text || "No summary available.", q) + '</div>\n';
@@ -913,24 +946,38 @@ function openAudioConv(id) {
       '</dl>\n';
 
     // Signal & Acoustic Voice Metrics (LUFS / Pitch / Drift)
-    if (r.acoustic_detail && (r.acoustic_detail.measured || (r.acoustic_detail.flags && r.acoustic_detail.flags.length > 0))) {
-      var ad = r.acoustic_detail;
-      bHtml += '<h4>Signal &amp; Acoustic Voice Metrics (LUFS / Pitch / Drift)</h4>\n<dl class="kv">\n';
-      if (ad.lufs_mean != null) {
-        bHtml += '<dt>Loudness (LUFS)</dt><dd>Mean: ' + ad.lufs_mean.toFixed(1) + ' dB' +
-          (ad.lufs_sd != null ? ' &middot; SD: &plusmn;' + ad.lufs_sd.toFixed(2) + ' dB' : '') +
-          (ad.max_adj_dlufs != null ? ' &middot; Max \u0394: ' + ad.max_adj_dlufs.toFixed(1) + ' dB' : '') + '</dd>\n';
+    var ad = r.acoustic_detail;
+    var hasAcousticData = ad && (
+      ad.lufs_mean != null ||
+      ad.rate_mean != null ||
+      ad.f0_median_sd_st != null ||
+      ad.max_seam_st != null ||
+      (ad.flags && ad.flags.length > 0) ||
+      (ad.drift_reasons && ad.drift_reasons.length > 0) ||
+      (ad.turns && ad.turns.length > 0) ||
+      (ad.barge_in_details && ad.barge_in_details.length > 0)
+    );
+    if (hasAcousticData) {
+      bHtml += '<h4>Signal &amp; Acoustic Voice Metrics (LUFS / Pitch / Drift)</h4>\n';
+      var hasKv = (ad.lufs_mean != null || ad.rate_mean != null || ad.f0_median_sd_st != null || ad.max_seam_st != null);
+      if (hasKv) {
+        bHtml += '<dl class="kv">\n';
+        if (ad.lufs_mean != null) {
+          bHtml += '<dt>Loudness (LUFS)</dt><dd>Mean: ' + ad.lufs_mean.toFixed(1) + ' dB' +
+            (ad.lufs_sd != null ? ' &middot; SD: &plusmn;' + ad.lufs_sd.toFixed(2) + ' dB' : '') +
+            (ad.max_adj_dlufs != null ? ' &middot; Max \u0394: ' + ad.max_adj_dlufs.toFixed(1) + ' dB' : '') + '</dd>\n';
+        }
+        if (ad.rate_mean != null) {
+          bHtml += '<dt>Articulation Rate</dt><dd>' + ad.rate_mean.toFixed(1) + ' syl/s' +
+            (ad.rate_cov_pct != null ? ' (CoV: ' + ad.rate_cov_pct.toFixed(1) + '%)' : '') + '</dd>\n';
+        }
+        if (ad.f0_median_sd_st != null || ad.max_seam_st != null) {
+          bHtml += '<dt>Pitch &amp; Voice Seam</dt><dd>' +
+            (ad.f0_median_sd_st != null ? 'Spread: ' + ad.f0_median_sd_st.toFixed(1) + ' st' : '') +
+            (ad.max_seam_st != null ? ' &middot; Max Intra-Turn Seam: ' + ad.max_seam_st.toFixed(1) + ' st' : '') + '</dd>\n';
+        }
+        bHtml += '</dl>\n';
       }
-      if (ad.rate_mean != null) {
-        bHtml += '<dt>Articulation Rate</dt><dd>' + ad.rate_mean.toFixed(1) + ' syl/s' +
-          (ad.rate_cov_pct != null ? ' (CoV: ' + ad.rate_cov_pct.toFixed(1) + '%)' : '') + '</dd>\n';
-      }
-      if (ad.f0_median_sd_st != null || ad.max_seam_st != null) {
-        bHtml += '<dt>Pitch &amp; Voice Seam</dt><dd>' +
-          (ad.f0_median_sd_st != null ? 'Spread: ' + ad.f0_median_sd_st.toFixed(1) + ' st' : '') +
-          (ad.max_seam_st != null ? ' &middot; Max Intra-Turn Seam: ' + ad.max_seam_st.toFixed(1) + ' st' : '') + '</dd>\n';
-      }
-      bHtml += '</dl>\n';
 
       if (ad.flags && ad.flags.length > 0) {
         bHtml += '<div style="margin:6px 0;"><b>Acoustic Flags: </b>';
@@ -1071,6 +1118,10 @@ function closeAudioConv() {
   var drawer = document.getElementById("audio-conv-drawer");
   var scrim = document.getElementById("audio-conv-scrim");
   if (drawer) {
+    var audios = drawer.querySelectorAll("audio");
+    audios.forEach(function(a) {
+      try { a.pause(); } catch (e) {}
+    });
     drawer.classList.remove("on");
     drawer.setAttribute("aria-hidden", "true");
   }

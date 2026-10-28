@@ -51,6 +51,7 @@ from cxas_scrapi.core.audio_transformer import (
     AUDIO_SAMPLE_RATE_HZ,
     AUDIO_SAMPLE_WIDTH,
     AudioTransformer,
+    load_background_noise_segment,
 )
 
 try:
@@ -539,12 +540,9 @@ class BidiSessionHandler:
             )
         if AudioSegment and background_noise_file:
             try:
-                # Load and format to 16000Hz, 1ch, 16-bit (sample width 2) PCM
-                segment = AudioSegment.from_file(background_noise_file)
-                segment = (
-                    segment.set_frame_rate(SAMPLE_RATE)
-                    .set_channels(AUDIO_CHANNELS)
-                    .set_sample_width(SAMPLE_WIDTH)
+                # Load or synthesize and format to 16000Hz, 1ch, 16-bit PCM
+                segment = load_background_noise_segment(
+                    background_noise_file, sample_rate=SAMPLE_RATE
                 )
 
                 # Pre-scale the noise to match the target SNR relative to a
@@ -1652,6 +1650,8 @@ class BidiInteractiveSession:
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
+        burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         skip_playback_wait: bool = True,
         voice_config: dict[str, Any] | None = None,
     ) -> None:
@@ -1661,6 +1661,8 @@ class BidiInteractiveSession:
         self.capture_agent_audio = capture_agent_audio
         self.background_noise_file = background_noise_file
         self.bg_noise_snr = bg_noise_snr
+        self.burst_noise_files = burst_noise_files
+        self.burst_noise_snr = burst_noise_snr
         self.voice_config = voice_config
 
         self.input_queue = queue.Queue()
@@ -1733,6 +1735,9 @@ class BidiInteractiveSession:
                 credentials=self.sessions_client.creds,
                 project_id=self.sessions_client.project_id,
                 background_noise_file=self.background_noise_file,
+                bg_noise_snr=self.bg_noise_snr,
+                burst_noise_files=self.burst_noise_files,
+                burst_noise_snr=self.burst_noise_snr,
                 voice_config=current_voice_config,
             )
             if not input_data.get("audio_bytes"):
@@ -2252,6 +2257,8 @@ class Sessions(Common):
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
+        burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         use_tool_fakes: bool = True,
         skip_playback_wait: bool = True,
         voice_config: dict[str, Any] | None = None,
@@ -2296,6 +2303,8 @@ class Sessions(Common):
             capture_agent_audio=capture_agent_audio,
             background_noise_file=background_noise_file,
             bg_noise_snr=bg_noise_snr,
+            burst_noise_files=burst_noise_files,
+            burst_noise_snr=burst_noise_snr,
             skip_playback_wait=skip_playback_wait,
             voice_config=voice_config,
         )
@@ -2331,7 +2340,9 @@ class Sessions(Common):
         turn_num: int | None = None,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         voice_config: dict[str, Any] | None = None,
         skip_playback_wait: bool = False,
     ) -> typing.Any:
@@ -2523,7 +2534,9 @@ class Sessions(Common):
                             credentials=self.creds,
                             project_id=self.project_id,
                             background_noise_file=background_noise_file,
+                            bg_noise_snr=bg_noise_snr,
                             burst_noise_files=burst_noise_files,
+                            burst_noise_snr=burst_noise_snr,
                             voice_config=current_voice_config,
                         )
                     )
@@ -2547,6 +2560,7 @@ class Sessions(Common):
                     turn_num=turn_num,
                     capture_agent_audio=capture_agent_audio,
                     background_noise_file=background_noise_file,
+                    bg_noise_snr=bg_noise_snr,
                     skip_playback_wait=skip_playback_wait,
                 )
             elif inputs:
@@ -2556,6 +2570,7 @@ class Sessions(Common):
                     turn_num=turn_num,
                     capture_agent_audio=capture_agent_audio,
                     background_noise_file=background_noise_file,
+                    bg_noise_snr=bg_noise_snr,
                     skip_playback_wait=skip_playback_wait,
                 )
             else:

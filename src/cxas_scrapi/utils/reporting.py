@@ -23,15 +23,19 @@ import math
 import os
 import pathlib
 import re
+import statistics
 import typing
+import wave
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import jinja2
+import numpy as np
 import pandas as pd
 import yaml
 
 from cxas_scrapi.core import conversation_history, tools
+from cxas_scrapi.core.audio_transformer import snr_to_noise_level
 from cxas_scrapi.evals import naturalness
 from cxas_scrapi.evals import runner as evals_runner
 from cxas_scrapi.prompts import naturalness_prompts
@@ -652,6 +656,7 @@ def _get_combined_template_module(
         "_fmt_duration": lambda s: f"{s:.1f}s",
         "_fmt_ms": _fmt_ms,
         "_pl_status_cls": _pl_status_cls,
+        "json": json,
     }
     if extra_vars:
         default_vars.update(extra_vars)
@@ -1652,6 +1657,97 @@ def _aggregate_suite_audio_analysis(
 
         # Acoustic Signal & Voice Drift Metrics
         a_metrics = r.get("audio_metrics") or r.get("voice_metrics")
+        if not a_metrics:
+            sess_id = r.get("session_id")
+            if sess_id:
+                local_wavs = []
+                agent_paths = r.get("agent_audio_paths")
+                if isinstance(agent_paths, dict):
+                    local_wavs = [
+                        p
+                        for _, p in sorted(agent_paths.items())
+                        if os.path.exists(p)
+                    ]
+                if not local_wavs:
+                    candidates = sorted(
+                        glob.glob(f"/tmp/scrapi_evals/*{sess_id}*/*agent*.wav")
+                        + glob.glob(f".cxas/audio/{sess_id}/*agent*.wav")
+                    )
+                    local_wavs = [p for p in candidates if os.path.exists(p)]
+                if local_wavs:
+                    try:
+                        call, turns = audio_metrics.measure_call(local_wavs)
+                        call["conversation_id"] = sess_id
+                        r["audio_metrics"] = {"call": call, "turns": turns}
+                        r["audio_drift"] = audio_drift.flag_drift(turns)
+                    except Exception:
+                        try:
+                            fallback_turns = []
+                            total_dur = 0.0
+                            for w_idx, wpath in enumerate(local_wavs):
+                                with wave.open(wpath, "rb") as wf:
+                                    nf = wf.getnframes()
+                                    fr = wf.getframerate()
+                                    dur = nf / float(fr) if fr else 0.0
+                                    total_dur += dur
+                                    raw = wf.readframes(nf)
+                                    samp = np.frombuffer(raw, dtype=np.int16)
+                                    rms = (
+                                        float(
+                                            np.sqrt(
+                                                np.mean(
+                                                    samp.astype(np.float64) ** 2
+                                                )
+                                            )
+                                        )
+                                        if len(samp)
+                                        else 0.0
+                                    )
+                                    db = (
+                                        round(20 * math.log10(rms / 32768.0), 1)
+                                        if rms > 0
+                                        else -100.0
+                                    )
+                                    fallback_turns.append(
+                                        {
+                                            "turn_index": w_idx,
+                                            "duration_s": round(dur, 2),
+                                            "lufs": db,
+                                            "flags": [],
+                                        }
+                                    )
+                            if fallback_turns:
+                                call = {
+                                    "conversation_id": sess_id,
+                                    "duration_s": round(total_dur, 2),
+                                    "lufs_mean": round(
+                                        statistics.mean(
+                                            [t["lufs"] for t in fallback_turns]
+                                        ),
+                                        1,
+                                    ),
+                                    "flags": [],
+                                    "drift_reasons": [],
+                                }
+                                r["audio_metrics"] = {
+                                    "call": call,
+                                    "turns": fallback_turns,
+                                }
+                                r["audio_drift"] = {
+                                    "flags": [],
+                                    "drift_reasons": [],
+                                }
+                        except Exception:
+                            pass
+                    if isinstance(r.get("runs"), list):
+                        for sub_r in r["runs"]:
+                            if isinstance(sub_r, dict) and not sub_r.get(
+                                "audio_metrics"
+                            ):
+                                sub_r["audio_metrics"] = r.get("audio_metrics")
+                                sub_r["audio_drift"] = r.get("audio_drift")
+                    a_metrics = r.get("audio_metrics")
+
         call_metrics: dict[str, Any] = {}
         turn_metrics_rows: list[dict[str, Any]] = []
         if isinstance(a_metrics, tuple) and len(a_metrics) == 2:
@@ -1799,6 +1895,22 @@ def _aggregate_suite_audio_analysis(
                     "flags": t_flags,
                 }
             )
+
+        if not turn_metrics_rows and turn_tts_cache_types:
+            for t_idx, tts_type in enumerate(turn_tts_cache_types, 1):
+                if tts_type:
+                    acoustic_turns.append(
+                        {
+                            "turn": t_idx,
+                            "dur_s": None,
+                            "lufs": None,
+                            "artic_rate": None,
+                            "pitch_hz": None,
+                            "max_seam_st": None,
+                            "tts": tts_type,
+                            "flags": [],
+                        }
+                    )
 
         drift_reasons: list[str] = []
         for dr in drift_rows:
@@ -2284,6 +2396,16 @@ def _aggregate_suite_audio_analysis(
                 "run_idx": per_eval_run_idx,
                 "eval_type": eval_type_str,
                 "session_id": r.get("session_id", ""),
+                "audio_src": (
+                    f"audio/{r['session_id']}/"
+                    + (
+                        "full-session.wav"
+                        if eval_type_str == "golden"
+                        else "full-scenario.wav"
+                    )
+                    if r.get("session_id")
+                    else ""
+                ),
                 "passed": bool(r.get("passed")),
                 "outcome": "passed" if bool(r.get("passed")) else "failed",
                 "grade_key": grade_key,
@@ -3966,6 +4088,7 @@ def generate_combined_html_report(
     sim_wall_clock_s: float | None = None,
     user_agent_extension: str | None = None,
     bg_noise_file: str | None = None,
+    bg_noise_snr: float | None = None,
     burst_noise_files: list[str] | None = None,
     traces_dir: str | None = None,
     audio_analysis: bool | None = None,
@@ -4443,6 +4566,8 @@ def generate_combined_html_report(
         bg_noise_file=(
             os.path.basename(bg_noise_file) if bg_noise_file else None
         ),
+        bg_noise_snr=bg_noise_snr,
+        snr_to_noise_level=snr_to_noise_level,
         burst_noise_files=burst_noise_files,
         tool_results_html=tool_results_html,
         callback_results_html=callback_results_html,
@@ -4993,9 +5118,96 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
     if isinstance(data, list):
         return data
 
-    common_params = data.get("common_session_parameters", {}) or {}
+    common_session_params = (
+        data.get("common_session_parameters")
+        if isinstance(data.get("common_session_parameters"), dict)
+        else {}
+    )
+    common_params_dict = (
+        data.get("common_params")
+        if isinstance(data.get("common_params"), dict)
+        else {}
+    )
+
+    # Merge session parameters: common_session_parameters or common_params
+    merged_common_session_params = common_session_params.copy()
+    if "session_parameters" in common_params_dict and isinstance(
+        common_params_dict["session_parameters"], dict
+    ):
+        merged_common_session_params.update(
+            common_params_dict["session_parameters"]
+        )
+    else:
+        # Non-noise, non-meta keys in common_params act as
+        # common session parameters
+        meta_and_noise_keys = {
+            "background_noise",
+            "background_noise_file",
+            "common_background_noise",
+            "bg_noise_level",
+            "common_bg_noise_level",
+            "noise_level",
+            "bg_noise_snr",
+            "common_bg_noise_snr",
+            "burst_noise",
+            "common_burst_noise",
+            "burst_noise_files",
+            "common_burst_noise_files",
+            "burst_noise_level",
+            "common_burst_noise_level",
+            "burst_noise_snr",
+            "common_burst_noise_snr",
+            "config",
+            "common_config",
+            "expectations",
+            "common_expectations",
+            "naturalness_metric",
+            "common_naturalness_metric",
+        }
+        for k, v in common_params_dict.items():
+            if k not in meta_and_noise_keys:
+                merged_common_session_params[k] = v
+
     common_expectations = data.get("common_expectations", []) or []
     common_naturalness = data.get("common_naturalness_metric")
+
+    common_config = {}
+    if isinstance(data.get("common_config"), dict):
+        common_config = data["common_config"]
+    elif isinstance(data.get("config"), dict):
+        common_config = data["config"]
+
+    # Extract common noise settings from data, common_params, or common_config
+    def _find_common(keys: list[str]) -> Any:
+        for src in (data, common_params_dict, common_config):
+            if isinstance(src, dict):
+                for k in keys:
+                    if k in src and src[k] is not None:
+                        return src[k]
+        return None
+
+    common_bg_noise = _find_common(
+        ["common_background_noise", "background_noise", "background_noise_file"]
+    )
+    common_bg_level = _find_common(
+        ["common_bg_noise_level", "bg_noise_level", "noise_level"]
+    )
+    common_bg_snr = _find_common(["common_bg_noise_snr", "bg_noise_snr"])
+    common_burst_noise = _find_common(
+        [
+            "common_burst_noise",
+            "burst_noise",
+            "burst_noise_files",
+            "common_burst_noise_files",
+        ]
+    )
+    common_burst_level = _find_common(
+        ["common_burst_noise_level", "burst_noise_level"]
+    )
+    common_burst_snr = _find_common(
+        ["common_burst_noise_snr", "burst_noise_snr"]
+    )
+
     cases = data.get("evals", [])
     if not isinstance(cases, list):
         return []
@@ -5006,9 +5218,116 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
             case_copy = c.copy()
             # Merge session parameters
             case_params = case_copy.get("session_parameters", {}) or {}
-            merged = common_params.copy()
-            merged.update(case_params)
-            case_copy["session_parameters"] = merged
+            merged_params = merged_common_session_params.copy()
+            merged_params.update(case_params)
+            case_copy["session_parameters"] = merged_params
+
+            # Merge config
+            if common_config:
+                case_cfg = (
+                    case_copy.get("config").copy()
+                    if isinstance(case_copy.get("config"), dict)
+                    else {}
+                )
+                merged_cfg = common_config.copy()
+                merged_cfg.update(case_cfg)
+                case_copy["config"] = merged_cfg
+
+            # Merge background noise defaults if present
+            case_bg = case_copy.get("background_noise")
+            case_cfg_bg = (
+                case_copy["config"].get("background_noise")
+                if isinstance(case_copy.get("config"), dict)
+                else None
+            )
+
+            # Check if this case explicitly opted out of background noise
+            if case_bg is False or case_cfg_bg is False:
+                case_copy["background_noise"] = False
+                if "config" not in case_copy or not isinstance(
+                    case_copy["config"], dict
+                ):
+                    case_copy["config"] = {}
+                case_copy["config"]["background_noise"] = False
+            else:
+                # Merge background_noise: if both common and case are dicts,
+                # merge them
+                if isinstance(common_bg_noise, dict) and isinstance(
+                    case_bg, dict
+                ):
+                    merged_bg = common_bg_noise.copy()
+                    merged_bg.update(case_bg)
+                    case_copy["background_noise"] = merged_bg
+                elif case_bg is not None:
+                    case_copy["background_noise"] = case_bg
+                elif common_bg_noise is not None:
+                    case_copy["background_noise"] = (
+                        common_bg_noise.copy()
+                        if isinstance(common_bg_noise, dict)
+                        else common_bg_noise
+                    )
+
+                # Propagate common bg noise level and SNR if not specified
+                if common_bg_level is not None and (
+                    "bg_noise_level" not in case_copy
+                    and (
+                        not isinstance(case_copy.get("config"), dict)
+                        or "bg_noise_level" not in case_copy["config"]
+                    )
+                ):
+                    case_copy["bg_noise_level"] = common_bg_level
+
+                if common_bg_snr is not None and (
+                    "bg_noise_snr" not in case_copy
+                    and (
+                        not isinstance(case_copy.get("config"), dict)
+                        or "bg_noise_snr" not in case_copy["config"]
+                    )
+                ):
+                    case_copy["bg_noise_snr"] = common_bg_snr
+
+                # Merge burst noise
+                case_burst = case_copy.get("burst_noise")
+                case_cfg_burst = (
+                    case_copy["config"].get("burst_noise")
+                    if isinstance(case_copy.get("config"), dict)
+                    else None
+                )
+                if case_burst is False or case_cfg_burst is False:
+                    case_copy["burst_noise"] = False
+                else:
+                    if isinstance(common_burst_noise, dict) and isinstance(
+                        case_burst, dict
+                    ):
+                        merged_burst = common_burst_noise.copy()
+                        merged_burst.update(case_burst)
+                        case_copy["burst_noise"] = merged_burst
+                    elif case_burst is not None:
+                        case_copy["burst_noise"] = case_burst
+                    elif common_burst_noise is not None:
+                        case_copy["burst_noise"] = (
+                            common_burst_noise.copy()
+                            if isinstance(common_burst_noise, dict)
+                            else common_burst_noise
+                        )
+
+                    if common_burst_level is not None and (
+                        "burst_noise_level" not in case_copy
+                        and (
+                            not isinstance(case_copy.get("config"), dict)
+                            or "burst_noise_level" not in case_copy["config"]
+                        )
+                    ):
+                        case_copy["burst_noise_level"] = common_burst_level
+
+                    if common_burst_snr is not None and (
+                        "burst_noise_snr" not in case_copy
+                        and (
+                            not isinstance(case_copy.get("config"), dict)
+                            or "burst_noise_snr" not in case_copy["config"]
+                        )
+                    ):
+                        case_copy["burst_noise_snr"] = common_burst_snr
 
             # Merge expectations
             case_expectations = case_copy.get("expectations", []) or []
@@ -5417,6 +5736,7 @@ def generate_combined_report_from_dir(
     golden_parallel: int = 1,
     golden_timeout: int = 600,
     bg_noise_file: str | None = None,
+    bg_noise_snr: float | None = None,
     burst_noise_files: list[str] | None = None,
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
@@ -5802,6 +6122,7 @@ def run_all_evals(
     golden_timeout: int = 600,
     include: list[str] | None = None,
     bg_noise_file: str | None = None,
+    bg_noise_snr: float | None = None,
     burst_noise_files: list[str] | None = None,
     use_tool_fakes: bool = False,
     timestamp: str | None = None,

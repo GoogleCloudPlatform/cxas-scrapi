@@ -160,6 +160,84 @@ results = sim_evals.run_simulations(
 
 ---
 
+## Background & Acoustic Noise Stress Testing
+
+When evaluating voice agents in `audio` modality, you can simulate real-world calling conditions by injecting background acoustic noise and intermittent burst noise directly onto simulated caller turns.
+
+### YAML Configuration
+
+Add `background_noise` and optional burst noise to your test case, or configure them file-wide via `common_background_noise` / `common_params`:
+
+```yaml
+# File-level common parameters applied to all test cases in this file:
+common_background_noise: "cafe"    # Preset, custom WAV, or shorthand "cafe:MEDIUM"
+common_bg_noise_level: "MEDIUM"     # "LOW" (20dB), "MEDIUM" (12dB), or "HIGH" (5dB)
+
+# Or grouped under common_params:
+# common_params:
+#   background_noise: "call_center"
+#   bg_noise_level: "LOW"
+
+evals:
+  - name: "order_lookup_noisy_cafe"
+    # Inherits common_background_noise and common_bg_noise_level automatically,
+    # or override / customize per-eval:
+    burst_noise:
+      files: ["dog_barking"]      # Built-in preset or custom WAV paths
+      snr: "HIGH"                 # Categorical level or float dB (5.0 dB)
+    voice_config:
+      prompt: "Speak with a slightly hurried, frustrated tone"  # Custom Gemini TTS style
+    steps:
+      - goal: "Ask about the status of order ORD-12345"
+        success_criteria: "The agent acknowledged order ORD-12345"
+
+  - name: "clean_quiet_call"
+    background_noise: false       # Explicit opt-out for quiet baseline testing
+    steps:
+      - goal: "Ask for store hours"
+        success_criteria: "Agent provided store hours"
+```
+
+### Noise Levels and Shorthand
+
+Categorical noise levels map directly to standardized Signal-to-Noise Ratios:
+- `LOW`: **20.0 dB SNR** (light, subtle background noise)
+- `MEDIUM`: **12.0 dB SNR** (moderate everyday background chatter/traffic; aliases: `med`, `moderate`)
+- `HIGH`: **5.0 dB SNR** (heavy, challenging acoustic noise; aliases: `heavy`, `loud`)
+
+You can also use shorthand syntax in `background_noise` directly, e.g.:
+```yaml
+background_noise: "cafe:HIGH"      # Equivalent to preset: cafe at 5.0 dB SNR
+background_noise: "traffic:LOW"    # Equivalent to preset: traffic at 20.0 dB SNR
+```
+
+### Built-in Presets
+
+SCRAPI bundles 13 verified acoustic presets (normalized to 16 kHz mono PCM):
+
+| Category | Presets | Description |
+|---|---|---|
+| **Public & Commercial** | `cafe`, `call_center`, `traffic` | Real coffee shop clatter, call center agents on headsets, and street traffic |
+| **Domestic & Indoor** | `baby_crying`, `kids_noise`, `dog_barking`, `tv_radio`, `kitchen` | Infant crying, playground children, barking dog, room TV news broadcast, and running sink water |
+| **Environmental** | `cross_talk`, `wind` | Continuous secondary human conversation, and Pixel 10 mic wind-tunnel buffeting (12mph) |
+| **Mathematical Color Noise** | `white`, `pink`, `brown` | Flat-spectrum, $1/\sqrt{f}$, and $1/f$ algorithmic noise |
+
+### Programmatic Usage
+
+Pass noise configuration directly to `SimulationEvals`:
+
+```python
+sim_evals = SimulationEvals(
+    app_name="projects/my-project/locations/us/apps/my-app",
+    modality="audio",
+    background_noise_file="call_center",
+    bg_noise_snr="MEDIUM",  # or 12.0
+    burst_noise_files=["dog_barking"],
+    burst_noise_snr="HIGH",  # or 5.0
+)
+```
+---
+
 ## The `SimulationEvals` class
 
 For programmatic use, import `SimulationEvals`:

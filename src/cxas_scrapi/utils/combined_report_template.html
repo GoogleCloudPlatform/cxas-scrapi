@@ -932,13 +932,6 @@
         {% elif s_dur > 0 %}
           <br><span class='meta'>~{{ _fmt_duration(s_dur) }}</span>
         {% endif %}
-        {% if bg_noise_file or burst_noise_files %}
-          <div style="font-size:0.85em;color:#e67e22;margin-top:6px;">
-            <b>Noise Injection Active:</b>
-            {% if bg_noise_file %}<br>BG: {{ bg_noise_file }}{% endif %}
-            {% if burst_noise_files %}<br>Burst: {{ burst_noise_files | length }} file(s){% endif %}
-          </div>
-        {% endif %}
       </div>
     {% endif %}
 
@@ -1298,18 +1291,40 @@
     {% set cls = "pass-bg" if s['pass'] == s['total'] else "fail-bg" %}
     {% set passed_str = "true" if s['pass'] == s['total'] else "false" %}
 
+    {% set first_run = s["runs"][0] if s["runs"] else {} %}
+    {% set first_bg_dict = first_run.get("background_noise") if first_run.get("background_noise") is mapping else {} %}
+    {% set card_bg = first_run.get("background_noise_file") or first_bg_dict.get("preset") or first_bg_dict.get("file") or bg_noise_file %}
+    {% set card_snr = first_run.get("bg_noise_snr") if first_run.get("bg_noise_snr") is not none else (first_bg_dict.get("snr") if first_bg_dict.get("snr") is not none else bg_noise_snr) %}
+    {% set card_level = first_run.get("bg_noise_level") or (snr_to_noise_level(card_snr) if snr_to_noise_level and card_snr is not none else "") %}
     <div class="eval-card" id="eval-sim-{{ name }}" data-passed="{{ passed_str }}">
       <div class="eval-header {{ cls }}">
-        <span>{{ name | escape }} <span class="badge sim">sim</span></span>
+        <span>{{ name | escape }} <span class="badge sim">sim</span>{% if card_bg %} <span class="badge warn" style="margin-left:6px;">&#128266; BG: {{ card_bg | escape }}{% if card_snr is not none %} ({% if card_level %}{{ card_level }} &middot; {% endif %}{{ card_snr }} dB SNR){% endif %}</span>{% endif %}</span>
         <span>{{ score }}</span>
       </div>
       <div class="eval-body">
         {% for r in s["runs"] %}
           {% set run_cls = "pass" if r.get("passed") else "fail" %}
           {% set failed_str = "false" if r.get("passed") else "true" %}
+          {% set r_bg_dict = r.get("background_noise") if r.get("background_noise") is mapping else {} %}
+          {% set run_bg = r.get("background_noise_file") or r_bg_dict.get("preset") or r_bg_dict.get("file") or bg_noise_file %}
+          {% set run_snr = r.get("bg_noise_snr") if r.get("bg_noise_snr") is not none else (r_bg_dict.get("snr") if r_bg_dict.get("snr") is not none else bg_noise_snr) %}
+          {% set run_level = r.get("bg_noise_level") or (snr_to_noise_level(run_snr) if snr_to_noise_level and run_snr is not none else "") %}
+          {% set run_burst = r.get("burst_noise_files") or r_bg_dict.get("burst_files") or burst_noise_files %}
+          {% set run_burst_snr = r.get("burst_noise_snr") if r.get("burst_noise_snr") is not none else r_bg_dict.get("burst_snr") %}
+          {% set run_burst_level = r.get("burst_noise_level") or (snr_to_noise_level(run_burst_snr) if snr_to_noise_level and run_burst_snr is not none else "") %}
 
           <details class="run-detail" data-failed="{{ failed_str }}">
             <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }} | turns: {{ r.get('turns','?') }}{% if r.get('naturalness') %} | naturalness: {{ r['naturalness'] }}{% endif %}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}</summary>
+
+            {% if run_bg or run_burst %}
+              <div class="expectation" style="border-left: 3px solid #e67e22; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <div>
+                  <b>&#128266; Background Noise Injection:</b>
+                  {% if run_bg %}Continuous preset/file <code>{{ run_bg | escape }}</code>{% if run_level %} at <b>{{ run_level }}</b>{% endif %}{% if run_snr is not none %} ({{ run_snr }} dB SNR){% endif %}{% endif %}
+                  {% if run_burst %}{% if run_bg %} &middot; {% endif %}Burst noise ({{ run_burst | length }} file(s){% if run_burst_level %} at <b>{{ run_burst_level }}</b>{% endif %}{% if run_burst_snr is not none %} @ {{ run_burst_snr }} dB SNR{% endif %}): <code>{{ run_burst | join(', ') | escape }}</code>{% endif %}
+                </div>
+              </div>
+            {% endif %}
 
             {% if r.get('session_id') %}
               {% if ces_base %}
@@ -1426,7 +1441,7 @@
                       {% if kind == "user" %}
                         {% set ns.user_turn = ns.user_turn + 1 %}
                         <div class="user"><b>User:</b> {{ item[1] | escape }}
-                          {% if sim_modality == "audio" and r.get('session_id') %}
+                          {% if sim_modality == "audio" and r.get('session_id') and not item[1].startswith("event:") and not item[1].startswith("dtmf:") %}
                             <audio controls preload="none" class="turn-audio" src="audio/{{ r['session_id'] }}/user-turn-{{ ns.user_turn }}.wav"></audio>
                           {% endif %}
                         </div>

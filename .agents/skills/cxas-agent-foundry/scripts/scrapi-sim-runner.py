@@ -24,24 +24,28 @@ Usage:
   python scripts/scrapi-sim-runner.py convert [--priority P0]
   python scripts/scrapi-sim-runner.py list
 """
-import typing
 
 import argparse
 import json
 import os
 import sys
 import time
+import typing
 from datetime import datetime
 from typing import Any
 
 import yaml
 from config import get_project_path, load_app_name
 
+from cxas_scrapi.core.audio_transformer import parse_noise_snr
 from cxas_scrapi.evals.simulation_evals import (
     LLMUserConversation,
     SimulationEvals,
 )
-from cxas_scrapi.utils.reporting import generate_html_report
+from cxas_scrapi.utils.reporting import (
+    _load_sim_test_cases,
+    generate_html_report,
+)
 
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/scrapi-sim-runner"
 
@@ -65,17 +69,27 @@ def load_sim_templates() -> typing.Any:
     """Load sim eval templates from simulations.yaml."""
     if not os.path.exists(SIM_EVALS_YAML):
         return {}
-    with open(SIM_EVALS_YAML) as f:
-        data = yaml.safe_load(f)
-    if isinstance(data, list):
-        return {ev["name"]: ev for ev in data}
 
-    evals = (data or {}).get("evals", [])
-    common_expectations = (data or {}).get("common_expectations", [])
-    if common_expectations:
-        for ev in evals:
-            ev.setdefault("expectations", []).extend(common_expectations)
-    return {ev["name"]: ev for ev in evals}
+    cases = _load_sim_test_cases(SIM_EVALS_YAML)
+    with open(SIM_EVALS_YAML) as f:
+        data = yaml.safe_load(f) or {}
+    common_expectations = (
+        data.get("common_expectations", []) if isinstance(data, dict) else []
+    )
+
+    res = {}
+    for c in cases:
+        if isinstance(c, dict) and "name" in c:
+            c_copy = c.copy()
+            if common_expectations:
+                spec = [
+                    x
+                    for x in c_copy.get("expectations", [])
+                    if x not in common_expectations
+                ]
+                c_copy["expectations"] = spec + common_expectations
+            res[c_copy["name"]] = c_copy
+    return res
 
 
 def get_app_name() -> typing.Any:
@@ -93,20 +107,13 @@ def build_test_case(ev: dict[str, Any]) -> dict[str, Any] | None:
     if name not in templates:
         return None
 
-    template = templates[name]
-
-    return {
-        "name": name,
-        "steps": template["steps"],
-        "expectations": template.get("expectations", []),
-        "audio_expectations": template.get("audio_expectations", []),
-        "session_parameters": template.get("session_parameters", {}),
-        "metadata": {
-            "prd_id": ev.get("prd_id", ""),
-            "priority": ev.get("priority", ""),
-            "severity": ev.get("severity", ""),
-        },
+    template = templates[name].copy()
+    template["metadata"] = {
+        "prd_id": ev.get("prd_id", ""),
+        "priority": ev.get("priority", ""),
+        "severity": ev.get("severity", ""),
     }
+    return template
 
 
 class EnhancedSimRunner(SimulationEvals):
@@ -122,7 +129,9 @@ class EnhancedSimRunner(SimulationEvals):
         modality: str = "text",
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
         initial_utterance: str = "Hi",
@@ -137,7 +146,9 @@ class EnhancedSimRunner(SimulationEvals):
             modality=modality,
             capture_agent_audio=capture_agent_audio,
             background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
             burst_noise_files=burst_noise_files,
+            burst_noise_snr=burst_noise_snr,
             use_tool_fakes=use_tool_fakes,
             voice_config=voice_config,
             initial_utterance=initial_utterance,
@@ -152,7 +163,9 @@ def _parse_priorities(priority: typing.Any) -> typing.Any:
     return {p.strip().upper() for p in priority.split(",") if p.strip()}
 
 
-def filter_evals(evals: typing.Any, priority: typing.Any=None, tag: typing.Any=None) -> typing.Any:
+def filter_evals(
+    evals: typing.Any, priority: typing.Any = None, tag: typing.Any = None
+) -> typing.Any:
     prios = _parse_priorities(priority)
     if prios:
         filtered = []
@@ -160,9 +173,9 @@ def filter_evals(evals: typing.Any, priority: typing.Any=None, tag: typing.Any=N
             # Check both 'priority' field and 'tags' list for priority matching
             tags = e.get("tags", [])
             prio_field = e.get("priority", "")
-            if prio_field and prio_field.upper() in prios:
-                filtered.append(e)
-            elif tags and prios.intersection({t.upper() for t in tags}):
+            tag_set = {t.upper() for t in tags}
+            tags_match = bool(tags and prios.intersection(tag_set))
+            if (prio_field and prio_field.upper() in prios) or tags_match:
                 filtered.append(e)
             elif not prio_field and not tags:
                 # No priority info at all — include with warning
@@ -302,6 +315,25 @@ def cmd_run(args: typing.Any) -> typing.Any:
     print(f"App: {app_name}\n")
 
     _batch_start = time.time()
+    bg_noise = getattr(args, "background_noise", None)
+    bg_snr_raw = getattr(args, "bg_noise_level", None) or getattr(
+        args, "bg_noise_snr", None
+    )
+    bg_snr = None
+    if bg_snr_raw is not None:
+        bg_snr = parse_noise_snr(bg_snr_raw)
+    burst_snr_raw = getattr(args, "burst_noise_level", None) or getattr(
+        args, "burst_noise_snr", None
+    )
+    burst_snr = None
+    if burst_snr_raw is not None:
+        burst_snr = parse_noise_snr(burst_snr_raw)
+    burst_files = None
+    if getattr(args, "burst_noise_files", None):
+        burst_files = [
+            f.strip() for f in args.burst_noise_files.split(",") if f.strip()
+        ]
+
     sim = EnhancedSimRunner(
         app_name=app_name,
         user_agent_extension=USER_AGENT_EXTENSION,
@@ -318,6 +350,10 @@ def cmd_run(args: typing.Any) -> typing.Any:
         verbose=args.verbose,
         use_tool_fakes=args.use_tool_fakes,
         capture_agent_audio=args.capture_agent_audio,
+        background_noise_file=bg_noise,
+        bg_noise_snr=bg_snr,
+        burst_noise_files=burst_files,
+        burst_noise_snr=burst_snr,
     )
 
     # Summary
@@ -458,6 +494,56 @@ def main() -> typing.Any:
         type=str,
         default=None,
         help="Target a specific deployment ID",
+    )
+    p_run.add_argument(
+        "--background-noise",
+        type=str,
+        default=None,
+        help="Optional: Continuous background noise preset or audio file path.",
+    )
+    p_run.add_argument(
+        "--bg-noise-snr",
+        type=str,
+        default=None,
+        help=(
+            "Optional: SNR in dB or level ('LOW', 'MEDIUM', 'HIGH') for "
+            "background noise (default: 15.0 dB / MEDIUM)."
+        ),
+    )
+    p_run.add_argument(
+        "--bg-noise-level",
+        type=str,
+        default=None,
+        choices=["LOW", "MEDIUM", "HIGH", "low", "medium", "high"],
+        help=(
+            "Optional: Alias for --bg-noise-snr level "
+            "('LOW', 'MEDIUM', 'HIGH')."
+        ),
+    )
+    p_run.add_argument(
+        "--burst-noise-files",
+        type=str,
+        default=None,
+        help="Optional: Comma-separated list of burst noise audio file paths.",
+    )
+    p_run.add_argument(
+        "--burst-noise-snr",
+        type=str,
+        default=None,
+        help=(
+            "Optional: SNR in dB or level ('LOW', 'MEDIUM', 'HIGH') for "
+            "burst noise (default: 5.0 dB / HIGH)."
+        ),
+    )
+    p_run.add_argument(
+        "--burst-noise-level",
+        type=str,
+        default=None,
+        choices=["LOW", "MEDIUM", "HIGH", "low", "medium", "high"],
+        help=(
+            "Optional: Alias for --burst-noise-snr level "
+            "('LOW', 'MEDIUM', 'HIGH')."
+        ),
     )
 
     args = parser.parse_args()

@@ -552,7 +552,9 @@ def test_run_session_audio_modality_voice_config(
             project_id=sessions.project_id,
             voice_config=custom_voice,
             background_noise_file=None,
+            bg_noise_snr=15.0,
             burst_noise_files=None,
+            burst_noise_snr=5.0,
         )
 
 
@@ -993,6 +995,24 @@ def test_bidi_session_handler_pydub_missing_raises_error() -> None:
         assert "pydub is not installed or failed to import" in str(
             exc_info.value
         )
+
+
+def test_bidi_session_handler_with_preset_background_noise() -> None:
+    """Test BidiSessionHandler synthesizes preset noise and extracts chunks."""
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake_token",
+        config=config,
+        inputs=[],
+        background_noise_file="call_center",
+        bg_noise_snr=12.0,
+    )
+    assert handler.bg_noise_segment is not None
+    assert len(handler.bg_noise_segment) > 0
+    chunk = handler._get_next_noise_chunk(100)
+    assert len(chunk) == int(16000 * 2 * 0.1)
+    assert chunk != b"\x00" * len(chunk)
 
 
 @patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")

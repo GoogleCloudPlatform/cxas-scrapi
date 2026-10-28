@@ -38,6 +38,7 @@ from google import genai
 from rich.progress import Progress
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.audio_transformer import resolve_noise_config
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import BidiSessionError, Sessions
@@ -1400,7 +1401,9 @@ class SimulationEvals(Apps):
         turn_num: int | None = None,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
     ) -> Any:
@@ -1417,6 +1420,10 @@ class SimulationEvals(Apps):
             "burst_noise_files": burst_noise_files,
             "use_tool_fakes": use_tool_fakes,
         }
+        if background_noise_file is not None:
+            run_kwargs["bg_noise_snr"] = bg_noise_snr
+        if burst_noise_files is not None:
+            run_kwargs["burst_noise_snr"] = burst_noise_snr
         if voice_config is not None:
             run_kwargs["voice_config"] = voice_config
 
@@ -1530,7 +1537,9 @@ class SimulationEvals(Apps):
         modality: str = "text",
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
         initial_utterance: str = _FIRST_UTTERANCE,
@@ -1609,16 +1618,36 @@ class SimulationEvals(Apps):
             single_bidi_stream = True
             skip_playback_wait = False
 
+        resolved_noise = resolve_noise_config(
+            config_or_case=test_case,
+            background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
+            burst_noise_files=burst_noise_files,
+            burst_noise_snr=burst_noise_snr,
+        )
+        effective_bg_file = resolved_noise["background_noise_file"]
+        effective_bg_snr = resolved_noise["bg_noise_snr"]
+        effective_burst_files = resolved_noise["burst_noise_files"]
+        effective_burst_snr = resolved_noise["burst_noise_snr"]
+
         interactive_session = None
         if modality == "audio" and single_bidi_stream:
             client = self.sessions_client
+            create_kwargs: dict[str, Any] = {
+                "session_id": session_id,
+                "capture_agent_audio": capture_agent_audio,
+                "background_noise_file": effective_bg_file,
+                "use_tool_fakes": use_tool_fakes,
+                "skip_playback_wait": skip_playback_wait,
+                "voice_config": voice_config,
+            }
+            if effective_bg_file is not None:
+                create_kwargs["bg_noise_snr"] = effective_bg_snr
+            if effective_burst_files is not None:
+                create_kwargs["burst_noise_files"] = effective_burst_files
+                create_kwargs["burst_noise_snr"] = effective_burst_snr
             interactive_session = client.create_interactive_session(
-                session_id=session_id,
-                capture_agent_audio=capture_agent_audio,
-                background_noise_file=background_noise_file,
-                use_tool_fakes=use_tool_fakes,
-                skip_playback_wait=skip_playback_wait,
-                voice_config=voice_config,
+                **create_kwargs
             )
             interactive_session.start()
 
@@ -1757,8 +1786,10 @@ class SimulationEvals(Apps):
                         console_logging=console_logging,
                         turn_num=current_sim_turn,
                         capture_agent_audio=capture_agent_audio,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
+                        background_noise_file=effective_bg_file,
+                        bg_noise_snr=effective_bg_snr,
+                        burst_noise_files=effective_burst_files,
+                        burst_noise_snr=effective_burst_snr,
                         use_tool_fakes=use_tool_fakes,
                         voice_config=voice_config,
                     )
@@ -1900,7 +1931,9 @@ class SimulationEvals(Apps):
         parallel: int,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
@@ -1926,7 +1959,9 @@ class SimulationEvals(Apps):
                 modality=modality,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
+                bg_noise_snr=bg_noise_snr,
                 burst_noise_files=burst_noise_files,
+                burst_noise_snr=burst_noise_snr,
                 use_tool_fakes=use_tool_fakes,
                 skip_playback_wait=skip_playback_wait,
                 single_bidi_stream=single_bidi_stream,
@@ -2047,6 +2082,24 @@ class SimulationEvals(Apps):
             audio_drift_res = getattr(conv, "audio_drift_result", None)
             if audio_drift_res and not audio_drift_res.get("error"):
                 result["audio_drift"] = audio_drift_res
+
+            noise_cfg = resolve_noise_config(
+                tc,
+                background_noise_file=background_noise_file,
+                bg_noise_snr=bg_noise_snr,
+                burst_noise_files=burst_noise_files,
+                burst_noise_snr=burst_noise_snr,
+            )
+            if noise_cfg["background_noise_file"]:
+                result["background_noise_file"] = noise_cfg[
+                    "background_noise_file"
+                ]
+                result["bg_noise_snr"] = noise_cfg["bg_noise_snr"]
+                result["bg_noise_level"] = noise_cfg["bg_noise_level"]
+            if noise_cfg["burst_noise_files"]:
+                result["burst_noise_files"] = noise_cfg["burst_noise_files"]
+                result["burst_noise_snr"] = noise_cfg["burst_noise_snr"]
+                result["burst_noise_level"] = noise_cfg["burst_noise_level"]
 
             return result
         except Exception as e:
@@ -2206,7 +2259,9 @@ class SimulationEvals(Apps):
         verbose: bool,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
@@ -2282,7 +2337,9 @@ class SimulationEvals(Apps):
         verbose: bool = False,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         expectations_only: bool | None = None,
         skip_playback_wait: bool = False,
@@ -2410,7 +2467,9 @@ class SimulationEvals(Apps):
             verbose,
             capture_agent_audio=capture_agent_audio,
             background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
             burst_noise_files=burst_noise_files,
+            burst_noise_snr=burst_noise_snr,
             use_tool_fakes=use_tool_fakes,
             skip_playback_wait=skip_playback_wait,
             single_bidi_stream=single_bidi_stream,
@@ -2485,7 +2544,9 @@ class SimulationEvals(Apps):
                 verbose,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
+                bg_noise_snr=bg_noise_snr,
                 burst_noise_files=burst_noise_files,
+                burst_noise_snr=burst_noise_snr,
                 use_tool_fakes=use_tool_fakes,
                 skip_playback_wait=skip_playback_wait,
                 single_bidi_stream=single_bidi_stream,
