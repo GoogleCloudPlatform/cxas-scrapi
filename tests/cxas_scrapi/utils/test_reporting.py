@@ -4384,3 +4384,45 @@ def test_generate_combined_html_report_with_ces_recordings(
     assert "seekAudio('scenario_a__run1'," in content
     assert "call setup before greeting" in content
     assert "dead air 4.50s" in content
+
+
+def test_generate_combined_report_from_dir_forwards_noise_snr(
+    tmp_path: typing.Any,
+) -> None:
+    out_file = str(tmp_path / "combined_report.html")
+    mock_run_results = {
+        "simulation": [],
+        "golden": [],
+        "tool": [],
+        "callback": [],
+    }
+    with (
+        patch(
+            "cxas_scrapi.utils.reporting.evals_runner.run_all_evals",
+            return_value=mock_run_results,
+        ) as mock_runner,
+        patch(
+            "cxas_scrapi.utils.reporting.generate_combined_html_report",
+            return_value=out_file,
+        ) as mock_html,
+    ):
+        res_path = generate_combined_report_from_dir(
+            output_dir=str(tmp_path),
+            app_name="projects/p/locations/l/apps/a",
+            run=True,
+            include=["sims"],
+            modality="audio",
+            bg_noise_file="cafe",
+            bg_noise_snr=0.0,
+            burst_noise_files=["dog_barking"],
+            burst_noise_snr=2.0,
+        )
+
+    assert res_path == out_file
+    mock_runner.assert_called_once()
+    assert mock_runner.call_args.kwargs["bg_noise_file"] == "cafe"
+    assert mock_runner.call_args.kwargs["bg_noise_snr"] == 0.0
+    assert mock_runner.call_args.kwargs["burst_noise_files"] == ["dog_barking"]
+    assert mock_runner.call_args.kwargs["burst_noise_snr"] == 2.0
+    mock_html.assert_called_once()
+    assert mock_html.call_args.kwargs["bg_noise_snr"] == 0.0

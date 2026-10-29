@@ -1670,7 +1670,9 @@ def test_simulation_evals_run_simulations_use_tool_fakes(
         1,
         capture_agent_audio=False,
         background_noise_file=None,
+        bg_noise_snr=None,
         burst_noise_files=None,
+        burst_noise_snr=None,
         use_tool_fakes=True,
         skip_playback_wait=False,
         single_bidi_stream=False,
@@ -1711,7 +1713,9 @@ def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
         2,
         capture_agent_audio=False,
         background_noise_file=None,
+        bg_noise_snr=None,
         burst_noise_files=None,
+        burst_noise_snr=None,
         use_tool_fakes=True,
         skip_playback_wait=False,
         single_bidi_stream=False,
@@ -1790,7 +1794,9 @@ def test_simulation_evals_run_simulations_capture_agent_audio(
         1,
         capture_agent_audio=True,
         background_noise_file=None,
+        bg_noise_snr=None,
         burst_noise_files=None,
+        burst_noise_snr=None,
         use_tool_fakes=False,
         skip_playback_wait=False,
         single_bidi_stream=False,
@@ -3391,3 +3397,175 @@ def test_inconclusive_reason_detects_zero_caller_turns_and_retries() -> None:
         results[0]["retried_because"]
         == "caller turns never reached agent (0 turns)"
     )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_run_simulations_forwards_noise_snr_sequential(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+    mock_eval_conv.expectation_results = []
+    mock_eval_conv.current_turn = 1
+    mock_eval_conv.get_transcript.return_value = "transcript"
+    mock_eval_conv.naturalness_result = None
+
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello!"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with (
+        patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"),
+        patch("cxas_scrapi.core.apps.AgentServiceClient"),
+    ):
+        simulator = SimulationEvals(app_name=app_name)
+
+    results = simulator.run_simulations(
+        test_cases=[{"name": "seq_snr_case", "steps": []}],
+        runs=1,
+        parallel=1,
+        modality="audio",
+        background_noise_file="cafe",
+        bg_noise_snr=0.0,
+        burst_noise_files=["dog_barking"],
+        burst_noise_snr=2.0,
+        infra_retries=0,
+    )
+
+    assert len(results) == 1
+    assert results[0]["bg_noise_snr"] == 0.0
+    assert results[0]["burst_noise_snr"] == 2.0
+    assert mock_sessions.run.call_args.kwargs["bg_noise_snr"] == 0.0
+    assert mock_sessions.run.call_args.kwargs["burst_noise_snr"] == 2.0
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_run_simulations_forwards_noise_snr_parallel(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+
+    def make_conv(*_args: typing.Any, **_kwargs: typing.Any) -> MagicMock:
+        conv = MagicMock()
+        conv.next_user_utterance.side_effect = [
+            ("event: welcome", {}),
+            ("", {}),
+        ]
+        conv.steps_progress = []
+        conv.expectation_results = []
+        conv.current_turn = 1
+        conv.get_transcript.return_value = "transcript"
+        conv.naturalness_result = None
+        return conv
+
+    mock_llm_conv_class.side_effect = make_conv
+
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello!"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with (
+        patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"),
+        patch("cxas_scrapi.core.apps.AgentServiceClient"),
+    ):
+        simulator = SimulationEvals(app_name=app_name)
+
+    results = simulator.run_simulations(
+        test_cases=[
+            {"name": "par_snr_1", "steps": []},
+            {"name": "par_snr_2", "steps": []},
+        ],
+        runs=1,
+        parallel=2,
+        modality="audio",
+        background_noise_file="cafe",
+        bg_noise_snr=0.0,
+        burst_noise_files=["dog_barking"],
+        burst_noise_snr=2.0,
+        infra_retries=0,
+    )
+
+    assert len(results) == 2
+    for res in results:
+        assert res["bg_noise_snr"] == 0.0
+        assert res["burst_noise_snr"] == 2.0
+    assert mock_sessions.run.call_count == 2
+    for call in mock_sessions.run.call_args_list:
+        assert call.kwargs["bg_noise_snr"] == 0.0
+        assert call.kwargs["burst_noise_snr"] == 2.0
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_run_simulations_platform_local_fallback_forwards_noise_snr(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+    mock_eval_conv.expectation_results = []
+    mock_eval_conv.current_turn = 1
+    mock_eval_conv.get_transcript.return_value = "transcript"
+    mock_eval_conv.naturalness_result = None
+
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello!"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with (
+        patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"),
+        patch("cxas_scrapi.core.apps.AgentServiceClient"),
+    ):
+        simulator = SimulationEvals(app_name=app_name)
+
+    with patch.object(
+        simulator, "run_simulations_on_platform"
+    ) as mock_platform:
+        results = simulator.run_simulations(
+            test_cases=[{"name": "platform_fallback_snr", "steps": []}],
+            runs=1,
+            parallel=1,
+            modality="audio",
+            background_noise_file="cafe",
+            bg_noise_snr=0.0,
+            burst_noise_files=["dog_barking"],
+            burst_noise_snr=2.0,
+            infra_retries=0,
+            run_on_platform=True,
+        )
+
+    mock_platform.assert_not_called()
+    assert len(results) == 1
+    assert results[0]["bg_noise_snr"] == 0.0
+    assert results[0]["burst_noise_snr"] == 2.0
+    assert mock_sessions.run.call_args.kwargs["bg_noise_snr"] == 0.0
+    assert mock_sessions.run.call_args.kwargs["burst_noise_snr"] == 2.0
