@@ -27,7 +27,8 @@ import shutil
 import time
 import typing
 import uuid
-from collections.abc import Callable
+import zlib
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -557,6 +558,69 @@ def cleanup_session_dir(func: typing.Any) -> typing.Any:
     return wrapper
 
 
+def _voice_locale(voice_name: str) -> str:
+    """Extracts the BCP-47 locale prefix from a TTS voice name."""
+    parts = voice_name.split("-")
+    if len(parts) >= 2:
+        return f"{parts[0]}-{parts[1]}"
+    return "en-US"
+
+
+def _scenario_locale(session_parameters: Mapping[str, Any] | None) -> str:
+    """Determines the target locale from scenario session_parameters."""
+    if not session_parameters:
+        return "en-US"
+    explicit_locale = str(session_parameters.get("locale") or "").strip()
+    if explicit_locale and "-" in explicit_locale:
+        return explicit_locale
+    user_lang = str(session_parameters.get("user_lang") or "").strip().upper()
+    if user_lang in {"S", "ES"} or user_lang.startswith("ES"):
+        return "es-US"
+    return "en-US"
+
+
+def expected_caller_turns(tc: Mapping[str, Any]) -> int:
+    """Returns the number of expected caller turns/steps in a scenario."""
+    steps = tc.get("steps") or []
+    if isinstance(steps, list) and steps:
+        return len(steps)
+    turns = tc.get("turns") or tc.get("conversation_Turns") or []
+    if isinstance(turns, list) and turns:
+        return len(turns)
+    return 0
+
+
+def actual_caller_turns(row: Mapping[str, Any]) -> int:
+    """Counts actual spoken/text caller turns from a simulation result."""
+    transcript = str(row.get("transcript") or "")
+    if transcript.strip():
+        user_lines = [
+            ln
+            for ln in transcript.splitlines()
+            if ln.strip().startswith("User:")
+            and not ln.strip().startswith("User: event")
+            and ln.strip() != "User:"
+        ]
+        return len(user_lines)
+    detailed_trace = row.get("detailed_trace")
+    if isinstance(detailed_trace, list) and detailed_trace:
+        user_trace = [
+            str(ln)
+            for ln in detailed_trace
+            if str(ln).strip().startswith("User:")
+            and not str(ln).strip().startswith("User: event")
+            and str(ln).strip() != "User:"
+        ]
+        return len(user_trace)
+    turns = row.get("conversation_Turns") or row.get("conversation_turns")
+    if isinstance(turns, list):
+        return len(turns)
+    turn_count = row.get("turns")
+    if isinstance(turn_count, int):
+        return turn_count
+    return 0
+
+
 class SimulationEvals(Apps):
     """Wrapper class to simulate entire multi-turn conversations with a
     CXAS Agent."""
@@ -573,6 +637,7 @@ class SimulationEvals(Apps):
         vertex_location: str = "global",
         naturalness: bool | dict[str, Any] | None = None,
         audio_analysis: bool = False,
+        sim_user_voices: Sequence[str] | None = None,
         **kwargs: typing.Any,
     ) -> None:
         self.expectations_only = expectations_only
@@ -582,6 +647,9 @@ class SimulationEvals(Apps):
         # defaults; a dict is merged over the test case's own block.
         self.naturalness = naturalness
         self.audio_analysis = audio_analysis
+        self.sim_user_voices: list[str] = [
+            v.strip() for v in (sim_user_voices or []) if v and v.strip()
+        ]
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
@@ -602,6 +670,31 @@ class SimulationEvals(Apps):
             location=self.vertex_location,
             credentials=self.creds,
         )
+
+    def _voice_config_for(
+        self, test_case: Mapping[str, Any]
+    ) -> dict[str, str] | None:
+        """Deterministically selects a TTS voice_config for a test case."""
+        existing = test_case.get("voice_config")
+        if isinstance(existing, dict) and existing.get("voice_name"):
+            return dict(existing)
+        if not self.sim_user_voices:
+            return None
+        locale = _scenario_locale(test_case.get("session_parameters"))
+        candidates = [
+            v
+            for v in self.sim_user_voices
+            if _voice_locale(v).lower() == locale.lower()
+        ]
+        if not candidates:
+            candidates = list(self.sim_user_voices)
+        name = str(test_case.get("name") or "")
+        idx = zlib.crc32(name.encode("utf-8")) % len(candidates)
+        voice_name = candidates[idx]
+        return {
+            "voice_name": voice_name,
+            "language_code": _voice_locale(voice_name),
+        }
 
     @staticmethod
     def requires_local_execution(
@@ -1957,6 +2050,9 @@ class SimulationEvals(Apps):
         name = tc["name"]
         label = f"{name} (run {run_idx + 1}/{runs})"
         session_id = str(uuid.uuid4())
+        voice_config = self._voice_config_for(tc)
+        if voice_config and not tc.get("voice_config"):
+            tc = {**tc, "voice_config": voice_config}
         try:
             _start = time.time()
 
@@ -2111,15 +2207,30 @@ class SimulationEvals(Apps):
                 result["burst_noise_snr"] = noise_cfg["burst_noise_snr"]
                 result["burst_noise_level"] = noise_cfg["burst_noise_level"]
 
+            if voice_config and isinstance(result, dict):
+                result.setdefault(
+                    "sim_user_voice", voice_config.get("voice_name", "")
+                )
+
             return result
         except Exception as e:
             print(f"  ERROR  {label}: {e}")
-            return {
+            err_result: dict[str, Any] = {
                 "name": name,
                 "run": run_idx + 1,
                 "passed": False,
                 "error": str(e),
+                "session_id": session_id,
+                "session_parameters": tc.get("session_parameters", {}),
+                "goals": f"0/{len(tc.get('steps') or [])}",
+                "expectations": (f"0/{self._declared_expectations_count(tc)}"),
+                "turns": 0,
             }
+            if voice_config:
+                err_result["sim_user_voice"] = voice_config.get(
+                    "voice_name", ""
+                )
+            return err_result
 
     @staticmethod
     def _declared_expectations_count(
@@ -2246,10 +2357,28 @@ class SimulationEvals(Apps):
         row: dict[str, Any],
         declared_by_name: dict[str, int],
         lookup: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+        expected_turns_by_name: Mapping[str, int] | None = None,
     ) -> str | None:
         if row.get("error"):
             return f"session died: {str(row['error'])[:80]}"
-        name = row.get("name")
+        name = str(row.get("name") or "")
+        expected_turns = (expected_turns_by_name or {}).get(name, 0)
+        has_turn_data = any(
+            k in row
+            for k in (
+                "transcript",
+                "detailed_trace",
+                "conversation_Turns",
+                "conversation_turns",
+                "turns",
+            )
+        )
+        if (
+            expected_turns > 0
+            and (has_turn_data or not row.get("passed"))
+            and actual_caller_turns(row) == 0
+        ):
+            return "caller turns never reached agent (0 turns)"
         if declared_by_name.get(name, 0) > 0 and str(
             row.get("expectations", "")
         ).endswith("/0"):
@@ -2362,6 +2491,7 @@ class SimulationEvals(Apps):
         retry_cooldown: float = 60.0,
         run_on_platform: bool = False,
         platform_timeout: int = 600,
+        sim_user_voices: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Runs multiple simulations, optionally in parallel.
 
@@ -2386,6 +2516,10 @@ class SimulationEvals(Apps):
         """
         if expectations_only is not None:
             self.expectations_only = expectations_only
+        if sim_user_voices is not None:
+            self.sim_user_voices = [
+                v.strip() for v in sim_user_voices if v and v.strip()
+            ]
         if run_on_platform:
             platform_cases: list[dict[str, Any]] = []
             local_cases: list[dict[str, Any]] = []
@@ -2489,6 +2623,7 @@ class SimulationEvals(Apps):
                         retry_parallel=retry_parallel,
                         retry_cooldown=retry_cooldown,
                         run_on_platform=False,
+                        sim_user_voices=sim_user_voices,
                     )
                 )
             return results
@@ -2526,6 +2661,11 @@ class SimulationEvals(Apps):
             for tc in test_cases
             if isinstance(tc, dict) and tc.get("name")
         }
+        expected_turns_by_name = {
+            tc.get("name", ""): expected_caller_turns(tc)
+            for tc in test_cases
+            if isinstance(tc, dict) and tc.get("name")
+        }
         tc_by_name = {
             tc.get("name", ""): tc
             for tc in test_cases
@@ -2545,7 +2685,10 @@ class SimulationEvals(Apps):
                 if isinstance(row, dict)
                 and (
                     why := self._inconclusive_reason(
-                        row, declared_by_name, lookup=conv_lookup
+                        row,
+                        declared_by_name,
+                        lookup=conv_lookup,
+                        expected_turns_by_name=expected_turns_by_name,
                     )
                 )
             ]
@@ -2622,7 +2765,10 @@ class SimulationEvals(Apps):
             if isinstance(row, dict)
             and (
                 why := self._inconclusive_reason(
-                    row, declared_by_name, lookup=conv_lookup
+                    row,
+                    declared_by_name,
+                    lookup=conv_lookup,
+                    expected_turns_by_name=expected_turns_by_name,
                 )
             )
         ]

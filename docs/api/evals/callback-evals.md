@@ -6,10 +6,11 @@ title: CallbackEvals
 
 `CallbackEvals` brings proper unit testing to your CXAS agent callbacks. It runs pytest-based tests against your callback Python code, either by reading it from a local app directory or by fetching it live from the CXAS API.
 
-The two main methods are:
+The main methods are:
 
 - **`test_all_callbacks_in_app_dir()`** — scans your local app directory, discovers every `test.py` alongside each callback's `python_code.py`, and runs them all. Returns a DataFrame with results for each test.
 - **`test_single_callback_for_agent()`** — fetches a specific agent's callback from the CXAS API and runs the test file you point it to. Useful for CI jobs where you want to verify a specific agent hasn't regressed.
+- **`run_python_unit_tests_in_dir()`** — discovers and executes standalone `test_*.py` unit test files in a directory (such as `evals/tool_tests/`), supporting `filter_files` and `exclude_files` substring filtering. Automatically invoked by `run_all_evals` when `"callbacks"` is included.
 
 Both methods return a pandas DataFrame with columns: `agent_name`, `callback_type`, `test_name`, `status`, and `error_message`.
 

@@ -229,6 +229,106 @@ class CallbackEvals:
             ],
         )
 
+    def run_python_unit_tests_in_dir(
+        self,
+        test_dir: str,
+        filter_files: list[str] | None = None,
+        exclude_files: list[str] | None = None,
+        pytest_args: list[str] | None = None,
+    ) -> pd.DataFrame:
+        """Discovers and runs standalone `test_*.py` unit tests."""
+        columns = [
+            "agent_name",
+            "agent",
+            "callback_type",
+            "test_name",
+            "status",
+            "passed",
+            "duration_s",
+            "error_message",
+            "error",
+            "code",
+            "file",
+        ]
+        if not test_dir or not os.path.exists(test_dir):
+            return pd.DataFrame(columns=columns)
+
+        if os.path.isfile(test_dir):
+            py_files = [test_dir] if test_dir.endswith(".py") else []
+        else:
+            py_files = sorted(glob.glob(os.path.join(test_dir, "test_*.py")))
+
+        include_pats = [
+            p.strip().lower() for p in (filter_files or []) if p and p.strip()
+        ]
+        exclude_pats = [
+            p.strip().lower() for p in (exclude_files or []) if p and p.strip()
+        ]
+        if include_pats:
+            py_files = [
+                f
+                for f in py_files
+                if any(
+                    pat in os.path.basename(f).lower() for pat in include_pats
+                )
+            ]
+        if exclude_pats:
+            py_files = [
+                f
+                for f in py_files
+                if not any(
+                    pat in os.path.basename(f).lower() for pat in exclude_pats
+                )
+            ]
+
+        if not py_files:
+            return pd.DataFrame(columns=columns)
+
+        all_results: list[dict[str, typing.Any]] = []
+        for py_file in py_files:
+            abs_file = os.path.abspath(py_file)
+            file_dir = os.path.dirname(abs_file)
+            suite_label = os.path.splitext(os.path.basename(abs_file))[0]
+            try:
+                with open(abs_file, encoding="utf-8") as f:
+                    code_content = f.read()
+            except OSError:
+                code_content = ""
+
+            collector = _TestResultCollector(
+                abs_file,
+                suite_label,
+                "tool_unit_test",
+                code=code_content,
+            )
+            original_sys_path = sys.path.copy()
+            try:
+                if file_dir not in sys.path:
+                    sys.path.insert(0, file_dir)
+                buf = io.StringIO()
+                with redirect_stdout(buf), redirect_stderr(buf):
+                    pytest.main(
+                        [abs_file, "-q"] + (pytest_args or []),
+                        plugins=[collector],
+                    )
+                for row in collector.results:
+                    row_copy = dict(row)
+                    row_copy.setdefault("agent", suite_label)
+                    row_copy.setdefault(
+                        "passed", row_copy.get("status") == "PASSED"
+                    )
+                    row_copy.setdefault("duration_s", 0.0)
+                    row_copy.setdefault(
+                        "error", row_copy.get("error_message") or ""
+                    )
+                    row_copy.setdefault("code", code_content)
+                    row_copy.setdefault("file", py_file)
+                    all_results.append(row_copy)
+            finally:
+                sys.path = original_sys_path
+
+        return pd.DataFrame(all_results, columns=columns)
+
     def _get_agent_name(self, original_file: str) -> str:
         """Extracts the agent name from the agent path."""
         return original_file.split("/")[-4]
@@ -309,11 +409,13 @@ class _TestResultCollector:
         original_file: typing.Any,
         agent_name: typing.Any,
         callback_type: typing.Any,
+        code: str = "",
     ) -> None:
-        self.results = []
+        self.results: list[dict[str, typing.Any]] = []
         self.original_file = original_file
         self.agent_name = agent_name
         self.callback_type = callback_type
+        self.code = code
 
     def _get_error_message(self, report: typing.Any) -> typing.Any:
         if getattr(report, "longrepr", None):
@@ -325,14 +427,23 @@ class _TestResultCollector:
         return None
 
     def pytest_runtest_logreport(self, report: typing.Any) -> None:
-        if report.when == "call" or report.failed:
+        if report.when == "call" or (report.when == "setup" and report.failed):
+            err_msg = self._get_error_message(report)
             self.results.append(
                 {
                     "agent_name": self.agent_name,
+                    "agent": self.agent_name,
                     "callback_type": self.callback_type,
                     "test_name": report.nodeid.split("::")[-1],
                     "status": report.outcome.upper(),
-                    "error_message": self._get_error_message(report),
+                    "passed": report.outcome == "passed",
+                    "duration_s": round(
+                        float(getattr(report, "duration", 0.0) or 0.0), 4
+                    ),
+                    "error_message": err_msg,
+                    "error": err_msg or "",
+                    "code": self.code,
+                    "file": self.original_file,
                 }
             )
 
