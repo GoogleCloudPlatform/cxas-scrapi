@@ -79,7 +79,7 @@ cxas arc chat --app-name <APP> --download-artifacts <dir> --message "Export the 
 cxas arc sessions new    --app-name <APP>
 cxas arc sessions list   --app-name <APP>
 cxas arc sessions get    --app-name <APP>          # messages, artifacts, active turn
-cxas arc cancel          --app-name <APP>          # stop an in-flight turn
+cxas arc cancel          --app-name <APP>          # stop an in-flight turn (may return UNIMPLEMENTED)
 cxas arc suggestions     --app-name <APP>          # may return UNIMPLEMENTED where not enabled
 ```
 
@@ -111,5 +111,5 @@ JSON output (`--format json`): top-level `action`, `session_id`, `canonical_sess
 - **New task, new session**: use `--new-session` so an old contract does not bleed into a new build. Use `--session-id` to return to an earlier session (`sessions list` shows them).
 - **Attachments**: bundle limits are 20 MiB zipped, 100 MiB raw, 10,000 files; `.git/`, `node_modules/`, `__pycache__/`, build output trees and binary or media files are excluded. Attach the app directory plus only the relevant eval directories; preview with `--attach-dry-run`. If the default bucket cannot be derived, pass `--bucket`.
 - **Verify counts yourself**: after an import, confirm with `cxas pull` or the evaluation list rather than trusting Arc's summary alone.
-- **`UNIMPLEMENTED` from `suggestions`** is expected where onboarding suggestions are not enabled; `chat` is unaffected.
+- **`UNIMPLEMENTED` from `suggestions` or `cancel`** is expected where those endpoints are not enabled yet; `chat`, `confirm`, `answer` and `sessions` are unaffected. A turn you could not cancel still finishes server-side; read it with `cxas arc sessions get`.
 - **Auth and endpoint**: `gcloud auth application-default login` or `CXAS_OAUTH_TOKEN`; override the API host with `CES_API_ENDPOINT` or `--api-endpoint` (the sticky session store is keyed by endpoint and app).

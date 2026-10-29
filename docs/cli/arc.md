@@ -215,7 +215,7 @@ lists them under `### [Downloaded Artifacts]`.
 ## `cancel`
 
 ```bash
-cxas arc cancel --url "<console-url>"              # cancel the in-flight turn
+cxas arc cancel --url "<console-url>"              # cancel the in-flight turn (may return UNIMPLEMENTED today)
 cxas arc cancel --url "<console-url>" --turn-id <id>
 ```
 
@@ -316,6 +316,7 @@ For unattended runs add `--confirmation-policy click` to steps 4–5 and
 | `Note: a confirmation card is pending; this message is sent as a typed reply` | You used `chat` while a card was pending. Use `cxas arc confirm` to click instead. |
 | `No pending confirmation card is recorded for this session` | The sidecar has no card for this session (different machine or store). Pass `--confirmation-id` from the last output, or re-run `sessions get`. |
 | `cxas arc suggestions` prints `UNIMPLEMENTED` | Onboarding suggestions are not enabled for this app; `chat` still works. |
+| `cxas arc cancel` prints `UNIMPLEMENTED` | Turn cancellation is not yet served on the public endpoint for this app. The turn still finishes server-side; close the client and use `cxas arc sessions get` to read the result. |
 | `Could not resolve the project id` on `--attach` | Pass `--bucket <project-id>-agent-assist-artifacts` (or any bucket you can write to). |
 
 See also the [Python API](../api/core/arc.md) for `cxas_scrapi.core.arc.Arc`.
