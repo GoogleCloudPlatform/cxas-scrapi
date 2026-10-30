@@ -326,6 +326,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | E010 | `eval-tool-test-wrong-key` | Error | Tool test uses `test_cases` instead of `tests` |
     | E011 | `eval-invalid-match-type` | Error | Invalid `$matchType` value in golden `tool_calls` |
     | E012 | `eval-shadow-structure` | Error | Shadow eval needs `conversation_id` and non-empty `expectations`, a valid `replay_mode`, and only known keys (unknown keys are warnings) |
+    | E013 | `eval-simulation-structure` | Error | Simulation / CXAS 2.0 Milestone eval needs a non-empty `steps` list, an actionable key per step (`goal`, `success_criteria`, `static_utterance`, or `event`), `inject_variables` only on step 1, and only known keys |
 
     ---
 
@@ -358,6 +359,12 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     **E012 — eval-shadow-structure**
 
     Applies to YAML files under `evals/shadows/`. Each shadow eval needs a `conversation_id` and at least one natural-language expectation. `replay_mode` (on the case or in `config:`) must be `hybrid` or `exact`. Unknown keys in a case or in the `config:` block are reported as warnings with a *did you mean* suggestion, because ShadowEvals would otherwise ignore them silently (for example `session_params` instead of `session_parameters`).
+
+    ---
+
+    **E013 — eval-simulation-structure**
+
+    Applies to simulation and CXAS 2.0 Milestone evaluation YAML files under `evals/simulations/`. Each test case under `evals:` must define a non-empty `steps` list where every step contains at least one actionable field (`goal`, `success_criteria`, `static_utterance`, or `event`), `inject_variables` only appears on step 1, `event` mappings specify `event` or `name`, and eval/step keys match the supported simulation and milestone schemas.
 
 === "A — Config"
 

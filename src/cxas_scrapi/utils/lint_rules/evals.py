@@ -13,9 +13,9 @@
 # limitations under the License.
 
 
-"""Eval lint rules (E001-E012).
+"""Eval lint rules (E001-E013).
 
-Validates golden, scenario, and simulation YAML files.
+Validates golden, scenario, shadow, and simulation/milestone YAML files.
 """
 
 import difflib
@@ -661,4 +661,298 @@ class ShadowEvalStructure(Rule):
                         ),
                     )
                 )
+        return results
+
+
+@rule("evals")
+class SimulationEvalStructure(Rule):
+    """Validates simulation / CXAS 2.0 Milestone evaluation YAML structure.
+
+    Grounded in CES MilestoneYamlTranslator and SimulationEvals:
+    - Each evaluation entry must define a non-empty ``steps`` list.
+    - Each step must define at least one of ``goal``, ``success_criteria``,
+      ``static_utterance``, or ``event`` (and if ``event`` is a mapping, it
+      must specify ``event`` or ``name``).
+    - ``inject_variables`` is only supported on the first step (step 1).
+    - Unknown keys on eval items or steps emit a warning with typo suggestions.
+    """
+
+    id = "E013"
+    name = "eval-simulation-structure"
+    description = (
+        "Simulation/milestone eval must define valid steps, step actions, "
+        "first-step-only inject_variables, and known keys"
+    )
+    default_severity = Severity.ERROR
+
+    _NON_MILESTONE_MANIFEST_KEYS = frozenset(
+        {"manifest_type", "scenarios", "cases", "test_cases", "conversations"}
+    )
+
+    _EVAL_KEYS = frozenset(
+        {
+            # Platform Milestone (CES MilestoneYamlTranslator) keys
+            "name",
+            "tags",
+            "session_parameters",
+            "sessionParameters",
+            "steps",
+            "expectations",
+            "evaluation_expectations",
+            "evaluationExpectations",
+            "max_turns",
+            "maxTurns",
+            "max_turn_count",
+            "maxTurnCount",
+            "initial_event",
+            "initialEvent",
+            "metadata",
+            # Local SimulationEvals keys
+            "modality",
+            "audio_expectations",
+            "naturalness_metric",
+            "naturalness",
+            "use_tool_fakes",
+            "barge_in_after_ms",
+            "voice_config",
+            "background_noise",
+            "burst_noise",
+            "pass_k",
+            "runs",
+            "initial_utterance",
+            "tool_expectations",
+            "insights_expectations",
+            "trace_assertions",
+            "priority",
+            "category",
+            "domain",
+            "eval_id",
+            "target_agent",
+            "target_tool",
+            "user_ask_summary",
+            "legacy_dfcx_lineage",
+            "description",
+            "notes",
+        }
+    )
+
+    _STEP_KEYS = frozenset(
+        {
+            "goal",
+            "success_criteria",
+            "successCriteria",
+            "response_guide",
+            "responseGuide",
+            "protocol",
+            "max_turns",
+            "maxTurns",
+            "max_turn_count",
+            "maxTurnCount",
+            "static_utterance",
+            "staticUtterance",
+            "event",
+            "inject_variables",
+            "injectVariables",
+            "metadata",
+            "barge_in_after_ms",
+            "bargeInAfterMs",
+            "description",
+            "notes",
+        }
+    )
+
+    def _unknown_key_warnings(
+        self, rel: str, mapping: dict, allowed: frozenset[str], where: str
+    ) -> list[LintResult]:
+        results: list[LintResult] = []
+        for key in mapping:
+            key_str = str(key)
+            if key_str in allowed or key_str.startswith("_"):
+                continue
+            close = difflib.get_close_matches(key_str, allowed, n=1)
+            results.append(
+                self.make_result(
+                    file=rel,
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Unknown key '{key_str}' in {where} is ignored by "
+                        "SimulationEvals / MilestoneYamlTranslator"
+                    ),
+                    fix=f"Did you mean '{close[0]}'?" if close else "",
+                )
+            )
+        return results
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if (
+            _is_golden(file_path)
+            or _is_shadow(file_path)
+            or _is_tool_test(file_path)
+        ):
+            return []
+
+        data = _parse_yaml(content)
+        if not data:
+            return []
+
+        from cxas_scrapi.utils.eval_utils import EvalUtils  # noqa: PLC0415
+
+        is_sim_path = _is_simulation(file_path)
+        is_milestone = EvalUtils.is_milestone_eval_data(data)
+        if not is_sim_path and not is_milestone:
+            return []
+
+        rel = str(file_path.relative_to(context.project_root))
+        results: list[LintResult] = []
+
+        if isinstance(data, list):
+            evals_list = data
+        elif isinstance(data, dict):
+            if "evals" in data and isinstance(data["evals"], list):
+                evals_list = data["evals"]
+            elif "steps" in data:
+                evals_list = [data]
+            elif self._NON_MILESTONE_MANIFEST_KEYS & data.keys():
+                return []
+            else:
+                return [
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            "Missing 'evals' (or single-case 'steps') key in "
+                            "simulation/milestone eval YAML"
+                        ),
+                        fix="Add an 'evals:' list of simulation test cases",
+                    )
+                ]
+        else:
+            return []
+
+        for idx, ev in enumerate(evals_list, start=1):
+            if not isinstance(ev, dict):
+                continue
+            name = str(ev.get("name") or f"item #{idx}")
+            results.extend(
+                self._unknown_key_warnings(
+                    rel, ev, self._EVAL_KEYS, f"simulation eval '{name}'"
+                )
+            )
+
+            steps = ev.get("steps")
+            if not isinstance(steps, list) or not steps:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Simulation eval '{name}' must define a "
+                            "non-empty 'steps' list"
+                        ),
+                        fix=(
+                            "Add steps: [{goal: '...', "
+                            "success_criteria: '...'}]"
+                        ),
+                    )
+                )
+                continue
+
+            for step_idx, step in enumerate(steps):
+                step_num = step_idx + 1
+                if not isinstance(step, dict):
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            message=(
+                                f"Simulation eval '{name}' step {step_num} "
+                                "must be a mapping"
+                            ),
+                            fix=(
+                                "Replace step with a mapping containing "
+                                "'goal' and 'success_criteria'"
+                            ),
+                        )
+                    )
+                    continue
+
+                results.extend(
+                    self._unknown_key_warnings(
+                        rel,
+                        step,
+                        self._STEP_KEYS,
+                        f"simulation eval '{name}' step {step_num}",
+                    )
+                )
+
+                has_goal = bool(str(step.get("goal") or "").strip())
+                has_criteria = bool(
+                    str(
+                        step.get("success_criteria")
+                        or step.get("successCriteria")
+                        or ""
+                    ).strip()
+                )
+                has_static = bool(
+                    str(
+                        step.get("static_utterance")
+                        or step.get("staticUtterance")
+                        or ""
+                    ).strip()
+                )
+                event_val = step.get("event")
+                has_event = event_val is not None and (
+                    (isinstance(event_val, str) and bool(event_val.strip()))
+                    or isinstance(event_val, dict)
+                )
+
+                if not (has_goal or has_criteria or has_static or has_event):
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            message=(
+                                f"Simulation eval '{name}' step {step_num} "
+                                "must define 'goal' (with 'success_criteria'), "
+                                "'static_utterance', or 'event'"
+                            ),
+                            fix=(
+                                "Add 'goal' and 'success_criteria', "
+                                "'static_utterance', or 'event' to the step"
+                            ),
+                        )
+                    )
+
+                if isinstance(event_val, dict) and not (
+                    str(event_val.get("event") or "").strip()
+                    or str(event_val.get("name") or "").strip()
+                ):
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            message=(
+                                f"Simulation eval '{name}' step {step_num} "
+                                "'event' mapping must specify an 'event' or "
+                                "'name' key"
+                            ),
+                            fix="Use event: {event: '<event_name>'}",
+                        )
+                    )
+
+                if step_idx > 0 and (
+                    "inject_variables" in step or "injectVariables" in step
+                ):
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            message=(
+                                f"Simulation eval '{name}' step {step_num} "
+                                "sets 'inject_variables', which is only "
+                                "supported on the first step (step 1)"
+                            ),
+                            fix=(
+                                "Move 'inject_variables' to step 1 or "
+                                "'session_parameters' on the eval"
+                            ),
+                        )
+                    )
+
         return results
