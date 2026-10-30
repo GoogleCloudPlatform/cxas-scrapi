@@ -17,8 +17,11 @@
 Validates agent instruction files against CXAS design guide best practices.
 """
 
+import ast
+import contextlib
 import json
 import re
+import warnings
 from pathlib import Path
 
 from cxas_scrapi.utils.linter import (
@@ -352,6 +355,84 @@ class WrongToolSyntax(Rule):
         )
 
 
+def _extract_py_tool_refs_and_dags(
+    text: str, candidate_tools: set[str]
+) -> tuple[set[str], set[str]]:
+    """Extract candidate tool references and ``*_dag`` calls from Python AST."""
+    matched: set[str] = set()
+    dags: set[str] = set()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(text)
+    except SyntaxError:
+        for tool in candidate_tools:
+            if re.search(rf"\btools\.{re.escape(tool)}\b", text):
+                matched.add(tool)
+        for m in re.finditer(r"\btools\.(\w+_dag)\s*\(", text):
+            dags.add(m.group(1))
+        return matched, dags
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "tools"
+        ):
+            if node.attr in candidate_tools:
+                matched.add(node.attr)
+            if node.attr.endswith("_dag"):
+                dags.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            s = node.value
+            if s in candidate_tools:
+                matched.add(s)
+            else:
+                matched |= _extract_tool_refs(s) & candidate_tools
+                for tool in candidate_tools - matched:
+                    if re.search(rf"\btools\.{re.escape(tool)}\b", s):
+                        matched.add(tool)
+    return matched, dags
+
+
+def _collect_agent_callback_and_dag_tool_refs(
+    agent_dir: Path, app_root: Path, candidate_tools: set[str]
+) -> set[str]:
+    """Return tools referenced in agent callbacks or invoked DAG tools."""
+    if not candidate_tools or not agent_dir.exists():
+        return set()
+
+    found: set[str] = set()
+    dag_calls: set[str] = set()
+    for py_path in agent_dir.rglob("*.py"):
+        try:
+            text = py_path.read_text()
+        except OSError:
+            continue
+        matched, dags = _extract_py_tool_refs_and_dags(
+            text, candidate_tools - found
+        )
+        found |= matched
+        dag_calls |= dags
+
+    for dag_name in dag_calls:
+        dag_py = (
+            app_root / "tools" / dag_name / "python_function" / "python_code.py"
+        )
+        if not dag_py.exists():
+            continue
+        try:
+            dag_text = dag_py.read_text()
+        except OSError:
+            continue
+        matched, _ = _extract_py_tool_refs_and_dags(
+            dag_text, candidate_tools - found
+        )
+        found |= matched
+
+    return found
+
+
 @rule("instructions")
 class UnusedToolInConfig(Rule):
     id = "I012"
@@ -368,7 +449,17 @@ class UnusedToolInConfig(Rule):
 
         config_tools = set(config.get("tools", []))
         instruction_refs = _extract_tool_refs(content)
+        app_root = context.app_root or file_path.parent.parent.parent
+        global_inst = app_root / "global_instruction.txt"
+        if global_inst.exists():
+            with contextlib.suppress(OSError):
+                instruction_refs |= _extract_tool_refs(global_inst.read_text())
+
         unused = config_tools - instruction_refs - {"end_session"}
+        if unused:
+            unused -= _collect_agent_callback_and_dag_tool_refs(
+                file_path.parent, app_root, unused
+            )
 
         agent_json_rel = str(
             (file_path.parent / f"{file_path.parent.name}.json").relative_to(
@@ -478,7 +569,6 @@ class BannedLegacyXmlTags(Rule):
         "Persona",
         "Role",
         "General_Instruction",
-        "Context",
     )
 
     PROHIBITED_TAG_NAMES = (
@@ -510,6 +600,23 @@ class BannedLegacyXmlTags(Rule):
         re.IGNORECASE,
     )
 
+    _INLINE_SPAN_RE = re.compile(r"`[^`]*`|\"[^\"]*\"|'[^']*'")
+    _USER_TURN_RE = re.compile(r"^\s*(?:\[user\]|user)\s*:", re.IGNORECASE)
+
+    @classmethod
+    def _is_runtime_context_envelope_ref(
+        cls, line: str, start: int, tag: str
+    ) -> bool:
+        tag_name = re.sub(r"[<\s/>]", "", tag).lower()
+        if tag_name != "context":
+            return False
+        if cls._USER_TURN_RE.match(line):
+            return True
+        return any(
+            m.start() <= start < m.end()
+            for m in cls._INLINE_SPAN_RE.finditer(line)
+        )
+
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
@@ -520,6 +627,10 @@ class BannedLegacyXmlTags(Rule):
                 self._PROHIBITED_PATTERN.finditer(line)
             ):
                 tag = match.group(0)
+                if self._is_runtime_context_envelope_ref(
+                    line, match.start(), tag
+                ):
+                    continue
                 results.append(
                     self.make_result(
                         file=rel,
