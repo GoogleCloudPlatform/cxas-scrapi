@@ -166,11 +166,20 @@ def _validate_fields(data: dict, cls, path: str = "") -> None:  # noqa: ANN001
     """Validate required fields and recurse into nested proto messages."""
     required = _get_required_fields(cls)
     cls_name = getattr(cls, "__name__", str(cls))
+    if cls_name == "EngineSource" and any(
+        bool(data.get(k)) for k in ("dataStoreSources", "data_store_sources")
+    ):
+        required = [f for f in required if f != "engine"]
     if cls_name == "Scenario" and any(
         k in data
         for k in (
             "evaluationExpectations",
             "evaluation_expectations",
+            "taskCompletionBehavior",
+            "task_completion_behavior",
+            "userGoalBehavior",
+            "user_goal_behavior",
+            "milestones",
         )
     ):
         required = [
@@ -201,6 +210,85 @@ def _validate_fields(data: dict, cls, path: str = "") -> None:  # noqa: ANN001
                 field_data, dict
             ):
                 _validate_fields(field_data, field.message, path=sub_path)
+
+
+def _pop_missing_descriptor_fields(
+    msg_dict: typing.Any,
+    proto_cls: typing.Any,
+    candidate_keys: tuple[str, ...],
+) -> None:
+    """Remove v1main fields that are not yet present in the v1beta wheel."""
+    if not isinstance(msg_dict, dict):
+        return
+    known = set()
+    if hasattr(proto_cls, "meta") and hasattr(proto_cls.meta, "fields"):
+        for fname in proto_cls.meta.fields:
+            known.add(fname)
+            known.add(_to_camel_case(fname))
+    for key in candidate_keys:
+        if key not in known:
+            msg_dict.pop(key, None)
+
+
+def _strip_v1main_only_fields(data: dict, target: str) -> None:
+    """Strip CES v1main fields that lag in the google-cloud-ces v1beta wheel."""
+    if target in ("app_config", "agent_config"):
+        model_settings = data.get("modelSettings") or data.get("model_settings")
+        _pop_missing_descriptor_fields(
+            model_settings,
+            types.ModelSettings,
+            ("thinkingLevel", "thinking_level"),
+        )
+    elif target == "tool_config":
+        ds_tool = data.get("dataStoreTool") or data.get("data_store_tool")
+        if isinstance(ds_tool, dict):
+            mod_configs = ds_tool.get("modalityConfigs") or ds_tool.get(
+                "modality_configs"
+            )
+            if isinstance(mod_configs, list):
+                for mc in mod_configs:
+                    _pop_missing_descriptor_fields(
+                        mc,
+                        types.DataStoreTool.ModalityConfig,
+                        ("snippetsConfig", "snippets_config"),
+                    )
+        remote_tool = data.get("remoteAgentTool") or data.get(
+            "remote_agent_tool"
+        )
+        _pop_missing_descriptor_fields(
+            remote_tool,
+            types.RemoteAgentTool,
+            (
+                "apiAuthentication",
+                "api_authentication",
+                "statefulAgent",
+                "stateful_agent",
+                "inputVariableMapping",
+                "input_variable_mapping",
+                "outputVariableMapping",
+                "output_variable_mapping",
+            ),
+        )
+    elif target == "guardrail_config":
+        action = data.get("action")
+        _pop_missing_descriptor_fields(
+            action,
+            types.TriggerAction,
+            (
+                "endSession",
+                "end_session",
+                "toolCall",
+                "tool_call",
+                "retry",
+            ),
+        )
+    elif target == "evaluation_config":
+        scenario = data.get("scenario") or data.get("Scenario")
+        _pop_missing_descriptor_fields(
+            scenario,
+            types.Evaluation.Scenario,
+            ("milestones", "initialEvent", "initial_event"),
+        )
 
 
 # ── Schema validation rule ───────────────────────────────────────────────
@@ -367,6 +455,8 @@ class SchemaValid(Rule):
             _validate_fields(data, self._proto_type, path=str(resource_dir))
         except ValueError as e:
             return [self.make_result(rel, str(e))]
+
+        _strip_v1main_only_fields(data, self.target)
 
         try:
             obj = self._proto_type()
