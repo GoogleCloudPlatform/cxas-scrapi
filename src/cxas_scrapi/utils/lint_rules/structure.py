@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Structure validation rules (S001-S008).
+"""Structure validation rules (S001-S012).
 
 Validates app structure and cross-references using the existing
 ``cxas_scrapi.utils.validator.Validator`` for structural checks, plus
 custom rules for cross-referencing (e.g., instruction references a tool
-not in the agent's tool list).
+not in the agent's tool list, or configs reference missing guardrails,
+toolsets, or code/schema files).
 """
 
 import json
@@ -512,4 +513,418 @@ class SingletonGuardrailTypes(Rule):
                         ),
                     )
                 )
+        return results
+
+
+def _find_app_root_for_path(file_path: Path, context: LintContext) -> Path:
+    """Resolve the app root directory from context or file_path hierarchy."""
+    if context.app_root and context.app_root.exists():
+        return context.app_root
+    if (context.app_dir / "app.json").exists() or (
+        context.app_dir / "app.yaml"
+    ).exists():
+        return context.app_dir
+    if file_path.name in ("app.json", "app.yaml"):
+        return file_path.parent
+    if file_path.parent.parent.name in (
+        "agents",
+        "tools",
+        "toolsets",
+        "guardrails",
+    ):
+        return file_path.parent.parent.parent
+    if file_path.parent.name in ("agents", "tools", "toolsets", "guardrails"):
+        return file_path.parent.parent
+    return context.app_dir
+
+
+def _load_resource_dir_config(
+    resource_dir: Path,
+) -> tuple[dict | None, Path | None]:
+    """Load ``<name>.yaml`` or ``<name>.json`` from a resource directory."""
+    name = resource_dir.name
+    yaml_path = resource_dir / f"{name}.yaml"
+    json_path = resource_dir / f"{name}.json"
+    if yaml_path.exists():
+        try:
+            data = yaml.safe_load(yaml_path.read_text())
+            return (data if isinstance(data, dict) else None), yaml_path
+        except Exception:
+            return None, yaml_path
+    if json_path.exists():
+        try:
+            data = json.loads(json_path.read_text())
+            return (data if isinstance(data, dict) else None), json_path
+        except Exception:
+            return None, json_path
+    return None, None
+
+
+def _collect_known_resource_names(app_root: Path, subdir: str) -> set[str]:
+    """Collect valid resource identifiers (dir name, stem, displayName)."""
+    parent = app_root / subdir
+    if not parent.exists() or not parent.is_dir():
+        return set()
+    known: set[str] = set()
+    for entry in parent.iterdir():
+        if entry.name.startswith("."):
+            continue
+        if entry.is_dir():
+            known.add(entry.name)
+            known.add(entry.name.replace("_", " "))
+            cfg, _ = _load_resource_dir_config(entry)
+            if cfg:
+                disp = cfg.get("displayName") or cfg.get("display_name")
+                if isinstance(disp, str) and disp:
+                    known.add(disp)
+        elif entry.is_file() and entry.suffix in (".json", ".yaml", ".yml"):
+            known.add(entry.stem)
+            known.add(entry.stem.replace("_", " "))
+            try:
+                cfg = (
+                    json.loads(entry.read_text())
+                    if entry.suffix == ".json"
+                    else yaml.safe_load(entry.read_text())
+                )
+            except Exception:
+                cfg = None
+            if isinstance(cfg, dict):
+                disp = cfg.get("displayName") or cfg.get("display_name")
+                if isinstance(disp, str) and disp:
+                    known.add(disp)
+    return known
+
+
+def _is_file_path_ref(val: object) -> bool:
+    """Return True if val looks like a relative file path reference."""
+    return (
+        isinstance(val, str)
+        and bool(val.strip())
+        and "://" not in val
+        and "\n" not in val
+        and not any(c.isspace() for c in val)
+        and val.endswith((".txt", ".py", ".yaml", ".yml", ".json"))
+    )
+
+
+def _referenced_file_exists(
+    rel_path: str,
+    resource_dir: Path,
+    app_root: Path,
+    context: LintContext,
+) -> bool:
+    """Check if a relative file path exists under app_root or resource_dir."""
+    if (app_root / rel_path).exists():
+        return True
+    if _resolve_path(context.app_dir, rel_path).exists():
+        return True
+    return (resource_dir / rel_path).exists()
+
+
+@rule("structure")
+class AppGuardrailReferences(Rule):
+    """App config references missing guardrails or globalInstruction."""
+
+    id = "S009"
+    name = "app-resource-references"
+    description = (
+        "Guardrails and globalInstruction file referenced in app config exist"
+    )
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        try:
+            app_config = (
+                json.loads(content)
+                if file_path.suffix == ".json"
+                else yaml.safe_load(content)
+            )
+        except Exception:
+            return []
+        if not isinstance(app_config, dict):
+            return []
+
+        app_root = _find_app_root_for_path(file_path, context)
+        known_guardrails = _collect_known_resource_names(app_root, "guardrails")
+        results: list[LintResult] = []
+
+        for gr in app_config.get("guardrails", []):
+            if isinstance(gr, str) and gr not in known_guardrails:
+                results.append(
+                    self.make_result(
+                        str(file_path),
+                        (
+                            f"App config references guardrail '{gr}' "
+                            "but no matching guardrail was found in "
+                            "guardrails/."
+                        ),
+                        fix=(
+                            f"Create guardrails/{gr}/ or remove '{gr}' "
+                            f"from {file_path.name}."
+                        ),
+                    )
+                )
+
+        global_inst = app_config.get("globalInstruction") or app_config.get(
+            "global_instruction"
+        )
+        if _is_file_path_ref(global_inst) and not _referenced_file_exists(
+            global_inst, file_path.parent, app_root, context
+        ):
+            results.append(
+                self.make_result(
+                    str(file_path),
+                    (
+                        "App config globalInstruction references "
+                        f"'{global_inst}' but file not found"
+                    ),
+                    fix=(
+                        f"Create '{global_inst}' or fix the path in "
+                        f"{file_path.name}."
+                    ),
+                )
+            )
+
+        return results
+
+
+@rule("structure")
+class AgentResourceReferences(Rule):
+    """Agent config references missing guardrails, toolsets, or instruction."""
+
+    id = "S010"
+    name = "agent-resource-references"
+    description = (
+        "Guardrails, toolsets, and instruction file referenced in agent "
+        "JSON exist on disk"
+    )
+    default_severity = Severity.ERROR
+    target = "agent_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        try:
+            agent_config = json.loads(content)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(agent_config, dict):
+            return []
+
+        app_root = _find_app_root_for_path(file_path, context)
+        known_guardrails = _collect_known_resource_names(app_root, "guardrails")
+        known_toolsets = _collect_known_resource_names(app_root, "toolsets")
+        results: list[LintResult] = []
+
+        for gr in agent_config.get("guardrails", []):
+            if isinstance(gr, str) and gr not in known_guardrails:
+                results.append(
+                    self.make_result(
+                        str(file_path),
+                        (
+                            f"Agent config references guardrail '{gr}' "
+                            "but no matching guardrail was found in "
+                            "guardrails/."
+                        ),
+                        fix=(
+                            f"Create guardrails/{gr}/ or remove '{gr}' "
+                            f"from {file_path.name}."
+                        ),
+                    )
+                )
+
+        for ts_entry in agent_config.get("toolsets", []):
+            ts_name = (
+                ts_entry.get("toolset")
+                if isinstance(ts_entry, dict)
+                else (ts_entry if isinstance(ts_entry, str) else None)
+            )
+            if (
+                isinstance(ts_name, str)
+                and ts_name
+                and ts_name not in known_toolsets
+            ):
+                results.append(
+                    self.make_result(
+                        str(file_path),
+                        (
+                            f"Agent config references toolset '{ts_name}' "
+                            "but no matching toolset was found in "
+                            "toolsets/."
+                        ),
+                        fix=(
+                            f"Create toolsets/{ts_name}/ or remove "
+                            f"'{ts_name}' from {file_path.name}."
+                        ),
+                    )
+                )
+
+        instruction_path = agent_config.get("instruction")
+        if _is_file_path_ref(instruction_path) and not _referenced_file_exists(
+            instruction_path, file_path.parent, app_root, context
+        ):
+            results.append(
+                self.make_result(
+                    str(file_path),
+                    (
+                        f"Agent instruction references '{instruction_path}' "
+                        "but file not found"
+                    ),
+                    fix=(
+                        "Create the instruction file or fix the path in "
+                        f"{file_path.name}."
+                    ),
+                )
+            )
+
+        return results
+
+
+@rule("structure")
+class ToolFileReferences(Rule):
+    """Tool config references missing pythonCode or openApiSchema files."""
+
+    id = "S011"
+    name = "tool-file-references"
+    description = (
+        "Tool pythonCode and openApiSchema files referenced in tool "
+        "config exist on disk"
+    )
+    default_severity = Severity.ERROR
+    target = "tool_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        tool_dir = file_path if file_path.is_dir() else file_path.parent
+        config_data, target_path = _load_resource_dir_config(tool_dir)
+        if not config_data or not target_path:
+            return []
+
+        app_root = _find_app_root_for_path(tool_dir, context)
+        results: list[LintResult] = []
+
+        py_fn = config_data.get("pythonFunction") or config_data.get(
+            "python_function"
+        )
+        if isinstance(py_fn, dict):
+            code_path = py_fn.get("pythonCode") or py_fn.get("python_code")
+            if _is_file_path_ref(code_path) and not _referenced_file_exists(
+                code_path, tool_dir, app_root, context
+            ):
+                results.append(
+                    self.make_result(
+                        str(target_path),
+                        (
+                            f"Tool pythonCode references '{code_path}' "
+                            "but file not found"
+                        ),
+                        fix=(
+                            "Create the Python file or fix the path in "
+                            f"{target_path.name}."
+                        ),
+                    )
+                )
+
+        oa_tool = config_data.get("openApiTool") or config_data.get(
+            "open_api_tool"
+        )
+        if isinstance(oa_tool, dict):
+            schema_path = oa_tool.get("openApiSchema") or oa_tool.get(
+                "open_api_schema"
+            )
+            if _is_file_path_ref(schema_path) and not _referenced_file_exists(
+                schema_path, tool_dir, app_root, context
+            ):
+                results.append(
+                    self.make_result(
+                        str(target_path),
+                        (
+                            f"Tool openApiSchema references '{schema_path}' "
+                            "but file not found"
+                        ),
+                        fix=(
+                            "Create the OpenAPI schema file or fix the path "
+                            f"in {target_path.name}."
+                        ),
+                    )
+                )
+
+        return results
+
+
+@rule("structure")
+class ToolsetFileReferences(Rule):
+    """Toolset config openApiSchema path is app-relative and exists on disk."""
+
+    id = "S012"
+    name = "toolset-file-references"
+    description = (
+        "Toolset openApiSchema file path must be prefixed with "
+        "toolsets/{toolset_name}/ and exist on disk"
+    )
+    default_severity = Severity.ERROR
+    target = "toolset_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        toolset_dir = file_path if file_path.is_dir() else file_path.parent
+        toolset_name = toolset_dir.name
+        config_data, target_path = _load_resource_dir_config(toolset_dir)
+        if not config_data or not target_path:
+            return []
+
+        oa_toolset = config_data.get("openApiToolset") or config_data.get(
+            "open_api_toolset"
+        )
+        if not isinstance(oa_toolset, dict):
+            return []
+
+        schema_path = oa_toolset.get("openApiSchema") or oa_toolset.get(
+            "open_api_schema"
+        )
+        if not _is_file_path_ref(schema_path):
+            return []
+
+        app_root = _find_app_root_for_path(toolset_dir, context)
+        results: list[LintResult] = []
+
+        expected_prefix = f"toolsets/{toolset_name}/"
+        if not schema_path.startswith(expected_prefix):
+            results.append(
+                self.make_result(
+                    str(target_path),
+                    (
+                        f"Toolset openApiSchema path '{schema_path}' must be "
+                        "relative to the app root and start with "
+                        f"'{expected_prefix}'"
+                    ),
+                    fix=(
+                        f"Change '{schema_path}' to start with "
+                        f"'{expected_prefix}'"
+                    ),
+                )
+            )
+
+        if not _referenced_file_exists(
+            schema_path, toolset_dir, app_root, context
+        ):
+            results.append(
+                self.make_result(
+                    str(target_path),
+                    (
+                        f"Toolset openApiSchema references '{schema_path}' "
+                        "but file not found"
+                    ),
+                    fix=(
+                        "Create the OpenAPI schema file or fix the path in "
+                        f"{target_path.name}."
+                    ),
+                )
+            )
+
         return results
