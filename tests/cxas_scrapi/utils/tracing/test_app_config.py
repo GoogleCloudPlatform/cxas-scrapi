@@ -18,7 +18,11 @@ import typing
 
 import pytest
 
-from cxas_scrapi.utils.tracing.app_config import ENV_VAR_PLACEHOLDER, AppConfig
+from cxas_scrapi.utils.tracing.app_config import (
+    ENV_VAR_PLACEHOLDER,
+    AppConfig,
+    resolve_env_booleans_in_dir,
+)
 
 
 def _write(path: typing.Any, payload: typing.Any) -> None:
@@ -334,3 +338,159 @@ def test_no_environment_file_no_default_present(tmp_path: typing.Any) -> None:
     # No env file resolved at all.
     assert cfg.env_path is None
     assert cfg.audio_bucket() == "gs://concrete"
+
+
+def test_boolean_env_var_substitution_and_coercion(
+    tmp_path: typing.Any,
+) -> None:
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "loggingSettings": {
+                "bigqueryExportSettings": {
+                    "project": ENV_VAR_PLACEHOLDER,
+                    "dataset": ENV_VAR_PLACEHOLDER,
+                    "enabled": ENV_VAR_PLACEHOLDER,
+                },
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": ENV_VAR_PLACEHOLDER,
+                },
+            }
+        },
+        env={
+            "loggingSettings": {
+                "bigqueryExportSettings": {
+                    "project": "my-proj",
+                    "dataset": "my-ds",
+                    "enabled": "false",
+                },
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": "true",
+                },
+            }
+        },
+    )
+    cfg = AppConfig.load(app_dir=app_dir)
+    assert cfg.cloud_logging_enabled() is True
+    assert cfg.bigquery_export() == {
+        "project": "my-proj",
+        "dataset": "my-ds",
+        "enabled": False,
+    }
+
+
+def test_boolean_env_override_without_placeholder(
+    tmp_path: typing.Any,
+) -> None:
+    """When app.json has a concrete bool (`true`), environment.json can override
+    it per environment (e.g. `false` in dev)."""
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "loggingSettings": {
+                "bigqueryExportSettings": {
+                    "project": "p",
+                    "dataset": "d",
+                    "enabled": True,
+                },
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": True,
+                },
+            }
+        },
+        env={
+            "app": {
+                "loggingSettings": {
+                    "bigqueryExportSettings": {
+                        "enabled": False,
+                    },
+                    "cloudLoggingSettings": {
+                        "enableCloudLogging": False,
+                    },
+                }
+            }
+        },
+    )
+    cfg = AppConfig.load(app_dir=app_dir)
+    assert cfg.cloud_logging_enabled() is False
+    assert cfg.bigquery_export() == {
+        "project": "p",
+        "dataset": "d",
+        "enabled": False,
+    }
+
+
+def test_resolve_env_booleans_in_dir_updates_app_and_tool_manifests(
+    tmp_path: typing.Any,
+) -> None:
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "displayName": "Test App",
+            "loggingSettings": {
+                "bigqueryExportSettings": {
+                    "project": ENV_VAR_PLACEHOLDER,
+                    "dataset": ENV_VAR_PLACEHOLDER,
+                    "enabled": ENV_VAR_PLACEHOLDER,
+                },
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": True,
+                },
+            },
+        },
+        env={
+            "app": {
+                "loggingSettings": {
+                    "bigqueryExportSettings": {
+                        "project": "prod-proj",
+                        "dataset": "prod-ds",
+                        "enabled": "false",
+                    },
+                    "cloudLoggingSettings": {
+                        "enableCloudLogging": False,
+                    },
+                }
+            },
+            "tools": {
+                "lookup_order": {
+                    "openApiTool": {
+                        "ignoreUnknownFields": "true",
+                    }
+                }
+            },
+        },
+    )
+    tools_dir = tmp_path / "tools" / "lookup_order"
+    tools_dir.mkdir(parents=True)
+    tool_json = tools_dir / "lookup_order.json"
+    _write(
+        tool_json,
+        {
+            "displayName": "lookup_order",
+            "openApiTool": {
+                "url": ENV_VAR_PLACEHOLDER,
+                "ignoreUnknownFields": ENV_VAR_PLACEHOLDER,
+            },
+        },
+    )
+
+    modified = resolve_env_booleans_in_dir(app_dir)
+    assert modified is True
+
+    with open(tmp_path / "app.json") as f:
+        updated_app = json.load(f)
+    bq = updated_app["loggingSettings"]["bigqueryExportSettings"]
+    assert bq["enabled"] is False
+    # String $env_var placeholders remain untouched for server-side resolution
+    assert bq["project"] == ENV_VAR_PLACEHOLDER
+    assert (
+        updated_app["loggingSettings"]["cloudLoggingSettings"][
+            "enableCloudLogging"
+        ]
+        is False
+    )
+
+    with open(tool_json) as f:
+        updated_tool = json.load(f)
+    assert updated_tool["openApiTool"]["ignoreUnknownFields"] is True
+    assert updated_tool["openApiTool"]["url"] == ENV_VAR_PLACEHOLDER

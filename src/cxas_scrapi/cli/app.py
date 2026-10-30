@@ -399,6 +399,14 @@ def _app_push(
                 f"'{env_file}' not found. Skipping."
             )
 
+    # Resolve boolean $env_var placeholders and boolean environment overrides
+    # in the staged inner_dir before creating the zip archive.
+    from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
+        resolve_env_booleans_in_dir,
+    )
+
+    resolve_env_booleans_in_dir(inner_dir)
+
     # ZIP does not support timestamps before 1980.
     # Touch files and directories in temp_dir with timestamps before 1980.
     limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))

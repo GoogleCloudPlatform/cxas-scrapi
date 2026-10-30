@@ -34,7 +34,7 @@ The CLI bundles the following top-level items from `--app-dir` into a ZIP archiv
 
 - `app.yaml` / `app.json`
 - `global_instruction.txt`
-- `environment.json` (or the file you pass via `--env-file`)
+- `environment.json` (or the file you pass via `--env-file`). Any boolean `"$env_var"` placeholders or per-environment boolean overrides (such as `bigqueryExportSettings.enabled`, `cloudLoggingSettings.enableCloudLogging`, or `openApiTool.ignoreUnknownFields`) are resolved into the staged manifests as native JSON booleans before archiving.
 - `agents/`, `tools/`, `guardrails/`, `toolsets/`
 - `evaluations/`, `evaluationDatasets/`, `evaluationExpectations/`
 - `.github/workflows/`
