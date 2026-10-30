@@ -78,7 +78,7 @@ def normalize(conversation: Any) -> dict[str, Any]:
 
 
 def _turn_metrics(turn: dict[str, Any], turn_idx: int) -> dict[str, Any]:
-    """Pulls per-turn timing, latency, tokens, and a flat span list."""
+    """Pulls per-turn timing, latency, tokens, flat spans, and raw turn JSON."""
     rs = turn.get("root_span") or {}
     spans: list[dict[str, Any]] = []
     _flatten_spans(rs.get("child_spans", []) or [], spans)
@@ -93,6 +93,7 @@ def _turn_metrics(turn: dict[str, Any], turn_idx: int) -> dict[str, Any]:
         "perceived_latency_ms": _attr(rs, "perceived latency (ms)"),
         "tokens": tokens,
         "spans": spans,
+        "raw_turn": Common.unwrap_struct(turn),
     }
 
 
@@ -103,23 +104,54 @@ def _flatten_spans(
 ) -> None:
     """Walks `child_spans` recursively into a flat list with depth markers."""
     for s in children:
-        attrs = s.get("attributes") or {}
+        raw_attrs = Common.unwrap_struct(s.get("attributes") or {})
+        attrs = raw_attrs if isinstance(raw_attrs, dict) else {}
+        span_name = s.get("name")
+        is_tool = span_name in ("Tool", "Async Tool", "Fake Tool")
+        raw_args = (
+            attrs.get("args")
+            if attrs.get("args") is not None
+            else attrs.get("input")
+        )
+        raw_resp = (
+            attrs.get("response")
+            if attrs.get("response") is not None
+            else attrs.get("output")
+        )
         out.append(
             {
-                "name": s.get("name"),
+                "name": span_name,
                 "depth": depth,
                 "stage": attrs.get("stage"),
                 "agent": attrs.get("agent"),
-                "tool": attrs.get("name") if s.get("name") == "Tool" else None,
+                "tool": (
+                    (attrs.get("name") or attrs.get("tool_name"))
+                    if is_tool
+                    else None
+                ),
                 "model": attrs.get("model"),
-                "tool_args": Common.unwrap_struct(attrs.get("args"))
-                if s.get("name") == "Tool"
-                else None,
-                "tool_response": Common.unwrap_struct(attrs.get("response"))
-                if s.get("name") == "Tool"
-                else None,
-                "tool_id": attrs.get("tool call id"),
+                "tool_args": (
+                    Common.unwrap_struct(raw_args)
+                    if is_tool and raw_args is not None
+                    else None
+                ),
+                "tool_response": (
+                    Common.unwrap_struct(raw_resp)
+                    if is_tool and raw_resp is not None
+                    else None
+                ),
+                "tool_id": (
+                    attrs.get("tool call id")
+                    or attrs.get("tool_call_id")
+                    or attrs.get("id")
+                ),
                 "tool_type": attrs.get("type"),
+                "stdout": attrs.get("stdout"),
+                "stderr": attrs.get("stderr"),
+                "logs": attrs.get("logs"),
+                "error": attrs.get("error"),
+                "description": attrs.get("description"),
+                "attributes": attrs,
                 "tokens": (
                     {
                         "input": _to_int(attrs.get("input token count")),
@@ -129,7 +161,7 @@ def _flatten_spans(
                             attrs.get("time to first chunk (ms)")
                         ),
                     }
-                    if s.get("name") == "LLM"
+                    if span_name == "LLM"
                     else None
                 ),
                 "duration_ms": _duration_ms(
@@ -432,20 +464,38 @@ def _span_to_text(s: dict[str, Any]) -> str:
     name = s.get("name") or "?"
     dur = _fmt_ms(s.get("duration_ms"))
     if name == "Callback":
-        return f"{indent}* Callback[{s.get('stage')}] {dur}"
-    if name == "LLM":
+        header = f"{indent}* Callback[{s.get('stage')}] {dur}"
+    elif name == "LLM":
         t = s.get("tokens") or {}
-        return (
+        header = (
             f"{indent}* LLM {s.get('model')} {dur}  "
             f"in={t.get('input')} out={t.get('output')} "
             f"ttfc_ms={t.get('ttfc_ms')}"
         )
-    if name == "Tool":
-        return (
-            f"{indent}* Tool {s.get('tool')} {dur}  "
+    elif name in ("Tool", "Async Tool", "Fake Tool"):
+        header = (
+            f"{indent}* {name} {s.get('tool')} {dur}  "
             f"args={json.dumps(s.get('tool_args'), default=str)[:80]}"
         )
-    return f"{indent}* {name} {dur}"
+    else:
+        header = f"{indent}* {name} {dur}"
+
+    detail_indent = indent + "  "
+    details: list[str] = []
+    if s.get("stdout"):
+        for line in str(s["stdout"]).rstrip("\n").splitlines():
+            details.append(f"{detail_indent}stdout: {line}")
+    if s.get("stderr"):
+        for line in str(s["stderr"]).rstrip("\n").splitlines():
+            details.append(f"{detail_indent}stderr: {line}")
+    if s.get("logs"):
+        logs_val = s["logs"]
+        log_items = logs_val if isinstance(logs_val, list) else [logs_val]
+        for item in log_items:
+            details.append(f"{detail_indent}log: {item}")
+    if s.get("error"):
+        details.append(f"{detail_indent}error: {s['error']}")
+    return "\n".join([header, *details])
 
 
 def _entry_to_text(e: dict[str, Any]) -> str:
@@ -548,6 +598,19 @@ def to_markdown(
             md.append("  |---|---|---|---|---|")
             for s in spans:
                 md.append(_span_to_markdown(s))
+            for s in spans:
+                md.extend(_span_logs_to_markdown(s))
+            md.append("  </details>")
+        raw_turn = m.get("raw_turn")
+        if raw_turn is not None:
+            raw_json = json.dumps(raw_turn, indent=2, default=str)
+            md.append("")
+            md.append("  <details><summary>Raw turn JSON</summary>")
+            md.append("")
+            md.append("  ```json")
+            for line in raw_json.splitlines():
+                md.append(f"  {line}")
+            md.append("  ```")
             md.append("  </details>")
         md.append("")
 
@@ -596,6 +659,41 @@ def _span_to_markdown(s: dict[str, Any]) -> str:
     return (
         f"  | {s.get('depth', 0)} | {name} | `{label}` | {dur} | {token_str} |"
     )
+
+
+def _span_logs_to_markdown(s: dict[str, Any]) -> list[str]:
+    """Renders stdout, stderr, logs, or error attached to a span in Markdown."""
+    name = s.get("name") or "?"
+    label = s.get("stage") or s.get("tool") or s.get("model") or ""
+    prefix = f"{name} `{label}`" if label else name
+    lines: list[str] = []
+    if s.get("stdout"):
+        lines.append("")
+        lines.append(f"  **{prefix} stdout:**")
+        lines.append("  ```text")
+        for line in str(s["stdout"]).rstrip("\n").splitlines():
+            lines.append(f"  {line}")
+        lines.append("  ```")
+    if s.get("stderr"):
+        lines.append("")
+        lines.append(f"  **{prefix} stderr:**")
+        lines.append("  ```text")
+        for line in str(s["stderr"]).rstrip("\n").splitlines():
+            lines.append(f"  {line}")
+        lines.append("  ```")
+    if s.get("logs"):
+        logs_val = s["logs"]
+        log_items = logs_val if isinstance(logs_val, list) else [logs_val]
+        lines.append("")
+        lines.append(f"  **{prefix} logs:**")
+        lines.append("  ```text")
+        for item in log_items:
+            lines.append(f"  {item}")
+        lines.append("  ```")
+    if s.get("error"):
+        lines.append("")
+        lines.append(f"  **{prefix} error:** `{s['error']}`")
+    return lines
 
 
 def _entry_to_markdown(e: dict[str, Any]) -> str:
@@ -697,7 +795,19 @@ def to_html(
             )
             for s in spans:
                 body.append(_span_to_html(s))
-            body.append("</table></details>")
+            body.append("</table>")
+            for s in spans:
+                body.extend(_span_logs_to_html(s))
+            body.append("</details>")
+        raw_turn = m.get("raw_turn")
+        if raw_turn is not None:
+            raw_escaped = _html.escape(
+                json.dumps(raw_turn, indent=2, default=str)
+            )
+            body.append(
+                "<details class='raw-turn'><summary>Raw turn JSON</summary>"
+                f"<pre>{raw_escaped}</pre></details>"
+            )
     body.append("</div>")
     if extras:
         for section, content in extras.items():
@@ -774,6 +884,39 @@ def _span_to_html(s: dict[str, Any]) -> str:
         f"<td>{label}</td><td>{dur}</td>"
         f"<td>{tok_in}/{tok_out}</td><td>{ttfc}</td></tr>"
     )
+
+
+def _span_logs_to_html(s: dict[str, Any]) -> list[str]:
+    """Renders stdout, stderr, logs, or error attached to a span in HTML."""
+    esc = _html.escape
+    name = esc(str(s.get("name") or "?"))
+    label = esc(str(s.get("stage") or s.get("tool") or s.get("model") or ""))
+    prefix = f"{name} <code>{label}</code>" if label else name
+    parts: list[str] = []
+    if s.get("stdout"):
+        parts.append(
+            f"<div class='span-log'><b>{prefix} stdout:</b>"
+            f"<pre>{esc(str(s['stdout']))}</pre></div>"
+        )
+    if s.get("stderr"):
+        parts.append(
+            f"<div class='span-log'><b>{prefix} stderr:</b>"
+            f"<pre>{esc(str(s['stderr']))}</pre></div>"
+        )
+    if s.get("logs"):
+        logs_val = s["logs"]
+        log_items = logs_val if isinstance(logs_val, list) else [logs_val]
+        joined = "\n".join(str(x) for x in log_items)
+        parts.append(
+            f"<div class='span-log'><b>{prefix} logs:</b>"
+            f"<pre>{esc(joined)}</pre></div>"
+        )
+    if s.get("error"):
+        parts.append(
+            f"<div class='span-log'><b>{prefix} error:</b> "
+            f"<code>{esc(str(s['error']))}</code></div>"
+        )
+    return parts
 
 
 def _entry_to_html(e: dict[str, Any]) -> str:

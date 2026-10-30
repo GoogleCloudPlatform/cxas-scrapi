@@ -408,3 +408,97 @@ def test_span_renderers_unknown_name() -> None:
     assert "Other" in tr._span_to_text(s)
     md = tr._span_to_markdown(s)
     assert "Other" in md
+
+
+def test_python_tool_and_callback_print_logs_and_raw_turn_json() -> None:
+    turn_with_logs = {
+        "messages": [
+            {"role": "user", "chunks": [{"text": "check status"}]},
+            {"role": "agent", "chunks": [{"text": "all good"}]},
+        ],
+        "root_span": {
+            "name": "root",
+            "duration": "0.5s",
+            "attributes": {"perceived latency (ms)": 480.0},
+            "child_spans": [
+                {
+                    "name": "Callback",
+                    "duration": "0.1s",
+                    "attributes": {
+                        "agent": "root_agent",
+                        "stage": "BeforeTool",
+                        "stdout": "callback print line 1\ncallback print line 2\n",
+                        "logs": ["cb_log_entry"],
+                    },
+                    "child_spans": [],
+                },
+                {
+                    "name": "Tool",
+                    "duration": "0.2s",
+                    "attributes": {
+                        "name": "python_lookup",
+                        "type": "PythonFunctionTool",
+                        "args": {"query": "abc"},
+                        "response": {"result": "ok"},
+                        "stdout": "tool print debug: query=abc\n",
+                        "stderr": "tool warning on stderr\n",
+                        "error": "transient warning",
+                    },
+                    "child_spans": [],
+                },
+            ],
+        },
+    }
+    normalized = tr.normalize({"name": "p/c_logs", "turns": [turn_with_logs]})
+    tm = normalized["turn_metrics"][0]
+
+    # Issue #350: per-turn raw JSON preserved on each turn metric entry
+    assert "raw_turn" in tm
+    assert tm["raw_turn"]["messages"][0]["chunks"][0]["text"] == "check status"
+
+    # Issue #485: Python tool & callback stdout/stderr/logs/error extracted
+    cb_span, tool_span = tm["spans"]
+    assert cb_span["stdout"] == "callback print line 1\ncallback print line 2\n"
+    assert cb_span["logs"] == ["cb_log_entry"]
+    assert tool_span["stdout"] == "tool print debug: query=abc\n"
+    assert tool_span["stderr"] == "tool warning on stderr\n"
+    assert tool_span["error"] == "transient warning"
+    assert tool_span["attributes"]["type"] == "PythonFunctionTool"
+
+    # Text rendering includes stdout, stderr, log, and error lines
+    txt = tr.to_text(normalized)
+    assert "stdout: callback print line 1" in txt
+    assert "stdout: tool print debug: query=abc" in txt
+    assert "stderr: tool warning on stderr" in txt
+    assert "log: cb_log_entry" in txt
+    assert "error: transient warning" in txt
+
+    # Markdown rendering includes span stdout/stderr/logs/error and Raw turn JSON
+    md = tr.to_markdown(normalized)
+    assert "**Callback `BeforeTool` stdout:**" in md
+    assert "callback print line 1" in md
+    assert "**Tool `python_lookup` stdout:**" in md
+    assert "tool print debug: query=abc" in md
+    assert "**Tool `python_lookup` stderr:**" in md
+    assert "tool warning on stderr" in md
+    assert "**Callback `BeforeTool` logs:**" in md
+    assert "cb_log_entry" in md
+    assert "**Tool `python_lookup` error:** `transient warning`" in md
+    assert "<details><summary>Raw turn JSON</summary>" in md
+
+    # HTML rendering includes span logs and raw-turn details block
+    html = tr.to_html(normalized)
+    assert "tool print debug: query=abc" in html
+    assert "tool warning on stderr" in html
+    assert "Raw turn JSON" in html
+
+    # JSON output includes raw_turn inside turn_metrics by default
+    json_payload = json.loads(tr.to_json(normalized))
+    assert (
+        json_payload["turn_metrics"][0]["raw_turn"]["messages"][0]["role"]
+        == "user"
+    )
+    assert (
+        json_payload["turn_metrics"][0]["spans"][1]["stdout"]
+        == "tool print debug: query=abc\n"
+    )

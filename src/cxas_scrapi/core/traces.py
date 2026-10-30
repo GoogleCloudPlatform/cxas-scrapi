@@ -296,6 +296,7 @@ class Traces(Common):
         with_audio: bool = False,
         with_analysis: bool = False,
         with_triage: bool = False,
+        include_raw: bool = False,
     ) -> str:
         """Builds a single trace report in the requested format."""
         normalized = self.get_normalized(conversation_id)
@@ -335,7 +336,9 @@ class Traces(Common):
         source_str = normalized.get("source")
         url = self.console_url(conversation_id, source=source_str)
         if fmt == "json":
-            return trace_report.to_json(normalized, extras=extras)
+            return trace_report.to_json(
+                normalized, include_raw=include_raw, extras=extras
+            )
         if fmt in ("md", "markdown"):
             return trace_report.to_markdown(
                 normalized, console_url=url, extras=extras

@@ -243,15 +243,17 @@ def _format_snippets(snippets: list, query: str) -> str:
 def trace_get(args: argparse.Namespace) -> None:
     try:
         traces = _build_traces(args)
-        out = traces.get_report(
-            args.conversation_id,
-            fmt=args.format,
-            with_logs=args.with_logs,
-            log_level=args.log_level,
-            with_audio=args.with_audio,
-            with_analysis=args.with_analysis,
-            with_triage=args.with_triage,
-        )
+        report_kwargs: dict[str, typing.Any] = {
+            "fmt": args.format,
+            "with_logs": args.with_logs,
+            "log_level": args.log_level,
+            "with_audio": args.with_audio,
+            "with_analysis": args.with_analysis,
+            "with_triage": args.with_triage,
+        }
+        if getattr(args, "include_raw", False):
+            report_kwargs["include_raw"] = True
+        out = traces.get_report(args.conversation_id, **report_kwargs)
     except Exception as e:
         print(f"Failed to get trace: {e}", file=sys.stderr)
         sys.exit(1)
@@ -857,6 +859,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     p_get.add_argument("--with-audio", action="store_true")
     p_get.add_argument("--with-analysis", action="store_true")
     p_get.add_argument("--with-triage", action="store_true")
+    p_get.add_argument(
+        "--include-raw",
+        action="store_true",
+        help="Include top-level raw conversation payload in JSON output.",
+    )
     p_get.add_argument("--out", help="File path to write the report to.")
     p_get.set_defaults(func=trace_get)
 

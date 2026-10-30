@@ -314,6 +314,30 @@ def test_trace_get_writes_file(
     assert "Wrote" in capsys.readouterr().out
 
 
+def test_trace_get_include_raw_flag(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
+    fake_traces.get_report.return_value = '{"raw": {}}'
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    trace_cli.register(sub)
+    args = parser.parse_args(
+        [
+            "trace",
+            "get",
+            "c1",
+            "--app-name",
+            APP,
+            "--format",
+            "json",
+            "--include-raw",
+        ]
+    )
+    trace_cli.trace_get(args)
+    assert fake_traces.get_report.call_args.kwargs.get("include_raw") is True
+    assert "raw" in capsys.readouterr().out
+
+
 def test_trace_get_failure(fake_traces: typing.Any) -> None:
     fake_traces.get_report.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):

@@ -21,7 +21,7 @@ All `cxas trace` subcommands share a few flags:
 | Subcommand | Purpose |
 |-----------|---------|
 | `cxas trace list` | List conversations filtered by time / source / channel. |
-| `cxas trace get <id>` | Fetch a conversation and render a trace report (JSON / Markdown / text / HTML). |
+| `cxas trace get <id>` | Fetch a conversation and render a trace report (JSON / Markdown / text / HTML), including per-turn raw JSON (`raw_turn`), Python tool/callback `stdout`/`stderr`/`logs` span attributes, and optional full raw conversation JSON via `--include-raw`. |
 | `cxas trace logs <id>` | Fetch Cloud Logging entries correlated to a conversation. |
 | `cxas trace audio download <id>` | Download the GCS audio recording. |
 | `cxas trace audio analyze <id>` | Run configured Gemini audio metrics over the recording. |
@@ -50,7 +50,7 @@ Gemini audio + transcript analysis — written to a file:
 cxas trace get conv-id-1 \
   --app-name projects/p/locations/l/apps/a \
   --format md --with-logs --with-audio --with-analysis --with-triage \
-  --out trace.md
+  --include-raw --out trace.md
 ```
 
 Compare a deployed conversation against the current agent (diffing is enabled by default, use `--no-diff` to disable it):
