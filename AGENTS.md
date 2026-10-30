@@ -8,6 +8,7 @@ This repository is a workspace and SDK for building and managing GECX (Google Cu
 cxas-scrapi/                    # SDK source code
 .agents/skills/                 # Collection of reusable agent skills
 ├── cxas-agent-foundry/         # Composite skill for end-to-end agent lifecycle
+├── cxas-arc/                   # Skill for driving Arc, the CX Agent Studio AI assistant
 ├── cxas-sim-eval/              # Skill for converting evals
 └── ...
 <project_name>/                 # (Optional) App-specific agent workspaces managed by skills (e.g., cymbal/)
@@ -34,6 +35,7 @@ Requires Python 3.10+ and [astral-uv](https://docs.astral.sh/uv/getting-started/
 This workspace provides several specialized AI skills to assist with development.
 
 - **`cxas-agent-foundry`**: The primary skill for the end-to-end GECX agent lifecycle. Use this for building agents from PRDs, generating and running evals, debugging failures, and syncing code.
+- **`cxas-arc`**: Talk to Arc, the AI assistant built into the CX Agent Studio console, via `cxas arc`. Use this to ask Arc about an app, design an agent contract, build an agent from a PRD, attach local app/eval files, answer confirmation cards and clarification options, and run or hillclimb evaluations on a sticky session.
 - **`cxas-autolabel-rules`**: Author, validate, and manage Contact Center AI (CCAI) Insights Autolabeling Rules declaratively via YAML and CEL.
 - **`cxas-composite-voice-agent-optimizer`**: Audits, optimizes, and remediates CXAS agent configurations for Gemini Composite v2: upgrades the model, clears or shortens speaking style instructions (<12 words), and migrates inline audio tags to angle brackets.
 - **`cxas-configurable-dashboards`**: Author, validate, and manage CCAI Insights Configurable Dashboards declaratively via YAML, Vega-Lite specs, and SQL metrics queries.
@@ -41,6 +43,7 @@ This workspace provides several specialized AI skills to assist with development
 
 ## CLI Features
 
+- **`cxas arc`**: Drive Arc, the CX Agent Studio AI assistant, from the terminal the way the console does. `cxas arc chat --app-name <app> --message "..."` (or `--message-file prd.md`, `--attach <dir>`) sends a turn on a sticky session; `cxas arc confirm --confirmed` clicks a pending confirmation card; `cxas arc answer --choices A,B` submits a clarification option panel; `cxas arc sessions list|get|new|delete`, `cxas arc cancel` and `cxas arc suggestions` manage the session. Evaluation runs started by Arc are polled and the session resumed automatically; add `--format json` for machine-readable output. See `.agents/skills/cxas-arc/SKILL.md`.
 - **`cxas deployments`**: Manage app deployments and channel settings. Use `cxas deployments create --app-name <app> --deployment-id <id> --version-id <ver> [--channel-type <type>] [--persona-property {CONCISE,CHATTY}] [--noise-suppression-level {low,moderate,high,very_high}]` to configure channel profiles and audio settings, and `cxas deployments update` to modify them on existing deployments.
 - **`cxas evals report`**: Run and generate comprehensive HTML/CSV/JSON evaluation reports across simulations, goldens, and turn evals. Supports `--modality {text,audio}` with acoustic background noise injection (`--background-noise <preset|file>`, `--bg-noise-snr <dB|level>`, `--bg-noise-level {LOW,MEDIUM,HIGH}`, `--burst-noise <file>`, `--burst-noise-snr <dB|level>`, `--burst-noise-level {LOW,MEDIUM,HIGH}`) across 13 built-in acoustic presets (`white`, `pink`, `brown`, `cafe`, `call_center`, `traffic`, `cross_talk`, `baby_crying`, `kids_noise`, `dog_barking`, `tv_radio`, `kitchen`, `wind`) and shorthand syntax (`<preset>:LOW`, `<preset>:MEDIUM`, `<preset>:HIGH`).
 - **`cxas help`**: Interactive terminal help documentation detailing all available CLI commands and sub-commands. Example: `cxas help llm-lint`.
