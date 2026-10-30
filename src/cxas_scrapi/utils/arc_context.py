@@ -22,6 +22,7 @@ name together with an optional ``assistantSessions/*`` id.
 from __future__ import annotations
 
 import dataclasses
+import os
 import re
 import urllib.parse
 
@@ -30,9 +31,12 @@ from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT
 PROD_API_ENDPOINT = "ces.googleapis.com"
 DEFAULT_PROD_LOCATION = "us"
 DEFAULT_NONPROD_LOCATION = "us-east1"
+ALLOW_ANY_ENDPOINT_ENV = "CXAS_ALLOW_ANY_API_ENDPOINT"
 
 _APP_RE = re.compile(r"projects/([^/?#]+)/locations/([^/?#]+)/apps/([^/?#]+)")
 _SESSION_RE = re.compile(r"assistantSessions/([^/?#]+)")
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_GOOGLEAPIS_HOST_RE = re.compile(r"(^|\.)googleapis\.com$", re.IGNORECASE)
 _CONSOLE_PATH_RE = re.compile(r"customer-engagement-ai", re.IGNORECASE)
 
 
@@ -52,15 +56,43 @@ class ArcTarget:
 
     @property
     def project(self) -> str:
+        """Project ID or number parsed from ``app_name``."""
         return _APP_RE.search(self.app_name).group(1)  # type: ignore[union-attr]
 
     @property
     def location(self) -> str:
+        """Location segment parsed from ``app_name``."""
         return _APP_RE.search(self.app_name).group(2)  # type: ignore[union-attr]
 
     @property
     def app_id(self) -> str:
+        """Short app ID parsed from ``app_name``."""
         return _APP_RE.search(self.app_name).group(3)  # type: ignore[union-attr]
+
+
+def normalize_api_endpoint(api_endpoint: str | None) -> str:
+    """Normalizes and validates an API endpoint hostname.
+
+    Rejects path/query/userinfo injection and requires ``*.googleapis.com``
+    unless ``CXAS_ALLOW_ANY_API_ENDPOINT=1`` is set in the environment.
+    """
+    raw = (
+        DEFAULT_API_ENDPOINT if api_endpoint is None else api_endpoint
+    ).strip()
+    host = raw.removeprefix("https://").removeprefix("http://").rstrip("/")
+    if not host or re.search(r"[@/?#\s]", host):
+        raise ValueError(
+            f"Invalid API endpoint {raw!r}: expected a bare hostname."
+        )
+    if os.environ.get(ALLOW_ANY_ENDPOINT_ENV) != "1" and not (
+        _GOOGLEAPIS_HOST_RE.search(host)
+    ):
+        raise ValueError(
+            f"Refusing untrusted API endpoint {host!r}; expected "
+            f"*.googleapis.com (set {ALLOW_ANY_ENDPOINT_ENV}=1 for local "
+            "testing)."
+        )
+    return host
 
 
 def default_location(api_endpoint: str) -> str:
@@ -71,9 +103,19 @@ def default_location(api_endpoint: str) -> str:
 
 
 def session_short_id(value: str) -> str:
-    """Returns the short session id from a short id or full resource name."""
-    match = _SESSION_RE.search(value)
-    return match.group(1) if match else value.strip()
+    """Returns a validated short session id from a short id or resource name."""
+    raw = value.strip()
+    if "assistantSessions/" in raw:
+        tail = raw.split("assistantSessions/", 1)[1]
+        short = re.split(r"[?#]", tail, maxsplit=1)[0]
+    else:
+        short = raw
+    if not _SESSION_ID_RE.match(short):
+        raise ValueError(
+            f"Invalid session id {value!r}: expected 1-128 characters "
+            "matching [A-Za-z0-9._-] starting with an alphanumeric."
+        )
+    return short
 
 
 def _parse_console_url(url: str) -> tuple[str | None, str | None]:
@@ -120,9 +162,7 @@ def resolve_target(
     Raises:
         ValueError: when the app cannot be determined.
     """
-    endpoint = (api_endpoint or DEFAULT_API_ENDPOINT).strip()
-    endpoint = endpoint.removeprefix("https://").removeprefix("http://")
-    endpoint = endpoint.rstrip("/")
+    endpoint = normalize_api_endpoint(api_endpoint)
     session_id: str | None = None
     resolved: str | None = None
 
@@ -152,6 +192,9 @@ def resolve_target(
 
     if resolved is None:
         raise ValueError("Provide --url or --app-name to select an app.")
+
+    if session_id is not None:
+        session_id = session_short_id(session_id)
 
     return ArcTarget(
         app_name=resolved, api_endpoint=endpoint, session_id_from_url=session_id

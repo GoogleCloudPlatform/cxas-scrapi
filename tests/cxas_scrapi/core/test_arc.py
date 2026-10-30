@@ -20,11 +20,12 @@ import itertools
 import json
 import pathlib
 import time
+import uuid
 from typing import Any
 
 import pytest
 import requests
-from urllib3.exceptions import ReadTimeoutError
+from urllib3.exceptions import ConnectTimeoutError, ReadTimeoutError
 
 from cxas_scrapi.core import arc as arc_module
 from cxas_scrapi.core.arc import (
@@ -123,6 +124,10 @@ class FakeSession:
         self.requests: list[dict[str, Any]] = []
         self._post_queue: list[FakeResponse] = []
         self._request_queue: list[FakeResponse] = []
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
     def queue_post(self, *responses: FakeResponse) -> None:
         self._post_queue.extend(responses)
@@ -172,9 +177,11 @@ class FakeSession:
                 "timeout": timeout,
             }
         )
-        if self._request_queue:
-            return self._request_queue.pop(0)
-        return FakeResponse(b"{}", headers=_JSON_HEADERS)
+        if not self._request_queue:
+            raise AssertionError(
+                f"unexpected unary {method} {url} (#{len(self.requests)})"
+            )
+        return self._request_queue.pop(0)
 
 
 class TypedPolicy(ConfirmationPolicy):
@@ -237,18 +244,21 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 
 def test_constructor_normalises_endpoint_and_profile() -> None:
+    notices: list[str] = []
     client = Arc(
         app_name=_APP,
         creds=FakeCreds(),
         http_session=FakeSession(),  # type: ignore[arg-type]
-        api_endpoint="https://autopush-ces.sandbox.googleapis.com/",
+        api_endpoint="https://sandbox-ces.sandbox.googleapis.com/",
         client_profile="legacy",
+        progress=notices.append,
     )
 
-    assert client.api_endpoint == "autopush-ces.sandbox.googleapis.com"
+    assert client.api_endpoint == "sandbox-ces.sandbox.googleapis.com"
     assert client.client_profile == "legacy"
     assert client.project_id == "p"
     assert client.user_agent.endswith(":arc")
+    assert any("sandbox-ces.sandbox.googleapis.com" in n for n in notices)
 
 
 def test_constructor_rejects_unknown_profile() -> None:
@@ -563,11 +573,16 @@ def test_stream_turn_reattaches_after_connection_reset(
                             "turnId": "0",
                             "resolvedSequenceNumber": "3",
                             "events": [
-                                {"textChunk": "world", "sequenceNumber": "3"}
+                                {"thoughtChunk": "t", "sequenceNumber": "1"},
+                                {
+                                    "textChunk": "Hello world",
+                                    "sequenceNumber": "3",
+                                },
                             ],
                         },
                         "sequenceNumber": "3",
                     },
+                    {"textChunk": "DUP", "sequenceNumber": "3"},
                     {"textChunk": "!", "sequenceNumber": "4"},
                     {
                         "turnCompleted": {"turnId": "0", "reason": "COMPLETED"},
@@ -581,6 +596,7 @@ def test_stream_turn_reattaches_after_connection_reset(
     events = arc.stream_turn("s-1", "hi")
 
     assert events.text == "Hello world!"
+    assert events.thoughts == ["t"]
     assert events.turn_completed is not None
     assert len(fake.posts) == 2
     second = fake.posts[1]["json"]
@@ -830,20 +846,21 @@ def test_chat_stops_at_max_confirmation_rounds(
 def test_chat_partial_events_on_stream_timeout(
     arc: Arc, fake: FakeSession
 ) -> None:
-    fake.queue_post(
-        FakeResponse(
-            sse_body([{"textChunk": "so far"}]),
-            raise_after=requests.exceptions.ReadTimeout("idle"),
-        )
+    resp = FakeResponse(
+        sse_body([{"textChunk": "so far"}]),
+        raise_after=requests.exceptions.ReadTimeout("idle"),
     )
+    fake.queue_post(resp)
 
     with pytest.raises(ArcStreamTimeout) as excinfo:
         arc.chat("s-1", "hi")
 
+    assert resp.closed is True
     # The partial text travels on the exception; the client also keeps the
     # structured events of the failed turn for later rendering.
     assert excinfo.value.partial.text == "so far"
     assert arc.last_stream_events is not None
+    assert arc.last_stream_events.text == "so far"
     assert arc.last_stream_events.last_sequence_number is None
     assert arc.active_turn_events is None
 
@@ -965,7 +982,10 @@ def test_chat_resolves_evaluation_lro(
     assert calls["run"] == [_RUN_NAME]
     second = fake.posts[1]["json"]
     assert second["message"] == ""
-    assert second["operationCompletedEvent"] == {
+    completed_ev = dict(second["operationCompletedEvent"])
+    dedup = completed_ev.pop("deduplicationToken")
+    assert uuid.UUID(dedup)
+    assert completed_ev == {
         "operationName": _OP_NAME,
         "targetResourceName": _RUN_NAME,
         "operationType": "run_evaluation",
@@ -998,6 +1018,7 @@ def test_chat_without_auto_resolve_leaves_lro_pending(
     events = arc.chat("s-1", "run the evaluations", auto_resolve_lro=False)
 
     assert len(fake.posts) == 1
+    assert fake.posts[0]["json"]["clientCapabilities"] == ["CONFIRMATION_CARDS"]
     assert calls == {"operation": [], "run": []}
     assert len(events.initiated_lros) == 1
     assert events.initiated_lros[0].status == "PENDING"
@@ -1158,19 +1179,17 @@ def test_poll_detached_job(
                         {
                             "typedPayload": {
                                 "type": "detached_assistant_status",
-                                "payload": json.dumps(
-                                    {
-                                        "job_id": "guddelon-1",
-                                        "status": status,
-                                        "memo_path": "memo/out.md",
-                                    }
-                                ),
+                                "displayName": "guddelon-1",
+                                "value": {
+                                    "status": status,
+                                    "memo_path": "memo/out.md",
+                                },
                             }
                         },
                         {
                             "typedPayload": {
                                 "type": "detached_assistant_status",
-                                "data": {
+                                "value": {
                                     "job_id": "guddelon-other",
                                     "status": "failed",
                                 },
@@ -1224,7 +1243,9 @@ def test_chat_detached_lro_resumes_with_memo(
     events = arc.chat("s-1", "go")
 
     assert len(fake.posts) == 2
-    assert fake.posts[1]["json"]["operationCompletedEvent"] == {
+    completed_ev = dict(fake.posts[1]["json"]["operationCompletedEvent"])
+    assert uuid.UUID(completed_ev.pop("deduplicationToken"))
+    assert completed_ev == {
         "operationName": "guddelon-9",
         "targetResourceName": "memo/report.md",
         "operationType": "detached_assistant",
@@ -1323,6 +1344,7 @@ def test_list_sessions(arc: Arc, fake: FakeSession) -> None:
 
 
 def test_list_sessions_without_filter(arc: Arc, fake: FakeSession) -> None:
+    fake.queue_request(json_response({}))
     assert arc.list_sessions() == []
     assert fake.requests[0]["params"] == {"pageSize": 20}
 
@@ -1383,7 +1405,7 @@ def test_create_session(arc: Arc, fake: FakeSession) -> None:
     assert req["method"] == "POST"
     assert req["url"] == f"{_BASE}/assistantSessions"
     assert req["params"] == {"assistantSessionId": "s-1"}
-    assert req["json"] == {}
+    assert req["json"] == {"assistantSessionId": "s-1"}
 
 
 def test_generate_onboarding_suggestions(arc: Arc, fake: FakeSession) -> None:
@@ -1443,3 +1465,410 @@ def test_unary_error_raises_api_error(arc: Arc, fake: FakeSession) -> None:
         ArcApiError, match="HTTP 404: NOT_FOUND: Session not found"
     ):
         arc.get_session("missing")
+
+
+# --------------------------------------------------- protocol & resilience
+
+
+def test_stream_turn_handoff_reconnects_without_charging_error_budget(
+    arc: Arc, fake: FakeSession, no_sleep: list[float]
+) -> None:
+    arc.max_reattach_attempts = 0
+    fake.queue_post(
+        FakeResponse(
+            sse_body(
+                [
+                    {"textChunk": "Part 1 ", "sequenceNumber": "1"},
+                    {
+                        "handoff": {"turnId": "t-1", "reason": "DRAINING"},
+                        "sequenceNumber": "2",
+                    },
+                ]
+            )
+        ),
+        FakeResponse(
+            sse_body(
+                [
+                    {"textChunk": "Part 2", "sequenceNumber": "3"},
+                    {
+                        "turnCompleted": {
+                            "turnId": "t-1",
+                            "reason": "COMPLETED",
+                        },
+                        "sequenceNumber": "4",
+                    },
+                ]
+            )
+        ),
+    )
+
+    events = arc.stream_turn("s-1", "hi")
+
+    assert events.text == "Part 1 Part 2"
+    assert events.turn_completed is not None
+    assert len(fake.posts) == 2
+    assert fake.posts[1]["json"]["attachOnly"] is True
+    assert fake.posts[1]["json"]["resumeFromSequenceNumber"] == "2"
+    assert no_sleep == []
+
+
+def test_stream_turn_clean_eof_without_turn_completed_reattaches(
+    arc: Arc, fake: FakeSession, no_sleep: list[float]
+) -> None:
+    arc.max_reattach_attempts = 1
+    fake.queue_post(
+        FakeResponse(
+            sse_body([{"textChunk": "First ", "sequenceNumber": "2"}])
+        ),
+        FakeResponse(
+            sse_body(
+                [
+                    {
+                        "resumeSnapshot": {
+                            "turnId": "0",
+                            "resolvedSequenceNumber": "2",
+                            "events": [
+                                {"textChunk": "First ", "sequenceNumber": "2"}
+                            ],
+                        },
+                        "sequenceNumber": "2",
+                    },
+                    {"textChunk": "second", "sequenceNumber": "3"},
+                    {
+                        "turnCompleted": {"turnId": "0", "reason": "COMPLETED"},
+                        "sequenceNumber": "4",
+                    },
+                ]
+            )
+        ),
+    )
+
+    events = arc.stream_turn("s-1", "hi")
+
+    assert events.text == "First second"
+    assert len(fake.posts) == 2
+    assert no_sleep == [2]
+
+
+def test_stream_turn_socket_error_after_turn_completed_returns_cleanly(
+    arc: Arc, fake: FakeSession
+) -> None:
+    fake.queue_post(
+        FakeResponse(
+            sse_body(
+                [
+                    {"textChunk": "Complete answer", "sequenceNumber": "1"},
+                    {
+                        "turnCompleted": {"turnId": "0", "reason": "COMPLETED"},
+                        "sequenceNumber": "2",
+                    },
+                ]
+            ),
+            raise_after=requests.exceptions.ChunkedEncodingError(
+                "teardown reset"
+            ),
+        )
+    )
+
+    events = arc.stream_turn("s-1", "hi")
+
+    assert events.text == "Complete answer"
+    assert events.turn_completed is not None
+    assert len(fake.posts) == 1
+
+
+def test_stream_turn_preserves_first_leg_events_when_reattach_returns_4xx(
+    arc: Arc, fake: FakeSession, no_sleep: list[float]
+) -> None:
+    fake.queue_post(
+        FakeResponse(
+            sse_body([{"textChunk": "first leg", "sequenceNumber": "1"}]),
+            raise_after=requests.exceptions.ConnectionError("reset"),
+        ),
+        json_response(
+            {"error": {"code": 500, "message": "backend down"}}, status_code=500
+        ),
+    )
+
+    with pytest.raises(ArcApiError, match="HTTP 500"):
+        arc.chat("s-1", "hi")
+
+    assert arc.last_stream_events is not None
+    assert arc.last_stream_events.text == "first leg"
+    assert no_sleep == [2]
+
+
+def test_confirmation_round_failure_keeps_full_partial_and_leaves_card_pending(
+    arc: Arc, fake: FakeSession
+) -> None:
+    fake.queue_post(
+        sse_fixture("card_gate"),
+        FakeResponse(
+            sse_body([{"textChunk": "halfway"}]),
+            raise_after=requests.exceptions.ReadTimeout("idle"),
+        ),
+    )
+
+    with pytest.raises(ArcStreamTimeout) as excinfo:
+        arc.chat("s-1", "go", confirmation_policy=make_policy("click"))
+
+    partial = excinfo.value.partial
+    assert [
+        c.confirmation_id for c in partial.pending_confirmation_requests
+    ] == ["step-idx-12"]
+    # Because leg 2 timed out, the card must NOT be recorded as clicked.
+    assert partial.confirmation_actions == []
+    assert "halfway" in partial.text
+
+
+def test_turn_deadline_shared_across_lro_polling_leaves_lro_pending(
+    arc: Arc, fake: FakeSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.queue_post(sse_fixture("lro_pending"))
+    monkeypatch.setattr(
+        arc,
+        "poll_operation",
+        lambda name, **kw: {
+            "status": "TIMEOUT",
+            "error": "operation not finished",
+        },
+    )
+
+    with pytest.raises(ArcStreamTimeout, match="not finished") as excinfo:
+        arc.chat("s-1", "run evals", timeout_seconds=30)
+
+    # Client-side timeout must NOT tell the server the LRO completed.
+    assert len(fake.posts) == 1
+    assert excinfo.value.partial.initiated_lros[0].status == "PENDING"
+
+
+def test_poll_operation_done_with_error_fails_fast_before_evaluation_run(
+    arc: Arc, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_calls: list[str] = []
+    monkeypatch.setattr(
+        arc,
+        "get_operation",
+        lambda name: {
+            "name": name,
+            "done": True,
+            "error": {"code": 7, "message": "Permission denied"},
+            "metadata": {"evaluationRun": _RUN_NAME},
+        },
+    )
+    monkeypatch.setattr(
+        arc,
+        "get_evaluation_run",
+        lambda name: run_calls.append(name) or {"state": "RUNNING"},
+    )
+
+    result = arc.poll_operation("ops/1")
+
+    assert result == {"status": "FAILED", "error": "Permission denied"}
+    assert run_calls == []
+
+
+def test_lro_double_delivery_failure_raises_and_single_retry_dedups_sub(
+    arc: Arc,
+    fake: FakeSession,
+    monkeypatch: pytest.MonkeyPatch,
+    no_sleep: list[float],
+) -> None:
+    _patch_eval_lro(monkeypatch, arc, {"totalCount": 1, "completedCount": 1})
+    fake.queue_post(
+        sse_fixture("lro_pending"),
+        json_response({"error": {"message": "down"}}, status_code=503),
+        json_response({"error": {"message": "still down"}}, status_code=503),
+    )
+
+    with pytest.raises(ArcApiError, match="HTTP 503: still down"):
+        arc.chat("s-1", "run")
+    assert no_sleep == [5.0]
+
+    # Retry after mid-stream interruption on attempt 1 must not duplicate attempt 1 text.
+    fake.posts.clear()
+    fake.queue_post(
+        sse_fixture("lro_pending"),
+        FakeResponse(
+            sse_body([{"textChunk": "discarded-attempt-1"}]),
+            raise_after=requests.exceptions.ChunkedEncodingError("cut"),
+        ),
+        FakeResponse(
+            sse_body(
+                [
+                    {"textChunk": "clean-attempt-2"},
+                    {"turnCompleted": {"reason": "COMPLETED"}},
+                ]
+            )
+        ),
+    )
+    events = arc.chat("s-1", "run")
+    assert "discarded-attempt-1" not in events.text
+    assert "clean-attempt-2" in events.text
+
+
+def test_poll_evaluation_run_error_and_cancelled_counts_propagate(
+    arc: Arc,
+    fake: FakeSession,
+    monkeypatch: pytest.MonkeyPatch,
+    no_sleep: list[float],
+) -> None:
+    fake.queue_post(
+        sse_fixture("lro_pending"),
+        FakeResponse(
+            sse_body(
+                [
+                    {"textChunk": "Handled error."},
+                    {"turnCompleted": {"reason": "COMPLETED"}},
+                ]
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        arc,
+        "get_operation",
+        lambda name: {
+            "name": name,
+            "done": True,
+            "metadata": {"evaluationRun": _RUN_NAME},
+        },
+    )
+    monkeypatch.setattr(
+        arc,
+        "get_evaluation_run",
+        lambda name: {
+            "name": name,
+            "state": "ERROR",
+            "error": {"message": "Runner crashed"},
+            "progress": {
+                "totalCount": 4,
+                "passedCount": 1,
+                "failedCount": 0,
+                "errorCount": 2,
+                "cancelledCount": 1,
+            },
+        },
+    )
+
+    arc.chat("s-1", "run")
+
+    completed = fake.posts[1]["json"]["operationCompletedEvent"]
+    assert completed["status"] == "FAILED"
+    assert completed["error"] == {"code": 2, "message": "Runner crashed"}
+    assert completed["metadata"]["error_count"] == 2
+    assert completed["metadata"]["cancelled_count"] == 1
+    assert no_sleep == []
+
+
+def test_detached_lro_fallback_message_has_no_internal_tool_names(
+    arc: Arc, fake: FakeSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pending = sse_body(
+        [
+            {
+                "toolResponse": {
+                    "id": "c1",
+                    "tool": "run_detached_assistant",
+                    "response": {
+                        "status": "RUNNING",
+                        "job_id": "guddelon-9",
+                        "memo_path": "memo/report.md",
+                    },
+                }
+            },
+            {"turnCompleted": {"reason": "COMPLETED"}},
+        ]
+    )
+    already = sse_body(
+        [
+            {
+                "textChunk": (
+                    "The operation has already been processed for this session."
+                )
+            },
+            {"turnCompleted": {"reason": "COMPLETED"}},
+        ]
+    )
+    fake.queue_post(
+        FakeResponse(pending),
+        FakeResponse(already),
+        FakeResponse(
+            sse_body(
+                [
+                    {"textChunk": "Summary ready."},
+                    {"turnCompleted": {"reason": "COMPLETED"}},
+                ]
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        arc,
+        "poll_detached_job",
+        lambda session_id, job_id, **kw: {
+            "status": "SUCCEEDED",
+            "memo_path": "memo/report.md",
+        },
+    )
+
+    arc.chat("s-1", "go")
+
+    msg = fake.posts[2]["json"]["message"]
+    assert msg == (
+        "Operation guddelon-9 (detached_assistant) finished with status "
+        "SUCCEEDED on resource memo/report.md. Output path: memo/report.md."
+    )
+
+
+def test_session_name_allows_project_number_and_rejects_cross_app(
+    arc: Arc,
+) -> None:
+    # Server returns numeric project number in AssistantSession.name.
+    assert (
+        arc.session_name(
+            "projects/123456789/locations/us/apps/a/assistantSessions/s-1"
+        )
+        == f"{_APP}/assistantSessions/s-1"
+    )
+    with pytest.raises(ValueError, match="does not belong to"):
+        arc.session_name(
+            "projects/p/locations/us/apps/other/assistantSessions/s-1"
+        )
+    with pytest.raises(ValueError, match="Invalid session id"):
+        arc.session_name("../../apps/x")
+
+
+def test_retrying_vs_stream_session_and_context_manager_close() -> None:
+    with Arc(app_name=_APP, creds=FakeCreds()) as owned:
+        assert owned.session is not owned._stream_session
+        unary_retry = owned.session.adapters["https://"].max_retries
+        stream_retry = owned._stream_session.adapters["https://"].max_retries
+        assert unary_retry.raise_on_status is False
+        assert unary_retry.total == 5
+        assert stream_retry.total == 0
+
+    injected = FakeSession()
+    with Arc(
+        app_name=_APP,
+        creds=FakeCreds(),
+        http_session=injected,  # type: ignore[arg-type]
+    ) as borrowed:
+        assert borrowed.session is injected
+    assert injected.closed is False
+
+
+def test_is_read_timeout_narrows_to_read_timeouts() -> None:
+    assert arc_module._is_read_timeout(requests.exceptions.ReadTimeout("idle"))
+    assert arc_module._is_read_timeout(
+        requests.exceptions.ConnectionError(
+            ReadTimeoutError(None, "https://x", "Read timed out")
+        )
+    )
+    assert not arc_module._is_read_timeout(
+        requests.exceptions.ConnectTimeout("connect timed out")
+    )
+    assert not arc_module._is_read_timeout(
+        requests.exceptions.ConnectionError(
+            ConnectTimeoutError(None, "https://x", "Connect timed out")
+        )
+    )
+    assert not arc_module._is_read_timeout(TimeoutError("tcp connect"))

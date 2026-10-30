@@ -29,6 +29,14 @@ import json
 import re
 from typing import Any
 
+__all__ = [
+    "DETACHED_JOB_PREFIX",
+    "LroOperationInfo",
+    "extract_from_dict",
+    "extract_from_text",
+    "extract_from_tool_response",
+]
+
 
 @dataclasses.dataclass
 class LroOperationInfo:
@@ -43,12 +51,9 @@ class LroOperationInfo:
 
 # Server-side wrapper tools whose payloads carry the real operation type.
 _WRAPPER_TOOLS = ("run_kestrel_python", "call_kestrel_tool")
-_DETACHED_JOB_PREFIX = "guddelon-"
+DETACHED_JOB_PREFIX = "guddelon-"
+_DETACHED_JOB_PREFIX = DETACHED_JOB_PREFIX
 _JSON_OBJECT_RE = re.compile(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", re.DOTALL)
-
-
-def _info(**kwargs: Any) -> LroOperationInfo:
-    return LroOperationInfo(**kwargs)
 
 
 def _is_pending(d: Any) -> bool:
@@ -57,7 +62,7 @@ def _is_pending(d: Any) -> bool:
         or d.get("lro_status") == "PENDING"
         or (
             d.get("status") == "RUNNING"
-            and str(d.get("job_id") or "").startswith(_DETACHED_JOB_PREFIX)
+            and str(d.get("job_id") or "").startswith(DETACHED_JOB_PREFIX)
         )
     )
 
@@ -124,10 +129,10 @@ def extract_from_dict(
     for cand in candidates:
         job_id = str(cand.get("job_id") or "")
         if (
-            job_id.startswith(_DETACHED_JOB_PREFIX)
+            job_id.startswith(DETACHED_JOB_PREFIX)
             and cand.get("status") == "RUNNING"
         ):
-            return _info(
+            return LroOperationInfo(
                 operation_name=job_id,
                 target_resource_name=str(cand.get("memo_path") or ""),
                 operation_type="detached_assistant",
@@ -182,7 +187,7 @@ def extract_from_dict(
         )
         if explicit_type:
             operation_type = explicit_type
-        elif op_name.startswith(_DETACHED_JOB_PREFIX) or run_id.startswith(
+        elif op_name.startswith(DETACHED_JOB_PREFIX) or run_id.startswith(
             "memo/"
         ):
             operation_type = "detached_assistant"
@@ -191,7 +196,7 @@ def extract_from_dict(
         else:
             operation_type = "operation"
 
-        return _info(
+        return LroOperationInfo(
             operation_name=op_name,
             target_resource_name=run_id,
             operation_type=operation_type,
@@ -210,56 +215,10 @@ def extract_from_tool_response(
     return extract_from_dict(response, default_tool_name=tool_name or "")
 
 
-def is_sync_completed_evaluation(
-    tool_name: str, response: dict[str, Any]
-) -> bool:
-    """True when an evaluation tool reports synchronous completion."""
-    if not response:
-        return False
-    output = response.get("output")
-    if isinstance(output, str):
-        try:
-            output = json.loads(output)
-        except ValueError:
-            output = None
-    result = response.get("result")
-    state = str(
-        response.get("state")
-        or (output.get("state") if isinstance(output, dict) else "")
-        or (result.get("state") if isinstance(result, dict) else "")
-        or ""
-    )
-    done = bool(
-        response.get("done")
-        or (output.get("done") if isinstance(output, dict) else False)
-        or (result.get("done") if isinstance(result, dict) else False)
-    )
-    rpc_calls = response.get("rpc_calls")
-    has_eval_rpc = "run_evaluation" in (tool_name or "") or (
-        tool_name in _WRAPPER_TOOLS
-        and (
-            (
-                isinstance(result, dict)
-                and "/evaluationRuns/" in str(result.get("name", ""))
-            )
-            or (
-                isinstance(rpc_calls, list)
-                and any(
-                    isinstance(c, dict) and c.get("tool") == "run_evaluation"
-                    for c in rpc_calls
-                )
-            )
-        )
-    )
-    return has_eval_rpc and (
-        state in ("COMPLETED", "SUCCEEDED", "ERROR", "CANCELLED") or done
-    )
-
-
 def extract_from_text(text: str) -> LroOperationInfo | None:
     """Finds a pending LRO payload inside a text chunk, if any."""
     if not text or (
-        '"PENDING"' not in text and _DETACHED_JOB_PREFIX not in text
+        '"PENDING"' not in text and DETACHED_JOB_PREFIX not in text
     ):
         return None
     stripped = text.strip()

@@ -22,11 +22,15 @@ from typing import Any
 
 import pytest
 
-from cxas_scrapi.utils import arc_lro
+from cxas_scrapi.utils import arc_events, arc_lro
 from cxas_scrapi.utils.arc_events import (
     ArtifactRecord,
     ConfirmationActionRecord,
+    ConfirmationRequestRecord,
     ContractMetadataRecord,
+    OptionQuestionRecord,
+    StatusRecord,
+    TurnHandoffRecord,
     TurnStreamEvents,
     TurnStreamReducer,
     parse_confirmation_request,
@@ -541,3 +545,134 @@ def test_parse_confirmation_request_maps_camel_case() -> None:
     assert record.expire_time == "2026-01-01T00:00:00Z"
     assert record.questions[0].options[0].title == "o"
     assert parse_confirmation_request({}).confirmation_id == ""
+
+
+def test_resume_snapshot_replaces_prior_turn_state_and_dedups_sequences() -> (
+    None
+):
+    events = reduce_events(
+        [
+            {"thoughtChunk": "partial thought", "sequenceNumber": "1"},
+            {"textChunk": "Hello ", "sequenceNumber": "2"},
+            {
+                "toolCall": {"id": "c1", "tool": "get_app"},
+                "sequenceNumber": "3",
+            },
+            {
+                "resumeSnapshot": {
+                    "turnId": "t-1",
+                    "resolvedSequenceNumber": "5",
+                    "events": [
+                        {"thoughtChunk": "compacted thought"},
+                        {"textChunk": "Hello world"},
+                        {"toolCall": {"id": "c1", "tool": "get_app"}},
+                    ],
+                },
+                "sequenceNumber": "5",
+            },
+            # Replayed frame at <= resolvedSequenceNumber must be ignored.
+            {"textChunk": " DUPLICATE", "sequenceNumber": "5"},
+            {"textChunk": "!", "sequenceNumber": "6"},
+            {
+                "turnCompleted": {
+                    "turnId": "t-1",
+                    "reason": "COMPLETED",
+                    "finalSequenceNumber": "6",
+                },
+                "sequenceNumber": "6",
+            },
+        ]
+    )
+
+    assert events.text == "Hello world!"
+    assert events.thoughts == ["compacted thought"]
+    assert [tc.tool for tc in events.tool_calls] == ["get_app"]
+    assert events.last_sequence_number == 6
+    assert events.turn_completed is not None
+    assert events.turn_completed.reason == "COMPLETED"
+
+
+def test_handoff_and_error_status_and_terminal_notes() -> None:
+    events = reduce_events(
+        [
+            {"textChunk": "Working...", "sequenceNumber": "1"},
+            {
+                "status": {
+                    "code": 7,
+                    "message": "Permission denied calling backend",
+                    "details": [{"@type": "type.googleapis.com/err"}],
+                },
+                "sequenceNumber": "2",
+            },
+            {"status": {"code": 0, "message": "ok"}, "sequenceNumber": "3"},
+            {
+                "handoff": {"turnId": "t-9", "reason": "TASK_DRAINING"},
+                "sequenceNumber": "4",
+            },
+            {
+                "turnCompleted": {
+                    "turnId": "t-9",
+                    "reason": "RESUME_UNAVAILABLE",
+                    "finalSequenceNumber": "9",
+                },
+                "sequenceNumber": "5",
+            },
+        ]
+    )
+
+    assert events.errors == [
+        StatusRecord(
+            code=7,
+            message="Permission denied calling backend",
+            details=[{"@type": "type.googleapis.com/err"}],
+        )
+    ]
+    assert events.handoff == TurnHandoffRecord(
+        turn_id="t-9", reason="TASK_DRAINING"
+    )
+    md = events.format_markdown()
+    assert "### [Errors]" in md
+    assert "- `code=7`: Permission denied calling backend" in md
+    assert "reason `RESUME_UNAVAILABLE`" in md
+    assert "missed events up to sequence 9 (last seen: 5)" in md
+
+    merged = TurnStreamEvents()
+    merged.merge(events)
+    assert merged.errors == events.errors
+    assert merged.handoff == events.handoff
+
+
+def test_codec_round_trip_snake_and_camel_and_public_exports() -> None:
+    assert "LroOperationInfo" not in arc_events.__all__
+    q_wire = {
+        "question": "Channel?",
+        "options": [{"title": "Voice", "submitText": "Voice only"}],
+    }
+    q_rec = OptionQuestionRecord.from_dict(q_wire)
+    assert (
+        OptionQuestionRecord.from_dict(
+            {
+                "question": "Channel?",
+                "options": [{"title": "Voice", "submit_text": "Voice only"}],
+            }
+        )
+        == q_rec
+    )
+
+    card_snake = {
+        "confirmation_id": "c-1",
+        "positive_label": "Go",
+        "negative_label": "Stop",
+        "agent_name": "builder",
+        "expire_time": "2026-10-30T00:00:00Z",
+        "questions": [
+            {
+                "question": "Channel?",
+                "options": [{"title": "Voice", "submit_text": "Voice only"}],
+            }
+        ],
+    }
+    rebuilt = ConfirmationRequestRecord.from_dict(card_snake)
+    assert rebuilt.confirmation_id == "c-1"
+    assert rebuilt.positive_label == "Go"
+    assert rebuilt.questions == [q_rec]

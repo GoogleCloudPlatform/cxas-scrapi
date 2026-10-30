@@ -22,18 +22,25 @@ markdown / JSON rendering that coding agents parse.
 
 from __future__ import annotations
 
+import argparse
+import contextlib
 import dataclasses
 import json
 import os
 import sys
+import tempfile
 import uuid
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from cxas_scrapi.utils.arc_context import ArcTarget, resolve_target
+from cxas_scrapi.utils.arc_context import (
+    ArcTarget,
+    resolve_target,
+    session_short_id,
+)
 
 if TYPE_CHECKING:
-    import argparse
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
     from cxas_scrapi.core.arc import Arc
     from cxas_scrapi.utils.arc_events import TurnStreamEvents
@@ -43,6 +50,7 @@ SESSION_ID_PREFIX = "arc-cli-"
 DEFAULT_MAX_CONFIRMATION_ROUNDS = 5
 DEFAULT_TIMEOUT_SECONDS = 1800
 DEFAULT_ATTACH_MAX_MB = 20
+EXIT_EMPTY_TURN = 3
 
 
 # ----------------------------------------------------------------- storage
@@ -63,20 +71,50 @@ def _load_json_dict(path: str) -> dict[str, Any]:
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        # Missing or corrupted local state is treated as empty.
+    except FileNotFoundError:
         return {}
+    except json.JSONDecodeError as e:
+        print(
+            f"Warning: ignoring corrupted JSON state file {path}: {e}",
+            file=sys.stderr,
+        )
+        return {}
+    except OSError as e:
+        print(
+            f"Warning: could not read state file {path}: {e}",
+            file=sys.stderr,
+        )
+        return {}
+    if not isinstance(data, dict):
+        print(
+            f"Warning: ignoring non-object JSON state file {path}",
+            file=sys.stderr,
+        )
+        return {}
+    return data
 
 
 def _save_json_dict(path: str, data: Mapping[str, Any]) -> None:
     if not path:
         return
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    if os.path.basename(os.path.normpath(parent)) == ".cxas":
+        with contextlib.suppress(OSError):
+            os.chmod(parent, 0o700)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=".arc_state_", suffix=".tmp", dir=parent
+    )
+    try:
+        with contextlib.suppress(OSError):
+            os.chmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+        os.replace(tmp_path, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
 
 def resolve_session_id(
@@ -84,6 +122,8 @@ def resolve_session_id(
     explicit_session_id: str | None = None,
     new_session: bool = False,
     session_store_path: str = DEFAULT_SESSION_STORE,
+    *,
+    persist: bool = True,
 ) -> str:
     """Resolves or creates the sticky session id for the target app."""
     path = _expand(session_store_path)
@@ -92,19 +132,19 @@ def resolve_session_id(
 
     candidate = explicit_session_id or target.session_id_from_url
     if candidate:
-        from cxas_scrapi.utils.arc_context import session_short_id
-
         short_id = session_short_id(candidate)
-        store[key] = short_id
-        _save_json_dict(path, store)
+        if persist:
+            store[key] = short_id
+            _save_json_dict(path, store)
         return short_id
 
     if not new_session and store.get(key):
-        return store[key]
+        return session_short_id(store[key])
 
     generated = f"{SESSION_ID_PREFIX}{uuid.uuid4().hex[:12]}"
-    store[key] = generated
-    _save_json_dict(path, store)
+    if persist:
+        store[key] = generated
+        _save_json_dict(path, store)
     return generated
 
 
@@ -147,36 +187,16 @@ def save_pending_ui_state(
 
 
 def _questions_from_dicts(raw: Sequence[Mapping[str, Any]]) -> list[Any]:
-    from cxas_scrapi.utils.arc_events import (
-        OptionChoiceRecord,
-        OptionQuestionRecord,
-    )
+    from cxas_scrapi.utils.arc_events import parse_option_questions
 
-    return [
-        OptionQuestionRecord(
-            question=str(q.get("question", "")),
-            options=[
-                OptionChoiceRecord(
-                    title=str(o.get("title", "")),
-                    details=str(o.get("details", "")),
-                    submit_text=str(o.get("submit_text", "")),
-                )
-                for o in q.get("options") or []
-            ],
-        )
-        for q in raw
-    ]
+    return parse_option_questions(raw)
 
 
 def card_from_dict(data: Mapping[str, Any]) -> Any:
     """Rebuilds a ConfirmationRequestRecord saved by save_pending_ui_state."""
     from cxas_scrapi.utils.arc_events import ConfirmationRequestRecord
 
-    fields = {f.name for f in dataclasses.fields(ConfirmationRequestRecord)}
-    kwargs = {k: v for k, v in data.items() if k in fields and k != "questions"}
-    return ConfirmationRequestRecord(
-        questions=_questions_from_dicts(data.get("questions") or []), **kwargs
-    )
+    return ConfirmationRequestRecord.from_dict(data)
 
 
 def pending_cards_from_session(session: Mapping[str, Any]) -> list[Any]:
@@ -333,6 +353,8 @@ def render_turn(
     response_format: str,
     notes: Sequence[str] = (),
     base_cmd: str = "",
+    uploaded_attachments: Sequence[str] = (),
+    downloaded_artifacts: Sequence[Mapping[str, Any]] = (),
 ) -> str:
     """Renders a chat-like turn with its pending cards and follow-ups."""
     followups = suggested_followups(events, base_cmd) if base_cmd else []
@@ -353,6 +375,8 @@ def render_turn(
             ],
             "suggested_commands": followups,
             "notes": list(notes),
+            "uploaded_attachments": list(uploaded_attachments),
+            "downloaded_artifacts": [dict(a) for a in downloaded_artifacts],
         }
         return json.dumps(payload, indent=2, sort_keys=True)
     header = (
@@ -387,8 +411,29 @@ def is_empty_turn(events: TurnStreamEvents) -> bool:
         or events.artifacts
         or events.option_questions
         or events.confirmation_requests
+        or events.confirmation_actions
         or events.initiated_lros
         or events.thoughts
+        or events.errors
+    )
+
+
+def _has_turn_activity(events: TurnStreamEvents) -> bool:
+    """True if at least one streamed event or sequence number was observed."""
+    return bool(
+        events.text
+        or events.thoughts
+        or events.statuses
+        or events.errors
+        or events.tool_calls
+        or events.tool_responses
+        or events.artifacts
+        or events.option_questions
+        or events.confirmation_requests
+        or events.confirmation_actions
+        or events.initiated_lros
+        or events.turn_completed is not None
+        or events.last_sequence_number is not None
     )
 
 
@@ -451,6 +496,7 @@ def _build_policy(args: argparse.Namespace) -> Any:
         getattr(args, "confirmation_policy", "manual") or "manual",
         typed_reply_probability=getattr(args, "typed_reply_probability", 0.2),
         seed=getattr(args, "confirmation_seed", None),
+        deny_tools=tuple(getattr(args, "deny_tools", None) or ()),
     )
 
 
@@ -458,6 +504,16 @@ def _split_csv(value: str | None) -> list[str] | None:
     if value is None:
         return None
     return [v.strip() for v in value.split(",")]
+
+
+def _merge_choices(
+    choices_csv: str | None, choice_list: Sequence[str] | None
+) -> list[str] | None:
+    from_csv = _split_csv(choices_csv)
+    from_repeat = [c.strip() for c in (choice_list or [])]
+    if from_csv is None and not from_repeat:
+        return None
+    return [*(from_csv or []), *from_repeat]
 
 
 def _fail(message: str, code: int = 1) -> None:
@@ -477,7 +533,10 @@ class _TurnContext:
 
 
 def _turn_context(
-    args: argparse.Namespace, *, new_session: bool = False
+    args: argparse.Namespace,
+    *,
+    new_session: bool = False,
+    persist: bool = True,
 ) -> _TurnContext:
     target = _build_target(args)
     store_path = getattr(args, "session_store", DEFAULT_SESSION_STORE)
@@ -486,6 +545,7 @@ def _turn_context(
         explicit_session_id=getattr(args, "session_id", None),
         new_session=new_session or getattr(args, "new_session", False),
         session_store_path=store_path,
+        persist=persist,
     )
     key = store_key(target)
     pending_path = pending_store_path(store_path)
@@ -507,6 +567,8 @@ def _finish_turn(
     args: argparse.Namespace,
     notes: Sequence[str] = (),
     extra_sections: Sequence[str] = (),
+    uploaded_attachments: Sequence[str] = (),
+    downloaded_artifacts: Sequence[Mapping[str, Any]] = (),
 ) -> None:
     save_pending_ui_state(
         ctx.pending_path, ctx.store_key, ctx.session_id, events
@@ -522,12 +584,31 @@ def _finish_turn(
         response_format=getattr(args, "format", "markdown"),
         notes=notes,
         base_cmd=ctx.base_cmd,
+        uploaded_attachments=uploaded_attachments,
+        downloaded_artifacts=downloaded_artifacts,
     )
     print(out)
     for section in extra_sections:
         if section:
             stream = sys.stderr if args.format == "json" else sys.stdout
             print("\n" + section, file=stream)
+
+
+def _check_turn_outcome(ctx: _TurnContext, events: TurnStreamEvents) -> None:
+    if events.errors:
+        last_err = events.errors[-1]
+        msg = last_err.message or "stream error"
+        _fail(
+            f"Arc ended the turn with error status {last_err.code}: {msg}",
+            code=1,
+        )
+    if is_empty_turn(events):
+        _fail(
+            "Arc ended the turn without any output. Check that the app "
+            "exists and that you can read it (cxas apps get "
+            f"{ctx.target.app_name}).",
+            code=EXIT_EMPTY_TURN,
+        )
 
 
 def _handle_turn_failure(
@@ -540,10 +621,28 @@ def _handle_turn_failure(
         if isinstance(error, (ArcStreamTimeout, ArcStreamInterrupted))
         else ctx.client.active_turn_events or ctx.client.last_stream_events
     )
-    if partial is not None:
+    has_activity = partial is not None and _has_turn_activity(partial)
+    if partial is not None and has_activity:
         save_pending_ui_state(
             ctx.pending_path, ctx.store_key, ctx.session_id, partial
         )
+    if getattr(args, "format", "markdown") == "json":
+        canonical = ctx.client.session_name(ctx.session_id)
+        payload = {
+            "action": "error",
+            "error": str(error),
+            "session_id": ctx.session_id,
+            "canonical_session_id": canonical,
+            "app_name": ctx.target.app_name,
+            "api_endpoint": ctx.target.api_endpoint,
+            "partial_events": (
+                partial.to_dict()
+                if partial is not None and has_activity
+                else None
+            ),
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    elif partial is not None:
         rendered = format_partial_turn(partial)
         if rendered:
             print(rendered)
@@ -551,14 +650,14 @@ def _handle_turn_failure(
 
 
 def _run_turn_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    timeout = getattr(args, "timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
     return {
         "confirmation_policy": _build_policy(args),
         "max_confirmation_rounds": getattr(
             args, "max_confirmation_rounds", DEFAULT_MAX_CONFIRMATION_ROUNDS
         ),
-        "timeout_seconds": getattr(
-            args, "timeout_seconds", DEFAULT_TIMEOUT_SECONDS
-        ),
+        "timeout_seconds": timeout,
+        "lro_timeout_seconds": timeout,
         "auto_resolve_lro": not getattr(args, "no_auto_resolve_lro", False),
     }
 
@@ -575,6 +674,64 @@ def arc_chat(args: argparse.Namespace) -> None:
             raise ValueError(
                 "--message, --message-file or --attach is required."
             )
+    except ValueError as e:
+        _fail(str(e))
+        return
+
+    bundle = None
+    if attach_paths:
+        from cxas_scrapi.utils import arc_bundle
+
+        limits = arc_bundle.BundleLimits(
+            max_zip_bytes=int(args.attach_max_mb) * 1024 * 1024
+        )
+        allow_secrets = bool(getattr(args, "attach_allow_secrets", False))
+        try:
+            bundle = arc_bundle.build(
+                attach_paths, limits=limits, allow_secrets=allow_secrets
+            )
+        except arc_bundle.BundleError as e:
+            _fail(str(e))
+            return
+        if args.attach_dry_run:
+            try:
+                _build_target(args)
+                if getattr(args, "session_id", None):
+                    session_short_id(args.session_id)
+            except ValueError as e:
+                _fail(str(e))
+                return
+            if args.format == "json":
+                print(
+                    json.dumps(
+                        {
+                            "action": "chat.attach_dry_run",
+                            "root": (
+                                os.path.basename(os.path.normpath(bundle.root))
+                                if bundle.root
+                                else ""
+                            ),
+                            "files": [
+                                {"path": f.rel_path, "size": f.size}
+                                for f in bundle.files
+                            ],
+                            "file_count": len(bundle.files),
+                            "excluded_count": bundle.excluded_count,
+                            "secret_excluded_count": (
+                                bundle.secret_excluded_count
+                            ),
+                            "uncompressed_bytes": bundle.uncompressed_bytes,
+                            "zip_bytes": len(bundle.zip_bytes or b""),
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print(arc_bundle.format_report(bundle, max_listed=200))
+            return
+
+    try:
         ctx = _turn_context(args)
     except ValueError as e:
         _fail(str(e))
@@ -582,20 +739,9 @@ def arc_chat(args: argparse.Namespace) -> None:
 
     attached: list[str] = list(args.attached_gcs_uri or [])
     sections: list[str] = []
-    if attach_paths:
+    if bundle is not None:
         from cxas_scrapi.utils import arc_bundle
 
-        limits = arc_bundle.BundleLimits(
-            max_zip_bytes=int(args.attach_max_mb) * 1024 * 1024
-        )
-        try:
-            bundle = arc_bundle.build(attach_paths, limits=limits)
-        except arc_bundle.BundleError as e:
-            _fail(str(e))
-            return
-        if args.attach_dry_run:
-            print(arc_bundle.format_report(bundle, max_listed=200))
-            return
         bucket = args.bucket
         if not bucket:
             try:
@@ -606,18 +752,42 @@ def arc_chat(args: argparse.Namespace) -> None:
                 _fail(str(e))
                 return
             bucket = arc_bundle.default_artifacts_bucket(project_id)
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            local = os.path.join(tmp, arc_bundle.bundle_file_name(bundle))
-            with open(local, "wb") as f:
-                f.write(arc_bundle.write_zip(bundle, limits))
-            gcs_uri = arc_bundle.upload_bundle(
-                local,
-                bucket,
-                credentials=ctx.client.creds,
-                project=ctx.target.project,
+        if bundle.zip_bytes is None:
+            _fail("Attachment bundle did not produce archive bytes.")
+            return
+        progress = _progress_printer(args)
+        if progress is not None:
+            preview = ", ".join(f.rel_path for f in bundle.files[:5])
+            more = (
+                f" (+{len(bundle.files) - 5} more)"
+                if len(bundle.files) > 5
+                else ""
             )
+            secrets_note = (
+                f", {bundle.secret_excluded_count} secret file(s) skipped"
+                if bundle.secret_excluded_count
+                else ""
+            )
+            clean_bucket = bucket.strip().removeprefix("gs://").strip("/")
+            progress(
+                f"uploading {len(bundle.files)} file(s)"
+                f" ({len(bundle.zip_bytes):,} B zipped{secrets_note})"
+                f" to gs://{clean_bucket}: {preview}{more}"
+            )
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                local = os.path.join(tmp, arc_bundle.bundle_file_name(bundle))
+                with open(local, "wb") as f:
+                    f.write(bundle.zip_bytes)
+                gcs_uri = arc_bundle.upload_bundle(
+                    local,
+                    bucket,
+                    credentials=ctx.client.creds,
+                    project=ctx.target.project,
+                )
+        except Exception as e:  # noqa: BLE001
+            _fail(f"Failed to upload attachment bundle: {e}")
+            return
         attached.append(gcs_uri)
         sections.append(
             arc_bundle.format_report(
@@ -644,22 +814,25 @@ def arc_chat(args: argparse.Namespace) -> None:
     except Exception as e:  # noqa: BLE001 — surface any failure cleanly
         _handle_turn_failure(ctx, args, e)
         return
+    downloaded_records: list[dict[str, Any]] = []
     if args.download_artifacts:
-        sections.append(
-            download_session_artifacts(
+        dl_section, downloaded_records = (
+            download_session_artifacts_with_records(
                 ctx.client, ctx.session_id, args.download_artifacts
             )
         )
+        sections.append(dl_section)
     _finish_turn(
-        "chat", ctx, events, args, notes=notes, extra_sections=sections
+        "chat",
+        ctx,
+        events,
+        args,
+        notes=notes,
+        extra_sections=sections,
+        uploaded_attachments=attached,
+        downloaded_artifacts=downloaded_records,
     )
-    if is_empty_turn(events):
-        _fail(
-            "Arc ended the turn without any output. Check that the app "
-            "exists and that you can read it (cxas apps get "
-            f"{ctx.target.app_name}).",
-            code=2,
-        )
+    _check_turn_outcome(ctx, events)
 
 
 def arc_confirm(args: argparse.Namespace) -> None:
@@ -671,6 +844,27 @@ def arc_confirm(args: argparse.Namespace) -> None:
     except ValueError as e:
         _fail(str(e))
         return
+
+    confirmed: bool | None = None
+    if args.confirmed:
+        confirmed = True
+    elif args.declined:
+        confirmed = False
+    choices = _merge_choices(args.choices, getattr(args, "choice", None))
+    given = [
+        bool(args.confirmed),
+        bool(args.declined),
+        args.answer_text is not None,
+        choices is not None,
+        args.skip is not None,
+    ].count(True)
+    if given != 1:
+        _fail(
+            "cxas arc confirm needs exactly one of --confirmed, --declined, "
+            "--answer-text, --choices/--choice or --skip."
+        )
+        return
+
     cards = [
         card_from_dict(c) for c in ctx.pending_state.get("confirmations") or []
     ]
@@ -698,29 +892,14 @@ def arc_confirm(args: argparse.Namespace) -> None:
             "--confirmation-id (see the last chat output)."
         )
         return
-    confirmed: bool | None = None
-    if args.confirmed:
-        confirmed = True
-    elif args.declined:
-        confirmed = False
-    choices = _split_csv(args.choices)
-    given = [
-        bool(args.confirmed),
-        bool(args.declined),
-        args.answer_text is not None,
-        choices is not None,
-        args.skip is not None,
-    ].count(True)
-    if given != 1:
-        _fail(
-            "cxas arc confirm needs exactly one of --confirmed, --declined, "
-            "--answer-text, --choices or --skip."
-        )
-        return
     try:
         answer = _resolve_answer(
             card.questions, args.answer_text, choices, args.skip
         )
+    except ValueError as e:
+        _fail(str(e))
+        return
+    try:
         events = ctx.client.send_confirmation_response(
             ctx.session_id,
             card.confirmation_id,
@@ -729,13 +908,11 @@ def arc_confirm(args: argparse.Namespace) -> None:
             tool=card.tool,
             **_run_turn_kwargs(args),
         )
-    except ValueError as e:
-        _fail(str(e))
-        return
     except Exception as e:  # noqa: BLE001
         _handle_turn_failure(ctx, args, e)
         return
     _finish_turn("confirm", ctx, events, args)
+    _check_turn_outcome(ctx, events)
 
 
 def arc_answer(args: argparse.Namespace) -> None:
@@ -754,22 +931,26 @@ def arc_answer(args: argparse.Namespace) -> None:
             "`cxas arc chat --message` to reply in your own words."
         )
         return
-    choices = _split_csv(args.choices)
+    choices = _merge_choices(args.choices, getattr(args, "choice", None))
     if [x is not None for x in (choices, args.skip)].count(True) != 1:
-        _fail("cxas arc answer needs exactly one of --choices or --skip.")
+        _fail(
+            "cxas arc answer needs exactly one of --choices/--choice or --skip."
+        )
         return
     try:
         answer = _resolve_answer(options, None, choices, args.skip)
-        events = ctx.client.chat(
-            ctx.session_id, answer or "", **_run_turn_kwargs(args)
-        )
     except ValueError as e:
         _fail(str(e))
         return
+    try:
+        events = ctx.client.chat(
+            ctx.session_id, answer or "", **_run_turn_kwargs(args)
+        )
     except Exception as e:  # noqa: BLE001
         _handle_turn_failure(ctx, args, e)
         return
     _finish_turn("answer", ctx, events, args)
+    _check_turn_outcome(ctx, events)
 
 
 def arc_sessions_new(args: argparse.Namespace) -> None:
@@ -794,6 +975,7 @@ def arc_sessions_new(args: argparse.Namespace) -> None:
                     "api_endpoint": ctx.target.api_endpoint,
                 },
                 indent=2,
+                sort_keys=True,
             )
         )
         return
@@ -834,7 +1016,7 @@ def arc_sessions_list(args: argparse.Namespace) -> None:
 def arc_sessions_get(args: argparse.Namespace) -> None:
     """Shows a session's messages, artifacts and active turn."""
     try:
-        ctx = _turn_context(args)
+        ctx = _turn_context(args, persist=False)
         session = ctx.client.get_session(ctx.session_id)
     except Exception as e:  # noqa: BLE001
         _fail(str(e))
@@ -873,7 +1055,7 @@ def arc_sessions_get(args: argparse.Namespace) -> None:
 def arc_sessions_delete(args: argparse.Namespace) -> None:
     """Deletes a session and forgets it locally."""
     try:
-        ctx = _turn_context(args)
+        ctx = _turn_context(args, persist=False)
         ctx.client.delete_session(ctx.session_id)
     except Exception as e:  # noqa: BLE001
         _fail(str(e))
@@ -883,16 +1065,36 @@ def arc_sessions_delete(args: argparse.Namespace) -> None:
     if store.get(ctx.store_key) == ctx.session_id:
         store.pop(ctx.store_key, None)
         _save_json_dict(path, store)
-    save_pending_ui_state(
-        ctx.pending_path, ctx.store_key, ctx.session_id, _empty_events()
-    )
-    print(f"Deleted `{ctx.client.session_name(ctx.session_id)}`")
+    pending_entry = _load_json_dict(ctx.pending_path).get(ctx.store_key)
+    if (
+        isinstance(pending_entry, dict)
+        and pending_entry.get("session_id") == ctx.session_id
+    ):
+        save_pending_ui_state(
+            ctx.pending_path, ctx.store_key, ctx.session_id, _empty_events()
+        )
+    canonical = ctx.client.session_name(ctx.session_id)
+    if args.format == "json":
+        print(
+            json.dumps(
+                {
+                    "action": "sessions.delete",
+                    "session_id": ctx.session_id,
+                    "canonical_session_id": canonical,
+                    "deleted": True,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+    print(f"Deleted `{canonical}`")
 
 
 def arc_cancel(args: argparse.Namespace) -> None:
     """Cancels the in-flight turn on the sticky session."""
     try:
-        ctx = _turn_context(args)
+        ctx = _turn_context(args, persist=False)
         result = ctx.client.cancel_turn(ctx.session_id, args.turn_id or "")
     except Exception as e:  # noqa: BLE001
         _fail(str(e))
@@ -903,9 +1105,39 @@ def arc_cancel(args: argparse.Namespace) -> None:
         "cancelled": bool(result.get("cancelled", False)),
     }
     if args.format == "json":
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(f"cancelled: {payload['cancelled']}")
+
+
+def _format_suggestion(s: Mapping[str, Any]) -> str:
+    label = str(s.get("label") or s.get("title") or s.get("displayName") or "")
+    load_session = s.get("loadSession")
+    load_target = ""
+    if isinstance(load_session, Mapping):
+        sid = load_session.get("assistantSessionId", "")
+        load_target = f"session {sid}".strip() if sid else ""
+    action = str(
+        s.get("seedPrompt")
+        or s.get("sendMessage")
+        or load_target
+        or s.get("prompt")
+        or s.get("message")
+        or s.get("text")
+        or ""
+    )
+    rationale = str(s.get("rationale") or "")
+    if label and action:
+        line = f"- {label}: {action}"
+    elif label:
+        line = f"- {label}"
+    elif action:
+        line = f"- {action}"
+    else:
+        line = f"- {json.dumps(s)}"
+    if rationale:
+        line = f"{line} ({rationale})"
+    return line
 
 
 def arc_suggestions(args: argparse.Namespace) -> None:
@@ -922,44 +1154,79 @@ def arc_suggestions(args: argparse.Namespace) -> None:
         return
     if not suggestions:
         print("(no suggestions)")
+        return
     for s in suggestions:
-        title = s.get("title") or s.get("displayName") or ""
-        prompt = s.get("prompt") or s.get("message") or s.get("text") or ""
-        print(
-            f"- {title}: {prompt}" if title else f"- {prompt or json.dumps(s)}"
+        print(_format_suggestion(s))
+
+
+def download_session_artifacts_with_records(
+    client: Arc, session_id: str, dest_dir: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """Downloads session artifacts and returns ``(markdown, records)``."""
+    from cxas_scrapi.utils import arc_bundle
+
+    artifacts = client.session_artifacts(session_id)
+    if not artifacts:
+        return "### [Downloaded Artifacts]\n(none)", []
+    lines = ["### [Downloaded Artifacts]"]
+    records: list[dict[str, Any]] = []
+    project = getattr(client, "project_id", None)
+    for art in artifacts:
+        uri = art.get("gcsUri")
+        if not uri:
+            continue
+        label = str(art.get("displayName") or art.get("id") or uri)
+        if not uri.startswith("gs://"):
+            lines.append(
+                f"- `{label}` -> not downloadable here (managed artifact "
+                f"`{uri}`); open it from the console"
+            )
+            records.append(
+                {
+                    "label": label,
+                    "gcs_uri": uri,
+                    "local_path": None,
+                    "status": "skipped_managed",
+                }
+            )
+            continue
+        dl_kwargs: dict[str, Any] = {"credentials": client.creds}
+        if isinstance(project, str) and project:
+            dl_kwargs["project"] = project
+        try:
+            local = arc_bundle.download_gcs_uri(uri, dest_dir, **dl_kwargs)
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"- `{label}` -> FAILED: {e}")
+            records.append(
+                {
+                    "label": label,
+                    "gcs_uri": uri,
+                    "local_path": None,
+                    "status": "failed",
+                    "error": str(e),
+                }
+            )
+            continue
+        lines.append(f"- `{label}` -> `{local}`")
+        records.append(
+            {
+                "label": label,
+                "gcs_uri": uri,
+                "local_path": local,
+                "status": "downloaded",
+            }
         )
+    return "\n".join(lines), records
 
 
 def download_session_artifacts(
     client: Arc, session_id: str, dest_dir: str
 ) -> str:
     """Downloads every artifact on the session into ``dest_dir``."""
-    from cxas_scrapi.utils import arc_bundle
-
-    artifacts = client.session_artifacts(session_id)
-    if not artifacts:
-        return "### [Downloaded Artifacts]\n(none)"
-    lines = ["### [Downloaded Artifacts]"]
-    for art in artifacts:
-        uri = art.get("gcsUri")
-        if not uri:
-            continue
-        label = art.get("displayName") or art.get("id") or uri
-        if not uri.startswith("gs://"):
-            lines.append(
-                f"- `{label}` -> not downloadable here (managed artifact "
-                f"`{uri}`); open it from the console"
-            )
-            continue
-        try:
-            local = arc_bundle.download_gcs_uri(
-                uri, dest_dir, credentials=client.creds
-            )
-        except Exception as e:  # noqa: BLE001
-            lines.append(f"- `{label}` -> FAILED: {e}")
-            continue
-        lines.append(f"- `{label}` -> `{local}`")
-    return "\n".join(lines)
+    markdown, _ = download_session_artifacts_with_records(
+        client, session_id, dest_dir
+    )
+    return markdown
 
 
 def _empty_events() -> TurnStreamEvents:
@@ -973,32 +1240,37 @@ def _empty_events() -> TurnStreamEvents:
 
 def _add_target_args(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group("target")
-    g.add_argument(
+    app_group = g.add_mutually_exclusive_group()
+    app_group.add_argument(
         "--app-name",
         help=(
-            "Full app resource name (projects/*/locations/*/apps/*) or a short "
-            "app id combined with --project/--location."
+            "Full app resource name (`projects/*/locations/*/apps/*`) or a "
+            "short app id combined with `--project`/`--location`."
         ),
     )
-    g.add_argument(
+    app_group.add_argument(
         "--url",
         help=(
             "CX Agent Studio console URL of the app (may include "
-            "/assistantSessions/<id>); alternative to --app-name."
+            "`/assistantSessions/<id>`); alternative to `--app-name`."
         ),
     )
     g.add_argument(
-        "--project", help="Project id or number for a short --app-name."
+        "--project", help="Project id or number for a short `--app-name`."
     )
-    g.add_argument("--location", help="Location for a short --app-name.")
+    g.add_argument(
+        "--location",
+        help="Location for a short `--app-name` (default: $CES_LOCATION or us).",
+    )
     g.add_argument(
         "--api-endpoint",
         help="API host (default: $CES_API_ENDPOINT or ces.googleapis.com).",
     )
-    g.add_argument(
+    sess_group = g.add_mutually_exclusive_group()
+    sess_group.add_argument(
         "--session-id", help="Use this session (short id or full name)."
     )
-    g.add_argument(
+    sess_group.add_argument(
         "--new-session",
         action="store_true",
         help="Start a fresh sticky session.",
@@ -1006,18 +1278,18 @@ def _add_target_args(p: argparse.ArgumentParser) -> None:
     g.add_argument(
         "--session-store",
         default=DEFAULT_SESSION_STORE,
-        help=f"Sticky session store (default: {DEFAULT_SESSION_STORE}).",
+        help=f"Sticky session store (default: `{DEFAULT_SESSION_STORE}`).",
     )
     g.add_argument(
         "--format",
         choices=["markdown", "json"],
         default="markdown",
-        help="Output format (json is stable for agents).",
+        help="Output format (`json` is stable for agents).",
     )
     g.add_argument(
         "--quiet",
         action="store_true",
-        help="Suppress [arc] progress on stderr.",
+        help="Suppress `[arc]` progress on stderr.",
     )
 
 
@@ -1030,21 +1302,42 @@ def _add_turn_args(p: argparse.ArgumentParser) -> None:
         help=(
             "manual: show cards and stop; click: confirm gate cards and answer "
             "questions with the first option; mixed: like click but types the "
-            "answer with --typed-reply-probability."
+            "answer with `--typed-reply-probability`."
         ),
     )
-    g.add_argument("--typed-reply-probability", type=float, default=0.2)
-    g.add_argument("--confirmation-seed", type=int, default=None)
+    g.add_argument(
+        "--deny-tools",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help=(
+            "Tool name glob that `click`/`mixed` must decline instead of "
+            "confirming (repeatable, e.g. `*delete*` or `*deploy*`)."
+        ),
+    )
+    g.add_argument(
+        "--typed-reply-probability",
+        type=float,
+        default=0.2,
+        help="Probability of typing instead of clicking under `mixed` policy.",
+    )
+    g.add_argument(
+        "--confirmation-seed",
+        type=int,
+        default=None,
+        help="RNG seed for reproducible `mixed` policy decisions.",
+    )
     g.add_argument(
         "--max-confirmation-rounds",
         type=int,
         default=DEFAULT_MAX_CONFIRMATION_ROUNDS,
+        help="Maximum confirmation rounds auto-answered in a single turn.",
     )
     g.add_argument(
         "--client-profile",
         choices=["console", "legacy"],
         default="console",
-        help="legacy omits CONFIRMATION_CARDS (server auto-denies gated tools).",
+        help="`legacy` omits `CONFIRMATION_CARDS` (server auto-denies gated tools).",
     )
     g.add_argument(
         "--no-auto-resolve-lro",
@@ -1052,7 +1345,10 @@ def _add_turn_args(p: argparse.ArgumentParser) -> None:
         help="Do not poll evaluation runs / operations and resume the session.",
     )
     g.add_argument(
-        "--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS
+        "--timeout-seconds",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help="Overall deadline in seconds for the turn and any polled LROs.",
     )
     g.add_argument(
         "--stream-idle-timeout",
@@ -1060,7 +1356,11 @@ def _add_turn_args(p: argparse.ArgumentParser) -> None:
         default=180.0,
         help="Seconds without streamed events before giving up.",
     )
-    g.add_argument("--include-thoughts", action="store_true")
+    g.add_argument(
+        "--include-thoughts",
+        action="store_true",
+        help="Include streamed model thoughts in markdown output.",
+    )
     g.add_argument(
         "--no-tools", action="store_true", help="Hide tool activity."
     )
@@ -1095,21 +1395,26 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--attach-dry-run", action="store_true", help="Only list the bundle."
     )
     chat.add_argument(
+        "--attach-allow-secrets",
+        action="store_true",
+        help="Include `.env*`, key and credential files excluded by default.",
+    )
+    chat.add_argument(
         "--attach-max-mb",
         type=int,
         default=DEFAULT_ATTACH_MAX_MB,
-        help="Zip size cap.",
+        help="Zip size cap in MiB.",
     )
     chat.add_argument(
         "--bucket",
-        help="GCS bucket for attachments (default: <project>-agent-assist-artifacts).",
+        help="GCS bucket for attachments (default: `<project>-agent-assist-artifacts`).",
     )
     chat.add_argument(
         "--attached-gcs-uri",
         action="append",
         default=[],
         metavar="GS_URI",
-        help="Attach an existing gs:// object (repeatable).",
+        help="Attach an existing `gs://` object (repeatable).",
     )
     chat.add_argument(
         "--download-artifacts",
@@ -1137,6 +1442,13 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Per-question answers: letter, number or free text, comma-separated.",
     )
     confirm.add_argument(
+        "--choice",
+        action="append",
+        default=[],
+        metavar="CHOICE",
+        help="Single question answer (repeatable; preserves commas).",
+    )
+    confirm.add_argument(
         "--answer-text", help="Raw answer text for a question card."
     )
     confirm.add_argument(
@@ -1154,7 +1466,18 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     answer.add_argument(
         "--choices", help="Per-question answers, comma-separated."
     )
-    answer.add_argument("--skip", choices=["round", "all"])
+    answer.add_argument(
+        "--choice",
+        action="append",
+        default=[],
+        metavar="CHOICE",
+        help="Single question answer (repeatable; preserves commas).",
+    )
+    answer.add_argument(
+        "--skip",
+        choices=["round", "all"],
+        help="Skip this round or all questions.",
+    )
     answer.set_defaults(func=arc_answer)
 
     sessions = sub.add_parser(
@@ -1163,7 +1486,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     ssub = sessions.add_subparsers(dest="sessions_command", required=True)
     s_list = ssub.add_parser("list", help="List sessions on the app.")
     _add_target_args(s_list)
-    s_list.add_argument("--page-size", type=int, default=20)
+    s_list.add_argument(
+        "--page-size",
+        type=int,
+        default=20,
+        help="Maximum sessions returned per page.",
+    )
     s_list.add_argument("--filter", default="", help="AIP-160 filter.")
     s_list.set_defaults(func=arc_sessions_list)
     s_get = ssub.add_parser("get", help="Show the sticky (or given) session.")
@@ -1180,7 +1508,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     cancel = sub.add_parser("cancel", help="Cancel the in-flight turn.")
     _add_target_args(cancel)
-    cancel.add_argument("--turn-id", default="")
+    cancel.add_argument(
+        "--turn-id",
+        default="",
+        help="Turn id to cancel (default: active turn).",
+    )
     cancel.set_defaults(func=arc_cancel)
 
     suggestions = sub.add_parser(
@@ -1188,3 +1520,123 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     _add_target_args(suggestions)
     suggestions.set_defaults(func=arc_suggestions)
+
+
+def _gfm_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    widths = [
+        max(len(headers[i]), *(len(r[i]) for r in rows), 3)
+        for i in range(len(headers))
+    ]
+
+    def fmt_row(cells: Sequence[str]) -> str:
+        return (
+            "| "
+            + " | ".join(cells[i].ljust(widths[i]) for i in range(len(headers)))
+            + " |"
+        )
+
+    sep = "| " + " | ".join("-" * w for w in widths) + " |"
+    return "\n".join([fmt_row(headers), sep, *(fmt_row(r) for r in rows)])
+
+
+def _action_row(action: argparse.Action) -> tuple[str, str, str]:
+    opts = ", ".join(f"`{o}`" for o in action.option_strings)
+    takes_value = action.nargs != 0
+    if takes_value:
+        if action.choices is not None:
+            meta = "{" + ",".join(str(c) for c in action.choices) + "}"
+        elif action.metavar is not None:
+            meta = str(action.metavar)
+        else:
+            meta = action.dest.upper()
+        flag_col = f"{opts} `{meta}`"
+    else:
+        flag_col = opts
+
+    default = action.default
+    if (
+        default is None
+        or default is False
+        or default in ("", [])
+        or default is argparse.SUPPRESS
+    ):
+        default_col = "—"
+    else:
+        default_col = f"`{default}`"
+    desc_col = (action.help or "").strip()
+    return (flag_col, default_col, desc_col)
+
+
+def render_cli_reference_markdown() -> str:
+    """Renders the markdown flag reference from ``register()``."""
+    root = argparse.ArgumentParser(prog="cxas")
+    root_sub = root.add_subparsers(dest="command", required=True)
+    register(root_sub)
+    arc_parser = root_sub.choices["arc"]
+    arc_sub = next(
+        a
+        for a in arc_parser._actions
+        if isinstance(a, argparse._SubParsersAction)
+    )
+    help_by_name = {ca.dest: (ca.help or "") for ca in arc_sub._choices_actions}
+
+    sessions_parser = arc_sub.choices["sessions"]
+    sess_sub = next(
+        a
+        for a in sessions_parser._actions
+        if isinstance(a, argparse._SubParsersAction)
+    )
+    sess_help = {ca.dest: (ca.help or "") for ca in sess_sub._choices_actions}
+
+    subcmd_rows: list[tuple[str, str]] = []
+    for name in ("chat", "confirm", "answer"):
+        subcmd_rows.append((f"`cxas arc {name}`", help_by_name[name]))
+    for sname in ("list", "get", "new", "delete"):
+        subcmd_rows.append((f"`cxas arc sessions {sname}`", sess_help[sname]))
+    for name in ("cancel", "suggestions"):
+        subcmd_rows.append((f"`cxas arc {name}`", help_by_name[name]))
+
+    chat_parser = arc_sub.choices["chat"]
+    groups = {g.title: g for g in chat_parser._action_groups}
+    target_rows = [_action_row(a) for a in groups["target"]._group_actions]
+    turn_rows = [_action_row(a) for a in groups["turn"]._group_actions]
+
+    def own_rows(p: argparse.ArgumentParser) -> list[tuple[str, str, str]]:
+        opt_group = next(g for g in p._action_groups if g.title == "options")
+        return [
+            _action_row(a)
+            for a in opt_group._group_actions
+            if "--help" not in a.option_strings
+        ]
+
+    sections = [
+        "# `cxas arc` flag reference",
+        (
+            "Generated from the `argparse` definitions in "
+            "`cxas_scrapi/cli/arc_cli.py`. Run `cxas arc <command> --help` "
+            "for the live text."
+        ),
+        "## Sub-commands",
+        _gfm_table(["Command", "Purpose"], subcmd_rows),
+        "## Target and session flags (all sub-commands)",
+        "Available on every `cxas arc` sub-command.",
+        _gfm_table(["Flag", "Default", "Description"], target_rows),
+        "## Turn flags (`chat`, `confirm`, `answer`)",
+        "Available on the sub-commands that send a turn to Arc.",
+        _gfm_table(["Flag", "Default", "Description"], turn_rows),
+    ]
+    per_cmd = [
+        ("`cxas arc chat` flags", arc_sub.choices["chat"]),
+        ("`cxas arc confirm` flags", arc_sub.choices["confirm"]),
+        ("`cxas arc answer` flags", arc_sub.choices["answer"]),
+        ("`cxas arc sessions list` flags", sess_sub.choices["list"]),
+        ("`cxas arc cancel` flags", arc_sub.choices["cancel"]),
+    ]
+    for title, p in per_cmd:
+        rows = own_rows(p)
+        if rows:
+            sections.append(f"## {title}")
+            sections.append(
+                _gfm_table(["Flag", "Default", "Description"], rows)
+            )
+    return "\n\n".join(sections) + "\n"

@@ -39,23 +39,31 @@ import codecs
 import http
 import json
 import logging
+import re
 import time
 import typing
+import urllib.parse
+import uuid
 from typing import Any
 
 import requests
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from requests.adapters import HTTPAdapter
+from urllib3.exceptions import ReadTimeoutError
 from urllib3.util.retry import Retry
 
-from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
-from cxas_scrapi.utils.arc_context import session_short_id
+from cxas_scrapi.core.common import Common
+from cxas_scrapi.utils.arc_context import (
+    PROD_API_ENDPOINT,
+    normalize_api_endpoint,
+    session_short_id,
+)
 from cxas_scrapi.utils.arc_events import (
     ConfirmationActionRecord,
-    LroOperationInfo,
     TurnStreamEvents,
     TurnStreamReducer,
 )
+from cxas_scrapi.utils.arc_lro import DETACHED_JOB_PREFIX, LroOperationInfo
 
 if typing.TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -74,8 +82,11 @@ CAPABILITY_CLIENT_MANAGED_LRO = "CLIENT_MANAGED_LRO"
 # the assistant runs tools; mirror that idle tolerance.
 CONSOLE_STREAM_IDLE_TIMEOUT_SECONDS = 180.0
 _ALREADY_PROCESSED_MARKER = "has already been processed for this session"
-_DETACHED_JOB_PREFIX = "guddelon-"
 _TERMINAL_RUN_STATES = ("COMPLETED", "ERROR", "CANCELLED")
+_MAX_HANDOFF_RECONNECTS = 10
+_APP_PREFIX_RE = re.compile(
+    r"^projects/[^/?#]+/locations/([^/?#]+)/apps/([^/?#]+)$"
+)
 
 
 class ArcError(RuntimeError):
@@ -109,8 +120,7 @@ class ArcStreamInterrupted(ArcError):
 
 
 def _is_read_timeout(error: BaseException) -> bool:
-    """True when a requests error chain is rooted in a read timeout."""
-    names = ("ReadTimeoutError", "ReadTimeout", "timeout", "TimeoutError")
+    """True when a requests error chain is rooted in a stream read timeout."""
     seen: set[int] = set()
     stack: list[BaseException] = [error]
     while stack:
@@ -118,14 +128,15 @@ def _is_read_timeout(error: BaseException) -> bool:
         if id(cur) in seen:
             continue
         seen.add(id(cur))
-        if type(cur).__name__ in names:
+        if isinstance(
+            cur, (requests.exceptions.ReadTimeout, ReadTimeoutError)
+        ) or type(cur).__name__ in ("ReadTimeoutError", "ReadTimeout"):
             return True
         # requests wraps urllib3 errors as ``ConnectionError(err)`` (args),
         # while ``raise ... from`` uses ``__cause__``.
         stack.extend(a for a in cur.args if isinstance(a, BaseException))
-        for nxt in (cur.__cause__, cur.__context__):
-            if nxt is not None:
-                stack.append(nxt)
+        if cur.__cause__ is not None:
+            stack.append(cur.__cause__)
     return False
 
 
@@ -135,7 +146,11 @@ def iter_stream_json(response: requests.Response) -> Iterator[dict[str, Any]]:
     Handles both ``?alt=sse`` (``data: {...}`` lines) and the default
     One Platform JSON-array framing (``[{...},{...}]``).
     """
-    content_type = response.headers.get("content-type", "")
+    content_type = (
+        response.headers.get("content-type")
+        or response.headers.get("Content-Type")
+        or ""
+    ).lower()
     if "text/event-stream" in content_type:
         for raw in response.iter_lines(decode_unicode=False):
             if not raw or not raw.startswith(b"data:"):
@@ -196,6 +211,7 @@ def _retrying_session() -> requests.Session:
             http.HTTPStatus.GATEWAY_TIMEOUT,
         ],
         allowed_methods=frozenset(["GET", "DELETE"]),
+        raise_on_status=False,
     )
     session.mount("https://", HTTPAdapter(max_retries=retries))
     return session
@@ -248,19 +264,38 @@ class Arc(Common):
                 f"'{CLIENT_PROFILE_LEGACY}', got {client_profile!r}"
             )
         self.client_profile = client_profile
-        endpoint = (api_endpoint or DEFAULT_API_ENDPOINT).strip()
-        endpoint = endpoint.removeprefix("https://").removeprefix("http://")
-        self.api_endpoint = endpoint.rstrip("/")
+        self.api_endpoint = normalize_api_endpoint(api_endpoint)
         self._base_url = f"https://{self.api_endpoint}/{API_VERSION}"
         self.stream_idle_timeout = stream_idle_timeout
         self.max_reattach_attempts = max(0, int(max_reattach_attempts))
         self.rate_limiter = rate_limiter
         self._progress_cb = progress
+        self._owns_sessions = http_session is None
         self.session = http_session or _retrying_session()
         # Streams must not be retried by the adapter; use a plain session.
         self._stream_session = http_session or requests.Session()
         self.last_stream_events: TurnStreamEvents | None = None
         self._active_turn_events: TurnStreamEvents | None = None
+        if self.api_endpoint != PROD_API_ENDPOINT:
+            self._progress(
+                f"using non-default API endpoint: {self.api_endpoint}"
+            )
+
+    def close(self) -> None:
+        """Closes HTTP sessions owned by this client."""
+        if self._owns_sessions:
+            self.session.close()
+            if self._stream_session is not self.session:
+                self._stream_session.close()
+
+    def __enter__(self) -> Arc:
+        """Enters context manager, returning ``self``."""
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        """Closes owned HTTP sessions on context exit."""
+        del exc
+        self.close()
 
     # ------------------------------------------------------------------ utils
 
@@ -331,23 +366,39 @@ class Arc(Common):
 
     def session_name(self, session_id: str) -> str:
         """Returns the full ``assistantSessions`` resource name."""
-        if "/assistantSessions/" in session_id:
-            return session_id
-        return (
-            f"{self.app_name}/assistantSessions/{session_short_id(session_id)}"
-        )
+        raw = session_id.strip()
+        if "assistantSessions/" in raw:
+            prefix, _ = raw.split("assistantSessions/", 1)
+            prefix = prefix.rstrip("/")
+            if prefix:
+                own = _APP_PREFIX_RE.match(self.app_name)
+                got = _APP_PREFIX_RE.match(prefix)
+                if got is None or (
+                    own is not None and got.groups() != own.groups()
+                ):
+                    raise ValueError(
+                        f"Session {session_id!r} does not belong to "
+                        f"{self.app_name!r}."
+                    )
+        short = urllib.parse.quote(session_short_id(raw), safe="")
+        return f"{self.app_name}/assistantSessions/{short}"
 
     def _capabilities(
-        self, enable_confirmation_cards: bool | None
+        self,
+        enable_confirmation_cards: bool | None,
+        *,
+        enable_client_managed_lro: bool = True,
     ) -> list[str]:
-        caps = [CAPABILITY_CLIENT_MANAGED_LRO]
+        caps: list[str] = []
         cards = (
             self.client_profile == CLIENT_PROFILE_CONSOLE
             if enable_confirmation_cards is None
             else enable_confirmation_cards
         )
         if cards:
-            caps.insert(0, CAPABILITY_CONFIRMATION_CARDS)
+            caps.append(CAPABILITY_CONFIRMATION_CARDS)
+        if enable_client_managed_lro:
+            caps.append(CAPABILITY_CLIENT_MANAGED_LRO)
         return caps
 
     # ---------------------------------------------------------------- sessions
@@ -370,11 +421,12 @@ class Arc(Common):
 
     def create_session(self, session_id: str) -> dict[str, Any]:
         """Explicitly creates an assistant session (streams create lazily)."""
+        short = session_short_id(session_id)
         return self._request(
             "POST",
             f"{self.app_name}/assistantSessions",
-            params={"assistantSessionId": session_short_id(session_id)},
-            data={},
+            params={"assistantSessionId": short},
+            data={"assistantSessionId": short},
         )
 
     def delete_session(self, session_id: str) -> None:
@@ -434,6 +486,7 @@ class Arc(Common):
         operation_completed_event: dict[str, Any] | None = None,
         resume_from_sequence_number: int | None = None,
         enable_confirmation_cards: bool | None = None,
+        enable_client_managed_lro: bool = True,
         timeout_seconds: float = 1800,
         on_event: Callable[[dict[str, Any]], None] | None = None,
         into: TurnStreamEvents | None = None,
@@ -452,6 +505,7 @@ class Arc(Common):
             operation_completed_event: Client-managed LRO completion event.
             resume_from_sequence_number: Replay from this sequence number.
             enable_confirmation_cards: Override the profile's card setting.
+            enable_client_managed_lro: Advertise ``CLIENT_MANAGED_LRO``.
             timeout_seconds: Overall deadline for this stream.
             on_event: Callback for every raw JSON event.
             into: Merge the sub-stream into this aggregate instead of a new one.
@@ -461,7 +515,10 @@ class Arc(Common):
         """
         body: dict[str, Any] = {
             "message": message or "",
-            "clientCapabilities": self._capabilities(enable_confirmation_cards),
+            "clientCapabilities": self._capabilities(
+                enable_confirmation_cards,
+                enable_client_managed_lro=enable_client_managed_lro,
+            ),
         }
         if attached_gcs_uris:
             body["attachedGcsUris"] = list(attached_gcs_uris)
@@ -485,71 +542,131 @@ class Arc(Common):
         count = 0
         request_body = body
         reattached = 0
-        while True:
-            try:
-                with self._stream_session.post(
-                    url,
-                    params={"alt": "sse"},
-                    headers=self._headers(),
-                    json=request_body,
-                    stream=True,
-                    timeout=(30, self.stream_idle_timeout),
-                ) as response:
-                    if response.status_code >= 400:
-                        raise self._error_from_response(response)
-                    for obj in iter_stream_json(response):
-                        count += 1
-                        reducer.feed(obj)
-                        if on_event is not None:
-                            on_event(obj)
-                        if time.monotonic() > deadline:
-                            target.merge(reducer.events)
-                            raise ArcStreamTimeout(
-                                f"Turn exceeded {timeout_seconds:.0f}s "
-                                f"deadline after {count} events.",
-                                target,
-                            )
-                break
-            except (
-                requests.exceptions.ReadTimeout,
-                requests.exceptions.ConnectionError,
-                requests.exceptions.ChunkedEncodingError,
-            ) as e:
-                # requests surfaces a read timeout that happens *while
-                # iterating* the body as ConnectionError(ReadTimeoutError).
-                if _is_read_timeout(e):
-                    target.merge(reducer.events)
-                    raise ArcStreamTimeout(
-                        f"Stream idle for {self.stream_idle_timeout:.0f}s "
-                        f"after {count} events.",
-                        target,
-                    ) from e
-                seq = reducer.events.last_sequence_number
-                if (
-                    reducer.events.turn_completed is None
-                    and seq is not None
-                    and reattached < self.max_reattach_attempts
-                ):
-                    # The turn keeps running server-side; re-attach and
-                    # replay from the last sequence number we saw.
-                    reattached += 1
-                    self._progress(
-                        f"stream dropped after {count} events; "
-                        f"re-attaching from sequence {seq} "
-                        f"(attempt {reattached})"
-                    )
-                    time.sleep(min(2 * reattached, 5))
-                    request_body = {
-                        "attachOnly": True,
-                        "resumeFromSequenceNumber": str(seq),
-                        "clientCapabilities": body["clientCapabilities"],
-                    }
-                    continue
+        handoffs = 0
+        merged = False
+
+        def _merge_once() -> None:
+            nonlocal merged
+            if not merged:
                 target.merge(reducer.events)
-                raise ArcStreamInterrupted(
-                    f"Stream interrupted after {count} events: {e}", target
-                ) from e
-        target.merge(reducer.events)
+                merged = True
+
+        try:
+            while True:
+                seq_before = reducer.events.last_sequence_number
+                reducer.events.handoff = None
+                try:
+                    with self._stream_session.post(
+                        url,
+                        params={"alt": "sse"},
+                        headers=self._headers(),
+                        json=request_body,
+                        stream=True,
+                        timeout=(30, self.stream_idle_timeout),
+                    ) as response:
+                        if response.status_code >= 400:
+                            raise self._error_from_response(response)
+                        for obj in iter_stream_json(response):
+                            count += 1
+                            reducer.feed(obj)
+                            if on_event is not None:
+                                on_event(obj)
+                            if time.monotonic() > deadline:
+                                _merge_once()
+                                raise ArcStreamTimeout(
+                                    f"Turn exceeded {timeout_seconds:.0f}s "
+                                    f"deadline after {count} events.",
+                                    target,
+                                )
+                    if reducer.events.turn_completed is not None:
+                        break
+                    seq = reducer.events.last_sequence_number
+                    if (
+                        reducer.events.handoff is not None
+                        and handoffs < _MAX_HANDOFF_RECONNECTS
+                    ):
+                        handoffs += 1
+                        resume_seq = seq if seq is not None else 0
+                        request_body = {
+                            "attachOnly": True,
+                            "resumeFromSequenceNumber": str(resume_seq),
+                            "clientCapabilities": body["clientCapabilities"],
+                        }
+                        continue
+                    if seq is not None:
+                        if seq_before is not None and seq > seq_before:
+                            reattached = 0
+                        if reattached < self.max_reattach_attempts:
+                            reattached += 1
+                            self._progress(
+                                "stream closed before turnCompleted after "
+                                f"{count} events; re-attaching from sequence "
+                                f"{seq} (attempt {reattached})"
+                            )
+                            time.sleep(min(2 * reattached, 5))
+                            request_body = {
+                                "attachOnly": True,
+                                "resumeFromSequenceNumber": str(seq),
+                                "clientCapabilities": (
+                                    body["clientCapabilities"]
+                                ),
+                            }
+                            continue
+                        _merge_once()
+                        raise ArcStreamInterrupted(
+                            "Stream closed before turnCompleted after "
+                            f"{count} events (last sequence {seq}).",
+                            target,
+                        )
+                    break
+                except (
+                    requests.exceptions.ReadTimeout,
+                    requests.exceptions.ConnectionError,
+                    requests.exceptions.ChunkedEncodingError,
+                ) as e:
+                    if reducer.events.turn_completed is not None:
+                        break
+                    # requests surfaces a read timeout that happens *while
+                    # iterating* the body as ConnectionError(ReadTimeoutError).
+                    if _is_read_timeout(e):
+                        _merge_once()
+                        raise ArcStreamTimeout(
+                            f"Stream idle for {self.stream_idle_timeout:.0f}s "
+                            f"after {count} events.",
+                            target,
+                        ) from e
+                    seq = reducer.events.last_sequence_number
+                    if (
+                        seq_before is not None
+                        and seq is not None
+                        and seq > seq_before
+                    ):
+                        reattached = 0
+                    if (
+                        seq is not None
+                        and reattached < self.max_reattach_attempts
+                    ):
+                        # The turn keeps running server-side; re-attach and
+                        # replay from the last sequence number we saw.
+                        reattached += 1
+                        self._progress(
+                            f"stream dropped after {count} events; "
+                            f"re-attaching from sequence {seq} "
+                            f"(attempt {reattached})"
+                        )
+                        time.sleep(min(2 * reattached, 5))
+                        request_body = {
+                            "attachOnly": True,
+                            "resumeFromSequenceNumber": str(seq),
+                            "clientCapabilities": body["clientCapabilities"],
+                        }
+                        continue
+                    _merge_once()
+                    raise ArcStreamInterrupted(
+                        f"Stream interrupted after {count} events: {e}", target
+                    ) from e
+        finally:
+            _merge_once()
         return target
 
     # --------------------------------------------------------------- turn loop
@@ -565,6 +682,7 @@ class Arc(Common):
         operation_completed_event: dict[str, Any] | None = None,
         enable_confirmation_cards: bool | None,
         timeout_seconds: float,
+        turn_deadline: float,
         auto_resolve_lro: bool,
         lro_timeout_seconds: float,
         lro_poll_interval_seconds: float,
@@ -574,7 +692,29 @@ class Arc(Common):
 
         Returns the text streamed by this request (and its LRO follow-ups).
         """
+        remaining = turn_deadline - time.monotonic()
+        if remaining <= 0:
+            raise ArcStreamTimeout(
+                f"Turn exceeded {timeout_seconds:.0f}s overall deadline.",
+                turn_events,
+            )
+        leg_timeout = min(timeout_seconds, remaining)
         sub = TurnStreamEvents()
+        merged_sub = False
+
+        def _merge_sub() -> None:
+            nonlocal merged_sub
+            if merged_sub:
+                return
+            merged_sub = True
+            text_before = turn_events.text
+            turn_events.merge(sub)
+            # The caller re-assembles text on success; keep the running text
+            # here so a failed turn still renders what streamed so far.
+            turn_events.text = "\n\n".join(
+                part for part in (text_before, sub.text) if part
+            )
+
         try:
             self.stream_turn(
                 session_id,
@@ -583,17 +723,16 @@ class Arc(Common):
                 confirmation_response=confirmation_response,
                 operation_completed_event=operation_completed_event,
                 enable_confirmation_cards=enable_confirmation_cards,
-                timeout_seconds=timeout_seconds,
+                enable_client_managed_lro=auto_resolve_lro,
+                timeout_seconds=leg_timeout,
                 into=sub,
             )
+        except (ArcStreamTimeout, ArcStreamInterrupted) as e:
+            _merge_sub()
+            e.partial = turn_events
+            raise
         finally:
-            text_before = turn_events.text
-            turn_events.merge(sub)
-            # The caller re-assembles text on success; keep the running text
-            # here so a failed turn still renders what streamed so far.
-            turn_events.text = "\n\n".join(
-                part for part in (text_before, sub.text) if part
-            )
+            _merge_sub()
         text = sub.text
         pending = [lro for lro in sub.initiated_lros if lro.status == "PENDING"]
         if auto_resolve_lro and pending:
@@ -603,6 +742,7 @@ class Arc(Common):
                 pending,
                 enable_confirmation_cards=enable_confirmation_cards,
                 timeout_seconds=timeout_seconds,
+                turn_deadline=turn_deadline,
                 lro_timeout_seconds=lro_timeout_seconds,
                 lro_poll_interval_seconds=lro_poll_interval_seconds,
                 max_lro_iterations=max_lro_iterations,
@@ -627,17 +767,17 @@ class Arc(Common):
         lro_poll_interval_seconds: float,
         max_lro_iterations: int,
     ) -> TurnStreamEvents:
+        turn_deadline = time.monotonic() + timeout_seconds
         send_kwargs: dict[str, Any] = {
             "enable_confirmation_cards": enable_confirmation_cards,
             "timeout_seconds": timeout_seconds,
+            "turn_deadline": turn_deadline,
             "auto_resolve_lro": auto_resolve_lro,
             "lro_timeout_seconds": lro_timeout_seconds,
             "lro_poll_interval_seconds": lro_poll_interval_seconds,
             "max_lro_iterations": max_lro_iterations,
         }
         turn_events = TurnStreamEvents()
-        if explicit_action is not None:
-            turn_events.confirmation_actions.append(explicit_action)
         self._active_turn_events = turn_events
         chunks: list[str] = []
         try:
@@ -656,6 +796,7 @@ class Arc(Common):
                 explicit_action.followup_tool_calls = len(
                     turn_events.tool_calls
                 )
+                turn_events.confirmation_actions.insert(0, explicit_action)
             if (
                 confirmation_policy is not None
                 and confirmation_policy.answers_cards
@@ -705,7 +846,6 @@ class Arc(Common):
                     round=round_idx,
                     reason=action.reason,
                 )
-                turn_events.confirmation_actions.append(record)
                 calls_before = len(turn_events.tool_calls)
                 how = "typing" if action.is_typed else "clicking"
                 self._progress(
@@ -738,6 +878,7 @@ class Arc(Common):
                 record.followup_tool_calls = (
                     len(turn_events.tool_calls) - calls_before
                 )
+                turn_events.confirmation_actions.append(record)
                 if followup:
                     chunks.append(("\n\n" if any(chunks) else "") + followup)
                 if action.is_typed:
@@ -883,17 +1024,22 @@ class Arc(Common):
             progress = last.get("progress") or {}
             total = int(progress.get("totalCount", 0) or 0)
             failed = int(progress.get("failedCount", 0) or 0)
+            errored = int(progress.get("errorCount", 0) or 0)
+            cancelled = int(progress.get("cancelledCount", 0) or 0)
             passed = int(progress.get("passedCount", 0) or 0)
             completed = int(progress.get("completedCount", 0) or 0)
             if not passed and completed:
-                passed = max(completed - failed, 0)
+                passed = max(completed - failed - errored - cancelled, 0)
+            extra = (f", errored {errored}" if errored else "") + (
+                f", cancelled {cancelled}" if cancelled else ""
+            )
             self._progress(
                 f"evaluation run {state or 'RUNNING'}: {completed}/{total} "
-                f"(failed {failed})"
+                f"(failed {failed}{extra})"
             )
             if state in _TERMINAL_RUN_STATES:
                 pass_rate = round(100.0 * passed / total, 1) if total else 0.0
-                return {
+                result: dict[str, Any] = {
                     "status": "SUCCEEDED" if state == "COMPLETED" else state,
                     "state": state,
                     "evaluation_run": last.get("name", run_name),
@@ -902,7 +1048,20 @@ class Arc(Common):
                     "failed_count": failed,
                     "total_count": total,
                 }
-            if time.monotonic() > deadline:
+                if errored:
+                    result["error_count"] = errored
+                if cancelled:
+                    result["cancelled_count"] = cancelled
+                run_error = last.get("error")
+                if run_error:
+                    result["error"] = (
+                        run_error.get("message", str(run_error))
+                        if isinstance(run_error, dict)
+                        else str(run_error)
+                    )
+                return result
+            now = time.monotonic()
+            if now > deadline:
                 return {
                     "status": "TIMEOUT",
                     "state": state,
@@ -911,7 +1070,7 @@ class Arc(Common):
                         f"evaluation run not finished after {timeout_seconds}s"
                     ),
                 }
-            time.sleep(poll_interval_seconds)
+            time.sleep(min(poll_interval_seconds, max(deadline - now, 0.0)))
 
     def poll_operation(
         self,
@@ -924,6 +1083,16 @@ class Arc(Common):
         deadline = time.monotonic() + timeout_seconds
         while True:
             op = self.get_operation(operation_name)
+            if op.get("done") and op.get("error"):
+                error = op["error"]
+                return {
+                    "status": "FAILED",
+                    "error": (
+                        error.get("message", str(error))
+                        if isinstance(error, dict)
+                        else str(error)
+                    ),
+                }
             metadata = op.get("metadata") or {}
             response = op.get("response") or {}
             run_ref = metadata.get("evaluationRun") or response.get(
@@ -933,23 +1102,16 @@ class Arc(Common):
                 run_ref.get("name") if isinstance(run_ref, dict) else run_ref
             )
             if run_name:
-                remaining = max(
-                    deadline - time.monotonic(), poll_interval_seconds
-                )
+                remaining = max(deadline - time.monotonic(), 0.0)
                 return self.poll_evaluation_run(
                     str(run_name),
                     timeout_seconds=remaining,
                     poll_interval_seconds=poll_interval_seconds,
                 )
             if op.get("done"):
-                error = op.get("error")
-                if error:
-                    return {
-                        "status": "FAILED",
-                        "error": error.get("message", str(error)),
-                    }
                 return {"status": "SUCCEEDED", "response": response}
-            if time.monotonic() > deadline:
+            now = time.monotonic()
+            if now > deadline:
                 return {
                     "status": "TIMEOUT",
                     "error": f"operation not done after {timeout_seconds}s",
@@ -957,7 +1119,7 @@ class Arc(Common):
             self._progress(
                 f"operation running: {operation_name.rsplit('/', 1)[-1]}"
             )
-            time.sleep(poll_interval_seconds)
+            time.sleep(min(poll_interval_seconds, max(deadline - now, 0.0)))
 
     def poll_detached_job(
         self,
@@ -988,13 +1150,14 @@ class Arc(Common):
                         else state,
                         "memo_path": status.get("memo_path", ""),
                     }
-            if time.monotonic() > deadline:
+            now = time.monotonic()
+            if now > deadline:
                 return {
                     "status": "TIMEOUT",
                     "error": "detached job not finished",
                 }
             self._progress(f"detached job running: {job_id}")
-            time.sleep(poll_interval_seconds)
+            time.sleep(min(poll_interval_seconds, max(deadline - now, 0.0)))
 
     def _resolve_lro_loop(
         self,
@@ -1004,6 +1167,7 @@ class Arc(Common):
         *,
         enable_confirmation_cards: bool | None,
         timeout_seconds: float,
+        turn_deadline: float,
         lro_timeout_seconds: float,
         lro_poll_interval_seconds: float,
         max_lro_iterations: int,
@@ -1015,40 +1179,50 @@ class Arc(Common):
             iteration += 1
             current, pending = list(pending), []
             for lro in current:
-                lro.status = "PROCESSED"
                 self._progress(
                     f"waiting for {lro.operation_type}: "
                     f"{lro.target_resource_name or lro.operation_name}"
                 )
                 detached = (
                     lro.operation_type == "detached_assistant"
-                    or _DETACHED_JOB_PREFIX in lro.operation_name
+                    or DETACHED_JOB_PREFIX in lro.operation_name
                 )
+                remaining_for_poll = max(turn_deadline - time.monotonic(), 0.0)
+                poll_budget = min(lro_timeout_seconds, remaining_for_poll)
                 if detached:
                     result = self.poll_detached_job(
                         session_id,
                         lro.operation_name,
-                        timeout_seconds=lro_timeout_seconds,
+                        timeout_seconds=poll_budget,
                         poll_interval_seconds=lro_poll_interval_seconds,
                     )
                 elif "evaluationRuns" in (lro.target_resource_name or ""):
                     result = self.poll_evaluation_run(
                         lro.target_resource_name,
-                        timeout_seconds=lro_timeout_seconds,
+                        timeout_seconds=poll_budget,
                         poll_interval_seconds=lro_poll_interval_seconds,
                     )
                 elif lro.operation_name:
                     result = self.poll_operation(
                         lro.operation_name,
-                        timeout_seconds=lro_timeout_seconds,
+                        timeout_seconds=poll_budget,
                         poll_interval_seconds=lro_poll_interval_seconds,
                     )
                 else:
                     result = {"status": "SUCCEEDED"}
 
-                status = str(result.get("status", "SUCCEEDED"))
+                raw_status = str(result.get("status", "SUCCEEDED")).upper()
+                if raw_status == "TIMEOUT":
+                    raise ArcStreamTimeout(
+                        str(
+                            result.get("error")
+                            or f"{lro.operation_type} timed out"
+                        ),
+                        turn_events,
+                    )
+                wire_status = _canonical_lro_status(raw_status)
                 self._progress(
-                    f"{lro.operation_type} finished ({status}); resuming"
+                    f"{lro.operation_type} finished ({wire_status}); resuming"
                 )
                 metadata = {
                     k: result[k]
@@ -1056,6 +1230,8 @@ class Arc(Common):
                         "pass_rate",
                         "passed_count",
                         "failed_count",
+                        "error_count",
+                        "cancelled_count",
                         "total_count",
                     )
                     if k in result
@@ -1069,32 +1245,49 @@ class Arc(Common):
                     "operationName": lro.operation_name,
                     "targetResourceName": target,
                     "operationType": lro.operation_type,
-                    "status": status,
+                    "status": wire_status,
+                    "deduplicationToken": str(uuid.uuid4()),
                 }
                 if metadata:
                     event["metadata"] = metadata
                 if result.get("error"):
-                    event["error"] = {"message": str(result["error"])}
+                    event["error"] = {
+                        "code": 2,
+                        "message": str(result["error"]),
+                    }
 
                 sub = TurnStreamEvents()
                 had_error = False
+                last_error: ArcError | None = None
                 for attempt in range(2):
+                    sub = TurnStreamEvents()
+                    rem = turn_deadline - time.monotonic()
+                    if rem <= 0:
+                        raise ArcStreamTimeout(
+                            f"Turn exceeded {timeout_seconds:.0f}s overall "
+                            "deadline before LRO resume.",
+                            turn_events,
+                        )
+                    resume_budget = min(
+                        max(timeout_seconds, lro_timeout_seconds)
+                        if detached
+                        else timeout_seconds,
+                        rem,
+                    )
                     try:
                         self.stream_turn(
                             session_id,
                             "",
                             operation_completed_event=event,
                             enable_confirmation_cards=enable_confirmation_cards,
-                            timeout_seconds=(
-                                max(timeout_seconds, lro_timeout_seconds)
-                                if detached
-                                else timeout_seconds
-                            ),
+                            timeout_seconds=resume_budget,
                             into=sub,
                         )
+                        last_error = None
                         break
                     except ArcError as e:
                         had_error = True
+                        last_error = e
                         logger.warning(
                             "operationCompletedEvent delivery failed "
                             "(attempt %d): %s",
@@ -1103,9 +1296,14 @@ class Arc(Common):
                         )
                         if attempt == 0:
                             time.sleep(5)
-                else:
-                    continue
+                if last_error is not None:
+                    if isinstance(
+                        last_error, (ArcStreamTimeout, ArcStreamInterrupted)
+                    ):
+                        last_error.partial = turn_events
+                    raise last_error
 
+                lro.status = "PROCESSED"
                 text_before = turn_events.text
                 turn_events.merge(sub)
                 turn_events.text = text_before
@@ -1120,19 +1318,16 @@ class Arc(Common):
                         if "pass_rate" in metadata
                         else ""
                     )
-                    memo = ""
-                    if detached and str(target).startswith("memo/"):
-                        memo = (
-                            " The detached assistant's output was persisted to "
-                            f"memory file '{target}'. Call read_memory_file "
-                            "with "
-                            f"path='{target}' to inspect it and continue."
-                        )
+                    memo = (
+                        f" Output path: {target}."
+                        if detached and str(target).startswith("memo/")
+                        else ""
+                    )
                     fallback = (
                         f"Operation {lro.operation_name} "
                         f"({lro.operation_type}) "
-                        f"finished with status {status} on resource {target}"
-                        f"{pass_rate}.{memo}"
+                        f"finished with status {wire_status} on resource "
+                        f"{target}{pass_rate}.{memo}"
                     )
                     logger.warning(
                         "Server already processed %s; "
@@ -1141,15 +1336,18 @@ class Arc(Common):
                     )
                     fb = TurnStreamEvents()
                     try:
+                        rem_fb = max(turn_deadline - time.monotonic(), 1.0)
+                        fb_budget = min(
+                            min(timeout_seconds, 300)
+                            if had_error
+                            else timeout_seconds,
+                            rem_fb,
+                        )
                         self.stream_turn(
                             session_id,
                             fallback,
                             enable_confirmation_cards=enable_confirmation_cards,
-                            timeout_seconds=(
-                                min(timeout_seconds, 300)
-                                if had_error
-                                else timeout_seconds
-                            ),
+                            timeout_seconds=fb_budget,
                             into=fb,
                         )
                         text_before = turn_events.text
@@ -1179,6 +1377,16 @@ class Arc(Common):
         return "\n\n".join(collected)
 
 
+def _canonical_lro_status(status: str) -> str:
+    if status in ("COMPLETED", "SUCCEEDED"):
+        return "SUCCEEDED"
+    if status in ("CANCELLED", "CANCELED"):
+        return "CANCELLED"
+    if status in ("FAILED", "ERROR"):
+        return "FAILED"
+    return status
+
+
 def _detached_job_statuses(session: dict[str, Any]) -> Iterable[dict[str, Any]]:
     """Yields ``detached_assistant_status`` payloads from session messages."""
     for message in session.get("messages", []) or []:
@@ -1186,11 +1394,19 @@ def _detached_job_statuses(session: dict[str, Any]) -> Iterable[dict[str, Any]]:
             payload = chunk.get("typedPayload") or {}
             if payload.get("type") != "detached_assistant_status":
                 continue
-            data = payload.get("payload") or payload.get("data") or {}
+            data = (
+                payload.get("value")
+                or payload.get("payload")
+                or payload.get("data")
+                or {}
+            )
             if isinstance(data, str):
                 try:
                     data = json.loads(data)
                 except ValueError:
                     continue
             if isinstance(data, dict):
-                yield data
+                entry = dict(data)
+                if not entry.get("job_id") and payload.get("displayName"):
+                    entry["job_id"] = str(payload["displayName"])
+                yield entry

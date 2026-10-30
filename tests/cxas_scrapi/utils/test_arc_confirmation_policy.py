@@ -326,3 +326,40 @@ def test_make_policy_variants_and_unknown() -> None:
     assert "seed=11" in scripted.describe()
     with pytest.raises(ValueError, match="Unknown confirmation policy"):
         policy_lib.make_policy("yolo")
+
+
+def test_make_policy_and_scripted_forward_deny_tools() -> None:
+    click = policy_lib.make_policy("click", deny_tools=["*delete*", "*deploy*"])
+    actions = click.decide(
+        [_gate("c1", tool="delete_agent"), _gate("c2", tool="update_app")]
+    )
+    assert [a.action for a in actions] == [
+        _Action.CLICK_DENY,
+        _Action.CLICK_CONFIRM,
+    ]
+
+    mixed = policy_lib.make_policy(
+        "mixed",
+        typed_reply_probability=0.0,
+        seed=3,
+        deny_tools=["*deploy*"],
+    )
+    assert mixed.decide([_gate("c1", tool="deploy_app")])[0].action == (
+        _Action.CLICK_DENY
+    )
+
+    scripted_via_factory = policy_lib.make_policy(
+        "scripted",
+        deny_tools=["*delete*"],
+        script={"default": "click"},
+    )
+    assert scripted_via_factory.decide([_gate("c1", tool="delete_tool")])[
+        0
+    ].action == (_Action.CLICK_DENY)
+
+    scripted_from_dict = policy_lib.ScriptedPolicy.from_dict(
+        {"default": "click", "deny_tools": ["*publish*"]}
+    )
+    assert scripted_from_dict.decide([_gate("c1", tool="publish_contract")])[
+        0
+    ].action == (_Action.CLICK_DENY)

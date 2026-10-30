@@ -437,6 +437,7 @@ class ScriptedPolicy(ConfirmationPolicy):
         typed_deny_text: str = DEFAULT_TYPED_DENY_TEXT,
         question_answerer: QuestionAnswerer | None = None,
         answers: Mapping[str, str] | None = None,
+        deny_tools: Sequence[str] = (),
     ):
         """Initializes ScriptedPolicy with ordered rules and a fallback."""
         if default not in ("click", "manual"):
@@ -451,9 +452,12 @@ class ScriptedPolicy(ConfirmationPolicy):
             typed_deny_text=typed_deny_text,
             question_answerer=question_answerer,
             answers=answers,
+            deny_tools=deny_tools,
         )
         self._click = ClickPolicy(
-            question_answerer=question_answerer, answers=answers
+            question_answerer=question_answerer,
+            answers=answers,
+            deny_tools=deny_tools,
         )
 
     def reset(self) -> None:
@@ -477,6 +481,7 @@ class ScriptedPolicy(ConfirmationPolicy):
             "typed_confirm_text",
             "typed_deny_text",
             "answers",
+            "deny_tools",
         }
         unknown = set(script) - known
         if unknown:
@@ -502,6 +507,7 @@ class ScriptedPolicy(ConfirmationPolicy):
             ),
             question_answerer=question_answerer,
             answers=script.get("answers"),
+            deny_tools=tuple(script.get("deny_tools") or ()),
         )
 
     @classmethod
@@ -602,6 +608,7 @@ def make_policy(
     script: Mapping[str, Any] | None = None,
     question_answerer: QuestionAnswerer | None = None,
     answers: Mapping[str, str] | None = None,
+    deny_tools: Sequence[str] = (),
 ) -> ConfirmationPolicy:
     """Builds a policy from its CLI/config name.
 
@@ -619,6 +626,8 @@ def make_policy(
             cards.
         answers: Optional explicit answer overrides keyed by confirmation ID
             or tool name.
+        deny_tools: Optional fnmatch globs of gated tools to automatically
+            decline under "click", "mixed", or "scripted" fallback.
 
     Returns:
         The configured ConfirmationPolicy instance.
@@ -631,7 +640,11 @@ def make_policy(
     if key == "manual":
         return ManualPolicy()
     if key == "click":
-        return ClickPolicy(question_answerer=question_answerer, answers=answers)
+        return ClickPolicy(
+            question_answerer=question_answerer,
+            answers=answers,
+            deny_tools=deny_tools,
+        )
     if key == "mixed":
         return MixedPolicy(
             typed_reply_probability=(
@@ -642,6 +655,7 @@ def make_policy(
             seed=seed,
             question_answerer=question_answerer,
             answers=answers,
+            deny_tools=deny_tools,
         )
     if key == "scripted":
         merged = dict(script or {})
@@ -654,6 +668,8 @@ def make_policy(
             merged["seed"] = seed
         if answers is not None and "answers" not in merged:
             merged["answers"] = answers
+        if deny_tools and "deny_tools" not in merged:
+            merged["deny_tools"] = list(deny_tools)
         return ScriptedPolicy.from_dict(
             merged, question_answerer=question_answerer
         )

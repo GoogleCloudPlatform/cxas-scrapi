@@ -24,17 +24,19 @@ or hillclimbing an evaluation pass rate.
   questions). Attachments and `--download-artifacts` additionally need object
   read/write access on the artifacts bucket.
 - Endpoint: the API host defaults to `ces.googleapis.com`. Override it with
-  `CES_API_ENDPOINT` or `--api-endpoint`.
+  `CES_API_ENDPOINT` or `--api-endpoint` (non-`*.googleapis.com` hosts require
+  `CXAS_ALLOW_ANY_API_ENDPOINT=1` to protect bearer tokens).
 
 ## Targeting an app
 
-Every sub-command accepts one of:
+Every sub-command accepts one of (`--url` and `--app-name` are mutually
+exclusive):
 
 | Form | Example |
 |------|---------|
 | Console URL | `--url "https://ces.cloud.google.com/projects/<project>/locations/<location>/apps/<app>"` (may end in `/assistantSessions/<id>`) |
 | Full resource name | `--app-name projects/<project>/locations/<location>/apps/<app>` |
-| Short id | `--app-name <app> --project <project> --location <location>` |
+| Short id | `--app-name <app> --project <project> [--location <location>]` (`--location` defaults to `$CES_LOCATION` or `us`) |
 
 ## Sub-commands
 
@@ -52,7 +54,7 @@ Common flags (all sub-commands): `--url`, `--app-name`, `--project`,
 `--session-store`, `--format markdown|json`, `--quiet`.
 
 Turn flags (`chat`, `confirm`, `answer`): `--confirmation-policy`,
-`--typed-reply-probability`, `--confirmation-seed`,
+`--deny-tools`, `--typed-reply-probability`, `--confirmation-seed`,
 `--max-confirmation-rounds`, `--client-profile`, `--no-auto-resolve-lro`,
 `--timeout-seconds`, `--stream-idle-timeout`, `--include-thoughts`,
 `--no-tools`. Run `cxas arc <sub-command> --help` for the full list.
@@ -61,8 +63,9 @@ Turn flags (`chat`, `confirm`, `answer`): `--confirmation-policy`,
 
 A conversation with Arc lives in an *assistant session* on the app. The CLI
 remembers one session per `(api_endpoint, app_name)` pair in
-`~/.cxas/arc_sessions.json`, so consecutive commands continue the same
-conversation without repeating `--session-id`.
+`~/.cxas/arc_sessions.json` (written atomically with `0600` permissions inside
+`0700` `~/.cxas`), so consecutive commands continue the same conversation
+without repeating `--session-id`.
 
 ```bash
 cxas arc sessions new  --app-name projects/p/locations/l/apps/a   # fresh sticky session
@@ -71,9 +74,12 @@ cxas arc sessions get  --app-name projects/p/locations/l/apps/a   # messages, ar
 cxas arc sessions delete --app-name projects/p/locations/l/apps/a # delete + forget locally
 ```
 
+- `--new-session` and `--session-id` are mutually exclusive.
 - `--new-session` on any turn command starts a fresh session first.
 - `--session-id <short-id-or-full-name>` (or `/assistantSessions/<id>` in
-  `--url`) switches to that session and makes it sticky.
+  `--url`) on a turn command (`chat`, `confirm`, `answer`) switches to that
+  session and makes it sticky. Read-only, cancel, delete-other, and
+  `--attach-dry-run` invocations do not overwrite the sticky pointer.
 - `--session-store PATH` relocates the store; the pending-card sidecar lives
   next to it as `<store>.pending.json` (default
   `~/.cxas/arc_sessions.pending.json`).
@@ -99,6 +105,7 @@ The markdown output starts with a header line (`**Session**`, `**Endpoint**`,
 |---------|---------|
 | `### [Tool Activity]` | Tool calls and responses Arc executed (hide with `--no-tools`). |
 | *(plain text)* | Arc's streamed answer. |
+| `### [Errors]` | Server-streamed `google.rpc.Status` (`code != 0`) frames; the CLI exits `1`. |
 | `### [Artifact] <name> (state=…, mime=…, gcs_uri=…)` | A streamed artifact, e.g. the agent contract YAML or an exported bundle. |
 | `### [Contract Progress]` | Contract-related flags for this turn: related / draft complete / finalized. |
 | `### [Confirmation Actions]` | Cards answered during this turn (by you or by a policy), typed vs. clicked. |
@@ -120,16 +127,19 @@ prints follow-up commands. Answer it the way a console user clicks:
 ```bash
 cxas arc confirm --url "<console-url>" --confirmed            # click the confirm button
 cxas arc confirm --url "<console-url>" --declined             # click the decline button
-cxas arc confirm --url "<console-url>" --choices A,"Only after 6pm"   # question card: one answer per question
+cxas arc confirm --url "<console-url>" --choices A,"Only after 6pm"   # comma-separated answers
+cxas arc confirm --url "<console-url>" --choice A --choice "Yes, after 6pm"  # repeatable (preserves commas)
 cxas arc confirm --url "<console-url>" --answer-text "..."    # raw answer text
 cxas arc confirm --url "<console-url>" --skip round           # or --skip all
 cxas arc confirm --url "<console-url>" --confirmation-id <id> --confirmed
 ```
 
-Exactly one of `--confirmed`, `--declined`, `--choices`, `--answer-text` or
-`--skip` is required. `--choices` takes a letter (`A`), a 1-based number (`1`)
-or free text per question, comma-separated; an empty entry skips that question.
-`--confirmation-id` defaults to the latest pending card of the sticky session.
+Exactly one of `--confirmed`, `--declined`, `--choices`/`--choice`,
+`--answer-text` or `--skip` is required. `--choices` takes a letter (`A`), a
+1-based number (`1`) or free text per question, comma-separated (use repeatable
+`--choice` when a free-text answer contains commas); an empty entry skips that
+question. `--confirmation-id` defaults to the latest pending card of the sticky
+session.
 
 Sending `cxas arc chat --message "yes"` while a card is pending is a *typed
 reply*: the server hands the text to the paused tool as the user's answer rather
@@ -141,6 +151,7 @@ them like the console's Submit button:
 
 ```bash
 cxas arc answer --url "<console-url>" --choices B,A
+cxas arc answer --url "<console-url>" --choice B --choice "Yes, please"
 cxas arc answer --url "<console-url>" --skip all
 ```
 
@@ -154,6 +165,10 @@ cards raised during the turn:
 | `manual` (default) | Show cards and stop; you answer them. |
 | `click` | Confirm gate cards and answer question cards with the first option, until no card is pending (at most `--max-confirmation-rounds`, default 5). |
 | `mixed` | Like `click`, but types the answer instead of clicking with probability `--typed-reply-probability` (default 0.2); `--confirmation-seed` makes the draw reproducible. |
+
+Pass `--deny-tools GLOB` (repeatable, e.g. `--deny-tools "*delete*"
+--deny-tools "*deploy*"`) with `click` or `mixed` to automatically decline
+matching gated tools while approving the rest.
 
 Every automatic answer is listed under `### [Confirmation Actions]` (and
 `events.confirmation_actions` in JSON) with the action, typed vs. clicked, the
@@ -173,9 +188,10 @@ default: it polls the operation (or the evaluation run it references, reporting
 command. Evaluation results carry `pass_rate`, `passed_count`, `failed_count`
 and `total_count` back to Arc.
 
-- `--no-auto-resolve-lro` disables polling; the turn returns as soon as the
-  operation is started.
-- `--timeout-seconds` (default 1800) is the overall deadline of a turn.
+- `--no-auto-resolve-lro` omits `CLIENT_MANAGED_LRO` and disables client-side
+  polling so the turn returns without waiting on client resumption.
+- `--timeout-seconds` (default 1800) is the overall monotonic deadline across
+  stream legs, confirmation rounds, and LRO polling.
 - `--stream-idle-timeout` (default 180) is how long the CLI waits without any
   streamed event before giving up; Arc can be silent for a few minutes while it
   runs tools, so do not set this much lower.
@@ -190,27 +206,34 @@ cxas arc chat --url "<console-url>" --attached-gcs-uri gs://bucket/path/bundle.z
 ```
 
 `--attach` (repeatable) zips the files and directories verbatim (paths relative
-to their common root, plus an `arc_bundle.json` manifest), uploads the zip to
+to their common root, plus an `arc_bundle.json` manifest), logs a pre-upload
+summary to stderr, uploads the zip to
 `gs://<project-id>-agent-assist-artifacts/agent-assist-uploads/` (override with
 `--bucket`), and attaches it to the turn. Pass an existing object with
-`--attached-gcs-uri` (repeatable). A single `.zip` input is uploaded as-is and
-cannot be combined with other paths.
+`--attached-gcs-uri` (repeatable). A single `.zip` input is validated and
+uploaded as-is and cannot be combined with other paths.
 
-- `--attach-dry-run` prints the bundle report (`### [Attachment Bundle]`)
-  without uploading or calling Arc.
+- `--attach-dry-run` prints the bundle report (`### [Attachment Bundle]` or a
+  JSON summary with `--format json`) without uploading, requiring credentials,
+  or mutating the sticky session store.
 - Limits, checked before upload: 20 MiB zipped (`--attach-max-mb` can only
   lower this), 100 MiB uncompressed, 10,000 files. Errors list the largest
   entries so you can attach narrower paths.
-- Default exclusions: `.git/`, `.hg/`, `.jj/`, `__pycache__/`,
-  `node_modules/`, `bazel-*` build output trees, symlinks, and binary or
-  media files (images, audio, video, archives, `.jar`/`.so`/`.par`/`.pyc`).
+- Default exclusions: `.git/`, `.hg/`, `.jj/`, `.aws/`, `.gcloud/`, `.ssh/`,
+  `.terraform/`, `.venv/`, `venv/`, `__pycache__/`, `node_modules/`, `bazel-*`
+  build output trees, symlinks, binary or media files (images, audio, video,
+  archives, `.jar`/`.so`/`.par`/`.pyc`), and secret-like files (`.env`,
+  `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `*credentials*.json`,
+  `service_account*.json`, `.netrc`, `.npmrc`, `.pypirc`). Pass
+  `--attach-allow-secrets` only if you intentionally need secret-matched files
+  in the bundle.
 - The default bucket name needs the project *id*; when you target by project
   number the CLI resolves it through Resource Manager, or you can pass
   `--bucket` explicitly.
 
-`--download-artifacts DIR` saves every artifact recorded on the session (for
-example an exported app bundle Arc produced) into `DIR` after the turn and
-lists them under `### [Downloaded Artifacts]`.
+`--download-artifacts DIR` saves every `gs://` artifact recorded on the session
+into `DIR` (collision-safe basenames) after the turn and lists them under
+`### [Downloaded Artifacts]`.
 
 ## `cancel`
 
@@ -229,7 +252,7 @@ Prints the starter prompts the console shows on an empty session. On apps or
 projects where the feature is not enabled the API returns `UNIMPLEMENTED`; that
 is expected and does not affect `chat`.
 
-## `--format json`
+## `--format json` and exit codes
 
 Every sub-command accepts `--format json`; the turn commands (`chat`,
 `confirm`, `answer`) print one JSON object with a stable shape intended for
@@ -237,7 +260,7 @@ coding agents and scripts:
 
 | Key | Content |
 |-----|---------|
-| `action` | `chat`, `confirm` or `answer`. |
+| `action` | `chat`, `confirm` or `answer` (or `error` when a turn raises). |
 | `session_id` | Short sticky session id. |
 | `canonical_session_id` | Full `…/assistantSessions/<id>` resource name. |
 | `app_name`, `api_endpoint`, `client_profile` | Resolved target. |
@@ -245,6 +268,8 @@ coding agents and scripts:
 | `pending_confirmations` | Cards still awaiting an answer (same records as `events.confirmation_requests`, filtered). |
 | `suggested_commands` | The `### [Next Steps]` commands as strings. |
 | `notes` | Advisory notes, e.g. the typed-reply warning. |
+| `uploaded_attachments` | `gs://` URIs attached to the turn (`[]` when none). |
+| `downloaded_artifacts` | Structured download outcomes (`label`, `gcs_uri`, `local_path`, `status`). |
 
 `events` is the serialized `TurnStreamEvents` aggregate:
 
@@ -252,6 +277,7 @@ coding agents and scripts:
 |------------|---------|
 | `text` | Arc's answer text (all resumed sub-streams concatenated). |
 | `thoughts`, `statuses` | Streamed thoughts and status lines. |
+| `errors[]` | `{code, message, details}` from non-zero streamed `google.rpc.Status` frames. |
 | `tool_calls[]` | `{id, tool, display_name, args}` |
 | `tool_responses[]` | `{id, tool, display_name, response}` |
 | `artifacts[]` | `{artifact_id, display_name, mime_type, content, gcs_uri, state}` |
@@ -260,13 +286,25 @@ coding agents and scripts:
 | `confirmation_actions[]` | `{confirmation_id, tool, action, text, typed, policy, round, reason, followup_chars, followup_tool_calls}` |
 | `contract_metadata` | `{contract_related, contract_finalized, contract_draft_complete}` or `null`. |
 | `initiated_lros[]` | `{operation_name, target_resource_name, operation_type, status, metadata}` |
+| `handoff` | `{turn_id, reason}` if the stream crossed a server handoff, else `null`. |
 | `turn_completed` | `{turn_id, reason, final_sequence_number}` or `null`. |
 | `last_sequence_number` | Last stream sequence number seen. |
 
-`sessions list|get`, `cancel` and `suggestions` print the raw API resource (or
-`{"action": "cancel", "session_id": …, "cancelled": bool}`). With
-`--format json` the attachment and download reports go to stderr so stdout
-stays parseable.
+`sessions list|get` and `suggestions` print raw API resources; `sessions new`,
+`sessions delete`, `cancel`, and `chat --attach-dry-run` print structured
+action JSON objects. With `--format json`, attachment/download markdown reports
+go to stderr so stdout stays valid JSON, and turn exceptions emit an
+`{"action": "error", "error": …, "partial_events": …}` JSON object before
+exiting `1`.
+
+Exit codes:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success. |
+| `1` | API error, stream error/timeout, or bundle validation/upload failure. |
+| `2` | Invalid CLI flags (`argparse` usage error). |
+| `3` | Empty turn (`turnCompleted` with no output; typically a missing or unreadable app). |
 
 ## End-to-end example
 
@@ -301,8 +339,8 @@ cxas arc chat --app-name $APP --download-artifacts ./arc_artifacts \
 cxas pull $APP --project-id my-project --location us --target-dir ./cxas_app
 ```
 
-For unattended runs add `--confirmation-policy click` to steps 4–5 and
-`--format json` to parse the result.
+For unattended runs add `--confirmation-policy click --deny-tools "*delete*"`
+to steps 4–5 and `--format json` to parse the result.
 
 ## Troubleshooting
 
@@ -316,8 +354,8 @@ For unattended runs add `--confirmation-policy click` to steps 4–5 and
 | `Note: a confirmation card is pending; this message is sent as a typed reply` | You used `chat` while a card was pending. Use `cxas arc confirm` to click instead. |
 | `No pending confirmation card is recorded for this session` | The sidecar has no card for this session (different machine or store). Pass `--confirmation-id` from the last output, or re-run `sessions get`. |
 | `cxas arc suggestions` prints `UNIMPLEMENTED` | Onboarding suggestions are not enabled for this app; `chat` still works. |
-| `Arc ended the turn without any output.` (exit 2) | The stream ended with no content, which is what a non-existent app (or one you cannot read) looks like. Check the app name with `cxas apps get <app>`. |
-| `[arc] stream dropped after N events; re-attaching from sequence S` | The connection was reset while the turn was still running. The CLI re-attaches (`attachOnly` + `resumeFromSequenceNumber`) up to twice and replays the missed events; no action needed. |
+| `Arc ended the turn without any output.` (exit 3) | The stream ended with no content, which is what a non-existent app (or one you cannot read) looks like. Check the app name with `cxas apps get <app>`. |
+| `[arc] stream dropped after N events; re-attaching from sequence S` | The connection was reset while the turn was still running. The CLI re-attaches (`attachOnly` + `resumeFromSequenceNumber`) up to twice and replaces local turn state from `resumeSnapshot`; no action needed. |
 | `- <artifact> -> not downloadable here (managed artifact ...)` | The artifact lives in managed storage (`ces-artifact://`) rather than your bucket; open it from the console. |
 | `sessions list --filter` returns `INVALID_ARGUMENT: Unsupported filter` | The server accepts only a limited filter grammar; omit `--filter` and filter client-side with `--format json`. |
 | `cxas arc cancel` prints `UNIMPLEMENTED` | Turn cancellation is not yet served on the public endpoint for this app. The turn still finishes server-side; close the client and use `cxas arc sessions get` to read the result. |

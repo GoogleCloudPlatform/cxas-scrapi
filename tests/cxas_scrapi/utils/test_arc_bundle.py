@@ -1,5 +1,3 @@
-"""Tests for the Arc attachment bundle builder."""
-
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""Tests for the Arc attachment bundle builder."""
 
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ def test_manifest_records_provenance(workspace: Path, team: str) -> None:
     with zipfile.ZipFile(io.BytesIO(_zip_bytes(bundle))) as zf:
         manifest = json.loads(zf.read(arc_bundle.MANIFEST_NAME))
     assert manifest["version"] == arc_bundle.BUNDLE_VERSION
-    assert manifest["source"] == {"type": "local", "root": app}
+    assert manifest["source"] == {"type": "local", "root": "app"}
     assert manifest["inputs"] == ["."]
     assert manifest["file_count"] == 2
     assert manifest["uncompressed_bytes"] == bundle.uncompressed_bytes
@@ -412,3 +412,111 @@ def test_resolve_project_id_missing_field(
     )
     with pytest.raises(RuntimeError, match="--bucket"):
         arc_bundle.resolve_project_id("123456", credentials=None)
+
+
+def test_excludes_secrets_and_env_dirs_by_default(
+    workspace: Path, team: str
+) -> None:
+    _write(workspace, "team/.env", "API_KEY=secret")
+    _write(workspace, "team/.env.production", "TOKEN=secret")
+    _write(workspace, "team/tls.pem", "-----BEGIN PRIVATE KEY-----")
+    _write(workspace, "team/private.key", "secret")
+    _write(workspace, "team/service_account_prod.json", "{}")
+    _write(workspace, "team/client_credentials.json", "{}")
+    _write(workspace, "team/.ssh/id_rsa", "secret")
+    _write(workspace, "team/.venv/pyvenv.cfg", "home = /usr")
+    _write(workspace, "team/.terraform/state.tfstate", "{}")
+
+    bundle = arc_bundle.build([team])
+    names = _zip_names(bundle)
+    assert names == [
+        "app/agents/root/instruction.txt",
+        "app/app.json",
+        arc_bundle.MANIFEST_NAME,
+        "evals/sim_evals/simulations.yaml",
+    ]
+    assert bundle.secret_excluded_count == 6
+    report = arc_bundle.format_report(bundle)
+    assert "- **Secrets skipped**: 6" in report
+
+    allowed = arc_bundle.build([team], allow_secrets=True)
+    allowed_names = _zip_names(allowed)
+    assert ".env" in allowed_names
+    assert "service_account_prod.json" in allowed_names
+    assert allowed.secret_excluded_count == 0
+    # Sensitive directories (.ssh, .venv, .terraform) remain excluded.
+    assert not any(
+        n.startswith((".ssh/", ".venv/", ".terraform/")) for n in allowed_names
+    )
+
+
+@pytest.mark.parametrize(
+    "unsafe_member",
+    [
+        "../evil.txt",
+        "a/../../evil.txt",
+        "/etc/passwd",
+        r"sub\evil.txt",
+        "C:x.txt",
+    ],
+)
+def test_prebuilt_zip_rejects_unsafe_member_paths(
+    workspace: Path, unsafe_member: str
+) -> None:
+    path = _write_zip(workspace, "exports/unsafe.zip", {unsafe_member: "x"})
+    with pytest.raises(arc_bundle.BundleError, match="Unsafe path"):
+        arc_bundle.build([path])
+
+
+def test_upload_bundle_gs_uri_with_subprefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local = tmp_path / "x.zip"
+    local.write_bytes(b"PK")
+    client_cls = MagicMock()
+    monkeypatch.setattr("google.cloud.storage.Client", client_cls)
+
+    uri = arc_bundle.upload_bundle(
+        str(local), "gs://my-bucket/team-sub/uploads", credentials=None
+    )
+
+    assert re.fullmatch(
+        r"gs://my-bucket/team-sub/uploads/agent-assist-uploads/\d+_x\.zip", uri
+    )
+    client_cls.return_value.bucket.assert_called_once_with("my-bucket")
+
+
+@pytest.mark.parametrize("uri", ["gs://b/dir/", "gs://b/.", "gs://b/.."])
+def test_download_rejects_unsafe_basename(uri: str, tmp_path: Path) -> None:
+    with pytest.raises(arc_bundle.BundleError, match="Unsafe object name"):
+        arc_bundle.download_gcs_uri(uri, str(tmp_path), credentials=None)
+
+
+def test_download_gcs_uri_forwards_project_and_avoids_collisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client_cls = MagicMock()
+
+    def write_dummy(dest_file: str) -> None:
+        Path(dest_file).write_text("downloaded", encoding="utf-8")
+
+    client_cls.return_value.bucket.return_value.blob.return_value.download_to_filename.side_effect = write_dummy
+    monkeypatch.setattr("google.cloud.storage.Client", client_cls)
+    creds = object()
+
+    first = arc_bundle.download_gcs_uri(
+        "gs://b/a/report.md",
+        str(tmp_path),
+        credentials=creds,
+        project="proj-1",
+    )
+    second = arc_bundle.download_gcs_uri(
+        "gs://b/b/report.md",
+        str(tmp_path),
+        credentials=creds,
+        project="proj-1",
+    )
+
+    assert first == str(tmp_path / "report.md")
+    assert second == str(tmp_path / "report-1.md")
+    client_cls.assert_called_with(credentials=creds, project="proj-1")

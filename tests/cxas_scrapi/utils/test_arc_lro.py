@@ -306,46 +306,9 @@ def test_extract_from_dict_rejects_non_dict() -> None:
     assert arc_lro.extract_from_dict("nope") is None  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize(
-    ("tool", "response", "expected"),
-    [
-        ("run_evaluation", {"state": "COMPLETED"}, True),
-        ("run_evaluation", {"state": "ERROR"}, True),
-        ("run_evaluation", {"done": True}, True),
-        (
-            "run_evaluation",
-            {"output": json.dumps({"state": "SUCCEEDED"})},
-            True,
-        ),
-        ("run_evaluation", {"result": {"state": "CANCELLED"}}, True),
-        ("run_evaluation", {"state": "RUNNING"}, False),
-        ("run_evaluation", {}, False),
-        ("get_app", {"state": "COMPLETED"}, False),
-        (
-            "call_kestrel_tool",
-            {"result": {"name": _RUN, "state": "COMPLETED"}},
-            True,
-        ),
-        (
-            "call_kestrel_tool",
-            {
-                "state": "COMPLETED",
-                "rpc_calls": [{"tool": "run_evaluation", "status": "success"}],
-            },
-            True,
-        ),
-        (
-            "call_kestrel_tool",
-            {"result": {"name": "projects/p/apps/a", "state": "COMPLETED"}},
-            False,
-        ),
-        ("run_evaluation", {"output": "not json", "state": "COMPLETED"}, True),
-    ],
-)
-def test_is_sync_completed_evaluation(
-    tool: str, response: dict[str, Any], expected: bool
-) -> None:
-    assert arc_lro.is_sync_completed_evaluation(tool, response) is expected
+def test_detached_job_prefix_is_exported() -> None:
+    assert "DETACHED_JOB_PREFIX" in arc_lro.__all__
+    assert arc_lro.DETACHED_JOB_PREFIX == "guddelon-"
 
 
 def test_extract_from_text_finds_embedded_json() -> None:

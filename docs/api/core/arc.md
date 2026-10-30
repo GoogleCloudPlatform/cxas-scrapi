@@ -14,39 +14,49 @@ Each turn returns a [`TurnStreamEvents`](#cxas_scrapi.utils.arc_events.TurnStrea
 from cxas_scrapi.core.arc import Arc
 from cxas_scrapi.utils.arc_confirmation_policy import make_policy
 
-arc = Arc(app_name="projects/my-project/locations/us/apps/my-app")
-session_id = "arc-sdk-demo"
+with Arc(app_name="projects/my-project/locations/us/apps/my-app") as arc:
+    session_id = "arc-sdk-demo"
 
-# Ask a question; cards stay pending with the default manual policy.
-events = arc.chat(session_id, "What does this app do? Summarize its agents and tools.")
-print(events.format_markdown())
+    # Ask a question; cards stay pending with the default manual policy.
+    events = arc.chat(
+        session_id, "What does this app do? Summarize its agents and tools."
+    )
+    print(events.format_markdown())
 
-# Build something, clicking through confirmation cards like an attentive user.
-events = arc.chat(
-    session_id,
-    "Add a guardrail that blocks requests for medical advice.",
-    confirmation_policy=make_policy("click"),
-    timeout_seconds=1800,
-)
-print(events.text)
-for action in events.confirmation_actions:
-    print(action.tool, action.action, "typed" if action.typed else "clicked")
+    # Build something, clicking through confirmation cards while declining destructive tools.
+    events = arc.chat(
+        session_id,
+        "Add a guardrail that blocks requests for medical advice.",
+        confirmation_policy=make_policy("click", deny_tools=("*delete*",)),
+        timeout_seconds=1800,
+    )
+    print(events.text)
+    for action in events.confirmation_actions:
+        print(action.tool, action.action, "typed" if action.typed else "clicked")
 
-# Anything still waiting for a human decision?
-for card in events.pending_confirmation_requests:
-    print(card.confirmation_id, card.tool, card.context)
-    # e.g. arc.send_confirmation_response(session_id, card.confirmation_id, confirmed=True)
+    # Anything still waiting for a human decision?
+    for card in events.pending_confirmation_requests:
+        print(card.confirmation_id, card.tool, card.context)
+        # e.g. arc.send_confirmation_response(session_id, card.confirmation_id, confirmed=True)
 
-# Artifacts recorded on the session (gcsUri pointers), e.g. an exported bundle.
-for artifact in arc.session_artifacts(session_id):
-    print(artifact.get("displayName"), artifact.get("gcsUri"))
+    # Artifacts recorded on the session (gcsUri pointers), e.g. an exported bundle.
+    for artifact in arc.session_artifacts(session_id):
+        print(artifact.get("displayName"), artifact.get("gcsUri"))
 ```
 
-Errors surface as `ArcApiError` (HTTP status and decoded message) or `ArcStreamTimeout` (idle stream or turn deadline; `.partial` holds what streamed so far).
+Errors surface as `ArcApiError` (HTTP status and decoded message), `ArcStreamTimeout` (idle stream or turn deadline; `.partial` holds what streamed so far), or `ArcStreamInterrupted` (connection lost after exhausting re-attach attempts; `.partial` holds what streamed so far).
 
 ## Reference
 
 ::: cxas_scrapi.core.arc
+    options:
+      members:
+        - Arc
+        - ArcError
+        - ArcApiError
+        - ArcStreamTimeout
+        - ArcStreamInterrupted
+        - iter_stream_json
 
 ::: cxas_scrapi.utils.arc_events.TurnStreamEvents
 

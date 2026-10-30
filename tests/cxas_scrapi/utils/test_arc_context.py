@@ -117,7 +117,7 @@ def test_short_app_id_with_project_and_location() -> None:
     ("endpoint", "expected_location"),
     [
         (_PROD, "us"),
-        ("autopush-ces.sandbox.googleapis.com", "us-east1"),
+        ("sandbox-ces.sandbox.googleapis.com", "us-east1"),
         ("staging-ces.sandbox.googleapis.com", "us-east1"),
     ],
 )
@@ -179,7 +179,7 @@ def test_api_endpoint_defaults_to_module_constant() -> None:
     ("endpoint", "expected"),
     [
         (_PROD, "us"),
-        ("autopush-ces.sandbox.googleapis.com", "us-east1"),
+        ("sandbox-ces.sandbox.googleapis.com", "us-east1"),
         ("localhost:8080", "us-east1"),
     ],
 )
@@ -217,3 +217,59 @@ def test_arc_target_is_frozen() -> None:
 )
 def test_session_short_id(value: str, expected: str) -> None:
     assert arc_context.session_short_id(value) == expected
+
+
+@pytest.mark.parametrize(
+    "bad_session",
+    [
+        "",
+        "   ",
+        "../../apps/victim",
+        "assistantSessions/../other",
+        "s/1",
+        "s%2F1",
+        ".hidden",
+        "-leading-dash",
+        "has space",
+        "a" * 129,
+    ],
+)
+def test_session_short_id_rejects_invalid_ids(bad_session: str) -> None:
+    with pytest.raises(ValueError, match="Invalid session id"):
+        arc_context.session_short_id(bad_session)
+
+
+@pytest.mark.parametrize(
+    "bad_endpoint",
+    [
+        "",
+        "   ",
+        "https://user:pass@ces.googleapis.com",
+        "ces.googleapis.com/v1beta/evil",
+        "ces.googleapis.com?next=evil",
+        "ces.googleapis.com#frag",
+        "ces.googleapis.com evil.com",
+        "evil.example.com",
+        "googleapis.com.evil.com",
+        "localhost:8080",
+    ],
+)
+def test_normalize_api_endpoint_rejects_untrusted_or_malformed_hosts(
+    bad_endpoint: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(arc_context.ALLOW_ANY_ENDPOINT_ENV, raising=False)
+    with pytest.raises(ValueError, match="API endpoint"):
+        arc_context.normalize_api_endpoint(bad_endpoint)
+
+
+def test_normalize_api_endpoint_allows_custom_host_when_opted_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(arc_context.ALLOW_ANY_ENDPOINT_ENV, "1")
+    assert (
+        arc_context.normalize_api_endpoint("https://localhost:8443/")
+        == "localhost:8443"
+    )
+    # Structural injection is still rejected even when custom hosts are opted in.
+    with pytest.raises(ValueError, match="API endpoint"):
+        arc_context.normalize_api_endpoint("https://localhost:8443/extra/path")

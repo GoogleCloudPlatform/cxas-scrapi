@@ -25,25 +25,28 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from cxas_scrapi.utils import arc_lro
-from cxas_scrapi.utils.arc_lro import LroOperationInfo
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
+
+    from cxas_scrapi.utils.arc_lro import LroOperationInfo
 
 __all__ = [
     "ArtifactRecord",
     "ConfirmationActionRecord",
     "ConfirmationRequestRecord",
     "ContractMetadataRecord",
-    "LroOperationInfo",
     "OptionChoiceRecord",
     "OptionQuestionRecord",
+    "StatusRecord",
     "ToolCallRecord",
     "ToolResponseRecord",
     "TurnCompletedRecord",
+    "TurnHandoffRecord",
     "TurnStreamEvents",
     "TurnStreamReducer",
     "parse_confirmation_request",
@@ -59,6 +62,17 @@ class OptionChoiceRecord:
     details: str = ""
     submit_text: str = ""
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> OptionChoiceRecord:
+        """Builds an option record from camelCase or snake_case JSON."""
+        return cls(
+            title=str(data.get("title", "")),
+            details=str(data.get("details", "")),
+            submit_text=str(
+                data.get("submitText") or data.get("submit_text") or ""
+            ),
+        )
+
 
 @dataclasses.dataclass
 class OptionQuestionRecord:
@@ -66,6 +80,18 @@ class OptionQuestionRecord:
 
     question: str
     options: list[OptionChoiceRecord] = dataclasses.field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> OptionQuestionRecord:
+        """Builds a question record from camelCase or snake_case JSON."""
+        return cls(
+            question=str(data.get("question", "")),
+            options=[
+                OptionChoiceRecord.from_dict(o)
+                for o in data.get("options") or []
+                if isinstance(o, dict)
+            ],
+        )
 
 
 @dataclasses.dataclass
@@ -83,6 +109,30 @@ class ConfirmationRequestRecord:
     agent_name: str = ""
     # RFC 3339; empty when the card does not expire.
     expire_time: str = ""
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ConfirmationRequestRecord:
+        """Builds a card record from camelCase wire JSON or saved snake_case."""
+        return cls(
+            confirmation_id=str(
+                data.get("confirmationId") or data.get("confirmation_id") or ""
+            ),
+            context=str(data.get("context", "")),
+            positive_label=str(
+                data.get("positiveLabel") or data.get("positive_label") or ""
+            ),
+            negative_label=str(
+                data.get("negativeLabel") or data.get("negative_label") or ""
+            ),
+            questions=parse_option_questions(data.get("questions") or []),
+            tool=str(data.get("tool", "")),
+            agent_name=str(
+                data.get("agentName") or data.get("agent_name") or ""
+            ),
+            expire_time=str(
+                data.get("expireTime") or data.get("expire_time") or ""
+            ),
+        )
 
 
 @dataclasses.dataclass
@@ -162,6 +212,23 @@ class ContractMetadataRecord:
 
 
 @dataclasses.dataclass
+class StatusRecord:
+    """A streamed ``google.rpc.Status`` frame (``code != 0`` is an error)."""
+
+    code: int = 0
+    message: str = ""
+    details: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class TurnHandoffRecord:
+    """A ``handoff`` frame advising the client to reconnect cleanly."""
+
+    turn_id: str = ""
+    reason: str = ""
+
+
+@dataclasses.dataclass
 class TurnCompletedRecord:
     """The terminal ``turnCompleted`` event of a stream."""
 
@@ -177,6 +244,7 @@ class TurnStreamEvents:
     text: str = ""
     thoughts: list[str] = dataclasses.field(default_factory=list)
     statuses: list[str] = dataclasses.field(default_factory=list)
+    errors: list[StatusRecord] = dataclasses.field(default_factory=list)
     tool_calls: list[ToolCallRecord] = dataclasses.field(default_factory=list)
     tool_responses: list[ToolResponseRecord] = dataclasses.field(
         default_factory=list
@@ -195,6 +263,7 @@ class TurnStreamEvents:
     initiated_lros: list[LroOperationInfo] = dataclasses.field(
         default_factory=list
     )
+    handoff: TurnHandoffRecord | None = None
     turn_completed: TurnCompletedRecord | None = None
     last_sequence_number: int | None = None
 
@@ -238,6 +307,7 @@ class TurnStreamEvents:
             )
         self.thoughts.extend(other.thoughts)
         self.statuses.extend(other.statuses)
+        self.errors.extend(other.errors)
         self.tool_calls.extend(other.tool_calls)
         self.tool_responses.extend(other.tool_responses)
         for art in other.artifacts:
@@ -270,6 +340,8 @@ class TurnStreamEvents:
         for lro in other.initiated_lros:
             if lro not in self.initiated_lros:
                 self.initiated_lros.append(lro)
+        if other.handoff is not None:
+            self.handoff = other.handoff
         if other.turn_completed is not None:
             self.turn_completed = other.turn_completed
         if other.last_sequence_number is not None:
@@ -301,6 +373,12 @@ class TurnStreamEvents:
             sections.append("\n".join(lines))
         if self.text.strip():
             sections.append(self.text.strip())
+        if self.errors:
+            lines = ["### [Errors]"]
+            for err in self.errors:
+                msg = err.message or f"code={err.code}"
+                lines.append(f"- `code={err.code}`: {msg}")
+            sections.append("\n".join(lines))
         for art in self.artifacts:
             meta = [f"state={art.state or 'UNKNOWN'}"]
             if art.mime_type:
@@ -367,6 +445,23 @@ class TurnStreamEvents:
                 lines.append(f"{qi}. {q.question}")
                 lines.extend(_format_options(q.options, indent="   "))
             sections.append("\n".join(lines))
+        if self.turn_completed is not None:
+            tc = self.turn_completed
+            notes: list[str] = []
+            if tc.reason and tc.reason != "COMPLETED":
+                notes.append(f"> Note: turn ended with reason `{tc.reason}`.")
+            if (
+                tc.final_sequence_number is not None
+                and self.last_sequence_number is not None
+                and tc.final_sequence_number > self.last_sequence_number
+            ):
+                notes.append(
+                    "> Note: stream missed events up to sequence "
+                    f"{tc.final_sequence_number} "
+                    f"(last seen: {self.last_sequence_number})."
+                )
+            if notes:
+                sections.append("\n".join(notes))
         return "\n\n".join(sections)
 
 
@@ -396,39 +491,21 @@ def _compact_json(value: Any, limit: int = 400) -> str:
 
 
 def parse_option_questions(
-    raw: Iterable[dict[str, Any]],
+    raw: Iterable[Mapping[str, Any]],
 ) -> list[OptionQuestionRecord]:
     """Converts ``OptionQuestionsChunk.questions`` JSON into records."""
-    records = []
-    for q in raw or []:
-        records.append(
-            OptionQuestionRecord(
-                question=str(q.get("question", "")),
-                options=[
-                    OptionChoiceRecord(
-                        title=str(o.get("title", "")),
-                        details=str(o.get("details", "")),
-                        submit_text=str(o.get("submitText", "")),
-                    )
-                    for o in q.get("options", []) or []
-                ],
-            )
-        )
-    return records
+    return [
+        OptionQuestionRecord.from_dict(q)
+        for q in raw or []
+        if isinstance(q, Mapping)
+    ]
 
 
-def parse_confirmation_request(cr: dict[str, Any]) -> ConfirmationRequestRecord:
+def parse_confirmation_request(
+    cr: Mapping[str, Any],
+) -> ConfirmationRequestRecord:
     """Converts an ``AssistantConfirmationRequest`` JSON into a record."""
-    return ConfirmationRequestRecord(
-        confirmation_id=str(cr.get("confirmationId", "")),
-        context=str(cr.get("context", "")),
-        positive_label=str(cr.get("positiveLabel", "")),
-        negative_label=str(cr.get("negativeLabel", "")),
-        questions=parse_option_questions(cr.get("questions", [])),
-        tool=str(cr.get("tool", "")),
-        agent_name=str(cr.get("agentName", "")),
-        expire_time=str(cr.get("expireTime", "")),
-    )
+    return ConfirmationRequestRecord.from_dict(cr)
 
 
 class TurnStreamReducer:
@@ -443,6 +520,7 @@ class TurnStreamReducer:
         self.events = TurnStreamEvents()
         self._artifacts: dict[str, ArtifactRecord] = {}
         self._on_progress = on_progress
+        self._in_snapshot = False
 
     def _progress(self, message: str) -> None:
         if self._on_progress is not None:
@@ -455,9 +533,22 @@ class TurnStreamReducer:
     def feed(self, resp: dict[str, Any]) -> None:
         """Consumes one response object (camelCase JSON)."""
         ev = self.events
+        seq: int | None = None
         if "sequenceNumber" in resp:
             with contextlib.suppress(TypeError, ValueError):
-                ev.last_sequence_number = int(resp["sequenceNumber"])
+                seq = int(resp["sequenceNumber"])
+        if (
+            not self._in_snapshot
+            and seq is not None
+            and ev.last_sequence_number is not None
+            and seq <= ev.last_sequence_number
+            and "turnCompleted" not in resp
+            and "resumeSnapshot" not in resp
+            and "handoff" not in resp
+        ):
+            return
+        if seq is not None:
+            ev.last_sequence_number = seq
         tm = resp.get("turnMetadata")
         if isinstance(tm, dict) and tm:
             ev.contract_metadata = ContractMetadataRecord(
@@ -474,8 +565,19 @@ class TurnStreamReducer:
             ev.thoughts.append(str(resp["thoughtChunk"]))
         elif "status" in resp:
             status = resp.get("status") or {}
-            msg = status.get("message") or f"code={status.get('code', 0)}"
+            raw_code = status.get("code", 0)
+            try:
+                code = int(raw_code or 0)
+            except (TypeError, ValueError):
+                code = 1
+            msg = str(status.get("message") or f"code={code}")
             ev.statuses.append(msg)
+            if code != 0:
+                raw_details = status.get("details") or []
+                details = [dict(d) for d in raw_details if isinstance(d, dict)]
+                ev.errors.append(
+                    StatusRecord(code=code, message=msg, details=details)
+                )
             self._progress(f"status: {msg}")
         elif "toolCall" in resp:
             tc = resp["toolCall"] or {}
@@ -516,15 +618,41 @@ class TurnStreamReducer:
                 f"confirmation card: {record.tool or record.confirmation_id}"
             )
         elif "resumeSnapshot" in resp:
-            for inner in (resp["resumeSnapshot"] or {}).get("events", []) or []:
-                self.feed(inner)
+            snap = resp.get("resumeSnapshot") or {}
+            self.events = TurnStreamEvents()
+            self._artifacts = {}
+            prev_in_snapshot = self._in_snapshot
+            self._in_snapshot = True
+            try:
+                for inner in snap.get("events", []) or []:
+                    self.feed(inner)
+            finally:
+                self._in_snapshot = prev_in_snapshot
+            resolved_seq = snap.get("resolvedSequenceNumber")
+            if resolved_seq is not None:
+                with contextlib.suppress(TypeError, ValueError):
+                    self.events.last_sequence_number = int(resolved_seq)
+            elif seq is not None and (
+                self.events.last_sequence_number is None
+                or seq > self.events.last_sequence_number
+            ):
+                self.events.last_sequence_number = seq
+        elif "handoff" in resp:
+            ho = resp.get("handoff") or {}
+            ev.handoff = TurnHandoffRecord(
+                turn_id=str(ho.get("turnId", "")),
+                reason=str(ho.get("reason", "")),
+            )
+            self._progress("stream handoff; reconnecting")
         elif "turnCompleted" in resp:
             tc = resp["turnCompleted"] or {}
-            seq = tc.get("finalSequenceNumber")
+            final_seq = tc.get("finalSequenceNumber")
             ev.turn_completed = TurnCompletedRecord(
                 turn_id=str(tc.get("turnId", "")),
                 reason=str(tc.get("reason", "")),
-                final_sequence_number=int(seq) if seq is not None else None,
+                final_sequence_number=(
+                    int(final_seq) if final_seq is not None else None
+                ),
             )
 
     def _merge_artifact(self, ac: dict[str, Any]) -> None:

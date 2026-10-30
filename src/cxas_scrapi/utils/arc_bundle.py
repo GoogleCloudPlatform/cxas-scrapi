@@ -1,14 +1,3 @@
-"""Packages local files into a zip bundle for the CXAS AI assistant (Arc).
-
-The bundle is pure transport: files are copied verbatim (no parsing or format
-conversion) with their paths relative to the common root of the requested
-inputs, plus a small `arc_bundle.json` manifest recording where the files came
-from so Arc can map any changes it exports back to the same paths.
-
-Size limits are enforced on the client so oversized bundles fail fast with a
-breakdown of the largest directories instead of being rejected server-side.
-"""
-
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,11 +12,23 @@ breakdown of the largest directories instead of being rejected server-side.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Packages local files into a zip bundle for the CXAS AI assistant (Arc).
+
+The bundle is pure transport: files are copied verbatim (no parsing or format
+conversion) with their paths relative to the common root of the requested
+inputs, plus a small `arc_bundle.json` manifest recording where the files came
+from so Arc can map any changes it exports back to the same paths.
+
+Size limits are enforced on the client so oversized bundles fail fast with a
+breakdown of the largest directories instead of being rejected server-side.
+"""
+
 from __future__ import annotations
 
 import collections
 import dataclasses
 import datetime
+import fnmatch
 import io
 import json
 import os
@@ -50,11 +51,17 @@ DEFAULT_MAX_FILES = 10000
 
 EXCLUDED_DIR_NAMES = frozenset(
     {
+        ".aws",
+        ".gcloud",
         ".git",
         ".hg",
         ".jj",
+        ".ssh",
+        ".terraform",
+        ".venv",
         "__pycache__",
         "node_modules",
+        "venv",
     }
 )
 # Build output trees (e.g. `bazel-bin`, `bazel-out`).
@@ -82,6 +89,24 @@ EXCLUDED_FILE_SUFFIXES = frozenset(
         ".wav",
         ".zip",
     }
+)
+SECRET_FILE_GLOBS = (
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "*.kdbx",
+    "id_rsa*",
+    "id_ed25519*",
+    "id_ecdsa*",
+    "*credentials*.json",
+    "*service_account*.json",
+    "client_secret*.json",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
 )
 
 DEFAULT_UPLOAD_PREFIX = "agent-assist-uploads"
@@ -123,6 +148,7 @@ class Bundle:
     zip_bytes: bytes | None = None
     # Set when an existing .zip was attached as-is rather than built here.
     source_zip: str | None = None
+    secret_excluded_count: int = 0
 
     @property
     def uncompressed_bytes(self) -> int:
@@ -149,9 +175,16 @@ def _is_excluded_file(name: str) -> bool:
     return os.path.splitext(name)[1].lower() in EXCLUDED_FILE_SUFFIXES
 
 
+def _is_secret_file(name: str) -> bool:
+    base = os.path.basename(name).lower()
+    return any(fnmatch.fnmatchcase(base, pat) for pat in SECRET_FILE_GLOBS)
+
+
 def collect(
     raw_paths: Sequence[str],
     working_dir: str | None = None,
+    *,
+    allow_secrets: bool = False,
 ) -> Bundle:
     """Collects files under the given paths, applying default exclusions."""
     if not raw_paths:
@@ -165,14 +198,19 @@ def collect(
     seen: set[str] = set()
     files: list[BundleFile] = []
     excluded = 0
+    secret_excluded = 0
 
     def _add(abs_path: str) -> None:
-        nonlocal excluded
+        nonlocal excluded, secret_excluded
         if abs_path in seen:
             return
         seen.add(abs_path)
         if os.path.islink(abs_path) or _is_excluded_file(abs_path):
             excluded += 1
+            return
+        if not allow_secrets and _is_secret_file(abs_path):
+            excluded += 1
+            secret_excluded += 1
             return
         files.append(
             BundleFile(
@@ -201,6 +239,7 @@ def collect(
         ],
         files=files,
         excluded_count=excluded,
+        secret_excluded_count=secret_excluded,
     )
 
 
@@ -242,8 +281,14 @@ def _limit_error(message: str, bundle: Bundle) -> BundleError:
 def check_limits(bundle: Bundle, limits: BundleLimits) -> None:
     """Raises BundleError if file count or uncompressed size exceed limits."""
     if not bundle.files:
+        hint = (
+            " Pass --attach-allow-secrets only if you intend to include "
+            "secret-like files."
+            if bundle.secret_excluded_count
+            else ""
+        )
         raise BundleError(
-            "No files to attach after applying default exclusions."
+            f"No files to attach after applying default exclusions.{hint}"
         )
     if len(bundle.files) > limits.max_files:
         raise _limit_error(
@@ -260,9 +305,10 @@ def check_limits(bundle: Bundle, limits: BundleLimits) -> None:
 
 def build_manifest(bundle: Bundle) -> dict[str, object]:
     """Builds the provenance manifest stored at the root of the zip."""
+    root_name = os.path.basename(bundle.root.rstrip(os.sep)) or "."
     return {
         "version": BUNDLE_VERSION,
-        "source": {"type": "local", "root": bundle.root},
+        "source": {"type": "local", "root": root_name},
         "inputs": bundle.inputs,
         "file_count": len(bundle.files),
         "uncompressed_bytes": bundle.uncompressed_bytes,
@@ -294,6 +340,18 @@ def _is_zip_input(abs_path: str) -> bool:
     return os.path.isfile(abs_path) and abs_path.lower().endswith(".zip")
 
 
+def _validate_zip_member(name: str) -> None:
+    parts = name.split("/")
+    if (
+        not name
+        or "\\" in name
+        or name.startswith("/")
+        or ":" in parts[0]
+        or any(p == ".." for p in parts)
+    ):
+        raise BundleError(f"Unsafe path inside zip archive: {name!r}")
+
+
 def _prebuilt(abs_path: str, limits: BundleLimits) -> Bundle:
     """Wraps an existing .zip (e.g. a console export) as a bundle, unchanged."""
     try:
@@ -301,6 +359,8 @@ def _prebuilt(abs_path: str, limits: BundleLimits) -> Bundle:
             infos = [i for i in zf.infolist() if not i.is_dir()]
     except zipfile.BadZipFile as e:
         raise BundleError(f"Not a valid zip file: {abs_path}") from e
+    for info in infos:
+        _validate_zip_member(info.filename)
     bundle = Bundle(
         root=os.path.dirname(abs_path),
         inputs=[os.path.basename(abs_path)],
@@ -332,6 +392,8 @@ def build(
     raw_paths: Sequence[str],
     limits: BundleLimits | None = None,
     working_dir: str | None = None,
+    *,
+    allow_secrets: bool = False,
 ) -> Bundle:
     """Collects, validates, and zips the given paths.
 
@@ -342,6 +404,7 @@ def build(
         raw_paths: Files or directories (absolute or relative paths).
         limits: Client-side size and file-count limits.
         working_dir: Directory relative paths resolve against.
+        allow_secrets: Include secret-like files excluded by default.
 
     Returns:
         The bundle, with `zip_bytes` set.
@@ -365,7 +428,7 @@ def build(
             )
         if zips:
             return _prebuilt(zips[0], limits)
-    bundle = collect(raw_paths, working_dir)
+    bundle = collect(raw_paths, working_dir, allow_secrets=allow_secrets)
     check_limits(bundle, limits)
     write_zip(bundle, limits)
     return bundle
@@ -380,8 +443,10 @@ def format_report(
         f"- **Root**: `{bundle.root}`",
         f"- **Inputs**: {', '.join(f'`{p}`' for p in bundle.inputs)}",
         f"- **Files**: {len(bundle.files)} (excluded: {bundle.excluded_count})",
-        f"- **Uncompressed**: {_fmt_bytes(bundle.uncompressed_bytes)}",
     ]
+    if bundle.secret_excluded_count:
+        lines.append(f"- **Secrets skipped**: {bundle.secret_excluded_count}")
+    lines.append(f"- **Uncompressed**: {_fmt_bytes(bundle.uncompressed_bytes)}")
     if bundle.zip_bytes is not None:
         lines.append(f"- **Zip**: {_fmt_bytes(len(bundle.zip_bytes))}")
     if uploaded_uri:
@@ -432,7 +497,7 @@ def upload_bundle(
 
     Args:
         local_path: Path to the local zip file to upload.
-        bucket: Destination bucket name (without `gs://`).
+        bucket: Destination bucket name (or `gs://bucket[/subprefix]`).
         credentials: Google credentials used for the storage client.
         project: Optional project used for client billing/quota.
         prefix: Object name prefix (folder) inside the bucket.
@@ -442,25 +507,54 @@ def upload_bundle(
     """
     from google.cloud import storage  # noqa: PLC0415
 
-    bucket = bucket.removeprefix("gs://").rstrip("/")
-    object_name = (
-        f"{prefix.strip('/')}/{int(time.time() * 1000)}_"
-        f"{os.path.basename(local_path)}"
-    )
+    raw_bucket = bucket.removeprefix("gs://").strip("/")
+    bucket_name, _, bucket_prefix = raw_bucket.partition("/")
+    if not bucket_name:
+        raise BundleError(f"Invalid bucket name: {bucket!r}")
+    parts = [p for p in (bucket_prefix.strip("/"), prefix.strip("/")) if p]
+    folder = "/".join(parts)
+    filename = f"{int(time.time() * 1000)}_{os.path.basename(local_path)}"
+    object_name = f"{folder}/{filename}" if folder else filename
     client = storage.Client(credentials=credentials, project=project)
-    blob = client.bucket(bucket).blob(object_name)
+    blob = client.bucket(bucket_name).blob(object_name)
     blob.upload_from_filename(local_path, content_type="application/zip")
-    return f"gs://{bucket}/{object_name}"
+    return f"gs://{bucket_name}/{object_name}"
 
 
-def download_gcs_uri(gcs_uri: str, dest_dir: str, *, credentials: Any) -> str:
+def download_gcs_uri(
+    gcs_uri: str,
+    dest_dir: str,
+    *,
+    credentials: Any,
+    project: str | None = None,
+) -> str:
     """Downloads a gs:// object into dest_dir, returning the local path."""
     from google.cloud import storage  # noqa: PLC0415
 
     bucket, object_name = _split_gcs_uri(gcs_uri)
+    raw_base = os.path.basename(object_name)
+    if (
+        not raw_base
+        or object_name.endswith("/")
+        or raw_base in (".", "..")
+        or "\\" in raw_base
+    ):
+        raise BundleError(f"Unsafe object name in GCS URI: {gcs_uri}")
+    safe_base = re.sub(r"[^a-zA-Z0-9._-]", "_", raw_base).lstrip(".")
+    safe_base = safe_base or "artifact"
     os.makedirs(dest_dir, exist_ok=True)
-    local_path = os.path.join(dest_dir, os.path.basename(object_name))
-    client = storage.Client(credentials=credentials)
+    local_path = os.path.join(dest_dir, safe_base)
+    if os.path.exists(local_path):
+        stem, ext = os.path.splitext(safe_base)
+        idx = 1
+        while os.path.exists(os.path.join(dest_dir, f"{stem}-{idx}{ext}")):
+            idx += 1
+        local_path = os.path.join(dest_dir, f"{stem}-{idx}{ext}")
+    client = (
+        storage.Client(credentials=credentials)
+        if project is None
+        else storage.Client(credentials=credentials, project=project)
+    )
     client.bucket(bucket).blob(object_name).download_to_filename(local_path)
     return local_path
 
