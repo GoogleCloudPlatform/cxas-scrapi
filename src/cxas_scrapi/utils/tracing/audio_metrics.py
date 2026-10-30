@@ -327,6 +327,182 @@ def intra_turn_seams(
     return seams
 
 
+#: Voice jumps at render joins (the JUMP flag in `audio_drift`). A turn sent
+#: as several response parts plays each as a fresh TTS render, which starts
+#: louder and higher than the previous one ended. Calibrated 2026-10-28 on a
+#: production collections agent (composite-v2, one official voice):
+#:   * a listener's "the voice changed" answers on 50 clips were predicted
+#:     best by pitch AND loudness rising together (AUC 0.88; loudness alone
+#:     0.83, pitch alone 0.72); a pitch rise with flat or falling loudness
+#:     was never heard (0 of 9), nor was a ~2 dB within-turn fade;
+#:   * at render joins the step was a median +4.9 st / +5.9 dB, against
+#:     +2.5 st / +2.2 dB at the other pauses of the same turns (670 turns).
+#: Whole-turn pause scans flag ordinary emphasis too, so only joins are
+#: measured. One listener and 50 clips: a first calibration.
+JUMP_ST = 3.0
+JUMP_DB = 5.0
+#: Speech compared on each side of a join.
+JUMP_WINDOW_S = 1.0
+#: An estimated join is matched to a pause at most this far away.
+JUMP_SNAP_S = 1.0
+#: Voiced / speech 10 ms frames needed per side.
+JUMP_MIN_VOICED_FRAMES = 25
+JUMP_MIN_SPEECH_FRAMES = 40
+#: Loudness counts frames within this of the turn's loudest frame.
+JUMP_SPEECH_RANGE_DB = 35.0
+
+
+def _join_segments(y: np.ndarray, sr: int) -> list[tuple[float, float]]:
+    """Speech segments for join finding: keeps the short pauses that
+    `_speech_segments` merges away (a render join is often under 150 ms).
+
+    RMS over 20 ms frames every 10 ms against a per-turn threshold of
+    max(floor, min(3 x 10th-percentile frame, 0.5 x 90th-percentile
+    frame)); dropouts under 120 ms are bridged. The same speech definition
+    the calibration above was measured with.
+    """
+    hop, win = int(0.010 * sr), int(0.020 * sr)
+    if len(y) < win:
+        return []
+    frames = np.lib.stride_tricks.sliding_window_view(y, win)[::hop]
+    rms = np.sqrt((frames.astype(np.float64) ** 2).mean(axis=1))
+    quiet, loud = np.percentile(rms, 10), np.percentile(rms, 90)
+    thr = max(120.0 / 32768.0, min(3.0 * quiet, 0.5 * loud))
+    segs: list[list[float]] = []
+    for i in np.flatnonzero(rms >= thr):
+        t = i * hop / sr
+        if segs and t - segs[-1][1] < 0.12:
+            segs[-1][1] = t + win / sr
+        else:
+            segs.append([t, t + win / sr])
+    return [(a, b) for a, b in segs]
+
+
+def render_join_shares(parts: list[str]) -> list[float]:
+    """Where each join between rendered parts falls, as a fraction of the
+    turn's syllables (empty for a single part)."""
+    syl = [_text_syllables(p) for p in parts]
+    total = sum(syl)
+    out: list[float] = []
+    acc = 0
+    for n in syl[:-1]:
+        acc += n
+        if n and 0 < acc < total:
+            out.append(acc / total)
+    return out
+
+
+def _text_syllables(text: str) -> int:
+    total = 0
+    for word in re.findall(r"[A-Za-z']+|\d", text or ""):
+        w = re.sub(r"[^a-z]", "", word.lower())
+        total += max(1, len(re.findall(r"[aeiouy]+", w))) if w else 1
+    return total
+
+
+def render_join_steps(
+    path: str,
+    parts: list[str],
+    jump_st: float = JUMP_ST,
+    jump_db: float = JUMP_DB,
+) -> list[dict | None]:
+    """The voice step at each join between a turn's rendered parts.
+
+    Each join's time is estimated from the parts' share of the turn's
+    syllables, then matched to the nearest pause within `JUMP_SNAP_S` (the
+    join itself is a pause). Per join: `{part, t_s, pause_s, d_st, d_db,
+    jump}` — the median-pitch step in semitones and the speech-loudness step
+    in dB over `JUMP_WINDOW_S` either side, and `jump` when pitch rose
+    >= `jump_st` AND loudness >= `jump_db`. None where no pause was close.
+    Empty for a single-part turn.
+    """
+    if parselmouth is None:
+        raise ImportError(_MISSING_DEPS_MSG)
+    shares = render_join_shares([p for p in parts if p and p.strip()])
+    if not shares:
+        return []
+    y, sr = _read_wav(path)
+    segs = _join_segments(y, sr)
+    if len(segs) < 2:
+        return [None] * len(shares)
+    contour = _two_pass_pitch(parselmouth.Sound(y.astype(np.float64), sr))
+    hop = int(0.010 * sr)
+    n = len(y) // hop
+    db = 20 * np.log10(
+        np.sqrt(
+            np.mean(
+                y[: n * hop].astype(np.float64).reshape(n, hop) ** 2, axis=1
+            )
+        )
+        + 1e-9
+    )
+    lt = (np.arange(n) + 0.5) * 0.010
+    floor = float(db.max()) - JUMP_SPEECH_RANGE_DB
+    span0, span1 = segs[0][0], segs[-1][1]
+    pauses = [(b1, a2) for (_, b1), (a2, _) in pairwise(segs)]
+    used: set[float] = set()
+    out: list[dict | None] = []
+    for k, share in enumerate(shares):
+        t = span0 + (span1 - span0) * share
+        near = [
+            p
+            for p in pauses
+            if abs(p[1] - t) <= JUMP_SNAP_S and p[1] not in used
+        ]
+        if not near:
+            out.append(None)
+            continue
+        end, start = min(near, key=lambda p: abs(p[1] - t))
+        used.add(start)
+
+        def side(lo: float, hi: float) -> tuple[float | None, float | None]:
+            st = None
+            if contour is not None:
+                xs, f0 = contour
+                hz = f0[(xs >= lo) & (xs < hi) & (f0 > 0)]
+                if len(hz) >= JUMP_MIN_VOICED_FRAMES:
+                    st = hz_to_semitones(float(np.median(hz)))
+            seg = db[(lt >= lo) & (lt < hi) & (db > floor)]
+            loud = (
+                float(10 * np.log10(np.mean(10 ** (seg / 10))))
+                if len(seg) >= JUMP_MIN_SPEECH_FRAMES
+                else None
+            )
+            return st, loud
+
+        p0, l0 = side(max(0.0, end - JUMP_WINDOW_S), end)
+        p1, l1 = side(start, start + JUMP_WINDOW_S)
+        d_st = None if p0 is None or p1 is None else round(p1 - p0, 2)
+        d_db = None if l0 is None or l1 is None else round(l1 - l0, 2)
+        out.append(
+            {
+                "part": k + 2,
+                "t_s": round(start, 2),
+                "pause_s": round(start - end, 2),
+                "d_st": d_st,
+                "d_db": d_db,
+                "jump": d_st is not None
+                and d_db is not None
+                and d_st >= jump_st
+                and d_db >= jump_db,
+            }
+        )
+    return out
+
+
+def try_render_join_steps(
+    path: str | None, parts: list[str]
+) -> list[dict | None]:
+    """`render_join_steps`, best-effort: [] for one part, no audio, or when
+    the measurement can't run (missing extra, unreadable audio)."""
+    if not path or len([p for p in parts if p and p.strip()]) < 2:
+        return []
+    try:
+        return render_join_steps(path, parts)
+    except Exception:  # noqa: BLE001 - optional signal; no JUMP then
+        return []
+
+
 def turn_metrics(path: str, meter_cache: dict | None = None) -> dict:
     """Per-turn features for one agent recording. See the module docstring."""
     if parselmouth is None or pyloudnorm is None:

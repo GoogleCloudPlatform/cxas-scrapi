@@ -935,7 +935,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help=(
             "Per-turn voice-drift flags: TTS vintage seams (cached vs "
             "fresh), loudness steps, truncation, voice changes inside a "
-            "turn."
+            "turn, and voice jumps where a turn's next rendered part "
+            "starts."
         ),
     )
     add_trace_args(p_audio_drift)

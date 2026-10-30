@@ -71,7 +71,10 @@ from cxas_scrapi.utils.rate_limiter import RateLimiter
 from cxas_scrapi.utils.tracing import trace_report
 from cxas_scrapi.utils.tracing.audio_analysis import ANALYSIS_REGISTRY
 from cxas_scrapi.utils.tracing.audio_drift import flag_drift
-from cxas_scrapi.utils.tracing.audio_metrics import measure_call
+from cxas_scrapi.utils.tracing.audio_metrics import (
+    measure_call,
+    try_render_join_steps,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1482,6 +1485,11 @@ class SimulationEvals(Apps):
                             "seams": turn_item.get("seams", []),
                             "agent_text": " | ".join(
                                 agent_text_by_turn.get(conv_turn, [])
+                            ),
+                            # each part is a separate TTS render: JUMP
+                            "joins": try_render_join_steps(
+                                turn_item.get("path"),
+                                agent_text_by_turn.get(conv_turn, []),
                             ),
                         }
                     )

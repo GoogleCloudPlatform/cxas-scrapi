@@ -1041,6 +1041,7 @@ def _aggregate_suite_audio_analysis(
         ("tts_cache_seam", "TTS Cache Vintage Seam", "var(--serious)"),
         ("loudness_jump", "Loudness Jump (>3.0 dB LUFS)", "var(--serious)"),
         ("midturn_voice_seam", "Mid-Turn Voice Pitch Seam", "var(--critical)"),
+        ("voice_jump", "Voice Jump at a Render Join", "var(--serious)"),
         ("audio_truncation", "Audio Playback Truncation", "var(--critical)"),
     ]
     issue_counts: dict[str, int] = {k: 0 for k, _, _ in issues_meta}
@@ -1073,6 +1074,7 @@ def _aggregate_suite_audio_analysis(
         "tts_cache_seam": "TTS seam",
         "loudness_jump": "Loudness jump",
         "midturn_voice_seam": "Voice seam",
+        "voice_jump": "Voice jump",
         "audio_truncation": "Truncation",
     }
 
@@ -1086,6 +1088,9 @@ def _aggregate_suite_audio_analysis(
     suite_seam_runs = 0
     suite_loud_runs = 0
     suite_midturn_runs = 0
+    suite_jump_runs = 0
+    suite_jump_turns = 0
+    suite_join_runs = 0
     suite_trunc_runs = 0
     suite_lufs_means: list[float] = []
     suite_rate_means: list[float] = []
@@ -1860,6 +1865,16 @@ def _aggregate_suite_audio_analysis(
         if "TRUNC" in run_acoustic_flags:
             run_issues.append("audio_truncation")
 
+        # JUMP: the voice stepped up louder and higher where a turn's next
+        # rendered part started (audio_drift); only turns sent in several
+        # parts are measured, so count the runs that had a join at all.
+        run_jump_turns = sum(
+            1 for dr in drift_rows if "JUMP" in (dr.get("flags") or [])
+        )
+        run_has_joins = any(dr.get("joins") for dr in drift_rows)
+        if run_jump_turns:
+            run_issues.append("voice_jump")
+
         acoustic_turns: list[dict[str, Any]] = []
         drift_by_turn: dict[int, dict[str, Any]] = {}
         for d in drift_rows:
@@ -1943,6 +1958,7 @@ def _aggregate_suite_audio_analysis(
                 or "loudness_jump" in run_issues
                 or "midturn_voice_seam" in run_issues
                 or "audio_truncation" in run_issues
+                or "voice_jump" in run_issues
             )
             if not has_acoustic_defect:
                 suite_clean_acoustic_runs += 1
@@ -1954,6 +1970,11 @@ def _aggregate_suite_audio_analysis(
                 suite_midturn_runs += 1
             if "audio_truncation" in run_issues:
                 suite_trunc_runs += 1
+            if run_has_joins:
+                suite_join_runs += 1
+            if run_jump_turns:
+                suite_jump_runs += 1
+                suite_jump_turns += run_jump_turns
 
             if call_metrics.get("lufs_mean") is not None:
                 suite_lufs_means.append(float(call_metrics["lufs_mean"]))
@@ -2675,6 +2696,14 @@ def _aggregate_suite_audio_analysis(
         "loud_runs": suite_loud_runs,
         "midturn_runs": suite_midturn_runs,
         "trunc_runs": suite_trunc_runs,
+        "jump_runs": suite_jump_runs,
+        "jump_turns": suite_jump_turns,
+        "join_runs": suite_join_runs,
+        "jump_free_pct": (
+            round((1 - suite_jump_runs / suite_join_runs) * 100)
+            if suite_join_runs
+            else None
+        ),
         "consistency_pct": acoustic_consistency_pct,
         "mean_lufs": (
             round(sum(suite_lufs_means) / len(suite_lufs_means), 2)
@@ -2845,6 +2874,7 @@ def _aggregate_suite_audio_analysis(
         "audio_check_tips": audio_check_tips,
         "acoustic_tips": acoustic_tips,
         "acoustic_consistency": acoustic_tips.get("acoustic_consistency", ""),
+        "voice_jump": acoustic_tips.get("voice_jump", ""),
     }
 
     conv_data_json = json.dumps(
@@ -3034,7 +3064,7 @@ def _get_acoustic_metrics_tooltips() -> dict[str, str]:
 
     def _extract_drift_flag(header_pattern: str) -> str:
         m = re.search(
-            rf"^\s*{header_pattern}\s+(.*?)(?=\n\s*(?:SEAM|LOUD|TRUNC|MIDTURN)|\n\n|\Z)",
+            rf"^\s*{header_pattern}\s+(.*?)(?=\n\s*(?:SEAM|LOUD|TRUNC|MIDTURN|JUMP)\s|\n\n|\Z)",
             drift_doc,
             re.DOTALL | re.MULTILINE,
         )
@@ -3044,6 +3074,7 @@ def _get_acoustic_metrics_tooltips() -> dict[str, str]:
     loud_doc = _extract_drift_flag(r"LOUD")
     trunc_doc = _extract_drift_flag(r"TRUNC")
     midturn_doc = _extract_drift_flag(r"MIDTURN\s*/\s*MIDDRIFT")
+    jump_doc = _extract_drift_flag(r"JUMP")
 
     bullets = [
         " ".join(m.group(1).split()).rstrip(",.")
@@ -3100,6 +3131,14 @@ def _get_acoustic_metrics_tooltips() -> dict[str, str]:
             else (
                 "Triggered when agent audio syllable count falls below"
                 f" ratio < {trunc_ratio:.1f} (≥{trunc_min_syl} syllables)."
+            )
+        ),
+        "voice_jump": (
+            f"JUMP ({jump_doc})"
+            if jump_doc
+            else (
+                "Triggered when the voice steps up louder and higher where a"
+                " turn's next rendered part starts."
             )
         ),
         "acoustic_consistency": (
@@ -3227,6 +3266,11 @@ def _get_issue_tooltips(
             "midturn_voice_seam",
             "Triggered when median pitch shifts abruptly across an intra-turn"
             " pause.",
+        ),
+        "voice_jump": ac_tips.get(
+            "voice_jump",
+            "Triggered when the voice steps up louder and higher where a"
+            " turn's next rendered part starts.",
         ),
         "audio_truncation": ac_tips.get(
             "audio_truncation",

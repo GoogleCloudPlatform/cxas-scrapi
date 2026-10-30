@@ -136,6 +136,37 @@ def test_midturn_and_middrift_come_from_the_turns_seams() -> None:
         in ad.describe(rows[1])
     )
     assert (
-        "voice drift, listen to confirm inside the turn at 4.10s (-7.5 st)"
-        in ad.describe(rows[2])
+        "voice drift, listen to confirm inside the turn at 4.10s "
+        "(-7.5 st, pitch only: loudness -0.2 dB)" in ad.describe(rows[2])
     )
+
+
+def test_jump_comes_from_the_turns_render_joins() -> None:
+    jump = {
+        "part": 2,
+        "t_s": 6.3,
+        "pause_s": 0.4,
+        "d_st": 7.8,
+        "d_db": 7.7,
+        "jump": True,
+    }
+    smooth = dict(jump, d_st=1.7, d_db=8.5, jump=False)
+    rows = [
+        dict(_row(1, 3.0, -20.0), joins=[jump]),
+        dict(_row(2, 3.0, -20.0), joins=[smooth, None]),
+    ]
+    flagged = ad.flag_drift(rows)
+    assert [r["turn"] for r in flagged] == [1]
+    assert rows[0]["flags"] == ["JUMP"]
+    assert rows[1]["flags"] == []
+    assert (
+        "voice jumps louder and higher where a new rendered part starts: "
+        "part 2 at 6.30s (+7.8 st, +7.7 dB)" in ad.describe(rows[0])
+    )
+
+
+def test_a_pitch_only_drift_says_so() -> None:
+    quiet = {"t_s": 2.0, "shift_st": 7.6, "tier": "drift", "level_db": -1.9}
+    rows = [dict(_row(1, 3.0, -20.0), seams=[quiet])]
+    ad.flag_drift(rows)
+    assert "pitch only: loudness -1.9 dB" in ad.describe(rows[0])
