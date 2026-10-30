@@ -24,6 +24,7 @@ import ast
 import json
 import re
 import typing
+import warnings
 from pathlib import Path
 
 import yaml
@@ -53,6 +54,9 @@ SCHEMA_TYPE_TO_PY = {
 # Builtin instruction variables that bypass declaration checks.
 INSTRUCTION_BUILTINS = {"current_date"}
 
+# Builtin CES runtime state keys populated by the platform.
+STATE_BUILTINS = {"_session"}
+
 # Template ref pattern — matches single {var} and double {{var}} syntax (plus
 # dotted paths like {var.child} and {{var.child}}). Excludes {@TOOL: name}
 # and {@AGENT: name} directives.
@@ -60,7 +64,15 @@ TEMPLATE_RE = re.compile(r"\{{1,2}(?!@)([a-zA-Z_][\w.]*)\}{1,2}")
 
 # Eval YAML keys that contain nested var assignments shaped like
 # ``{var_name: {nested_key: value, ...}, ...}``.
-EVAL_VAR_KEYS = ("variables", "session_parameters", "common_session_parameters")
+EVAL_VAR_KEYS = (
+    "variables",
+    "session_parameters",
+    "sessionParameters",
+    "common_session_parameters",
+    "commonSessionParameters",
+    "inject_variables",
+    "injectVariables",
+)
 
 
 def _resolve_app_root(context: LintContext) -> Path | None:
@@ -109,11 +121,18 @@ def _load_var_schema(context: LintContext) -> dict:
     if key in _SCHEMA_CACHE:
         return _SCHEMA_CACHE[key]
     cfg = _load_app_config(app_root)
-    decls = (
-        cfg.get("variableDeclarations")
-        or cfg.get("variable_declarations")
-        or []
-    )
+    decls = [
+        *(
+            cfg.get("variableDeclarations")
+            or cfg.get("variable_declarations")
+            or []
+        ),
+        *(
+            cfg.get("predefinedVariableDeclarations")
+            or cfg.get("predefined_variable_declarations")
+            or []
+        ),
+    ]
     schema: dict[str, dict] = {}
     for d in decls:
         if isinstance(d, dict):
@@ -447,7 +466,9 @@ def _collect_state_accesses(
     content: str,
 ) -> list[tuple[str, str, int, str | None]]:
     try:
-        tree = ast.parse(content)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(content)
     except SyntaxError:
         return []
     visitor = _StateAccessVisitor()
@@ -529,13 +550,53 @@ def _strip_inline_examples(content: str) -> str:
 def _collect_template_refs(content: str) -> list[tuple[str, int]]:
     stripped = _strip_inline_examples(content)
     refs = []
+    seen: set[tuple[str, int]] = set()
     for m in TEMPLATE_RE.finditer(stripped):
         ref = m.group(1)
         if ref in INSTRUCTION_BUILTINS:
             continue
         line = stripped[: m.start()].count("\n") + 1
+        if (ref, line) in seen:
+            continue
+        seen.add((ref, line))
         refs.append((ref, line))
     return refs
+
+
+def _extract_non_fstring_constants(tree: ast.AST) -> set[str]:
+    """Return string constants from AST, excluding f-string parts."""
+    fstring_part_ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            for child in ast.walk(node):
+                if isinstance(child, ast.Constant):
+                    fstring_part_ids.add(id(child))
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in fstring_part_ids
+    }
+
+
+def _agent_callback_substitutes_ref(file_path: Path, ref: str) -> bool:
+    """Return True if a callback in the same agent dir substitutes ``{ref}``."""
+    agent_dir = file_path.parent
+    if agent_dir.parent.name != "agents" or not agent_dir.is_dir():
+        return False
+    placeholder = f"{{{ref}}}"
+    for py_file in agent_dir.rglob("*.py"):
+        try:
+            text = py_file.read_text(errors="ignore")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(text)
+        except (OSError, SyntaxError):
+            continue
+        if placeholder in _extract_non_fstring_constants(tree):
+            return True
+    return False
 
 
 # ── Rules ────────────────────────────────────────────────────────────────
@@ -675,7 +736,7 @@ def _check_v100_python(
     results = []
     seen: set[tuple[str, int]] = set()
     for _kind, key, line, _rhs in _collect_state_accesses(content):
-        if (key, line) in seen:
+        if (key, line) in seen or key.split(".")[0] in STATE_BUILTINS:
             continue
         verdict = resolve_path(key, schema)
         if verdict[0] != "undeclared":
@@ -913,7 +974,7 @@ def _check_v103_python(
     results = []
     seen: set[tuple[str, int]] = set()
     for _kind, key, line, _rhs in _collect_state_accesses(content):
-        if (key, line) in seen:
+        if (key, line) in seen or key.split(".")[0] in STATE_BUILTINS:
             continue
         verdict = resolve_path(key, schema)
         if verdict[0] != "stale_flat":
@@ -972,6 +1033,10 @@ class InstructionVariableRef(Rule):
             verdict = resolve_path(ref, schema)
             tag = verdict[0]
             if tag in ("ok", "ok_object"):
+                continue
+            if tag == "undeclared" and _agent_callback_substitutes_ref(
+                file_path, ref
+            ):
                 continue
             if tag in ("undeclared", "stale_flat"):
                 # Both surface as "not a declared top-level var".

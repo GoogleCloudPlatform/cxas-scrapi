@@ -24,6 +24,8 @@ from cxas_scrapi.utils.lint_rules.variables import (
     CallbackVariableDeclared,
     CallbackVariableTypeMatch,
     EvalVariableDeclared,
+    InstructionStaleFlatVar,
+    InstructionVariableRef,
     ToolVariableDeclared,
     ToolVariableTypeMatch,
     _clear_schema_cache,
@@ -291,3 +293,88 @@ def test_state_visitor_tracks_rebound_state_alias_in_statement_order() -> None:
     )
     accesses = _collect_state_accesses(src)
     assert accesses == [("read", "undeclared_key", 3, None)]
+
+
+def test_v100_recognizes_session_builtin_and_predefined_variables(
+    tmp_path: typing.Any,
+) -> None:
+    (tmp_path / "app.json").write_text(
+        '{"name": "test-app", "variableDeclarations": [{"name": "flat_str", "schema": {"type": "STRING"}}], "predefinedVariableDeclarations": [{"name": "channel", "schema": {"type": "STRING"}}]}'
+    )
+    _clear_schema_cache()
+    ctx = LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path / "evals",
+        app_root=tmp_path,
+    )
+    f = tmp_path / "python_code.py"
+    f.write_text(
+        "def cb(callback_context):\n"
+        "    sess = callback_context.state.get('_session', {})\n"
+        "    ch = callback_context.state.get('channel')\n"
+        "    bad = callback_context.state.get('missing_var')\n"
+    )
+    results = CallbackVariableDeclared().check(f, f.read_text(), ctx)
+    assert len(results) == 1
+    assert "missing_var" in results[0].message
+
+
+def test_v104_recognizes_callback_substituted_instruction_placeholders(
+    tmp_path: typing.Any, var_context: LintContext
+) -> None:
+    agent_dir = tmp_path / "agents" / "Payment_Agent"
+    cb_dir = agent_dir / "before_model_callbacks" / "before_model_callback"
+    cb_dir.mkdir(parents=True, exist_ok=True)
+    (cb_dir / "python_code.py").write_text(
+        "# '{unhandled_var}' in a comment must not count as substitution\n"
+        "def before_model_callback(callback_context, llm_request):\n"
+        "    unhandled_var = 'local'\n"
+        "    _ = f'f-string {unhandled_var} must not count as substitution'\n"
+        "    replacements = {'{methods_on_file}': 'Visa ending 1234'}\n"
+    )
+    instr_path = agent_dir / "instruction.txt"
+    instr_path.write_text(
+        "Available payment methods: {methods_on_file}\n"
+        "Repeated undeclared on one line: {unhandled_var} and {unhandled_var}\n"
+    )
+    v104_results = InstructionVariableRef().check(
+        instr_path, instr_path.read_text(), var_context
+    )
+    assert len(v104_results) == 1
+    assert "unhandled_var" in v104_results[0].message
+
+
+def test_v103_instruction_deduplicates_same_line_refs(
+    tmp_path: typing.Any, var_context: LintContext
+) -> None:
+    instr_path = tmp_path / "agents" / "Root_Agent" / "instruction.txt"
+    instr_path.parent.mkdir(parents=True, exist_ok=True)
+    instr_path.write_text(
+        "Check {auth_status} before using {auth_status} again.\n"
+    )
+    v103_results = InstructionStaleFlatVar().check(
+        instr_path, instr_path.read_text(), var_context
+    )
+    assert len(v103_results) == 1
+    assert "customer.auth_status" in v103_results[0].message
+
+
+def test_v100_eval_validates_milestone_step_inject_variables(
+    tmp_path: typing.Any, var_context: LintContext
+) -> None:
+    rule = EvalVariableDeclared()
+    f = tmp_path / "evals" / "simulations" / "sim.yaml"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        "evals:\n"
+        "  - name: sim_1\n"
+        "    steps:\n"
+        "      - goal: 'Greet'\n"
+        "        inject_variables:\n"
+        "          flat_str: 'ok'\n"
+        "          undeclared_sim_var: 'bad'\n"
+    )
+    results = rule.check(f, f.read_text(), var_context)
+    assert len(results) == 1
+    assert "undeclared_sim_var" in results[0].message
