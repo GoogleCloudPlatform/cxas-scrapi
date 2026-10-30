@@ -21,6 +21,8 @@ import pytest
 from cxas_scrapi.utils.lint_rules.callbacks import (
     ReturnsDictNotLlmResponse,
     ToolNamingConvention,
+    WrongArgCount,
+    WrongFunctionName,
 )
 from cxas_scrapi.utils.lint_rules.tools import (
     CompositeToolConversationalPacing,
@@ -30,6 +32,7 @@ from cxas_scrapi.utils.lint_rules.tools import (
     MissingToolDescriptionInJSON,
     MissingTypeHints,
     NoneDefaultValue,
+    ToolDisplayNameUnreferenced,
 )
 from cxas_scrapi.utils.linter import LintContext
 
@@ -212,3 +215,130 @@ def test_c004_handles_async_callback_functions(
     results = ReturnsDictNotLlmResponse().check(f, f.read_text(), context)
     assert len(results) == 1
     assert results[0].rule_id == "C004"
+
+
+def test_t008_recognizes_tools_invoked_from_callbacks_tools_or_guardrails(
+    tmp_path: Path, context: LintContext
+) -> None:
+    (tmp_path / "agents" / "root_agent").mkdir(parents=True)
+    (tmp_path / "agents" / "root_agent" / "root_agent.json").write_text(
+        '{"displayName": "root_agent", "tools": []}'
+    )
+
+    # 1. Helper tool invoked from a callback via tools.cb_helper(...)
+    cb_dir = (
+        tmp_path / "agents" / "root_agent" / "before_model_callbacks" / "cb_01"
+    )
+    cb_dir.mkdir(parents=True)
+    (cb_dir / "python_code.py").write_text(
+        "def before_model_callback(callback_context, llm_request):\n"
+        "    tools.cb_helper({})\n"
+    )
+    t1_dir = tmp_path / "tools" / "cb_helper" / "python_function"
+    t1_dir.mkdir(parents=True)
+    f1 = t1_dir / "python_code.py"
+    f1.write_text("def cb_helper() -> dict:\n    return {}\n")
+    (tmp_path / "tools" / "cb_helper" / "cb_helper.json").write_text(
+        '{"name": "cb_helper", "displayName": "cb_helper"}'
+    )
+    assert (
+        ToolDisplayNameUnreferenced().check(f1, f1.read_text(), context) == []
+    )
+
+    # 2. Helper tool invoked from a guardrail action.toolCall
+    gr_dir = tmp_path / "guardrails" / "esc_guardrail"
+    gr_dir.mkdir(parents=True)
+    (gr_dir / "esc_guardrail.json").write_text(
+        '{"action": {"toolCall": {"tool": "gr_helper"}}}'
+    )
+    t2_dir = tmp_path / "tools" / "gr_helper" / "python_function"
+    t2_dir.mkdir(parents=True)
+    f2 = t2_dir / "python_code.py"
+    f2.write_text("def gr_helper() -> dict:\n    return {}\n")
+    (tmp_path / "tools" / "gr_helper" / "gr_helper.json").write_text(
+        '{"name": "gr_helper", "displayName": "gr_helper"}'
+    )
+    assert (
+        ToolDisplayNameUnreferenced().check(f2, f2.read_text(), context) == []
+    )
+
+    # 3. Prefix collision (cb_helper vs cb) or comment must still flag T008
+    t3_dir = tmp_path / "tools" / "cb" / "python_function"
+    t3_dir.mkdir(parents=True)
+    f3 = t3_dir / "python_code.py"
+    f3.write_text("def cb() -> dict:\n    return {}\n")
+    (tmp_path / "tools" / "cb" / "cb.json").write_text(
+        '{"name": "cb", "displayName": "cb"}'
+    )
+    assert (
+        len(ToolDisplayNameUnreferenced().check(f3, f3.read_text(), context))
+        == 1
+    )
+
+
+def test_t012_accepts_python_function_docstring_when_json_omits_output_only_desc(
+    tmp_path: Path, context: LintContext
+) -> None:
+    tool_dir = tmp_path / "tools" / "get_current_bill_rules"
+    py_dir = tool_dir / "python_function"
+    py_dir.mkdir(parents=True)
+    json_f = tool_dir / "get_current_bill_rules.json"
+    json_f.write_text(
+        '{"name": "get_current_bill_rules", '
+        '"displayName": "get_current_bill_rules", '
+        '"pythonFunction": {"name": "get_current_bill_rules"}}'
+    )
+    py_f = py_dir / "python_code.py"
+    py_f.write_text(
+        "def get_current_bill_rules() -> dict:\n"
+        '    """Return billing rules for the current bill."""\n'
+        "    return {}\n"
+    )
+
+    assert (
+        MissingToolDescriptionInJSON().check(
+            json_f, json_f.read_text(), context
+        )
+        == []
+    )
+
+    # A triple-quoted literal in the body (not a docstring) must still flag T012
+    py_f.write_text(
+        "def get_current_bill_rules() -> dict:\n"
+        '    query = """SELECT 1"""\n'
+        "    return {'q': query}\n"
+    )
+    assert (
+        len(
+            MissingToolDescriptionInJSON().check(
+                json_f, json_f.read_text(), context
+            )
+        )
+        == 1
+    )
+
+
+def test_c007_ignores_comments_and_bypass_tool_prefixes(
+    tmp_path: Path,
+) -> None:
+    ctx = LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path,
+        all_tool_names={"known_tool"},
+        bypass_tool_prefixes={"common_mcp_"},
+    )
+    cb_dir = tmp_path / "agents" / "root" / "before_model_callbacks_01"
+    cb_dir.mkdir(parents=True)
+    f = cb_dir / "python_code.py"
+    f.write_text(
+        "# tools.CCFV_commented_out_tool({'a': 1})\n"
+        "def before_model_callback(callback_context, llm_request):\n"
+        "    tools.common_mcp_endSession({})\n"
+        "    tools.known_tool({})\n"
+        "    return None\n"
+    )
+
+    assert ToolNamingConvention().check(f, f.read_text(), ctx) == []
+    assert WrongFunctionName().check(f, f.read_text(), ctx) == []
+    assert WrongArgCount().check(f, f.read_text(), ctx) == []
