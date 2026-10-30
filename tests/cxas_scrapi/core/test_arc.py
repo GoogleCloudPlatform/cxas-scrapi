@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 import requests
+from urllib3.exceptions import ReadTimeoutError
 
 from cxas_scrapi.core import arc as arc_module
 from cxas_scrapi.core.arc import (
@@ -520,9 +521,10 @@ def test_stream_turn_read_timeout_keeps_partial(
     assert partial.turn_completed is None
 
 
-def test_stream_turn_chunked_encoding_error(
+def test_stream_turn_chunked_encoding_error_without_sequence(
     arc: Arc, fake: FakeSession
 ) -> None:
+    """No sequence number seen yet -> nothing to re-attach to."""
     fake.queue_post(
         FakeResponse(
             sse_body([{"textChunk": "x"}]),
@@ -530,8 +532,96 @@ def test_stream_turn_chunked_encoding_error(
         )
     )
 
-    with pytest.raises(arc_module.ArcError, match="interrupted after 1 events"):
+    with pytest.raises(
+        arc_module.ArcStreamInterrupted, match="interrupted after 1 events"
+    ) as excinfo:
         arc.stream_turn("s-1", "hi")
+    assert excinfo.value.partial.text == "x"
+
+
+def test_stream_turn_reattaches_after_connection_reset(
+    arc: Arc, fake: FakeSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(time, "sleep", lambda *_: None)
+    fake.queue_post(
+        FakeResponse(
+            sse_body(
+                [
+                    {"thoughtChunk": "t", "sequenceNumber": "1"},
+                    {"textChunk": "Hello ", "sequenceNumber": "2"},
+                ]
+            ),
+            raise_after=requests.exceptions.ConnectionError(
+                "Connection broken: ConnectionResetError(104)"
+            ),
+        ),
+        FakeResponse(
+            sse_body(
+                [
+                    {
+                        "resumeSnapshot": {
+                            "turnId": "0",
+                            "resolvedSequenceNumber": "3",
+                            "events": [
+                                {"textChunk": "world", "sequenceNumber": "3"}
+                            ],
+                        },
+                        "sequenceNumber": "3",
+                    },
+                    {"textChunk": "!", "sequenceNumber": "4"},
+                    {
+                        "turnCompleted": {"turnId": "0", "reason": "COMPLETED"},
+                        "sequenceNumber": "5",
+                    },
+                ]
+            )
+        ),
+    )
+
+    events = arc.stream_turn("s-1", "hi")
+
+    assert events.text == "Hello world!"
+    assert events.turn_completed is not None
+    assert len(fake.posts) == 2
+    second = fake.posts[1]["json"]
+    assert second == {
+        "attachOnly": True,
+        "resumeFromSequenceNumber": "2",
+        "clientCapabilities": ["CONFIRMATION_CARDS", "CLIENT_MANAGED_LRO"],
+    }
+
+
+def test_stream_turn_gives_up_after_max_reattach_attempts(
+    arc: Arc, fake: FakeSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(time, "sleep", lambda *_: None)
+    arc.max_reattach_attempts = 1
+    broken = lambda: FakeResponse(  # noqa: E731
+        sse_body([{"textChunk": "x", "sequenceNumber": "1"}]),
+        raise_after=requests.exceptions.ChunkedEncodingError("broken"),
+    )
+    fake.queue_post(broken(), broken())
+
+    with pytest.raises(arc_module.ArcStreamInterrupted):
+        arc.stream_turn("s-1", "hi")
+    assert len(fake.posts) == 2
+
+
+def test_stream_turn_idle_surfaced_as_connection_error(
+    arc: Arc, fake: FakeSession
+) -> None:
+    """requests wraps a mid-body read timeout in ConnectionError."""
+    inner = ReadTimeoutError(None, "https://x", "Read timed out.")
+    fake.queue_post(
+        FakeResponse(
+            sse_body([{"textChunk": "x", "sequenceNumber": "1"}]),
+            raise_after=requests.exceptions.ConnectionError(inner),
+        )
+    )
+
+    with pytest.raises(ArcStreamTimeout, match="idle for 180s after 1 events"):
+        arc.stream_turn("s-1", "hi")
+    assert len(fake.posts) == 1
 
 
 def test_stream_turn_deadline_exceeded(

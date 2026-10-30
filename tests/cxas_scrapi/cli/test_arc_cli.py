@@ -35,6 +35,7 @@ from cxas_scrapi.utils.arc_events import (
     ConfirmationRequestRecord,
     OptionChoiceRecord,
     OptionQuestionRecord,
+    TurnCompletedRecord,
     TurnStreamEvents,
 )
 
@@ -438,8 +439,8 @@ def _session_with_cards(*statuses: tuple[str, str]) -> dict[str, object]:
         "name": f"{APP}/assistantSessions/{SESSION}",
         "messages": [
             {"role": "user", "chunks": [{"text": "hi"}]},
-            {"role": "model", "chunks": chunks},
             {"role": "model", "chunks": [{"typedPayload": {"type": "x"}}]},
+            {"role": "model", "chunks": chunks},
         ],
     }
 
@@ -455,6 +456,16 @@ def test_pending_cards_from_session_keeps_only_pending() -> None:
     assert card.positive_label == "Publish"
     assert card.questions[0].options[0].submit_text == "Voice only"
     assert arc_cli.pending_cards_from_session({}) == []
+
+
+def test_pending_cards_from_session_ignores_cards_before_last_message() -> None:
+    """The server never flips status, so a later message means it was handled."""
+    session = _session_with_cards(("stale", "PENDING"))
+    session["messages"].append(
+        {"role": "user", "chunks": [{"text": "Confirmed."}]}
+    )
+    session["messages"].append({"role": "model", "chunks": [{"text": "Done."}]})
+    assert arc_cli.pending_cards_from_session(session) == []
 
 
 def test_describe_typed_payload() -> None:
@@ -1499,3 +1510,44 @@ def test_build_client_forwards_profile_and_timeout(
     assert kwargs["client_profile"] == "legacy"
     assert kwargs["stream_idle_timeout"] == 5.0
     assert kwargs["progress"] is None
+
+
+def test_is_empty_turn() -> None:
+    empty = TurnStreamEvents(
+        turn_completed=TurnCompletedRecord(reason="COMPLETED")
+    )
+    assert arc_cli.is_empty_turn(empty)
+    assert not arc_cli.is_empty_turn(TurnStreamEvents(text="hi"))
+    assert not arc_cli.is_empty_turn(
+        TurnStreamEvents(confirmation_requests=[_gate_card("c-1")])
+    )
+
+
+def test_arc_chat_empty_turn_exits_2(
+    store: Path, fake_arc: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake_arc.chat.return_value = TurnStreamEvents(
+        turn_completed=TurnCompletedRecord(reason="")
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        _run(store, "chat", "--message", "hi")
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "without any output" in err
+    assert "cxas apps get" in err
+
+
+def test_download_session_artifacts_skips_managed_uris(
+    fake_arc: MagicMock, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_arc.session_artifacts.return_value = [
+        {"displayName": "notes.md", "gcsUri": "ces-artifact://projects/p/x"},
+        {"displayName": "plan.md", "gcsUri": "gs://b/plan.md"},
+    ]
+    monkeypatch.setattr(
+        "cxas_scrapi.utils.arc_bundle.download_gcs_uri",
+        lambda uri, dest, credentials: str(tmp_path / "plan.md"),
+    )
+    out = arc_cli.download_session_artifacts(fake_arc, "s-1", str(tmp_path))
+    assert "`notes.md` -> not downloadable here (managed artifact" in out
+    assert "`plan.md` -> `" in out

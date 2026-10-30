@@ -100,6 +100,35 @@ class ArcStreamTimeout(ArcError):
         self.partial = partial
 
 
+class ArcStreamInterrupted(ArcError):
+    """The connection dropped mid-stream and could not be re-attached."""
+
+    def __init__(self, message: str, partial: TurnStreamEvents):
+        super().__init__(message)
+        self.partial = partial
+
+
+def _is_read_timeout(error: BaseException) -> bool:
+    """True when a requests error chain is rooted in a read timeout."""
+    names = ("ReadTimeoutError", "ReadTimeout", "timeout", "TimeoutError")
+    seen: set[int] = set()
+    stack: list[BaseException] = [error]
+    while stack:
+        cur = stack.pop()
+        if id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        if type(cur).__name__ in names:
+            return True
+        # requests wraps urllib3 errors as ``ConnectionError(err)`` (args),
+        # while ``raise ... from`` uses ``__cause__``.
+        stack.extend(a for a in cur.args if isinstance(a, BaseException))
+        for nxt in (cur.__cause__, cur.__context__):
+            if nxt is not None:
+                stack.append(nxt)
+    return False
+
+
 def iter_stream_json(response: requests.Response) -> Iterator[dict[str, Any]]:
     """Yields JSON objects from a streaming REST response.
 
@@ -185,6 +214,9 @@ class Arc(Common):
         api_endpoint: API host; defaults to ``CES_API_ENDPOINT`` or prod.
         stream_idle_timeout: Seconds without any streamed event before the
             turn is abandoned client-side.
+        max_reattach_attempts: How many times a dropped connection is
+            re-attached (``attachOnly`` + ``resumeFromSequenceNumber``) while
+            the turn is still running server-side.
         rate_limiter: Optional :class:`RateLimiter` applied before each
             streaming request.
         http_session: Optional ``requests.Session`` (tests inject fakes).
@@ -199,6 +231,7 @@ class Arc(Common):
         client_profile: str = CLIENT_PROFILE_CONSOLE,
         api_endpoint: str | None = None,
         stream_idle_timeout: float = CONSOLE_STREAM_IDLE_TIMEOUT_SECONDS,
+        max_reattach_attempts: int = 2,
         rate_limiter: RateLimiter | None = None,
         http_session: requests.Session | None = None,
         progress: Callable[[str], None] | None = None,
@@ -220,6 +253,7 @@ class Arc(Common):
         self.api_endpoint = endpoint.rstrip("/")
         self._base_url = f"https://{self.api_endpoint}/{API_VERSION}"
         self.stream_idle_timeout = stream_idle_timeout
+        self.max_reattach_attempts = max(0, int(max_reattach_attempts))
         self.rate_limiter = rate_limiter
         self._progress_cb = progress
         self.session = http_session or _retrying_session()
@@ -449,41 +483,72 @@ class Arc(Common):
         target = into if into is not None else TurnStreamEvents()
         deadline = time.monotonic() + timeout_seconds
         count = 0
-        try:
-            with self._stream_session.post(
-                url,
-                params={"alt": "sse"},
-                headers=self._headers(),
-                json=body,
-                stream=True,
-                timeout=(30, self.stream_idle_timeout),
-            ) as response:
-                if response.status_code >= 400:
-                    raise self._error_from_response(response)
-                for obj in iter_stream_json(response):
-                    count += 1
-                    reducer.feed(obj)
-                    if on_event is not None:
-                        on_event(obj)
-                    if time.monotonic() > deadline:
-                        target.merge(reducer.events)
-                        raise ArcStreamTimeout(
-                            f"Turn exceeded {timeout_seconds:.0f}s deadline "
-                            f"after {count} events.",
-                            target,
-                        )
-        except requests.exceptions.ReadTimeout as e:
-            target.merge(reducer.events)
-            raise ArcStreamTimeout(
-                f"Stream idle for {self.stream_idle_timeout:.0f}s after "
-                f"{count} events.",
-                target,
-            ) from e
-        except requests.exceptions.ChunkedEncodingError as e:
-            target.merge(reducer.events)
-            raise ArcError(
-                f"Stream interrupted after {count} events: {e}"
-            ) from e
+        request_body = body
+        reattached = 0
+        while True:
+            try:
+                with self._stream_session.post(
+                    url,
+                    params={"alt": "sse"},
+                    headers=self._headers(),
+                    json=request_body,
+                    stream=True,
+                    timeout=(30, self.stream_idle_timeout),
+                ) as response:
+                    if response.status_code >= 400:
+                        raise self._error_from_response(response)
+                    for obj in iter_stream_json(response):
+                        count += 1
+                        reducer.feed(obj)
+                        if on_event is not None:
+                            on_event(obj)
+                        if time.monotonic() > deadline:
+                            target.merge(reducer.events)
+                            raise ArcStreamTimeout(
+                                f"Turn exceeded {timeout_seconds:.0f}s "
+                                f"deadline after {count} events.",
+                                target,
+                            )
+                break
+            except (
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ChunkedEncodingError,
+            ) as e:
+                # requests surfaces a read timeout that happens *while
+                # iterating* the body as ConnectionError(ReadTimeoutError).
+                if _is_read_timeout(e):
+                    target.merge(reducer.events)
+                    raise ArcStreamTimeout(
+                        f"Stream idle for {self.stream_idle_timeout:.0f}s "
+                        f"after {count} events.",
+                        target,
+                    ) from e
+                seq = reducer.events.last_sequence_number
+                if (
+                    reducer.events.turn_completed is None
+                    and seq is not None
+                    and reattached < self.max_reattach_attempts
+                ):
+                    # The turn keeps running server-side; re-attach and
+                    # replay from the last sequence number we saw.
+                    reattached += 1
+                    self._progress(
+                        f"stream dropped after {count} events; "
+                        f"re-attaching from sequence {seq} "
+                        f"(attempt {reattached})"
+                    )
+                    time.sleep(min(2 * reattached, 5))
+                    request_body = {
+                        "attachOnly": True,
+                        "resumeFromSequenceNumber": str(seq),
+                        "clientCapabilities": body["clientCapabilities"],
+                    }
+                    continue
+                target.merge(reducer.events)
+                raise ArcStreamInterrupted(
+                    f"Stream interrupted after {count} events: {e}", target
+                ) from e
         target.merge(reducer.events)
         return target
 

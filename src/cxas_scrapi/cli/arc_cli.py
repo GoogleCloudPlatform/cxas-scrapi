@@ -187,18 +187,23 @@ def pending_cards_from_session(session: Mapping[str, Any]) -> list[Any]:
     """
     from cxas_scrapi.utils.arc_events import parse_confirmation_request
 
+    messages = session.get("messages", []) or []
+    if not messages:
+        return []
+    # The server does not flip ``status`` once a card is answered, so only
+    # trust cards in the *last* message: a later user or model message means
+    # the turn moved on and the card was handled.
     cards = []
-    for message in session.get("messages", []) or []:
-        for chunk in message.get("chunks", []) or []:
-            payload = chunk.get("typedPayload") or {}
-            if payload.get("type") != "confirmation_request":
-                continue
-            value = payload.get("value") or {}
-            if str(value.get("status", "")).upper() != "PENDING":
-                continue
-            request = value.get("request") or {}
-            if request.get("confirmationId"):
-                cards.append(parse_confirmation_request(request))
+    for chunk in messages[-1].get("chunks", []) or []:
+        payload = chunk.get("typedPayload") or {}
+        if payload.get("type") != "confirmation_request":
+            continue
+        value = payload.get("value") or {}
+        if str(value.get("status", "")).upper() != "PENDING":
+            continue
+        request = value.get("request") or {}
+        if request.get("confirmationId"):
+            cards.append(parse_confirmation_request(request))
     return cards
 
 
@@ -367,6 +372,26 @@ def render_turn(
     return "\n\n".join(sections)
 
 
+def is_empty_turn(events: TurnStreamEvents) -> bool:
+    """True when the server ended the turn without producing anything.
+
+    A stream against a non-existent app, or one the caller cannot read,
+    returns a lone ``turnCompleted`` with no content.
+    """
+    if events.turn_completed is None:
+        return False
+    return not (
+        events.text.strip()
+        or events.tool_calls
+        or events.tool_responses
+        or events.artifacts
+        or events.option_questions
+        or events.confirmation_requests
+        or events.initiated_lros
+        or events.thoughts
+    )
+
+
 def format_partial_turn(events: TurnStreamEvents | None) -> str:
     """Renders what streamed before a failure."""
     if events is None:
@@ -508,11 +533,11 @@ def _finish_turn(
 def _handle_turn_failure(
     ctx: _TurnContext, args: argparse.Namespace, error: Exception
 ) -> None:
-    from cxas_scrapi.core.arc import ArcStreamTimeout
+    from cxas_scrapi.core.arc import ArcStreamInterrupted, ArcStreamTimeout
 
     partial = (
         error.partial
-        if isinstance(error, ArcStreamTimeout)
+        if isinstance(error, (ArcStreamTimeout, ArcStreamInterrupted))
         else ctx.client.active_turn_events or ctx.client.last_stream_events
     )
     if partial is not None:
@@ -628,6 +653,13 @@ def arc_chat(args: argparse.Namespace) -> None:
     _finish_turn(
         "chat", ctx, events, args, notes=notes, extra_sections=sections
     )
+    if is_empty_turn(events):
+        _fail(
+            "Arc ended the turn without any output. Check that the app "
+            "exists and that you can read it (cxas apps get "
+            f"{ctx.target.app_name}).",
+            code=2,
+        )
 
 
 def arc_confirm(args: argparse.Namespace) -> None:
@@ -913,6 +945,12 @@ def download_session_artifacts(
         if not uri:
             continue
         label = art.get("displayName") or art.get("id") or uri
+        if not uri.startswith("gs://"):
+            lines.append(
+                f"- `{label}` -> not downloadable here (managed artifact "
+                f"`{uri}`); open it from the console"
+            )
+            continue
         try:
             local = arc_bundle.download_gcs_uri(
                 uri, dest_dir, credentials=client.creds
