@@ -22,7 +22,8 @@ Customer Engagement Suite (CES) applications for Gemini Composite V2
   `gemini-composite-v2` (other models are only reported), clears legacy V1
   Director's Notes and over-long speaking styles to an empty style, enables
   `languageSettings.enableMultilingualSupport` for multi-locale apps, and adds
-  missing locales with the default locale's Chirp 3 HD voice persona.
+  missing locales with the default locale's Chirp 3 HD voice persona (defaulting
+  to `Aoede`, `<locale>-Chirp3-HD-Aoede`, when prebuilt voices are used).
 - Migrates inline `[tag]` syntax to `<tag>`, converts translated non-English
   audio tags (`<pausa corta>`, `<短暂停顿>`, etc.) to canonical English `<...>`
   tags, remaps low-performing tags to validated Composite V2 equivalents
@@ -89,6 +90,7 @@ except (ImportError, ModuleNotFoundError):
 
 TARGET_COMPOSITE_MODEL = "gemini-composite-v2"
 COMPOSITE_MODEL_PREFIX = "gemini-composite"
+DEFAULT_PREBUILT_PERSONA = "Aoede"
 EMPTY_V2_STYLE = ""
 MAX_RECOMMENDED_STYLE_WORDS = 25
 PROSODY_RESET_TAG = '<prosody rate="100%">'
@@ -488,39 +490,68 @@ CHIRP3_VOICE_RE = re.compile(
 )
 
 DEFAULT_V2_VOICES: dict[str, str] = {
-    "en": "en-US-Chirp3-HD-Zephyr",
-    "en-US": "en-US-Chirp3-HD-Zephyr",
-    "en-AU": "en-AU-Chirp3-HD-Zephyr",
-    "en-GB": "en-GB-Chirp3-HD-Zephyr",
-    "en-CA": "en-CA-Chirp3-HD-Zephyr",
-    "en-IN": "en-IN-Chirp3-HD-Zephyr",
-    "es": "es-US-Chirp3-HD-Zephyr",
-    "es-US": "es-US-Chirp3-HD-Zephyr",
-    "es-ES": "es-ES-Chirp3-HD-Zephyr",
-    "es-MX": "es-US-Chirp3-HD-Zephyr",
-    "cmn": "cmn-CN-Chirp3-HD-Zephyr",
-    "cmn-CN": "cmn-CN-Chirp3-HD-Zephyr",
-    "cmn-TW": "cmn-TW-Chirp3-HD-Zephyr",
-    "zh": "cmn-CN-Chirp3-HD-Zephyr",
-    "zh-CN": "cmn-CN-Chirp3-HD-Zephyr",
-    "zh-TW": "cmn-TW-Chirp3-HD-Zephyr",
-    "yue": "yue-CN-Chirp3-HD-Zephyr",
-    "yue-CN": "yue-CN-Chirp3-HD-Zephyr",
-    "hi": "hi-IN-Chirp3-HD-Zephyr",
-    "hi-IN": "hi-IN-Chirp3-HD-Zephyr",
-    "ko": "ko-KR-Chirp3-HD-Zephyr",
-    "ko-KR": "ko-KR-Chirp3-HD-Zephyr",
-    "ja": "ja-JP-Chirp3-HD-Zephyr",
-    "ja-JP": "ja-JP-Chirp3-HD-Zephyr",
-    "fr": "fr-FR-Chirp3-HD-Zephyr",
-    "fr-FR": "fr-FR-Chirp3-HD-Zephyr",
-    "fr-CA": "fr-CA-Chirp3-HD-Zephyr",
-    "de": "de-DE-Chirp3-HD-Zephyr",
-    "de-DE": "de-DE-Chirp3-HD-Zephyr",
-    "pt": "pt-BR-Chirp3-HD-Zephyr",
-    "pt-BR": "pt-BR-Chirp3-HD-Zephyr",
-    "it": "it-IT-Chirp3-HD-Zephyr",
-    "it-IT": "it-IT-Chirp3-HD-Zephyr",
+    # Base 2/3-letter language codes
+    "en": f"en-US-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "es": f"es-US-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "fr": f"fr-FR-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "de": f"de-DE-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "ja": f"ja-JP-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "pt": f"pt-BR-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "it": f"it-IT-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "zh": f"cmn-CN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "cmn": f"cmn-CN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "yue": f"yue-CN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "ko": f"ko-KR-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "nl": f"nl-NL-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "hi": f"hi-IN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "sv": f"sv-SE-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "da": f"da-DK-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "fi": f"fi-FI-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "pl": f"pl-PL-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "tr": f"tr-TR-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "id": f"id-ID-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "mr": f"mr-IN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "ro": f"ro-RO-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "ta": f"ta-IN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "te": f"te-IN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "vi": f"vi-VN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    # Specific locale codes
+    "en-US": f"en-US-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "en-AU": f"en-AU-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "en-GB": f"en-GB-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "en-CA": f"en-CA-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "en-IN": f"en-IN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "en-hi": f"en-IN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "en-es": f"es-US-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "es-US": f"es-US-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "es-ES": f"es-ES-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "es-MX": f"es-US-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "cmn-CN": f"cmn-CN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "cmn-TW": f"cmn-TW-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "zh-CN": f"cmn-CN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "zh-TW": f"cmn-TW-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "yue-CN": f"yue-CN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "hi-IN": f"hi-IN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "ko-KR": f"ko-KR-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "ja-JP": f"ja-JP-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "fr-FR": f"fr-FR-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "fr-CA": f"fr-CA-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "de-DE": f"de-DE-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "pt-BR": f"pt-BR-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "it-IT": f"it-IT-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "nl-NL": f"nl-NL-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "nl-BE": f"nl-BE-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "sv-SE": f"sv-SE-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "da-DK": f"da-DK-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "fi-FI": f"fi-FI-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "pl-PL": f"pl-PL-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "tr-TR": f"tr-TR-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "id-ID": f"id-ID-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "mr-IN": f"mr-IN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "ro-RO": f"ro-RO-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "ta-IN": f"ta-IN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "te-IN": f"te-IN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
+    "vi-VN": f"vi-VN-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}",
 }
 
 NORMALIZED_DEFAULT_VOICES: dict[str, str] = {
@@ -641,14 +672,14 @@ APP_RESOURCE_RE = re.compile(
 
 
 def get_default_v2_voice(locale: str) -> str:
-    """Returns the fallback Chirp3-HD-Zephyr voice identifier for a locale."""
+    """Returns the default Chirp3-HD-Aoede voice identifier for a locale."""
     norm = locale.strip().lower().replace("_", "-")
     if norm in NORMALIZED_DEFAULT_VOICES:
         return NORMALIZED_DEFAULT_VOICES[norm]
     prefix = norm.split("-")[0]
     if prefix in NORMALIZED_DEFAULT_VOICES:
         return NORMALIZED_DEFAULT_VOICES[prefix]
-    return f"{locale}-Chirp3-HD-Zephyr"
+    return f"{locale}-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}"
 
 
 def derive_locale_voice(
@@ -661,7 +692,7 @@ def derive_locale_voice(
     If the default locale uses `en-AU-Chirp3-HD-Aoede`, a new `es-US` locale
     gets `es-US-Chirp3-HD-Aoede`, so every language sounds like the same
     speaker. If the default locale uses a custom voice from `customVoiceSamples`,
-    reuses that custom voice key. Falls back to the Zephyr default when no
+    reuses that custom voice key. Falls back to the Aoede default when no
     Chirp 3 HD or custom persona is configured.
     """
     clean_persona = str(persona_voice or "").strip()
@@ -1175,6 +1206,7 @@ class VoiceAgentV2Auditor:
         dry_run: bool = False,
         backup: bool = False,
         bind_custom_voice: str | None = None,
+        prebuilt_voice: str | None = None,
     ):
         self.workspace_path = pathlib.Path(workspace_dir).resolve()
         self.app_json_path = self._find_app_json()
@@ -1188,7 +1220,26 @@ class VoiceAgentV2Auditor:
         self.bind_custom_voice = (
             bind_custom_voice.strip() if bind_custom_voice else None
         )
+        self.prebuilt_voice = self._normalize_prebuilt_persona(prebuilt_voice)
+        if self.bind_custom_voice and self.prebuilt_voice:
+            raise ValueError(
+                "Cannot specify both bind_custom_voice and prebuilt_voice."
+            )
         self.planned_diffs: list[str] = []
+
+    @staticmethod
+    def _normalize_prebuilt_persona(prebuilt_voice: str | None) -> str | None:
+        if prebuilt_voice is None:
+            return None
+        cleaned = prebuilt_voice.strip()
+        if not cleaned or cleaned.lower() == "auto":
+            return DEFAULT_PREBUILT_PERSONA
+        match = CHIRP3_VOICE_RE.match(cleaned)
+        if match:
+            cleaned = match.group("name")
+        if cleaned.islower():
+            return cleaned[:1].upper() + cleaned[1:]
+        return cleaned
 
     def _find_app_json(self) -> pathlib.Path:
         direct = self.workspace_path / "app.json"
@@ -1708,8 +1759,11 @@ class VoiceAgentV2Auditor:
                         "recommended": (
                             "Bind synthesizeSpeechConfigs.<locale>.voice to "
                             f"'{sample_name}' (--remediate --bind-custom-voice "
-                            f"'{sample_name}' or 'auto' does this automatically) "
-                            "or remove the unused entry from customVoiceSamples."
+                            f"'{sample_name}' or 'auto' does this automatically), "
+                            "or if using a prebuilt voice instead, default to "
+                            f"'{DEFAULT_PREBUILT_PERSONA}' "
+                            f"('<locale>-Chirp3-HD-{DEFAULT_PREBUILT_PERSONA}') "
+                            "and remove the unused entry from customVoiceSamples."
                         ),
                     }
                 )
@@ -1733,6 +1787,7 @@ class VoiceAgentV2Auditor:
                 )
 
         if not speech_cfgs:
+            default_suggested = get_default_v2_voice(default_lang)
             issues.append(
                 {
                     "code": "MISSING_SYNTHESIZE_SPEECH_CONFIGS",
@@ -1741,8 +1796,11 @@ class VoiceAgentV2Auditor:
                     "message": "audioProcessingConfig.synthesizeSpeechConfigs is missing or empty.",
                     "recommended": (
                         f"Configure synthesizeSpeechConfigs for {declared_langs} "
-                        "with a Chirp 3 HD voice and a ~12-word speaker profile "
-                        "(or an empty speaking style)."
+                        f"with default prebuilt '{DEFAULT_PREBUILT_PERSONA}' "
+                        f"(e.g. '{default_suggested}'; --remediate scaffolds "
+                        "declared locales automatically) or your "
+                        "customVoiceSamples key, plus a ~12-word speaker "
+                        "profile for prebuilt voices (or an empty speaking style)."
                     ),
                 }
             )
@@ -1907,11 +1965,14 @@ class VoiceAgentV2Auditor:
                         "message": (
                             f"Locale '{lang}' uses voice='{voice}'; expected a "
                             "*-Chirp3-HD-* or customVoiceSamples voice. --remediate "
-                            "reports this but does not replace the voice."
+                            "reports this without replacing it unless --prebuilt-voice "
+                            "is passed."
                         ),
                         "recommended": (
-                            f"Consider '{suggested_voice}' (verify it exists for "
-                            "this locale and matches your brand voice)."
+                            f"Use '{suggested_voice}' (default prebuilt voice is "
+                            f"'{DEFAULT_PREBUILT_PERSONA}'; run --remediate "
+                            "--prebuilt-voice to apply across locales, and verify "
+                            "it exists for this locale) or bind a custom voice."
                         ),
                     }
                 )
@@ -2904,8 +2965,17 @@ class VoiceAgentV2Auditor:
                     target_custom_voice = next(iter(custom_voice_names))
                 elif self.bind_custom_voice in custom_voice_names:
                     target_custom_voice = self.bind_custom_voice
-            persona_voice = target_custom_voice or self._persona_voice(
-                speech_cfgs, default_lang, custom_voice_names
+            target_prebuilt_seed = (
+                f"en-US-Chirp3-HD-{self.prebuilt_voice}"
+                if self.prebuilt_voice
+                else None
+            )
+            persona_voice = (
+                target_custom_voice
+                or target_prebuilt_seed
+                or self._persona_voice(
+                    speech_cfgs, default_lang, custom_voice_names
+                )
             )
             default_cfg = speech_cfgs.get(default_lang)
             default_rate = (
@@ -2932,6 +3002,13 @@ class VoiceAgentV2Auditor:
                     app_changed = True
                     continue
                 cfg = speech_cfgs[lang]
+                desired_prebuilt = (
+                    derive_locale_voice(
+                        lang, target_prebuilt_seed, custom_voice_names
+                    )
+                    if target_prebuilt_seed
+                    else None
+                )
                 if (
                     target_custom_voice
                     and str(cfg.get("voice") or "").strip()
@@ -2942,6 +3019,18 @@ class VoiceAgentV2Auditor:
                     changes.append(
                         f"Bound '{lang}' voice to custom voice "
                         f"'{target_custom_voice}'"
+                        + (f" (was '{old_v}')." if old_v else ".")
+                    )
+                    app_changed = True
+                elif (
+                    desired_prebuilt
+                    and str(cfg.get("voice") or "").strip() != desired_prebuilt
+                ):
+                    old_v = str(cfg.get("voice") or "").strip()
+                    cfg["voice"] = desired_prebuilt
+                    changes.append(
+                        f"Set '{lang}' voice to prebuilt voice "
+                        f"'{desired_prebuilt}'"
                         + (f" (was '{old_v}')." if old_v else ".")
                     )
                     app_changed = True
@@ -3136,7 +3225,8 @@ def main() -> None:
         action="store_true",
         help="With --remediate: save <file>.bak before changing a file.",
     )
-    parser.add_argument(
+    voice_group = parser.add_mutually_exclusive_group()
+    voice_group.add_argument(
         "--bind-custom-voice",
         type=str,
         default=None,
@@ -3144,6 +3234,19 @@ def main() -> None:
             "With --remediate: bind synthesizeSpeechConfigs.<locale>.voice "
             "across declared locales to the given customVoiceSamples name "
             "(or 'auto' when exactly one custom voice exists)."
+        ),
+    )
+    voice_group.add_argument(
+        "--prebuilt-voice",
+        nargs="?",
+        const=DEFAULT_PREBUILT_PERSONA,
+        default=None,
+        metavar="PERSONA",
+        help=(
+            "With --remediate: set synthesizeSpeechConfigs.<locale>.voice "
+            "across declared locales to '<locale>-Chirp3-HD-<PERSONA>' "
+            f"(defaults to '{DEFAULT_PREBUILT_PERSONA}' when passed without "
+            "a value or with 'auto')."
         ),
     )
     parser.add_argument(
@@ -3171,6 +3274,7 @@ def main() -> None:
         dry_run=args.dry_run,
         backup=args.backup,
         bind_custom_voice=args.bind_custom_voice,
+        prebuilt_voice=args.prebuilt_voice,
     )
 
     if args.lint_report:

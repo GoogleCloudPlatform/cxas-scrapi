@@ -670,7 +670,7 @@ def test_custom_voice_audit_and_remediation(tmp_path: pathlib.Path) -> None:
     assert samples[1]["voiceInstructionMode"] == "NO_INSTRUCTION"
     assert any("agent_voice" in s for s in res["removed_styles"])
 
-    # Missing es-US locale inherits the custom voice key instead of Chirp3-HD-Zephyr,
+    # Missing es-US locale inherits the custom voice key instead of Chirp3-HD-Aoede,
     # and en-AU's conflicting short speaking style is cleared to ""
     speech = out["audioProcessingConfig"]["synthesizeSpeechConfigs"]
     assert speech["en-AU"]["instruction"] == ""
@@ -721,3 +721,166 @@ def test_bind_custom_voice_auto_one_pass(tmp_path: pathlib.Path) -> None:
     assert sample["voiceInstruction"] == ""
     assert sample["voiceInstructionMode"] == "NO_INSTRUCTION"
     assert "previewAudioContent" not in sample
+
+
+def test_default_prebuilt_voice_is_aoede() -> None:
+    assert aud.DEFAULT_PREBUILT_PERSONA == "Aoede"
+    assert aud.get_default_v2_voice("en-US") == "en-US-Chirp3-HD-Aoede"
+    assert aud.get_default_v2_voice("en-AU") == "en-AU-Chirp3-HD-Aoede"
+    assert aud.get_default_v2_voice("es-MX") == "es-US-Chirp3-HD-Aoede"
+    assert aud.get_default_v2_voice("zh-CN") == "cmn-CN-Chirp3-HD-Aoede"
+    assert aud.get_default_v2_voice("nl-NL") == "nl-NL-Chirp3-HD-Aoede"
+    assert aud.get_default_v2_voice("ar-XA") == "ar-XA-Chirp3-HD-Aoede"
+    assert aud.derive_locale_voice("hi-IN", None) == "hi-IN-Chirp3-HD-Aoede"
+    assert aud.derive_locale_voice("ko-KR", "") == "ko-KR-Chirp3-HD-Aoede"
+
+
+def test_remediate_scaffolds_aoede_when_speech_configs_or_voices_missing(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = _make_app(
+        tmp_path,
+        supported=("es-US", "hi-IN"),
+        speech={},
+        extra_app={
+            "audioProcessingConfig": {
+                "synthesizeSpeechConfigs": {},
+                "customVoiceSamples": [
+                    {
+                        "name": "UnusedCustomSample",
+                        "voiceSampleGcsUri": "gs://bucket/sample.wav",
+                        "consentAudioGcsUri": "gs://bucket/consent.wav",
+                        "voiceInstruction": "",
+                        "voiceInstructionMode": "NO_INSTRUCTION",
+                    }
+                ],
+            }
+        },
+    )
+    missing_cfg = [
+        i
+        for i in _issues(app)
+        if i["code"] == "MISSING_SYNTHESIZE_SPEECH_CONFIGS"
+    ]
+    assert len(missing_cfg) == 1
+    assert "en-AU-Chirp3-HD-Aoede" in missing_cfg[0]["recommended"]
+
+    aud.VoiceAgentV2Auditor(app).remediate()
+    out = json.loads((app / "app.json").read_text())
+    speech = out["audioProcessingConfig"]["synthesizeSpeechConfigs"]
+    assert speech["en-AU"]["voice"] == "en-AU-Chirp3-HD-Aoede"
+    assert speech["es-US"]["voice"] == "es-US-Chirp3-HD-Aoede"
+    assert speech["hi-IN"]["voice"] == "hi-IN-Chirp3-HD-Aoede"
+
+
+def test_prebuilt_voice_flag_switches_legacy_and_custom_to_aoede_or_persona(
+    tmp_path: pathlib.Path,
+) -> None:
+    legacy_dir = tmp_path / "legacy"
+    _make_app(
+        legacy_dir,
+        supported=("es-US",),
+        speech={
+            "en-AU": {"voice": "en-AU-Neural2-B", "instruction": ""},
+            "es-US": {"voice": "es-US-Neural2-A", "instruction": ""},
+        },
+    )
+    non_chirp = [
+        i for i in _issues(legacy_dir) if i["code"] == "NON_CHIRP3_HD_VOICE"
+    ]
+    assert any("en-AU-Chirp3-HD-Aoede" in i["recommended"] for i in non_chirp)
+
+    # Default --prebuilt-voice ("auto" / const="Aoede") applies Aoede across locales
+    res = aud.VoiceAgentV2Auditor(legacy_dir, prebuilt_voice="auto").remediate()
+    assert res["post_remediation_audit"]["overall_status"] == "PASSED"
+    speech = json.loads((legacy_dir / "app.json").read_text())[
+        "audioProcessingConfig"
+    ]["synthesizeSpeechConfigs"]
+    assert speech["en-AU"]["voice"] == "en-AU-Chirp3-HD-Aoede"
+    assert speech["es-US"]["voice"] == "es-US-Chirp3-HD-Aoede"
+
+    # Explicit persona override (e.g. "puck") switches from custom voice to Puck
+    custom_dir = tmp_path / "custom"
+    _make_app(
+        custom_dir,
+        supported=("es-US",),
+        speech={
+            "en-AU": {"voice": "BrandVoice", "instruction": ""},
+            "es-US": {"voice": "BrandVoice", "instruction": ""},
+        },
+    )
+    aud.VoiceAgentV2Auditor(custom_dir, prebuilt_voice="puck").remediate()
+    speech_puck = json.loads((custom_dir / "app.json").read_text())[
+        "audioProcessingConfig"
+    ]["synthesizeSpeechConfigs"]
+    assert speech_puck["en-AU"]["voice"] == "en-AU-Chirp3-HD-Puck"
+    assert speech_puck["es-US"]["voice"] == "es-US-Chirp3-HD-Puck"
+
+    with pytest.raises(ValueError, match="Cannot specify both"):
+        aud.VoiceAgentV2Auditor(
+            legacy_dir, bind_custom_voice="Claire", prebuilt_voice="Aoede"
+        )
+
+
+def test_remediate_preserves_existing_non_aoede_chirp3_persona(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = _make_app(
+        tmp_path,
+        supported=("es-US",),
+        speech={"en-AU": {"voice": "en-AU-Chirp3-HD-Puck", "instruction": ""}},
+    )
+    aud.VoiceAgentV2Auditor(app).remediate()
+    speech = json.loads((app / "app.json").read_text())[
+        "audioProcessingConfig"
+    ]["synthesizeSpeechConfigs"]
+    assert speech["en-AU"]["voice"] == "en-AU-Chirp3-HD-Puck"
+    assert speech["es-US"]["voice"] == "es-US-Chirp3-HD-Puck"
+
+
+def test_cli_prebuilt_voice_default_and_mutual_exclusion(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _make_app(
+        tmp_path,
+        supported=("es-US",),
+        speech={
+            "en-AU": {"voice": "en-AU-Neural2-B", "instruction": ""},
+            "es-US": {"voice": "es-US-Neural2-A", "instruction": ""},
+        },
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "audit_agent_v2.py",
+            "--workspace",
+            str(app),
+            "--remediate",
+            "--prebuilt-voice",
+            "--json",
+        ],
+    )
+    aud.main()
+    speech = json.loads((app / "app.json").read_text())[
+        "audioProcessingConfig"
+    ]["synthesizeSpeechConfigs"]
+    assert speech["en-AU"]["voice"] == "en-AU-Chirp3-HD-Aoede"
+    assert speech["es-US"]["voice"] == "es-US-Chirp3-HD-Aoede"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "audit_agent_v2.py",
+            "--workspace",
+            str(app),
+            "--remediate",
+            "--prebuilt-voice",
+            "--bind-custom-voice",
+            "auto",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        aud.main()

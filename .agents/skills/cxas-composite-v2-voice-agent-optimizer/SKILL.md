@@ -2,7 +2,8 @@
 name: cxas-composite-v2-voice-agent-optimizer
 description: >-
   Audits, migrates, and optimizes CXAS / CES conversational voice agents for Gemini Composite V2
-  (gemini-composite-v2 / 3.8 TTS) with prebuilt Chirp 3 HD or custom cloned voices (customVoiceSamples).
+  (gemini-composite-v2 / 3.8 TTS) with prebuilt Chirp 3 HD voices (defaulting to Aoede,
+  *-Chirp3-HD-Aoede) or custom cloned voices (customVoiceSamples).
   Covers V1-to-V2 migration (clearing V1 Director's Notes, converting [tag] to <tag>, remapping
   low-performing tags, and relocating mid-sentence style tags), ~12-word vertical speaker-identity
   speaking styles (or empty style + NO_INSTRUCTION for custom voices), angle-bracket <...> sound/pause
@@ -41,7 +42,7 @@ ______________________________________________________________________
 | Dimension              | Legacy Composite V1                                       | Composite V2 (`gemini-composite-v2`)                                                                                                                                                                                                                      |
 | :--------------------- | :-------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Model ID**           | `"model": "gemini-composite-v1"`                          | **`"model": "gemini-composite-v2"`** (temperature and `speakingRate` are not V2 requirements).                                                                                                                                                            |
-| **Speaking Style**     | `# AUDIO PROFILE` + `# THE SCENE` + `# DIRECTOR'S NOTES`  | **Prebuilt (`*-Chirp3-HD-*`):** ~12-word speaker profile (`""` secondary). **Custom (`customVoiceSamples[]`):** `""` + `"voiceInstructionMode": "NO_INSTRUCTION"`.                                                                                        |
+| **Speaking Style**     | `# AUDIO PROFILE` + `# THE SCENE` + `# DIRECTOR'S NOTES`  | **Prebuilt (`*-Chirp3-HD-*`, default `Aoede`):** ~12-word speaker profile (`""` secondary). **Custom (`customVoiceSamples[]`):** `""` + `"voiceInstructionMode": "NO_INSTRUCTION"`.                                                                       |
 | **Sound & Pause Tags** | Square brackets (`[short pause]`, `[sigh]`, `[uhm]`)      | **Angle brackets (`<...>`) ONLY — zero `[...]` and zero `</...>`**: `<breath>`, `<exhales>`, `<sigh>`, `<laugh>`, `<chuckle>`, `<gasp>`, `<throat-clearing>`, `<short pause>`, `<long pause>`, optional `<prosody rate="N%">`.                            |
 | **Tone Transitions**   | Square-bracket `[positive]`, `[neutral]`, `[reassuring]`  | **Sentence-opening tone tags**: `<calm>`, `<empathetic>`, `<warm>`, `<positive>`, `<enthusiasm>`, `<clear>`, `<determination>`, `<interest>`, `<relief>`, `<sympathetic>`.                                                                                |
 | **Tag Remapping**      | `[reassuring]`, `[curiosity]`, `[professional]`, `[slow]` | Remaps `reassuring` → `<empathetic>`, `curiosity` → `<interest>`, `professional` → `<clear>`, `medium pause` → `<short pause>`, `slow` → `<prosody rate="65%">`, drops `<neutral>` / `[uhm]` (see P1.2 & `references/natural_speech_patterns_v2.md` §2D). |
@@ -58,7 +59,7 @@ Run through this prioritized checklist (P0 → P1 → P2) whenever auditing, mig
 - [ ] **P0.1 (`app.json` & Agent Model ID, Locale Speech Configs, Custom Voice Samples & Speaking Style):**
   - `modelSettings.model` in `app.json` is `"gemini-composite-v2"`, and any agent-level `modelSettings.model` override in `agents/*/*.json` that still points to an older Composite model is upgraded too. `--remediate` upgrades only an older Composite model or a missing model; any other model is reported for the app owner to decide.
   - Temperature and `speakingRate` are **not** Composite V2 requirements: the auditor reports temperature only as a P2 advisory, and `--remediate` never changes temperature or `speakingRate`.
-  - Every declared language (`defaultLanguageCode` + `supportedLanguageCodes`) has a matching entry in `audioProcessingConfig.synthesizeSpeechConfigs` with a `voice` set (and no deprecated inline `voiceSampleGcsUri`, reported as `DEPRECATED_INLINE_VOICE_SAMPLE_URI`).
+  - Every declared language (`defaultLanguageCode` + `supportedLanguageCodes`) has a matching entry in `audioProcessingConfig.synthesizeSpeechConfigs` with a `voice` set (defaulting to `<locale>-Chirp3-HD-Aoede` whenever prebuilt voices are used and no existing Chirp 3 HD persona is configured, and with no deprecated inline `voiceSampleGcsUri`, reported as `DEPRECATED_INLINE_VOICE_SAMPLE_URI`).
   - **Custom Cloned Voice Sample Completeness (`customVoiceSamples[]`):** When `audioProcessingConfig.customVoiceSamples` is used, every entry must set valid `gs://...` URIs for **both** `voiceSampleGcsUri` and `consentAudioGcsUri` (`CUSTOM_VOICE_MISSING_GCS_URI`; missing either causes CES to silently fall back to a prebuilt voice at runtime) and set `"voiceInstructionMode": "NO_INSTRUCTION"` (`CUSTOM_VOICE_INSTRUCTION_MODE_NOT_DISABLED`, auto-fixed by `--remediate` so `cxas push` never auto-generates an `<agent_voice>` DSP block or restores a cached `priorVoiceInstruction` from Spanner).
   - **Zero V1 Director's Notes:** `synthesizeSpeechConfigs.<locale>.instruction` and `customVoiceSamples[].voiceInstruction` contain **no** `# Audio Profile`, `# The Scene`, `# Director's note`, `## Transcript:`, or `<agent_voice>` blocks. `--remediate` clears them to `""` (and sets `"voiceInstructionMode": "NO_INSTRUCTION"` on custom voices) and prints the removed text; `--remediate` never injects a style automatically.
 - [ ] **P0.2 (Angle-Bracket `<...>` Tag Syntax, Zero `[...]` Tags, Zero Translated Tags & Zero Closing Tags):**
@@ -72,8 +73,8 @@ Run through this prioritized checklist (P0 → P1 → P2) whenever auditing, mig
 ### 🟡 Priority P1: Voice Persona, Speaking Style, Tag Remapping, Placement, Tool-Scoped Normalization & Contradiction Check
 
 - [ ] **P1.1 (Voice Persona, Multi-Locale Enablement & Speaking Style Design — Prebuilt vs. Custom Cloned Voices):**
-  - **Voice persona & multi-locale enablement:** Use any `*-Chirp3-HD-*` voice or a custom voice from `customVoiceSamples[]`, and keep the same voice persona across locales (for example, Aoede or your custom voice key in every locale). Verify that the voice exists for each locale. Non-Chirp voices not in `customVoiceSamples[]` are reported (`NON_CHIRP3_HD_VOICE`) and never replaced automatically. When `languageSettings.supportedLanguageCodes` declares additional locales, `languageSettings.enableMultilingualSupport` must be `true` (`MULTILINGUAL_SUPPORT_NOT_ENABLED`, auto-fixed by `--remediate`). When `--remediate` adds a missing locale, it reuses the default locale's Chirp 3 HD persona or custom voice key and copies its `speakingRate`.
-  - **Prebuilt Voices (`*-Chirp3-HD-*`) — Primary recommendation: ~12-word vertical speaker profile (`""` as secondary alternative):** By default, recommend a short description of **about a dozen words** (≤ 25 words max) describing **who the speaker is** (age, vocal timbre, pitch, accent, and pace), adapted from the vertical industry examples in `references/natural_speech_patterns_v2.md` §1 (**General Support**, **Retail Support**, **Banking**, **Telecom**, **Travel**) to match the app's vertical, Chirp 3 HD voice gender, and locale (e.g., `"Friendly American woman in her early 30s, warm mid-pitch voice, relaxed conversational pace"`). Offer an empty speaking style (`"instruction": ""`) as the secondary alternative.
+  - **Voice persona & multi-locale enablement (`Aoede` default for prebuilt voices):** If the **prebuilt voice type** is chosen instead of a custom cloned voice (`customVoiceSamples[]`)—including new apps, missing/empty `synthesizeSpeechConfigs` or `voice` fields, migrations from legacy non-Chirp voices (`NON_CHIRP3_HD_VOICE`), or switching off a custom voice—**`Aoede` (`<locale>-Chirp3-HD-Aoede`, e.g., `en-US-Chirp3-HD-Aoede`, `en-AU-Chirp3-HD-Aoede`) MUST be used as the default voice persona across all declared locales**, unless the app already configures another valid `*-Chirp3-HD-*` persona the owner wants to keep or the user explicitly requests a different Chirp 3 HD voice (such as `Puck` or `Kore`). Keep the same voice persona across every locale and verify that the voice exists for each locale. Non-Chirp voices not in `customVoiceSamples[]` are reported (`NON_CHIRP3_HD_VOICE`) and only replaced when confirmed (`--remediate --prebuilt-voice` applies `<locale>-Chirp3-HD-Aoede` across all declared locales). When `languageSettings.supportedLanguageCodes` declares additional locales, `languageSettings.enableMultilingualSupport` must be `true` (`MULTILINGUAL_SUPPORT_NOT_ENABLED`, auto-fixed by `--remediate`). When `--remediate` adds a missing locale, it reuses the default locale's Chirp 3 HD persona (falling back to `Aoede`) or custom voice key and copies its `speakingRate`.
+  - **Prebuilt Voices (`*-Chirp3-HD-*`, default `Aoede`) — Primary recommendation: ~12-word vertical speaker profile (`""` as secondary alternative):** By default, recommend a short description of **about a dozen words** (≤ 25 words max) describing **who the speaker is** (age, vocal timbre, pitch, accent, and pace), adapted from the vertical industry examples in `references/natural_speech_patterns_v2.md` §1 (**General Support**, **Retail Support**, **Banking**, **Telecom**, **Travel**) to match the app's vertical, Chirp 3 HD voice gender (feminine by default when using `Aoede`), and locale (e.g., `"Friendly American woman in her early 30s, warm mid-pitch voice, relaxed conversational pace"`). Offer an empty speaking style (`"instruction": ""`) as the secondary alternative.
   - **Custom Cloned Voices (`customVoiceSamples[]`) — Primary recommendation: `""` for both `voiceInstruction` and locale `instruction` + `"voiceInstructionMode": "NO_INSTRUCTION"`:** Because the 10–20s reference `.wav` (`voiceSampleGcsUri`) already supplies the speaker's acoustic identity (age, gender, timbre, pitch, accent) and CES concatenates `synthesizeSpeechConfigs.<locale>.instruction` + `customVoiceSamples[].voiceInstruction` into `speechMetadata.style`, any text speaker description competes with the reference audio embedding and causes speaker-similarity drift over 20+ turn calls (`CUSTOM_VOICE_INSTRUCTION_TOO_LONG`, `CUSTOM_VOICE_LOCALE_STYLE_CONFLICT`). Leave **both** fields empty (`""`), set `"voiceInstructionMode": "NO_INSTRUCTION"`, and bind the custom voice across all declared locales (`--remediate --bind-custom-voice auto`) for zero-shot cross-lingual speaker continuity. When an English custom voice speaks a Latin-script secondary language (such as Spanish `es-US`), spell English acronyms phonetically in the target language (e.g., `ene-be-ene` for `NBN`) and avoid ALL-CAPS stress on cognates (`módems`, `facturas`) so the English reference embedding does not pronounce them in English.
   - **Never copy an English-locale accent into non-English locales:** If you write a short speaker profile for `en-US` or `en-AU`, do **not** copy `"American woman..."` or `"Australian woman..."` into `es-US`, `hi-IN`, `cmn-CN`, or `ko-KR` (`LOCALE_SPEAKER_PROFILE_ACCENT_MISMATCH`), as it forces a foreign English accent onto non-English speech. Use a locale-neutral/native speaker profile (e.g., `"Woman in her early 30s, warm mid-pitch voice, relaxed conversational pace"`) or leave non-English locale `instruction` fields empty (`""`).
   - **Don't use feeling words as a speaking style:** `"warm, friendly, natural, professional"` describes how the speaker feels, not who the speaker is. For prebuilt voices, replace it with a ~12-word vertical speaker profile from `references/natural_speech_patterns_v2.md` §1 as the primary option (or `""` as the secondary option). Never put temporary emotions in `synthesizeSpeechConfigs.<locale>.instruction`; use inline angle-bracket tags for moment-to-moment emotion.
@@ -103,7 +104,7 @@ Run through this prioritized checklist (P0 → P1 → P2) whenever auditing, mig
   - Speak a short 2–5 word pre-tool bridge in the caller's active language (`{user_language}`) before latency-sensitive tool calls, avoid echoing the same noun phrase in the post-tool opening, and connect with a soft conversational opener (`"Okay, so..."`, `"Right, so..."`).
   - **Multi-language register, voice-persona gender agreement & non-Latin script purity:**
     - Use polite metropolitan register (`usted` in Spanish, `आप`/`जी` in Hindi, `您` in Mandarin, `해요체` in Korean, `丁寧語` in Japanese).
-    - In gendered languages (Hindi `सकती हूँ` vs. `सकता हूँ`, Spanish `encantada` vs. `encantado`, French, Portuguese), match first-person verb and adjective gender to the configured Chirp 3 HD voice persona (`Aoede`/`Zephyr`/`Kore`/`Leda` = female; `Puck`/`Charon`/`Fenrir`/`Orus` = male).
+    - In gendered languages (Hindi `सकती हूँ` vs. `सकता हूँ`, Spanish `encantada` vs. `encantado`, French, Portuguese), match first-person verb and adjective gender to the configured Chirp 3 HD voice persona (`Aoede` [default prebuilt voice]/`Zephyr`/`Kore`/`Leda` = female; `Puck`/`Charon`/`Fenrir`/`Orus` = male).
     - When responding in a non-Latin script (especially Devanagari Hindi, Mandarin, Korean, or Japanese after the caller switches languages from an English session), write brand names, technical acronyms, and loanwords phonetically in the **native script** (e.g., Devanagari `'वाई-फाई'` and `'सिम'` instead of Latin `'Wi-Fi'` and `'SIM'`, checked as `MIXED_LATIN_IN_DEVANAGARI_UTTERANCE`) and avoid dense English loanword chains separated by `और` (which sounds like English `"or"` and can trigger mid-sentence English code-switching in TTS).
 - [ ] **P1.5 (Mandatory Prompt Contradiction Check & Explicit Agent Overrides):**
   - Check tag rules and normalization rules in three passes: (1) within `global_instruction.txt`, every rule against every other; (2) `global_instruction.txt` against each sub-agent (`agents/*/instruction.txt`) and its tools and docstrings; (3) callbacks and eval/test assertions (for example, a test that forbids adjacent or stacked tags blocks `<calm><empathetic>`).
@@ -131,50 +132,50 @@ ______________________________________________________________________
 
 Each auditor finding carries one of these codes (shown in the `--report` output and its `--json` form):
 
-| Code                                         | Priority | Fixed by `--remediate`?                                  |
-| :------------------------------------------- | :------- | :------------------------------------------------------- |
-| `MODEL_NOT_COMPOSITE_V2`                     | P0       | Yes (older Composite or missing model)                   |
-| `AGENT_MODEL_NOT_COMPOSITE_V2`               | P0       | Yes (older Composite overrides)                          |
-| `MISSING_SYNTHESIZE_SPEECH_CONFIGS`          | P0       | No                                                       |
-| `MISSING_LOCALE_SPEECH_CONFIG`               | P0       | Yes                                                      |
-| `MISSING_VOICE_ID`                           | P0       | Yes                                                      |
-| `LEGACY_V1_DIRECTORS_NOTE_IN_V2_STYLE`       | P0       | Yes (cleared)                                            |
-| `CUSTOM_VOICE_DIRECTORS_NOTE`                | P0       | Yes (clears `voiceInstruction`, sets `NO_INSTRUCTION`)   |
-| `CUSTOM_VOICE_INSTRUCTION_MODE_NOT_DISABLED` | P0       | Yes (sets `voiceInstructionMode: NO_INSTRUCTION`)        |
-| `CUSTOM_VOICE_MISSING_GCS_URI`               | P0       | No (missing `gs://` on sample or consent URI)            |
-| `DEPRECATED_INLINE_VOICE_SAMPLE_URI`         | P0       | No (deprecated inline `voiceSampleGcsUri`)               |
-| `LEGACY_V1_SQUARE_BRACKET_TAG`               | P0       | Yes                                                      |
-| `TRANSLATED_AUDIO_TAG`                       | P0       | Yes (converts to English `<...>` tags)                   |
-| `CLOSING_AUDIO_TAG_FORBIDDEN`                | P0       | Yes                                                      |
-| `MISSING_INSTRUCTION_FILE`                   | P0       | No                                                       |
-| `NO_INSTRUCTIONS_FOUND`                      | P0       | No                                                       |
-| `I015` / `V104` (structural lint)            | P0       | No                                                       |
-| `NON_CHIRP3_HD_VOICE`                        | P1       | No                                                       |
-| `MULTILINGUAL_SUPPORT_NOT_ENABLED`           | P1       | Yes (enables `enableMultilingualSupport`)                |
-| `LOCALE_SPEAKER_PROFILE_ACCENT_MISMATCH`     | P1       | No (English accent in non-English locale)                |
-| `SPEAKING_STYLE_TOO_LONG`                    | P1       | Yes (cleared)                                            |
-| `CUSTOM_VOICE_INSTRUCTION_TOO_LONG`          | P1       | Yes (clears `voiceInstruction`, sets `NO_INSTRUCTION`)   |
-| `CUSTOM_VOICE_LOCALE_STYLE_CONFLICT`         | P1       | Yes (clears non-empty custom-voice locale `instruction`) |
-| `STALE_V2_AUDIO_TAG`                         | P1       | Yes                                                      |
-| `MIXED_LATIN_IN_DEVANAGARI_UTTERANCE`        | P1       | No (Latin words inside Devanagari utterance)             |
-| `UNEVALUATED_V2_TAG`                         | P1       | No (suggestion only)                                     |
-| `UNRECOGNIZED_BRACKET_TOKEN`                 | P1       | No                                                       |
-| `PROSODY_NOT_FIRST_IN_STACK`                 | P1       | Yes                                                      |
-| `MID_SENTENCE_TAG_PLACEMENT`                 | P1       | Yes (adds comma before pause; moves style tag to start)  |
-| `SIGH_ON_ENDING_OR_TRANSFER_TURN`            | P1       | No (product decision)                                    |
-| `CONTRADICTORY_LEGACY_TAG_RULE`              | P1       | No                                                       |
-| `ELLIPSIS_PAUSE_TAG_COLLISION`               | P1       | No                                                       |
-| `ALL_CAPS_IMMEDIATELY_AFTER_VOCAL_TAG`       | P1       | No                                                       |
-| `MISSING_GLOBAL_INSTRUCTION`                 | P1       | No                                                       |
-| `MISSING_V2_AUDIO_TAG_GUIDANCE`              | P1       | No                                                       |
-| `MISSING_TEXT_NORMALIZATION_BLOCK`           | P1       | No                                                       |
-| `UNSCOPED_TEXT_NORMALIZATION`                | P1       | No                                                       |
-| `MISSING_ALL_CAPS_LEXICAL_STRESS_RULE`       | P1       | No                                                       |
-| `TEMPERATURE_ADVISORY`                       | P2       | No (advisory)                                            |
-| `UNBOUND_CUSTOM_VOICE_SAMPLE`                | P2       | Yes with `--bind-custom-voice <name\|auto>`              |
-| `CUSTOM_VOICE_STALE_PREVIEW_AUDIO_BLOB`      | P2       | Yes (strips `previewAudioContent` from `app.json`)       |
-| `CALLBACK_MISSING_V2_TAG_REGEX`              | P2       | No                                                       |
-| `handoff` / `app_reference`                  | Info     | No (informational cross-app hand-offs)                   |
+| Code                                         | Priority | Fixed by `--remediate`?                                        |
+| :------------------------------------------- | :------- | :------------------------------------------------------------- |
+| `MODEL_NOT_COMPOSITE_V2`                     | P0       | Yes (older Composite or missing model)                         |
+| `AGENT_MODEL_NOT_COMPOSITE_V2`               | P0       | Yes (older Composite overrides)                                |
+| `MISSING_SYNTHESIZE_SPEECH_CONFIGS`          | P0       | Yes (scaffolds declared locales; defaults prebuilt to `Aoede`) |
+| `MISSING_LOCALE_SPEECH_CONFIG`               | P0       | Yes (inherits persona; defaults prebuilt to `Aoede`)           |
+| `MISSING_VOICE_ID`                           | P0       | Yes (inherits persona; defaults prebuilt to `Aoede`)           |
+| `LEGACY_V1_DIRECTORS_NOTE_IN_V2_STYLE`       | P0       | Yes (cleared)                                                  |
+| `CUSTOM_VOICE_DIRECTORS_NOTE`                | P0       | Yes (clears `voiceInstruction`, sets `NO_INSTRUCTION`)         |
+| `CUSTOM_VOICE_INSTRUCTION_MODE_NOT_DISABLED` | P0       | Yes (sets `voiceInstructionMode: NO_INSTRUCTION`)              |
+| `CUSTOM_VOICE_MISSING_GCS_URI`               | P0       | No (missing `gs://` on sample or consent URI)                  |
+| `DEPRECATED_INLINE_VOICE_SAMPLE_URI`         | P0       | No (deprecated inline `voiceSampleGcsUri`)                     |
+| `LEGACY_V1_SQUARE_BRACKET_TAG`               | P0       | Yes                                                            |
+| `TRANSLATED_AUDIO_TAG`                       | P0       | Yes (converts to English `<...>` tags)                         |
+| `CLOSING_AUDIO_TAG_FORBIDDEN`                | P0       | Yes                                                            |
+| `MISSING_INSTRUCTION_FILE`                   | P0       | No                                                             |
+| `NO_INSTRUCTIONS_FOUND`                      | P0       | No                                                             |
+| `I015` / `V104` (structural lint)            | P0       | No                                                             |
+| `NON_CHIRP3_HD_VOICE`                        | P1       | Yes with `--prebuilt-voice [PERSONA]` (default `Aoede`)        |
+| `MULTILINGUAL_SUPPORT_NOT_ENABLED`           | P1       | Yes (enables `enableMultilingualSupport`)                      |
+| `LOCALE_SPEAKER_PROFILE_ACCENT_MISMATCH`     | P1       | No (English accent in non-English locale)                      |
+| `SPEAKING_STYLE_TOO_LONG`                    | P1       | Yes (cleared)                                                  |
+| `CUSTOM_VOICE_INSTRUCTION_TOO_LONG`          | P1       | Yes (clears `voiceInstruction`, sets `NO_INSTRUCTION`)         |
+| `CUSTOM_VOICE_LOCALE_STYLE_CONFLICT`         | P1       | Yes (clears non-empty custom-voice locale `instruction`)       |
+| `STALE_V2_AUDIO_TAG`                         | P1       | Yes                                                            |
+| `MIXED_LATIN_IN_DEVANAGARI_UTTERANCE`        | P1       | No (Latin words inside Devanagari utterance)                   |
+| `UNEVALUATED_V2_TAG`                         | P1       | No (suggestion only)                                           |
+| `UNRECOGNIZED_BRACKET_TOKEN`                 | P1       | No                                                             |
+| `PROSODY_NOT_FIRST_IN_STACK`                 | P1       | Yes                                                            |
+| `MID_SENTENCE_TAG_PLACEMENT`                 | P1       | Yes (adds comma before pause; moves style tag to start)        |
+| `SIGH_ON_ENDING_OR_TRANSFER_TURN`            | P1       | No (product decision)                                          |
+| `CONTRADICTORY_LEGACY_TAG_RULE`              | P1       | No                                                             |
+| `ELLIPSIS_PAUSE_TAG_COLLISION`               | P1       | No                                                             |
+| `ALL_CAPS_IMMEDIATELY_AFTER_VOCAL_TAG`       | P1       | No                                                             |
+| `MISSING_GLOBAL_INSTRUCTION`                 | P1       | No                                                             |
+| `MISSING_V2_AUDIO_TAG_GUIDANCE`              | P1       | No                                                             |
+| `MISSING_TEXT_NORMALIZATION_BLOCK`           | P1       | No                                                             |
+| `UNSCOPED_TEXT_NORMALIZATION`                | P1       | No                                                             |
+| `MISSING_ALL_CAPS_LEXICAL_STRESS_RULE`       | P1       | No                                                             |
+| `TEMPERATURE_ADVISORY`                       | P2       | No (advisory)                                                  |
+| `UNBOUND_CUSTOM_VOICE_SAMPLE`                | P2       | Yes with `--bind-custom-voice <name\|auto>`                    |
+| `CUSTOM_VOICE_STALE_PREVIEW_AUDIO_BLOB`      | P2       | Yes (strips `previewAudioContent` from `app.json`)             |
+| `CALLBACK_MISSING_V2_TAG_REGEX`              | P2       | No                                                             |
+| `handoff` / `app_reference`                  | Info     | No (informational cross-app hand-offs)                         |
 
 ______________________________________________________________________
 
@@ -210,16 +211,17 @@ uv run python .agents/skills/cxas-composite-v2-voice-agent-optimizer/scripts/aud
    ```
    - Inspect `global_instruction.txt`, `agents/*/instruction.txt`, tool descriptions/docstrings, callbacks, and eval/test assertions across all three passes of the **Contradiction Check** (P1.5).
 1. **Batch All User Decisions in One Turn (If Any Require Confirmation):**
-   - Present a recommended **~12-word vertical speaker profile** from [`references/natural_speech_patterns_v2.md` §1](references/natural_speech_patterns_v2.md) adapted to the app's vertical, Chirp 3 HD voice gender, and locale (or offer `""` as the secondary alternative) when replacing a legacy V1 Director's Note or feeling-word style.
+   - When choosing between a prebuilt voice vs. a custom cloned voice (e.g., on a new app, `NON_CHIRP3_HD_VOICE`, or an unbound `customVoiceSamples[]` entry), **if prebuilt voice is chosen without a specific persona request, default to `Aoede` (`<locale>-Chirp3-HD-Aoede`) across all declared locales** (while keeping any already-configured valid `*-Chirp3-HD-*` persona unless the owner wants to change it).
+   - Present a recommended **~12-word vertical speaker profile** from [`references/natural_speech_patterns_v2.md` §1](references/natural_speech_patterns_v2.md) adapted to the app's vertical, Chirp 3 HD voice gender (feminine when using default `Aoede`), and locale (or offer `""` as the secondary alternative) when replacing a legacy V1 Director's Note or feeling-word style.
    - Surface any **P1.5 prompt contradictions** (quoting the conflicting lines and offering options), any **`UNEVALUATED_V2_TAG`** swap suggestions, and ask before adding `<prosody rate>` where the app had none.
-1. **Run Automated In-Place Migration & Remediation** (`--backup` saves `<file>.bak` before changing each file; add `--bind-custom-voice auto` when binding a single `customVoiceSamples[]` voice across all declared locales in one pass). This applies all `Yes` items in [Auditor Finding Codes](#auditor-finding-codes) (`app.json` model/locale/custom-voice remediation per P0.1/P1.1 and `[tag]` → `<tag>` / remap / placement fixes per P0.2/P1.2) and prints any removed speaking styles so you can set the chosen ~12-word speaker profile for prebuilt voices:
+1. **Run Automated In-Place Migration & Remediation** (`--backup` saves `<file>.bak` before changing each file; add `--prebuilt-voice` \[defaults to `Aoede`, or `--prebuilt-voice <Persona>`\] when switching to a prebuilt Chirp 3 HD voice, or `--bind-custom-voice auto` when binding a single `customVoiceSamples[]` voice across all declared locales in one pass). This applies all `Yes` items in [Auditor Finding Codes](#auditor-finding-codes) (`app.json` model/locale/voice/custom-voice remediation per P0.1/P1.1 and `[tag]` → `<tag>` / remap / placement fixes per P0.2/P1.2) and prints any removed speaking styles so you can set the chosen ~12-word speaker profile for prebuilt voices:
    ```bash
    uv run python .agents/skills/cxas-composite-v2-voice-agent-optimizer/scripts/audit_agent_v2.py \
      --workspace="<PATH_TO_CXAS_APP_DIR>" \
      --remediate --backup
    ```
 1. **Apply Semantic Prompt, Speaking Style & Callback Optimizations** using the canonical templates in [`references/natural_speech_patterns_v2.md`](references/natural_speech_patterns_v2.md):
-   - Set `synthesizeSpeechConfigs.<locale>.instruction` to the chosen ~12-word vertical speaker profile (without copying English-locale accents into non-English locales) or `""`.
+   - Ensure `synthesizeSpeechConfigs.<locale>.voice` uses `<locale>-Chirp3-HD-Aoede` whenever prebuilt voice was chosen without another explicit `*-Chirp3-HD-*` persona, and set `synthesizeSpeechConfigs.<locale>.instruction` to the chosen ~12-word vertical speaker profile (without copying English-locale accents into non-English locales) or `""`.
    - Add (or merge into an existing equivalent block) `<instruction id="audio tag format">` and `<instruction id="text normalization for speech">` (including the mandatory **`Scope:`** tool-call guard, target-language number words, and `/IPA/` pronunciation notation) to `global_instruction.txt`.
    - Refactor `<persona>`, `<Affective Delivery and Voice Guidelines>`, `<response_protocol>`, and `<taskflow>` examples non-destructively to enforce concise single-paragraph turns, 1–2 ALL-CAPS stress words (in Latin-script languages), pre-tool bridges + post-tool soft connectors, voice-persona gender agreement, non-Latin script purity, and clean tag placement.
    - Apply the user's chosen resolutions for any P1.5 contradictions and `UNEVALUATED_V2_TAG` items.
