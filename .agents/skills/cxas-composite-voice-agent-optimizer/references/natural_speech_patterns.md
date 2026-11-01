@@ -1,8 +1,30 @@
 # Natural Speech Patterns & Anti-Looping Architecture Guide
 
-With Gemini Composite v2, delivery is steered by **inline audio tags** that the reasoning model writes into its response. Director's Notes are cleared during the migration, and speaking style instructions are either cleared or kept below 12 words so they do not conflict with inline tags. Natural prosody, micro-pauses, emotion attunement, and pacing must therefore be engineered into the global and agent instructions.
+With Gemini Composite v2, delivery is steered by **inline audio tags** that the reasoning model writes into its response. Director's Notes are cleared during migration, and speaking style instructions in `app.json` are kept empty (`""`, mandatory for custom cloned voices) or concise (`≤ 25` words — ideally a ~12-word speaker-identity profile for prebuilt voices) so they do not conflict with inline tags. Natural prosody, micro-pauses, emotion attunement, and pacing are engineered into the global and agent instructions.
 
 See the [Tag Reference](tag_reference.md) for the tag vocabulary, the tags to replace, and syntax rules.
+
+______________________________________________________________________
+
+## 0. Voice Persona, Custom Voice & Speaking Style Configuration (`app.json`)
+
+- **Model (`CV201`):** Set `modelSettings.model` to `"gemini-composite-v2"` in `app.json` (and upgrade any older Composite model overrides in `agents/*/*.json`). `temperature` and `speakingRate` are **not** Composite v2 requirements and are never modified by `--remediate`.
+- **Prebuilt Voices (`CV204`, default `Aoede`):** When using prebuilt Chirp 3 HD voices instead of `customVoiceSamples[]`, default to **`Aoede`** (`<locale>-Chirp3-HD-Aoede`, e.g. `en-US-Chirp3-HD-Aoede`) across all declared locales unless the app already configures another valid `*-Chirp3-HD-*` persona or the user requests a different voice. When `languageSettings.supportedLanguageCodes` declares additional locales, set `"enableMultilingualSupport": true`.
+- **Prebuilt Speaking Style (`CV203`):** Either write a ~12-word speaker-identity profile (`≤ 25` words max) describing **who the speaker is** (age, vocal timbre, pitch, accent, pace) or leave `"instruction": ""`. Never use feeling-word lists (`"warm, friendly, natural, professional"`), and never copy an English accent descriptor (`"American woman..."`, `"Australian woman..."`) into non-English locales (`es-US`, `hi-IN`, `cmn-CN`, `ko-KR`, `CV203`) — omit the English accent word or leave non-English locale instructions `""`.
+- **Custom Cloned Voices (`CV205`, `audioProcessingConfig.customVoiceSamples[]`):** Set valid `gs://...` URIs on **both** `voiceSampleGcsUri` and `consentAudioGcsUri` (never use deprecated inline `synthesizeSpeechConfigs.<lang>.voiceSampleGcsUri`), set `"voiceInstructionMode": "NO_INSTRUCTION"` (so `cxas push` never auto-generates `<agent_voice>` DSP blocks or restores cached `priorVoiceInstruction` text), strip transient `previewAudioContent` blobs, and set **both** `voiceInstruction` and bound `synthesizeSpeechConfigs.<lang>.instruction` to `""`.
+
+| Vertical | Prebuilt Speaking Style (`synthesizeSpeechConfigs.<lang>.instruction`) | Sample Line |
+| :--- | :--- | :--- |
+| **General Support** | `"Friendly American woman in her early 30s, warm mid-pitch voice, relaxed conversational pace"` | `"Hi there, I'd be happy to look into that for you right away."` |
+| **Retail Support** | `"Upbeat woman in her late 20s, bright mid-range voice, quick, friendly cadence"` | `"Thanks for calling. <breath> I can help you track that order. What's your order number?"` |
+| **Banking** | `"Calm man in his 40s, steady low baritone, measured and unhurried delivery"` | `"I can see the charge you're asking about, <short pause> and I'll walk you through it."` |
+| **Telecom** | `"Friendly Southern US woman in her 50s, warm alto, relaxed, patient drawl"` | `"Alright, let's get your internet back up. <short pause> Go ahead and unplug your router."` |
+| **Travel** | `"Young British man, crisp diction, clear tenor voice, brisk yet polite pace"` | `"Good news, <short pause> I found you a seat on the six forty to London. Shall I book it?"` |
+| **Unstyled / Custom** | `""` *(empty — secondary option for prebuilt; mandatory for custom cloned voices)* | `"Right, let me check your account... everything looks SOLID on our end."` |
+
+**Chirp 3 HD Persona Gender Reference (for gendered languages such as Spanish, Hindi, French, Portuguese):**
+- **Female:** `Aoede` *(default)*, `Zephyr`, `Kore`, `Leda`, `Callirrhoe`, `Autonoe`, `Erinome`, `Laomedeia`, `Pulcherrima`, `Vindemiatrix`, `Despina`, `Gacrux`, `Achernar`, `Sulafat`
+- **Male:** `Puck`, `Charon`, `Fenrir`, `Orus`, `Enceladus`, `Iapetus`, `Umbriel`, `Algieba`, `Algenib`, `Rasalgethi`, `Alnilam`, `Schedar`, `Achird`, `Zubenelgenubi`, `Sadachbia`, `Sadaltager`
 
 ______________________________________________________________________
 
@@ -51,16 +73,19 @@ When resolving an issue for an upset caller, never celebrate or sound triumphant
 - ❌ `"<enthusiasm> Great news! I got you onto that morning flight! Isn't that fantastic?"`
 - ✅ `"<calm> Alright, I've confirmed your seat on tomorrow's seven thirty departure to Chicago. <short pause> Your updated boarding pass is in your email."`
 
-Lead with validation, and deliver good news gently.
+Lead with validation, and deliver good news gently. When shifting from empathy to a constructive resolution in the same response for a calmer caller, open the new sentence with a tone tag:
+
+- ✅ `"<calm><empathetic> I'm so sorry your flight was canceled. That's a stressful way to start a trip. <positive> The good news is that I've already rebooked you on the next flight out."`
 
 ### 1.4 Inline Tag Syntax Standards
 
-1. **Angle brackets only:** `<warm>`, `<short pause>`. Never `[warm]`.
-2. **Tags at the sentence start; stacking allowed there:** `<calm><empathetic> I understand.`
-3. **Mid-sentence, only pause tags, after punctuation:** `"I checked your account, <short pause> everything is in order."`
-4. **No closing tags.** Reset pace with `<prosody rate="100%">` instead of `</prosody>`.
-5. **Tag sparsity:** a few tags per turn; do not tag every clause.
-6. **Punctuation:** never use exclamation marks; end sentences with full stops or ellipses.
+1. **Angle brackets & English keywords only (`CV210`):** `<warm>`, `<breath>`, `<short pause>`. Never `[warm]`, and never translate tags into other languages (`<pausa corta>`, `<短暂停顿>`).
+2. **Tags at the sentence start; stacking & mid-turn shifts allowed there:** `<calm><empathetic> I understand. <positive> Here is what we can do.`
+3. **Mid-sentence, only pause tags, after punctuation (`CV214`):** `"I checked your account, <short pause> everything is in order."` Never stack `... <short pause>` (`CV215`).
+4. **No closing tags (`CV213`).** Reset pace with `<prosody rate="100%">` instead of `</prosody>`, and put `<prosody rate="N%">` first in a stack.
+5. **No ALL-CAPS immediately after `<exhales>` or `<sigh>` (`CV215`):** Keep the first word after `<exhales>` or `<sigh>` normal case and place ALL-CAPS stress later in the clause; never use `<sigh>`, `<sighs>`, or `<exhales>` on call-ending or transfer turns.
+6. **Tag sparsity:** 1–2 tags per turn are plenty; routine turns need no sound tag at all.
+7. **Punctuation:** never use exclamation marks; end sentences with full stops or ellipses.
 
 Rules written for the old format must be rewritten, not kept alongside: *"wrap tags in square brackets"*, *"never stack tags"*, *"do not bunch all tags at the front of a sentence"*.
 
@@ -71,7 +96,7 @@ Rules written for the old format must be rewritten, not kept alongside: *"wrap t
 - **Merge, don't overwrite.** Read the existing global instruction in full first. If it already has a voice or affective delivery section, put the *Audio Tag Format* block (section 4 below) inside it and edit any rule it contradicts in place. Add the full template only when no such section exists.
 - **Where it lives.** `globalInstruction` in `app.json` is a filename pointer (`"globalInstruction": "global_instruction.txt"`). If the app has none, create `global_instruction.txt` beside `app.json` and add the key at the top level of `app.json`.
 - **Match the file's formatting** (heading style, numbering, bullet pattern) and adapt the registers and examples to the customer's domain, keeping the structure: recognize the emotion, pick a register, open the turn with its tags.
-- **Do not add text normalization rules** (numbers, currency, dates, times, IDs, phone numbers, addresses). Composite v2 handles spoken-form normalization in the platform.
+- **Text normalization (`CV217`):** Do **not** add generic text normalization rules when all configured locales are covered by platform runtime inline TTS text normalization (`en-*`, `fr`/`fr-CA`, `es`/`es-US`). Add the `Scope:`-guarded `<instruction id="text normalization for speech">` block in [§2.3](#23-numbers-dates--identifiers) **only** when the app configures unsupported locales or needs domain-specific overrides.
 - **Prosody:** the template has none. If the user wants it, put their rate first in each opener and add the two prosody bullets shown after the template.
 
 ```text
@@ -109,13 +134,14 @@ Use angle-bracket delivery tags to steer the speech synthesis engine. The engine
 
 ### 3. Human Conversational Texture
 Talk like a real customer service representative on the phone, not a script being read:
-- **INLINE TAG WEAVING:** Put style and emotion tags at the start of a sentence or utterance (stacking is allowed there); mid-sentence, use only '<short pause>' or '<long pause>' after punctuation at a natural conversational beat.
-- **HUMAN-LIKE DELIVERY:** Do NOT speak in clean, polished sentences. Include the small sounds people make when thinking while speaking (e.g. "uhmmm"), and occasionally pause and repeat a word while gathering your thoughts.
+- **CONCISE SPOKEN TURNS:** Keep turns concise (typically 2-3 sentences in a single paragraph with spoken contractions in English) and share at most two facts after a tool call before checking in.
+- **INLINE TAG WEAVING:** Put style, emotion, and sound tags ('<breath>', '<exhales>', '<sigh>', '<chuckles>') at the start of a sentence (stacking and sentence-boundary tone shifts are allowed there); mid-sentence, use only '<short pause>' or '<long pause>' after punctuation at a natural conversational beat. One or two tags per turn are plenty.
+- **EMPHASIS, HESITATION & IPA:** Use ellipses ('...') for light hesitation beats (never stack '... <short pause>'), put CAPITAL letters on 1-2 key words per turn in Latin-script languages (never as the very first word right after '<exhales>' or '<sigh>'), and write International Phonetic Alphabet (IPA) pronunciation in slashes (e.g., '/niːv/') for tricky names or terms.
 - **PUNCTUATION:** Never use exclamation marks; end sentences with a full stop.
 
 ### 4. Audio Tag Format
-- Write every audio tag in angle brackets: <empathetic>, <short pause>, <chuckles>.
-- Put style, emotion, and paralinguistic tags at the start of a sentence or utterance. Stacked tags are fine there, e.g. <calm><empathetic>.
+- Write every audio tag in English angle brackets: <empathetic>, <breath>, <short pause>, <chuckles> — never square brackets and never translate tag names into other languages.
+- Put style, emotion, and paralinguistic tags at the start of a sentence or utterance. Stacked tags and mid-turn sentence-opening shifts are fine there, e.g. <calm><empathetic> ... <positive>.
 - Mid-sentence, only pause tags are allowed, and always after punctuation: "I checked your account, <short pause> everything is in order."
 - Never write a closing tag (</prosody>, </warm>, or any </...>). A tag stays in effect until the next one.
 - <sigh>, <sighs>, and <exhales> are fine in an empathetic or sympathetic moment, but never use them in a turn that ends the session or escalates or transfers the call.
@@ -160,7 +186,7 @@ Beyond audio tags, the response text must be written for the ear.
 
 ### 2.1 Micro-Pauses via Ellipses (`...`)
 
-Instruct the model to use ellipses for natural pauses during data retrieval or mid-sentence transitions:
+Instruct the model to use ellipses for natural pauses during data retrieval or mid-sentence transitions (and never combine `...` immediately with `<short pause>`):
 
 - ✅ *Natural:* `"Your seat is confirmed... and your flight boards at gate twenty-two."`
 - ❌ *Monotonic:* `"Your seat is confirmed and your flight boards at gate twenty-two."`
@@ -177,7 +203,25 @@ Use realistic bridge words when retrieving records or transitioning between step
 
 ### 2.3 Numbers, Dates & Identifiers
 
-Composite v2 normalizes numbers, currency, dates, times, phone numbers, and alphanumeric IDs into their spoken form in the platform. **Do not add text normalization or digit-clustering rules** to the global or agent instructions. Keep customer-specific readout rules that already exist (e.g. a NATO-alphabet readout for a code), and report them if they conflict with each other.
+Platform runtime inline TTS text normalization on Composite v2 automatically normalizes standard currencies, dates, clock times, phone numbers, street addresses, postal codes, and alphanumeric IDs on the synthesized audio stream for **`en-*`, `fr` / `fr-CA`, and `es` / `es-US`** without altering UI transcripts or tool arguments.
+
+- **Supported platform locales (`en-*`, `fr`/`fr-CA`, `es`/`es-US`):** **Do not add generic text normalization or digit-clustering rules** to the global or agent instructions. Keep existing customer-specific readout rules (e.g., NATO-alphabet readout, paired quotas, `/IPA/`), ensure they carry a spoken-only `Scope:` guard, and report conflicts.
+- **Unsupported locales or domain-specific overrides (`CV217`):** Add `<instruction id="text normalization for speech">` **only** when (1) `app.json` declares locales outside `en-*`, `fr`/`fr-CA`, and `es`/`es-US` (such as `es-ES`, `es-MX`, `es-419`, `fr-FR`, `de-DE`, `cmn-CN`, `hi-IN`, `ja-JP`, `ko-KR`, `pt-BR`, `it-IT`, `nl-NL`), or (2) the app needs concise domain-specific spoken overrides (`42 GB of 100 GB`, `Mbps`, mixed-case `Uni-D1`, URLs/emails, `/IPA/`). Whenever present, the **`Scope:`** paragraph is **mandatory** (`CV217` P0 error if omitted) so spelled-out words are never passed into tool arguments:
+
+```xml
+<instruction id="text normalization for speech">
+Normalize spoken output text into its natural, spelled-out spoken form in the language of the response so that target-language numbers, currencies, dates, paired quotas, web/email addresses, and tricky names are spoken accurately.
+
+Scope: These rules apply ONLY to the words you speak aloud to the caller. They NEVER apply to tool calls, tool arguments, or internal matching and comparison logic. When you call a tool, pass every value in its original written form exactly as the user or system provided it: pass "1234", not "one two three four"; pass "XED1234", not "X E D one two three four"; pass "2026-09-21", not "September twenty-first, twenty twenty-six". Spell a value out only in the sentence you say back to the caller.
+
+- Use International Phonetic Alphabet (IPA) spelling in slashes for tricky names or terms, such as /niːv/.
+- When speaking a language outside platform runtime inline normalization ({user_language}, such as 'hi-IN', 'cmn-CN', 'ko-KR', 'ja-JP', 'es-ES', 'es-MX', 'fr-FR', or 'de-DE'), spell out currencies, numbers, dates, times, phone numbers, and percentages in words in that active target language (never use English number words inside a non-English sentence).
+- Domain-specific spoken overrides (adapt to your domain):
+  - "42 GB of 100 GB" -> "FORTY-TWO of your hundred gigs" (avoids reading "42 / 100" as "forty-two percent")
+  - "20 Mbps" -> "twenty megabits per second"; "UNI-D1" -> "Uni-D1"
+  - "help.example.com/returns" -> "help dot example dot com slash returns"
+</instruction>
+```
 
 ### 2.4 Elimination of Reflexive Closings
 
@@ -186,6 +230,12 @@ Ban IVR-style closings (*"Is there anything else I can help you with today?"*) o
 ### 2.5 Empathy Capping
 
 Repeated apologies (*"I completely understand how frustrating that must be..."*) sound robotic and escalate frustration on long calls. Cap empathy statements at **one per call**; later turns move straight to resolution.
+
+### 2.6 Lexical Stress (ALL-CAPS), `/IPA/` Pronunciation & Multilingual Script Purity
+
+- **ALL-CAPS lexical stress (Latin scripts only):** Capitalize 1–2 high-value words per turn (`NO outages`, `SOLID green`, `FORTY-TWO gigs`) so the voice leans on them naturally. In non-Latin scripts without uppercase/lowercase (Devanagari, Hanzi, Hangul, Kana), use sentence-opening tone tags (`<positive>`, `<warm>`, `<empathetic>`) and native phrasing rather than inserting Latin ALL-CAPS words.
+- **`/IPA/` pronunciation notation:** Write International Phonetic Alphabet transcriptions inside forward slashes (e.g., `/niːv/`) for unusual proper nouns, brand names, or technical terms.
+- **Multilingual register, gender & script purity (`CV215`):** Use polite customer-care register (`usted` in Spanish, `आप`/`जी` in Hindi, `您` in Mandarin, `해요체` in Korean, `丁寧語` in Japanese), match first-person grammatical gender to the configured voice persona (see §0), and write loanwords/acronyms in the native script (`'वाई-फाई'`, `'सिम'` rather than Latin `'Wi-Fi'`, `'SIM'` inside Devanagari utterances) to prevent mid-sentence English code-switching.
 
 ______________________________________________________________________
 
@@ -198,3 +248,42 @@ In long calls (5+ minutes / 25+ turns), recency bias causes repetitive empathy l
 - **Turn-by-turn classification:** classify caller sentiment into a finite set (`{anxious, confused, frustrated, neutral, satisfied}`) once per turn in a `before_agent_callback`.
 - **State history tracking:** keep a turn history of emotional states to prevent repetitive empathy phrases.
 - **Tag consistency:** inject only tags from the [Tag Reference](tag_reference.md) recommended or supported tiers, in angle brackets, at the start of the sentence they color.
+
+### 3.2 Tag-Preserving After-Model Callback (`CV218`)
+
+When an `after_model_callback` applies deterministic text cleanup (such as English contractions, silent-lookup holding bridges, or warm-transfer speech ordering), split on an `INLINE_TAG` regex covering every Composite v2 sound, pause, tone, and `<prosody>` tag used in your prompts so tag names are never mutated:
+
+```python
+INLINE_TAG = re.compile(
+    r"(<(?:"
+    r"breath|heavy breath|exhales|pant|sigh|sighs|"
+    r"laugh|chuckle|chuckles|giggle|snicker|cackle|"
+    r"gasp|cough|sneeze|throat-clearing|snort|tsk|argh|"
+    r"sob|cry|whimper|groan|yawn|whispers|whispering|"
+    r"short pause|long pause|fast|faster|"
+    r"calm|empathetic|warm|positive|enthusiasm|"
+    r"clear|determination|interest|relief|sympathetic|"
+    r"tension|anxiety|awe|surprised|fearful|negative|disgusted|"
+    r'prosody\s+rate="?\d{1,3}%"?'
+    r")>|\[[^\]]*\])",
+    re.IGNORECASE,
+)
+```
+
+### 3.3 Web / Chat Widget Streaming Tag Sanitization
+
+When rendering live transcripts in a web or chat UI alongside Composite v2 audio playback, strip complete `<...>` audio tags and any trailing incomplete `<...` token during streaming so callers see clean text while hearing natural vocalizations:
+
+```typescript
+const AUDIO_TAG_REGEX =
+  /<(?:breath|heavy breath|exhales|pant|sigh|sighs|laugh|chuckle|chuckles|giggle|snicker|cackle|gasp|cough|sneeze|throat-clearing|snort|tsk|argh|sob|cry|whimper|groan|yawn|whispers|whispering|short pause|long pause|fast|faster|calm|empathetic|warm|positive|enthusiasm|clear|determination|interest|relief|sympathetic|tension|anxiety|awe|surprised|fearful|negative|disgusted|prosody\s+rate="?\d{1,3}%"?)>/gi;
+const PARTIAL_AUDIO_TAG_REGEX = /<[^>]*$/;
+
+export function sanitizeTranscriptText(raw: string): string {
+  return raw
+    .replace(AUDIO_TAG_REGEX, "")
+    .replace(PARTIAL_AUDIO_TAG_REGEX, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+```
