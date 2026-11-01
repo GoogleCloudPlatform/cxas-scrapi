@@ -50,6 +50,7 @@ import pathlib
 import re
 import shutil
 import sys
+import tempfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -362,15 +363,43 @@ TRANSLATED_AUDIO_TAG_RE = re.compile(
     re.I,
 )
 
+_OPEN_ANGLE_PAT = r"(?:<|\\u003c)"
+_CLOSE_ANGLE_PAT = r"(?:>|\\u003e)"
+_EQ_PAT = r"(?:=|\\u003d)"
+JSON_HTML_UNESCAPE_MAP: dict[str, str] = {
+    '\\"': '"',
+    "\\u003d": "=",
+    "\\u0027": "'",
+    "\\u0026": "&",
+}
+JSON_HTML_ATTR_ESCAPES_RE = re.compile(r'\\"|\\u003d|\\u0027|\\u0026', re.I)
+
 PROSODY_RE = re.compile(r'^prosody\s+rate\s*=\s*"?\s*([^"\s]+?)\s*"?$', re.I)
+NUMERIC_PROSODY_RE = re.compile(r'^prosody\s+rate="(?:\d+(?:\.\d+)?)%"$', re.I)
 PROSODY_NOT_FIRST_RE = re.compile(
-    r"(?P<before>(?:<(?!/|prosody\b)[a-z][a-z \-]{0,30}>[ \t]*)+)"
-    r'(?P<pros><\s*prosody\s+rate\s*=\s*"?\d{1,3}\s*%"?\s*>)',
+    rf"(?P<before>(?:{_OPEN_ANGLE_PAT}(?!/|prosody\b)[a-z][a-z \-]"
+    rf"{{0,30}}{_CLOSE_ANGLE_PAT}[ \t]*)+)"
+    rf"(?P<pros>{_OPEN_ANGLE_PAT}\s*prosody\s+rate\s*{_EQ_PAT}\s*"
+    rf'(?:\\")?"?\d{{1,3}}\s*%(?:\\")?"?\s*{_CLOSE_ANGLE_PAT})',
     re.I,
 )
-CLOSING_PROSODY_RE = re.compile(r"[ \t]*</\s*prosody\s*>", re.I)
-BRACKET_TAG_RE = re.compile(r"\[(/?)([^\[\]\n]{1,40})\]")
-ANGLE_TAG_RE = re.compile(r"<(/?)([^<>\n]{1,40})>")
+ADJACENT_PROSODY_RE = re.compile(
+    rf"({_OPEN_ANGLE_PAT}\s*prosody\s+rate\s*{_EQ_PAT}\s*"
+    rf'(?:\\")?"?\d{{1,3}}\s*%(?:\\")?"?\s*{_CLOSE_ANGLE_PAT})'
+    rf"(?:[ \t]+{_OPEN_ANGLE_PAT}\s*prosody\s+rate\s*{_EQ_PAT}\s*"
+    rf'(?:\\")?"?\d{{1,3}}\s*%(?:\\")?"?\s*{_CLOSE_ANGLE_PAT})+',
+    re.I,
+)
+CLOSING_PROSODY_RE = re.compile(
+    rf"[ \t]*{_OPEN_ANGLE_PAT}/\s*prosody\s*{_CLOSE_ANGLE_PAT}", re.I
+)
+BRACKET_TAG_RE = re.compile(r"\[(/?)([^\[\]\n]{1,55})\]")
+ANGLE_TAG_RE = re.compile(
+    rf"{_OPEN_ANGLE_PAT}(/?)"
+    rf"((?:(?!(?:<|>|\\u003c|\\u003e|\n)).){{1,55}})"
+    rf"{_CLOSE_ANGLE_PAT}",
+    re.I,
+)
 BARE_BRACKET_WORD_RE = re.compile(r"\[([a-z]{3,20})\]")
 
 # Bracketed labels for control logic, e.g. `user intent is [Negative]`.
@@ -393,11 +422,12 @@ OLD_FORMAT_RULE_RE = re.compile(
     r"never\s+stack\s+(?:audio\s+|delivery\s+)?tags|do\s+not\s+bunch",
     re.I,
 )
-ANGLE_GUIDANCE_RE = re.compile(
-    r"angle[\s-]+brackets?|<\s*instruction\s+id\s*=\s*[\"']audio tag format[\"']"
-    r"|Affective_Delivery_and_Voice_Guidelines",
+GLOBAL_SECTION_GUIDANCE_RE = re.compile(
+    r"<\s*instruction\s+id\s*=\s*[\"']audio tag format[\"']"
+    r"|Affective[\s_]+Delivery[\s_]+and[\s_]+Voice[\s_]+Guidelines",
     re.I,
 )
+ANGLE_PHRASE_RE = re.compile(r"angle[\s-]+brackets?", re.I)
 # The audio tag format block's own "never write a closing tag" bullet.
 NO_CLOSING_RULE_RE = re.compile(
     r"never\s+(?:write|use|emit|add)\s+(?:a\s+|any\s+)?closing|"
@@ -451,9 +481,19 @@ ENGLISH_ACCENT_IN_STYLE_RE = re.compile(
     re.I,
 )
 
+# Word characters across Latin, Devanagari (excluding । \u0964 & ॥ \u0965),
+# Kana (excluding ・ \u30FB), Hanzi, and Hangul.
+_WORD_CHARS = (
+    r"A-Za-z0-9\u00C0-\u024F"
+    r"\u0900-\u0963\u0966-\u097F"
+    r"\u3040-\u30FA\u30FC-\u30FF"
+    r"\u4E00-\u9FFF\uAC00-\uD7AF"
+)
+
 # Prompt acoustic & script-purity checks.
 ELLIPSIS_PAUSE_COLLISION_RE = re.compile(
-    r"(?:\.\.\.|\u2026)\s*<(?:short|long)\s+pause>", re.I
+    rf"(?:\.\.\.|\u2026)\s*{_OPEN_ANGLE_PAT}(?:short|long)\s+pause{_CLOSE_ANGLE_PAT}",
+    re.I,
 )
 ALL_CAPS_AFTER_VOCAL_TAG_RE = re.compile(
     r"<(?:exhales|sighs?)>\s+([A-Z]{2,})\b"
@@ -487,7 +527,12 @@ UTTERANCE_SPAN_RE = re.compile(
 )
 QUOTED_SPAN_RE = re.compile(r'(?<!")"(?!")(?:[^"\n]|\n(?!\s*\n)){0,400}"(?!")')
 _TAG_QUOTE_SENTINEL = "\ue000"
-TAG_WITH_QUOTES_RE = re.compile(r"<[^<>\n]*\"[^<>\n]*>")
+_TAG_ESCAPED_QUOTE_SENTINEL = "\ue001"
+TAG_WITH_QUOTES_RE = re.compile(
+    rf"{_OPEN_ANGLE_PAT}(?:(?!(?:<|>|\\u003c|\\u003e|\n)).)*\""
+    rf"(?:(?!(?:<|>|\\u003c|\\u003e|\n)).)*{_CLOSE_ANGLE_PAT}",
+    re.I,
+)
 DEVANAGARI_CHAR_RE = re.compile(r"[\u0900-\u097F]")
 LATIN_WORD_RE = re.compile(r"\b[A-Za-z]{2,}\b")
 
@@ -499,10 +544,23 @@ TWO_ITEM_COMMA_RE = re.compile(r"^\s*,\s*(?=(?:or|and)\b)", re.I)
 
 # Conditional spoken text normalization checks.
 NORMALIZATION_BLOCK_RE = re.compile(
-    r'(?:<\s*instruction\s+id\s*=\s*["\']text normalization[^"\']*["\']\s*>'
-    r"(.*?)</\s*instruction\s*>|"
-    r"<\s*text_normalization\s*>(.*?)</\s*text_normalization\s*>)",
-    re.I | re.DOTALL,
+    r"(?:^[ \t]*<\s*(?P<tntag>instruction|guideline|rule)\b[^>\n]*"
+    r'\b(?:id|name)\s*=\s*["\'][^"\']*text[\s_-]*normalization[^"\']*["\']'
+    r"[^>\n]*>(?P<xml_body>.*?)</\s*(?P=tntag)\s*>|"
+    r"^[ \t]*<\s*text_normalization\s*>(?P<tag_body>.*?)"
+    r"</\s*text_normalization\s*>|"
+    r"^#{1,4}\s*(?:spoken\s+)?text\s+normalization\b[^\n]*\n"
+    r"(?P<md_body>.*?)(?=^#{1,4}\s|\Z))",
+    re.I | re.M | re.DOTALL,
+)
+TN_SCOPE_TARGET_RE = re.compile(
+    r"\b(?:tools?|arguments?|parameters?|payloads?|inputs?)\b", re.I
+)
+TN_SCOPE_GUARD_RE = re.compile(
+    r"\b(?:scope\s*:|never|do\s+not|don't|exclud\w*"
+    r"|only\s+(?:to|for)\s+(?:the\s+)?(?:words?\s+)?spoken"
+    r"|spoken\s+(?:words?|output|responses?|speech)\s+only)\b",
+    re.I,
 )
 PLATFORM_TN_EXACT_LOCALES: frozenset[str] = frozenset(
     {"fr", "fr-ca", "es", "es-us"}
@@ -637,9 +695,16 @@ def derive_locale_voice(
     return get_default_voice(locale)
 
 
+def _unescape_json_tag_inner(inner: str) -> str:
+    """Unescapes JSON string escapes inside a tag body."""
+    return JSON_HTML_ATTR_ESCAPES_RE.sub(
+        lambda m: JSON_HTML_UNESCAPE_MAP[m.group(0).lower()], inner
+    )
+
+
 def normalize_tag(inner: str) -> str:
     """Lowercases a tag body and collapses whitespace and JSON escapes."""
-    collapsed = re.sub(r"\s+", " ", inner.replace('\\"', '"')).strip()
+    collapsed = re.sub(r"\s+", " ", _unescape_json_tag_inner(inner)).strip()
     prosody = PROSODY_RE.match(collapsed)
     if prosody:
         rate = prosody.group(1)
@@ -651,6 +716,31 @@ def normalize_tag(inner: str) -> str:
 
 def is_audio_tag(name: str) -> bool:
     return name in KNOWN_TAGS or bool(PROSODY_RE.match(name))
+
+
+def _voice_matches_locale(lang: str, voice_locale: str) -> bool:
+    """Returns True if `voice_locale` matches `lang` or its Chirp3-HD prefix."""
+    expected_prefix = (
+        get_default_voice(lang).split("-Chirp3-HD-")[0].strip().lower()
+    )
+    return _norm_locale(voice_locale) in {_norm_locale(lang), expected_prefix}
+
+
+def _has_angle_tag_guidance(content: str) -> bool:
+    """Returns True if global instruction carries non-negated angle-tag guidance."""
+    if GLOBAL_SECTION_GUIDANCE_RE.search(content):
+        return True
+    return any(
+        not _is_negated(content, m.start())
+        for m in ANGLE_PHRASE_RE.finditer(content)
+    )
+
+
+def _has_spoken_only_tool_guard(body: str) -> bool:
+    """Returns True if a normalization block excludes tool calls/arguments."""
+    return bool(
+        TN_SCOPE_TARGET_RE.search(body) and TN_SCOPE_GUARD_RE.search(body)
+    )
 
 
 def _line_of(content: str, offset: int) -> int:
@@ -683,15 +773,22 @@ def _is_meta_documentation_line(line: str) -> bool:
 
 
 def _mask_tag_quotes(text: str) -> str:
-    if _TAG_QUOTE_SENTINEL in text:
+    if _TAG_QUOTE_SENTINEL in text or _TAG_ESCAPED_QUOTE_SENTINEL in text:
         return text
     return TAG_WITH_QUOTES_RE.sub(
-        lambda m: m.group(0).replace('"', _TAG_QUOTE_SENTINEL), text
+        lambda m: (
+            m.group(0)
+            .replace('\\"', _TAG_ESCAPED_QUOTE_SENTINEL)
+            .replace('"', _TAG_QUOTE_SENTINEL)
+        ),
+        text,
     )
 
 
 def _unmask_tag_quotes(text: str) -> str:
-    return text.replace(_TAG_QUOTE_SENTINEL, '"')
+    return text.replace(_TAG_ESCAPED_QUOTE_SENTINEL, '\\"').replace(
+        _TAG_QUOTE_SENTINEL, '"'
+    )
 
 
 def _speech_configs(app_data: dict[str, Any]) -> dict[str, Any]:
@@ -918,6 +1015,7 @@ class TagMatch:
     bracket: bool
     closing: bool
     translated_target: str | None = None
+    raw_inner: str = ""
 
 
 def iter_audio_tags(content: str) -> Iterator[TagMatch]:
@@ -956,6 +1054,7 @@ def iter_audio_tags(content: str) -> Iterator[TagMatch]:
                 bracket,
                 closing,
                 translated_target=translated,
+                raw_inner=raw_inner,
             )
 
 
@@ -975,11 +1074,11 @@ def _target_tag(name: str, translated_target: str | None = None) -> str:
 def _inside_double_quotes(
     content: str, start: int, escaped: bool = False
 ) -> bool:
-    """Whether `start` sits inside a "..." span on its line."""
+    """Whether `start` sits inside a "..." span (or JSON string) on its line."""
+    del escaped
     masked = _mask_tag_quotes(content)
     line = masked[masked.rfind("\n", 0, start) + 1 : start]
-    pattern = r'\\"' if escaped else r'(?<!\\)["\u201c\u201d]'
-    return len(re.findall(pattern, line)) % 2 == 1
+    return len(re.findall(r'(?<!\\)["\u201c\u201d]', line)) % 2 == 1
 
 
 def _rebuild_tag_list(
@@ -1057,8 +1156,12 @@ def _reorder_prosody_first(line: str) -> tuple[str, int]:
 
     def _swap(m: re.Match[str]) -> str:
         nonlocal moved
-        before_tags = re.findall(r"<([^<>]+)>", m.group("before"))
-        if not all(is_audio_tag(normalize_tag(t)) for t in before_tags):
+        before_tags = [
+            sub.group(2) for sub in ANGLE_TAG_RE.finditer(m.group("before"))
+        ]
+        if not before_tags or not all(
+            is_audio_tag(normalize_tag(t)) for t in before_tags
+        ):
             return m.group(0)
         moved += 1
         return m.group("pros") + m.group("before").rstrip()
@@ -1083,8 +1186,7 @@ def _relocate_utterance_tags_and_punctuate_pauses(
         return f"{m.group(1)}, {m.group(2)}"
 
     inner = re.sub(
-        r"([A-Za-z0-9\u00C0-\u024F\u0900-\u0963\u0966-\u097F\u3040-\u30FF"
-        r"\u4E00-\u9FFF\uAC00-\uD7AF])[ \t]+(<(?:short|long)\s+pause>)",
+        rf"([{_WORD_CHARS}])[ \t]+(<(?:short|long)\s+pause>)",
         _punct_pause,
         inner,
         flags=re.I,
@@ -1141,7 +1243,9 @@ def _relocate_utterance_tags_and_punctuate_pauses(
 
 
 def migrate_tags(
-    content: str, json_escaped: bool = False
+    content: str,
+    json_escaped: bool = False,
+    relocate_utterance_tags: bool = True,
 ) -> tuple[str, list[str]]:
     """Converts square/translated tags, remaps poor tags, and fixes placement."""
     changes: list[str] = []
@@ -1160,11 +1264,10 @@ def migrate_tags(
                 continue
             if tag.name == "prosody":
                 remainder = line[tag.end - line_start :]
-                spoken_after = re.sub(r"<[^<>]*>", "", remainder)
-                quote_delim = '\\"' if json_escaped else '"'
+                spoken_after = ANGLE_TAG_RE.sub("", remainder)
                 if re.search(
                     r"[A-Za-z0-9\u00C0-\uFFFF]",
-                    spoken_after.split(quote_delim)[0],
+                    re.split(r'(?<!\\)"', spoken_after)[0],
                 ):
                     reset = PROSODY_RESET_TAG
                     if json_escaped:
@@ -1210,7 +1313,11 @@ def migrate_tags(
             and tag.name not in REMAP
             and not PROSODY_RE.match(tag.name)
         ):
-            target = content[start + 1 : end - 1].strip()
+            target = (
+                _unescape_json_tag_inner(tag.raw_inner).strip()
+                if tag.raw_inner
+                else content[start + 1 : end - 1].strip()
+            )
         if '"' in target and json_escaped:
             target = target.replace('"', '\\"')
         new = f"<{target}>" if target else ""
@@ -1247,6 +1354,7 @@ def migrate_tags(
         cur_line, moves = _reorder_prosody_first(raw_line)
         if moves:
             changes.append(f"L{lineno}: moved <prosody> first in tag stack")
+        cur_line = ADJACENT_PROSODY_RE.sub(r"\1", cur_line)
         cur_line = _deduplicate_tag_lists_in_line(cur_line)
         reordered_lines.append(cur_line)
     migrated = "".join(reordered_lines)
@@ -1257,8 +1365,8 @@ def migrate_tags(
     )
 
     # Fix mid-sentence pause punctuation and style-tag placement in quoted
-    # utterances for non-JSON text files.
-    if not json_escaped:
+    # utterances for prompt files only (never rewrite .json or .py literals).
+    if not json_escaped and relocate_utterance_tags:
         pause_commas = 0
         style_moves = 0
 
@@ -1570,6 +1678,7 @@ class CompositeV2VoiceParity(Rule):
                 )
 
             voice = str(cfg.get("voice") or "").strip()
+            chirp_match = CHIRP3_VOICE_RE.match(voice)
             if not voice:
                 results.append(
                     self.make_result(
@@ -1585,7 +1694,7 @@ class CompositeV2VoiceParity(Rule):
                         ),
                     )
                 )
-            elif "Chirp3-HD" not in voice and voice not in custom_names:
+            elif voice not in custom_names and not chirp_match:
                 results.append(
                     self.make_result(
                         file=rel,
@@ -1600,6 +1709,21 @@ class CompositeV2VoiceParity(Rule):
                             " --prebuilt-voice to apply Aoede across locales)"
                             " or bind a custom voice"
                         ),
+                    )
+                )
+            elif chirp_match and not _voice_matches_locale(
+                lang, chirp_match.group("locale")
+            ):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        severity=Severity.WARNING,
+                        message=(
+                            f"Locale '{lang}' is configured with mismatched"
+                            f" voice '{voice}' (voice locale"
+                            f" '{chirp_match.group('locale')}')."
+                        ),
+                        fix=f"Use '{suggested}' to match locale '{lang}'",
                     )
                 )
         return results
@@ -1902,35 +2026,31 @@ class CompositeV2TagPlacement(_AudioTagRule):
     def findings(
         self, tag: TagMatch, content: str, file_path: pathlib.Path
     ) -> tuple[str, str] | None:
-        if tag.bracket or tag.closing or tag.translated_target is not None:
+        if (
+            tag.bracket
+            or tag.closing
+            or tag.translated_target is not None
+            or file_path.suffix == ".py"
+        ):
             return None
         before = content[content.rfind("\n", 0, tag.start) + 1 : tag.start]
         after = content[tag.end : tag.end + 2]
-        escaped = file_path.suffix in (".json", ".jsonl")
         if (
-            not re.search(
-                r"[A-Za-z0-9\u00C0-\u024F\u0900-\u097F\u3040-\u30FF"
-                r"\u4E00-\u9FFF\uAC00-\uD7AF] $",
-                before,
-            )
-            or not re.match(
-                r" [A-Za-z\u00C0-\u024F\u0900-\u097F\u3040-\u30FF"
-                r"\u4E00-\u9FFF\uAC00-\uD7AF]",
-                after,
-            )
-            or not _inside_double_quotes(content, tag.start, escaped)
+            not re.search(rf"[{_WORD_CHARS}] $", before)
+            or not re.match(rf" [{_WORD_CHARS}]", after)
+            or not _inside_double_quotes(content, tag.start)
         ):
             return None
+        in_prompt = file_path.suffix == ".txt"
+        hint = " (--remediate fixes this in prompts)" if in_prompt else ""
         if tag.name in PAUSE_TAGS:
             return (
                 f"<{tag.name}> follows a word without punctuation.",
-                "Add a comma or other punctuation before the pause tag"
-                " (--remediate fixes this in prompts)",
+                f"Add a comma or other punctuation before the pause tag{hint}",
             )
         return (
             f"<{tag.name}> sits mid-sentence in a quoted utterance.",
-            "Move the tag to the start of the sentence it colors"
-            " (--remediate fixes this in prompts)",
+            f"Move the tag to the start of the sentence it colors{hint}",
         )
 
     def check(
@@ -1938,6 +2058,7 @@ class CompositeV2TagPlacement(_AudioTagRule):
     ) -> list[LintResult]:
         results = super().check(file_path, content, context)
         rel = _rel(file_path, context)
+        check_double_pause = file_path.suffix != ".txt"
         for lineno, line in enumerate(content.splitlines(), 1):
             if _is_meta_documentation_line(line):
                 continue
@@ -1953,6 +2074,28 @@ class CompositeV2TagPlacement(_AudioTagRule):
                         fix=(
                             'Move <prosody rate="N%"> to the front of the'
                             " stack (--remediate fixes this)"
+                        ),
+                    )
+                )
+            lower = line.lower()
+            if (
+                check_double_pause
+                and "never stack" not in lower
+                and "avoid" not in lower
+                and "rather than" not in lower
+                and ELLIPSIS_PAUSE_COLLISION_RE.search(line)
+            ):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        line=lineno,
+                        message=(
+                            "Ellipsis ('...') stacked immediately before a"
+                            " pause tag causes an unnatural double pause."
+                        ),
+                        fix=(
+                            "Use ', <short pause>' or '. <short pause>',"
+                            " never '... <short pause>'"
                         ),
                     )
                 )
@@ -2133,7 +2276,7 @@ class CompositeV2GlobalGuidelines(Rule):
     def check(
         self, file_path: pathlib.Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if ANGLE_GUIDANCE_RE.search(content):
+        if _has_angle_tag_guidance(content):
             return []
         return [
             self.make_result(
@@ -2167,8 +2310,13 @@ class CompositeV2TextNormalization(Rule):
         results: list[LintResult] = []
         rel = _rel(file_path, context)
         for m in NORMALIZATION_BLOCK_RE.finditer(content):
-            body = m.group(1) or m.group(2) or ""
-            if not re.search(r"\btool", body, re.I):
+            body = (
+                m.group("xml_body")
+                or m.group("tag_body")
+                or m.group("md_body")
+                or ""
+            )
+            if not _has_spoken_only_tool_guard(body):
                 results.append(
                     self.make_result(
                         file=rel,
@@ -2539,7 +2687,10 @@ class VoiceAgentAuditor:
                 if (
                     not tag.bracket
                     and not tag.closing
-                    and tag.name in ALLOWED_V2_TAGS
+                    and (
+                        tag.name in ALLOWED_V2_TAGS
+                        or bool(NUMERIC_PROSODY_RE.match(tag.name))
+                    )
                     and not _is_negated(text, tag.start)
                 ):
                     used_tags.add(tag.name)
@@ -2927,11 +3078,46 @@ class VoiceAgentAuditor:
                 changes.append(f'Cleared {label} to ""')
         return changes
 
+    def _dry_run_post_audit(self) -> dict[str, Any]:
+        """Computes the post-remediation audit in a scratch copy without touching disk."""
+        ignore = shutil.ignore_patterns(
+            ".git",
+            ".venv",
+            "venv",
+            "__pycache__",
+            "node_modules",
+            "build",
+            "dist",
+            "*.bak",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            shadow_root = pathlib.Path(tmp) / self.workspace_path.name
+            shutil.copytree(
+                self.workspace_path, shadow_root, symlinks=True, ignore=ignore
+            )
+            shadow = VoiceAgentAuditor(
+                workspace_dir=shadow_root,
+                app_name=self.app_name,
+                prebuilt_voice=self.prebuilt_voice,
+                bind_custom_voice=self.bind_custom_voice,
+                backup=False,
+            )
+            shadow_res = shadow.remediate(dry_run=False)
+            post = shadow_res["post_remediation_audit"]
+            post["workspace"] = str(self.workspace_path)
+            post["app_json"] = (
+                str(self.app_json_path)
+                if self.app_json_path.is_file()
+                else None
+            )
+            return post
+
     def remediate(self, dry_run: bool = False) -> dict[str, Any]:
         """Applies deterministic Composite v2 fixes in place."""
         changes: dict[str, list[str]] = {}
         removed_styles: list[str] = []
         context = self._context()
+        prompt_set = set(self.prompt_files())
 
         for path in self.config_files():
             is_app = path == self.app_json_path
@@ -2954,7 +3140,9 @@ class VoiceAgentAuditor:
             except (OSError, UnicodeDecodeError):
                 continue
             migrated, found = migrate_tags(
-                content, json_escaped=path.suffix in (".json", ".jsonl")
+                content,
+                json_escaped=path.suffix in (".json", ".jsonl"),
+                relocate_utterance_tags=(path in prompt_set),
             )
             if migrated != content:
                 if not dry_run:
@@ -2962,6 +3150,11 @@ class VoiceAgentAuditor:
                     path.write_text(migrated, encoding="utf-8")
                 changes.setdefault(_rel(path, context), []).extend(found)
 
+        post_audit = (
+            self._dry_run_post_audit()
+            if (dry_run and changes)
+            else self.audit()
+        )
         return {
             "status": (
                 ("DRY_RUN" if dry_run else "REMEDIATED")
@@ -2970,7 +3163,7 @@ class VoiceAgentAuditor:
             ),
             "changes_applied": changes,
             "removed_styles": removed_styles,
-            "post_remediation_audit": self.audit(),
+            "post_remediation_audit": post_audit,
         }
 
 

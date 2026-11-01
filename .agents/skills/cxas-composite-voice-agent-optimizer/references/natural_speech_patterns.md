@@ -198,7 +198,7 @@ Use realistic bridge words when retrieving records or transitioning between step
 - **American English (`en-US`):** `"Let's see..."`, `"Got it,"`, `"Sure,"`, `"Alright,"`, `"Hmm, let me check that for you..."`
 - **British English (`en-GB`):** `"Right, let me have a look..."`, `"Brilliant,"`, `"Certainly,"`, `"Um, let's see..."`
 - **Irish English (`en-IE`):** `"Grand, let's see now..."`, `"Sure thing,"`, `"Right so,"`
-- **Australian English (`en-AU`):** `"No worries, let's take a look..."`, `"Too easy,"`, `"Yeah, let me check that..."`
+- **Australian English (`en-AU`):** `"No worries, let's take a look..."`, `"Sure thing,"`, `"Bear with me,"`, `"Yeah, let me check that..."`
 - **Latin American Spanish (`es-419` / `es-US`):** `"Veamos..."`, `"Claro, permítame revisar..."`, `"A ver..."`
 
 ### 2.3 Numbers, Dates & Identifiers
@@ -272,17 +272,18 @@ INLINE_TAG = re.compile(
 
 ### 3.3 Web / Chat Widget Streaming Tag Sanitization
 
-When rendering live transcripts in a web or chat UI alongside Composite v2 audio playback, strip complete `<...>` audio tags and any trailing incomplete `<...` token during streaming so callers see clean text while hearing natural vocalizations:
+When rendering live transcripts in a web or chat UI alongside Gemini Composite v2 audio playback, strip complete `<...>` audio tags and any trailing incomplete `<...` tag prefix during streaming so callers see clean text while hearing natural vocalizations. Never gate DOM text sanitization exclusively on `text.includes("[")`, or angle-bracket tags (`<short pause>`, `<exhales>`) will leak into chat bubbles:
 
 ```typescript
 const AUDIO_TAG_REGEX =
   /<(?:breath|heavy breath|exhales|pant|sigh|sighs|laugh|chuckle|chuckles|giggle|snicker|cackle|gasp|cough|sneeze|throat-clearing|snort|tsk|argh|sob|cry|whimper|groan|yawn|whispers|whispering|short pause|long pause|fast|faster|calm|empathetic|warm|positive|enthusiasm|clear|determination|interest|relief|sympathetic|tension|anxiety|awe|surprised|fearful|negative|disgusted|prosody\s+rate="?\d{1,3}%"?)>/gi;
-const PARTIAL_AUDIO_TAG_REGEX = /<[^>]*$/;
+const PARTIAL_AUDIO_TAG_REGEX = /<\/?[a-zA-Z][^>]*$/;
 
 export function sanitizeTranscriptText(raw: string): string {
   return raw
-    .replace(AUDIO_TAG_REGEX, "")
+    .replace(AUDIO_TAG_REGEX, " ")
     .replace(PARTIAL_AUDIO_TAG_REGEX, "")
+    .replace(/\s+([,.;:!?])/g, "$1")
     .replace(/\s{2,}/g, " ")
     .trim();
 }

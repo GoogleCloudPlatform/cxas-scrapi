@@ -929,6 +929,28 @@ def test_dry_run_backup_and_cli_outputs(
 
     dry = aud.VoiceAgentAuditor(app).remediate(dry_run=True)
     assert dry["status"] == "DRY_RUN"
+    assert dry["post_remediation_audit"]["overall_status"] == "PASSED"
+    assert dry["post_remediation_audit"]["total_issues"] == 0
+    assert inst.read_text(encoding="utf-8") == 'Say "[sigh] Okay."\n'
+
+    dry_cli_out = tmp_path / "dry_run.txt"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "audit_agent.py",
+            "--workspace",
+            str(app),
+            "--remediate",
+            "--dry-run",
+            "--output",
+            str(dry_cli_out),
+        ],
+    )
+    with pytest.raises(SystemExit) as exc_dry:
+        aud.main()
+    assert exc_dry.value.code == 0
+    assert "Remaining Issues" not in dry_cli_out.read_text(encoding="utf-8")
     assert inst.read_text(encoding="utf-8") == 'Say "[sigh] Okay."\n'
 
     aud.VoiceAgentAuditor(app, backup=True).remediate()
@@ -975,3 +997,172 @@ def test_dry_run_backup_and_cli_outputs(
         aud.main()
     assert exc_lint.value.code == 0
     assert json.loads(lint_json.read_text(encoding="utf-8")) == []
+
+
+# ── Regression tests for JSON escapes, Indic punctuation & scope guards ──
+
+
+def test_json_unicode_html_escapes_detected_and_remediated(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = _make_app(tmp_path)
+    g1 = app / "guardrails" / "pci" / "pci.json"
+    g2 = app / "guardrails" / "sim" / "sim.json"
+    ev = app / "evaluations" / "demo" / "demo.json"
+    _write(
+        g1,
+        '{\n  "text": "[prosody rate\\u003d\\"68%\\"] [neutral] For your privacy."\n}\n',
+    )
+    _write(
+        g2,
+        '{\n  "text": "[prosody rate\\u003d\\"66%\\"] [slow] For security."\n}\n',
+    )
+    _write(
+        ev,
+        '{\n  "a": "Playing up... \\u003cshort pause\\u003e let us check.",\n'
+        '  "b": "\\u003creassuring\\u003e All good \\u003cshort pause\\u003e now.",\n'
+        '  "c": "\\u003cexcited\\u003e Great news."\n}\n',
+    )
+
+    issues = _issues(app)
+    cv210 = [i for i in issues if i["code"] == "CV210"]
+    assert len(cv210) == 4
+    assert any(i["code"] == "CV211" for i in issues)
+    assert any(i["code"] == "CV212" for i in issues)
+    cv214 = [i for i in issues if i["code"] == "CV214"]
+    assert any("Ellipsis" in i["message"] for i in cv214)
+    assert any("without punctuation" in i["message"] for i in cv214)
+
+    aud.VoiceAgentAuditor(app).remediate()
+    assert (
+        json.loads(g1.read_text(encoding="utf-8"))["text"]
+        == '<prosody rate="68%"> For your privacy.'
+    )
+    assert (
+        json.loads(g2.read_text(encoding="utf-8"))["text"]
+        == '<prosody rate="66%"> For security.'
+    )
+    ev_out = json.loads(ev.read_text(encoding="utf-8"))
+    assert ev_out["b"] == "<empathetic> All good <short pause> now."
+
+
+def test_cv214_allows_devanagari_danda_before_pause(
+    tmp_path: pathlib.Path,
+) -> None:
+    punctuated_hindi = (
+        'Say "मैं अभी देखती हूँ। <short pause> क्या आप बता सकते हैं?"\n'
+        'Or "धन्यवाद॥ <short pause> आगे बढ़ते हैं।"\n'
+    )
+    app = _make_app(tmp_path, agent_instruction=punctuated_hindi)
+    assert "CV214" not in _codes(app)
+    res = aud.VoiceAgentAuditor(app).remediate()
+    assert res["status"] == "NO_CHANGES_NEEDED"
+
+    unpunct_app = _make_app(
+        tmp_path / "unpunct",
+        agent_instruction='Say "मैं अभी देखती हूँ <short pause> क्या आप यहाँ हैं?"\n',
+    )
+    assert "CV214" in _codes(unpunct_app)
+    aud.VoiceAgentAuditor(unpunct_app).remediate()
+    assert "CV214" not in _codes(unpunct_app)
+    assert "देखती हूँ, <short pause>" in (
+        unpunct_app / "agents" / "root" / "instruction.txt"
+    ).read_text(encoding="utf-8")
+
+
+def test_remediate_does_not_rewrite_python_multiline_strings(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = _make_app(tmp_path)
+    cb = (
+        app
+        / "agents"
+        / "root"
+        / "after_model_callbacks"
+        / "cb"
+        / "python_code.py"
+    )
+    py_src = (
+        "MSG = (\n"
+        '    "I checked it now "\n'
+        '    "today <short pause> and [sigh] done."\n'
+        ")\n"
+    )
+    _write(cb, py_src)
+    assert "CV214" not in _codes(app)
+    aud.VoiceAgentAuditor(app).remediate()
+    out_py = cb.read_text(encoding="utf-8")
+    assert '"I checked it now "\n' in out_py
+    assert '"today <short pause> and <sigh> done."\n' in out_py
+
+
+def test_cv204_flags_cross_locale_voice_mismatch(
+    tmp_path: pathlib.Path,
+) -> None:
+    app = _make_app(
+        tmp_path,
+        supported=("es-US",),
+        speech={
+            "en-AU": {"voice": "en-AU-Chirp3-HD-Aoede", "instruction": ""},
+            "es-US": {"voice": "en-AU-Chirp3-HD-Aoede", "instruction": ""},
+        },
+    )
+    cv204 = [i for i in _issues(app) if i["code"] == "CV204"]
+    assert len(cv204) == 1
+    assert "mismatched voice" in cv204[0]["message"]
+
+
+def test_cv216_cv217_and_cv218_precision_guards(
+    tmp_path: pathlib.Path,
+) -> None:
+    negated_global = _make_app(
+        tmp_path / "negated",
+        global_instruction="Do not use angle brackets for tags.\n",
+    )
+    assert "CV216" in _codes(negated_global)
+
+    spaced_xml_global = _make_app(
+        tmp_path / "spaced",
+        global_instruction="<Affective Delivery and Voice Guidelines>\n</Affective Delivery and Voice Guidelines>\n",
+    )
+    assert "CV216" not in _codes(spaced_xml_global)
+
+    inline_ref_prompt = (
+        "Follow '<instruction id=\"text normalization for speech\">' always.\n"
+        '<guideline name="stay_in_scope">\nStay focused.\n</guideline>\n'
+    )
+    inline_ref_app = _make_app(
+        tmp_path / "inline_ref",
+        agent_instruction=inline_ref_prompt,
+    )
+    assert "CV217" not in _codes(inline_ref_app)
+
+    weak_tool_mention = _make_app(
+        tmp_path / "weak_tn",
+        global_instruction=(
+            GLOBAL_OK
+            + "### Spoken Text Normalization\n"
+            + "Read diagnostic tool status codes slowly.\n"
+        ),
+    )
+    cv217 = [i for i in _issues(weak_tool_mention) if i["code"] == "CV217"]
+    assert len(cv217) == 1
+    assert cv217[0]["priority"] == "P0"
+
+    prosody_cb_app = _make_app(
+        tmp_path / "prosody_cb",
+        agent_instruction='Say "<prosody rate="70%"> Slow down."\n',
+    )
+    _write(
+        prosody_cb_app
+        / "agents"
+        / "root"
+        / "after_model_callbacks"
+        / "cb"
+        / "python_code.py",
+        "import re\n"
+        'INLINE_TAG = re.compile(r"(<(?:calm|empathetic|short pause)>)", re.I)\n',
+    )
+    cv218 = [i for i in _issues(prosody_cb_app) if i["code"] == "CV218"]
+    assert len(cv218) == 1
+    assert 'prosody rate="70%"' in cv218[0]["message"]
