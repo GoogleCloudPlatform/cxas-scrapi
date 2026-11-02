@@ -51,11 +51,9 @@ SCHEMA_TYPE_TO_PY = {
     "ARRAY": ("list",),
 }
 
-# Builtin instruction variables that bypass declaration checks.
-INSTRUCTION_BUILTINS = {"current_date"}
-
-# Builtin CES runtime state keys populated by the platform.
-STATE_BUILTINS = {"_session"}
+# Builtin CES runtime variables/state keys populated by the platform.
+INSTRUCTION_BUILTINS = {"_session", "current_date", "session_metadata"}
+STATE_BUILTINS = INSTRUCTION_BUILTINS
 
 # Template ref pattern — matches single {var} and double {{var}} syntax (plus
 # dotted paths like {var.child} and {{var.child}}). Excludes {@TOOL: name}
@@ -553,7 +551,7 @@ def _collect_template_refs(content: str) -> list[tuple[str, int]]:
     seen: set[tuple[str, int]] = set()
     for m in TEMPLATE_RE.finditer(stripped):
         ref = m.group(1)
-        if ref in INSTRUCTION_BUILTINS:
+        if ref.split(".")[0] in INSTRUCTION_BUILTINS:
             continue
         line = stripped[: m.start()].count("\n") + 1
         if (ref, line) in seen:
@@ -656,8 +654,10 @@ class EvalVariableDeclared(Rule):
         seen: set[tuple[str, int]] = set()
         failed_prefixes: set[str] = set()
         for path, line in _collect_eval_var_refs(content):
-            if (path, line) in seen or any(
-                path.startswith(f"{p}.") for p in failed_prefixes
+            if (
+                (path, line) in seen
+                or path.split(".")[0] in STATE_BUILTINS
+                or any(path.startswith(f"{p}.") for p in failed_prefixes)
             ):
                 continue
             verdict = resolve_path(path, schema)

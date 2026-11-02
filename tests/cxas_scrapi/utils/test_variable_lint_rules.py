@@ -312,6 +312,8 @@ def test_v100_recognizes_session_builtin_and_predefined_variables(
     f.write_text(
         "def cb(callback_context):\n"
         "    sess = callback_context.state.get('_session', {})\n"
+        "    meta = callback_context.state.get('session_metadata', {})\n"
+        "    dt = callback_context.state.get('current_date')\n"
         "    ch = callback_context.state.get('channel')\n"
         "    bad = callback_context.state.get('missing_var')\n"
     )
