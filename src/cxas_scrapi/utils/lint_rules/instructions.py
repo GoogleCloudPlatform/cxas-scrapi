@@ -377,7 +377,7 @@ def _extract_py_tool_refs_and_dags(
         if (
             isinstance(node, ast.Attribute)
             and isinstance(node.value, ast.Name)
-            and node.value.id == "tools"
+            and node.value.id in ("tools", "async_tools")
         ):
             if node.attr in candidate_tools:
                 matched.add(node.attr)
@@ -385,13 +385,10 @@ def _extract_py_tool_refs_and_dags(
                 dags.add(node.attr)
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             s = node.value
-            if s in candidate_tools:
-                matched.add(s)
-            else:
-                matched |= _extract_tool_refs(s) & candidate_tools
-                for tool in candidate_tools - matched:
-                    if re.search(rf"\btools\.{re.escape(tool)}\b", s):
-                        matched.add(tool)
+            matched |= _extract_tool_refs(s) & candidate_tools
+            for tool in candidate_tools - matched:
+                if re.search(rf"\b(?:async_)?tools\.{re.escape(tool)}\b", s):
+                    matched.add(tool)
     return matched, dags
 
 
@@ -406,7 +403,7 @@ def _collect_agent_callback_and_dag_tool_refs(
     dag_calls: set[str] = set()
     for py_path in agent_dir.rglob("*.py"):
         try:
-            text = py_path.read_text()
+            text = py_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         matched, dags = _extract_py_tool_refs_and_dags(
@@ -422,7 +419,7 @@ def _collect_agent_callback_and_dag_tool_refs(
         if not dag_py.exists():
             continue
         try:
-            dag_text = dag_py.read_text()
+            dag_text = dag_py.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         matched, _ = _extract_py_tool_refs_and_dags(
@@ -600,16 +597,30 @@ class BannedLegacyXmlTags(Rule):
         re.IGNORECASE,
     )
 
-    _INLINE_SPAN_RE = re.compile(r"`[^`]*`|\"[^\"]*\"|'[^']*'")
-    _USER_TURN_RE = re.compile(r"^\s*(?:\[user\]|user)\s*:", re.IGNORECASE)
+    _INLINE_SPAN_RE = re.compile(
+        r'```[\s\S]*?```|`[^`]*`|"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\''
+        r'|"[^"]*"|(?<!\w)\'[^\']*\'(?!\w)'
+    )
+    _USER_TURN_RE = re.compile(
+        r"(?im)^[ \t]*(?:\[user\]|user)[ \t]*:"
+        r"(?:[^\n]*?<context\b[\s\S]*?</context>|[^\n]*)"
+    )
 
     @classmethod
     def _is_runtime_context_envelope_ref(
-        cls, line: str, start: int, tag: str
+        cls,
+        line: str,
+        start: int,
+        tag: str,
+        *,
+        abs_start: int | None = None,
+        excluded_spans: list[tuple[int, int]] | None = None,
     ) -> bool:
         tag_name = re.sub(r"[<\s/>]", "", tag).lower()
         if tag_name != "context":
             return False
+        if abs_start is not None and excluded_spans is not None:
+            return any(s <= abs_start < e for s, e in excluded_spans)
         if cls._USER_TURN_RE.match(line):
             return True
         return any(
@@ -622,13 +633,24 @@ class BannedLegacyXmlTags(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
         results = []
-        for line_num, line in enumerate(content.splitlines(), start=1):
+        excluded_spans = [
+            m.span() for m in self._INLINE_SPAN_RE.finditer(content)
+        ] + [m.span() for m in self._USER_TURN_RE.finditer(content)]
+        offset = 0
+        for line_num, raw_line in enumerate(
+            content.splitlines(keepends=True), start=1
+        ):
+            line = raw_line.rstrip("\r\n")
             for match in list(self._EXACT_PATTERN.finditer(line)) + list(
                 self._PROHIBITED_PATTERN.finditer(line)
             ):
                 tag = match.group(0)
                 if self._is_runtime_context_envelope_ref(
-                    line, match.start(), tag
+                    line,
+                    match.start(),
+                    tag,
+                    abs_start=offset + match.start(),
+                    excluded_spans=excluded_spans,
                 ):
                     continue
                 results.append(
@@ -648,6 +670,7 @@ class BannedLegacyXmlTags(Rule):
                         ),
                     )
                 )
+            offset += len(raw_line)
         return results
 
 

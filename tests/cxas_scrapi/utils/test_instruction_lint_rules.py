@@ -60,7 +60,8 @@ def test_i012_recognizes_tools_used_in_global_instruction_callbacks_and_dags(
     (cb_dir / "python_code.py").write_text(
         "# tools.truly_unused_tool({})\n"
         "def before_model_callback(callback_context, llm_request):\n"
-        "    llm_request.config.hide_tool('hide_only_tool')\n"
+        "    callback_context.state['step'] = 'truly_unused_tool'\n"
+        "    tools.hide_only_tool({})\n"
         "    tools.truly_unused_tool_extended({})\n"
         "    tools.order_status_dag({})\n"
     )
@@ -91,15 +92,20 @@ def test_i015_deduplicates_context_and_ignores_runtime_envelope_examples(
     inst.write_text(
         "Wait for the `<context>function completed</context>` message.\n"
         'If input starts with "<context>user pressed", parse digits.\n'
-        "[user]: <context>user pressed 1980 on keypad.</context>\n"
+        "[user]: <context>\n"
+        "user pressed 1980 on keypad.\n"
+        "</context>\n"
+        "It's invalid to use <context> for the caller's state.\n"
         "<Context>\n"
         "Legacy context block\n"
         "</Context>\n"
     )
 
     results = BannedLegacyXmlTags().check(inst, inst.read_text(), ctx)
-    assert len(results) == 2  # noqa: PLR2004
-    assert results[0].line == 4  # noqa: PLR2004
-    assert "<Context>" in results[0].message
-    assert results[1].line == 6  # noqa: PLR2004
-    assert "</Context>" in results[1].message
+    assert len(results) == 3  # noqa: PLR2004
+    assert results[0].line == 6  # noqa: PLR2004
+    assert "<context>" in results[0].message
+    assert results[1].line == 7  # noqa: PLR2004
+    assert "<Context>" in results[1].message
+    assert results[2].line == 9  # noqa: PLR2004
+    assert "</Context>" in results[2].message
