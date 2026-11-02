@@ -21,6 +21,7 @@ from cxas_scrapi.utils.lint_rules import (  # noqa: F401
     evals,
     instructions,
     schema,
+    security,
     structure,
     tools,
     variables,

@@ -497,3 +497,66 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* `{var}` reference where `var` is not declared or doesn't resolve.
 
     *Fix:* Declare the variable in `app.json` or fix the reference.
+
+=== "SEC — Security"
+
+    Rules in the `SEC` category perform Static Application Security Testing (SAST) across first-party Python code in agent callbacks (`agents/<agent>/*_callbacks/*/python_code.py`) and Python tools (`tools/<tool>/python_function/python_code.py`).
+
+    | ID | Name | Default | Description |
+    |----|------|---------|-------------|
+    | SEC001 | `dangerous-code-execution` | Error | Prohibits `eval()`, `exec()`, `compile()`, `__import__()`, and sandbox-escape dunder attributes |
+    | SEC002 | `prohibited-sandbox-import` | Error | Prohibits OS/process/raw-socket module imports and dangerous `os`/`shutil` system calls |
+    | SEC003 | `hardcoded-secret-or-token` | Error | Prohibits hardcoded API keys, tokens, private keys, and passwords |
+    | SEC004 | `unsafe-deserialization` | Error | Prohibits `pickle`/`cPickle`/`marshal`/`shelve` deserialization and `yaml.load()` without `SafeLoader` |
+    | SEC005 | `sensitive-data-logging` | Warning | Warns when `print()` or `logging` calls output sensitive PII or credential identifiers |
+
+    ---
+
+    **SEC001 — dangerous-code-execution**
+
+    Dynamic code evaluation and reflection dunders can enable arbitrary code execution or sandbox escape if untrusted user input or LLM tool arguments reach them.
+
+    *Triggers:* Calls to `eval(...)`, `exec(...)`, `compile(...)`, `__import__(...)`, or attribute access to `__subclasses__`, `__globals__`, `__builtins__`, or `__code__`.
+
+    *Fix:* Remove dynamic code execution and dunder reflection; use explicit dictionaries or static function dispatch instead.
+
+    ---
+
+    **SEC002 — prohibited-sandbox-import**
+
+    The CES Python 3.12 runtime executes inside a closed sandbox without subprocess, raw socket, or filesystem mutation privileges.
+
+    *Triggers:* Importing prohibited modules (`subprocess`, `socket`, `ctypes`, `multiprocessing`, `pty`, `fcntl`, `resource`, `pip`, `venv`, `ensurepip`) or invoking dangerous system/filesystem calls (`os.system`, `os.popen`, `os.spawn*`, `os.exec*`, `os.fork`, `os.kill`, `shutil.rmtree`).
+
+    *Fix:* Remove the prohibited import or system call and use approved CES toolsets or HTTP integrations instead.
+
+    ---
+
+    **SEC003 — hardcoded-secret-or-token**
+
+    Hardcoding credentials or API tokens in exported agent packages exposes secrets in version control and exported archives.
+
+    *Triggers:* Non-placeholder string literals assigned to secret-named variables or dictionary keys (`api_key`, `apikey`, `secret_key`, `client_secret`, `access_token`, `auth_token`, `bearer_token`, `private_key`, `password`, `passwd`) or literals matching high-confidence credential patterns (`AIza...`, `ya29....`, PEM private keys, `ghp_...`, `xox[baprs]-...`). Empty strings, placeholders (`"REDACTED"`, `"<API_KEY>"`, `"your_api_key_here"`, `"dummy"`, `"mock_token"`, `"test_key"`, `"***"`), and dynamic reads from `state`/`context`/`os.environ` are ignored.
+
+    *Fix:* Remove the hardcoded secret and retrieve credentials dynamically at runtime via `context.state`, environment variables, or Secret Manager.
+
+    ---
+
+    **SEC004 — unsafe-deserialization**
+
+    Deserializing untrusted payloads with `pickle`, `marshal`, `shelve`, or unsafe `yaml.load()` allows arbitrary code execution.
+
+    *Triggers:* Calls to `pickle.load`/`loads`, `cPickle.load`/`loads`, `marshal.load`/`loads`, `shelve.open`, or `yaml.load(...)` without `SafeLoader`/`CSafeLoader`.
+
+    *Fix:* Use `json.loads()` or `yaml.safe_load()` (or pass `Loader=yaml.SafeLoader`).
+
+    ---
+
+    **SEC005 — sensitive-data-logging**
+
+    Logging raw PII or authentication secrets via `print()` or `logging` leaks sensitive customer data into Cloud Logging and session traces.
+
+    *Triggers:* `print(...)` or `logging.(debug|info|warning|error|critical|exception)(...)` calls that directly output variables, f-strings, or `state[...]` subscripts referencing sensitive identifiers (`password`, `passcode`, `pin`, `ssn`, `social_security`, `cvv`, `cvc`, `card_number`, `credit_card`, `api_key`, `secret`, `auth_token`, `access_token`).
+
+    *Fix:* Redact or mask sensitive fields before logging.
+
