@@ -42,7 +42,9 @@ import jinja2
 from jinja2 import meta
 
 COMMENT = re.compile(r"\{\{#.*?#\}\}", re.S)
-TAG = re.compile(r"\{%.*?%\}|\{\{.*?\}\}", re.S)
+DOUBLE_BLOCK = re.compile(r"\{\{%(-?)(.*?)(-?)%\}\}", re.S)
+SINGLE_BLOCK = re.compile(r"(?<!\{)\{%.*?%\}(?!\})", re.S)
+TAG = re.compile(r"\{\{%.*?%\}\}|(?<!\{)\{%.*?%\}(?!\})|\{\{.*?\}\}", re.S)
 # Variables CES provides without a declaration.
 BUILTIN_VARIABLES = frozenset({"current_date", "_session"})
 # Tools the model must never see: built-in end_session and the queue helper.
@@ -209,8 +211,14 @@ def _comment_problems(app: _App) -> list[str]:
 
 
 def _syntax_problems(app: _App) -> list[str]:
-    """Finds template syntax that jinja2 accepts but a CES push rejects."""
+    """Finds template syntax that local jinja2 accepts or CES rejects."""
     problems = []
+    for tag in SINGLE_BLOCK.findall(app.without_comments):
+        snippet = " ".join(tag.split())
+        problems.append(
+            f"single-brace block {snippet!r}: write double-brace control blocks"
+            " so CES does not add <state_update> to the history"
+        )
     for tag in TAG.findall(app.without_comments):
         snippet = " ".join(tag.split())
         if re.search(r"\bnot\s+in\b", tag):
@@ -271,6 +279,14 @@ def _router_problems(
     return problems
 
 
+def _to_jinja(raw: str) -> str:
+    """Converts CES double-brace blocks and {{# #}} comments for jinja2."""
+    source = DOUBLE_BLOCK.sub(r"{%\1\2\3%}", raw)
+    return COMMENT.sub(
+        lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", source
+    )
+
+
 def _compile(app: _App) -> tuple[jinja2.Template, list[str]]:
     """Compiles the instruction with {{# #}} comments kept as text, like CES.
 
@@ -285,9 +301,7 @@ def _compile(app: _App) -> tuple[jinja2.Template, list[str]]:
       jinja2.TemplateSyntaxError: The instruction isn't a valid template.
     """
     env = jinja2.Environment()
-    source = COMMENT.sub(
-        lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", app.instruction
-    )
+    source = _to_jinja(app.instruction)
     declared = {v["name"] for v in app.config.get("variableDeclarations", [])}
     undeclared = (
         meta.find_undeclared_variables(env.parse(source))

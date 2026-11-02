@@ -59,48 +59,48 @@ When the customer says they're all set and don't need anything else, call {@TOOL
             - `returns`: Returning an item from a delivered order.
             - `live_agent`: Connecting the customer with a live representative.
         </playbook_list>
-        {% if current_playbook %}
+        {{% if current_playbook %}}
         <current_playbook_status>
             Currently Opened Playbook: "{{current_playbook}}"
             If the customer asks for something covered by a different playbook, silently call {@TOOL: open_playbook} with that playbook FIRST, before replying or calling any other tool.
         </current_playbook_status>
-        {% endif %}
+        {{% endif %}}
     </section>
 
     {{# SECTION 2: AVAILABLE TASKS IN THE OPENED PLAYBOOK #}}
-    {% if current_playbook %}
+    {{% if current_playbook %}}
     <section name="Available_Tasks_In_Playbook">
         <task_list>
             Available Tasks in Currently Opened Playbook ("{{current_playbook}}"):
-            {% if current_playbook == 'order_support' %}
+            {{% if current_playbook == 'order_support' %}}
             - `check_order_status`: Look up an order and share its status and delivery details.
             ...
-            {% endif %}
+            {{% endif %}}
         </task_list>
         <current_task_status>
-            {% if current_task %}
+            {{% if current_task %}}
             Currently Loaded Task: "{{current_task}}"
             To switch to a different task in this playbook, silently call {@TOOL: load_task} with the exact task name FIRST, before replying or calling any other tool.
-            {% else %}
+            {{% else %}}
             No task is loaded yet. Silently call {@TOOL: load_task} with the exact task name from the list above FIRST, before replying or calling any other tool.
-            {% endif %}
+            {{% endif %}}
             Your tool list only has the tools for the currently loaded task. Never call a tool that is not in your tool list, even if you called it earlier in the conversation. If you need a tool that isn't in your list, first silently call {@TOOL: load_task} with the task that uses it (call {@TOOL: open_playbook} first if that task is in another playbook), then call the tool.
         </current_task_status>
     </section>
-    {% endif %}
+    {{% endif %}}
 
     {{# SECTION 3: INSTRUCTIONS FOR THE LOADED TASK #}}
-    {% if current_task %}
+    {{% if current_task %}}
     <section name="Loaded_Task_Instruction">
         <active_instruction>
             Instruction for Currently Loaded Task ("{{current_task}}"):
-            {% if current_task == 'check_order_status' %}
+            {{% if current_task == 'check_order_status' %}}
             <subtask name="Check_Order_Status">...</subtask>
-            {% elif ... %}
-            {% endif %}
+            {{% elif ... %}}
+            {{% endif %}}
         </active_instruction>
     </section>
-    {% endif %}
+    {{% endif %}}
 </taskflow>
 ```
 
@@ -161,25 +161,25 @@ already keep it in the history.
 Write state-dependent rules as Jinja branches. The cancel task from the sample:
 
 ```xml
-{% elif current_task == 'cancel_order' %}
+{{% elif current_task == 'cancel_order' %}}
 <subtask name="Cancel_Order">
-    {% if not order_id %}
+    {{% if not order_id %}}
     - Ask for the order number if the customer hasn't shared it, then call {@TOOL: lookup_order} with it.
-    {% else %}
+    {{% else %}}
     - If the customer means a different order than {{order_id}}, call {@TOOL: lookup_order} with that order number first.
-    {% if order_status == 'Processing' %}
+    {{% if order_status == 'Processing' %}}
     - Order {{order_id}} hasn't shipped yet, so it can be canceled. Confirm that the customer wants to cancel it, and ask for a short reason if they haven't given one.
     - Once they confirm, call {@TOOL: submit_cancellation} with `order_number` and `reason`.
-    {% elif order_status == 'Canceled' %}
+    {{% elif order_status == 'Canceled' %}}
     - Order {{order_id}} is canceled. If you just canceled it, confirm that and share the refund timeline from the result.
-    {% elif order_status == 'Shipped' %}
+    {{% elif order_status == 'Shipped' %}}
     - Order {{order_id}} has already shipped, so it can't be canceled. Let the customer know they can start a return once it's delivered.
-    {% elif order_status == 'Delivered' %}
+    {{% elif order_status == 'Delivered' %}}
     - Order {{order_id}} was already delivered, so it can't be canceled. Offer to start a return instead. If the customer wants one, silently call {@TOOL: open_playbook} with `returns`.
-    {% else %}
+    {{% else %}}
     - Order {{order_id}} has status "{{order_status}}", so it can't be canceled. Let the customer know.
-    {% endif %}
-    {% endif %}
+    {{% endif %}}
+    {{% endif %}}
 </subtask>
 ```
 
@@ -193,9 +193,10 @@ Write state-dependent rules as Jinja branches. The cancel task from the sample:
     variable the branch depends on, have the tool set a flag, or the next call
     is told to do it again. For an action on one order, store that order's
     number instead of `true`, so the flag doesn't carry over to the next order.
--   `{var}` (single braces) isn't substituted. The model sees the literal
-    placeholder and only gets the value from state update notes that the
-    platform attaches to the start of the turn. Use `{{var}}`.
+-   Use double braces for both values (`{{var}}`) and control blocks
+    (`{{% if ... %}}`, `{{% elif ... %}}`, `{{% else %}}`, `{{% endif %}}`).
+    Single-brace `{var}` isn't substituted, and single-brace control blocks make
+    the platform attach `<state_update>` blocks to the start of the turn.
 -   Shared tools such as `lookup_order` are mentioned in every branch where the
     customer might need them, so they stay visible.
 
@@ -348,10 +349,13 @@ avoids the startup cost the platform adds per separate callback.
 ## Platform gotchas
 
 -   CXAS instruction templates support `if`/`elif`/`else`, `and`, `or`, `not`,
-    `in`, `==`, `!=` and dot access, but reject `not in` (write `not a in ['x',
-    'y']`) and subscripts like `order['status']` (use `order.status`). `cxas
-    lint` doesn't catch these and the push fails with "Invalid template syntax",
-    so `check_tool_visibility.py` flags them.
+    `in`, `==`, `!=` and dot access inside double-brace blocks (`{{% ... %}}`),
+    but reject `not in` (write `not a in ['x', 'y']`) and subscripts like
+    `order['status']` (use `order.status`). Single-brace blocks emit
+    `<state_update>` notes into the conversation history, and standard `jinja2`
+    needs `{{% ... %}}` normalized before parsing. `cxas lint` doesn't catch
+    `not in` or subscripts and the push fails with "Invalid template syntax", so
+    `check_tool_visibility.py` flags them along with single-brace blocks.
 -   `Part.from_end_session` takes `reason` and `escalated`. Passing
     `session_escalated` raises a `TypeError`, the platform answers with a
     fallback line, and the queued action stays in state, so every later turn

@@ -75,10 +75,7 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    `current_task`. The required one-sentence `rationale` stays in the history
    so later turns know why the step happened, since the model's reasoning from
    earlier turns isn't kept.
-1. **Branch with Jinja, not prose.** CXAS renders `{{var}}` in place, so `If {{order_id}} is empty, ...` reaches the model as `If is empty, ...`. Use `{% if %}`, `{% elif %}`, `{% else %}` so the model sees only the branch that
-   applies, render values with `{{var}}` (never `{var}`), and write each branch
-   so it makes sense right after the action that leads to it: the instruction
-   is rendered again for the next model call in the same turn.
+1. **Branch with Jinja, not prose.** CXAS renders `{{var}}` in place, so `If {{order_id}} is empty, ...` reaches the model as `If is empty, ...`. Use double-brace control tags (`{{% if %}}`, `{{% elif %}}`, `{{% else %}}`, `{{% endif %}}`) so the model sees only the branch that applies without injecting `<state_update>` blocks into the conversation history. Render values with `{{var}}` (never `{var}`), and write each branch so it makes sense right after the action that leads to it: the instruction is rendered again for the next model call in the same turn.
 1. **Static goodbye.** A `<ending_the_conversation>` block above `<taskflow>`
    references `{@TOOL: graceful_end_session}`, so the agent can end the
    conversation with one model call from any state.
@@ -169,17 +166,19 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
 
    Keep the sample's `cxaslint.yaml`; it turns off only the rules that
    don't fit this design. The checker fails on a missing `load_task`,
-   undeclared instruction variables, `not in` and subscripts (which a push
-   rejects), tool names in comments, names shared by a playbook or task and a
-   tool, router lists that don't match the instruction, registered tools
-   nothing uses, and a visible `end_session` or `set_next_agent_actions`. To
-   check branches that depend on other state, pass the full state, including
-   the playbook and task, with `--state '{"current_playbook": "...", "current_task": "...", ...}'`, and add `--print` to read the rendered
-   instruction. `run_locally.py` walks one flow per task through the real tool
-   and callback code, so Python errors show up now instead of after a push. The
-   first `callback` step plays the greeting, and each later one prints the
-   tools the model would get next. The script doesn't stop you from calling a
-   tool the last callback step hid, so follow the visible tools it prints.
+   undeclared instruction variables, single-brace control tags, `not in` and
+   subscripts (which a push rejects), tool names in comments, names shared by a
+   playbook or task and a tool, router lists that don't match the instruction,
+   registered tools nothing uses, and a visible `end_session` or
+   `set_next_agent_actions`. To check branches that depend on other state, pass
+   the full state, including the playbook and task, with
+   `--state '{"current_playbook": "...", "current_task": "...", ...}'`, and add
+   `--print` to read the rendered instruction. `run_locally.py` walks one flow
+   per task through the real tool and callback code, so Python errors show up
+   now instead of after a push. The first `callback` step plays the greeting,
+   and each later one prints the tools the model would get next. The script
+   doesn't stop you from calling a tool the last callback step hid, so follow
+   the visible tools it prints.
 
 1. Push:
 
@@ -250,7 +249,8 @@ is in the instruction it got for that state.
 - [ ] Only `open_playbook` and `graceful_end_session` are named in static
   text; no tool names in comments or tag names; no playbook or task shares a
   tool's name.
-- [ ] State-dependent rules are Jinja branches, and values use `{{var}}`.
+- [ ] State-dependent rules use double-brace `{{% if ... %}}` blocks, and
+  values use `{{var}}`.
 - [ ] Every variable the instruction or tools use is declared in `app.json`.
 - [ ] Tool JSON descriptions match the docstrings (`sync_tool_descriptions.py --check`).
 - [ ] `cxas lint` passes, `check_tool_visibility.py` reports no problems, and
