@@ -51,7 +51,6 @@ When the customer says they're all set and don't need anything else, call {@TOOL
 </ending_the_conversation>
 
 <taskflow>
-    {{# SECTION 1: AVAILABLE PLAYBOOKS (ALWAYS VISIBLE) #}}
     <section name="Available_Playbooks">
         <playbook_list>
             Available Playbooks (call {@TOOL: open_playbook} to open one):
@@ -67,7 +66,6 @@ When the customer says they're all set and don't need anything else, call {@TOOL
         {{% endif %}}
     </section>
 
-    {{# SECTION 2: AVAILABLE TASKS IN THE OPENED PLAYBOOK #}}
     {{% if current_playbook %}}
     <section name="Available_Tasks_In_Playbook">
         <task_list>
@@ -89,7 +87,6 @@ When the customer says they're all set and don't need anything else, call {@TOOL
     </section>
     {{% endif %}}
 
-    {{# SECTION 3: INSTRUCTIONS FOR THE LOADED TASK #}}
     {{% if current_task %}}
     <section name="Loaded_Task_Instruction">
         <active_instruction>
@@ -196,7 +193,9 @@ Write state-dependent rules as Jinja branches. The cancel task from the sample:
 -   Use double braces for both values (`{{var}}`) and control blocks
     (`{{% if ... %}}`, `{{% elif ... %}}`, `{{% else %}}`, `{{% endif %}}`).
     Single-brace `{var}` isn't substituted, and single-brace control blocks make
-    the platform attach `<state_update>` blocks to the start of the turn.
+    the platform attach `<state_update>` blocks to the start of the turn. Do not
+    put `{{# ... #}}` or `{# ... #}` comments in `instruction.txt`; CES leaves
+    them in the rendered prompt sent to the model and the callback.
 -   Shared tools such as `lookup_order` are mentioned in every branch where the
     customer might need them, so they stay visible.
 
@@ -223,9 +222,9 @@ def _handle_dynamic_tool_hiding(
     `graceful_end_session`; a substring check would expose it whenever the
     goodbye tool is visible, and the model can then end the conversation without
     the goodbye message.
--   The callback receives the instruction with `{{# ... #}}` comments still in
-    it, and tag names count too: a block called `<end_session>` keeps
-    `end_session` visible on every turn.
+-   CES does not strip `{{# ... #}}` or `{# ... #}` comments, so both the model
+    and the callback see them verbatim, and tag names count too: a block called
+    `<end_session>` keeps `end_session` visible on every turn.
 -   A task list stays visible while its playbook is open, so a tool named like a
     task is visible before the task loads. The sample's `cancel_order` task uses
     a `submit_cancellation` tool for this reason.

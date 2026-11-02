@@ -15,7 +15,6 @@ When the customer says they're all set and don't need anything else, call {@TOOL
 </ending_the_conversation>
 
 <taskflow>
-    {{# SECTION 1: AVAILABLE PLAYBOOKS (ALWAYS VISIBLE) #}}
     <section name="Available_Playbooks">
         <playbook_list>
             Available Playbooks (call {@TOOL: open_playbook} to open one):
@@ -31,7 +30,6 @@ When the customer says they're all set and don't need anything else, call {@TOOL
         {{% endif %}}
     </section>
 
-    {{# SECTION 2: AVAILABLE TASKS IN THE OPENED PLAYBOOK #}}
     {{% if current_playbook %}}
     <section name="Available_Tasks_In_Playbook">
         <task_list>
@@ -58,7 +56,6 @@ When the customer says they're all set and don't need anything else, call {@TOOL
     </section>
     {{% endif %}}
 
-    {{# SECTION 3: INSTRUCTIONS FOR THE LOADED TASK #}}
     {{% if current_task %}}
     <section name="Loaded_Task_Instruction">
         <active_instruction>

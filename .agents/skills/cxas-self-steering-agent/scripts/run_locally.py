@@ -47,6 +47,7 @@ import jinja2
 from cxas_scrapi.utils import callback_libs
 
 COMMENT = re.compile(r"\{\{#.*?#\}\}", re.S)
+SINGLE_COMMENT = re.compile(r"(?<!\{)\{#.*?#\}(?!\})", re.S)
 DOUBLE_BLOCK = re.compile(r"\{\{%(-?)(.*?)(-?)%\}\}", re.S)
 
 
@@ -172,6 +173,9 @@ class Runner:
         raw = (self.agent_dir / "instruction.txt").read_text(encoding="utf-8")
         source = DOUBLE_BLOCK.sub(r"{%\1\2\3%}", raw)
         source = COMMENT.sub(
+            lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", source
+        )
+        source = SINGLE_COMMENT.sub(
             lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", source
         )
         rendered = jinja2.Environment().from_string(source).render(**self.state)

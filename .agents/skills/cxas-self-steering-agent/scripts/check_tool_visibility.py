@@ -42,6 +42,7 @@ import jinja2
 from jinja2 import meta
 
 COMMENT = re.compile(r"\{\{#.*?#\}\}", re.S)
+SINGLE_COMMENT = re.compile(r"(?<!\{)\{#.*?#\}(?!\})", re.S)
 DOUBLE_BLOCK = re.compile(r"\{\{%(-?)(.*?)(-?)%\}\}", re.S)
 SINGLE_BLOCK = re.compile(r"(?<!\{)\{%.*?%\}(?!\})", re.S)
 TAG = re.compile(r"\{\{%.*?%\}\}|(?<!\{)\{%.*?%\}(?!\})|\{\{.*?\}\}", re.S)
@@ -182,12 +183,13 @@ def _load_app(app_dir: pathlib.Path) -> _App:
     agent_file = agent_dir / f"{config['rootAgent']}.json"
     agent = json.loads(agent_file.read_text(encoding="utf-8"))
     instruction = (agent_dir / "instruction.txt").read_text(encoding="utf-8")
+    without_comments = SINGLE_COMMENT.sub("", COMMENT.sub("", instruction))
     return _App(
         path=app_dir,
         config=config,
         tools=agent.get("tools", []),
         instruction=instruction,
-        without_comments=COMMENT.sub("", instruction),
+        without_comments=without_comments,
     )
 
 
@@ -199,13 +201,25 @@ def _all_tasks(playbook_tasks: dict[str, tuple[str, ...]]) -> set[str]:
 
 
 def _comment_problems(app: _App) -> list[str]:
-    """Finds tool names in {{# #}} comments, which reach the hiding callback."""
+    """Finds Jinja comments (unstripped by CES) and tool names inside them."""
     problems = []
-    for comment in COMMENT.findall(app.instruction):
-        for tool in _visible(comment, app.tools):
+    comments = COMMENT.findall(app.instruction) + SINGLE_COMMENT.findall(
+        app.instruction
+    )
+    for comment in comments:
+        snippet = " ".join(comment.split())[:60]
+        tools_in_comment = _visible(comment, app.tools)
+        if tools_in_comment:
+            for tool in tools_in_comment:
+                problems.append(
+                    f"tool name {tool!r} in a Jinja comment (comments are not"
+                    f" stripped by CES and reach the model and callback):"
+                    f" {snippet!r}"
+                )
+        else:
             problems.append(
-                f"tool name {tool!r} in a Jinja comment (comments reach the"
-                f" callback): {comment[:60]!r}"
+                "Jinja comment is not stripped by CES and reaches the model and"
+                f" callback; remove it: {snippet!r}"
             )
     return problems
 
@@ -280,9 +294,12 @@ def _router_problems(
 
 
 def _to_jinja(raw: str) -> str:
-    """Converts CES double-brace blocks and {{# #}} comments for jinja2."""
+    """Converts CES double-brace blocks and preserves unstripped comments."""
     source = DOUBLE_BLOCK.sub(r"{%\1\2\3%}", raw)
-    return COMMENT.sub(
+    source = COMMENT.sub(
+        lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", source
+    )
+    return SINGLE_COMMENT.sub(
         lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", source
     )
 

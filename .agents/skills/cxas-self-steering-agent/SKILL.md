@@ -75,15 +75,24 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    `current_task`. The required one-sentence `rationale` stays in the history
    so later turns know why the step happened, since the model's reasoning from
    earlier turns isn't kept.
-1. **Branch with Jinja, not prose.** CXAS renders `{{var}}` in place, so `If {{order_id}} is empty, ...` reaches the model as `If is empty, ...`. Use double-brace control tags (`{{% if %}}`, `{{% elif %}}`, `{{% else %}}`, `{{% endif %}}`) so the model sees only the branch that applies without injecting `<state_update>` blocks into the conversation history. Render values with `{{var}}` (never `{var}`), and write each branch so it makes sense right after the action that leads to it: the instruction is rendered again for the next model call in the same turn.
+1. **Branch with Jinja, not prose.** CXAS renders `{{var}}` in place, so
+   `If {{order_id}} is empty, ...` reaches the model as `If is empty, ...`. Use
+   double-brace control tags (`{{% if ... %}}`, `{{% elif ... %}}`,
+   `{{% else %}}`, `{{% endif %}}`) so the model sees only the branch that
+   applies without injecting `<state_update>` blocks into the conversation
+   history. Render values with `{{var}}` (never `{var}`). Do not put
+   `{{# ... #}}` or `{# ... #}` comments in `instruction.txt`: the platform
+   leaves them in the prompt sent to the model and the callback. Write each
+   branch so it makes sense right after the action that leads to it: the
+   instruction is rendered again for the next model call in the same turn.
 1. **Static goodbye.** A `<ending_the_conversation>` block above `<taskflow>`
    references `{@TOOL: graceful_end_session}`, so the agent can end the
    conversation with one model call from any state.
 1. **Dynamic tool hiding.** The callback hides every tool whose name has no
    word-boundary match in the rendered instruction. Only `open_playbook` and
    `graceful_end_session` may be named in static text. Never put a tool name in
-   a Jinja comment or a tag name (`<end_session>` would expose the built-in
-   `end_session` tool on every turn), never give a playbook or task the same
+   a tag name (`<end_session>` would expose the built-in `end_session` tool on
+   every turn) or an unstripped comment, never give a playbook or task the same
    name as a tool, and mention a tool in every branch where the model may need
    it. Keep the "Your tool list only has the tools for the currently loaded
    task..." rule at the end of `<current_task_status>`.
@@ -167,11 +176,11 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    Keep the sample's `cxaslint.yaml`; it turns off only the rules that
    don't fit this design. The checker fails on a missing `load_task`,
    undeclared instruction variables, single-brace control tags, `not in` and
-   subscripts (which a push rejects), tool names in comments, names shared by a
-   playbook or task and a tool, router lists that don't match the instruction,
-   registered tools nothing uses, and a visible `end_session` or
-   `set_next_agent_actions`. To check branches that depend on other state, pass
-   the full state, including the playbook and task, with
+   subscripts (which a push rejects), Jinja comments (which the platform does
+   not strip), names shared by a playbook or task and a tool, router lists that
+   don't match the instruction, registered tools nothing uses, and a visible
+   `end_session` or `set_next_agent_actions`. To check branches that depend on
+   other state, pass the full state, including the playbook and task, with
    `--state '{"current_playbook": "...", "current_task": "...", ...}'`, and add
    `--print` to read the rendered instruction. `run_locally.py` walks one flow
    per task through the real tool and callback code, so Python errors show up
@@ -234,9 +243,9 @@ is in the instruction it got for that state.
    and the variables the instruction branches on.
 1. Render that state with `check_tool_visibility.py --state '{...}' --print` to
    read the instruction and the tool list the model had. A tool that shouldn't
-   be visible is named somewhere in that text, often in a shared block, a Jinja
-   comment, or a branch that covers more states than intended. If the tool
-   belongs there, look for the wording that sent the model to it.
+   be visible is named somewhere in that text, often in a shared block, an
+   unstripped Jinja comment, or a branch that covers more states than intended.
+   If the tool belongs there, look for the wording that sent the model to it.
 1. Fix the instruction rather than adding code, reproduce the flow with
    `run_locally.py`, and run the checks in step 7 again.
 
@@ -247,8 +256,8 @@ is in the instruction it got for that state.
   and `GREETING`, the agent `description` and `<role>` describe it.
 - [ ] `VALID_PLAYBOOKS` and `PLAYBOOK_TASKS` match the instruction exactly.
 - [ ] Only `open_playbook` and `graceful_end_session` are named in static
-  text; no tool names in comments or tag names; no playbook or task shares a
-  tool's name.
+  text; no Jinja comments in `instruction.txt` and no tool names in tag names;
+  no playbook or task shares a tool's name.
 - [ ] State-dependent rules use double-brace `{{% if ... %}}` blocks, and
   values use `{{var}}`.
 - [ ] Every variable the instruction or tools use is declared in `app.json`.
