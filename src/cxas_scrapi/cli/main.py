@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         app_branch,
         app_create,
         app_delete,
+        app_generate_stubs,
         app_init,
         app_lint,
         app_pull,
@@ -69,6 +70,9 @@ else:
     app_branch = LazyCallable("cxas_scrapi.cli.app", "app_branch")
     app_create = LazyCallable("cxas_scrapi.cli.app", "app_create")
     app_delete = LazyCallable("cxas_scrapi.cli.app", "app_delete")
+    app_generate_stubs = LazyCallable(
+        "cxas_scrapi.cli.app", "app_generate_stubs"
+    )
     app_init = LazyCallable("cxas_scrapi.cli.app", "app_init")
     app_lint = LazyCallable("cxas_scrapi.cli.app", "app_lint")
     app_pull = LazyCallable("cxas_scrapi.cli.app", "app_pull")
@@ -2897,6 +2901,44 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
     parser_lint.set_defaults(func=app_lint)
+
+    # Parser for 'generate-stubs'
+    parser_generate_stubs = subparsers.add_parser(
+        "generate-stubs",
+        help=(
+            "Generate typed Python stubs (cxas_types.pyi) for app state "
+            "variables and tool interfaces."
+        ),
+    )
+    parser_generate_stubs.add_argument(
+        "--app-dir",
+        default=".",
+        help=(
+            "Path to the app directory to inspect (default: current directory)."
+        ),
+    )
+    parser_generate_stubs.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Output file path for generated stubs "
+            "(default: <app-dir>/cxas_types.pyi)."
+        ),
+    )
+    parser_generate_stubs.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Verify that the existing stub file is up to date without "
+            "writing changes (exits 1 if missing or out of sync)."
+        ),
+    )
+    parser_generate_stubs.add_argument(
+        "--stdout",
+        action="store_true",
+        help="Print generated stub content to stdout.",
+    )
+    parser_generate_stubs.set_defaults(func=app_generate_stubs)
 
     # Parser for 'llm-lint'
     parser_llm_lint = subparsers.add_parser(

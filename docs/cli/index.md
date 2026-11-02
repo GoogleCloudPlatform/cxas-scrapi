@@ -55,11 +55,36 @@ When you pass a display name (e.g., `"My Support Agent"`) instead of a resource 
 | [`cxas local-test`](local-test.md) | Run the CI test lifecycle inside a local Docker container. |
 | [`cxas init-github-action`](init-github-action.md) | Generate a GitHub Actions workflow file for your agent. |
 | [`cxas lint`](lint.md) | Fast, deterministic structural and configuration linter across 60+ rules. |
+| [`cxas generate-stubs`](#typed-stubs-cxas-generate-stubs) | Generate typed Python stubs (`cxas_types.pyi`) for `AppState`, `TypedTools`, and callback/tool contexts. |
 | [`cxas llm-lint`](llm-lint.md) | AI-driven semantic natural language prompt linter for sub-agent instructions using Gemini. |
 | [`cxas help`](index.md) | Show detailed help for the CLI or any specific subcommand. |
 | [`cxas init`](init.md) | Bootstrap a project with AI agent development skills. |
 | [`cxas insights`](insights.md) | Manage QA scorecards via the Insights API. |
 | [`cxas trace`](trace.md) | Inspect, analyze, and report on individual conversations (deployed/build/eval) — list, fetch report, merge Cloud Logs, download/analyze audio with Gemini, replay against current agent, aggregate stats, and flag platform bugs. |
+
+---
+
+## Typed Stubs (`cxas generate-stubs`)
+
+Generate a `.pyi` stub file (`cxas_types.pyi` by default) from your exported CXAS app's `variableDeclarations`, `environment.json`, `tools/`, and `toolsets/` for IDE autocomplete, type-checking (`mypy` / `pyright`), and type-safe refactoring across callbacks and tools:
+
+```bash
+# Generate <app-dir>/cxas_types.pyi
+cxas generate-stubs --app-dir ./my_agent
+
+# Write to a custom path or print to stdout
+cxas generate-stubs --app-dir ./my_agent --output ./my_agent/types.pyi
+cxas generate-stubs --app-dir ./my_agent --stdout
+
+# Verify in CI that committed stubs match the current app schema (exits 1 if out of sync)
+cxas generate-stubs --app-dir ./my_agent --check
+```
+
+The generated stub exposes:
+- `AppState` (`TypedDict` containing declared app/environment variables plus built-in session state keys such as `current_date: str`)
+- `<PascalToolName>Args` (`TypedDict` for each tool's parameters)
+- `TypedTools` (`Protocol` enforcing the CES Xbox v2 single positional dict invocation signature)
+- `TypedCallbackContext` and `TypedToolContext` (`state: AppState`, `variables: AppState`, `tools: TypedTools`)
 
 ---
 
@@ -74,3 +99,4 @@ CXAS provides two complementary linting tools designed for different stages of y
 2. **`cxas llm-lint` (AI Semantic Linter)**
    - **What it does:** Uses Gemini to review the *actual meaning, tone, persona adherence, and logical consistency* of your natural language prompts (`instruction.txt`, `global_instruction.txt`, and dynamic state instructions in `before_agent_callbacks`).
    - **When to run:** When authoring or refactoring prompt engineering instructions, conducting thorough prompt quality reviews, or preparing for high-stakes production deployments.
+
