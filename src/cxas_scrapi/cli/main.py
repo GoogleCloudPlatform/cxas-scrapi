@@ -51,6 +51,7 @@ if TYPE_CHECKING:
         app_lint,
         app_pull,
         app_push,
+        app_sync_shared,
         apps_get,
         apps_list,
     )
@@ -73,6 +74,7 @@ else:
     app_lint = LazyCallable("cxas_scrapi.cli.app", "app_lint")
     app_pull = LazyCallable("cxas_scrapi.cli.app", "app_pull")
     app_push = LazyCallable("cxas_scrapi.cli.app", "app_push")
+    app_sync_shared = LazyCallable("cxas_scrapi.cli.app", "app_sync_shared")
     apps_get = LazyCallable("cxas_scrapi.cli.app", "apps_get")
     apps_list = LazyCallable("cxas_scrapi.cli.app", "apps_list")
     handle_local_create = LazyCallable(
@@ -2793,7 +2795,44 @@ def get_parser() -> argparse.ArgumentParser:
             "will be deleted"
         ),
     )
+    parser_push.add_argument(
+        "--sync-shared",
+        action="store_true",
+        help=(
+            "Materialize shared callbacks and instruction fragments before "
+            "packaging and uploading."
+        ),
+    )
     parser_push.set_defaults(func=app_push)
+
+    # Parser for 'sync-shared'
+    parser_sync_shared = subparsers.add_parser(
+        "sync-shared",
+        help=(
+            "Materialize or check shared callbacks and instruction fragments "
+            "across agents."
+        ),
+    )
+    parser_sync_shared.add_argument(
+        "--app-dir",
+        default=".",
+        help="Path to the app directory (default: current directory).",
+    )
+    parser_sync_shared.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Check if shared targets are in sync without modifying files "
+            "(exits with code 1 on drift)."
+        ),
+    )
+    parser_sync_shared.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output sync report as JSON.",
+    )
+    parser_sync_shared.set_defaults(func=app_sync_shared)
 
     # Parser for 'lint'
     parser_lint = subparsers.add_parser(

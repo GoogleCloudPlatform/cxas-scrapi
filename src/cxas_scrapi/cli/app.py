@@ -344,6 +344,81 @@ def app_push(args: argparse.Namespace) -> str | None:
     )
 
 
+VALID_APP_ROOTS: tuple[str, ...] = (
+    "app.yaml",
+    "app.json",
+    "global_instruction.txt",
+    "environment.json",
+    "agents",
+    "tools",
+    "examples",
+    "guardrails",
+    "toolsets",
+    "evaluations",
+    "evaluationDatasets",
+    "evaluationExpectations",
+    ".github/workflows",
+)
+
+_IGNORED_TOP_LEVEL_METADATA: frozenset[str] = frozenset(
+    {
+        ".git",
+        ".gitignore",
+        ".DS_Store",
+        "__pycache__",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        "README.md",
+        "cxaslint.yaml",
+        ".cxaslint.yaml",
+        "Dockerfile",
+        "cxas_types.pyi",
+    }
+)
+
+
+def _find_ignored_top_level_entries(
+    app_path: Path, valid_roots: tuple[str, ...] = VALID_APP_ROOTS
+) -> list[str]:
+    """Returns direct children of ``app_path`` not covered by ``valid_roots``."""
+    path_obj = Path(app_path)
+    if not path_obj.is_dir():
+        return []
+
+    direct_roots = {root for root in valid_roots if "/" not in root}
+    nested_roots: dict[str, set[str]] = {}
+    for root in valid_roots:
+        if "/" in root:
+            top_name, sub_path = root.split("/", 1)
+            nested_roots.setdefault(top_name, set()).add(sub_path.split("/")[0])
+
+    ignored: list[str] = []
+
+    for child in sorted(path_obj.iterdir(), key=lambda p: p.name):
+        name = child.name
+        if name in _IGNORED_TOP_LEVEL_METADATA:
+            continue
+        if name in direct_roots:
+            continue
+        if name in nested_roots and child.is_dir():
+            allowed_subs = nested_roots[name]
+            sub_children = sorted(child.iterdir(), key=lambda p: p.name)
+            if not sub_children:
+                ignored.append(name)
+                continue
+            for sub in sub_children:
+                if (
+                    sub.name not in allowed_subs
+                    and sub.name not in _IGNORED_TOP_LEVEL_METADATA
+                ):
+                    ignored.append(f"{name}/{sub.name}")
+            continue
+        ignored.append(name)
+
+    return ignored
+
+
 def _app_push(
     app_dir: str,
     apps_client: Apps = None,
@@ -354,25 +429,56 @@ def _app_push(
     args: argparse.Namespace | None = None,
 ) -> str | None:
     """Helper to push an app to CXAS."""
+    from cxas_scrapi.utils.shared_sync import sync_shared  # noqa: PLC0415
+
+    app_path = Path(app_dir)
+    valid_roots: tuple[str, ...] = VALID_APP_ROOTS
+
+    if app_path.is_dir():
+        if args and getattr(args, "sync_shared", False):
+            try:
+                sync_report = sync_shared(app_path, check=False)
+                if sync_report.updated:
+                    joined_updated = ", ".join(sync_report.updated)
+                    print(
+                        f"Synchronized {len(sync_report.updated)} shared "
+                        f"target(s) before push: {joined_updated}"
+                    )
+            except (ValueError, OSError) as sync_err:
+                print(
+                    f"Failed to push app: {sync_err}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        else:
+            try:
+                sync_report = sync_shared(app_path, check=True)
+                if not sync_report.in_sync:
+                    drifted_str = ", ".join(sync_report.drifted)
+                    print(
+                        "⚠️  Warning: Shared targets in "
+                        f"{app_dir} are out of sync with their canonical "
+                        f"sources: {drifted_str}. Run 'cxas sync-shared "
+                        f"--app-dir {app_dir}' to synchronize before pushing."
+                    )
+            except (ValueError, OSError) as sync_err:
+                print(
+                    f"⚠️  Warning: Shared sync check reported an issue in "
+                    f"{app_dir}: {sync_err}"
+                )
+
+        ignored_entries = _find_ignored_top_level_entries(app_path, valid_roots)
+        if ignored_entries:
+            joined_ignored = ", ".join(ignored_entries)
+            print(
+                f"⚠️  Warning: The following top-level entries in {app_dir} "
+                "are not part of the CXAS export format and will not be "
+                f"uploaded by cxas push: {joined_ignored}"
+            )
+
     temp_dir = tempfile.mkdtemp()
     inner_dir = os.path.join(temp_dir, "agent")
     os.makedirs(inner_dir)
-
-    valid_roots = [
-        "app.yaml",
-        "app.json",
-        "global_instruction.txt",
-        "environment.json",
-        "agents",
-        "tools",
-        "examples",
-        "guardrails",
-        "toolsets",
-        "evaluations",
-        "evaluationDatasets",
-        "evaluationExpectations",
-        ".github/workflows",
-    ]
 
     for item in valid_roots:
         src_path = os.path.join(app_dir, item)
@@ -843,3 +949,60 @@ def _prompt_overwrite(name: str, no_input: bool = False) -> str:
             return "skip"
         if choice in ("q", "quit"):
             return "abort"
+
+
+def app_sync_shared(args: argparse.Namespace) -> None:
+    """Handles the 'sync-shared' command."""
+    import json  # noqa: PLC0415
+
+    from cxas_scrapi.utils.shared_sync import sync_shared  # noqa: PLC0415
+
+    app_dir = getattr(args, "app_dir", None) or "."
+    check = getattr(args, "check", False)
+    json_output = getattr(args, "json_output", False) or getattr(
+        args, "json", False
+    )
+
+    try:
+        report = sync_shared(app_dir, check=check)
+    except (ValueError, FileNotFoundError) as exc:
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "app_dir": str(Path(app_dir).resolve()),
+                        "check_only": check,
+                        "in_sync": False,
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if json_output:
+        print(json.dumps(report.to_dict(), indent=2))
+    elif not report.items:
+        print(f"No shared targets found in {app_dir}.")
+    else:
+        for item in report.items:
+            print(f"[{item.status.upper()}] {item.target}: {item.message}")
+        if check:
+            if report.in_sync:
+                print(f"All {len(report.items)} shared target(s) are in sync.")
+            else:
+                print(
+                    f"{len(report.drifted)} shared target(s) out of sync: "
+                    f"{', '.join(report.drifted)}",
+                    file=sys.stderr,
+                )
+        else:
+            print(
+                f"Synchronized {len(report.updated)} of "
+                f"{len(report.items)} shared target(s)."
+            )
+
+    if check and not report.in_sync:
+        sys.exit(1)
