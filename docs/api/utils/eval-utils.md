@@ -8,11 +8,13 @@ title: EvalUtils
 
 Think of `EvalUtils` as the bridge between your local eval files and the CXAS API: load from disk, inspect or transform, then push or run via the inherited `Evaluations` methods.
 
-Key Pydantic models you'll encounter:
+Key Pydantic models and Milestone utilities you'll encounter:
 
 - **`Conversation`** — one test conversation with turns, expectations, tags, and session parameters.
 - **`Turn`** — a single round-trip with `user` text, `agent` response, and optional `tool_calls`.
 - **`Conversations`** — the top-level container, supporting `common_session_parameters` shared across all conversations.
+- **`is_milestone_eval_data()` / `sanitize_milestone_eval_dict()`** — detects and normalizes simulation/milestone YAML (`evals:` or `scenario.milestones`) against CES `MilestoneYamlTranslator` whitelists.
+- **`convert_sim_evals_to_milestone_yaml()` / `push_milestone_evals_from_yaml()`** — converts simulation files, directories, or dicts into CXAS 2.0 Milestone YAML and imports them onto the platform.
 
 ## Quick Example
 
@@ -33,6 +35,16 @@ print(df[["conversation", "turns", "expectations"]].head())
 # Export evaluation results to a spreadsheet-ready format
 results_df = eu.get_evaluation_results_dataframe()
 results_df.to_csv("eval_results.csv", index=False)
+
+# Convert simulation test cases (evals:) to CXAS 2.0 Milestone YAML
+milestone_yaml = eu.convert_sim_evals_to_milestone_yaml("evals/simulations.yaml")
+
+# Push simulation or Milestone YAML to the CX Agent Studio platform
+eu.push_milestone_evals_from_yaml(
+    source="evals/simulations.yaml",
+    app_name=app_name,
+    conflict_strategy="OVERWRITE",
+)
 ```
 
 ## Reference

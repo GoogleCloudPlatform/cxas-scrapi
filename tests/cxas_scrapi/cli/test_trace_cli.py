@@ -402,6 +402,25 @@ def test_trace_audio_analyze(
     assert "audio_cutoff" in out
 
 
+def test_trace_audio_analyze_with_questions_file(
+    fake_traces: typing.Any, capsys: typing.Any
+) -> None:
+    fake_traces.analyze_audio.return_value = {"custom_q": {"result": "PASS"}}
+    trace_cli.trace_audio_analyze(
+        _ns(
+            conversation_id="c1",
+            metric="custom_q",
+            questions_file="/tmp/custom_questions.json",
+        )
+    )
+    fake_traces.analyze_audio.assert_called_once_with(
+        "c1",
+        metrics=["custom_q"],
+        questions_path="/tmp/custom_questions.json",
+    )
+    assert "custom_q" in capsys.readouterr().out
+
+
 def test_trace_audio_analyze_failure(fake_traces: typing.Any) -> None:
     fake_traces.analyze_audio.side_effect = RuntimeError("boom")
     with pytest.raises(SystemExit):

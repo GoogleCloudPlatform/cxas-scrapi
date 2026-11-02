@@ -2,6 +2,8 @@
 
 `cxas export` lets you download an evaluation definition from CX Agent Studio to a local YAML or JSON file, so you can version-control it, review it, or use it as a template for new evaluations.
 
+Both deterministic **Golden** evaluations (exported as `conversations:` YAML) and **CXAS 2.0 Scenario Milestone** evaluations (`scenario.milestones`, exported as `evals:` YAML with `steps:`) are supported.
+
 ## Usage
 
 ```

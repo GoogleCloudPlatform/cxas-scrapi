@@ -50,54 +50,6 @@ CALLBACK_SIGNATURES = {
     ),
 }
 
-EXPECTED_TYPED_SIGNATURES = {
-    "before_model_callbacks": {
-        "fn": "before_model_callback",
-        "params": {
-            "callback_context": "CallbackContext",
-            "llm_request": "LlmRequest",
-        },
-        "return": "Optional[LlmResponse]",
-    },
-    "after_model_callbacks": {
-        "fn": "after_model_callback",
-        "params": {
-            "callback_context": "CallbackContext",
-            "llm_response": "LlmResponse",
-        },
-        "return": "Optional[LlmResponse]",
-    },
-    "before_agent_callbacks": {
-        "fn": "before_agent_callback",
-        "params": {"callback_context": "CallbackContext"},
-        "return": "Optional[Content]",
-    },
-    "after_agent_callbacks": {
-        "fn": "after_agent_callback",
-        "params": {"callback_context": "CallbackContext"},
-        "return": "Optional[Content]",
-    },
-    "before_tool_callbacks": {
-        "fn": "before_tool_callback",
-        "params": {
-            "tool": "Tool",
-            "input": "dict[str, Any]",
-            "callback_context": "CallbackContext",
-        },
-        "return": "Optional[dict[str, Any]]",
-    },
-    "after_tool_callbacks": {
-        "fn": "after_tool_callback",
-        "params": {
-            "tool": "Tool",
-            "input": "dict[str, Any]",
-            "callback_context": "CallbackContext",
-            "tool_response": "dict[str, Any]",
-        },
-        "return": "Optional[dict[str, Any]]",
-    },
-}
-
 
 def _find_entry_function(content: str, expected_fn: str) -> re.Match | None:
     """Find the entry callback function, not helper functions."""
@@ -112,7 +64,10 @@ def _get_args(content: str, fn_name: str) -> list[str] | None:
     except SyntaxError:
         return None
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == fn_name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == fn_name
+        ):
             return [arg.arg for arg in node.args.args]
     return None
 
@@ -234,6 +189,27 @@ class CamelCaseFunction(Rule):
         return results
 
 
+def _function_returns_dict(
+    fn_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """Return True if fn_node directly returns a dict literal."""
+    stack = list(fn_node.body)
+    while stack:
+        stmt = stack.pop()
+        if isinstance(
+            stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Dict):
+            return True
+        for child in ast.iter_child_nodes(stmt):
+            if not isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                stack.append(child)
+    return False
+
+
 @rule("callbacks")
 class ReturnsDictNotLlmResponse(Rule):
     id = "C004"
@@ -250,7 +226,25 @@ class ReturnsDictNotLlmResponse(Rule):
         if cb_type not in ("before_model_callbacks", "after_model_callbacks"):
             return []
 
-        if "return {" in content and "LlmResponse" not in content:
+        returns_dict = False
+        try:
+            tree = ast.parse(content)
+            expected_fn, _ = CALLBACK_SIGNATURES.get(cb_type, (None, None))
+            top_fns = [
+                n
+                for n in tree.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ]
+            target_fns = [n for n in top_fns if n.name == expected_fn]
+            if not target_fns:
+                target_fns = [n for n in top_fns if not n.name.startswith("_")]
+            returns_dict = any(_function_returns_dict(fn) for fn in target_fns)
+        except SyntaxError:
+            returns_dict = (
+                "return {" in content and "LlmResponse" not in content
+            )
+
+        if returns_dict:
             return [
                 self.make_result(
                     file=rel,
@@ -364,6 +358,26 @@ class BareExcept(Rule):
         return results
 
 
+_PYTHON_COLLECTION_METHODS: frozenset[str] = frozenset(
+    {
+        "add",
+        "append",
+        "clear",
+        "copy",
+        "discard",
+        "extend",
+        "get",
+        "items",
+        "keys",
+        "pop",
+        "remove",
+        "setdefault",
+        "update",
+        "values",
+    }
+)
+
+
 @rule("callbacks")
 class ToolNamingConvention(Rule):
     id = "C007"
@@ -376,8 +390,10 @@ class ToolNamingConvention(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
         results = []
-        tool_calls = re.findall(r"tools\.(\w+)\s*\(", content)
+        tool_calls = re.findall(r"\btools\.(\w+)\s*\(", content)
         for tool_name in tool_calls:
+            if tool_name in _PYTHON_COLLECTION_METHODS:
+                continue
             if tool_name not in context.all_known_tools:
                 results.append(
                     self.make_result(
@@ -399,194 +415,6 @@ class ToolNamingConvention(Rule):
                         ),
                     )
                 )
-        return results
-
-
-@rule("callbacks")
-class MissingTypingImport(Rule):
-    id = "C008"
-    name = "callback-missing-typing-import"
-    description = (
-        "Callback uses typing types"
-        " (Optional, Iterator, etc.)"
-        " without importing them"
-    )
-    default_severity = Severity.ERROR
-
-    TYPING_TYPES = {
-        "Optional",
-        "Iterator",
-        "List",
-        "Dict",
-        "Tuple",
-        "Set",
-        "Union",
-        "Any",
-    }
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        if not str(file_path).endswith(".py"):
-            return []
-
-        results = []
-        rel = str(file_path.relative_to(context.project_root))
-
-        has_typing_import = (
-            "from typing import" in content or "import typing" in content
-        )
-        if has_typing_import:
-            return []
-
-        used_types = []
-        for type_name in self.TYPING_TYPES:
-            patterns = [
-                rf"-> {type_name}\[",
-                rf"-> {type_name}\b",
-                rf": {type_name}\[",
-                rf": {type_name}\b",
-            ]
-            for pattern in patterns:
-                if re.search(pattern, content):
-                    used_types.append(type_name)
-                    break
-
-        if used_types:
-            types_str = ", ".join(sorted(set(used_types)))
-            results.append(
-                self.make_result(
-                    file=rel,
-                    message=(
-                        f"Uses {types_str} without"
-                        " importing from typing"
-                        " — will fail with 'name"
-                        " not defined' at push"
-                        " time"
-                    ),
-                    fix=f"Add: from typing import {types_str}",
-                )
-            )
-
-        return results
-
-
-@rule("callbacks")
-class WrongCallbackSignature(Rule):
-    id = "C009"
-    name = "callback-signature"
-    description = "Callback function must have correct type annotations"
-    default_severity = Severity.ERROR
-
-    def check(
-        self,
-        file_path: Path,
-        content: str,
-        context: LintContext,
-    ) -> list[LintResult]:
-        rel = str(file_path.relative_to(context.project_root))
-        cb_type = file_path.parent.parent.name
-        expected = EXPECTED_TYPED_SIGNATURES.get(cb_type)
-        if not expected:
-            return []
-
-        try:
-            tree = ast.parse(content)
-        except SyntaxError:
-            return []
-
-        fn_name = expected["fn"]
-        func = next(
-            (
-                node
-                for node in ast.walk(tree)
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name == fn_name
-            ),
-            None,
-        )
-        if func is None:
-            return []
-
-        params_str = ", ".join(
-            f"{k}: {v}" for k, v in expected["params"].items()
-        )
-        expected_sig = f"def {fn_name}({params_str}) -> {expected['return']}:"
-
-        def _norm(annotation: str) -> str:
-            return re.sub(r"\s+", "", annotation)
-
-        results = []
-        all_args = (
-            list(func.args.posonlyargs)
-            + list(func.args.args)
-            + list(func.args.kwonlyargs)
-        )
-        for arg in all_args:
-            expected_type = expected["params"].get(arg.arg)
-            if not expected_type:
-                continue
-            if arg.annotation is None:
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=(
-                            f"Parameter"
-                            f" '{arg.arg}'"
-                            " missing type"
-                            " annotation,"
-                            f" expected"
-                            f" '{arg.arg}:"
-                            f" {expected_type}'"
-                        ),
-                        fix=expected_sig,
-                    )
-                )
-                continue
-            actual_t = ast.unparse(arg.annotation)
-            if _norm(actual_t) != _norm(expected_type):
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=(
-                            f"Parameter"
-                            f" '{arg.arg}'"
-                            f" has type"
-                            f" '{actual_t}',"
-                            f" expected"
-                            f" '{expected_type}'"
-                        ),
-                        fix=expected_sig,
-                    )
-                )
-
-        if func.returns is None:
-            results.append(
-                self.make_result(
-                    file=rel,
-                    message=(
-                        "Missing return type"
-                        " annotation, expected"
-                        f" '-> {expected['return']}'"
-                    ),
-                    fix=expected_sig,
-                )
-            )
-        else:
-            actual = ast.unparse(func.returns)
-            if _norm(actual) != _norm(expected["return"]):
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=(
-                            f"Return type is"
-                            f" '{actual}', expected"
-                            f" '{expected['return']}'"
-                        ),
-                        fix=expected_sig,
-                    )
-                )
-
         return results
 
 

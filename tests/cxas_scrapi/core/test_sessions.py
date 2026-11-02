@@ -552,7 +552,9 @@ def test_run_session_audio_modality_voice_config(
             project_id=sessions.project_id,
             voice_config=custom_voice,
             background_noise_file=None,
+            bg_noise_snr=15.0,
             burst_noise_files=None,
+            burst_noise_snr=5.0,
         )
 
 
@@ -995,6 +997,24 @@ def test_bidi_session_handler_pydub_missing_raises_error() -> None:
         )
 
 
+def test_bidi_session_handler_with_preset_background_noise() -> None:
+    """Test BidiSessionHandler synthesizes preset noise and extracts chunks."""
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake_token",
+        config=config,
+        inputs=[],
+        background_noise_file="call_center",
+        bg_noise_snr=12.0,
+    )
+    assert handler.bg_noise_segment is not None
+    assert len(handler.bg_noise_segment) > 0
+    chunk = handler._get_next_noise_chunk(100)
+    assert len(chunk) == int(16000 * 2 * 0.1)
+    assert chunk != b"\x00" * len(chunk)
+
+
 @patch("cxas_scrapi.core.sessions.websocket.WebSocketApp")
 @patch("cxas_scrapi.core.sessions.threading.Thread")
 @patch("cxas_scrapi.core.sessions.time.sleep")
@@ -1329,3 +1349,26 @@ def test_run_session_audio_plumbs_skip_playback_wait(
 
     mock_handler_cls.assert_called_once()
     assert mock_handler_cls.call_args.kwargs["skip_playback_wait"] is True
+
+
+@patch("cxas_scrapi.core.sessions.Sessions._check_audio_requirements")
+@patch("cxas_scrapi.core.sessions.SessionServiceClient")
+def test_bidi_run_session_raises_on_tts_failure(
+    mock_client_cls: typing.Any,
+    mock_check_reqs: typing.Any,
+) -> None:
+    sessions = Sessions(app_name="projects/p/locations/l/apps/a")
+    with patch(
+        "cxas_scrapi.core.sessions.AudioTransformer"
+    ) as mock_transformer_cls:
+        mock_transformer = mock_transformer_cls.return_value
+        mock_transformer.text_to_speech_bytes.return_value = {
+            "audio_bytes": None,
+            "text": "hello",
+        }
+        with pytest.raises(RuntimeError, match="TTS produced no audio"):
+            sessions.run(
+                session_id="s1",
+                text="hello",
+                modality=Modality.AUDIO,
+            )

@@ -155,15 +155,34 @@ conversations:
 
 ## Pushing goldens to the platform
 
-Before you can run goldens, you need to push them to the platform:
+Before you can run goldens, you need to push them to the platform. `--file` accepts either a single YAML file or a directory of YAML files:
 
 ```bash
+# Push a single file
 cxas push-eval \
   --app-name "projects/my-project/locations/us/apps/my-app" \
   --file evals/goldens/order_lookup.yaml
+
+# Sync an entire directory and prune removed evaluations carrying a specific tag
+cxas push-eval \
+  --app-name "projects/my-project/locations/us/apps/my-app" \
+  --file evals/goldens/ \
+  --prune-tag regression
 ```
 
-Push each golden file individually using `--file`.
+### `cxas push-eval` CLI Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--app-name` | *(required)* | CXAS app resource path (`projects/.../locations/.../apps/...`) |
+| `--file` | *(required)* | Path to a YAML file or directory of YAML files containing evaluation definitions |
+| `--prune` | `False` | Delete remote evaluations whose `display_name` is not present in the local YAML files |
+| `--prune-tag` | `None` | Only prune remote evaluations that carry this tag and are absent from local YAML files (implies `--prune`) |
+| `--dry-run` | `False` | Preview evaluation upsert and prune actions without mutating the server |
+
+When syncing evaluations:
+- Tool `displayName` references in `toolCall` / `toolResponse` expectations are automatically resolved to the target app's server-minted tool resource IDs.
+- If the platform returns `501 Not Implemented` on `UpdateEvaluation`, SCRAPI automatically falls back to `delete` + `create`.
 
 ---
 
@@ -186,9 +205,29 @@ You can filter which conversations to run using tags:
 ```bash
 cxas run \
   --app-name "projects/my-project/locations/us/apps/my-app" \
-  --filter-auto-metrics \
+  --tags P0 order_management \
+  --runs 3 \
+  --min-run-passes 2 \
+  --min-pass-rate 0.90 \
+  --golden-run-method NAIVE \
   --wait
 ```
+
+### `cxas run` CLI Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--app-name` | *(required)* | CXAS app resource path (`projects/.../locations/.../apps/...`) |
+| `--evaluation-id` | `None` | Specific evaluation resource name to run |
+| `--display-name-prefix` | `None` | Run all evaluations whose display name starts with this prefix |
+| `--tags` | `[]` | Space-separated list of tags; runs evaluations matching any tag |
+| `--modality` | `text` | Execution modality (`text` or `audio`) |
+| `--golden-run-method` | `STABLE` | Replay method for golden evaluations (`STABLE` or `NAIVE`) |
+| `--runs` | `1` | Number of evaluation runs to execute for `k-of-N` reconciliation |
+| `--min-run-passes` | `None` | Minimum passing runs per evaluation for `k-of-N` voting (defaults to `1` when `--runs > 1`) |
+| `--min-pass-rate` | `None` | Minimum fraction of evaluations (`0.0`–`1.0`) that must pass; fails closed if `0` run |
+| `--wait` | `False` | Wait for evaluation runs to complete and exit `0` on pass or `1` on fail |
+| `--filter-auto-metrics` | `False` | Ignore automated semantic similarity/hallucination metrics and evaluate custom expectations only |
 
 ### Exit codes
 

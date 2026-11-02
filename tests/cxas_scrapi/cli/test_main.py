@@ -496,6 +496,32 @@ def test_parser_pull_version_id() -> None:
         assert parsed_args.target_dir == "/tmp/target"
         assert parsed_args.version_id == "0.0.3"
         assert parsed_args.overwrite is True
+        assert parsed_args.app_dir_name is None
+
+
+def test_parser_pull_app_dir_name() -> None:
+    """Test that the pull parser correctly handles --app-dir-name."""
+    test_args = [
+        "cxas",
+        "pull",
+        "dev-app-1",
+        "--target-dir",
+        "cxas_app",
+        "--app-dir-name",
+        "shared_agent",
+        "--overwrite",
+    ]
+    with (
+        mock.patch.object(sys, "argv", test_args),
+        mock.patch("cxas_scrapi.cli.main.app_pull") as mock_app_pull,
+    ):
+        main_cli.main()
+        mock_app_pull.assert_called_once()
+        parsed_args = mock_app_pull.call_args[0][0]
+        assert parsed_args.app == "dev-app-1"
+        assert parsed_args.target_dir == "cxas_app"
+        assert parsed_args.app_dir_name == "shared_agent"
+        assert parsed_args.overwrite is True
 
 
 def test_parser_versions_create() -> None:

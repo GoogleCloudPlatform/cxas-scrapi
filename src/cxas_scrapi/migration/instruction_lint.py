@@ -34,12 +34,10 @@ from cxas_scrapi.utils.linter import (
 )
 
 # Curated to schema/syntax rules that work without filesystem context:
-#   I001 — required <role>/<persona>/<taskflow> tags
-#   I002 — <taskflow> needs <subtask> or <step> children
 #   I010 — wrong agent-reference syntax (e.g. ${AGENT:...})
 #   I011 — wrong tool-reference syntax
 #   I015 — banned legacy CamelCase / state-machine tags
-_SYNTHESIS_GATING_RULES = frozenset({"I001", "I002", "I010", "I011", "I015"})
+_SYNTHESIS_GATING_RULES = frozenset({"I010", "I011", "I015"})
 
 
 def lint_instruction_text(text: str, agent_name: str) -> list[LintResult]:

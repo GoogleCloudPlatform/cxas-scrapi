@@ -62,8 +62,8 @@ Turn-by-turn **ideal** conversations. The platform replays user inputs and score
 
 **Run goldens at least 5 times** using the high-level reporting script (`run-and-report.py`) to average across runs.
 
-### 2. Local Simulations -- open-ended flows
-Uses SCRAPI's Sessions API with Gemini as the sim user to test flows where the conversation varies each run. Runs locally (not on the platform), supports parallel execution (~1 min for the full suite).
+### 2. Local & Platform Milestone Simulations -- open-ended flows
+Uses SCRAPI's Sessions API with Gemini as the sim user to test flows where the conversation varies each run. Runs locally in parallel (~1 min for the full suite), or can be converted and executed directly on the CES platform as **CXAS 2.0 Milestone Evaluations** (`cxas push-eval --file <sims.yaml>` + `cxas run --eval-type scenarios --wait`, `cxas evals report --platform-sims`, or `SimulationEvals.run_simulations(..., run_on_platform=True)`).
 
 **Use for:** troubleshooting cadence, multi-step failures, knowledge base queries, any flow where tool responses determine the agent's path.
 
@@ -129,6 +129,14 @@ All commands support `--priority P0` and `--tag <tag>`.
 **For a combined HTML report:**
 ```bash
 cxas evals report --output-dir <project>/eval-reports/
+
+# Include comprehensive Audio Analysis (opt-in; off by default)
+cxas evals report \
+  --run \
+  --app-name "$APP_NAME" \
+  --modality audio \
+  --audio-analysis \
+  --output-dir <project>/eval-reports/
 ```
 
 **For an interactive diagnostic dashboard (dynamic parameter filters & LLM failure clustering):**

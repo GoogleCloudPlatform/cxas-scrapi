@@ -18,6 +18,7 @@
 
 import contextlib
 import enum
+import glob
 import json
 import logging
 import os
@@ -48,6 +49,36 @@ CALLBACK_RESULTS_FILENAME = "callback_results.csv"
 COMBINED_REPORT_FILENAME = "combined_report.html"
 COMBINED_REPORT_JSON_FILENAME = "combined_report.json"
 TIMESTAMP_PATTERN = r"\d{8}_\d{6}"
+
+# Whitelist constants for Milestone YAMLs aligned with
+# CES MilestoneYamlTranslator.kt
+MILESTONE_ALLOWED_ROOT_KEYS = {
+    "common_session_parameters",
+    "common_expectations",
+    "evals",
+    "initial_event",
+    "metadata",
+}
+MILESTONE_ALLOWED_EVAL_KEYS = {
+    "name",
+    "tags",
+    "session_parameters",
+    "steps",
+    "expectations",
+    "max_turns",
+    "initial_event",
+    "metadata",
+}
+MILESTONE_ALLOWED_STEP_KEYS = {
+    "goal",
+    "success_criteria",
+    "response_guide",
+    "max_turns",
+    "static_utterance",
+    "event",
+    "inject_variables",
+    "metadata",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +189,7 @@ class EvalUtils(Evaluations):
         self.var_client = Variables(app_name=self.app_name, creds=self.creds)
         try:
             self.tool_map = self.tools_client.get_tools_map(reverse=True)
-        except (AttributeError, KeyError, RuntimeError, ValueError) as e:
+        except Exception as e:
             logger.warning(
                 "Failed to fetch tool map for %s: %s", self.app_name, e
             )
@@ -166,10 +197,11 @@ class EvalUtils(Evaluations):
         self.agents_client = Agents(app_name=self.app_name, creds=self.creds)
         try:
             self.agent_map = self.agents_client.get_agents_map(reverse=True)
-        except (AttributeError, KeyError, RuntimeError, ValueError) as e:
+        except Exception as e:
             logger.warning(
                 "Failed to fetch agent map for %s: %s", self.app_name, e
             )
+            self.agent_map = {}
         # Defer import to break circular dependency:
         # conversation_history -> latency_parser -> eval_utils
         # -> conversation_history
@@ -198,6 +230,435 @@ class EvalUtils(Evaluations):
             outcome_map = {0: "UNSPECIFIED", 1: "PASS", 2: "FAIL"}
             return outcome_map.get(val, f"UNKNOWN_{val}")
         return str(val) if val is not None else None
+
+    @staticmethod
+    def is_milestone_eval_data(data: Any) -> bool:
+        """Determines if the given data represents a Milestone evaluation."""
+        if isinstance(data, dict):
+            if "evals" in data and isinstance(data["evals"], list):
+                return True
+            if "steps" in data and isinstance(data["steps"], list):
+                return any(
+                    isinstance(s, dict)
+                    and ("goal" in s or "success_criteria" in s)
+                    for s in data["steps"]
+                )
+            scenario = data.get("scenario")
+            if isinstance(scenario, dict) and isinstance(
+                scenario.get("milestones"), list
+            ):
+                return True
+            if isinstance(data.get("milestones"), list):
+                return True
+        elif isinstance(data, list):
+            if data and all(
+                isinstance(item, dict)
+                and "steps" in item
+                and isinstance(item["steps"], list)
+                for item in data
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _format_milestone_expectation(exp: Any) -> str:
+        """Normalizes a string or dict expectation into a prompt string."""
+        if isinstance(exp, dict):
+            title = exp.get("title") or exp.get("name")
+            body = (
+                exp.get("expectation")
+                or exp.get("prompt")
+                or exp.get("description")
+                or ""
+            )
+            if title and body:
+                return f"{title}: {body}"
+            if body:
+                return str(body)
+            if title:
+                return str(title)
+            return ""
+        return str(exp) if exp else ""
+
+    @staticmethod
+    def sanitize_milestone_eval_dict(data: Any) -> dict[str, Any]:
+        """Normalizes and sanitizes simulation evals data into strict Milestone
+        YAML format compatible with CES platform MilestoneYamlTranslator.
+
+        Removes non-whitelisted keys (e.g. client-only audio_expectations,
+        naturalness_metric, barge_in_after_ms) and ensures inject_variables
+        only exists on step 0 (hoisting to session_parameters or step 0 if found
+        on later steps).
+        """
+        if not data:
+            return {"evals": []}
+
+        if isinstance(data, dict) and (
+            (
+                isinstance(data.get("scenario"), dict)
+                and isinstance(data["scenario"].get("milestones"), list)
+            )
+            or isinstance(data.get("milestones"), list)
+        ):
+            data = Evaluations.eval_dict_to_yaml(data)
+
+        root_dict: dict[str, Any] = {}
+        evals_list: list[dict[str, Any]] = []
+
+        if isinstance(data, dict):
+            if "evals" in data and isinstance(data["evals"], list):
+                common_params = data.get(
+                    "common_session_parameters"
+                ) or data.get("commonSessionParameters")
+                if isinstance(common_params, dict) and common_params:
+                    root_dict["common_session_parameters"] = (
+                        Common.unwrap_struct(common_params)
+                    )
+                common_exps = data.get("common_expectations") or data.get(
+                    "commonExpectations"
+                )
+                if isinstance(common_exps, list) and common_exps:
+                    formatted_common_exps = [
+                        EvalUtils._format_milestone_expectation(e)
+                        for e in common_exps
+                    ]
+                    formatted_common_exps = [
+                        e for e in formatted_common_exps if e
+                    ]
+                    if formatted_common_exps:
+                        root_dict["common_expectations"] = formatted_common_exps
+                init_evt = data.get("initial_event") or data.get("initialEvent")
+                if init_evt:
+                    root_dict["initial_event"] = init_evt
+                evals_list = data["evals"]
+            elif "steps" in data:
+                evals_list = [data]
+            else:
+                evals_list = []
+        elif isinstance(data, list):
+            evals_list = [item for item in data if isinstance(item, dict)]
+
+        sanitized_evals: list[dict[str, Any]] = []
+        client_only_fields = [
+            "barge_in_after_ms",
+            "audio_expectations",
+            "audio_analysis",
+            "naturalness_metric",
+            "naturalness",
+            "voice_config",
+        ]
+        for eval_idx, item in enumerate(evals_list):
+            if not isinstance(item, dict):
+                continue
+
+            name = item.get("name") or f"milestone_eval_{eval_idx + 1}"
+            stripped_eval_fields = [
+                f for f in client_only_fields if item.get(f) is not None
+            ]
+            if stripped_eval_fields:
+                logger.warning(
+                    "Stripping unsupported client-only field(s) %s from "
+                    "evaluation '%s' for Milestone platform compatibility.",
+                    stripped_eval_fields,
+                    name,
+                )
+            sanitized_eval: dict[str, Any] = {"name": str(name)}
+
+            tags = item.get("tags")
+            if tags and isinstance(tags, list):
+                sanitized_eval["tags"] = [str(t) for t in tags]
+
+            session_params = (
+                item.get("session_parameters")
+                or item.get("sessionParameters")
+                or {}
+            )
+            if session_params:
+                sanitized_eval["session_parameters"] = Common.unwrap_struct(
+                    session_params
+                )
+            else:
+                sanitized_eval["session_parameters"] = {}
+
+            expectations = (
+                item.get("expectations")
+                or item.get("evaluation_expectations")
+                or item.get("evaluationExpectations")
+                or []
+            )
+            if expectations and isinstance(expectations, list):
+                formatted_exps = [
+                    EvalUtils._format_milestone_expectation(e)
+                    for e in expectations
+                ]
+                formatted_exps = [e for e in formatted_exps if e]
+                if formatted_exps:
+                    sanitized_eval["expectations"] = formatted_exps
+
+            max_turns = (
+                item.get("max_turns")
+                or item.get("maxTurns")
+                or item.get("max_turn_count")
+                or item.get("maxTurnCount")
+            )
+            if max_turns:
+                with contextlib.suppress(ValueError, TypeError):
+                    sanitized_eval["max_turns"] = int(max_turns)
+
+            init_event = item.get("initial_event") or item.get("initialEvent")
+            if init_event:
+                sanitized_eval["initial_event"] = init_event
+
+            eval_meta = item.get("metadata")
+            if isinstance(eval_meta, dict) and eval_meta:
+                sanitized_eval["metadata"] = Common.unwrap_struct(eval_meta)
+
+            raw_steps = item.get("steps", [])
+            if not isinstance(raw_steps, list):
+                raw_steps = [raw_steps]
+
+            sanitized_steps: list[dict[str, Any]] = []
+            hoisted_vars: dict[str, Any] = {}
+
+            for step_idx, raw_step in enumerate(raw_steps):
+                if not isinstance(raw_step, dict):
+                    continue
+
+                stripped_step_fields = [
+                    f for f in client_only_fields if raw_step.get(f) is not None
+                ]
+                if stripped_step_fields:
+                    logger.warning(
+                        "Stripping unsupported client-only field(s) %s from "
+                        "step %d in evaluation '%s'.",
+                        stripped_step_fields,
+                        step_idx,
+                        name,
+                    )
+
+                goal = raw_step.get("goal", "")
+                success_criteria = (
+                    raw_step.get("success_criteria")
+                    or raw_step.get("successCriteria")
+                    or ""
+                )
+                if not goal and not success_criteria:
+                    goal = f"Step {step_idx + 1}"
+                    success_criteria = "Goal achieved"
+                elif not goal:
+                    goal = success_criteria
+                elif not success_criteria:
+                    success_criteria = goal
+
+                step_dict: dict[str, Any] = {
+                    "goal": str(goal),
+                    "success_criteria": str(success_criteria),
+                }
+
+                resp_guide = (
+                    raw_step.get("response_guide")
+                    or raw_step.get("responseGuide")
+                    or raw_step.get("protocol")
+                )
+                if resp_guide:
+                    step_dict["response_guide"] = str(resp_guide)
+
+                step_max_turns = (
+                    raw_step.get("max_turns")
+                    or raw_step.get("max_turn_count")
+                    or raw_step.get("maxTurnCount")
+                )
+                if step_max_turns:
+                    with contextlib.suppress(ValueError, TypeError):
+                        step_dict["max_turns"] = int(step_max_turns)
+
+                static_utt = raw_step.get("static_utterance") or raw_step.get(
+                    "staticUtterance"
+                )
+                if static_utt:
+                    step_dict["static_utterance"] = str(static_utt)
+
+                event_val = raw_step.get("event")
+                if event_val:
+                    step_dict["event"] = str(event_val)
+
+                inject_vars = raw_step.get("inject_variables") or raw_step.get(
+                    "injectVariables"
+                )
+                if inject_vars and isinstance(inject_vars, dict):
+                    unwrapped_inj = Common.unwrap_struct(inject_vars)
+                    if step_idx == 0:
+                        step_dict["inject_variables"] = unwrapped_inj
+                    else:
+                        logger.warning(
+                            "Hoisting inject_variables from step %d to "
+                            "session_parameters for evaluation '%s' (platform "
+                            "only allows inject_variables on step 0).",
+                            step_idx,
+                            name,
+                        )
+                        hoisted_vars.update(unwrapped_inj)
+
+                step_meta = raw_step.get("metadata")
+                if isinstance(step_meta, dict) and step_meta:
+                    step_dict["metadata"] = Common.unwrap_struct(step_meta)
+
+                sanitized_steps.append(step_dict)
+
+            if hoisted_vars:
+                sanitized_eval["session_parameters"].update(hoisted_vars)
+
+            if not sanitized_eval["session_parameters"]:
+                sanitized_eval.pop("session_parameters", None)
+
+            sanitized_eval["steps"] = sanitized_steps
+
+            sanitized_eval = {
+                k: v
+                for k, v in sanitized_eval.items()
+                if k in MILESTONE_ALLOWED_EVAL_KEYS
+            }
+            sanitized_evals.append(sanitized_eval)
+
+        root_dict["evals"] = sanitized_evals
+        return {
+            k: v
+            for k, v in root_dict.items()
+            if k in MILESTONE_ALLOWED_ROOT_KEYS
+        }
+
+    @staticmethod
+    def convert_sim_evals_to_milestone_yaml(source: Any) -> str:
+        """Converts local simulation evals (file path, directory path, or
+        dict/list) into a CES Platform-compatible Milestone YAML string.
+        """
+        raw_cases: list[dict[str, Any]] = []
+        root_data: dict[str, Any] = {}
+
+        if isinstance(source, str):
+            if os.path.isdir(source):
+                yaml_files = sorted(
+                    glob.glob(os.path.join(source, "*.yaml"))
+                    + glob.glob(os.path.join(source, "*.yml"))
+                    + glob.glob(os.path.join(source, "*.json"))
+                )
+                for fpath in yaml_files:
+                    with open(fpath, encoding="utf-8") as f:
+                        content = (
+                            yaml.safe_load(f)
+                            if fpath.endswith((".yaml", ".yml"))
+                            else json.load(f)
+                        )
+                        if isinstance(content, dict):
+                            if "evals" in content and isinstance(
+                                content["evals"], list
+                            ):
+                                file_common_params = (
+                                    content.get("common_session_parameters")
+                                    or content.get("commonSessionParameters")
+                                    or {}
+                                )
+                                file_common_exps = (
+                                    content.get("common_expectations")
+                                    or content.get("commonExpectations")
+                                    or []
+                                )
+                                file_init_evt = content.get(
+                                    "initial_event"
+                                ) or content.get("initialEvent")
+                                for c in content["evals"]:
+                                    if not isinstance(c, dict):
+                                        continue
+                                    case_copy = dict(c)
+                                    if (
+                                        isinstance(file_common_params, dict)
+                                        and file_common_params
+                                    ):
+                                        existing_params = (
+                                            case_copy.get("session_parameters")
+                                            or case_copy.get(
+                                                "sessionParameters"
+                                            )
+                                            or {}
+                                        )
+                                        case_copy["session_parameters"] = {
+                                            **Common.unwrap_struct(
+                                                file_common_params
+                                            ),
+                                            **Common.unwrap_struct(
+                                                existing_params
+                                            ),
+                                        }
+                                    if (
+                                        isinstance(file_common_exps, list)
+                                        and file_common_exps
+                                    ):
+                                        existing_exps = (
+                                            case_copy.get("expectations")
+                                            or case_copy.get(
+                                                "evaluation_expectations"
+                                            )
+                                            or case_copy.get(
+                                                "evaluationExpectations"
+                                            )
+                                            or []
+                                        )
+                                        case_copy["expectations"] = list(
+                                            file_common_exps
+                                        ) + list(existing_exps)
+                                    if (
+                                        file_init_evt
+                                        and "initial_event" not in case_copy
+                                        and "initialEvent" not in case_copy
+                                    ):
+                                        case_copy["initial_event"] = (
+                                            file_init_evt
+                                        )
+                                    raw_cases.append(case_copy)
+                            elif "steps" in content:
+                                raw_cases.append(content)
+                        elif isinstance(content, list):
+                            raw_cases.extend(
+                                [c for c in content if isinstance(c, dict)]
+                            )
+                root_data = {"evals": raw_cases}
+            elif os.path.isfile(source):
+                with open(source, encoding="utf-8") as f:
+                    content = (
+                        yaml.safe_load(f)
+                        if source.endswith((".yaml", ".yml"))
+                        else json.load(f)
+                    )
+                    root_data = content
+            else:
+                try:
+                    root_data = yaml.safe_load(source)
+                except Exception:
+                    root_data = json.loads(source)
+        elif isinstance(source, (dict, list)):
+            root_data = source
+        else:
+            raise ValueError(f"Unsupported source type: {type(source)}")
+
+        sanitized = EvalUtils.sanitize_milestone_eval_dict(root_data)
+        return yaml.dump(sanitized, sort_keys=False, allow_unicode=True)
+
+    def push_milestone_evals_from_yaml(
+        self,
+        source: Any,
+        app_name: str | None = None,
+        conflict_strategy: str | int = "OVERWRITE",
+    ) -> Any:
+        """Converts and pushes local simulation evaluations to the platform as
+        Milestone evaluations via the REST importEvaluations endpoint.
+        """
+        app_name = app_name or self.app_name
+        yaml_content = self.convert_sim_evals_to_milestone_yaml(source)
+        return self.eval_client.import_evaluations(
+            app_name=app_name,
+            yaml_content=yaml_content,
+            conflict_strategy=conflict_strategy,
+        )
 
     @staticmethod
     def score_result_audio(result: typing.Any) -> bool:
@@ -426,25 +887,39 @@ class EvalUtils(Evaluations):
         if isinstance(eval_names, str):
             eval_names = [eval_names]
 
+        eval_cache = {}
         if results is None:
             results = []
             evaluations = self.list_evaluations(self.app_name)
+            seen_eval_resources: set[str] = set()
             for evaluation in evaluations:
+                eval_res_name = getattr(evaluation, "name", "")
+                if eval_res_name:
+                    eval_cache[eval_res_name] = getattr(
+                        evaluation, "display_name", "Unknown Evaluation"
+                    )
+                if eval_res_name in seen_eval_resources:
+                    continue
                 if (
                     eval_names
                     and evaluation.display_name not in eval_names
-                    and evaluation.name not in eval_names
+                    and eval_res_name not in eval_names
                 ):
                     continue
-                results.extend(self.list_evaluation_results(evaluation.name))
+                if eval_res_name:
+                    seen_eval_resources.add(eval_res_name)
+                results.extend(self.list_evaluation_results(eval_res_name))
 
         run_summaries = []
         expectations = []
         turns = []
-        eval_cache = {}
 
         for result in results:
-            res_dict = type(result).to_dict(result)
+            res_dict = (
+                type(result).to_dict(result)
+                if not isinstance(result, dict)
+                else result
+            )
             result_name = res_dict.get("name", "")
             eval_name = "/".join(result_name.split("/")[:-2])
             display_name = "Unknown Evaluation"
@@ -452,24 +927,61 @@ class EvalUtils(Evaluations):
                 if eval_name not in eval_cache:
                     try:
                         eval_obj = self.get_evaluation(eval_name)
-                        eval_cache[eval_name] = eval_obj.display_name
-                    except (AttributeError, KeyError, RuntimeError):
-                        eval_cache[eval_name] = "Unknown Evaluation"
+                        disp = (
+                            (
+                                eval_obj.get("displayName")
+                                or eval_obj.get("display_name")
+                            )
+                            if isinstance(eval_obj, dict)
+                            else getattr(eval_obj, "display_name", None)
+                        )
+                        if not disp or not isinstance(disp, str):
+                            raise ValueError("Missing display_name")
+                        eval_cache[eval_name] = disp
+                    except Exception:
+                        try:
+                            eval_obj = self.eval_client.get_evaluation_rest(
+                                eval_name
+                            )
+                            eval_cache[eval_name] = (
+                                eval_obj.get("displayName")
+                                or eval_obj.get("display_name")
+                                or "Unknown Evaluation"
+                                if isinstance(eval_obj, dict)
+                                else "Unknown Evaluation"
+                            )
+                        except Exception:
+                            eval_cache[eval_name] = "Unknown Evaluation"
                 display_name = eval_cache[eval_name]
 
-            raw_status = res_dict.get("evaluation_status", 0)
+            raw_status = (
+                res_dict.get("evaluation_status")
+                if "evaluation_status" in res_dict
+                else res_dict.get("evaluationStatus", 0)
+            )
             if isinstance(raw_status, int):
                 status_map = {0: "UNSPECIFIED", 1: "PASS", 2: "FAIL"}
                 status_str = status_map.get(raw_status, f"UNKNOWN_{raw_status}")
             else:
                 status_str = str(raw_status)
 
-            golden = res_dict.get("golden_result", {})
-            metrics = golden if golden else {}
+            golden = (
+                res_dict.get("golden_result")
+                or res_dict.get("goldenResult")
+                or {}
+            )
+            scenario = (
+                res_dict.get("scenario_result")
+                or res_dict.get("scenarioResult")
+                or {}
+            )
+            metrics = golden if golden else scenario
 
             sem_score_raw = metrics.get("semantic_similarity_result", {}).get(
                 "score"
             )
+            if not sem_score_raw and "semanticSimilarityResult" in metrics:
+                sem_score_raw = metrics["semanticSimilarityResult"].get("score")
             sem_score_str = None
             if isinstance(sem_score_raw, (int, float)):
                 score_val = (
@@ -484,19 +996,29 @@ class EvalUtils(Evaluations):
             tool_score_raw = metrics.get(
                 "overall_tool_invocation_result", {}
             ).get("tool_invocation_score")
+            if not tool_score_raw and "overallToolInvocationResult" in metrics:
+                tool_score_raw = metrics["overallToolInvocationResult"].get(
+                    "toolInvocationScore"
+                )
             tool_score_str = (
                 f"{int(tool_score_raw * 100)}%"
                 if isinstance(tool_score_raw, (int, float))
                 else EvalUtils._map_outcome(tool_score_raw)
             )
 
-            exec_state_raw = res_dict.get("execution_state", 0)
+            exec_state_raw = (
+                res_dict.get("execution_state")
+                if "execution_state" in res_dict
+                else res_dict.get("executionState", 0)
+            )
             if isinstance(exec_state_raw, int):
                 exec_state_map = {
                     0: "UNSPECIFIED",
                     1: "RUNNING",
                     2: "COMPLETED",
                     3: "ERROR",
+                    4: "CANCELLED",
+                    5: "QUEUED",
                 }
                 exec_state_str = exec_state_map.get(
                     exec_state_raw, f"UNKNOWN_{exec_state_raw}"
@@ -504,37 +1026,56 @@ class EvalUtils(Evaluations):
             else:
                 exec_state_str = str(exec_state_raw)
 
+            err_info = (
+                res_dict.get("error_info") or res_dict.get("errorInfo") or {}
+            )
+            err_msg = (
+                err_info.get("error_message")
+                or err_info.get("errorMessage")
+                or "Unknown Agent Exception"
+            )
+
             base_info = {
                 "display_name": display_name,
-                "evaluation_run": res_dict.get("evaluation_run", ""),
+                "evaluation_run": res_dict.get("evaluation_run")
+                or res_dict.get("evaluationRun", ""),
                 "eval_result_id": result_name,
+                "conversation": scenario.get("conversation")
+                or golden.get("conversation")
+                or "",
                 "evaluation_status": status_str,
                 "execution_state": exec_state_str,
-                "error_message": res_dict.get("error_info", {}).get(
-                    "error_message", "Unknown Agent Exception"
-                ),
+                "error_message": err_msg,
                 "semantic_score": sem_score_str,
                 "tool_invocation_score": tool_score_str,
-                "create_time": res_dict.get("create_time", ""),
-                "update_time": res_dict.get("update_time", ""),
+                "create_time": res_dict.get("create_time")
+                or res_dict.get("createTime", ""),
+                "update_time": res_dict.get("update_time")
+                or res_dict.get("updateTime", ""),
             }
             run_summaries.append(base_info)
 
-            expectation_list = metrics.get(
-                "expectation_results", []
-            ) or metrics.get("evaluation_expectation_results", [])
+            expectation_list = (
+                metrics.get("expectation_results")
+                or metrics.get("expectationResults")
+                or metrics.get("evaluation_expectation_results")
+                or metrics.get("evaluationExpectationResults")
+                or []
+            )
             for exp_item in expectation_list:
-                is_new_format = "prompt" in exp_item
-                not_met_count = (
-                    1
-                    if is_new_format and exp_item.get("outcome") == 2
-                    else exp_item.get("not_met_count", 0)
-                )
-                met_count = (
-                    1
-                    if is_new_format and exp_item.get("outcome") == 1
-                    else exp_item.get("met_count", 0)
-                )
+                is_new_format = "prompt" in exp_item or "outcome" in exp_item
+                outcome_val = exp_item.get("outcome")
+                if is_new_format:
+                    is_met = outcome_val in (1, "PASS", "MET", "STATUS_MET")
+                    not_met_count = 0 if is_met else 1
+                    met_count = 1 if is_met else 0
+                else:
+                    not_met_count = exp_item.get(
+                        "not_met_count"
+                    ) or exp_item.get("notMetCount", 0)
+                    met_count = exp_item.get("met_count") or exp_item.get(
+                        "metCount", 0
+                    )
 
                 row = {
                     "display_name": display_name,
@@ -543,15 +1084,70 @@ class EvalUtils(Evaluations):
                     "evaluation_status": base_info.get("evaluation_status"),
                     "record_type": "summary_expectation",
                     "expectation": str(
-                        exp_item.get("prompt", exp_item.get("expectation", ""))
+                        exp_item.get("prompt")
+                        or exp_item.get("expectation")
+                        or exp_item.get("evaluationExpectation", "")
                     ),
                     "met_count": met_count,
                     "not_met_count": not_met_count,
-                    "met_percentage": exp_item.get("met_percentage", 0.0),
-                    "not_met_percentage": exp_item.get(
-                        "not_met_percentage", 0.0
+                    "met_percentage": (
+                        exp_item.get("met_percentage")
+                        or exp_item.get("metPercentage", 0.0)
+                    ),
+                    "not_met_percentage": (
+                        exp_item.get("not_met_percentage")
+                        or exp_item.get("notMetPercentage", 0.0)
                     ),
                     "explanation": str(exp_item.get("explanation", "")),
+                }
+                expectations.append(row)
+
+            # Process milestone results if scenario result is present
+            milestone_results = (
+                scenario.get("milestone_results")
+                or scenario.get("milestoneResults")
+                or []
+            )
+            for m_res in milestone_results:
+                milestone_obj = m_res.get("milestone", {})
+                m_goal = (
+                    milestone_obj.get("goal")
+                    or milestone_obj.get("success_criteria")
+                    or milestone_obj.get("successCriteria")
+                    or "Milestone Goal"
+                )
+                m_criteria = (
+                    milestone_obj.get("success_criteria")
+                    or milestone_obj.get("successCriteria")
+                    or ""
+                )
+                raw_m_status = m_res.get("status", "NOT_STARTED")
+                if isinstance(raw_m_status, int):
+                    m_status_map = {
+                        0: "UNSPECIFIED",
+                        1: "NOT_STARTED",
+                        2: "IN_PROGRESS",
+                        3: "COMPLETED",
+                    }
+                    m_status = m_status_map.get(raw_m_status, str(raw_m_status))
+                else:
+                    m_status = str(raw_m_status)
+                is_completed = m_status in ("COMPLETED", "STATUS_COMPLETED")
+                justification = str(m_res.get("justification", ""))
+                row = {
+                    "display_name": display_name,
+                    "eval_result_id": result_name,
+                    "evaluation_run": base_info.get("evaluation_run"),
+                    "evaluation_status": base_info.get("evaluation_status"),
+                    "record_type": "milestone",
+                    "expectation": m_goal,
+                    "success_criteria": m_criteria,
+                    "status": "COMPLETED" if is_completed else m_status,
+                    "explanation": justification,
+                    "met_count": 1 if is_completed else 0,
+                    "not_met_count": 0 if is_completed else 1,
+                    "met_percentage": 100.0 if is_completed else 0.0,
+                    "not_met_percentage": 0.0 if is_completed else 100.0,
                 }
                 expectations.append(row)
 
@@ -666,6 +1262,45 @@ class EvalUtils(Evaluations):
         all_metadata = []
 
         for exp in expectations:
+            if exp.get("record_type") == "milestone":
+                if exp.get("not_met_count", 0) > 0:
+                    status_lbl = exp.get("status", "NOT_STARTED")
+                    explanation = exp.get("explanation", "")
+                    actual_text = (
+                        f"({status_lbl}) {explanation}"
+                        if explanation
+                        else f"({status_lbl})"
+                    )
+                    failures.append(
+                        {
+                            "display_name": exp["display_name"],
+                            "eval_result_id": exp["eval_result_id"],
+                            "turn_index": None,
+                            "failure_type": "Milestone",
+                            "expected": str(exp.get("expectation", "")),
+                            "actual": actual_text,
+                            "score": None,
+                        }
+                    )
+                status_val = exp.get("status", "NOT_STARTED")
+                outcome_str = "PASS" if status_val == "COMPLETED" else "FAIL"
+                all_metadata.append(
+                    {
+                        "display_name": exp["display_name"],
+                        "evaluation_run": exp.get("evaluation_run"),
+                        "eval_result_id": exp["eval_result_id"],
+                        "evaluation_status": exp.get("evaluation_status"),
+                        "turn_index": None,
+                        "type": "Milestone",
+                        "expected": exp["expectation"],
+                        "actual": exp["explanation"],
+                        "outcome": outcome_str,
+                        "score": status_val,
+                        "success_criteria": exp.get("success_criteria", ""),
+                    }
+                )
+                continue
+
             if exp.get("not_met_count", 0) > 0:
                 explanation = exp.get("explanation", "")
                 actual_text = (
@@ -1381,28 +2016,86 @@ class EvalUtils(Evaluations):
         self,
         run_name: str,
         timeout_seconds: int = 300,
-    ) -> list[dict[str, Any]]:
+        prefer_rest: bool = True,
+    ) -> list[Any]:
         """Polls for completion of an evaluation run and returns results.
 
         Args:
             run_name: Name of the evaluation run.
             timeout_seconds: Max time to wait.
+            prefer_rest: If True, attempts to fetch results via REST to preserve
+                internal scenario milestone results.
 
         Returns:
             A list of evaluation results.
         """
         logger.info("Waiting for evaluation run %s to complete...", run_name)
         start_time = time.time()
+        eval_result_names: list[str] = []
         while True:
-            run_status = self.eval_client.get_evaluation_run(run_name)
-            if run_status.state.name in ["COMPLETED", "ERROR"]:
+            try:
+                run_status = self.eval_client.get_evaluation_run(run_name)
+                # The state can be a value the installed stubs don't define yet.
+                # proto-plus then returns the raw int, which has no `.name`, so
+                # compare by int value: anything that is not UNSPECIFIED (0) or
+                # RUNNING (1) means the run is no longer in progress.
+                state = run_status.state
+                eval_result_names = list(
+                    getattr(run_status, "evaluation_results", [])
+                )
+                try:
+                    state_int = int(state)
+                    is_finished = state_int not in (0, 1)
+                    if is_finished and not hasattr(state, "name"):
+                        logger.warning(
+                            "Evaluation run %s ended in state %s, which this "
+                            "client does not recognize. Treating it as "
+                            "finished.",
+                            run_name,
+                            state_int,
+                        )
+                except (TypeError, ValueError):
+                    state_name = getattr(state, "name", str(state))
+                    is_finished = state_name in (
+                        "COMPLETED",
+                        "ERROR",
+                        "CANCELLED",
+                    )
+            except Exception:
+                if not prefer_rest:
+                    raise
+                run_status_dict = self.eval_client.get_evaluation_run_rest(
+                    run_name
+                )
+                state_name = str(run_status_dict.get("state", ""))
+                eval_result_names = list(
+                    run_status_dict.get("evaluationResults", [])
+                )
+                is_finished = state_name in (
+                    "COMPLETED",
+                    "ERROR",
+                    "CANCELLED",
+                    "2",
+                    "3",
+                    "4",
+                )
+            if is_finished:
                 break
             if time.time() - start_time > timeout_seconds:
                 raise TimeoutError(f"Evaluation run {run_name} timed out.")
-            time.sleep(10)
+            time.sleep(5)
 
-        results = self.eval_client.list_evaluation_results_by_run(run_name)
-        return results
+        if prefer_rest and eval_result_names:
+            results = []
+            for r_name in eval_result_names:
+                try:
+                    res = self.eval_client.get_evaluation_result_rest(r_name)
+                except Exception:
+                    res = self.eval_client.get_evaluation_result(r_name)
+                results.append(res)
+            return results
+
+        return self.eval_client.list_evaluation_results_by_run(run_name)
 
     def create_and_run_evaluation_from_yaml(
         self,

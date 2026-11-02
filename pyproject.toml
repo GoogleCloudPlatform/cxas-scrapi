@@ -64,6 +64,7 @@ dependencies = [
   # subcommands do NOT pull it in.
   "InquirerPy",
   "ratelimit",
+  "tenacity",
   "pydub",
   "audioop-lts; python_version >= '3.13'",
 ]

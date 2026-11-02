@@ -18,7 +18,7 @@ SCRAPI provides six complementary evaluation types, each targeting a different l
 | Type | What it tests | Where it runs | Format |
 |------|--------------|---------------|--------|
 | **Platform Goldens** | Deterministic turn-by-turn responses and tool calls | CX Agent Studio platform | YAML with `conversations:` key |
-| **Local Simulations** | Open-ended conversation goals over multiple turns | Local machine using Sessions API | YAML with `evals:` key |
+| **Simulations (Local & Platform Milestones)** | Open-ended conversation goals over multiple turns | Local machine (Sessions API) or CX Agent Studio platform (`scenario.milestones`) | YAML with `evals:` key |
 | **Tool Tests** | Isolated tool inputs and outputs with assertions | Local machine | YAML with `tests:` key |
 | **Callback Tests** | Python unit tests for callback code | Local machine (pytest) | pytest files |
 | **Turn Evals** | Single-turn response assertions | Local machine using Sessions API | Python code |
@@ -36,7 +36,7 @@ Is the behavior deterministic (same input → exact same output)?
 │         ├── YES → Tool Tests
 │         └── NO  → Platform Goldens (turn-by-turn assertions)
 └── NO  → Is this a multi-turn conversation goal?
-          ├── YES → Local Simulations
+          ├── YES → Simulations (run locally for audio/barge-in/naturalness, or on platform as Milestone Evals)
           └── NO  → Turn Evals (single-turn quality checks)
 
 Do you want to re-run a real (recorded) call against a new agent version?
@@ -50,7 +50,7 @@ In practice, you'll use multiple types together. A well-tested agent typically h
 
 - **Tool tests** for every tool — fast, isolated, run in seconds
 - **Platform goldens** for key happy-path conversations — verifies the full agent loop
-- **Local simulations** for complex multi-step scenarios where exact responses vary
+- **Local or platform milestone simulations** for complex multi-step scenarios where exact responses vary
 - **Callback tests** for any non-trivial callback logic
 
 ---
@@ -64,7 +64,7 @@ In practice, you'll use multiple types together. A well-tested agent typically h
 : Use [Platform Goldens](platform-goldens.md). You script the exact conversation and the expected responses.
 
 **"I want to test that the agent can *complete a task* without caring about exact phrasing"**
-: Use [Local Simulations](local-simulations.md). You define a goal and success criteria; Gemini plays the user and judges whether the goal was met.
+: Use [Local Simulations](local-simulations.md). You define a goal and success criteria; Gemini plays the user and judges whether the goal was met — either locally via the Sessions API or directly on the CX Agent Studio platform as CXAS 2.0 Milestone evaluations.
 
 **"I want to test that my callback code is correct before deploying it"**
 : Use [Callback Tests](callback-tests.md). They're just pytest — you can mock the platform objects and test your logic in isolation.
@@ -83,7 +83,7 @@ In practice, you'll use multiple types together. A well-tested agent typically h
 :   YAML format, pushing evals to the platform, running them with `cxas run --wait`, and interpreting results.
 
 `Local Simulations`
-:   YAML format, the `SimulationEvals` class, parallel execution, and audio modality support.
+:   YAML format, the `SimulationEvals` class, CXAS 2.0 platform Milestone evaluation execution (`--platform-sims`), parallel execution, and audio modality support.
 
 `Tool Tests`
 :   YAML format with operator assertions, the `ToolEvals` class, and `cxas test-tools`.

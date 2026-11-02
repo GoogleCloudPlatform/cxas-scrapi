@@ -137,6 +137,7 @@ def test_sanitize_question(mock_google_auth: typing.Any) -> None:
         "name": "projects/p/locations/l/qaScorecards/sc1/revisions/r1/qaQuestions/q1",
         "createTime": "2026-08-20T00:00:00Z",
         "metrics": {"some": "metric"},
+        "fileFilter": "agent-turn",
         "questionBody": "Did agent understand user?",
         "abbreviation": "intent_understanding",
         "answerChoices": [
@@ -149,6 +150,7 @@ def test_sanitize_question(mock_google_auth: typing.Any) -> None:
     assert "name" not in sanitized
     assert "createTime" not in sanitized
     assert "metrics" not in sanitized
+    assert "fileFilter" not in sanitized
     assert sanitized["questionBody"] == "Did agent understand user?"
     assert len(sanitized["answerChoices"]) == 3
     assert sanitized["answerChoices"][0]["strValue"] == "Agent understood."

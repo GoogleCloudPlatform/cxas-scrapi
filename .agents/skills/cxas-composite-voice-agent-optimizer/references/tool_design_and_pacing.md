@@ -1,12 +1,12 @@
 # Tool Design & Conversational Pacing
 
-This reference defines tool docstring contracts, conversational pacing directives, payload contamination prevention, and execution standards for the dialogue reasoning model in the Gemini Composite V1 architecture.
+This reference defines tool docstring contracts, conversational pacing directives, payload contamination prevention, and execution standards for the dialogue reasoning model in the Gemini Composite v2 architecture.
 
 --------------------------------------------------------------------------------
 
 ## 1. Tool Docstring Engineering
 
-In Gemini Composite V1, tool docstrings serve as explicit prompt instructions for the reasoning model. Because the model operates at low thinking effort to minimize conversational latency, docstrings must provide unambiguous execution contracts for all tools that are visible to the model. Only tools configured in the `agent_name.json` will be visible to the model. And as such will be provided in the prompt to the model.
+In Gemini Composite v2, tool docstrings serve as explicit prompt instructions for the reasoning model. Because the model operates at low thinking effort to minimize conversational latency, docstrings must provide unambiguous execution contracts for all tools that are visible to the model. Only tools configured in the `agent_name.json` will be visible to the model. And as such will be provided in the prompt to the model.
 
 ### Source of Truth & Preservation Rules for Tool Docstrings:
 - **Preserve Existing Documentation:** Never wipe or replace existing function descriptions, parameter explanations, or return signatures. Additive enhancement only.
@@ -84,7 +84,7 @@ A critical failure mode occurs when agent instructions and tool docstrings impos
   ```
 
 #### Why This Breaks the Agent:
-The agent instruction forbids speaking before receiving the tool response (*"wait for its response and then generate a response"* / *"Never say anything which is not in the tool response"*), whereas the tool docstring mandates speaking a pacing phrase *before* invoking the tool. This direct contradiction creates an impossible operational constraint for Gemini Composite V1, resulting in:
+The agent instruction forbids speaking before receiving the tool response (*"wait for its response and then generate a response"* / *"Never say anything which is not in the tool response"*), whereas the tool docstring mandates speaking a pacing phrase *before* invoking the tool. This direct contradiction creates an impossible operational constraint for Gemini Composite v2, resulting in:
 1. **Model Looping & Hesitation:** The model repeatedly tries and aborts generating tool calls and conversational turns.
 2. **Dead Air / Latency Spikes:** The agent stalls or times out waiting for conflicting internal policies to resolve.
 3. **Safety Fallbacks:** Triggers generic platform fallback messages (*"I'm sorry, I'm having trouble with that right now."*).

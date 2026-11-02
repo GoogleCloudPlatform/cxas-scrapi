@@ -112,3 +112,30 @@ def test_empty_yaml_uses_defaults(tmp_path: typing.Any) -> None:
     p.write_text("")
     cfg = TraceConfig.load(explicit_path=str(p))
     assert cfg.audio.download_dir == "./.cxas/audio"
+
+
+def test_custom_audio_metric_scorecard_fields(tmp_path: typing.Any) -> None:
+    p = tmp_path / "trace.yaml"
+    _write(
+        p,
+        {
+            "audio": {"questions_file": "./custom_questions.json"},
+            "gemini": {
+                "audio_metrics": {
+                    "custom_check": {
+                        "questionBody": "Was the greeting clear?",
+                        "answerInstructions": "Listen to turn 1.",
+                        "fileFilter": "agent-turn",
+                    }
+                }
+            },
+        },
+    )
+    cfg = TraceConfig.load(explicit_path=str(p))
+    assert cfg.audio.questions_file == "./custom_questions.json"
+    metric = cfg.gemini.audio_metrics["custom_check"]
+    q_dict = metric.to_question_dict("custom_check")
+    assert q_dict["abbreviation"] == "custom_check"
+    assert q_dict["questionBody"] == "Was the greeting clear?"
+    assert q_dict["answerInstructions"] == "Listen to turn 1."
+    assert q_dict["fileFilter"] == "agent-turn"

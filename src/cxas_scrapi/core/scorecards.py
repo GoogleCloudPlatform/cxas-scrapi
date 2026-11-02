@@ -87,6 +87,8 @@ class Scorecards(Insights):
             "updateTime",
             "metrics",
             "tuningMetadata",
+            "fileFilter",
+            "file_filter",
         ]:
             q.pop(k, None)
         if "answerChoices" in q and isinstance(q["answerChoices"], list):

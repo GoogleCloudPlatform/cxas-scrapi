@@ -242,9 +242,9 @@ def test_reset_registry() -> None:
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    # 73 baseline + 11 cross-surface V100-V104 registrations
+    # 65 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + T014 + E012.
-    assert len(registry_restored.all_rules()) == 87  # noqa: PLR2004
+    assert len(registry_restored.all_rules()) == 79  # noqa: PLR2004
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -263,7 +263,7 @@ def test_lint_config_load_from_yaml(tmp_path: typing.Any) -> None:
         "app_dir: my_app/\n"
         "evals_dir: my_evals/\n"
         "rules:\n"
-        "  I001: off\n"
+        "  I008: off\n"
         "  I003: error\n"
         "ignore:\n"
         "  - '**/__pycache__/**'\n"
@@ -271,7 +271,7 @@ def test_lint_config_load_from_yaml(tmp_path: typing.Any) -> None:
     config = LintConfig.load(tmp_path)
     assert config.app_dir == "my_app/"
     assert config.evals_dir == "my_evals/"
-    assert config.rules["I001"] == Severity.OFF
+    assert config.rules["I008"] == Severity.OFF
     assert config.rules["I003"] == Severity.ERROR
     assert "**/__pycache__/**" in config.ignore
 
@@ -295,10 +295,10 @@ def test_lint_config_cxaslint_overrides_gecx(tmp_path: typing.Any) -> None:
 
 def test_lint_config_severity_override() -> None:
     config = LintConfig()
-    config.rules["I001"] = Severity.OFF
+    config.rules["I008"] = Severity.OFF
 
     class DummyRule(Rule):
-        id = "I001"
+        id = "I008"
         default_severity = Severity.ERROR
 
         def check(
@@ -546,9 +546,9 @@ def test_discovery_filtering(tmp_path: typing.Any) -> None:
 def test_build_registry_all_rules() -> None:
     registry = build_registry()
     all_rules = registry.all_rules()
-    # 73 baseline + 11 cross-surface V100-V104 registrations
+    # 65 baseline + 11 cross-surface V100-V104 registrations
     # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + T014 + E012.
-    assert len(all_rules) == 87  # noqa: PLR2004
+    assert len(all_rules) == 79  # noqa: PLR2004
 
 
 def test_build_context(tmp_path: typing.Any) -> None:
@@ -635,11 +635,11 @@ def test_run_rules_specific_rules_filter(tmp_path: typing.Any) -> None:
 
     report = LintReport()
     run_rules(
-        registry, config, context, discovery, report, specific_rules={"I001"}
+        registry, config, context, discovery, report, specific_rules={"I015"}
     )
 
     for r in report.results:
-        assert r.rule_id == "I001", f"Expected I001, got {r.rule_id}"
+        assert r.rule_id == "I015", f"Expected I015, got {r.rule_id}"
 
 
 def test_run_rules_handles_directory_targets(tmp_path: typing.Any) -> None:
@@ -677,6 +677,9 @@ def test_run_rules_with_gecx_nested_layout(tmp_path: typing.Any) -> None:
     app_root = tmp_path / "cxas_app" / "my-agent"
     app_root.mkdir(parents=True)
     _make_app(app_root, agents=["root_agent"])
+    (app_root / "agents" / "root_agent" / "instruction.txt").write_text(
+        "<Agent>test</Agent>"
+    )
     (tmp_path / "gecx-config.json").write_text('{"app_dir": "cxas_app/"}')
 
     config = LintConfig.load(tmp_path)
@@ -697,11 +700,11 @@ def test_run_rules_with_gecx_nested_layout(tmp_path: typing.Any) -> None:
             context,
             discovery,
             report,
-            specific_rules={"I001"},
+            specific_rules={"I015"},
         )
 
-    # I001 checks instruction tags — our _make_app only has <role>
-    assert any(r.rule_id == "I001" for r in report.results)
+    # I015 checks banned legacy XML tags — our instruction has <Agent>
+    assert any(r.rule_id == "I015" for r in report.results)
 
 
 def test_structure_rules_dispatched_by_target(tmp_path: typing.Any) -> None:

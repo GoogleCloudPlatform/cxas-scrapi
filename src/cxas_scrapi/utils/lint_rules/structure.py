@@ -246,14 +246,6 @@ class ChildAgentReferences(Rule):
         return results
 
 
-_CALLBACK_TYPES = [
-    "beforeModelCallbacks",
-    "afterModelCallbacks",
-    "beforeTurnCallbacks",
-    "afterTurnCallbacks",
-]
-
-
 @rule("structure")
 class StrictAgentPathLayout(Rule):
     id = "S005"

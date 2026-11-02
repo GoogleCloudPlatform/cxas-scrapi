@@ -41,65 +41,6 @@ def context(tmp_path: typing.Any) -> typing.Any:
 # ── Instruction Rules ────────────────────────────────────────────────────
 
 
-def test_i001_missing_tags(tmp_path: typing.Any, context: typing.Any) -> None:
-    from cxas_scrapi.utils.lint_rules.instructions import RequiredXmlStructure  # noqa: PLC0415,I001
-
-    rule = RequiredXmlStructure()
-    f = tmp_path / "instruction.txt"
-    f.write_text("Just some text without tags.")
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 3
-    tags = {r.message for r in results}
-    assert any("<role>" in t for t in tags)
-    assert any("<persona>" in t for t in tags)
-    assert any("<taskflow>" in t for t in tags)
-
-
-def test_i001_all_tags_present(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.instructions import RequiredXmlStructure  # noqa: PLC0415,I001
-
-    rule = RequiredXmlStructure()
-    f = tmp_path / "instruction.txt"
-    f.write_text(
-        "<role>test</role><persona>test</persona><taskflow>test</taskflow>"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 0
-
-
-def test_i002_taskflow_without_children(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.instructions import TaskflowChildren  # noqa: PLC0415,I001
-
-    rule = TaskflowChildren()
-    f = tmp_path / "instruction.txt"
-    f.write_text("<taskflow>no children here</taskflow>")
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 1
-    assert "no <subtask>" in results[0].message
-
-
-def test_i002_taskflow_with_subtask(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.instructions import TaskflowChildren  # noqa: PLC0415,I001
-
-    rule = TaskflowChildren()
-    f = tmp_path / "instruction.txt"
-    f.write_text(
-        "<taskflow><subtask name='greet'><step>hi</step></subtask></taskflow>"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 0
-
-
 def test_i003_excessive_if_else(
     tmp_path: typing.Any, context: typing.Any
 ) -> None:
@@ -773,220 +714,6 @@ def test_c007_known_tool_ok(tmp_path: typing.Any, context: typing.Any) -> None:
     assert len(results) == 0
 
 
-def test_c008_missing_typing_import(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.callbacks import MissingTypingImport  # noqa: PLC0415,I001
-
-    rule = MissingTypingImport()
-    f = tmp_path / "callback.py"
-    f.write_text("def cb(ctx) -> Optional[str]:\n    return None")
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 1
-    assert "Optional" in results[0].message
-
-
-def test_c008_has_typing_import_ok(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.callbacks import MissingTypingImport  # noqa: PLC0415,I001
-
-    rule = MissingTypingImport()
-    f = tmp_path / "callback.py"
-    f.write_text(
-        "from typing import Optional\n"
-        "def cb(ctx) -> Optional[str]:\n"
-        "    return None"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 0
-
-
-def test_c008_non_py_skipped(tmp_path: typing.Any, context: typing.Any) -> None:
-    from cxas_scrapi.utils.lint_rules.callbacks import MissingTypingImport  # noqa: PLC0415,I001
-
-    rule = MissingTypingImport()
-    f = tmp_path / "callback.txt"
-    f.write_text("-> Optional[str]")
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 0
-
-
-def test_c009_wrong_type_annotation(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.callbacks import WrongCallbackSignature  # noqa: PLC0415,I001
-
-    rule = WrongCallbackSignature()
-    cb_dir = (
-        tmp_path / "agents" / "root" / "before_model_callbacks" / "greet_01"
-    )
-    cb_dir.mkdir(parents=True)
-    f = cb_dir / "python_code.py"
-    f.write_text(
-        "def before_model_callback(callback_context, llm_request):\n    pass"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    # Missing type annotations on params + missing return type
-    assert len(results) >= 1
-
-
-def test_c009_correct_signature(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.callbacks import WrongCallbackSignature  # noqa: PLC0415,I001
-
-    rule = WrongCallbackSignature()
-    cb_dir = (
-        tmp_path / "agents" / "root" / "before_model_callbacks" / "greet_01"
-    )
-    cb_dir.mkdir(parents=True)
-    f = cb_dir / "python_code.py"
-    f.write_text(
-        "def before_model_callback(callback_context: CallbackContext, "
-        "llm_request: LlmRequest) -> Optional[LlmResponse]:\n    pass"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 0
-
-
-def test_c009_before_tool_dict_str_any_no_false_positive(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    """A correctly typed before_tool_callback must not be flagged.
-
-    Regression test for issue #56: the comma inside `dict[str, Any]` used
-    to break the parameter splitter, producing a bogus
-    "Parameter 'input' has type 'dict[str'" error.
-    """
-    from cxas_scrapi.utils.lint_rules.callbacks import WrongCallbackSignature  # noqa: PLC0415,I001
-
-    rule = WrongCallbackSignature()
-    cb_dir = (
-        tmp_path
-        / "agents"
-        / "root"
-        / "before_tool_callbacks"
-        / "before_tool_callbacks_01"
-    )
-    cb_dir.mkdir(parents=True)
-    f = cb_dir / "python_code.py"
-    f.write_text(
-        "def before_tool_callback(\n"
-        "    tool: Tool,\n"
-        "    input: dict[str, Any],\n"
-        "    callback_context: CallbackContext,\n"
-        ") -> Optional[dict[str, Any]]:\n"
-        "    return None\n"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert results == [], [r.message for r in results]
-
-
-def test_c009_after_tool_dict_str_any_no_false_positive(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    """A correctly typed after_tool_callback must not be flagged.
-
-    Covers the `tool_response: dict[str, Any]` parameter from issue #56.
-    """
-    from cxas_scrapi.utils.lint_rules.callbacks import WrongCallbackSignature  # noqa: PLC0415,I001
-
-    rule = WrongCallbackSignature()
-    cb_dir = (
-        tmp_path
-        / "agents"
-        / "root"
-        / "after_tool_callbacks"
-        / "after_tool_callbacks_01"
-    )
-    cb_dir.mkdir(parents=True)
-    f = cb_dir / "python_code.py"
-    f.write_text(
-        "def after_tool_callback(\n"
-        "    tool: Tool,\n"
-        "    input: dict[str, Any],\n"
-        "    callback_context: CallbackContext,\n"
-        "    tool_response: dict[str, Any],\n"
-        ") -> Optional[dict[str, Any]]:\n"
-        "    return None\n"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert results == [], [r.message for r in results]
-
-
-def test_c009_dict_str_any_no_space_no_false_positive(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    """`dict[str,Any]` (no space) is semantically equal to `dict[str, Any]`.
-
-    Regression test for the whitespace-sensitive comparison from issue #56.
-    """
-    from cxas_scrapi.utils.lint_rules.callbacks import WrongCallbackSignature  # noqa: PLC0415,I001
-
-    rule = WrongCallbackSignature()
-    cb_dir = (
-        tmp_path
-        / "agents"
-        / "root"
-        / "before_tool_callbacks"
-        / "before_tool_callbacks_01"
-    )
-    cb_dir.mkdir(parents=True)
-    f = cb_dir / "python_code.py"
-    f.write_text(
-        "def before_tool_callback("
-        "tool: Tool, "
-        "input: dict[str,Any], "
-        "callback_context: CallbackContext"
-        ") -> Optional[dict[str,Any]]:\n"
-        "    return None\n"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert results == [], [r.message for r in results]
-
-
-def test_c009_genuinely_wrong_dict_type_still_caught(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    """Ensure the fix does not silence real type mismatches."""
-    from cxas_scrapi.utils.lint_rules.callbacks import WrongCallbackSignature  # noqa: PLC0415,I001
-
-    rule = WrongCallbackSignature()
-    cb_dir = (
-        tmp_path
-        / "agents"
-        / "root"
-        / "before_tool_callbacks"
-        / "before_tool_callbacks_01"
-    )
-    cb_dir.mkdir(parents=True)
-    f = cb_dir / "python_code.py"
-    f.write_text(
-        "def before_tool_callback("
-        "tool: Tool, "
-        "input: dict[int, Any], "
-        "callback_context: CallbackContext"
-        ") -> Optional[dict[str, Any]]:\n"
-        "    return None\n"
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    messages = [r.message for r in results]
-    assert any(
-        "input" in m and "dict[int, Any]" in m and "dict[str, Any]" in m
-        for m in messages
-    ), messages
-
-
 def test_c010_invalid_syntax(tmp_path: typing.Any, context: typing.Any) -> None:
     from cxas_scrapi.utils.lint_rules.callbacks import InvalidPythonSyntax  # noqa: PLC0415,I001
 
@@ -1019,35 +746,6 @@ def test_c010_valid_syntax(tmp_path: typing.Any, context: typing.Any) -> None:
 
 
 # ── Tool Rules ───────────────────────────────────────────────────────────
-
-
-def test_t001_missing_agent_action(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.tools import MissingAgentAction  # noqa: PLC0415,I001
-
-    rule = MissingAgentAction()
-    f = tmp_path / "python_code.py"
-    f.write_text("def get_balance(account_id): return {'balance': 100}")
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 1
-    assert "agent_action" in results[0].message
-
-
-def test_t001_has_agent_action(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.tools import MissingAgentAction  # noqa: PLC0415,I001
-
-    rule = MissingAgentAction()
-    f = tmp_path / "python_code.py"
-    f.write_text(
-        'def get_balance(account_id): return {"agent_action": "error"}'
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 0
 
 
 def test_t002_missing_docstring(
@@ -1201,40 +899,6 @@ def test_t006_filtered_ok(tmp_path: typing.Any, context: typing.Any) -> None:
     rule = ExcessiveReturnData()
     f = tmp_path / "python_code.py"
     f.write_text("def tool():\n    return {'balance': data['balance']}")
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 0
-
-
-def test_t007_not_snake_case(tmp_path: typing.Any, context: typing.Any) -> None:
-    from cxas_scrapi.utils.lint_rules.tools import ToolNameNotSnakeCase  # noqa: PLC0415,I001
-
-    rule = ToolNameNotSnakeCase()
-    tool_dir = tmp_path / "Get Balance" / "python_function"
-    tool_dir.mkdir(parents=True)
-    f = tool_dir / "python_code.py"
-    f.write_text("def get_balance(): pass")
-    json_path = tmp_path / "Get Balance" / "Get Balance.json"
-    json_path.write_text(
-        '{"name": "Get Balance", "displayName": "Get Balance"}'
-    )
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 2
-
-
-def test_t007_snake_case_ok(tmp_path: typing.Any, context: typing.Any) -> None:
-    from cxas_scrapi.utils.lint_rules.tools import ToolNameNotSnakeCase  # noqa: PLC0415,I001
-
-    rule = ToolNameNotSnakeCase()
-    tool_dir = tmp_path / "get_balance" / "python_function"
-    tool_dir.mkdir(parents=True)
-    f = tool_dir / "python_code.py"
-    f.write_text("def get_balance(): pass")
-    json_path = tmp_path / "get_balance" / "get_balance.json"
-    json_path.write_text(
-        '{"name": "get_balance", "displayName": "get_balance"}'
-    )
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -1443,20 +1107,6 @@ def test_t012_widget_tool_description(
     assert "widgetTool.description" in results[0].message
 
 
-def test_t001_json_tool_skipped(
-    tmp_path: typing.Any, context: typing.Any
-) -> None:
-    from cxas_scrapi.utils.lint_rules.tools import MissingAgentAction  # noqa: PLC0415,I001
-
-    rule = MissingAgentAction()
-    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
-
-    results = rule.check(f, f.read_text(), context)
-    assert len(results) == 0
-
-
 def test_t010_json_tool_skipped(
     tmp_path: typing.Any, context: typing.Any
 ) -> None:
@@ -1507,7 +1157,8 @@ def test_t014_tool_with_pacing(
     f = tool_dir / "python_code.py"
     f.write_text(
         '"""Lookup account details.\n\n'
-        "Before calling this tool, speak a brief conversational pacing phrase:\n"
+        "Before calling this tool, speak a brief conversational pacing"
+        " phrase:\n"
         "- Let me look that up for you.\n"
         '"""\n'
         "def lookup_account(account_id: str):\n"
@@ -1659,6 +1310,77 @@ def test_e002_non_golden_skipped(
     rule = MissingConversations()
     f = tmp_path / "test.yaml"
     f.write_text("name: test\nturns: []")
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_e003_unknown_tool_call(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.evals import InvalidToolCall  # noqa: PLC0415,I001
+
+    rule = InvalidToolCall()
+    goldens_dir = tmp_path / "goldens"
+    goldens_dir.mkdir()
+    f = goldens_dir / "test.yaml"
+    f.write_text(
+        "conversations:\n"
+        "  - conversation: test1\n"
+        "    turns:\n"
+        "      - user: hi\n"
+        "        agent: hello\n"
+        "        tool_calls:\n"
+        "          - action: nonexistent_tool\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert results[0].rule_id == "E003"
+    assert "nonexistent_tool" in results[0].message
+
+
+def test_e003_valid_and_special_tool_calls_ok(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.evals import InvalidToolCall  # noqa: PLC0415,I001
+
+    rule = InvalidToolCall()
+    goldens_dir = tmp_path / "goldens"
+    goldens_dir.mkdir()
+    f = goldens_dir / "test.yaml"
+    f.write_text(
+        "conversations:\n"
+        "  - conversation: test1\n"
+        "    turns:\n"
+        "      - user: hi\n"
+        "        agent: hello\n"
+        "        tool_calls:\n"
+        "          - action: get_balance\n"
+        "          - action: transfer_to_agent\n"
+        "          - action: end_session\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_e003_non_golden_skipped(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.evals import InvalidToolCall  # noqa: PLC0415,I001
+
+    rule = InvalidToolCall()
+    f = tmp_path / "simulations" / "test.yaml"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        "conversations:\n"
+        "  - conversation: test1\n"
+        "    turns:\n"
+        "      - user: hi\n"
+        "        tool_calls:\n"
+        "          - action: nonexistent_tool\n"
+    )
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
@@ -2393,6 +2115,31 @@ def test_s003_callback_file_missing(
     assert "greet.py" in results[0].message
 
 
+def test_s003_agent_and_tool_callbacks_missing(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.structure import CallbackFileReferences  # noqa: PLC0415,I001
+
+    rule = CallbackFileReferences()
+    f = tmp_path / "root_agent.json"
+    f.write_text(
+        json.dumps(
+            {
+                "beforeAgentCallbacks": [{"pythonCode": "callbacks/ba.py"}],
+                "afterAgentCallbacks": [{"pythonCode": "callbacks/aa.py"}],
+                "beforeToolCallbacks": [{"pythonCode": "callbacks/bt.py"}],
+                "afterToolCallbacks": [{"pythonCode": "callbacks/at.py"}],
+            }
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 4
+    messages = " ".join(r.message for r in results)
+    for expected in ("ba.py", "aa.py", "bt.py", "at.py"):
+        assert expected in messages
+
+
 def test_s003_not_json_skipped(
     tmp_path: typing.Any, context: typing.Any
 ) -> None:
@@ -2745,6 +2492,36 @@ def test_s005_agent_paths_invalid_callback(
     assert len(results) == 1
     assert "Agent callback pythonCode path" in results[0].message
     assert "agents/root_agent/" in results[0].message
+
+
+def test_s005_agent_and_tool_callbacks_invalid_path(
+    tmp_path: typing.Any, context: typing.Any
+) -> None:
+    from cxas_scrapi.utils.lint_rules.structure import StrictAgentPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictAgentPathLayout()
+    f = tmp_path / "root_agent.json"
+    f.write_text(
+        json.dumps(
+            {
+                "beforeAgentCallbacks": [{"pythonCode": "callbacks/ba.py"}],
+                "afterAgentCallbacks": [{"pythonCode": "callbacks/aa.py"}],
+                "beforeToolCallbacks": [{"pythonCode": "callbacks/bt.py"}],
+                "afterToolCallbacks": [{"pythonCode": "callbacks/at.py"}],
+            }
+        )
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 4
+    messages = " ".join(r.message for r in results)
+    for cb_type in (
+        "beforeAgentCallbacks[0]",
+        "afterAgentCallbacks[0]",
+        "beforeToolCallbacks[0]",
+        "afterToolCallbacks[0]",
+    ):
+        assert cb_type in messages
 
 
 def test_s006_tool_paths_valid(

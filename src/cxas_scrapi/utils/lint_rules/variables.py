@@ -109,12 +109,17 @@ def _load_var_schema(context: LintContext) -> dict:
     if key in _SCHEMA_CACHE:
         return _SCHEMA_CACHE[key]
     cfg = _load_app_config(app_root)
-    decls = cfg.get("variableDeclarations") or []
+    decls = (
+        cfg.get("variableDeclarations")
+        or cfg.get("variable_declarations")
+        or []
+    )
     schema: dict[str, dict] = {}
     for d in decls:
-        name = d.get("name")
-        if name:
-            schema[name] = d.get("schema") or {}
+        if isinstance(d, dict):
+            name = d.get("name")
+            if name:
+                schema[name] = d.get("schema") or {}
     _SCHEMA_CACHE[key] = schema
     return schema
 
@@ -152,7 +157,11 @@ def resolve_path(path: str, schema: dict) -> tuple:
     for i, child in enumerate(parts[1:], start=1):
         if current.get("type") != "OBJECT":
             return ("not_object", ".".join(parts[:i]))
-        props = current.get("properties") or {}
+        props = current.get("properties")
+        if not props:
+            # Free-form OBJECT with no declared properties schema: any nested
+            # key is allowed and its leaf type is unconstrained.
+            return ("ok", "UNKNOWN")
         if child not in props:
             return ("no_property", ".".join(parts[:i]), child)
         current = props[child]
@@ -205,15 +214,100 @@ class _StateAccessVisitor(ast.NodeVisitor):
         "frozenset": "set",
     }
 
+    _NON_CTX_STATE_HOLDERS = frozenset({"self", "cls", "runner", "engine"})
+
     def __init__(self) -> None:
         self.accesses: list[tuple[str, str, int, str | None]] = []
         self._skip_subscripts: set[int] = set()
+        self._scope_stack: list[tuple[set[str], set[str]]] = []
+        self._module_shadows_state = False
 
-    @staticmethod
-    def _is_state_target(node: ast.AST) -> bool:
-        if isinstance(node, ast.Name) and node.id == "state":
+    @classmethod
+    def _is_state_attr(cls, node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr == "state"
+            and not (
+                isinstance(node.value, ast.Name)
+                and node.value.id in cls._NON_CTX_STATE_HOLDERS
+            )
+        )
+
+    def _is_state_target(self, node: ast.AST) -> bool:
+        if self._is_state_attr(node):
             return True
-        return bool(isinstance(node, ast.Attribute) and node.attr == "state")
+        if isinstance(node, ast.Name):
+            name = node.id
+            for aliases, shadowed in reversed(self._scope_stack):
+                if name in shadowed:
+                    return False
+                if name in aliases:
+                    return True
+            if name == "state" and not self._module_shadows_state:
+                return True
+        return False
+
+    def visit_Module(self, node: ast.Module) -> None:
+        stack: list[ast.AST] = [
+            stmt
+            for stmt in node.body
+            if not isinstance(
+                stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            )
+        ]
+        while stack:
+            sub = stack.pop()
+            if isinstance(sub, ast.Assign) and not self._is_state_attr(
+                sub.value
+            ):
+                for target in sub.targets:
+                    if (
+                        isinstance(target, ast.Name) and target.id == "state"
+                    ) or (
+                        isinstance(target, ast.Tuple)
+                        and any(
+                            isinstance(elt, ast.Name) and elt.id == "state"
+                            for elt in target.elts
+                        )
+                    ):
+                        self._module_shadows_state = True
+            for child in ast.iter_child_nodes(sub):
+                if not isinstance(
+                    child,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                ):
+                    stack.append(child)
+        self.generic_visit(node)
+
+    def _visit_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self._scope_stack.append((set(), set()))
+        try:
+            self.generic_visit(node)
+        finally:
+            self._scope_stack.pop()
+
+    def _record_target_binding(self, target: ast.AST, is_ctx: bool) -> None:
+        if not self._scope_stack:
+            return
+        aliases, shadowed = self._scope_stack[-1]
+        if isinstance(target, ast.Name):
+            if is_ctx:
+                aliases.add(target.id)
+                shadowed.discard(target.id)
+            else:
+                shadowed.add(target.id)
+                aliases.discard(target.id)
+        elif isinstance(target, ast.Tuple):
+            for elt in target.elts:
+                if isinstance(elt, ast.Name):
+                    shadowed.add(elt.id)
+                    aliases.discard(elt.id)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_func(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_func(node)
 
     @staticmethod
     def _const_str(node: ast.AST) -> str | None:
@@ -257,6 +351,23 @@ class _StateAccessVisitor(ast.NodeVisitor):
                     )
                 self._skip_subscripts.add(id(target))
         self.generic_visit(node)
+        is_ctx = self._is_state_attr(node.value)
+        for target in node.targets:
+            self._record_target_binding(target, is_ctx)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        target = node.target
+        if isinstance(target, ast.Subscript) and self._is_state_target(
+            target.value
+        ):
+            key = self._const_str(target.slice)
+            if key is not None and node.value is not None:
+                rhs_type = self._literal_type_name(node.value)
+                self.accesses.append(("write", key, target.lineno, rhs_type))
+            self._skip_subscripts.add(id(target))
+        self.generic_visit(node)
+        if node.value is not None:
+            self._record_target_binding(target, self._is_state_attr(node.value))
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         target = node.target
@@ -279,11 +390,24 @@ class _StateAccessVisitor(ast.NodeVisitor):
                 self.accesses.append(("read", key, node.lineno, None))
         self.generic_visit(node)
 
+    def visit_Compare(self, node: ast.Compare) -> None:
+        operands = [node.left, *node.comparators]
+        for left_op, op, right_op in zip(
+            operands, node.ops, node.comparators, strict=False
+        ):
+            if isinstance(op, (ast.In, ast.NotIn)) and self._is_state_target(
+                right_op
+            ):
+                key = self._const_str(left_op)
+                if key is not None:
+                    self.accesses.append(("read", key, node.lineno, None))
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Attribute):
             method = node.func.attr
             if self._is_state_target(node.func.value):
-                if method == "get" and node.args:
+                if method in ("get", "pop") and node.args:
                     key = self._const_str(node.args[0])
                     if key is not None:
                         self.accesses.append(("read", key, node.lineno, None))
@@ -298,9 +422,9 @@ class _StateAccessVisitor(ast.NodeVisitor):
                         self.accesses.append(
                             ("write", key, node.lineno, rhs_type)
                         )
-                elif method == "update" and node.args:
-                    arg = node.args[0]
-                    if isinstance(arg, ast.Dict):
+                elif method == "update":
+                    if node.args and isinstance(node.args[0], ast.Dict):
+                        arg = node.args[0]
                         for k_node, v_node in zip(
                             arg.keys, arg.values, strict=False
                         ):
@@ -310,6 +434,12 @@ class _StateAccessVisitor(ast.NodeVisitor):
                                 self.accesses.append(
                                     ("write", key, node.lineno, rhs_type)
                                 )
+                    for kw in node.keywords:
+                        if kw.arg is not None:
+                            rhs_type = self._literal_type_name(kw.value)
+                            self.accesses.append(
+                                ("write", kw.arg, node.lineno, rhs_type)
+                            )
         self.generic_visit(node)
 
 
@@ -462,9 +592,20 @@ class EvalVariableDeclared(Rule):
             return []
         rel = str(file_path.relative_to(context.project_root))
         results = []
+        seen: set[tuple[str, int]] = set()
+        failed_prefixes: set[str] = set()
         for path, line in _collect_eval_var_refs(content):
+            if (path, line) in seen or any(
+                path.startswith(f"{p}.") for p in failed_prefixes
+            ):
+                continue
             verdict = resolve_path(path, schema)
-            if verdict[0] == "undeclared":
+            tag = verdict[0]
+            if tag in ("ok", "ok_object"):
+                continue
+            seen.add((path, line))
+            failed_prefixes.add(path)
+            if tag == "undeclared":
                 results.append(
                     self.make_result(
                         file=rel,
@@ -477,6 +618,45 @@ class EvalVariableDeclared(Rule):
                             "Declare it under variableDeclarations, or "
                             f"reference a known top-level var: "
                             f"{_available_top_level(schema)}"
+                        ),
+                    )
+                )
+            elif tag == "stale_flat":
+                results.append(
+                    _stale_flat_result(self, rel, line, path, verdict[1])
+                )
+            elif tag == "no_property":
+                parent_path = verdict[1]
+                child = verdict[2]
+                parent_schema = _walk_to_schema(parent_path, schema)
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        line=line,
+                        message=(
+                            f"Eval variable '{path}' — '{parent_path}' has no "
+                            f"property '{child}' (declared properties: "
+                            f"{_available_properties(parent_schema)})"
+                        ),
+                        fix=(
+                            f"Use one of the declared properties on "
+                            f"'{parent_path}', or add '{child}' to its schema"
+                        ),
+                    )
+                )
+            elif tag == "not_object":
+                parent_path = verdict[1]
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        line=line,
+                        message=(
+                            f"Eval variable '{path}' — '{parent_path}' is not "
+                            f"an OBJECT; cannot access nested key '{path}'"
+                        ),
+                        fix=(
+                            f"Change '{parent_path}' schema type to OBJECT, "
+                            "or use a flat reference"
                         ),
                     )
                 )

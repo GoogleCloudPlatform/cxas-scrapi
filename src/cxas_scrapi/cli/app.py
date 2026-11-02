@@ -132,6 +132,7 @@ def app_pull(args: argparse.Namespace) -> None:
         args.target_dir,
         getattr(args, "overwrite", False),
         app_version=app_version,
+        app_dir_name=getattr(args, "app_dir_name", None),
     )
 
 
@@ -141,9 +142,31 @@ def _app_pull(
     target_dir: str,
     overwrite: bool = False,
     app_version: str | None = None,
+    app_dir_name: str | None = None,
 ) -> None:
     """Helper to pull an app from CXAS."""
     try:
+        dest_app_root: str | None = None
+        if app_dir_name is not None:
+            stripped_dir_name = app_dir_name.strip()
+            if not stripped_dir_name:
+                raise ValueError("--app-dir-name cannot be empty.")
+            abs_target = os.path.abspath(target_dir)
+            abs_dest = os.path.abspath(
+                os.path.join(target_dir, stripped_dir_name)
+            )
+            if (
+                os.path.isabs(stripped_dir_name)
+                or os.path.commonpath([abs_target, abs_dest]) != abs_target
+            ):
+                raise ValueError(
+                    f"Invalid --app-dir-name '{app_dir_name}': must be a "
+                    "relative path within --target-dir."
+                )
+            dest_app_root = os.path.normpath(
+                os.path.join(target_dir, stripped_dir_name)
+            )
+
         # Export the app
         print("Exporting app from CXAS...")
         lro = apps_client.export_app(app_name=app_name, app_version=app_version)
@@ -154,31 +177,82 @@ def _app_pull(
             os.makedirs(target_dir)
 
         # Extract content to target directory.
+        top_dir = ""
         with zipfile.ZipFile(io.BytesIO(response.app_content)) as z:
-            export_members = z.namelist()
-            z.extractall(target_dir)
+            export_members = list(z.namelist())
+            if export_members:
+                first_part = export_members[0].split("/")[0]
+                has_top_dir = (
+                    bool(first_part)
+                    and any("/" in m for m in export_members)
+                    and all(
+                        m == first_part or m.startswith(first_part + "/")
+                        for m in export_members
+                    )
+                )
+                top_dir = first_part if has_top_dir else ""
+
+            if dest_app_root is not None:
+                os.makedirs(dest_app_root, exist_ok=True)
+                abs_dest_root = os.path.abspath(dest_app_root)
+                prefix = f"{top_dir}/" if top_dir else ""
+                for info in z.infolist():
+                    rel_name = info.filename
+                    if top_dir:
+                        if rel_name in (top_dir, prefix):
+                            continue
+                        if rel_name.startswith(prefix):
+                            rel_name = rel_name[len(prefix) :]
+                    if not rel_name:
+                        continue
+                    target_member_path = os.path.abspath(
+                        os.path.join(dest_app_root, rel_name)
+                    )
+                    if (
+                        os.path.commonpath([abs_dest_root, target_member_path])
+                        != abs_dest_root
+                    ):
+                        raise ValueError(
+                            "Path traversal detected in archive entry: "
+                            f"{info.filename}"
+                        )
+                    info.filename = rel_name
+                    z.extract(info, path=dest_app_root)
+            else:
+                z.extractall(target_dir)
 
         # Handle overwrite logic if requested
         if overwrite and export_members:
-            # Find the top level directory name in the zip (app name)
-            top_dir = export_members[0].split("/")[0]
-            app_root = os.path.join(target_dir, top_dir)
+            if dest_app_root is not None:
+                app_root = dest_app_root
+            else:
+                top_dir = export_members[0].split("/")[0]
+                app_root = os.path.join(target_dir, top_dir)
 
             if os.path.exists(app_root):
                 # Build set of exported paths relative to app_root
                 export_set = set()
                 for member in export_members:
-                    rel_path = os.path.relpath(member, top_dir)
-                    if rel_path != ".":
+                    rel_path = (
+                        os.path.relpath(member, top_dir)
+                        if top_dir
+                        else member.rstrip("/")
+                    )
+                    if rel_path and rel_path != ".":
                         export_set.add(rel_path)
 
                 # Identify root level items in export (direct children of
-                # top_dir)
+                # app_root)
                 export_root_items = set()
                 for member in export_members:
-                    parts = member.split("/")
-                    if len(parts) > 1 and parts[0] == top_dir:
-                        export_root_items.add(parts[1])
+                    if top_dir:
+                        parts = member.split("/")
+                        if len(parts) > 1 and parts[0] == top_dir and parts[1]:
+                            export_root_items.add(parts[1])
+                    else:
+                        first = member.split("/")[0]
+                        if first:
+                            export_root_items.add(first)
 
                 # Walk the local app root bottom-up to remove files then dirs
                 for root, dirs, files in os.walk(app_root, topdown=False):

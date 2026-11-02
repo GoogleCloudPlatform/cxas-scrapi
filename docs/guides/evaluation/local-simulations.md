@@ -23,9 +23,9 @@ Because the user is simulated by a language model, the conversation is non-deter
 
 ---
 
-## YAML format
+## YAML & JSON format
 
-Simulation files use the `evals:` key at the top level:
+Simulation files (`.yaml`, `.yml`, or `.json`) use `evals:` (or `test_cases:` / `scenarios:`) at the top level, and support file-level `common_session_parameters` and `common_expectations` (individual cases can opt out via `exclude_common_expectations: true`):
 
 ```yaml
 evals:
@@ -59,6 +59,8 @@ evals:
 | `session_parameters` | dict | Variables injected at session start |
 | `steps` | list | Ordered sequence of conversational goals |
 | `expectations` | list | Post-conversation quality assertions evaluated by Gemini |
+| `exclude_common_expectations` | bool | When `true`, skips merging file-level `common_expectations` into this test case |
+| `voice_config` | dict | Optional per-case TTS voice override (`{"voice_name": "...", "language_code": "..."}`); otherwise selected deterministically from `--sim-user-voices` |
 
 ### Step fields
 
@@ -66,10 +68,13 @@ evals:
 |-------|------|-------------|
 | `goal` | string | What the simulated user is trying to accomplish in this step |
 | `success_criteria` | string | The condition that determines whether this step is complete |
-| `response_guide` | string | Persona and context hints for the simulated user |
-| `max_turns` | int | Maximum turns allowed before declaring the step incomplete |
+| `response_guide` | string | Persona and context hints for the simulated user (alias `protocol`) |
+| `max_turns` | int | Maximum turns allowed before declaring the step incomplete (alias `max_turn_count`) |
 | `static_utterance` | string | Instead of AI simulation, send this exact text (useful for testing specific inputs) |
-| `inject_variables` | dict | Variables to inject for the first step only (overrides session_parameters) |
+| `event` | string | Optional event string to send for this step |
+| `inject_variables` | dict | Variables to inject for the first step (`step 0`); if declared on later steps, hoisted into `session_parameters` when converted to platform Milestone YAML |
+| `metadata` | dict | Optional step-level metadata dictionary |
+| `barge_in_after_ms` | int | Optional offset in ms after agent audio starts to trigger a barge-in utterance (local `audio` modality only; stripped when sanitizing for platform Milestone YAML) |
 
 ### Expectations
 
@@ -84,6 +89,155 @@ expectations:
 
 Each expectation is judged as Met or Not Met, with a justification from Gemini.
 
+---
+
+## Running Simulations on the Platform (CXAS 2.0 Milestone Evals)
+
+In addition to running locally via the Sessions API, SCRAPI can convert your simulation test cases (`evals:` YAML) into **CXAS 2.0 Platform Milestone Evaluations** (`scenario.milestones`) and run them directly on the CX Agent Studio platform.
+
+### How simulation-to-milestone conversion works
+
+When converting simulation test cases to CXAS 2.0 Milestone YAML (`EvalUtils.convert_sim_evals_to_milestone_yaml` or `SimulationEvals.to_milestone_yaml`):
+
+- Each evaluation and step is sanitized against the CES platform `MilestoneYamlTranslator` whitelists (`MILESTONE_ALLOWED_ROOT_KEYS`, `MILESTONE_ALLOWED_EVAL_KEYS`, `MILESTONE_ALLOWED_STEP_KEYS`).
+- Client-only keys (`audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, `barge_in_after_ms`, `modality`) are stripped automatically with logging warnings.
+- Step-level `inject_variables` on `step 0` are preserved, while `inject_variables` on later steps (`step_idx > 0`) are automatically hoisted into `session_parameters` with a warning.
+- When converting a directory of YAML files, file-level `common_session_parameters`, `common_expectations`, and `initial_event` are merged into each test case.
+- The sanitized YAML is imported via the CES REST `:importEvaluations` (`yamlContent`) endpoint, where each milestone is scored by the platform as `COMPLETED` (Pass), `IN_PROGRESS` (Fail), or `NOT_STARTED` (Fail) with a `justification`.
+
+### Option 1: Push & run via CLI
+
+Push your simulation YAML directly to the platform with `cxas push-eval`, then trigger and wait on all scenario evaluations with `cxas run --eval-type scenarios`:
+
+```bash
+# Convert and import simulation test cases as CXAS 2.0 Milestone evaluations
+cxas push-eval \
+  --app-name "projects/my-project/locations/us/apps/my-app" \
+  --file evals/simulations/order_sims.yaml
+
+# Trigger all scenario/milestone evaluations and wait for results
+cxas run \
+  --app-name "projects/my-project/locations/us/apps/my-app" \
+  --eval-type scenarios \
+  --run-count 3 \
+  --wait
+```
+
+### Option 2: Combined HTML report via CLI (`--platform-sims`)
+
+Pass `--platform-sims` to `cxas evals report` to execute platform-compatible simulations on the CX Agent Studio platform and include their milestone results in the combined HTML report:
+
+```bash
+cxas evals report \
+  --run \
+  --include sims \
+  --platform-sims \
+  --app-name "projects/my-project/locations/us/apps/my-app" \
+  --output-dir "eval-reports"
+```
+
+### Option 3: Programmatic SDK (`SimulationEvals`)
+
+```python
+from cxas_scrapi.evals.simulation_evals import SimulationEvals
+
+sim_evals = SimulationEvals(app_name="projects/my-project/locations/us/apps/my-app")
+
+# 1. Inspect the generated CXAS 2.0 Milestone YAML
+yaml_str = sim_evals.to_milestone_yaml(test_cases)
+
+# 2. Push simulation test cases to the platform as Milestone evaluations
+sim_evals.push_to_platform(test_cases)
+
+# 3. Run simulations on the platform with automatic hybrid fallback
+results = sim_evals.run_simulations(
+    test_cases=test_cases,
+    runs=3,
+    run_on_platform=True,
+)
+```
+
+!!! info "Automatic hybrid routing (`run_on_platform=True`)"
+    When `run_on_platform=True` (or `--platform-sims` on the CLI) is enabled, `SimulationEvals.requires_local_execution(test_case)` inspects each test case. Standard text simulations (including those with `use_tool_fakes=True`, executed via platform `EvaluationConfig.tool_call_behaviour = FAKE`) run on the platform as CXAS 2.0 Milestone evaluations, while test cases that require local-only features (`modality: "audio"`, `audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, or `barge_in_after_ms`) are automatically partitioned and executed locally.
+
+---
+
+## Background & Acoustic Noise Stress Testing
+
+When evaluating voice agents in `audio` modality, you can simulate real-world calling conditions by injecting background acoustic noise and intermittent burst noise directly onto simulated caller turns.
+
+### YAML Configuration
+
+Add `background_noise` and optional burst noise to your test case, or configure them file-wide via `common_background_noise` / `common_params`:
+
+```yaml
+# File-level common parameters applied to all test cases in this file:
+common_background_noise: "cafe"    # Preset, custom WAV, or shorthand "cafe:MEDIUM"
+common_bg_noise_level: "MEDIUM"     # "LOW" (20dB), "MEDIUM" (12dB), or "HIGH" (5dB)
+
+# Or grouped under common_params:
+# common_params:
+#   background_noise: "call_center"
+#   bg_noise_level: "LOW"
+
+evals:
+  - name: "order_lookup_noisy_cafe"
+    # Inherits common_background_noise and common_bg_noise_level automatically,
+    # or override / customize per-eval:
+    burst_noise:
+      files: ["dog_barking"]      # Built-in preset or custom WAV paths
+      snr: "HIGH"                 # Categorical level or float dB (5.0 dB)
+    voice_config:
+      prompt: "Speak with a slightly hurried, frustrated tone"  # Custom Gemini TTS style
+    steps:
+      - goal: "Ask about the status of order ORD-12345"
+        success_criteria: "The agent acknowledged order ORD-12345"
+
+  - name: "clean_quiet_call"
+    background_noise: false       # Explicit opt-out for quiet baseline testing
+    steps:
+      - goal: "Ask for store hours"
+        success_criteria: "Agent provided store hours"
+```
+
+### Noise Levels and Shorthand
+
+Categorical noise levels map directly to standardized Signal-to-Noise Ratios:
+- `LOW`: **20.0 dB SNR** (light, subtle background noise)
+- `MEDIUM`: **12.0 dB SNR** (moderate everyday background chatter/traffic; aliases: `med`, `moderate`)
+- `HIGH`: **5.0 dB SNR** (heavy, challenging acoustic noise; aliases: `heavy`, `loud`)
+
+You can also use shorthand syntax in `background_noise` directly, e.g.:
+```yaml
+background_noise: "cafe:HIGH"      # Equivalent to preset: cafe at 5.0 dB SNR
+background_noise: "traffic:LOW"    # Equivalent to preset: traffic at 20.0 dB SNR
+```
+
+### Built-in Presets
+
+SCRAPI bundles 13 verified acoustic presets (normalized to 16 kHz mono PCM):
+
+| Category | Presets | Description |
+|---|---|---|
+| **Public & Commercial** | `cafe`, `call_center`, `traffic` | Real coffee shop clatter, call center agents on headsets, and street traffic |
+| **Domestic & Indoor** | `baby_crying`, `kids_noise`, `dog_barking`, `tv_radio`, `kitchen` | Infant crying, playground children, barking dog, room TV news broadcast, and running sink water |
+| **Environmental** | `cross_talk`, `wind` | Continuous secondary human conversation, and Pixel 10 mic wind-tunnel buffeting (12mph) |
+| **Mathematical Color Noise** | `white`, `pink`, `brown` | Flat-spectrum, $1/\sqrt{f}$, and $1/f$ algorithmic noise |
+
+### Programmatic Usage
+
+Pass noise configuration directly to `SimulationEvals`:
+
+```python
+sim_evals = SimulationEvals(
+    app_name="projects/my-project/locations/us/apps/my-app",
+    modality="audio",
+    background_noise_file="call_center",
+    bg_noise_snr="MEDIUM",  # or 12.0
+    burst_noise_files=["dog_barking"],
+    burst_noise_snr="HIGH",  # or 5.0
+)
+```
 ---
 
 ## The `SimulationEvals` class
@@ -529,8 +683,43 @@ cxas evals report \
     --app-name "projects/my-project/locations/us/apps/my-app" \
     --output-dir "eval-reports" \
     --sim-parallel 5 \
+    --runs 3 \
+    --min-run-passes 2 \
+    --min-pass-rate 0.85 \
     --use-tool-fakes
 ```
+
+### Infrastructure Retries & `k-of-N` Majority Voting
+
+For multi-run and audio simulation suites, you can combine automatic infrastructure retries with `k-of-N` majority voting:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--runs` | `1` | Number of runs per simulation test case |
+| `--min-run-passes` | `None` | Minimum passing runs (`k` of `N`) required for a test case to pass (defaults to `1` when unset) |
+| `--min-pass-rate` | `None` | Minimum fraction of cases (`0.0`–`1.0`) that must pass; exits `1` if below threshold or if `0` cases ran |
+| `--infra-retries` | `2` | Automatic retries for runs that fail due to a session exception, empty judge verdict, or (in `audio` modality) a silent WebSocket turn drop where the caller's last utterance never reached CES (set to `0` to disable) |
+| `--retry-parallel` | `max(1, sim_parallel // 2)` | Worker concurrency during retry waves (steps down to half of `--sim-parallel` by default) |
+| `--retry-cooldown` | `60.0` | Cooldown in seconds before each retry wave |
+
+---
+
+## Audio Analysis & Voice Quality Evaluation
+
+For audio and voice simulations, `SimulationEvals` can perform comprehensive perceptual and signal-level quality analysis by setting `audio_analysis=True` (off by default):
+
+```python
+sim_evals = SimulationEvals(
+    app_name="projects/my-project/locations/us/apps/my-app",
+    audio_analysis=True,  # Opt-in comprehensive audio evaluation
+)
+```
+
+When `audio_analysis=True`:
+- **Naturalness Grading**: Evaluates the 5-point naturalness rubric across all conversation runs.
+- **Multimodal Audio Checks**: Evaluates 5 Gemini perceptual checks (voice consistency, no long pauses, agent having trouble, agent looping, agent cutoff) directly on agent speech audio.
+- **Signal-Level Acoustic Consistency**: Calculates ITU-R BS.1770 integrated loudness (LUFS), articulation rate, and median pitch (F0 in Hz and semitones).
+- **Voice Drift & Seam Detection**: Detects cross-turn timbre and pitch seams, abrupt loudness steps, audio truncation, and cached-versus-fresh TTS boundaries.
 
 ---
 

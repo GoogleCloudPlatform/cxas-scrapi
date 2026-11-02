@@ -15,14 +15,19 @@
 
 """Core Evaluations class for CXAS Scrapi."""
 
+import base64
+import concurrent.futures
+import contextlib
 import hashlib
 import json
 import os
+import time
 import typing
 from enum import Enum
 from typing import Any
 
 import yaml
+from google.auth.transport.requests import AuthorizedSession
 from google.cloud.ces_v1beta import (
     AgentServiceClient,
     EvaluationServiceClient,
@@ -31,7 +36,7 @@ from google.cloud.ces_v1beta import (
 from google.protobuf import field_mask_pb2, json_format
 
 from cxas_scrapi.core.agents import Agents
-from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.tools import Tools
 
 
@@ -69,6 +74,155 @@ class Evaluations(Common):
         self.evals_map: dict[str, dict[str, str]] = {}
         self._eval_search_index: dict[str, str] = {}
 
+    def _get_rest_session(self) -> AuthorizedSession:
+        """Returns an authorized requests Session for REST calls."""
+        session = AuthorizedSession(self.creds)
+        if (
+            os.environ.get("GOOGLE_API_USE_CLIENT_CERTIFICATE", "").lower()
+            == "true"
+        ):
+            with contextlib.suppress(Exception):
+                session.configure_mtls_channel()
+        return session
+
+    def _get_rest_base_url(self) -> str:
+        """Returns base REST URL, respecting client_options or
+        DEFAULT_API_ENDPOINT."""
+        if isinstance(self.client_options, dict):
+            endpoint = (
+                self.client_options.get("api_endpoint") or DEFAULT_API_ENDPOINT
+            )
+        else:
+            endpoint = (
+                getattr(self.client_options, "api_endpoint", None)
+                or DEFAULT_API_ENDPOINT
+            )
+        if (
+            os.environ.get("GOOGLE_API_USE_CLIENT_CERTIFICATE", "").lower()
+            == "true"
+            and endpoint == "ces.googleapis.com"
+        ):
+            endpoint = "ces.mtls.googleapis.com"
+        if not endpoint.startswith("http://") and not endpoint.startswith(
+            "https://"
+        ):
+            endpoint = f"https://{endpoint}"
+        return endpoint.rstrip("/")
+
+    def _get_rest_headers(self) -> dict[str, str]:
+        """Standard headers for CES REST requests."""
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": getattr(self, "user_agent", "cxas-scrapi"),
+        }
+        if getattr(self, "project_id", None):
+            headers["X-Goog-User-Project"] = self.project_id
+        return headers
+
+    def get_evaluation_rest(self, evaluation_id: str) -> dict[str, Any]:
+        """Fetches an evaluation via the REST endpoint (preserving scenario
+        milestones)."""
+        session = self._get_rest_session()
+        base_url = self._get_rest_base_url()
+        url = f"{base_url}/v1beta/{evaluation_id.lstrip('/')}"
+        resp = session.get(url, headers=self._get_rest_headers())
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_evaluation_result_rest(
+        self, evaluation_result_id: str
+    ) -> dict[str, Any]:
+        """Fetches an evaluation result via REST endpoint (preserving
+        scenarioResult)."""
+        session = self._get_rest_session()
+        base_url = self._get_rest_base_url()
+        url = f"{base_url}/v1beta/{evaluation_result_id.lstrip('/')}"
+        resp = session.get(url, headers=self._get_rest_headers())
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_evaluations_rest(
+        self, app_name: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Lists all evaluations in the given app via REST."""
+        app_name = app_name or self.app_name
+        if not app_name:
+            raise ValueError("app_name is required.")
+        session = self._get_rest_session()
+        base_url = self._get_rest_base_url()
+        evaluations: list[dict[str, Any]] = []
+        page_token = ""
+        while True:
+            url = (
+                f"{base_url}/v1beta/{app_name.lstrip('/')}"
+                f"/evaluations?pageSize=100"
+            )
+            if page_token:
+                url += f"&pageToken={page_token}"
+            resp = session.get(url, headers=self._get_rest_headers())
+            resp.raise_for_status()
+            data = resp.json()
+            evaluations.extend(data.get("evaluations", []))
+            page_token = data.get("nextPageToken", "")
+            if not page_token:
+                break
+        return evaluations
+
+    def get_evaluation_run_rest(self, run_name: str) -> dict[str, Any]:
+        """Fetches an evaluation run via the REST endpoint."""
+        session = self._get_rest_session()
+        base_url = self._get_rest_base_url()
+        url = f"{base_url}/v1beta/{run_name.lstrip('/')}"
+        resp = session.get(url, headers=self._get_rest_headers())
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_operation_rest(self, operation_name: str) -> dict[str, Any]:
+        """Fetches a long-running operation via the REST endpoint."""
+        session = self._get_rest_session()
+        base_url = self._get_rest_base_url()
+        url = f"{base_url}/v1beta/{operation_name.lstrip('/')}"
+        resp = session.get(url, headers=self._get_rest_headers())
+        resp.raise_for_status()
+        return resp.json()
+
+    def run_evaluation_rest(
+        self,
+        evaluations: list[str],
+        app_name: str | None = None,
+        modality: str = "text",
+        run_count: int | None = None,
+        golden_run_method: str = "STABLE",
+        use_tool_fakes: bool | None = None,
+    ) -> dict[str, Any]:
+        """Triggers an evaluation run via the REST endpoint."""
+        app_name = app_name or self.app_name
+        if not app_name:
+            raise ValueError("app_name is required.")
+        session = self._get_rest_session()
+        base_url = self._get_rest_base_url()
+        url = f"{base_url}/v1beta/{app_name.lstrip('/')}:runEvaluation"
+        config: dict[str, Any] = {
+            "evaluationChannel": (
+                "AUDIO" if modality.lower() == "audio" else "TEXT"
+            )
+        }
+        if use_tool_fakes is True:
+            config["toolCallBehaviour"] = "FAKE"
+        elif use_tool_fakes is False:
+            config["toolCallBehaviour"] = "REAL"
+        body: dict[str, Any] = {
+            "evaluations": list(evaluations),
+            "config": config,
+        }
+        if run_count:
+            body["runCount"] = run_count
+        if golden_run_method:
+            body["goldenRunMethod"] = golden_run_method.upper()
+        resp = session.post(url, json=body, headers=self._get_rest_headers())
+        resp.raise_for_status()
+        return resp.json()
+
     @staticmethod
     def parse_eval_to_yaml(filepath: typing.Any) -> typing.Any:
         """Parses a CXAS Evaluation textproto file into the target FDE
@@ -97,6 +251,143 @@ class Evaluations(Common):
     ) -> typing.Any:
         """Parses a CXAS Evaluation dictionary into the target FDE YAML
         format."""
+        # Check if this is a Scenario Milestone Evaluation
+        scenario = eval_dict.get("scenario") or {}
+        milestones = (
+            scenario.get("milestones") if isinstance(scenario, dict) else None
+        )
+        if not milestones and "milestones" in eval_dict:
+            milestones = eval_dict["milestones"]
+
+        if milestones:
+            eval_name = (
+                eval_dict.get("display_name")
+                or eval_dict.get("displayName")
+                or "Converted_Eval"
+            )
+            eval_entry: dict[str, Any] = {
+                "name": eval_name,
+                "steps": [],
+            }
+            tags = eval_dict.get("tags") or []
+            if tags:
+                eval_entry["tags"] = tags
+
+            session_params = (
+                eval_dict.get("session_parameters")
+                or eval_dict.get("sessionParameters")
+                or {}
+            )
+            if not session_params and isinstance(scenario, dict):
+                session_params = (
+                    scenario.get("session_parameters")
+                    or scenario.get("sessionParameters")
+                    or scenario.get("variable_overrides")
+                    or scenario.get("variableOverrides")
+                    or {}
+                )
+            if session_params:
+                eval_entry["session_parameters"] = Common.unwrap_struct(
+                    session_params
+                )
+
+            expectations = (
+                eval_dict.get("expectations")
+                or (
+                    scenario.get("evaluation_expectations")
+                    if isinstance(scenario, dict)
+                    else None
+                )
+                or (
+                    scenario.get("evaluationExpectations")
+                    if isinstance(scenario, dict)
+                    else None
+                )
+                or []
+            )
+            if expectations:
+                eval_entry["expectations"] = list(dict.fromkeys(expectations))
+
+            eval_max_turns = (
+                eval_dict.get("max_turns")
+                or eval_dict.get("maxTurns")
+                or (
+                    scenario.get("max_turns") or scenario.get("maxTurns")
+                    if isinstance(scenario, dict)
+                    else None
+                )
+            )
+            if eval_max_turns:
+                with contextlib.suppress(ValueError, TypeError):
+                    eval_entry["max_turns"] = int(eval_max_turns)
+
+            init_event = (
+                eval_dict.get("initial_event")
+                or eval_dict.get("initialEvent")
+                or (
+                    scenario.get("initial_event")
+                    or scenario.get("initialEvent")
+                    if isinstance(scenario, dict)
+                    else None
+                )
+            )
+            if init_event:
+                eval_entry["initial_event"] = init_event
+
+            eval_meta = eval_dict.get("metadata") or (
+                scenario.get("metadata") if isinstance(scenario, dict) else None
+            )
+            if isinstance(eval_meta, dict) and eval_meta:
+                eval_entry["metadata"] = Common.unwrap_struct(eval_meta)
+
+            for m in milestones:
+                if not isinstance(m, dict):
+                    continue
+                step: dict[str, Any] = {
+                    "goal": m.get("goal", ""),
+                    "success_criteria": m.get("success_criteria")
+                    or m.get("successCriteria", ""),
+                }
+                resp_guide = (
+                    m.get("response_guide")
+                    or m.get("responseGuide")
+                    or m.get("protocol")
+                )
+                if resp_guide:
+                    step["response_guide"] = resp_guide
+                max_t = (
+                    m.get("max_turns")
+                    or m.get("max_turn_count")
+                    or m.get("maxTurnCount")
+                )
+                if max_t:
+                    step["max_turns"] = int(max_t)
+                stat_utt = m.get("static_utterance") or m.get("staticUtterance")
+                if stat_utt:
+                    step["static_utterance"] = stat_utt
+                evt = m.get("event")
+                if evt:
+                    step["event"] = evt
+                inj_var = m.get("inject_variables") or m.get("injectVariables")
+                if inj_var:
+                    step["inject_variables"] = Common.unwrap_struct(inj_var)
+                step_meta = m.get("metadata")
+                if isinstance(step_meta, dict) and step_meta:
+                    step["metadata"] = Common.unwrap_struct(step_meta)
+
+                eval_entry["steps"].append(step)
+
+            out_yaml: dict[str, Any] = {}
+            common_params = eval_dict.get(
+                "common_session_parameters"
+            ) or eval_dict.get("commonSessionParameters")
+            if common_params:
+                out_yaml["common_session_parameters"] = Common.unwrap_struct(
+                    common_params
+                )
+            out_yaml["evals"] = [eval_entry]
+            return out_yaml
+
         golden = eval_dict.get("golden", {})
         turns = golden.get("turns", [])
         if not isinstance(turns, list):
@@ -372,12 +663,22 @@ class Evaluations(Common):
             )
 
         run_status = self.client.get_evaluation_run(name=evaluation_run_id)
+        result_names = list(run_status.evaluation_results or [])
+        if not result_names:
+            return []
+        if len(result_names) == 1:
+            return [self.client.get_evaluation_result(name=result_names[0])]
 
-        results = []
-        for result_name in run_status.evaluation_results:
-            results.append(self.client.get_evaluation_result(name=result_name))
-
-        return results
+        max_workers = min(16, len(result_names))
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_workers
+        ) as executor:
+            return list(
+                executor.map(
+                    lambda rname: self.client.get_evaluation_result(name=rname),
+                    result_names,
+                )
+            )
 
     def build_search_index(
         self, app_name: str | None = None, force: bool = False
@@ -482,23 +783,49 @@ class Evaluations(Common):
         """
         app_name = app_name or self.app_name
 
-        evaluations = self.list_evaluations(app_name)
+        try:
+            evaluations = self.list_evaluations(app_name)
+        except Exception:
+            evaluations = self.list_evaluations_rest(app_name)
         evaluations_dict: dict[str, dict[str, str]] = {
             "goldens": {},
             "scenarios": {},
         }
 
         for evaluation in evaluations:
-            display_name = evaluation.display_name
-            name = evaluation.name
+            if isinstance(evaluation, dict):
+                display_name = evaluation.get("displayName") or evaluation.get(
+                    "display_name"
+                )
+                name = evaluation.get("name")
+                is_golden = (
+                    "golden" in evaluation and evaluation["golden"] is not None
+                )
+                is_scenario = (
+                    "scenario" in evaluation
+                    and evaluation["scenario"] is not None
+                )
+            else:
+                display_name = evaluation.display_name
+                name = evaluation.name
+                is_golden = bool(getattr(evaluation, "golden", None))
+                is_scenario = bool(getattr(evaluation, "scenario", None))
+                if (
+                    not is_golden
+                    and not is_scenario
+                    and hasattr(evaluation, "_pb")
+                ):
+                    with contextlib.suppress(Exception):
+                        if evaluation._pb.HasField("golden"):
+                            is_golden = True
+                        elif evaluation._pb.HasField("scenario"):
+                            is_scenario = True
 
             if display_name and name:
                 target_dict = None
-                # Check the oneof field or structure property to determine
-                # the type
-                if getattr(evaluation, "golden", None):
+                if is_golden:
                     target_dict = evaluations_dict["goldens"]
-                elif getattr(evaluation, "scenario", None):
+                elif is_scenario:
                     target_dict = evaluations_dict["scenarios"]
 
                 if target_dict is not None:
@@ -552,20 +879,56 @@ class Evaluations(Common):
                 )
                 output_format = ExportFormat.YAML
 
-        eval_obj = self.get_evaluation(evaluation_id=evaluation_id)
-        # Convert the protobuf object to a python dictionary
-        eval_dict = type(eval_obj).to_dict(eval_obj)
+        eval_dict = None
+        try:
+            eval_obj = self.get_evaluation(evaluation_id=evaluation_id)
+            eval_dict = (
+                eval_obj
+                if isinstance(eval_obj, dict)
+                else type(eval_obj).to_dict(eval_obj)
+            )
+        except Exception:
+            eval_dict = None
+
+        has_golden_turns = (
+            isinstance(eval_dict, dict)
+            and isinstance(eval_dict.get("golden"), dict)
+            and "turns" in eval_dict["golden"]
+        )
+        has_milestones = isinstance(eval_dict, dict) and (
+            "milestones" in eval_dict
+            or (
+                isinstance(eval_dict.get("scenario"), dict)
+                and "milestones" in eval_dict["scenario"]
+            )
+        )
+        if not has_golden_turns and not has_milestones:
+            with contextlib.suppress(Exception):
+                rest_dict = self.get_evaluation_rest(
+                    evaluation_id=evaluation_id
+                )
+                if isinstance(rest_dict, dict) and rest_dict:
+                    eval_dict = rest_dict
+
+        if not isinstance(eval_dict, dict):
+            eval_dict = {}
 
         out_dict = self.eval_dict_to_yaml(eval_dict, tools_map=self.tools_map)
 
         # Resolve expectation resource names to LLM prompts and optionally
-        # sideload
-        for conv in out_dict.get("conversations", []):
-            if "expectations" not in conv:
+        # sideload for conversations and evals
+        entries_to_resolve = []
+        if "conversations" in out_dict:
+            entries_to_resolve.extend(out_dict["conversations"])
+        if "evals" in out_dict:
+            entries_to_resolve.extend(out_dict["evals"])
+
+        for entry in entries_to_resolve:
+            if "expectations" not in entry or not entry["expectations"]:
                 continue
 
             resolved_prompts = []
-            for exp_ref in conv["expectations"]:
+            for exp_ref in entry["expectations"]:
                 # Only resolve if it looks like a resource name
                 if "/evaluationExpectations/" in exp_ref:
                     try:
@@ -598,8 +961,12 @@ class Evaluations(Common):
                                     eval_exp_dir, f"{exp_id}.json"
                                 )
 
+                                exp_display_name = (
+                                    getattr(exp_obj, "display_name", None)
+                                    or exp_id
+                                )
                                 exp_content = {
-                                    "displayName": exp_id,
+                                    "displayName": exp_display_name,
                                     "llmCriteria": {"prompt": prompt_text},
                                 }
                                 with open(
@@ -622,7 +989,7 @@ class Evaluations(Common):
                     # Not a resource name, keep as is
                     resolved_prompts.append(exp_ref)
 
-            conv["expectations"] = resolved_prompts
+            entry["expectations"] = resolved_prompts
 
         if output_format == ExportFormat.JSON:
             content = json.dumps(out_dict, indent=2)
@@ -666,16 +1033,91 @@ class Evaluations(Common):
         )
         return self.client.create_evaluation(request=request)
 
+    @staticmethod
+    def _has_tool_expectations(eval_dict: dict[str, Any]) -> bool:
+        golden = eval_dict.get("golden") or eval_dict
+        for turn in golden.get("turns") or []:
+            for step in turn.get("steps") or []:
+                exp = step.get("expectation") or {}
+                if (
+                    "toolCall" in exp
+                    or "tool_call" in exp
+                    or "toolResponse" in exp
+                    or "tool_response" in exp
+                ):
+                    return True
+        return False
+
+    def resolve_evaluation_tool_references(
+        self,
+        evaluation: dict[str, Any],
+        app_name: str | None = None,
+        tools_reverse_map: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Resolves tool display names to tool resource names in-place."""
+        if not isinstance(evaluation, dict) or not self._has_tool_expectations(
+            evaluation
+        ):
+            return evaluation
+
+        app_name = app_name or self.app_name
+        if tools_reverse_map is None:
+            try:
+                tools_reverse_map = Tools(
+                    app_name=app_name, creds=self.creds
+                ).get_tools_map(reverse=True)
+            except Exception:  # noqa: BLE001
+                tools_reverse_map = {}
+
+        if not tools_reverse_map:
+            return evaluation
+
+        valid_resources = set(tools_reverse_map.values())
+        golden = evaluation.get("golden") or evaluation
+        for turn in golden.get("turns") or []:
+            for step in turn.get("steps") or []:
+                exp = step.get("expectation") or {}
+                for key in (
+                    "toolCall",
+                    "tool_call",
+                    "toolResponse",
+                    "tool_response",
+                ):
+                    tc = exp.get(key)
+                    if not isinstance(tc, dict):
+                        continue
+                    tool_ref = tc.get("tool", "")
+                    if tool_ref in valid_resources:
+                        continue
+                    dname = (
+                        tc.get("displayName")
+                        or tc.get("display_name")
+                        or (
+                            tool_ref.split("/")[-1]
+                            if "/" in str(tool_ref)
+                            else str(tool_ref)
+                        )
+                    )
+                    if dname and dname in tools_reverse_map:
+                        tc["tool"] = tools_reverse_map[dname]
+        return evaluation
+
     def update_evaluation(
         self,
         evaluation: types.Evaluation | dict[str, Any],
         app_name: str | None = None,
+        replace: bool = False,
     ) -> types.Evaluation:
         """Updates an evaluation. If it doesn't exist, it creates it.
+
+        Automatically falls back to delete + create when the platform returns
+        501 Not Implemented on UpdateEvaluation (or when ``replace=True``).
 
         Args:
             evaluation: The Evaluation object or dict to update.
             app_name: Parent App ID. Defaults to self.app_name.
+            replace: If True, deletes any existing evaluation with the same
+                display_name and recreates it via CreateEvaluation.
         """
         app_name = app_name or self.app_name
         if not app_name:
@@ -683,6 +1125,10 @@ class Evaluations(Common):
 
         # Convert dict to types.Evaluation if needed
         if isinstance(evaluation, dict):
+            if self._has_tool_expectations(evaluation):
+                self.resolve_evaluation_tool_references(
+                    evaluation, app_name=app_name
+                )
             # Use json_format to parse dict to message to handle
             # camelCase/snake_case
             eval_message = types.Evaluation()
@@ -710,9 +1156,128 @@ class Evaluations(Common):
                 evaluation=evaluation, app_name=app_name
             )
 
+        if replace:
+            existing_name = evaluation.name
+            self.delete_evaluation(name=existing_name, force=True)
+            evaluation.name = ""
+            return self.create_evaluation(
+                evaluation=evaluation, app_name=app_name
+            )
+
         print(f"Updating existing evaluation: {evaluation.name}")
         request = types.UpdateEvaluationRequest(evaluation=evaluation)
-        return self.client.update_evaluation(request=request)
+        try:
+            return self.client.update_evaluation(request=request)
+        except Exception as exc:
+            err_text = str(exc).upper()
+            if (
+                "501" in err_text
+                or "UNIMPLEMENTED" in err_text
+                or "NOT IMPLEMENTED" in err_text
+            ):
+                existing_name = evaluation.name
+                self.delete_evaluation(name=existing_name, force=True)
+                evaluation.name = ""
+                return self.create_evaluation(
+                    evaluation=evaluation, app_name=app_name
+                )
+            raise
+
+    def sync_evaluations(
+        self,
+        evaluations: list[types.Evaluation | dict[str, Any]],
+        app_name: str | None = None,
+        prune: bool = False,
+        prune_tag: str | None = None,
+        resolve_tools: bool = True,
+        dry_run: bool = False,
+    ) -> dict[str, list[str]]:
+        """Synchronizes evaluations by display_name via delete+create.
+
+        Resolves tool display names to server-minted tool resource IDs and
+        optionally prunes stale remote evaluations whose display_name is not
+        present in ``evaluations``.
+        """
+        app_name = app_name or self.app_name
+        if not app_name:
+            raise ValueError("app_name is required.")
+
+        tools_reverse_map: dict[str, str] | None = None
+        if resolve_tools and any(
+            isinstance(ev, dict) and self._has_tool_expectations(ev)
+            for ev in evaluations
+        ):
+            try:
+                tools_reverse_map = Tools(
+                    app_name=app_name, creds=self.creds
+                ).get_tools_map(reverse=True)
+            except Exception:  # noqa: BLE001
+                tools_reverse_map = {}
+
+        existing_list = list(self.list_evaluations(app_name) or [])
+        existing_by_display: dict[str, list[str]] = {}
+        for item in existing_list:
+            if getattr(item, "display_name", None) and getattr(
+                item, "name", None
+            ):
+                existing_by_display.setdefault(item.display_name, []).append(
+                    item.name
+                )
+
+        pushed: list[str] = []
+        suite_names: set[str] = set()
+
+        for item in evaluations:
+            if isinstance(item, dict):
+                payload = dict(item)
+                if resolve_tools:
+                    self.resolve_evaluation_tool_references(
+                        payload,
+                        app_name=app_name,
+                        tools_reverse_map=tools_reverse_map,
+                    )
+                dname = (
+                    payload.get("displayName")
+                    or payload.get("display_name")
+                    or ""
+                )
+                payload.pop("name", None)
+            else:
+                payload = item
+                dname = getattr(item, "display_name", "") or ""
+
+            if dname:
+                suite_names.add(dname)
+
+            if dry_run:
+                pushed.append(dname)
+                continue
+
+            for old_name in existing_by_display.get(dname, []):
+                self.delete_evaluation(name=old_name, force=True)
+
+            if not isinstance(payload, dict) and getattr(payload, "name", None):
+                payload.name = ""
+
+            created = self.create_evaluation(
+                evaluation=payload, app_name=app_name
+            )
+            pushed.append(getattr(created, "display_name", "") or dname)
+
+        pruned: list[str] = []
+        if prune and not dry_run:
+            for item in existing_list:
+                dname = getattr(item, "display_name", "") or ""
+                if dname in suite_names:
+                    continue
+                if prune_tag:
+                    item_tags = list(getattr(item, "tags", []) or [])
+                    if prune_tag not in item_tags:
+                        continue
+                self.delete_evaluation(name=item.name, force=True)
+                pruned.append(dname or item.name)
+
+        return {"pushed": pushed, "pruned": pruned}
 
     def delete_evaluation(self, name: str, force: bool = False) -> None:
         """Deletes an evaluation.
@@ -732,6 +1297,7 @@ class Evaluations(Common):
         modality: str = "text",
         run_count: int | None = None,
         golden_run_method: str = "STABLE",
+        use_tool_fakes: bool | None = None,
     ) -> Any:
         """Runs an evaluation on the specified app.
 
@@ -744,6 +1310,9 @@ class Evaluations(Common):
             modality: "text" (default) or "audio".
             run_count: Number of times to run the evaluation. Default is 1
                 per golden, 5 per scenario.
+            golden_run_method: Golden run replay strategy (STABLE or NAIVE).
+            use_tool_fakes: If True, executes with mock/fake tool behaviour.
+                If False, executes with real tool behaviour. Defaults to None.
         """
         app_name = app_name or self.app_name
         if not app_name:
@@ -756,7 +1325,20 @@ class Evaluations(Common):
             )
 
         resolved_names = set()
-        evals_map = self._get_or_load_evals_map(app_name)
+        need_map = bool(eval_type)
+        if evaluations and not need_map:
+            eval_list = (
+                [evaluations] if isinstance(evaluations, str) else evaluations
+            )
+            if not all(
+                isinstance(e, str)
+                and e.startswith("projects/")
+                and "/evaluations/" in e
+                for e in eval_list
+            ):
+                need_map = True
+
+        evals_map = self._get_or_load_evals_map(app_name) if need_map else {}
 
         # Handle explicit evaluation display names
         if evaluations:
@@ -764,6 +1346,13 @@ class Evaluations(Common):
                 evaluations = [evaluations]
 
             for display_name in evaluations:
+                if (
+                    display_name.startswith("projects/")
+                    and "/evaluations/" in display_name
+                ):
+                    resolved_names.add(display_name)
+                    continue
+
                 # Check both goldens and scenarios for this name
                 resource_name = evals_map.get("goldens", {}).get(
                     display_name
@@ -771,11 +1360,6 @@ class Evaluations(Common):
 
                 if resource_name:
                     resolved_names.add(resource_name)
-                elif (
-                    display_name.startswith("projects/")
-                    and "/evaluations/" in display_name
-                ):
-                    resolved_names.add(display_name)
                 else:
                     raise ValueError(
                         f"Evaluation display name not found: '{display_name}'"
@@ -825,6 +1409,15 @@ class Evaluations(Common):
                 types.EvaluationConfig.EvaluationChannel.AUDIO
             )
 
+        if use_tool_fakes is True:
+            request.config.tool_call_behaviour = (
+                types.EvaluationToolCallBehaviour.FAKE
+            )
+        elif use_tool_fakes is False:
+            request.config.tool_call_behaviour = (
+                types.EvaluationToolCallBehaviour.REAL
+            )
+
         return self.client.run_evaluation(request=request)
 
     def import_evaluations(
@@ -833,7 +1426,8 @@ class Evaluations(Common):
         gcs_uri: str | None = None,
         csv_content: bytes | None = None,
         conversations: list[str] | None = None,
-        conflict_strategy: int = 0,
+        yaml_content: bytes | str | None = None,
+        conflict_strategy: int | str = 0,
     ) -> Any:
         """Imports evaluations into the app.
 
@@ -842,13 +1436,114 @@ class Evaluations(Common):
             gcs_uri: The GCS URI to import from (gs://...).
             csv_content: Raw bytes representing the csv file.
             conversations: A list of conversation resource names.
+            yaml_content: YAML content string or bytes (for milestone or
+                conversations import via REST).
             conflict_strategy: See
                 types.ImportEvaluationsRequest.ImportOptions.ConflictResolutionStrategy
-                               (0=UNSPECIFIED, 1=OVERWRITE, 2=SKIP, 3=DUPLICATE)
+                               (0=UNSPECIFIED, 1=OVERWRITE, 2=SKIP, 3=DUPLICATE,
+                               or string names like 'OVERWRITE').
         """
         app_name = app_name or self.app_name
         if not app_name:
             raise ValueError("app_name is required.")
+
+        if yaml_content is not None:
+            if isinstance(yaml_content, str):
+                raw_bytes = yaml_content.encode("utf-8")
+            else:
+                raw_bytes = yaml_content
+            b64_content = base64.b64encode(raw_bytes).decode("utf-8")
+
+            strategy_str = None
+            if isinstance(conflict_strategy, str):
+                s_upper = conflict_strategy.upper()
+                if s_upper in (
+                    "OVERWRITE",
+                    "SKIP",
+                    "DUPLICATE",
+                    "CONFLICT_RESOLUTION_STRATEGY_UNSPECIFIED",
+                ):
+                    strategy_str = s_upper
+                elif s_upper == "UNSPECIFIED":
+                    strategy_str = "CONFLICT_RESOLUTION_STRATEGY_UNSPECIFIED"
+            elif isinstance(conflict_strategy, int):
+                strat_map = {
+                    0: "CONFLICT_RESOLUTION_STRATEGY_UNSPECIFIED",
+                    1: "OVERWRITE",
+                    2: "SKIP",
+                    3: "DUPLICATE",
+                }
+                strategy_str = strat_map.get(conflict_strategy)
+
+            body: dict[str, Any] = {"yamlContent": b64_content}
+            if (
+                strategy_str
+                and strategy_str != "CONFLICT_RESOLUTION_STRATEGY_UNSPECIFIED"
+            ):
+                body["importOptions"] = {
+                    "conflictResolutionStrategy": strategy_str
+                }
+
+            session = self._get_rest_session()
+            base_url = self._get_rest_base_url()
+            url = f"{base_url}/v1beta/{app_name.lstrip('/')}:importEvaluations"
+
+            resp = session.post(
+                url, json=body, headers=self._get_rest_headers()
+            )
+            resp.raise_for_status()
+            op_data = resp.json()
+
+            if (
+                isinstance(op_data, dict)
+                and "name" in op_data
+                and not op_data.get("done", False)
+            ):
+                op_name = op_data["name"]
+                poll_url = f"{base_url}/v1beta/{op_name.lstrip('/')}"
+                poll_start = time.time()
+                while not op_data.get("done", False):
+                    if time.time() - poll_start > 300:
+                        raise TimeoutError(
+                            f"Import evaluations operation timed out: {op_name}"
+                        )
+                    time.sleep(2)
+                    poll_resp = session.get(
+                        poll_url, headers=self._get_rest_headers()
+                    )
+                    poll_resp.raise_for_status()
+                    op_data = poll_resp.json()
+
+            if isinstance(op_data, dict):
+                if "error" in op_data:
+                    raise RuntimeError(
+                        f"Import evaluations failed: {op_data['error']}"
+                    )
+                resp_body = op_data.get("response")
+                if isinstance(resp_body, dict):
+                    err_msgs = (
+                        resp_body.get("errorMessages")
+                        or resp_body.get("error_messages")
+                        or []
+                    )
+                    fail_cnt = (
+                        resp_body.get("importFailureCount")
+                        or resp_body.get("import_failure_count")
+                        or 0
+                    )
+                    imported_evals = resp_body.get("evaluations") or []
+                    if (err_msgs or fail_cnt) and not imported_evals:
+                        msg = (
+                            "; ".join(str(m) for m in err_msgs)
+                            if err_msgs
+                            else f"importFailureCount={fail_cnt}"
+                        )
+                        raise RuntimeError(f"Import evaluations failed: {msg}")
+
+            # Invalidate cached evals
+            self.evals_map = {}
+            self._eval_search_index = {}
+            return op_data
 
         request = types.ImportEvaluationsRequest(parent=app_name)
 
@@ -864,13 +1559,21 @@ class Evaluations(Common):
             )
         else:
             raise ValueError(
-                "Must provide one of: gcs_uri, csv_content, or conversations."
+                "Must provide one of: gcs_uri, csv_content, conversations, "
+                "or yaml_content."
             )
 
         if conflict_strategy:
+            strategy_val = conflict_strategy
+            if isinstance(strategy_val, str):
+                strategy_val = getattr(
+                    types.ImportEvaluationsRequest.ImportOptions.ConflictResolutionStrategy,
+                    strategy_val.upper(),
+                    0,
+                )
             request.import_options = (
                 types.ImportEvaluationsRequest.ImportOptions(
-                    conflict_resolution_strategy=conflict_strategy
+                    conflict_resolution_strategy=strategy_val
                 )
             )
 

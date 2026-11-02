@@ -409,11 +409,530 @@
 {% endif %}
 {% endmacro %}
 
+{% macro render_audio_bar(key, label, val_str, pct, color, onclick="", extra_text="", extra_color="var(--text-muted)", extra_bold=false, tip="") %}
+  {% set width = [1.0, [100.0, pct | float] | min] | max %}
+  <button type="button" class="bar"{% if onclick %} onclick="{{ onclick }}"{% endif %}{% if tip %} data-tip="{{ tip | escape }}"{% endif %}>
+    <span class="bh"><span class="bl">{{ label | escape }}</span><span class="bv num">{{ val_str | escape }}{% if extra_text %} &middot; <span style="font-size:11px;color:{{ extra_color }};{% if extra_bold %}font-weight:600;{% endif %}">{{ extra_text | escape }}</span>{% endif %}</span></span>
+    <span class="track"><i style="width:{{ "%.1f" | format(width) }}%;background:{{ color }}"></i></span>
+  </button>
+{% endmacro %}
+
+{% macro render_suite_audio_quality(suite_audio) %}
+{% if suite_audio %}
+{% set tips = suite_audio.tooltips or {} %}
+<section id="quality" class="audio-quality-section" data-tab="quality">
+  <div class="sec-h">
+    <h2>Audio &amp; Conversation Quality</h2>
+    <p>Naturalness grading (1–5 scale), language &amp; language-switch adherence, multimodal audio checks, and spoken caller-experience issues.</p>
+  </div>
+  <div class="grid g2">
+    <div class="card">
+      <h3>Grade distribution <span class="tip-badge" data-tip="{{ tips.tip_grade_dist | escape }}">?</span></h3>
+      <p class="sub" id="gpa" data-tip="{{ tips.tip_gpa_sub | escape }}">
+        {{ suite_audio.gpa_meta }} <span class="tip-badge" data-tip="{{ tips.tip_gpa_sub | escape }}">?</span>
+      </p>
+      <div class="stack" id="grade-stack">
+        {% set any_graded = false %}
+        {% for b in suite_audio.grade_bands %}
+          {% if b.count > 0 %}
+            {% set any_graded = true %}
+            <div class="stack-seg" style="flex:{{ b.count }};background:{{ b.color }}" title="{{ b.label | escape }}: {{ b.count }} runs ({{ b.pct }}%)" data-tip="{{ b.tip | escape }}" onclick="filterAudioRunsByGrade('{{ b.key }}')"></div>
+          {% endif %}
+        {% endfor %}
+        {% if not any_graded %}
+          <div class="stack-seg" style="flex:1;background:var(--bg-subtle)" title="No runs graded"></div>
+        {% endif %}
+      </div>
+      <div class="stack-legend" id="grade-legend">
+        {% for b in suite_audio.grade_bands %}
+          <button type="button" data-audio-filter-grade="{{ b.key }}" data-tip="{{ b.tip | escape }}" onclick="filterAudioRunsByGrade('{{ b.key }}')">
+            <span class="sw" style="background:{{ b.color }}"></span>
+            <div><b class="num">{{ b.pct }}%</b><span>{{ b.label | escape }} &middot; {{ b.count }}</span></div>
+          </button>
+        {% endfor %}
+      </div>
+      <div class="grid g2" style="margin-top:20px">
+        <div>
+          <h3>Audio checks &amp; flow <span class="tip-badge" data-tip="{{ tips.tip_audio_checks_head | escape }}">?</span></h3>
+          <p class="sub">Multimodal audio analyses &amp; conversation checks</p>
+          <div class="bars" id="audio-checks-bars">
+            {% set any_chk = false %}
+            {% if suite_audio.acoustic_summary and (suite_audio.acoustic_summary.measured_runs or 0) > 0 %}
+              {% set ac = suite_audio.acoustic_summary %}
+              {% set any_chk = true %}
+              {% set ac_col = "var(--good)" if (ac.consistency_pct or 0) >= 90 else ("var(--warn)" if (ac.consistency_pct or 0) >= 70 else "var(--critical)") %}
+              {% set ac_extra_txt = (ac.clean_runs or 0) ~ "/" ~ (ac.measured_runs or 0) ~ " clean" %}
+              {{ render_audio_bar("acoustic_consistency", "Acoustic Signal Consistency", (ac.consistency_pct or 0) ~ "%", ac.consistency_pct or 0, ac_col, "filterAudioRunsByIssue('tts_cache_seam')", extra_text=ac_extra_txt, tip=tips.acoustic_consistency or "") }}
+            {% endif %}
+            {% for chk in suite_audio.audio_checks %}
+              {% if chk.total_count > 0 %}
+                {% set any_chk = true %}
+                {{ render_audio_bar(chk.key, chk.label, chk.pass_count ~ "/" ~ chk.total_count ~ " passed (" ~ chk.pct ~ "%)", chk.pct, chk.color, "filterAudioRunsByIssue('" ~ chk.key ~ "')", tip=chk.tip) }}
+              {% endif %}
+            {% endfor %}
+            {% for cf in suite_audio.conv_factors %}
+              {% if cf.count > 0 and cf.mean_score is not none %}
+                {% set any_chk = true %}
+                {{ render_audio_bar(cf.key, cf.label, "%.2f" | format(cf.mean_score) ~ " / 5.0", cf.pct, cf.color, "filterAudioRunsByIssue('" ~ cf.key ~ "')", tip=cf.tip) }}
+              {% endif %}
+            {% endfor %}
+            {% if not any_chk %}
+              <div style="color:var(--text-muted);font-size:12px;padding:8px 0;">No multimodal checks or conversation factors recorded</div>
+            {% endif %}
+          </div>
+        </div>
+        <div>
+          <h3>Language &amp; language switch <span class="tip-badge" data-tip="{{ tips.tip_lang_head | escape }}">?</span></h3>
+          <p class="sub">Routed language code vs agent spoken language</p>
+          <div class="bars" id="lang">
+            {% set any_lang = false %}
+            {% for lb in suite_audio.language_bars %}
+              {% set any_lang = true %}
+              {% set lb_extra_txt = (lb.mismatch_count ~ " mismatch") if lb.mismatch_count > 0 else "" %}
+              {{ render_audio_bar(lb.key, lb.label, lb.count ~ " (" ~ lb.pct ~ "%)", lb.pct, lb.color, "filterAudioRunsByLang('" ~ lb.key ~ "')", extra_text=lb_extra_txt, extra_color="var(--critical)", extra_bold=true, tip=lb.tip) }}
+            {% endfor %}
+            {% if not any_lang %}
+              <div style="color:var(--text-muted);font-size:12px;padding:8px 0;">No language data available</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Most common audio &amp; caller-experience issues <span class="tip-badge" data-tip="{{ tips.tip_ux_head | escape }}">?</span></h3>
+      <p class="sub">Flagged across naturalness factors, language switch, audio checks &amp; latency &mdash; click any bar to filter runs</p>
+      <div class="bars" id="ux">
+        {% set any_issues = false %}
+        {% for ib in suite_audio.issue_bars %}
+          {% set any_issues = true %}
+          {{ render_audio_bar(ib.key, ib.label, ib.count ~ " (" ~ ib.pct ~ "%)", ib.pct, ib.color, "filterAudioRunsByIssue('" ~ ib.key ~ "')", tip=ib.tip) }}
+        {% endfor %}
+        {% if not any_issues %}
+          <div style="color:var(--good);font-size:13px;padding:12px 0;">&#10003; No audio or caller-experience issues detected across graded runs</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="audio-diagnostics" class="audio-quality-section" data-tab="quality">
+  <div class="sec-h">
+    <h2>Naturalness Factors &amp; Run Diagnostics</h2>
+    <p>Turn-level vocal &amp; linguistic factor averages (1–5 scale), multimodal audio check breakdown, and per-run explorer.</p>
+  </div>
+  <div class="grid g2">
+    <div class="card">
+      <h3>Turn-level naturalness factors <span class="tip-badge" data-tip="{{ tips.tip_turn_head | escape }}">?</span></h3>
+      <p class="sub">Mean score across all graded agent turns (1.0 = bot-like, 5.0 = human-like)</p>
+      <div class="bars" id="turn-factors-bars">
+        {% set any_tf = false %}
+        {% for tf in suite_audio.turn_factors %}
+          {% if tf.count > 0 and tf.mean_score is not none %}
+            {% set any_tf = true %}
+            {% set tf_extra_txt = (tf.low_count ~ " low (≤2)") if tf.low_count > 0 else "" %}
+            {{ render_audio_bar(tf.key, tf.label, "%.2f" | format(tf.mean_score) ~ " / 5.0", tf.pct, tf.color, "filterAudioRunsByIssue('" ~ tf.key ~ "')", extra_text=tf_extra_txt, extra_color="var(--critical)", tip=tf.tip) }}
+          {% endif %}
+        {% endfor %}
+        {% if not any_tf %}
+          <div style="color:var(--text-muted);font-size:12px;padding:8px 0;">No turn-level factor data available</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <h3>Conversation-level factors &amp; multimodal checks <span class="tip-badge" data-tip="{{ tips.tip_conv_head | escape }}">?</span></h3>
+      <p class="sub">Whole-call coherence, voice consistency, pause &amp; cutoff checks</p>
+      <div class="bars" id="conv-factors-bars">
+        {% set any_cf = false %}
+        {% if suite_audio.acoustic_summary and (suite_audio.acoustic_summary.measured_runs or 0) > 0 %}
+          {% set ac = suite_audio.acoustic_summary %}
+          {% set any_cf = true %}
+          {% set ac_col = "var(--good)" if (ac.consistency_pct or 0) >= 90 else ("var(--warn)" if (ac.consistency_pct or 0) >= 70 else "var(--critical)") %}
+          {% set ac_extra_txt = (ac.clean_runs or 0) ~ "/" ~ (ac.measured_runs or 0) ~ " clean" %}
+          {{ render_audio_bar("acoustic_consistency", "Acoustic Signal Consistency & Drift", (ac.consistency_pct or 0) ~ "%", ac.consistency_pct or 0, ac_col, "filterAudioRunsByIssue('tts_cache_seam')", extra_text=ac_extra_txt, tip=tips.acoustic_consistency or "") }}
+        {% endif %}
+        {% for cf in suite_audio.conv_factors %}
+          {% if cf.count > 0 and cf.mean_score is not none %}
+            {% set any_cf = true %}
+            {{ render_audio_bar(cf.key, cf.label, "%.2f" | format(cf.mean_score) ~ " / 5.0", cf.pct, cf.color, "filterAudioRunsByIssue('" ~ cf.key ~ "')", tip=cf.tip) }}
+          {% endif %}
+        {% endfor %}
+        {% for chk in suite_audio.audio_checks %}
+          {% if chk.total_count > 0 %}
+            {% set any_cf = true %}
+            {{ render_audio_bar(chk.key, chk.label, chk.pass_count ~ "/" ~ chk.total_count ~ " passed (" ~ chk.pct ~ "%)", chk.pct, chk.color, "filterAudioRunsByIssue('" ~ chk.key ~ "')", tip=chk.tip) }}
+          {% endif %}
+        {% endfor %}
+        {% set wer_s = suite_audio.wer_summary %}
+        {% if wer_s and wer_s.total_count > 0 and wer_s.mean_wer is not none %}
+          {% set any_cf = true %}
+          {% set m_wer = wer_s.mean_wer %}
+          {% set pct_wer = [0.0, [100.0, (1.0 - m_wer) * 100.0] | min] | max %}
+          {% set col_wer = "var(--good)" if m_wer <= 0.10 else ("var(--warn)" if m_wer <= 0.25 else "var(--critical)") %}
+          {% set wer_extra_txt = wer_s.high_wer_count ~ " high (>25%)" %}
+          {{ render_audio_bar("wer", "Transcription Word Error Rate (WER)", "%.1f%% WER" | format(m_wer * 100.0), pct_wer, col_wer, "filterAudioRunsByIssue('high_wer')", extra_text=wer_extra_txt, tip=tips.wer_tip) }}
+        {% endif %}
+        {% set b_stats = suite_audio.barge_stats %}
+        {% if b_stats and b_stats.barge_turns > 0 %}
+          {% set any_cf = true %}
+          {% set b_rate_pct = [0.0, [100.0, b_stats.barge_in_rate * 100.0] | min] | max %}
+          {% set col_barge = "var(--warn)" if b_stats.barge_in_rate > 0.3 else "var(--good)" %}
+          {% set barge_extra_txt = (b_stats.sessions_with_barge_in ~ " sessions") if b_stats.sessions_with_barge_in else "" %}
+          {{ render_audio_bar("barge_in", "Caller Barge-In & Interruption Rate", b_stats.barge_turns ~ " barge-in turns (" ~ "%.1f%%" | format(b_stats.barge_in_rate * 100.0) ~ ")", b_rate_pct, col_barge, "filterAudioRunsByIssue('verdict_barged_missed')", extra_text=barge_extra_txt, tip="Percentage of conversation turns where the caller interrupted or spoke over agent audio.") }}
+        {% endif %}
+        {% if not any_cf %}
+          <div style="color:var(--text-muted);font-size:12px;padding:8px 0;">No conversation factors or multimodal check metrics available</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endmacro %}
+
+{% macro render_suite_conversations(suite_audio) %}
+{% if suite_audio %}
+{% set tips = suite_audio.tooltips or {} %}
+{% set total_runs = suite_audio.total_runs or 0 %}
+{% set pager_pages = [1, (total_runs + 49) // 50] | max %}
+<section id="conversations" class="audio-quality-section" data-tab="conversations">
+  <div class="sec-h">
+    <h2>Conversations</h2>
+    <p id="conv-n">Showing {{ total_runs }} of {{ total_runs }} conversations</p>
+  </div>
+  <div class="conv-search-wrap" style="margin-bottom:12px;">
+    <div style="position:relative;display:flex;align-items:center;">
+      <span style="position:absolute;left:12px;color:var(--text-muted);pointer-events:none;font-size:14px;">🔍</span>
+      <input type="search" id="audio-conv-search" class="conv-search-input" placeholder="Search conversations by name, session, summary, issue, transcript... (press / to focus)" oninput="handleAudioConvSearch(this.value)">
+      <kbd class="search-kbd">/</kbd>
+    </div>
+  </div>
+  <div class="card facets-box" id="audio-facets" style="padding:8px 16px;margin-bottom:12px">
+    {% set p_cnt = (suite_audio.run_rows | selectattr('passed') | list | length) if suite_audio.run_rows else 0 %}
+    {% set f_cnt = total_runs - p_cnt %}
+    <div class="fg">
+      <span class="fg-l">Outcome</span>
+      <div class="fg-o">
+        <button type="button" class="facet" data-g="outcome" data-gv="" aria-pressed="true" onclick="toggleAudioFacet('outcome', '', true)">All <span class="c">{{ total_runs }}</span></button>
+        <button type="button" class="facet{{ ' zero' if p_cnt == 0 else '' }}" data-g="outcome" data-gv="passed" aria-pressed="false" onclick="toggleAudioFacet('outcome', 'passed', true)"><span class="sw" style="background:var(--good)"></span>Passed <span class="c">{{ p_cnt }}</span></button>
+        <button type="button" class="facet{{ ' zero' if f_cnt == 0 else '' }}" data-g="outcome" data-gv="failed" aria-pressed="false" onclick="toggleAudioFacet('outcome', 'failed', true)"><span class="sw" style="background:var(--critical)"></span>Failed <span class="c">{{ f_cnt }}</span></button>
+      </div>
+    </div>
+
+    {% set hl_cnt = suite_audio.grade_bands[0].count if (suite_audio.grade_bands and suite_audio.grade_bands | length > 0) else 0 %}
+    {% set tr_cnt = suite_audio.grade_bands[1].count if (suite_audio.grade_bands and suite_audio.grade_bands | length > 1) else 0 %}
+    {% set bl_cnt = suite_audio.grade_bands[2].count if (suite_audio.grade_bands and suite_audio.grade_bands | length > 2) else 0 %}
+    <div class="fg">
+      <span class="fg-l">Grade</span>
+      <div class="fg-o">
+        <button type="button" class="facet" data-g="grade" data-gv="" aria-pressed="true" onclick="toggleAudioFacet('grade', '', false)">All <span class="c">{{ total_runs }}</span></button>
+        <button type="button" class="facet{{ ' zero' if hl_cnt == 0 else '' }}" data-g="grade" data-gv="human_like" aria-pressed="false" onclick="toggleAudioFacet('grade', 'human_like', false)"><span class="sw" style="background:var(--good)"></span>Human-like <span class="c">{{ hl_cnt }}</span></button>
+        <button type="button" class="facet{{ ' zero' if tr_cnt == 0 else '' }}" data-g="grade" data-gv="transitional" aria-pressed="false" onclick="toggleAudioFacet('grade', 'transitional', false)"><span class="sw" style="background:var(--warn)"></span>Transitional <span class="c">{{ tr_cnt }}</span></button>
+        <button type="button" class="facet{{ ' zero' if bl_cnt == 0 else '' }}" data-g="grade" data-gv="bot_like" aria-pressed="false" onclick="toggleAudioFacet('grade', 'bot_like', false)"><span class="sw" style="background:var(--critical)"></span>Bot-like <span class="c">{{ bl_cnt }}</span></button>
+      </div>
+    </div>
+
+    {% set sim_cnt = (suite_audio.run_rows | selectattr('eval_type', 'equalto', 'sim') | list | length) if suite_audio.run_rows else 0 %}
+    {% set gld_cnt = (suite_audio.run_rows | selectattr('eval_type', 'equalto', 'golden') | list | length) if suite_audio.run_rows else 0 %}
+    <div class="fg">
+      <span class="fg-l">Eval Type</span>
+      <div class="fg-o">
+        <button type="button" class="facet" data-g="type" data-gv="" aria-pressed="true" onclick="toggleAudioFacet('type', '', true)">All <span class="c">{{ total_runs }}</span></button>
+        <button type="button" class="facet{{ ' zero' if sim_cnt == 0 else '' }}" data-g="type" data-gv="sim" aria-pressed="false" onclick="toggleAudioFacet('type', 'sim', true)">Simulation (sim) <span class="c">{{ sim_cnt }}</span></button>
+        <button type="button" class="facet{{ ' zero' if gld_cnt == 0 else '' }}" data-g="type" data-gv="golden" aria-pressed="false" onclick="toggleAudioFacet('type', 'golden', true)">Golden (golden) <span class="c">{{ gld_cnt }}</span></button>
+      </div>
+    </div>
+
+    <div class="fg">
+      <span class="fg-l">Language</span>
+      <div class="fg-o">
+        <button type="button" class="facet" data-g="lang" data-gv="" aria-pressed="true" onclick="toggleAudioFacet('lang', '', true)">All <span class="c">{{ total_runs }}</span></button>
+        {% for lb in suite_audio.language_bars %}
+          {% set val_key = "switch" if lb.key == "language_switch" else lb.key %}
+          <button type="button" class="facet{{ ' zero' if lb.count == 0 else '' }}" data-g="lang" data-gv="{{ val_key }}" aria-pressed="false" onclick="toggleAudioFacet('lang', '{{ val_key | replace('\\', '\\\\') | replace('\'', '\\\'') | escape }}', true)">{{ lb.label | escape }} <span class="c">{{ lb.count }}</span></button>
+        {% endfor %}
+        {% set mismatch_cnt = (suite_audio.run_rows | selectattr('language_mismatch') | list | length) if suite_audio.run_rows else 0 %}
+        {% if mismatch_cnt > 0 %}
+          <button type="button" class="facet" data-g="lang" data-gv="mismatch" aria-pressed="false" onclick="toggleAudioFacet('lang', 'mismatch', true)"><span class="sw" style="background:var(--critical)"></span>Language Mismatch <span class="c">{{ mismatch_cnt }}</span></button>
+        {% endif %}
+      </div>
+    </div>
+
+    {% set chk_pass_cnt = (suite_audio.run_rows | selectattr('audio_checks_status', 'equalto', 'PASS') | list | length) if suite_audio.run_rows else 0 %}
+    {% set chk_fail_cnt = (suite_audio.run_rows | selectattr('audio_checks_status', 'equalto', 'FAIL') | list | length) if suite_audio.run_rows else 0 %}
+    <div class="fg">
+      <span class="fg-l">Audio Checks</span>
+      <div class="fg-o">
+        <button type="button" class="facet" data-g="checks" data-gv="" aria-pressed="true" onclick="toggleAudioFacet('checks', '', true)">All <span class="c">{{ total_runs }}</span></button>
+        <button type="button" class="facet{{ ' zero' if chk_pass_cnt == 0 else '' }}" data-g="checks" data-gv="pass" aria-pressed="false" onclick="toggleAudioFacet('checks', 'pass', true)"><span class="sw" style="background:var(--good)"></span>All Passed <span class="c">{{ chk_pass_cnt }}</span></button>
+        <button type="button" class="facet{{ ' zero' if chk_fail_cnt == 0 else '' }}" data-g="checks" data-gv="fail" aria-pressed="false" onclick="toggleAudioFacet('checks', 'fail', true)"><span class="sw" style="background:var(--critical)"></span>Any Failed <span class="c">{{ chk_fail_cnt }}</span></button>
+      </div>
+    </div>
+
+    {% if suite_audio.intents_list %}
+      <div class="fg">
+        <span class="fg-l">Intent</span>
+        <div class="fg-o">
+          <button type="button" class="facet" data-g="intent" data-gv="" aria-pressed="true" onclick="toggleAudioFacet('intent', '', true)">All <span class="c">{{ total_runs }}</span></button>
+          {% for it in suite_audio.intents_list %}
+            {% set it_key = it.key if it is mapping else it %}
+            {% set it_lbl = it.label if it is mapping else it %}
+            {% set it_cnt = it.count if it is mapping else "" %}
+            <button type="button" class="facet" data-g="intent" data-gv="{{ it_key | escape }}" aria-pressed="false" onclick="toggleAudioFacet('intent', '{{ it_key | replace('\\', '\\\\') | replace('\'', '\\\'') | escape }}', true)">{{ it_lbl | escape }}{% if it_cnt != "" %} <span class="c">{{ it_cnt }}</span>{% endif %}</button>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="fg">
+      <span class="fg-l">Issues / Flags <span class="fg-h">any of</span></span>
+      <div class="fg-o">
+        <button type="button" class="facet" data-g="issue" data-gv="" aria-pressed="true" onclick="toggleAudioFacet('issue', '', false)">All <span class="c">{{ total_runs }}</span></button>
+        {% for ib in suite_audio.issue_bars %}
+          <button type="button" class="facet{{ ' zero' if ib.count == 0 else '' }}" data-g="issue" data-gv="{{ ib.key }}" aria-pressed="false" onclick="toggleAudioFacet('issue', '{{ ib.key | replace('\\', '\\\\') | replace('\'', '\\\'') | escape }}', false)">{{ ib.label | escape }} <span class="c">{{ ib.count }}</span></button>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="active-filters" id="audio-active-filters"></div>
+  <div class="card" style="padding:0;overflow:clip;margin-bottom:12px;">
+    <table class="tbl" id="audio-runs-table">
+        <thead>
+          <tr>
+            <th class="sortable" data-sort="run" onclick="sortAudioConversations('run')">Run <span class="sort-arr" id="sort-arr-run"></span></th>
+            <th class="sortable" data-sort="eval" onclick="sortAudioConversations('eval')">Conversation / Eval <span class="sort-arr" id="sort-arr-eval"></span></th>
+            <th class="sortable" data-sort="type" onclick="sortAudioConversations('type')">Type <span class="sort-arr" id="sort-arr-type"></span></th>
+            <th class="sortable" data-sort="outcome" onclick="sortAudioConversations('outcome')">Outcome <span class="sort-arr" id="sort-arr-outcome"></span></th>
+            <th class="sortable" data-sort="grade" onclick="sortAudioConversations('grade')">Grade <span class="tip-badge" data-tip="{{ tips.tip_th_grade | escape }}">?</span> <span class="sort-arr" id="sort-arr-grade"></span></th>
+            <th class="sortable r" data-sort="score" onclick="sortAudioConversations('score')">Score <span class="tip-badge" data-tip="{{ tips.tip_th_score | escape }}">?</span> <span class="sort-arr" id="sort-arr-score"></span></th>
+            <th class="sortable" data-sort="lang" onclick="sortAudioConversations('lang')">Language <span class="tip-badge" data-tip="{{ tips.tip_th_lang | escape }}">?</span> <span class="sort-arr" id="sort-arr-lang"></span></th>
+            <th class="sortable" data-sort="checks" onclick="sortAudioConversations('checks')">Audio Checks <span class="tip-badge" data-tip="{{ tips.tip_th_checks | escape }}">?</span> <span class="sort-arr" id="sort-arr-checks"></span></th>
+            <th class="sortable r" data-sort="turns" onclick="sortAudioConversations('turns')">Turns <span class="sort-arr" id="sort-arr-turns"></span></th>
+            <th class="sortable r" data-sort="latency" onclick="sortAudioConversations('latency')">Latency p50 <span class="tip-badge" data-tip="{{ tips.tip_th_pl | escape }}">?</span> <span class="sort-arr" id="sort-arr-latency"></span></th>
+            <th class="sortable r" data-sort="wer" onclick="sortAudioConversations('wer')">WER <span class="tip-badge" data-tip="{{ tips.wer_tip | escape }}">?</span> <span class="sort-arr" id="sort-arr-wer"></span></th>
+            <th>Flags / Issues <span class="tip-badge" data-tip="{{ tips.tip_th_issues | escape }}">?</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in suite_audio.run_rows %}
+            {% set score_str = "%.1f/5" | format(r.score) if r.score is not none else "—" %}
+            {% set pass_str = "PASS" if r.passed else "FAIL" %}
+            {% set pass_cls = "pass" if r.passed else "fail" %}
+            {% set pl_str = "%.0f ms" | format(r.pl_p50_ms) if r.pl_p50_ms is not none else "—" %}
+            {% set wer_str = "%.1f%%" | format(r.wer * 100) if r.wer is not none else "—" %}
+            {% set chk_str = r.audio_checks_status %}
+            {% set chk_cls = "pass" if chk_str == "PASS" else ("fail" if chk_str == "FAIL" else "meta") %}
+            {% set lang_cls = "fail" if r.language_mismatch else "" %}
+            {% set row_id = r.id or r.row_id %}
+            <tr class="audio-run-row clickable"
+                data-grade="{{ r.grade_key | escape }}"
+                data-lang="{{ (r.language or '') | lower | escape }}"
+                data-intent="{{ r.intent | escape }}"
+                data-issues="{{ r.issue_keys | join(' ') | escape }}"
+                data-mismatch="{{ 'true' if r.language_mismatch else 'false' }}"
+                data-outcome="{{ r.outcome | escape }}"
+                data-type="{{ r.eval_type | escape }}"
+                data-checks="{{ chk_str | escape }}"
+                data-row-id="{{ row_id | escape }}"
+                onclick="openAudioConv('{{ row_id | replace('\\', '\\\\') | replace('\'', '\\\'') | escape }}');">
+              <td class="num">#{{ r.run_num }}</td>
+              <td>
+                <b class="ell" style="display:block;max-width:200px;" title="{{ r.eval_name | escape }}">{{ r.eval_name | escape }}</b>
+                {% if r.session_id %}
+                  <div class="mono ell" style="font-size:11px;color:var(--text-muted);max-width:180px;" title="{{ r.session_id | escape }}">{{ r.session_id | escape }}</div>
+                {% endif %}
+              </td>
+              <td><span class="badge {{ r.eval_type }}">{{ r.eval_type }}</span></td>
+              <td><span class="badge {{ pass_cls }}">{{ pass_str }}</span></td>
+              <td><span class="badge {{ r.grade_key }}">{{ r.grade_label }}</span></td>
+              <td class="num">{{ score_str }}</td>
+              <td><span class="{{ lang_cls }}">{{ r.language_status_label | escape }}</span></td>
+              <td><span class="badge {{ chk_cls }}">{{ chk_str }}</span></td>
+              <td class="num">{{ r.turns_count or 1 }}</td>
+              <td class="num">{{ pl_str }}</td>
+              <td class="num">{{ wer_str }}</td>
+              <td>
+                {% if r.issue_keys %}
+                  {% for ik in r.issue_keys %}
+                    {% set full_lbl = r.issue_labels[loop.index0] if (r.issue_labels and r.issue_labels | length > loop.index0) else ik %}
+                    {% set fl = r.flag_labels[loop.index0] if (r.flag_labels and r.flag_labels | length > loop.index0) else (r.issue_labels[loop.index0] if (r.issue_labels and r.issue_labels | length > loop.index0) else ik) %}
+                    {% set bad_issues = ["language_mismatch", "voice_drift", "long_pauses", "agent_looping", "audio_cutoff", "having_trouble", "audio_exp_failed", "verdict_barged_missed", "subagent_ping_pong_loop", "ignored_user", "markdown_link_tts_leakage", "prompt_or_directive_leakage", "midturn_voice_seam", "audio_truncation"] %}
+                    {% set cls_name = "bad" if ik in bad_issues else "warn" %}
+                    {% set tip_txt = tips.issue_tips.get(ik, "") if (tips.issue_tips is mapping) else "" %}
+                    <span class="flag {{ cls_name }}" title="{{ full_lbl | escape }}"{% if tip_txt %} data-tip="{{ tip_txt | escape }}"{% endif %}>{{ fl | escape }}</span>
+                  {% endfor %}
+                {% else %}
+                  <span style="color:var(--text-muted);font-size:11px;">None</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="12" style="text-align:center;color:var(--text-muted);padding:16px;">No evaluation runs recorded</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+  </div>
+  <div class="pager" id="audio-conv-pager">
+    <span id="audio-conv-pager-info">Showing {{ 1 if total_runs else 0 }}–{{ [total_runs, 50] | min }} of {{ total_runs }}</span>
+    <span>
+      <button type="button" id="audio-pager-prev" onclick="setAudioConvPage(-1)" disabled>&larr; Prev</button>
+      <span class="num" id="audio-pager-curr" style="margin:0 8px">1 / {{ pager_pages }}</span>
+      <button type="button" id="audio-pager-next" onclick="setAudioConvPage(1)" {% if total_runs <= 50 %}disabled{% endif %}>Next &rarr;</button>
+    </span>
+  </div>
+</section>
+{% endif %}
+{% endmacro %}
+
+{% macro render_audio_drawers(suite_audio) %}
+{% if suite_audio %}
+<div class="scrim" id="audio-conv-scrim" onclick="closeAudioConv()"></div>
+<aside class="drawer" id="audio-conv-drawer" aria-hidden="true" role="dialog" aria-label="Conversation detail">
+  <div class="dr-h" id="dr-h"></div>
+  <div class="dr-b" id="dr-b"></div>
+  <div class="dr-f" id="dr-f">
+    <span>
+      <button type="button" class="icon-btn" onclick="stepAudioConv(-1)">&larr; Prev</button>
+      <button type="button" class="icon-btn" onclick="stepAudioConv(1)">Next &rarr;</button>
+    </span>
+    <span><kbd>j</kbd>/<kbd>k</kbd> next / previous</span>
+    <span><kbd>esc</kbd> close</span>
+    <button type="button" class="icon-btn" onclick="closeAudioConv()">Close</button>
+  </div>
+</aside>
+<div class="tip-pop audio-tooltip-pop" id="audio-tooltip-pop" role="tooltip"></div>
+<script type="application/json" id="audio-conv-data">
+{{ suite_audio.conv_data_json | safe }}
+</script>
+{% endif %}
+{% endmacro %}
+
+{% macro render_suite_audio(suite_audio) %}
+{% if suite_audio %}
+  {{ render_suite_audio_quality(suite_audio) }}
+  {{ render_suite_conversations(suite_audio) }}
+  {{ render_audio_drawers(suite_audio) }}
+{% endif %}
+{% endmacro %}
+
+{% macro render_standalone_report_scaffold(overview_html, suite_audio) %}
+<nav class="nav" id="report-nav" role="tablist">
+  <button type="button" class="tab-btn active" role="tab" aria-selected="true" data-tab="overview" onclick="switchReportTab('overview'); switchTab('overview');">Overview</button>
+  {% if suite_audio and suite_audio.has_audio_analysis %}
+    <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="quality" onclick="switchReportTab('quality'); switchTab('quality');">Audio Analysis</button>
+  {% endif %}
+  {% if suite_audio and suite_audio.total_runs > 0 %}
+    <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="conversations" onclick="switchReportTab('conversations'); switchTab('conversations');">Conversations <span class="c" id="tab-conv-n">{{ suite_audio.total_runs }}</span></button>
+  {% endif %}
+</nav>
+<main class="main">
+  <div class="tab-pane active" id="tab-overview" data-tab="overview">
+    {{ overview_html | safe }}
+  </div>
+  {% if suite_audio and suite_audio.has_audio_analysis %}
+    <div class="tab-pane report-tab-panel tab-panel-quality" id="tab-quality" data-tab="quality">
+      {{ render_suite_audio_quality(suite_audio) }}
+    </div>
+  {% endif %}
+  {% if suite_audio and suite_audio.total_runs > 0 %}
+    <div class="tab-pane report-tab-panel" id="tab-conversations" data-tab="conversations">
+      {{ render_suite_conversations(suite_audio) }}
+    </div>
+  {% endif %}
+</main>
+{% if suite_audio %}
+  {{ render_audio_drawers(suite_audio) }}
+{% endif %}
+{% endmacro %}
+
+{% macro render_ces_audio_player(ces_audio) %}
+{% if not ces_audio or not ces_audio.has_audio %}
+<div class="no-audio">{{ (ces_audio.audio_note if ces_audio else "No server-side recording found for this session.") | escape }}</div>
+{% else %}
+{% set aid = ces_audio.anchor %}
+<script type="application/octet-stream" id="blob_{{ aid }}" data-mime="{{ ces_audio.mime_type | escape }}">{{ ces_audio.b64_data }}</script>
+<div class="audio-wrap"><span class="audio-lbl">🎧 Full call (L=caller, R=agent):</span><audio id="aud_{{ aid }}" controls preload="metadata"></audio><span class="dur-tag">{{ "%.2f" | format(ces_audio.duration_s) }}s</span></div>
+<div class="chap-row"><span class="chap-lbl">Listen to:</span><button type="button" class="chap-btn active" data-chan-for="{{ aid }}" data-mode="both" onclick="setChannel('{{ aid }}','both')">Both</button><button type="button" class="chap-btn" data-chan-for="{{ aid }}" data-mode="caller" onclick="setChannel('{{ aid }}','caller')">Caller track</button><button type="button" class="chap-btn" data-chan-for="{{ aid }}" data-mode="agent" onclick="setChannel('{{ aid }}','agent')">Agent track</button></div>
+<div class="chap-row"><span class="chap-lbl">Jump to:</span>{% for ch in ces_audio.chapters %}<button type="button" class="chap-btn" onclick="seekAudio('{{ aid }}',{{ '%.2f' | format(ch.offset_s) }})">▶ T{{ ch.turn }} ({{ "%.1f" | format(ch.offset_s) }}s{% if ch.dead_air_s is not none %} | ⏱{{ "%.1f" | format(ch.dead_air_s) }}s{% endif %})</button>{% endfor %}</div>
+{% endif %}
+{% endmacro %}
+
+{% macro render_ces_turn_vad(turn_vad) %}
+{% if turn_vad %}
+{% if turn_vad.turn_no == 1 and turn_vad.setup_s is not none %}<span class="lat-badge lat-neutral">⏱ call setup before greeting: {{ "%.2f" | format(turn_vad.setup_s) }}s</span>{% elif turn_vad.turn_no > 1 and turn_vad.dead_air_s is not none %}<span class="lat-badge {{ turn_vad.dead_air_cls }}">⏱ dead air {{ "%.2f" | format(turn_vad.dead_air_s) }}s</span>{% endif %}{% if turn_vad.segments %}<div class="tl-bar">{% for seg in turn_vad.segments %}<div class="tl-seg {{ seg.kind }}" style="width:{{ '%.1f' | format(seg.width_pct) }}%" title="{{ seg.title | escape }}"><span>{{ seg.text | escape }}</span></div>{% endfor %}</div>{% endif %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_enriched_sim_report(data) %}
+<header class="card"><h1>{{ data.title | escape }}</h1>
+<div class="subhead">{% if data.source_report_uri %}Source report: <code>{{ data.source_report_uri | escape }}</code> &nbsp;|&nbsp; {% endif %}Generated {{ data.generated_at | escape }} &nbsp;|&nbsp; App: {% if data.ces_base %}<a href="{{ data.ces_base | escape }}" target="_blank"><code>{{ data.app_id | escape }}</code> ↗</a>{% else %}<code>{{ data.app_id | escape }}</code>{% endif %}
+&nbsp;|&nbsp; Audio: <code>{{ data.recordings_uri | escape }}/&lt;date&gt;/&lt;session_id&gt;/</code></div>
+<div class="kpi-grid">{% for kpi in data.kpis %}<div class="kpi"><div class="label">{{ kpi.label | escape }}</div><div class="val">{{ kpi.value | escape }}</div><div class="sub">{{ kpi.sub | escape }}</div></div>{% endfor %}</div>
+<p class="sess-meta" style="margin-top:12px">Dead air = silence between the end
+of the caller's utterance (channel 0) and the first agent audio (channel 1) in
+the server-recorded <code>full-session(k).wav</code>. Turn 1 is reported
+separately as call setup (bootstrap before greeting). Timelines use a simple
+RMS VAD ({{ data.vad_dbfs }} dBFS, {{ data.frame_ms }} ms frames).</p></header>
+<div class="card"><h2>Failures ({{ data.failures | length }})</h2><ul class="fail-list">
+{% for f in data.failures %}<li><a class="toc-link" href="#{{ f.anchor }}"><b>{{ f.name | escape }}</b></a> (run {{ f.run_no }}) — {{ f.reason | escape }}</li>{% else %}<li>None 🎉</li>{% endfor %}</ul></div>
+<div class="card"><h2>Slowest agent responses (dead air)</h2><table><thead><tr>
+<th>#</th><th>Scenario · turn</th><th>Dead air</th><th></th></tr></thead>
+<tbody>{% for w in data.worst_rows %}<tr><td>{{ w.idx }}</td><td><a class="toc-link" href="#{{ w.anchor }}">{{ w.name | escape }}</a> · run {{ w.run_no }} · turn {{ w.turn_no }}</td><td><span class="lat-badge {{ w.cls }}">{{ "%.2f" | format(w.dead_air_s) }}s</span></td><td>{% if w.seek_at is not none %}<button class="chap-btn" onclick="seekAudio('{{ w.anchor }}',{{ '%.2f' | format(w.seek_at) }})">▶ play</button>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+<div class="card"><h2>All runs</h2><button id="btn-failures" class="btn"
+onclick="toggleFailures()">Failures only</button>
+<table style="margin-top:8px"><thead><tr><th>#</th><th>Scenario</th><th>Tags</th>
+<th>Status</th><th>Goals</th><th>Expect.</th><th>Turns</th><th>Avg dead air</th>
+<th>Max dead air</th><th>Setup</th></tr></thead><tbody>{% for row in data.toc_rows %}<tr data-passed="{{ 'true' if row.passed else 'false' }}"><td>{{ row.idx }}</td><td><a class="toc-link" href="#{{ row.anchor }}">{{ row.name | escape }}</a></td><td>{% for tag in row.tags %}<span class="pill {{ tag.cls }}">{{ tag.text | escape }}</span>{% endfor %}</td><td><span class="status-{{ 'pass' if row.passed else 'fail' }}">{{ 'PASS' if row.passed else 'FAIL' }}</span></td><td>{{ row.goals | escape }}</td><td>{{ row.expectations | escape }}</td><td>{{ row.turns | escape }}</td><td>{% if row.avg_dead_air_s is not none %}<span class="lat-badge {{ row.avg_dead_air_cls }}">{{ "%.2f" | format(row.avg_dead_air_s) }}s</span>{% else %}—{% endif %}</td><td>{% if row.max_dead_air_s is not none %}<span class="lat-badge {{ row.max_dead_air_cls }}">{{ "%.2f" | format(row.max_dead_air_s) }}s</span>{% else %}—{% endif %}</td><td>{% if row.setup_s is not none %}{{ "%.1f" | format(row.setup_s) }}s{% else %}—{% endif %}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% for run in data.runs %}<div class="card" id="{{ run.anchor }}" data-passed="{{ 'true' if run.passed else 'false' }}"{% if run.ces_audio and run.ces_audio.has_audio %} data-audio-id="{{ run.anchor }}"{% endif %}><div class="scenario-header"><div><h2>{{ run.idx }}. {{ run.name | escape }} <span class="status-{{ 'pass' if run.passed else 'fail' }}">{{ 'PASS' if run.passed else 'FAIL' }}</span></h2><div>{% for tag in run.tags %}<span class="pill {{ tag.cls }}">{{ tag.text | escape }}</span>{% endfor %}</div><div class="sess-meta">Run {{ run.run_no }} · goals {{ run.goals | escape }} · expectations {{ run.expectations | escape }} · {{ run.turns | escape }} turns · voice <code>{{ run.voice | escape }}</code> · {% if run.session_link %}Session <a href="{{ run.session_link | escape }}" target="_blank"><code>{{ run.session_id | escape }}</code> ↗</a>{% else %}Session <code>{{ (run.session_id or 'n/a') | escape }}</code>{% endif %}{% if run.ces_audio and run.ces_audio.gcs_dir %} · <code>{{ run.ces_audio.gcs_dir | escape }}</code>{% endif %}</div></div><div style="text-align:right">{% if run.ces_audio and run.ces_audio.avg_dead_air_s is not none %}<span class="lat-badge {{ run.ces_audio.avg_dead_air_cls }}">⏱ avg dead air {{ "%.2f" | format(run.ces_audio.avg_dead_air_s) }}s</span>{% endif %}{% if run.ces_audio and run.ces_audio.max_dead_air_s is not none %}<span class="lat-badge {{ run.ces_audio.max_dead_air_cls }}">max {{ "%.2f" | format(run.ces_audio.max_dead_air_s) }}s</span>{% endif %}{% if run.ces_audio and run.ces_audio.setup_s is not none %}<span class="lat-badge lat-neutral">setup {{ "%.2f" | format(run.ces_audio.setup_s) }}s</span>{% endif %}</div></div>{% if run.error is not none %}<div class="error-box"><b>Error:</b> {{ run.error | escape }}</div>{% else %}{{ render_ces_audio_player(run.ces_audio) }}<table style="margin-top:12px"><thead><tr><th>Caller</th><th>Agent (server-recorded full-session(k).wav — exact dead air)</th></tr></thead><tbody>{% for tr in run.turn_rows %}<tr><td style="width:26%"><div class="turn-badge">Turn {{ tr.turn_no }}</div>{% if tr.seek_offset_s is not none %} <button type="button" class="chap-btn" onclick="seekAudio('{{ run.anchor }}',{{ '%.2f' | format(tr.seek_offset_s) }})">▶</button>{% endif %}<div class="caller-block"><div class="user-utt">🗣 "{{ tr.user | escape }}"</div></div></td><td><div class="agent-text">🤖 {% if tr.agent_lines %}{% for line in tr.agent_lines %}{{ line | escape }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}<span class="no-audio">(no agent text)</span>{% endif %}</div>{{ render_ces_turn_vad(tr.turn_vad) }}{% for ev in tr.events %}{% if ev.kind == "tool" %}<details class="tool"><summary>🔧 <b>{{ ev.text | escape }}</b></summary><div>{% if ev.tool_input %}<b>Input</b><pre>{{ ev.tool_input | escape }}</pre>{% endif %}{% if ev.tool_output %}<b>Output</b><pre>{{ ev.tool_output | escape }}</pre>{% endif %}</div></details>{% elif ev.kind == "transfer" %}<div class="evt">🔀 <code>{{ ev.text | escape }}</code></div>{% else %}<div class="evt">{{ ev.text | escape }}</div>{% endif %}{% endfor %}</td></tr>{% endfor %}</tbody></table><details style="margin-top:10px"{% if not run.passed %} open{% endif %}><summary><b>Goals &amp; expectations</b> — goals {{ run.goals | escape }}, expectations {{ run.expectations | escape }}</summary>{% for s in run.step_details %}<div class="step"><b>Goal:</b> {{ s.goal | escape }}<br><b>Criteria:</b> {{ s.success_criteria | escape }}<br><b>Status:</b> <span class="badge {{ s.cls }}">{{ s.status | escape }}</span><br><span class="meta">{{ s.justification | escape }}</span></div>{% endfor %}{% for e in run.expectation_details %}<div class="expectation"><span class="badge {{ e.cls }}">{{ e.status | escape }}</span> {{ e.expectation | escape }}<br><span class="meta">{{ e.justification | escape }}</span></div>{% endfor %}</details><details><summary>Session parameters</summary><pre style="font-size:11px">{{ run.session_parameters_json | escape }}</pre></details>{% endif %}</div>{% endfor %}
+{% endmacro %}
+
+{% macro render_eval_index_dashboard(data) %}
+<main class="report-main">
+  <h1>{{ data.title | escape }}</h1>
+  <div class="subhead">Rolling evaluation runs in Google Cloud Storage</div>
+  <div class="eval-dashboard-cards">
+    {% for card in data.cards %}
+      <div class="eval-dashboard-card">
+        <div class="card-title">{{ card.suite | escape }} <span class="badge {{ 'pass' if card.gate_passed else 'fail' }}">{{ 'PASS' if card.gate_passed else 'FAIL' }}</span></div>
+        <div class="card-stat">{{ card.passed_cases }}/{{ card.total_cases }} cases ({{ card.pass_rate_pct_str }})</div>
+        <div class="card-meta">{{ card.timestamp_utc | escape }} &middot; <a href="{{ card.latest_url | escape }}">Latest Report</a>{% if card.latest_enriched_url %} &middot; <a href="{{ card.latest_enriched_url | escape }}">Latest Enriched</a>{% endif %}</div>
+      </div>
+    {% endfor %}
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp (UTC)</th>
+        <th>Suite</th>
+        <th>Gate</th>
+        <th>Cases Passed</th>
+        <th>Changelist / SHA</th>
+        <th>Run ID</th>
+        <th>Artifact</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in data.rows %}
+        <tr>
+          <td>{{ row.timestamp_utc | escape }}</td>
+          <td><code>{{ row.suite | escape }}</code></td>
+          <td><span class="badge {{ 'pass' if row.gate_passed else 'fail' }}">{{ 'PASS' if row.gate_passed else 'FAIL' }}</span></td>
+          <td>{{ row.passed_cases }}/{{ row.total_cases }} ({{ row.pass_rate_pct_str }})</td>
+          <td><code>{{ row.git_sha_short | escape }}</code></td>
+          <td><code>{{ row.run_id | escape }}</code></td>
+          <td><a href="{{ row.report_url | escape }}">Open Report</a>{% if row.enriched_report_url %} &middot; <a href="{{ row.enriched_report_url | escape }}">Enriched (Audio+VAD)</a>{% endif %}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</main>
+{% endmacro %}
+
 <header class="top">
   <div class="top-in">
     <div class="top-row">
       <div class="brand">
-        <span class="brand-title">Combined Eval Report</span>
+        <b class="brand-title">Eval Report</b>
         <span class="meta">Generated {{ ts }}</span>
       </div>
       <div class="top-actions">
@@ -424,32 +943,50 @@
         <button class="icon-btn" id="theme" type="button" title="Toggle theme (light / dark)" onclick="toggleTheme()">◐</button>
       </div>
     </div>
-    <div class="controls" style="margin-top:8px;">
-      <button id="btn-failures" onclick="toggleFailures()">Show Failures Only</button>
-      <button onclick="expandAll()">Expand All</button>
-      <button onclick="collapseAll()">Collapse All</button>
-      {% if suite_latency_html or (suite_pl and suite_pl.get("primary")) %}
-        <button id="btn-latency" onclick="toggleAllLatency()">⏱ Expand All Latency</button>
-      {% endif %}
+    {% if suite_audio %}
+      <div class="filter-row">
+        <div class="intent-wrap" id="intent-wrap">
+          <button class="sel intent-btn" id="intent-btn" type="button" onclick="toggleIntentPop(event)" aria-haspopup="dialog" aria-expanded="false" title="Filter by intent">
+            <span>All intents · {{ suite_audio.total_runs if suite_audio else 0 }}</span>
+            <span class="arr">▾</span>
+          </button>
+          <div class="pop intent-pop" id="intent-pop" role="dialog" aria-label="Select intents to filter"></div>
+        </div>
+      </div>
+    {% endif %}
+    <div class="report-tabs-nav">
+      <nav class="nav" id="report-nav">
+        <button type="button" class="active" data-tab="overview" onclick="switchReportTab('overview'); switchTab('overview');">
+          Overview <span class="c" id="tab-overview-n">{{ unified | length }}</span>
+        </button>
+        {% if suite_latency_html or (suite_pl and suite_pl.get("primary")) %}
+          <button type="button" data-tab="latency" onclick="switchReportTab('latency'); switchTab('latency');">Latency</button>
+        {% endif %}
+        {% if (suite_audio and suite_audio.has_audio_analysis) or suite_audio_html %}
+          <button type="button" data-tab="quality" onclick="switchReportTab('quality'); switchTab('quality');">
+            Audio Analysis <span class="c" id="tab-audio-n">{{ suite_audio.graded_runs if suite_audio else 0 }}</span>
+          </button>
+        {% endif %}
+        {% if golden_results %}
+          <button type="button" data-tab="goldens" onclick="switchReportTab('goldens'); switchTab('goldens');">Goldens <span class="c">{{ golden_results | length }}</span></button>
+        {% endif %}
+        {% if sim_results %}
+          <button type="button" data-tab="sims" onclick="switchReportTab('sims'); switchTab('sims');">Simulations <span class="c">{{ sim_results | length }}</span></button>
+        {% endif %}
+        {% if tool_results or callback_results %}
+          <button type="button" data-tab="unit" onclick="switchReportTab('unit'); switchTab('unit');">Tools &amp; Callbacks <span class="c">{{ (tool_results | length) + (callback_results | length) }}</span></button>
+        {% endif %}
+        {% if suite_audio and suite_audio.total_runs > 0 %}
+          <button type="button" data-tab="conversations" onclick="switchReportTab('conversations'); switchTab('conversations');">
+            Conversations <span class="c" id="tab-conv-n">{{ suite_audio.total_runs if suite_audio else 0 }}</span>
+          </button>
+        {% endif %}
+      </nav>
     </div>
-    <nav class="nav" id="report-nav">
-      <button type="button" class="active" data-tab="overview" onclick="switchTab('overview')">Overview</button>
-      {% if suite_latency_html or (suite_pl and suite_pl.get("primary")) %}
-        <button type="button" data-tab="latency" onclick="switchTab('latency')">Latency</button>
-      {% endif %}
-      {% if golden_results %}
-        <button type="button" data-tab="goldens" onclick="switchTab('goldens')">Goldens ({{ golden_results | length }})</button>
-      {% endif %}
-      {% if sim_results %}
-        <button type="button" data-tab="sims" onclick="switchTab('sims')">Simulations ({{ sim_results | length }})</button>
-      {% endif %}
-      {% if tool_results or callback_results %}
-        <button type="button" data-tab="unit" onclick="switchTab('unit')">Tools &amp; Callbacks</button>
-      {% endif %}
-    </nav>
   </div>
 </header>
 
+<main class="report-main">
 <div class="tab-pane active" id="tab-overview">
 <div class="summary">
   <div class="summary-top">
@@ -479,13 +1016,6 @@
         {% elif s_dur > 0 %}
           <br><span class='meta'>~{{ _fmt_duration(s_dur) }}</span>
         {% endif %}
-        {% if bg_noise_file or burst_noise_files %}
-          <div style="font-size:0.85em;color:#e67e22;margin-top:6px;">
-            <b>Noise Injection Active:</b>
-            {% if bg_noise_file %}<br>BG: {{ bg_noise_file }}{% endif %}
-            {% if burst_noise_files %}<br>Burst: {{ burst_noise_files | length }} file(s){% endif %}
-          </div>
-        {% endif %}
       </div>
     {% endif %}
 
@@ -507,7 +1037,134 @@
   </div>
 </div>
 
-<h2>All Evals</h2>
+{% if suite_audio or suite_pl %}
+<div class="tiles overview-tiles" id="overview-tiles">
+  {% if suite_audio and suite_audio.has_audio_analysis and suite_audio.graded_runs > 0 and suite_audio.mean_score is not none %}
+    {% set nat_cls = "pass" if suite_audio.mean_score >= 4.0 else ("warn" if suite_audio.mean_score >= 2.5 else "fail") %}
+    <div class="tile clickable" id="ov-tile-nat" onclick="switchReportTab('quality')" data-tip="{{ suite_audio.tooltips.tip_gpa_sub | escape }}">
+      <div class="t-lbl"><span>Audio Naturalness</span><span class="tip-badge" data-tip="{{ suite_audio.tooltips.tip_gpa_sub | escape }}">?</span></div>
+      <div class="t-val {{ nat_cls }}">{{ "%.2f" | format(suite_audio.mean_score) }}/5</div>
+      <div class="t-sub">GPA {{ "%.2f" | format(suite_audio.gpa_4) }}/4.0 &middot; {{ suite_audio.graded_runs }}/{{ suite_audio.total_runs }} graded</div>
+    </div>
+  {% endif %}
+
+  {% if suite_audio and suite_audio.has_audio_analysis and suite_audio.graded_runs > 0 %}
+    {% set hb = (suite_audio.grade_bands | selectattr('key', 'equalto', 'human_like') | first) if suite_audio.grade_bands else none %}
+    {% if hb %}
+      {% set hb_cls = "pass" if hb.pct >= 75 else ("warn" if hb.pct >= 50 else "fail") %}
+      <div class="tile clickable" id="ov-tile-human" onclick="filterAudioRunsByGrade('human_like')" data-tip="{{ hb.tip | escape }}">
+        <div class="t-lbl"><span>Human-like Runs</span><span class="tip-badge" data-tip="{{ hb.tip | escape }}">?</span></div>
+        <div class="t-val {{ hb_cls }}">{{ hb.pct }}%</div>
+        <div class="t-sub">{{ hb.count }} / {{ suite_audio.graded_runs }} graded runs (&ge;4.0)</div>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  {% if suite_pl and suite_pl.get("primary") and suite_pl["primary"].get("p50_ms") is not none %}
+    {% set pl_p50 = suite_pl["primary"].get("p50_ms") %}
+    <div class="tile clickable" id="ov-tile-pl" onclick="switchReportTab('latency')" data-tip="Median turn perceived latency (p50) from caller speech end (VAD.endTime) to first agent audio.">
+      <div class="t-lbl"><span>Perceived Latency (p50)</span><span class="tip-badge" data-tip="Median turn perceived latency (p50) from caller speech end (VAD.endTime) to first agent audio.">?</span></div>
+      <div class="t-val {{ _pl_status_cls(pl_p50) }}">{{ _fmt_ms(pl_p50) }}</div>
+      <div class="t-sub">p90: {{ _fmt_ms(suite_pl["primary"].get("p90_ms")) }} &middot; Mean: {{ _fmt_ms(suite_pl["primary"].get("avg_ms")) }}</div>
+    </div>
+  {% endif %}
+
+  {% if suite_pl and suite_pl.get("primary") %}
+    {% set slo_pct = (100.0 - (suite_pl["primary"].get("over_2s_pct", 0.0) | float)) | round(1) %}
+    {% set slo_cls = "pass" if slo_pct >= 80 else ("warn" if slo_pct >= 50 else "fail") %}
+    <div class="tile clickable" id="ov-tile-slo" onclick="switchReportTab('latency')" data-tip="Share of spoken turns where agent response audio began within the 2.0s perceived latency target.">
+      <div class="t-lbl"><span>Latency &le;2.0s SLO</span><span class="tip-badge" data-tip="Share of spoken turns where agent response audio began within the 2.0s perceived latency target.">?</span></div>
+      <div class="t-val {{ slo_cls }}">{{ "%.1f" | format(slo_pct) }}%</div>
+      <div class="t-sub">&lt;1s: {{ "%.0f" | format(suite_pl["primary"].get("under_1s_pct", 0.0) | float) }}% &middot; {{ suite_pl.get("total_turns", 0) }} turns</div>
+    </div>
+  {% endif %}
+
+  {% if suite_audio and suite_audio.total_runs > 0 and suite_audio.overview_metrics %}
+    {% set om = suite_audio.overview_metrics %}
+    <div class="tile clickable" id="ov-tile-llm-turns" onclick="switchReportTab('{{ 'latency' if (suite_latency_html or (suite_pl and suite_pl.get('primary'))) else 'conversations' }}')" data-tip="Average number of LLM turns (model invocations) per conversation run across the evaluation suite.">
+      <div class="t-lbl"><span>Avg # LLM Turns</span><span class="tip-badge" data-tip="Average number of LLM turns (model invocations) per conversation run across the evaluation suite.">?</span></div>
+      <div class="t-val">{{ "%.1f" | format(om.avg_llm_turns) }}</div>
+      <div class="t-sub">{{ om.total_llm_turns }} total &middot; {{ "%.1f" | format(om.avg_conv_turns) }} user turns/run</div>
+    </div>
+  {% elif suite_pl and suite_pl.get("avg_llm_turns") is not none %}
+    <div class="tile clickable" id="ov-tile-llm-turns" onclick="switchReportTab('latency')" data-tip="Average number of LLM turns (model invocations) per conversation run across the evaluation suite.">
+      <div class="t-lbl"><span>Avg # LLM Turns</span><span class="tip-badge" data-tip="Average number of LLM turns (model invocations) per conversation run across the evaluation suite.">?</span></div>
+      <div class="t-val">{{ "%.1f" | format(suite_pl.get("avg_llm_turns", 0.0)) }}</div>
+      <div class="t-sub">{{ suite_pl.get("total_llm_turns", 0) }} total &middot; {{ suite_pl.get("total_turns", 0) }} user turns</div>
+    </div>
+  {% endif %}
+
+  {% if suite_audio and suite_audio.has_audio_analysis and suite_audio.checks_total_runs %}
+    {% set chk_cls = "pass" if suite_audio.checks_pass_pct >= 90 else ("warn" if suite_audio.checks_pass_pct >= 70 else "fail") %}
+    <div class="tile clickable" id="ov-tile-checks" onclick="switchReportTab('quality')" data-tip="{{ suite_audio.tooltips.tip_audio_checks_head | escape }}">
+      <div class="t-lbl"><span>Audio Checks Pass Rate</span><span class="tip-badge" data-tip="{{ suite_audio.tooltips.tip_audio_checks_head | escape }}">?</span></div>
+      <div class="t-val {{ chk_cls }}">{{ suite_audio.checks_pass_pct }}%</div>
+      <div class="t-sub">{{ suite_audio.checks_pass_runs }} / {{ suite_audio.checks_total_runs }} runs passed</div>
+    </div>
+  {% endif %}
+
+  {% if suite_audio and suite_audio.has_audio_analysis and suite_audio.acoustic_summary and (suite_audio.acoustic_summary.measured_runs or 0) > 0 %}
+    {% set ac = suite_audio.acoustic_summary %}
+    {% set ac_cls = "pass" if (ac.consistency_pct or 0) >= 90 else ("warn" if (ac.consistency_pct or 0) >= 70 else "fail") %}
+    <div class="tile clickable" id="ov-tile-acoustic" onclick="filterAudioRunsByIssue('tts_cache_seam')" data-tip="{{ suite_audio.tooltips.acoustic_consistency | escape }}">
+      <div class="t-lbl"><span>Acoustic Consistency</span><span class="tip-badge" data-tip="{{ suite_audio.tooltips.acoustic_consistency | escape }}">?</span></div>
+      <div class="t-val {{ ac_cls }}">{{ ac.consistency_pct }}%</div>
+      <div class="t-sub">{{ ac.clean_runs }} / {{ ac.measured_runs }} drift-free</div>
+    </div>
+  {% endif %}
+
+  {% if suite_audio and suite_audio.has_audio_analysis and suite_audio.acoustic_summary and (suite_audio.acoustic_summary.join_runs or 0) > 0 %}
+    {% set ac = suite_audio.acoustic_summary %}
+    {% set jump_cls = "pass" if (ac.jump_free_pct or 0) >= 90 else ("warn" if (ac.jump_free_pct or 0) >= 70 else "fail") %}
+    <div class="tile clickable" id="ov-tile-voice-jump" onclick="filterAudioRunsByIssue('voice_jump')" data-tip="{{ suite_audio.tooltips.voice_jump | escape }}">
+      <div class="t-lbl"><span>Voice Jumps</span><span class="tip-badge" data-tip="{{ suite_audio.tooltips.voice_jump | escape }}">?</span></div>
+      <div class="t-val {{ jump_cls }}">{{ ac.jump_free_pct }}%</div>
+      <div class="t-sub">{{ ac.join_runs - ac.jump_runs }} / {{ ac.join_runs }} runs jump-free &middot; {{ ac.jump_turns }} jump turn{{ "" if ac.jump_turns == 1 else "s" }}</div>
+    </div>
+  {% endif %}
+
+  {% if suite_audio and suite_audio.has_audio_analysis and suite_audio.wer_summary and suite_audio.wer_summary.total_count > 0 and suite_audio.wer_summary.mean_wer is not none %}
+    {% set ws = suite_audio.wer_summary %}
+    {% set wer_cls = "pass" if ws.mean_wer <= 0.10 else ("warn" if ws.mean_wer <= 0.25 else "fail") %}
+    <div class="tile clickable" id="ov-tile-wer" onclick="filterAudioRunsByIssue('high_wer')" data-tip="{{ suite_audio.tooltips.wer_tip | escape }}">
+      <div class="t-lbl"><span>Transcription WER</span><span class="tip-badge" data-tip="{{ suite_audio.tooltips.wer_tip | escape }}">?</span></div>
+      <div class="t-val {{ wer_cls }}">{{ "%.1f" | format(ws.mean_wer * 100.0) }}%</div>
+      <div class="t-sub">{{ ws.high_wer_count }} high (&gt;25%) &middot; {{ ws.total_count }} runs</div>
+    </div>
+  {% endif %}
+
+  {% if suite_audio and suite_audio.has_audio_analysis and suite_audio.total_runs > 0 and suite_audio.lang_adherence_pct is not none %}
+    {% set lang_cls = "pass" if suite_audio.lang_mismatch_runs == 0 else ("warn" if suite_audio.lang_adherence_pct >= 85 else "fail") %}
+    <div class="tile clickable" id="ov-tile-lang" onclick="switchReportTab('quality')" data-tip="{{ suite_audio.tooltips.tip_lang_head | escape }}">
+      <div class="t-lbl"><span>Language Adherence</span><span class="tip-badge" data-tip="{{ suite_audio.tooltips.tip_lang_head | escape }}">?</span></div>
+      <div class="t-val {{ lang_cls }}">{{ suite_audio.lang_adherence_pct }}%</div>
+      <div class="t-sub">{{ suite_audio.lang_matched_runs }} / {{ suite_audio.total_runs }} matched ({{ suite_audio.lang_mismatch_runs }} mismatch)</div>
+    </div>
+  {% endif %}
+
+  {% if suite_audio and suite_audio.has_audio_analysis and suite_audio.barge_stats and suite_audio.barge_stats.barge_turns > 0 %}
+    {% set bs = suite_audio.barge_stats %}
+    {% set barge_cls = "warn" if bs.barge_in_rate > 0.30 else "pass" %}
+    <div class="tile clickable" id="ov-tile-barge" onclick="filterAudioRunsByIssue('verdict_barged_missed')" data-tip="Percentage of conversation turns where the caller interrupted or spoke over agent audio.">
+      <div class="t-lbl"><span>Caller Barge-In Rate</span><span class="tip-badge" data-tip="Percentage of conversation turns where the caller interrupted or spoke over agent audio.">?</span></div>
+      <div class="t-val {{ barge_cls }}">{{ "%.1f" | format(bs.barge_in_rate * 100.0) }}%</div>
+      <div class="t-sub">{{ bs.barge_turns }} turns &middot; {{ bs.sessions_with_barge_in }} sessions</div>
+    </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="sec-h" style="justify-content:space-between;align-items:center;margin-top:20px;">
+  <h2>All Evals</h2>
+  <div class="seg">
+    <button id="btn-failures" type="button" onclick="toggleFailures()">Show Failures Only</button>
+    <button type="button" onclick="expandAll()">Expand All</button>
+    <button type="button" onclick="collapseAll()">Collapse All</button>
+    {% if suite_latency_html or (suite_pl and suite_pl.get("primary")) %}
+      <button id="btn-latency" type="button" onclick="toggleAllLatency()">⏱ Expand All Latency</button>
+    {% endif %}
+  </div>
+</div>
 <table>
   <tr><th>Result</th><th>Type</th><th>Eval</th><th>Detail</th></tr>
   {% for u in unified %}
@@ -728,26 +1385,51 @@
     {% set cls = "pass-bg" if s['pass'] == s['total'] else "fail-bg" %}
     {% set passed_str = "true" if s['pass'] == s['total'] else "false" %}
 
+    {% set first_run = s["runs"][0] if s["runs"] else {} %}
+    {% set first_bg_dict = first_run.get("background_noise") if first_run.get("background_noise") is mapping else {} %}
+    {% set card_bg = first_run.get("background_noise_file") or first_bg_dict.get("preset") or first_bg_dict.get("file") or bg_noise_file %}
+    {% set card_snr = first_run.get("bg_noise_snr") if first_run.get("bg_noise_snr") is not none else (first_bg_dict.get("snr") if first_bg_dict.get("snr") is not none else bg_noise_snr) %}
+    {% set card_level = first_run.get("bg_noise_level") or (snr_to_noise_level(card_snr) if snr_to_noise_level and card_snr is not none else "") %}
     <div class="eval-card" id="eval-sim-{{ name }}" data-passed="{{ passed_str }}">
       <div class="eval-header {{ cls }}">
-        <span>{{ name | escape }} <span class="badge sim">sim</span></span>
+        <span>{{ name | escape }} <span class="badge sim">sim</span>{% if card_bg %} <span class="badge warn" style="margin-left:6px;">&#128266; BG: {{ card_bg | escape }}{% if card_snr is not none %} ({% if card_level %}{{ card_level }} &middot; {% endif %}{{ card_snr }} dB SNR){% endif %}</span>{% endif %}</span>
         <span>{{ score }}</span>
       </div>
       <div class="eval-body">
         {% for r in s["runs"] %}
           {% set run_cls = "pass" if r.get("passed") else "fail" %}
           {% set failed_str = "false" if r.get("passed") else "true" %}
+          {% set r_bg_dict = r.get("background_noise") if r.get("background_noise") is mapping else {} %}
+          {% set run_bg = r.get("background_noise_file") or r_bg_dict.get("preset") or r_bg_dict.get("file") or bg_noise_file %}
+          {% set run_snr = r.get("bg_noise_snr") if r.get("bg_noise_snr") is not none else (r_bg_dict.get("snr") if r_bg_dict.get("snr") is not none else bg_noise_snr) %}
+          {% set run_level = r.get("bg_noise_level") or (snr_to_noise_level(run_snr) if snr_to_noise_level and run_snr is not none else "") %}
+          {% set run_burst = r.get("burst_noise_files") or r_bg_dict.get("burst_files") or burst_noise_files %}
+          {% set run_burst_snr = r.get("burst_noise_snr") if r.get("burst_noise_snr") is not none else r_bg_dict.get("burst_snr") %}
+          {% set run_burst_level = r.get("burst_noise_level") or (snr_to_noise_level(run_burst_snr) if snr_to_noise_level and run_burst_snr is not none else "") %}
 
-          <details class="run-detail" data-failed="{{ failed_str }}">
-            <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }} | turns: {{ r.get('turns','?') }}{% if r.get('naturalness') %} | naturalness: {{ r['naturalness'] }}{% endif %}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}</summary>
+          {% set ces_aud = r.get("_ces_audio") %}
+          <details class="run-detail" data-failed="{{ failed_str }}"{% if ces_aud and ces_aud.get("has_audio") %} data-audio-id="{{ ces_aud.get('anchor') }}"{% endif %}>
+            <summary>Run {{ r.get('run','?') }} — <span class="{{ run_cls }}">{% if r.get('passed') %}PASS{% else %}FAIL{% endif %}</span> | goals: {{ r.get('goals','?') }} | expectations: {{ r.get('expectations','?') }} | turns: {{ r.get('turns','?') }}{% if r.get('naturalness') %} | naturalness: {{ r['naturalness'] }}{% endif %}{% if r.get('duration_s') %} | {{ _fmt_duration(r['duration_s']) }}{% endif %}{% if r.get('sim_user_voice') %} | voice: <code>{{ r['sim_user_voice'] | escape }}</code>{% endif %}{% if ces_aud and ces_aud.get('avg_dead_air_s') is not none %} <span class="lat-badge {{ ces_aud.get('avg_dead_air_cls', 'lat-neutral') }}">⏱ avg dead air {{ "%.2f" | format(ces_aud['avg_dead_air_s']) }}s</span>{% endif %}{% if ces_aud and ces_aud.get('max_dead_air_s') is not none %} <span class="lat-badge {{ ces_aud.get('max_dead_air_cls', 'lat-neutral') }}">max {{ "%.2f" | format(ces_aud['max_dead_air_s']) }}s</span>{% endif %}{% if ces_aud and ces_aud.get('setup_s') is not none %} <span class="lat-badge lat-neutral">setup {{ "%.2f" | format(ces_aud['setup_s']) }}s</span>{% endif %}</summary>
+
+            {% if run_bg or run_burst %}
+              <div class="expectation" style="border-left: 3px solid #e67e22; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <div>
+                  <b>&#128266; Background Noise Injection:</b>
+                  {% if run_bg %}Continuous preset/file <code>{{ run_bg | escape }}</code>{% if run_level %} at <b>{{ run_level }}</b>{% endif %}{% if run_snr is not none %} ({{ run_snr }} dB SNR){% endif %}{% endif %}
+                  {% if run_burst %}{% if run_bg %} &middot; {% endif %}Burst noise ({{ run_burst | length }} file(s){% if run_burst_level %} at <b>{{ run_burst_level }}</b>{% endif %}{% if run_burst_snr is not none %} @ {{ run_burst_snr }} dB SNR{% endif %}): <code>{{ run_burst | join(', ') | escape }}</code>{% endif %}
+                </div>
+              </div>
+            {% endif %}
 
             {% if r.get('session_id') %}
               {% if ces_base %}
-                <div class="session-link">Session: <a href="{{ ces_base }}?panel=conversation_list&id={{ r['session_id'] }}&source=EVAL" target="_blank"><code>{{ r['session_id'] }}</code></a></div>
+                <div class="session-link">Session: <a href="{{ ces_base }}?panel=conversation_list&id={{ r['session_id'] }}&source=EVAL" target="_blank"><code>{{ r['session_id'] }}</code></a>{% if ces_aud and ces_aud.get('gcs_dir') %} &middot; <code>{{ ces_aud['gcs_dir'] | escape }}</code>{% endif %}</div>
               {% else %}
-                <div class="session-link">Session: <code>{{ r['session_id'] }}</code></div>
+                <div class="session-link">Session: <code>{{ r['session_id'] }}</code>{% if ces_aud and ces_aud.get('gcs_dir') %} &middot; <code>{{ ces_aud['gcs_dir'] | escape }}</code>{% endif %}</div>
               {% endif %}
-              {% if sim_modality == "audio" %}
+              {% if ces_aud %}
+                {{ render_ces_audio_player(ces_aud) }}
+              {% elif sim_modality == "audio" %}
                 <div class="audio-player">
                   <span class="audio-label">Full Conversation</span>
                   <audio controls preload="none" src="audio/{{ r['session_id'] }}/full-scenario.wav"></audio>
@@ -856,14 +1538,18 @@
                       {% if kind == "user" %}
                         {% set ns.user_turn = ns.user_turn + 1 %}
                         <div class="user"><b>User:</b> {{ item[1] | escape }}
-                          {% if sim_modality == "audio" and r.get('session_id') %}
+                          {% if ces_aud and ces_aud.get('has_audio') and ns.user_turn in (ces_aud.get('chapter_offsets') or {}) %}
+                            <button type="button" class="chap-btn" onclick="seekAudio('{{ ces_aud.get('anchor') }}',{{ '%.2f' | format(ces_aud['chapter_offsets'][ns.user_turn]) }})">▶</button>
+                          {% elif sim_modality == "audio" and r.get('session_id') and not item[1].startswith("event:") and not item[1].startswith("dtmf:") %}
                             <audio controls preload="none" class="turn-audio" src="audio/{{ r['session_id'] }}/user-turn-{{ ns.user_turn }}.wav"></audio>
                           {% endif %}
                         </div>
                       {% elif kind == "agent" %}
                         {% set ns.agent_turn = ns.agent_turn + 1 %}
                         <div class="agent"><b>Agent:</b> {{ item[1] | escape }}
-                          {% if sim_modality == "audio" and r.get('session_id') %}
+                          {% if ces_aud and ns.agent_turn in (ces_aud.get('turns') or {}) %}
+                            <div>{{ render_ces_turn_vad(ces_aud['turns'][ns.agent_turn]) }}</div>
+                          {% elif sim_modality == "audio" and r.get('session_id') %}
                             <audio controls preload="none" class="turn-audio" src="audio/{{ r['session_id'] }}/agent-turn-{{ ns.agent_turn }}.wav"></audio>
                           {% endif %}
                         </div>
@@ -928,4 +1614,26 @@
       {{ callback_results_html | safe }}
     {% endif %}
   </div>
+{% endif %}
+
+{% if (suite_audio and suite_audio.has_audio_analysis) or suite_audio_html %}
+  <div class="tab-pane report-tab-panel tab-panel-quality" id="tab-quality" data-tab="quality">
+    <div id="tab-panel-quality"></div>
+    {% if suite_audio %}
+      {{ render_suite_audio_quality(suite_audio) }}
+    {% elif suite_audio_html %}
+      {{ suite_audio_html | safe }}
+    {% endif %}
+  </div>
+{% endif %}
+
+{% if suite_audio and suite_audio.total_runs > 0 %}
+  <div class="tab-pane report-tab-panel" id="tab-conversations" data-tab="conversations">
+    {{ render_suite_conversations(suite_audio) }}
+  </div>
+{% endif %}
+</main>
+
+{% if suite_audio %}
+  {{ render_audio_drawers(suite_audio) }}
 {% endif %}

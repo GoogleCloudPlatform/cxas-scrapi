@@ -676,6 +676,108 @@ def test_analyze_audio_handles_unparseable_response(
     assert out["agent_cutoff"]["justification"] == "no verdict here"
 
 
+def test_analyze_audio_with_custom_questions_file(
+    traces_obj: typing.Any, monkeypatch: typing.Any, tmp_path: typing.Any
+) -> None:
+    _patch_audio_files(traces_obj, monkeypatch)
+    q_file = tmp_path / "custom_questions.json"
+    q_file.write_text(
+        json.dumps(
+            {
+                "qaScorecard": {"displayName": "Custom"},
+                "qaQuestions": [
+                    {
+                        "abbreviation": "custom_tone_check",
+                        "questionBody": "Determine if the agent tone is empathetic.",
+                        "answerInstructions": "Listen to the agent turns.",
+                        "answerChoices": [
+                            {
+                                "key": "PASS",
+                                "body": "tone is empathetic",
+                                "score": 1.0,
+                            },
+                            {
+                                "key": "FAIL",
+                                "body": "tone is robotic",
+                                "score": 0.0,
+                            },
+                        ],
+                        "fileFilter": "agent-turn",
+                    }
+                ],
+            }
+        )
+    )
+    fake_gem = MagicMock()
+    fake_gem.generate_with_parts.return_value = "PASS — empathetic tone"
+    monkeypatch.setattr(
+        traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
+    )
+    out = traces_obj.analyze_audio(
+        "c1",
+        metrics=["custom_tone_check"],
+        questions_path=str(q_file),
+    )
+    assert "custom_tone_check" in out
+    assert out["custom_tone_check"]["result"] == "PASS"
+    assert all(
+        "agent-turn" in f for f in out["custom_tone_check"]["files_analyzed"]
+    )
+
+
+def test_analyze_audio_with_custom_metric_in_trace_yaml(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    _patch_audio_files(traces_obj, monkeypatch)
+    traces_obj.trace_config.gemini.audio_metrics = {
+        "custom_yaml_question": GeminiMetric(
+            questionBody="Did the user sound frustrated?",
+            answerInstructions="Check user audio files.",
+            fileFilter="full-session",
+        )
+    }
+    fake_gem = MagicMock()
+    fake_gem.generate_with_parts.return_value = "FAIL — user sounded frustrated"
+    monkeypatch.setattr(
+        traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
+    )
+    out = traces_obj.analyze_audio("c1", metrics=["custom_yaml_question"])
+    assert out["custom_yaml_question"]["result"] == "FAIL"
+    assert out["custom_yaml_question"]["files_analyzed"] == [
+        "gs://b/p/conv-1/full-session.wav"
+    ]
+    _args, kwargs = fake_gem.generate_with_parts.call_args
+    prompt_sent = kwargs["parts"][-1]
+    assert "Did the user sound frustrated?" in prompt_sent
+    assert "Check user audio files." in prompt_sent
+
+
+def test_analyze_audio_with_inline_questions_list(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    _patch_audio_files(traces_obj, monkeypatch)
+    fake_gem = MagicMock()
+    fake_gem.generate_with_parts.return_value = "PASS — clear audio"
+    monkeypatch.setattr(
+        traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
+    )
+    out = traces_obj.analyze_audio(
+        "c1",
+        metrics=["inline_clarity"],
+        questions=[
+            {
+                "abbreviation": "inline_clarity",
+                "questionBody": "Is the audio free of clipping?",
+                "fileFilter": "full-session",
+            }
+        ],
+    )
+    assert out["inline_clarity"]["result"] == "PASS"
+    assert out["inline_clarity"]["files_analyzed"] == [
+        "gs://b/p/conv-1/full-session.wav"
+    ]
+
+
 def test_list_audio_files_uses_gcs_listing(
     traces_obj: typing.Any, monkeypatch: typing.Any
 ) -> None:

@@ -124,9 +124,7 @@ class InvalidToolCall(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if _is_golden(file_path) or str(file_path).startswith(
-            str(context.evals_dir)
-        ):
+        if not _is_golden(file_path):
             return []
 
         data = _parse_yaml(content)

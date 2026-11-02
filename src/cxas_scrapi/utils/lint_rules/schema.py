@@ -59,6 +59,23 @@ def _load_json_or_yaml(directory: Path, file_name: str) -> dict:
         )
 
 
+_NON_PATH_KEYS: frozenset[str] = frozenset(
+    {
+        "default",
+        "description",
+        "displayName",
+        "display_name",
+        "name",
+        "prompt",
+        "text",
+        "variableDeclarations",
+        "variable_declarations",
+        "variableOverrides",
+        "variable_overrides",
+    }
+)
+
+
 def _resolve_paths(
     data: typing.Any,
     extra_prefixes: typing.Any = (),
@@ -67,15 +84,22 @@ def _resolve_paths(
     """Recursively replace file-path strings with their contents."""
     if isinstance(data, dict):
         return {
-            k: _resolve_paths(v, extra_prefixes, base_path)
+            k: (
+                v
+                if k in _NON_PATH_KEYS
+                else _resolve_paths(v, extra_prefixes, base_path)
+            )
             for k, v in data.items()
         }
     elif isinstance(data, list):
         return [
             _resolve_paths(item, extra_prefixes, base_path) for item in data
         ]
-    elif isinstance(data, str) and data.endswith(
-        (".txt", ".py", ".yaml", ".json")
+    elif (
+        isinstance(data, str)
+        and "://" not in data
+        and not any(c.isspace() for c in data)
+        and data.endswith((".txt", ".py", ".yaml", ".json"))
     ):
         path_to_check = Path(data)
         resolved = False
@@ -121,22 +145,50 @@ def _get_required_fields(cls) -> list[str]:  # noqa: ANN001
         return []
     lines = doc.split("\n")
     required = []
+    cls_name = getattr(cls, "__name__", "")
     for i, line in enumerate(lines):
         match = re.match(r"^\s+(\w+)\s+\([^)]+\):$", line)
         if match and i + 1 < len(lines):  # noqa: SIM102
             if lines[i + 1].strip().startswith("Required."):
-                required.append(match.group(1))
+                field_name = match.group(1)
+                if (
+                    cls_name == "VariableDeclaration"
+                    and field_name == "description"
+                ):
+                    continue
+                if cls_name == "LlmPolicy" and field_name == "policy_scope":
+                    continue
+                required.append(field_name)
     return required
 
 
 def _validate_fields(data: dict, cls, path: str = "") -> None:  # noqa: ANN001
     """Validate required fields and recurse into nested proto messages."""
     required = _get_required_fields(cls)
+    cls_name = getattr(cls, "__name__", str(cls))
+    if cls_name == "EngineSource" and any(
+        bool(data.get(k)) for k in ("dataStoreSources", "data_store_sources")
+    ):
+        required = [f for f in required if f != "engine"]
+    if cls_name == "Scenario" and any(
+        k in data
+        for k in (
+            "evaluationExpectations",
+            "evaluation_expectations",
+            "taskCompletionBehavior",
+            "task_completion_behavior",
+            "userGoalBehavior",
+            "user_goal_behavior",
+            "milestones",
+        )
+    ):
+        required = [
+            f for f in required if f not in ("rubrics", "scenario_expectations")
+        ]
     missing = [
         f for f in required if f not in data and _to_camel_case(f) not in data
     ]
     if missing:
-        cls_name = getattr(cls, "__name__", str(cls))
         raise ValueError(
             f"Missing required fields for {path} {cls_name}: {missing}"
         )
@@ -146,17 +198,97 @@ def _validate_fields(data: dict, cls, path: str = "") -> None:  # noqa: ANN001
             if not (hasattr(field, "message") and field.message is not None):
                 continue
             camel_name = _to_camel_case(name)
-            field_data = data.get(name) or data.get(camel_name)
-            if field_data is None:
+            field_data = data[name] if name in data else data.get(camel_name)
+            if not field_data:
                 continue
+            sub_path = f"{path}.{name}" if path else name
             if isinstance(field, proto.fields.RepeatedField):
                 for item in field_data if isinstance(field_data, list) else []:
-                    if isinstance(item, dict):
-                        _validate_fields(item, field.message)
+                    if isinstance(item, dict) and item:
+                        _validate_fields(item, field.message, path=sub_path)
             elif isinstance(field, proto.fields.Field) and isinstance(
                 field_data, dict
             ):
-                _validate_fields(field_data, field.message)
+                _validate_fields(field_data, field.message, path=sub_path)
+
+
+def _pop_missing_descriptor_fields(
+    msg_dict: typing.Any,
+    proto_cls: typing.Any,
+    candidate_keys: tuple[str, ...],
+) -> None:
+    """Remove v1main fields that are not yet present in the v1beta wheel."""
+    if not isinstance(msg_dict, dict):
+        return
+    known = set()
+    if hasattr(proto_cls, "meta") and hasattr(proto_cls.meta, "fields"):
+        for fname in proto_cls.meta.fields:
+            known.add(fname)
+            known.add(_to_camel_case(fname))
+    for key in candidate_keys:
+        if key not in known:
+            msg_dict.pop(key, None)
+
+
+def _strip_v1main_only_fields(data: dict, target: str) -> None:
+    """Strip CES v1main fields that lag in the google-cloud-ces v1beta wheel."""
+    if target in ("app_config", "agent_config"):
+        model_settings = data.get("modelSettings") or data.get("model_settings")
+        _pop_missing_descriptor_fields(
+            model_settings,
+            types.ModelSettings,
+            ("thinkingLevel", "thinking_level"),
+        )
+    elif target == "tool_config":
+        ds_tool = data.get("dataStoreTool") or data.get("data_store_tool")
+        if isinstance(ds_tool, dict):
+            mod_configs = ds_tool.get("modalityConfigs") or ds_tool.get(
+                "modality_configs"
+            )
+            if isinstance(mod_configs, list):
+                for mc in mod_configs:
+                    _pop_missing_descriptor_fields(
+                        mc,
+                        types.DataStoreTool.ModalityConfig,
+                        ("snippetsConfig", "snippets_config"),
+                    )
+        remote_tool = data.get("remoteAgentTool") or data.get(
+            "remote_agent_tool"
+        )
+        _pop_missing_descriptor_fields(
+            remote_tool,
+            types.RemoteAgentTool,
+            (
+                "apiAuthentication",
+                "api_authentication",
+                "statefulAgent",
+                "stateful_agent",
+                "inputVariableMapping",
+                "input_variable_mapping",
+                "outputVariableMapping",
+                "output_variable_mapping",
+            ),
+        )
+    elif target == "guardrail_config":
+        action = data.get("action")
+        _pop_missing_descriptor_fields(
+            action,
+            types.TriggerAction,
+            (
+                "endSession",
+                "end_session",
+                "toolCall",
+                "tool_call",
+                "retry",
+            ),
+        )
+    elif target == "evaluation_config":
+        scenario = data.get("scenario") or data.get("Scenario")
+        _pop_missing_descriptor_fields(
+            scenario,
+            types.Evaluation.Scenario,
+            ("milestones", "initialEvent", "initial_event"),
+        )
 
 
 # ── Schema validation rule ───────────────────────────────────────────────
@@ -323,6 +455,8 @@ class SchemaValid(Rule):
             _validate_fields(data, self._proto_type, path=str(resource_dir))
         except ValueError as e:
             return [self.make_result(rel, str(e))]
+
+        _strip_v1main_only_fields(data, self.target)
 
         try:
             obj = self._proto_type()

@@ -191,11 +191,11 @@ Do NOT use `**kwargs` in tool function signatures -- CXAS requires explicit name
 def my_tool(arg1: str, arg2: str = "") -> dict:
     # Access state via the context global
     auth = context.state.get("auth_status", "")
-    
+
     # Or use shorthand functions
     auth = get_variable("auth_status", "")
     set_variable("my_var", "value")
-    
+
     return {"status": "success"}
 ```
 
@@ -363,7 +363,18 @@ results = evals.list_evaluation_results_by_run(run_id)
 ```python
 utils = EvalUtils(app_name=app_name)
 dfs = utils.evals_to_dataframe(eval_names=["golden_auth"])
-# dfs["summary"], dfs["failures"], dfs["trace"]
+# dfs["summary"], dfs["failures"], dfs["trace"], dfs["metadata"] (includes type == "Milestone")
+```
+
+**Platform Milestone Evaluations (CXAS 2.0):**
+```python
+from cxas_scrapi.evals.simulation_evals import SimulationEvals
+
+sim_evals = SimulationEvals(app_name=app_name)
+# Push simulation YAML/dicts to platform as Milestone scenarios
+sim_evals.push_to_platform(test_cases)
+# Run on platform (with automatic local fallback for audio/barge-in/naturalness/tool-fakes)
+results = sim_evals.run_simulations(test_cases, runs=3, run_on_platform=True)
 ```
 
 **Schema:** `api-schemas/evaluations.md` -- includes threshold fields, scoring enums, result structures

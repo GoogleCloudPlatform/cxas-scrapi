@@ -45,6 +45,7 @@ from cxas_scrapi.core.audio_transformer import (
     AUDIO_CHANNELS,
     AUDIO_SAMPLE_RATE_HZ,
     AUDIO_SAMPLE_WIDTH,
+    resolve_noise_config,
 )
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import BidiSessionError, Sessions
@@ -1784,7 +1785,9 @@ class ShadowEvals(Apps):
         turn_num: int | None = None,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
     ) -> Any:
@@ -1807,6 +1810,10 @@ class ShadowEvals(Apps):
             "burst_noise_files": burst_noise_files,
             "use_tool_fakes": use_tool_fakes,
         }
+        if background_noise_file is not None:
+            run_kwargs["bg_noise_snr"] = bg_noise_snr
+        if burst_noise_files is not None:
+            run_kwargs["burst_noise_snr"] = burst_noise_snr
         if voice_config is not None:
             run_kwargs["voice_config"] = voice_config
 
@@ -2088,7 +2095,9 @@ class ShadowEvals(Apps):
         modality: str = "audio",
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
         initial_utterance: str | None = None,
@@ -2146,17 +2155,37 @@ class ShadowEvals(Apps):
             initial_utterance=initial_utterance,
         )
 
+        resolved_noise = resolve_noise_config(
+            config_or_case=tc_dict,
+            background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
+            burst_noise_files=burst_noise_files,
+            burst_noise_snr=burst_noise_snr,
+        )
+        effective_bg_file = resolved_noise["background_noise_file"]
+        effective_bg_snr = resolved_noise["bg_noise_snr"]
+        effective_burst_files = resolved_noise["burst_noise_files"]
+        effective_burst_snr = resolved_noise["burst_noise_snr"]
+
         current_sim_turn = 0
         interactive_session = None
         if modality == "audio" and single_bidi_stream:
             client = self.sessions_client
+            create_kwargs: dict[str, Any] = {
+                "session_id": session_id,
+                "capture_agent_audio": capture_agent_audio,
+                "background_noise_file": effective_bg_file,
+                "use_tool_fakes": use_tool_fakes,
+                "skip_playback_wait": skip_playback_wait,
+                "voice_config": voice_config,
+            }
+            if effective_bg_file is not None:
+                create_kwargs["bg_noise_snr"] = effective_bg_snr
+            if effective_burst_files is not None:
+                create_kwargs["burst_noise_files"] = effective_burst_files
+                create_kwargs["burst_noise_snr"] = effective_burst_snr
             interactive_session = client.create_interactive_session(
-                session_id=session_id,
-                capture_agent_audio=capture_agent_audio,
-                background_noise_file=background_noise_file,
-                use_tool_fakes=use_tool_fakes,
-                skip_playback_wait=skip_playback_wait,
-                voice_config=voice_config,
+                **create_kwargs
             )
             interactive_session.start()
 
@@ -2221,8 +2250,10 @@ class ShadowEvals(Apps):
                         console_logging=console_logging,
                         turn_num=current_sim_turn,
                         capture_agent_audio=capture_agent_audio,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
+                        background_noise_file=effective_bg_file,
+                        bg_noise_snr=effective_bg_snr,
+                        burst_noise_files=effective_burst_files,
+                        burst_noise_snr=effective_burst_snr,
                         use_tool_fakes=use_tool_fakes,
                         voice_config=voice_config,
                     )
@@ -2341,7 +2372,9 @@ class ShadowEvals(Apps):
         parallel: int,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         use_tool_fakes: bool = False,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
@@ -2370,7 +2403,9 @@ class ShadowEvals(Apps):
                 modality=modality,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
+                bg_noise_snr=bg_noise_snr,
                 burst_noise_files=burst_noise_files,
+                burst_noise_snr=burst_noise_snr,
                 use_tool_fakes=use_tool_fakes,
                 skip_playback_wait=skip_playback_wait,
                 single_bidi_stream=single_bidi_stream,
@@ -2491,7 +2526,9 @@ class ShadowEvals(Apps):
         verbose: bool = False,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         use_tool_fakes: bool = False,
         expectations_only: bool | None = None,
         skip_playback_wait: bool = False,
@@ -2583,7 +2620,9 @@ class ShadowEvals(Apps):
                             parallel,
                             capture_agent_audio=capture_agent_audio,
                             background_noise_file=background_noise_file,
+                            bg_noise_snr=bg_noise_snr,
                             burst_noise_files=burst_noise_files,
+                            burst_noise_snr=burst_noise_snr,
                             use_tool_fakes=use_tool_fakes,
                             skip_playback_wait=skip_playback_wait,
                             single_bidi_stream=single_bidi_stream,
@@ -2609,7 +2648,9 @@ class ShadowEvals(Apps):
                             parallel,
                             capture_agent_audio=capture_agent_audio,
                             background_noise_file=background_noise_file,
+                            bg_noise_snr=bg_noise_snr,
                             burst_noise_files=burst_noise_files,
+                            burst_noise_snr=burst_noise_snr,
                             use_tool_fakes=use_tool_fakes,
                             skip_playback_wait=skip_playback_wait,
                             single_bidi_stream=single_bidi_stream,

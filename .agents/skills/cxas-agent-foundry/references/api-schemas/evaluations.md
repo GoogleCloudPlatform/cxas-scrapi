@@ -52,14 +52,28 @@ App-level settings.
 ## Scenarios
 
 ### EvaluationScenario
-- **task** (string): [required] Task description.
+- **task** (string): Task description (legacy scenario format).
+- **milestones** (array[-> EvaluationScenarioMilestone]): Ordered milestones for CXAS 2.0 platform milestone evaluations.
+- **sessionParameters** (object): Initial session variable overrides.
+- **initialEvent** (string | object): Optional initial event sent at session start.
 - **userFacts** (array[-> EvaluationScenarioUserFact]): Facts known to sim user.
 - **maxTurns** (integer): Max turns. Default: until task complete.
-- **rubrics** (array[string]): [required] Rubrics to score against.
-- **scenarioExpectations** (array[-> EvaluationScenarioExpectation]): [required]
+- **rubrics** (array[string]): Rubrics to score against.
+- **scenarioExpectations** (array[-> EvaluationScenarioExpectation]): Scenario-level expectations.
 - **variableOverrides** (object): Session parameter overrides.
 - **userGoalBehavior** (enum: `USER_GOAL_SATISFIED` | `USER_GOAL_REJECTED` | `USER_GOAL_IGNORED`)
 - **evaluationExpectations** (array[string]): Expectation resource names.
+- **metadata** (object): Optional scenario metadata.
+
+### EvaluationScenarioMilestone
+- **goal** (string): [required] What the simulated user is trying to accomplish in this milestone.
+- **successCriteria** (string): [required] Condition that determines whether the milestone is complete.
+- **responseGuide** (string): Optional persona/protocol guidance for the simulated user.
+- **maxTurnCount** (integer): Optional maximum turns allowed for this milestone.
+- **staticUtterance** (string): Optional fixed utterance to send instead of LLM-generated user text.
+- **event** (string): Optional event string to send for this milestone.
+- **injectVariables** (object): Optional variables to inject (supported on the first milestone).
+- **metadata** (object): Optional milestone metadata.
 
 ### EvaluationScenarioExpectation
 - **toolExpectation** (-> EvaluationScenarioExpectationToolExpectation)
@@ -176,11 +190,18 @@ App-level settings.
 ### ScenarioResult (EvaluationResultScenarioResult)
 - **conversation** (string)
 - **task** (string)
+- **milestoneResults** (array[-> MilestoneResult]): Results for each milestone in CXAS 2.0 platform milestone evaluations.
+- **evaluationExpectationResults** (array[-> EvaluationExpectationResult])
 - **expectationOutcomes** (array[-> ScenarioExpectationOutcome])
 - **rubricOutcomes** (array[-> RubricOutcome])
 - **taskCompleted** (boolean): Composite of all checks.
 - **allExpectationsSatisfied** (boolean)
 - **userGoalSatisfactionResult** (-> UserGoalSatisfactionResult)
+
+### MilestoneResult
+- **milestone** (-> EvaluationScenarioMilestone)
+- **status** (enum: `COMPLETED` | `IN_PROGRESS` | `NOT_STARTED` | `UNSPECIFIED`)
+- **justification** (string)
 
 ### UserGoalSatisfactionResult
 - **score** (integer): -1, 0, or 1. 1=Satisfied, 0=Not Satisfied, -1=Unspecified.

@@ -3120,9 +3120,18 @@ class LatencyParser:
             else ("voice" if voice_convs else "chat")
         )
 
+        total_llm_turns = sum(
+            len(c.get("lat_llm_calls") or []) for c in valid_convs
+        ) or len(all_turns)
+        avg_llm_turns = (
+            round(total_llm_turns / len(valid_convs), 1) if valid_convs else 0.0
+        )
+
         return {
             "conversations_count": len(valid_convs),
             "total_turns": len(all_turns),
+            "total_llm_turns": total_llm_turns,
+            "avg_llm_turns": avg_llm_turns,
             "primary_slice_key": primary_key,
             "primary": primary,
             "slices": slices,

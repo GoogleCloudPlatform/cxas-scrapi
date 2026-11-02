@@ -22,16 +22,38 @@ Output: HTML report in `<project>/eval-reports/iterations/iteration-N/`. Include
 - Triage categories for failures
 
 ### 2. Combined Report
-Cross-iteration trend analysis showing pass rate progression over time.
+Cross-iteration trend analysis and multi-modal evaluation report compiled across simulations, goldens, tool tests, and callback tests.
 
 ```bash
-python .agents/skills/cxas-agent-foundry/scripts/generate-combined-report.py
+# Generate combined report from evaluation directory
+cxas evals report --output-dir <project>/eval-reports
+
+# Run evals and compile with Audio Analysis (opt-in; off by default)
+cxas evals report \
+  --run \
+  --app-name "$APP_NAME" \
+  --modality audio \
+  --audio-analysis \
+  --output-dir <project>/eval-reports
+
+# Run with k-of-N majority voting, infra retries, pass-rate gate, and GCS bundle upload
+cxas evals report \
+  --run \
+  --app-name "$APP_NAME" \
+  --modality audio \
+  --runs 3 \
+  --min-run-passes 2 \
+  --min-pass-rate 0.85 \
+  --suite-name sims-audio \
+  --gcs-bundle-uri "gs://my-bucket/evals/main/run-1" \
+  --github-step-summary \
+  --output-dir <project>/eval-reports
 ```
 
-Output: HTML report in `<project>/eval-reports/combined/`. Includes:
-- Pass rate trends across all iterations
-- Per-eval stability analysis
-- Regression detection
+Output: Interactive HTML report (`combined_eval_report.html`) and machine-readable JSON (`combined_eval_report.json`). Includes:
+- **Overview Dashboard**: High-level pass rates, test breakdowns, and KPI tiles.
+- **Audio Analysis Tab**: (Opt-in via `--audio-analysis`) Voice naturalness grading, 5 multimodal Gemini checks, ITU-R BS.1770 LUFS loudness, articulation rate, pitch spread, and TTS voice drift/seam detection.
+- **Conversations Tab**: Interactive run-by-run conversation explorer with per-turn transcript dialogs, audio playback, intent filtering, and issue tagging.
 
 ### 3. Coverage Analysis
 On-demand analysis of eval coverage against agent architecture. **Dispatch the `agents/coverage-analyst.md` sub-agent** with `app_dir`, `evals_dir`, and `output_path`. It reads every agent instruction, every eval, every tool, and every callback, then produces the markdown report following the template below. This is intentionally a sub-agent — doing it inline burns several thousand tokens per invocation.

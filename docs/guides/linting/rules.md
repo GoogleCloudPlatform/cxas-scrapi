@@ -15,51 +15,18 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     | ID | Name | Default | Description |
     |----|------|---------|-------------|
-    | I001 | `required-xml-structure` | Error | Instruction must contain `<role>`, `<persona>`, and `<taskflow>` tags |
-    | I002 | `taskflow-children` | Error | `<taskflow>` must contain `<subtask>` or `<step>` children |
     | I003 | `excessive-if-else` | Warning | 3 or more `IF/ELSE` blocks in an instruction |
     | I004 | `negative-triggers` | Warning | Negative conditions in `<trigger>` elements |
     | I005 | `conditional-logic-block` | Warning | `<conditional_logic>` block used for intent classification |
     | I006 | `hardcoded-data` | Warning | Hardcoded phone numbers, prices, or other dynamic data |
     | I007 | `instruction-too-long` | Info | Instruction exceeds word count threshold (default 3000 words) |
     | I008 | `invalid-agent-ref` | Error | `{@AGENT: Name}` references an agent that doesn't exist |
-    | I009 | `invalid-tool-ref` | Error | `{@TOOL: Name}` references a tool not in the agent's config |
     | I010 | `wrong-agent-syntax` | Error | Wrong agent reference syntax (e.g., `${AGENT:...}` instead of `{@AGENT:...}`) |
     | I011 | `wrong-tool-syntax` | Error | Wrong tool reference syntax (e.g., `{TOOL:...}` instead of `{@TOOL:...}`) |
     | I012 | `unused-tool-in-config` | Warning | Tool is in the agent's JSON config but never referenced in the instruction |
-    | I013 | `tool-not-in-config` | Error | Instruction references a tool that's not in the agent's JSON config |
     | I014 | `missing-current-date` | Warning | Instruction (or global instruction) should reference `{current_date}` |
     | I015 | `banned-legacy-xml-tags` | Error | Instruction uses a banned legacy XML tag |
     | I016 | `prose-state-machine` | Warning | Instruction encodes a state machine in prose (named-step GOTOs, retry counters, STOP tokens, state writes, orchestrator `agent_action` traversal) |
-
-    ---
-
-    **I001 — required-xml-structure**
-
-    Every instruction must have all three of `<role>`, `<persona>`, and `<taskflow>` tags. These sections organize the instruction into context (who the agent is) and behavior (what it does).
-
-    *Triggers:* Any of the three tags is absent.
-
-    *Fix:* Add the missing section. Minimum structure:
-    ```xml
-    <role>...</role>
-    <persona>...</persona>
-    <taskflow>
-      <subtask name="...">
-        <step>...</step>
-      </subtask>
-    </taskflow>
-    ```
-
-    ---
-
-    **I002 — taskflow-children**
-
-    A `<taskflow>` with no children is effectively an empty instruction — the LLM has no steps to follow.
-
-    *Triggers:* `<taskflow>...</taskflow>` present but contains no `<subtask>` or `<step>` elements.
-
-    *Fix:* Add at least one `<subtask name="...">` with `<step>` children.
 
     ---
 
@@ -127,16 +94,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     ---
 
-    **I009 — invalid-tool-ref**
-
-    The `{@TOOL: Name}` syntax tells the LLM to call a tool. If the tool doesn't exist in the app's tool registry, it can't be called.
-
-    *Triggers:* `{@TOOL: Name}` where `Name` isn't in the list of known tools.
-
-    *Fix:* Verify the tool's display name. The fix message lists available tools.
-
-    ---
-
     **I010 — wrong-agent-syntax**
 
     Common wrong forms for agent references that look almost right but won't be recognized by the platform.
@@ -164,16 +121,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* Tool appears in `agent.json`'s `tools` array but has no `{@TOOL: ...}` reference in `instruction.txt`.
 
     *Fix:* Either add `{@TOOL: tool_name}` to the instruction (with appropriate context), or remove the tool from the agent's config.
-
-    ---
-
-    **I013 — tool-not-in-config**
-
-    The instruction references a tool with `{@TOOL: ...}` that isn't in the agent's JSON config. The LLM will be told to call a tool that it doesn't have access to.
-
-    *Triggers:* `{@TOOL: Name}` where `Name` is not in `agent.json`'s `tools` array.
-
-    *Fix:* Add the tool to the agent's `tools` array, or remove the reference from the instruction.
 
     ---
 
@@ -220,8 +167,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C005 | `callback-hardcoded-phrases` | Warning | Hardcoded phrase lists for intent detection |
     | C006 | `callback-bare-except` | Warning | Bare `except:` without logging swallows errors silently |
     | C007 | `callback-tool-naming` | Info | Verify `tools.*` call uses correct naming convention |
-    | C008 | `callback-missing-typing-import` | Error | Uses typing types without importing them |
-    | C009 | `callback-signature` | Error | Callback function must have correct type annotations |
     | C010 | `callback-python-syntax` | Error | Callback Python file must have valid syntax |
 
     ---
@@ -292,28 +237,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     ---
 
-    **C008 — callback-missing-typing-import**
-
-    Using `Optional`, `List`, `Dict`, etc. without `from typing import ...` causes `NameError` at push time, silently breaking the callback.
-
-    *Fix:* Add `from typing import Optional, List, Dict` (or whichever types you use).
-
-    ---
-
-    **C009 — callback-signature**
-
-    Type annotations must be exactly right — the platform validates signatures and silently drops callbacks with wrong types.
-
-    *Fix:* Use the exact signatures defined in the platform documentation. Example for `before_model_callback`:
-    ```python
-    def before_model_callback(
-        callback_context: CallbackContext,
-        llm_request: LlmRequest,
-    ) -> Optional[LlmResponse]:
-    ```
-
-    ---
-
     **C010 — callback-python-syntax**
 
     Invalid Python syntax means the callback file can't be loaded. The platform silently fails to register callbacks with syntax errors.
@@ -326,32 +249,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     | ID | Name | Default | Description |
     |----|------|---------|-------------|
-    | T001 | `tool-error-pattern` | Error | Tool must return `agent_action` on error |
     | T002 | `tool-docstring` | Warning | Tool missing docstring |
     | T003 | `tool-type-hints` | Info | Tool function arguments lack type hints |
     | T004 | `tool-fn-name` | Warning | Tool function name should match tool directory name |
     | T005 | `tool-high-cardinality` | Info | High-cardinality input arguments |
     | T006 | `tool-return-explosion` | Info | Tool returning excessive data |
-    | T007 | `tool-name-snake-case` | Error | Tool JSON name/displayName must be snake_case |
     | T008 | `tool-displayname-unreferenced` | Warning | Tool displayName not referenced by any agent |
     | T009 | `tool-kwargs-signature` | Error | Tool function uses `**kwargs` |
     | T010 | `tool-python-syntax` | Error | Tool Python file must have valid syntax |
     | T011 | `tool-none-default` | Error | Tool parameter uses `None` as default value |
     | T012 | `tool-json-missing-description` | Error | Tool JSON configuration must include description |
-
-    ---
-
-    **T001 — tool-error-pattern**
-
-    When a tool encounters an error, it should return a dict with an `agent_action` key. This gives the agent a message to relay to the user instead of hallucinating a response.
-
-    *Triggers:* No `agent_action` string found anywhere in the tool file.
-
-    *Fix:*
-    ```python
-    if error_condition:
-        return {"agent_action": "I encountered an error looking up that information. Please try again."}
-    ```
 
     ---
 
@@ -374,14 +281,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     Arguments like `timestamp`, `latitude/longitude`, or internal `session_id`/`request_id` values are hard for users to express, especially in voice mode.
 
     *Fix:* Design arguments that a human can express naturally (e.g., `region`, `category`, `last_n_days`).
-
-    ---
-
-    **T007 — tool-name-snake-case**
-
-    Tool names with spaces or mixed case cause issues with the platform's routing. All tool names and `displayName` values must be `snake_case`.
-
-    *Fix:* Change `"displayName": "Look Up Order"` to `"displayName": "lookup_order"`.
 
     ---
 

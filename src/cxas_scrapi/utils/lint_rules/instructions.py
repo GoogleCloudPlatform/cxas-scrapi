@@ -26,8 +26,6 @@ from cxas_scrapi.utils.linter import (
     LintResult,
     Rule,
     Severity,
-    ToolsetValidationBehavior,
-    get_toolset_tools,
     rule,
 )
 
@@ -49,77 +47,6 @@ def _load_agent_config(file_path: Path) -> dict | None:
 def _extract_tool_refs(content: str) -> set[str]:
     """Extract all {@TOOL: name} references from instruction content."""
     return {m.group(1).strip() for m in TOOL_REF_PATTERN.finditer(content)}
-
-
-def _find_line(content: str, needle: str) -> int | None:
-    """Return 1-based line number of first occurrence, or None."""
-    for i, line in enumerate(content.splitlines(), 1):
-        if needle in line:
-            return i
-    return None
-
-
-@rule("instructions")
-class RequiredXmlStructure(Rule):
-    id = "I001"
-    name = "required-xml-structure"
-    description = (
-        "Instruction must contain <role>, <persona>, and <taskflow> tags"
-    )
-    default_severity = Severity.ERROR
-
-    REQUIRED_TAGS = ["<role>", "<persona>", "<taskflow>"]
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        rel = str(file_path.relative_to(context.project_root))
-        return [
-            self.make_result(
-                file=rel,
-                message=f"Missing required XML tag: {tag}",
-                fix=(
-                    f"Add {tag}..."
-                    f"{tag.replace('<', '</')}"
-                    " section to instruction"
-                ),
-            )
-            for tag in self.REQUIRED_TAGS
-            if tag not in content
-        ]
-
-
-@rule("instructions")
-class TaskflowChildren(Rule):
-    id = "I002"
-    name = "taskflow-children"
-    description = "Taskflow must contain <subtask> or <step> children"
-    default_severity = Severity.ERROR
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        if "<taskflow>" not in content:
-            return []
-        match = re.search(r"<taskflow>(.*?)</taskflow>", content, re.DOTALL)
-        if not match:
-            return []
-        taskflow = match.group(1)
-        if "<subtask" not in taskflow and "<step" not in taskflow:
-            rel = str(file_path.relative_to(context.project_root))
-            return [
-                self.make_result(
-                    file=rel,
-                    message="<taskflow> has no <subtask> or <step> children",
-                    fix=(
-                        'Add <subtask name="...">'
-                        "<step>...</step>"
-                        "</subtask> inside"
-                        " <taskflow>"
-                    ),
-                )
-            ]
-        return []
 
 
 @rule("instructions")
@@ -344,43 +271,6 @@ class InvalidAgentRef(Rule):
         ]
 
 
-@rule("instructions")
-class InvalidToolRef(Rule):
-    id = "I009"
-    name = "invalid-tool-ref"
-    description = "Tool reference points to tool not in agent's config"
-    default_severity = Severity.ERROR
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        rel = str(file_path.relative_to(context.project_root))
-        referenced = _extract_tool_refs(content)
-
-        # Filter out references that match workspace bypass prefixes
-        # (e.g., MCP/Connector toolsets)
-        bypass_pfx = getattr(context, "bypass_tool_prefixes", None)
-        if bypass_pfx:
-            referenced = {
-                ref
-                for ref in referenced
-                if not any(ref.startswith(pfx) for pfx in bypass_pfx)
-            }
-
-        return [
-            self.make_result(
-                file=rel,
-                message=f"{{@TOOL: {ref}}} references non-existent tool",
-                fix=(
-                    "Available tools:"
-                    f" {', '.join(sorted(context.all_known_tools))}"
-                ),
-            )
-            for ref in referenced
-            if ref not in context.all_known_tools
-        ]
-
-
 def _check_wrong_syntax(
     rule_obj: Rule,
     file_path: Path,
@@ -501,68 +391,6 @@ class UnusedToolInConfig(Rule):
                 ),
             )
             for tool in sorted(unused)
-        ]
-
-
-@rule("instructions")
-class ToolNotInConfig(Rule):
-    id = "I013"
-    name = "tool-not-in-config"
-    description = "Tool referenced in instruction but not in agent JSON"
-    default_severity = Severity.ERROR
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        config = _load_agent_config(file_path)
-        if not config:
-            return []
-
-        app_root = file_path.parent.parent.parent
-
-        config_tools = set(config.get("tools", []))
-        bypass_prefixes = set()
-
-        # Resolve toolsets and add their tools to config_tools
-        for ts_entry in config.get("toolsets", []):
-            if isinstance(ts_entry, dict):
-                toolset_name = ts_entry.get("toolset")
-                allowed_tool_ids = ts_entry.get("toolIds") or ts_entry.get(
-                    "tool_ids"
-                )
-                if toolset_name:
-                    res = get_toolset_tools(
-                        app_root, toolset_name, allowed_tool_ids
-                    )
-                    if res.behavior == ToolsetValidationBehavior.BYPASS:
-                        # Skip operation-level checks for MCP/Connector toolsets
-                        bypass_prefixes.add(f"{toolset_name}_")
-                    else:
-                        config_tools.update(res.tools)
-
-        referenced = _extract_tool_refs(content)
-
-        # Filter out referenced tools matching bypass prefixes
-        if bypass_prefixes:
-            referenced = {
-                ref
-                for ref in referenced
-                if not any(ref.startswith(pfx) for pfx in bypass_prefixes)
-            }
-
-        missing = referenced - config_tools
-        rel = str(file_path.relative_to(context.project_root))
-        return [
-            self.make_result(
-                file=rel,
-                message=(
-                    "Instruction references"
-                    f" {{@TOOL: {ref}}} but agent"
-                    " config does not list it"
-                ),
-                fix=f"Add '{ref}' to tools/toolsets, or remove the reference.",
-            )
-            for ref in sorted(missing)
         ]
 
 

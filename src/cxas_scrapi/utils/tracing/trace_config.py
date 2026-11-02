@@ -24,7 +24,7 @@ import os
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,9 @@ class AudioConfig(BaseModel):
     # `/{conversation_id}/{search_filename}` and use the first match.
     search_bucket: bool = True
     search_filename: str = "full-session.wav"
+    # Optional path to a custom JSON/YAML scorecard template file with audio
+    # analysis questions to merge with or override the built-in registry.
+    questions_file: str | None = None
 
 
 class CloudLoggingConfig(BaseModel):
@@ -56,7 +59,36 @@ class CloudLoggingConfig(BaseModel):
 
 
 class GeminiMetric(BaseModel):
-    prompt: str
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    prompt: str | None = None
+    question_body: str | None = Field(default=None, alias="questionBody")
+    answer_instructions: str | None = Field(
+        default=None, alias="answerInstructions"
+    )
+    answer_choices: list[dict[str, Any]] | None = Field(
+        default=None, alias="answerChoices"
+    )
+    file_filter: str | list[str] | None = Field(
+        default=None, alias="fileFilter"
+    )
+
+    def to_question_dict(self, name: str) -> dict[str, Any]:
+        """Converts this metric config into a scorecard question dict."""
+        q: dict[str, Any] = {"abbreviation": name}
+        if self.model_extra:
+            q.update(self.model_extra)
+        if self.prompt is not None:
+            q["prompt"] = self.prompt
+        if self.question_body is not None:
+            q["questionBody"] = self.question_body
+        if self.answer_instructions is not None:
+            q["answerInstructions"] = self.answer_instructions
+        if self.answer_choices is not None:
+            q["answerChoices"] = self.answer_choices
+        if self.file_filter is not None:
+            q["fileFilter"] = self.file_filter
+        return q
 
 
 class GeminiConfig(BaseModel):
@@ -68,10 +100,10 @@ class GeminiConfig(BaseModel):
     # classification-style, so "low" is a good default trade-off between
     # quality and latency / cost.
     thinking_level: str | None = "low"
-    # `audio_metrics` is an *override* layer; the catalog of analyses lives
-    # in `audio_analysis.ANALYSIS_REGISTRY`. Any key
-    # here whose name matches a registered analysis replaces that
-    # analysis's built-in prompt at runtime.
+    # `audio_metrics` can both override built-in analyses (from
+    # `audio_analysis.ANALYSIS_REGISTRY`) and define new custom audio analysis
+    # questions using either `prompt` or scorecard question fields
+    # (`questionBody`, `answerInstructions`, `answerChoices`, `fileFilter`).
     audio_metrics: dict[str, GeminiMetric] = Field(default_factory=dict)
     triage_metrics: dict[str, GeminiMetric] = Field(
         default_factory=lambda: {

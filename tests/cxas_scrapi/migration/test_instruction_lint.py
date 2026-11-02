@@ -55,17 +55,15 @@ def test_legacy_text_fires_i015_banned_tags() -> None:
     results = lint_instruction_text(LEGACY, "LegacyAgent")
     rule_ids = {r.rule_id for r in results}
     assert "I015" in rule_ids
-    # I001 also fires because <role>/<persona>/<taskflow> are absent.
-    assert "I001" in rule_ids
 
 
 def test_legacy_text_does_not_false_positive_on_cross_file_rules() -> None:
-    """I008/I009 need agent/tool registries we don't populate here — they
+    """I008/I012 need agent/tool registries we don't populate here — they
     must not fire on standalone text."""
     results = lint_instruction_text(LEGACY, "LegacyAgent")
     rule_ids = {r.rule_id for r in results}
     assert "I008" not in rule_ids
-    assert "I009" not in rule_ids
+    assert "I012" not in rule_ids
 
 
 def test_wrong_tool_syntax_fires_i011() -> None:

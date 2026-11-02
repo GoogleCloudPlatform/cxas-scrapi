@@ -18,6 +18,7 @@
 Validates agent tool Python files against CXAS conventions.
 """
 
+import ast
 import json
 import re
 import typing
@@ -32,6 +33,48 @@ from cxas_scrapi.utils.linter import (
 )
 
 FUNC_DEF_RE = re.compile(r"def\s+(\w+)\s*\(([^)]*)\)")
+
+
+def _find_tool_function(
+    content: str, expected_name: str | None = None
+) -> re.Match[str] | None:
+    """Find the entry tool function definition, skipping private helpers."""
+    matches = list(FUNC_DEF_RE.finditer(content))
+    if not matches:
+        return None
+    if expected_name:
+        for m in matches:
+            if m.group(1) == expected_name:
+                return m
+    for m in matches:
+        if not m.group(1).startswith("_"):
+            return m
+    return matches[0]
+
+
+def _find_tool_ast_function(
+    content: str, expected_name: str | None = None
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Find the entry tool AST function node, skipping private helpers."""
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return None
+    fns = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    if not fns:
+        return None
+    if expected_name:
+        for fn in fns:
+            if fn.name == expected_name:
+                return fn
+    for fn in fns:
+        if not fn.name.startswith("_"):
+            return fn
+    return fns[0]
 
 
 def _load_tool_config(file_path: Path) -> tuple[dict | None, Path | None]:
@@ -53,36 +96,6 @@ def _load_tool_config(file_path: Path) -> tuple[dict | None, Path | None]:
         return data if isinstance(data, dict) else None, json_path
     except (json.JSONDecodeError, OSError):
         return None, json_path
-
-
-@rule("tools")
-class MissingAgentAction(Rule):
-    id = "T001"
-    name = "tool-error-pattern"
-    description = (
-        "Tool must return agent_action on error for deterministic recovery"
-    )
-    default_severity = Severity.ERROR
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        if file_path.suffix != ".py":
-            return []
-        rel = str(file_path.relative_to(context.project_root))
-        if "agent_action" not in content:
-            return [
-                self.make_result(
-                    file=rel,
-                    message="Missing agent_action error return pattern",
-                    fix=(
-                        'Add: return {"agent_action":'
-                        ' "error message for agent'
-                        ' to relay"}'
-                    ),
-                )
-            ]
-        return []
 
 
 @rule("tools")
@@ -131,10 +144,43 @@ class MissingTypeHints(Rule):
         if file_path.suffix != ".py":
             return []
         rel = str(file_path.relative_to(context.project_root))
-        fn_match = FUNC_DEF_RE.search(content)
+        tool_dir_name = file_path.parent.parent.name
+        fn_node = _find_tool_ast_function(content, tool_dir_name)
+        if fn_node is not None:
+            all_args = (
+                fn_node.args.posonlyargs
+                + fn_node.args.args
+                + fn_node.args.kwonlyargs
+            )
+            non_ctx_args = [
+                a for a in all_args if a.arg not in ("context", "tool_context")
+            ]
+            if non_ctx_args and all(a.annotation is None for a in non_ctx_args):
+                return [
+                    self.make_result(
+                        file=rel,
+                        line=fn_node.lineno,
+                        message="Function arguments lack type hints",
+                        fix=(
+                            "Add type hints: def"
+                            " tool_name(arg: str,"
+                            " count: int) -> dict:"
+                        ),
+                    )
+                ]
+            return []
+
+        fn_match = _find_tool_function(content, tool_dir_name)
         if fn_match:
             args_str = fn_match.group(2)
-            if args_str.strip() and ":" not in args_str:
+            non_ctx_args_str = [
+                p.strip()
+                for p in args_str.split(",")
+                if p.strip()
+                and p.split(":")[0].split("=")[0].strip()
+                not in ("context", "tool_context")
+            ]
+            if non_ctx_args_str and ":" not in args_str:
                 return [
                     self.make_result(
                         file=rel,
@@ -165,7 +211,7 @@ class FunctionNameMismatch(Rule):
         rel = str(file_path.relative_to(context.project_root))
         tool_dir_name = file_path.parent.parent.name
 
-        fn_match = FUNC_DEF_RE.search(content)
+        fn_match = _find_tool_function(content, tool_dir_name)
         if not fn_match:
             return [
                 self.make_result(
@@ -222,7 +268,8 @@ class HighCardinalityArgs(Rule):
     ) -> list[LintResult]:
         if file_path.suffix != ".py":
             return []
-        fn_match = FUNC_DEF_RE.search(content)
+        tool_dir_name = file_path.parent.parent.name
+        fn_match = _find_tool_function(content, tool_dir_name)
         if not fn_match:
             return []
 
@@ -282,41 +329,6 @@ class ExcessiveReturnData(Rule):
             for pattern, msg, fix in self.RETURN_PATTERNS
             if re.search(pattern, content)
         ]
-
-
-@rule("tools")
-class ToolNameNotSnakeCase(Rule):
-    id = "T007"
-    name = "tool-name-snake-case"
-    description = (
-        "Tool JSON name/displayName must be"
-        " snake_case (no spaces or mixed case)"
-    )
-    default_severity = Severity.ERROR
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        tool_config, json_path = _load_tool_config(file_path)
-        if not tool_config:
-            return []
-
-        rel = str(json_path.relative_to(context.project_root))
-        results = []
-        for field_name in ("name", "displayName"):
-            value = tool_config.get(field_name, "")
-            if value and (" " in value or value != value.lower()):
-                snake = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=(
-                            f"Tool {field_name} '{value}' is not snake_case"
-                        ),
-                        fix=f'Change to: "{field_name}": "{snake}"',
-                    )
-                )
-        return results
 
 
 @rule("tools")
@@ -396,7 +408,33 @@ class KwargsInSignature(Rule):
         if file_path.suffix != ".py":
             return []
         rel = str(file_path.relative_to(context.project_root))
-        fn_match = FUNC_DEF_RE.search(content)
+        tool_dir_name = file_path.parent.parent.name
+        fn_node = _find_tool_ast_function(content, tool_dir_name)
+        if fn_node is not None:
+            if fn_node.args.kwarg is not None:
+                return [
+                    self.make_result(
+                        file=rel,
+                        line=fn_node.lineno,
+                        message=(
+                            "Tool function uses"
+                            " **kwargs — platform"
+                            " silently drops tools"
+                            " with **kwargs during"
+                            " import"
+                        ),
+                        fix=(
+                            "Replace **kwargs with"
+                            " explicit parameters:"
+                            " def my_tool(param1:"
+                            " str = '', param2:"
+                            " str = '') -> dict:"
+                        ),
+                    )
+                ]
+            return []
+
+        fn_match = _find_tool_function(content, tool_dir_name)
         if fn_match and "**" in fn_match.group(2):
             line = content[: fn_match.start()].count("\n") + 1
             return [
@@ -476,16 +514,56 @@ class NoneDefaultValue(Rule):
     ) -> list[LintResult]:
         if file_path.suffix != ".py":
             return []
-        fn_match = FUNC_DEF_RE.search(content)
+        rel = str(file_path.relative_to(context.project_root))
+        tool_dir_name = file_path.parent.parent.name
+        fn_node = _find_tool_ast_function(content, tool_dir_name)
+        if fn_node is not None:
+            pos_args = fn_node.args.posonlyargs + fn_node.args.args
+            defaults = fn_node.args.defaults
+            pairs: list[tuple[ast.arg, ast.expr | None]] = []
+            if defaults:
+                pairs.extend(
+                    zip(pos_args[-len(defaults) :], defaults, strict=False)
+                )
+            pairs.extend(
+                zip(
+                    fn_node.args.kwonlyargs,
+                    fn_node.args.kw_defaults,
+                    strict=False,
+                )
+            )
+            return [
+                self.make_result(
+                    file=rel,
+                    line=arg.lineno,
+                    message=(
+                        f"Parameter"
+                        f" '{arg.arg}'"
+                        " uses None as default"
+                        " — platform silently"
+                        " drops tools with None"
+                        " defaults during import"
+                    ),
+                    fix=(
+                        "Use type-matching defaults: str = '', int = 0,"
+                        " list = []"
+                    ),
+                )
+                for arg, default in pairs
+                if arg.arg not in ("context", "tool_context")
+                and isinstance(default, ast.Constant)
+                and default.value is None
+            ]
+
+        fn_match = _find_tool_function(content, tool_dir_name)
         if not fn_match:
             return []
 
-        rel = str(file_path.relative_to(context.project_root))
         args_str = fn_match.group(2)
         line = content[: fn_match.start()].count("\n") + 1
 
         def _param_name(p: typing.Any) -> typing.Any:
-            return p.split(":")[0].strip()
+            return p.split(":")[0].split("=")[0].strip()
 
         return [
             self.make_result(
@@ -504,7 +582,9 @@ class NoneDefaultValue(Rule):
                 ),
             )
             for p in args_str.split(",")
-            if "=" in p and re.search(r"=\s*None\s*$", p.strip())
+            if "=" in p
+            and _param_name(p) not in ("context", "tool_context")
+            and re.search(r"=\s*None\s*$", p.strip())
         ]
 
 
@@ -536,6 +616,7 @@ class MissingToolDescriptionInJSON(Rule):
             "fileSearchTool",
             "systemTool",
             "agentTool",
+            "remoteAgentTool",
             "widgetTool",
         ]
 
@@ -673,6 +754,7 @@ class CompositeToolConversationalPacing(Rule):
         "fileSearchTool",
         "systemTool",
         "agentTool",
+        "remoteAgentTool",
         "widgetTool",
     )
 

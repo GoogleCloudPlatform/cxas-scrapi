@@ -308,9 +308,13 @@ def trace_audio_analyze(args: argparse.Namespace) -> None:
     metrics = (
         [m.strip() for m in args.metric.split(",")] if args.metric else None
     )
+    questions_file = getattr(args, "questions_file", None)
     try:
         traces = _build_traces(args)
-        results = traces.analyze_audio(args.conversation_id, metrics=metrics)
+        kwargs: dict[str, typing.Any] = {"metrics": metrics}
+        if questions_file:
+            kwargs["questions_path"] = questions_file
+        results = traces.analyze_audio(args.conversation_id, **kwargs)
     except Exception as e:
         print(f"Audio analysis failed: {e}", file=sys.stderr)
         sys.exit(1)
@@ -898,7 +902,15 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     p_audio_analyze.add_argument(
         "--metric",
         help=(
-            "Comma-separated metric names from trace.yaml gemini.audio_metrics."
+            "Comma-separated metric names (built-in or custom from "
+            "questions file / trace.yaml)."
+        ),
+    )
+    p_audio_analyze.add_argument(
+        "--questions-file",
+        help=(
+            "Path to a JSON/JSON5/YAML scorecard template or questions file "
+            "with custom audio analysis questions."
         ),
     )
     p_audio_analyze.set_defaults(func=trace_audio_analyze)
@@ -923,7 +935,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help=(
             "Per-turn voice-drift flags: TTS vintage seams (cached vs "
             "fresh), loudness steps, truncation, voice changes inside a "
-            "turn."
+            "turn, and voice jumps where a turn's next rendered part "
+            "starts."
         ),
     )
     add_trace_args(p_audio_drift)

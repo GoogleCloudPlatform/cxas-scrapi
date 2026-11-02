@@ -201,3 +201,19 @@ def test_get_grpc_transport_defaults_to_the_environment(
     common.get_grpc_transport(client_class)
 
     client_class.get_transport_class.assert_called_once_with("rest")
+
+
+def test_get_grpc_transport_sets_unlimited_message_length(
+    monkeypatch: typing.Any,
+) -> None:
+    monkeypatch.setenv("CES_TRANSPORT", "grpc")
+    common = Common(creds=MagicMock())
+    client_class = MagicMock()
+    transport_cls = client_class.get_transport_class.return_value
+
+    common.get_grpc_transport(client_class)
+
+    transport_cls.create_channel.assert_called_once()
+    options = dict(transport_cls.create_channel.call_args.kwargs["options"])
+    assert options["grpc.max_receive_message_length"] == -1
+    assert options["grpc.max_send_message_length"] == -1

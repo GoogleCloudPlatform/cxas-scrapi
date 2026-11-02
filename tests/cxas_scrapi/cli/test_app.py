@@ -275,6 +275,188 @@ def test_app_pull_with_invalid_version_id_exits(
     assert excinfo.value.code == 1
 
 
+def test_app_pull_with_app_dir_name(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "cxas_app"),
+        app_dir_name="my_custom_folder",
+        project_id="test-project",
+        location="us",
+        overwrite=False,
+    )
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("123/", "")
+        zf.writestr("123/app.yaml", "name: Test App")
+        zf.writestr("123/agents/agent1.json", "{}")
+    dummy_zip_bytes = dummy_zip_io.getvalue()
+
+    mock_lro = mock.MagicMock()
+    mock_response = mock.MagicMock()
+    mock_response.app_content = dummy_zip_bytes
+    mock_lro.result.return_value = mock_response
+    mock_apps_client.export_app.return_value = mock_lro
+
+    cli_app.app_pull(args)
+
+    mock_apps_client.export_app.assert_called_once_with(
+        app_name="projects/test-project/locations/us/apps/123",
+        app_version=None,
+    )
+    assert os.path.exists(
+        os.path.join(args.target_dir, "my_custom_folder", "app.yaml")
+    )
+    assert os.path.exists(
+        os.path.join(
+            args.target_dir, "my_custom_folder", "agents", "agent1.json"
+        )
+    )
+    assert not os.path.exists(os.path.join(args.target_dir, "123"))
+
+
+def test_app_pull_multiple_apps_into_same_custom_dir_overwrite(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    target_dir = str(tmp_path / "cxas_app")
+
+    def _make_zip(prefix: str, agent_files: list[str]) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(f"{prefix}/app.json", '{"displayName": "Shared"}')
+            for agent_file in agent_files:
+                zf.writestr(f"{prefix}/agents/{agent_file}", "{}")
+        return buf.getvalue()
+
+    # Pull dev-1 into cxas_app/shared_agent
+    mock_app_1 = mock.MagicMock()
+    mock_app_1.name = "projects/test-project/locations/us/apps/dev-1"
+    mock_lro_1 = mock.MagicMock()
+    mock_lro_1.result.return_value = mock.MagicMock(
+        app_content=_make_zip("dev-1", ["agent1.json", "stale_agent.json"])
+    )
+
+    mock_apps_client.get_app_by_display_name.return_value = mock_app_1
+    mock_apps_client.export_app.return_value = mock_lro_1
+
+    cli_app.app_pull(
+        argparse.Namespace(
+            app="dev-1",
+            target_dir=target_dir,
+            app_dir_name="shared_agent",
+            project_id="test-project",
+            location="us",
+            overwrite=True,
+        )
+    )
+
+    # Pull dev-2 into the same cxas_app/shared_agent with overwrite=True
+    mock_app_2 = mock.MagicMock()
+    mock_app_2.name = "projects/test-project/locations/us/apps/dev-2"
+    mock_lro_2 = mock.MagicMock()
+    mock_lro_2.result.return_value = mock.MagicMock(
+        app_content=_make_zip("dev-2", ["agent1.json", "agent2.json"])
+    )
+
+    mock_apps_client.get_app_by_display_name.return_value = mock_app_2
+    mock_apps_client.export_app.return_value = mock_lro_2
+
+    cli_app.app_pull(
+        argparse.Namespace(
+            app="dev-2",
+            target_dir=target_dir,
+            app_dir_name="shared_agent",
+            project_id="test-project",
+            location="us",
+            overwrite=True,
+        )
+    )
+
+    shared_dir = os.path.join(target_dir, "shared_agent")
+    assert os.path.exists(os.path.join(shared_dir, "app.json"))
+    assert os.path.exists(os.path.join(shared_dir, "agents", "agent1.json"))
+    assert os.path.exists(os.path.join(shared_dir, "agents", "agent2.json"))
+    assert not os.path.exists(
+        os.path.join(shared_dir, "agents", "stale_agent.json")
+    )
+    assert not os.path.exists(os.path.join(target_dir, "dev-1"))
+    assert not os.path.exists(os.path.join(target_dir, "dev-2"))
+
+
+def test_app_pull_with_nested_app_dir_name(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path),
+        app_dir_name="cxas_app/shared_agent",
+        project_id="test-project",
+        location="us",
+        overwrite=True,
+    )
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    dummy_zip_io = io.BytesIO()
+    with zipfile.ZipFile(dummy_zip_io, "w") as zf:
+        zf.writestr("123/app.yaml", "name: Test App")
+    mock_lro = mock.MagicMock()
+    mock_lro.result.return_value = mock.MagicMock(
+        app_content=dummy_zip_io.getvalue()
+    )
+    mock_apps_client.export_app.return_value = mock_lro
+
+    cli_app.app_pull(args)
+
+    assert os.path.exists(
+        os.path.join(str(tmp_path), "cxas_app", "shared_agent", "app.yaml")
+    )
+    assert not os.path.exists(os.path.join(str(tmp_path), "123"))
+
+
+@pytest.mark.parametrize("bad_name", ["../outside", "/abs/path", "   "])
+def test_app_pull_with_invalid_app_dir_name_exits(
+    bad_name: str,
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    args = argparse.Namespace(
+        app="Test App",
+        target_dir=str(tmp_path / "pulled_app"),
+        app_dir_name=bad_name,
+        project_id="test-project",
+        location="us",
+    )
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_pull(args)
+    assert excinfo.value.code == 1
+    mock_apps_client.export_app.assert_not_called()
+
+
 def test_app_push(mock_apps_client: typing.Any, tmp_path: typing.Any) -> None:
     args = argparse.Namespace(
         app_dir=str(tmp_path),
@@ -557,7 +739,7 @@ def test_app_lint_list_rules(capsys: typing.Any) -> None:
 
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
-    assert "I001" in captured.out
+    assert "I008" in captured.out
     assert "V001" in captured.out
     assert "Available Rules" in captured.out
 
@@ -597,7 +779,9 @@ def test_app_lint_with_errors(capsys: typing.Any, tmp_path: typing.Any) -> None:
     (tmp_path / "agents").mkdir()
     agent_dir = tmp_path / "agents" / "root_agent"
     agent_dir.mkdir()
-    (agent_dir / "instruction.txt").write_text("No XML tags here.")
+    (agent_dir / "instruction.txt").write_text(
+        "Transfer to {@AGENT: nonexistent}."
+    )
     (agent_dir / "root_agent.json").write_text(
         '{"displayName": "root_agent", "tools": ["end_session"]}'
     )
@@ -680,7 +864,7 @@ def test_app_lint_only_filter(capsys: typing.Any, tmp_path: typing.Any) -> None:
 
 def test_app_lint_rule_filter(capsys: typing.Any, tmp_path: typing.Any) -> None:
     _make_lint_app(tmp_path)
-    args = _lint_args(tmp_path, json_output=True, rule="I001")
+    args = _lint_args(tmp_path, json_output=True, rule="I008")
 
     with (
         mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
@@ -694,8 +878,8 @@ def test_app_lint_rule_filter(capsys: typing.Any, tmp_path: typing.Any) -> None:
 
     results = json.loads(captured.out)
     for r in results:
-        assert r["rule_id"] == "I001", (
-            f"Expected only I001 with --rule I001, got {r['rule_id']}"
+        assert r["rule_id"] == "I008", (
+            f"Expected only I008 with --rule I008, got {r['rule_id']}"
         )
 
 
@@ -712,7 +896,7 @@ def test_app_lint_list_rules_with_model(capsys: typing.Any) -> None:
     assert "A007" in captured.out
     assert "Available Rules" in captured.out
     # Agnostic rules should not be listed when model_only=True
-    assert "I001" not in captured.out
+    assert "I008" not in captured.out
 
 
 def test_app_lint_model_only(capsys: typing.Any, tmp_path: typing.Any) -> None:
@@ -738,7 +922,7 @@ def test_app_lint_model_only(capsys: typing.Any, tmp_path: typing.Any) -> None:
     rule_ids = {r["rule_id"] for r in results}
     assert "A007" in rule_ids
     # Model-agnostic rules should be excluded
-    assert "I001" not in rule_ids
+    assert "I008" not in rule_ids
     assert "A001" not in rule_ids
 
 

@@ -68,6 +68,33 @@ print(report)  # Colorized in terminal, styled HTML in Jupyter
 
 In `audio` modality the agent's recordings are attached to the grading call automatically, so pacing and emotion are judged from what the caller heard. `perceivedLatency` is measured from the conversation trace rather than judged, and a turn past `latency_failure_threshold_ms` fails the simulation outright.
 
+## Audio Analysis (optional)
+
+`SimulationEvals` can run comprehensive perceptual and acoustic voice evaluations by setting `audio_analysis=True` (off by default):
+
+```python
+sim = SimulationEvals(
+    app_name=app_name,
+    audio_analysis=True,  # Opt-in audio evaluation
+)
+```
+
+- **Perceptual Audio Checks**: Runs 5 Gemini checks (voice consistency, pauses, looping, cutoff, agent trouble).
+- **Acoustic Consistency**: Measures ITU-R BS.1770 LUFS loudness, articulation rate, and F0 pitch stability.
+- **Voice Drift Detection**: Identifies cross-turn timbre and pitch seams, audio truncation, and loudness steps.
+- **Multi-Voice Caller Pool (`sim_user_voices`)**: Pass `sim_user_voices=["en-US-Journey-D", "es-US-Journey-F", ...]` to `SimulationEvals` or `run_simulations()` to deterministically assign locale-matched (`en-US` / `es-US`) TTS voices across scenarios via CRC32 hashing.
+- **Zero-Caller-Turn Inconclusive Retry**: Sessions where `expected_caller_turns(tc) > 0` but `actual_caller_turns(row) == 0` are automatically classified as inconclusive (`"caller turns never reached agent (0 turns)"`) and retried during `infra_retries` waves.
+
+## Platform Milestone Evaluations (CXAS 2.0)
+
+`SimulationEvals` also supports converting simulation test cases into CXAS 2.0 `scenario.milestones` evaluations and executing them directly on the CX Agent Studio platform:
+
+- **`to_milestone_yaml(test_cases)`** — sanitizes and converts one or more simulation test cases into CXAS 2.0 Milestone YAML (`evals:` format compatible with CES `MilestoneYamlTranslator`).
+- **`push_to_platform(test_cases, conflict_strategy="OVERWRITE")`** — converts and imports simulation test cases onto the platform as Milestone evaluations via `:importEvaluations`.
+- **`run_simulations_on_platform(test_cases, runs=1, timeout_seconds=600, use_tool_fakes=None)`** — imports, triggers `RunEvaluation` (with `EvaluationConfig.tool_call_behaviour` set to `FAKE` when `use_tool_fakes=True`), waits for completion, and returns results formatted as standard simulation result dictionaries.
+- **`requires_local_execution(test_case)`** — checks whether a test case uses local-only features (`modality: "audio"`, `audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, or `barge_in_after_ms`). Tool fakes (`use_tool_fakes`) are supported directly on the platform.
+- **`run_simulations(..., run_on_platform=True, platform_timeout=600, use_tool_fakes=None)`** — automatically partitions `test_cases` into platform-compatible cases (executed via `run_simulations_on_platform`, forwarding `use_tool_fakes`) and local-only cases (executed locally via `simulate_conversation`). Run-level audio settings (`audio_analysis`, `capture_agent_audio`, `background_noise_file`, `burst_noise_files`) automatically force local execution.
+
 ## Reference
 
 ::: cxas_scrapi.evals.simulation_evals.SimulationEvals

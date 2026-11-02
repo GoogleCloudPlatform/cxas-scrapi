@@ -28,19 +28,15 @@ evals_dir: evals/
 # Rule severity overrides (error, warning, info, off)
 rules:
   # Instruction rules
-  # I001: error      # Required XML structure (<role>, <persona>, <taskflow>)
-  # I002: error      # Taskflow must contain <subtask> or <step>
   # I003: error      # Excessive IF/ELSE logic
   # I004: error      # Negative conditions in triggers
   # I005: error      # conditional_logic block
   # I006: error      # Hardcoded data (phone numbers, prices)
   # I007: info       # Instruction too long (>3000 words)
   # I008: error      # Invalid {@AGENT: ...} reference
-  # I009: error      # Invalid {@TOOL: ...} reference
   # I010: error      # Wrong agent reference syntax
   # I011: error      # Wrong tool reference syntax
   # I012: error      # Tool in agent JSON but not referenced in instruction
-  # I013: error      # Tool referenced in instruction but not in agent JSON
 
   # Callback rules
   # C001: error      # Wrong function name for callback type
@@ -50,16 +46,13 @@ rules:
   # C005: error      # Hardcoded phrase list for intent detection
   # C006: error      # Bare except without logging
   # C007: info       # tools.* call naming convention
-  # C008: error      # Missing typing import
 
   # Tool rules
-  # T001: error      # Missing agent_action error return
   # T002: error      # Missing docstring
   # T003: info       # Missing type hints
   # T004: error      # Function name doesn't match tool directory
   # T005: info       # High-cardinality input arguments
   # T006: info       # Excessive return data
-  # T007: error      # Tool name not snake_case
   # T008: error      # Tool displayName not referenced by any agent
 
   # Eval rules

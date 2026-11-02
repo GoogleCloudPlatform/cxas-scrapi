@@ -431,7 +431,11 @@ class Common:
         channel = transport_class.create_channel(
             host=host,
             credentials=self.creds,
-            options=[("grpc.primary_user_agent", self.user_agent)],
+            options=[
+                ("grpc.primary_user_agent", self.user_agent),
+                ("grpc.max_receive_message_length", -1),
+                ("grpc.max_send_message_length", -1),
+            ],
         )
 
         return transport_class(channel=channel)

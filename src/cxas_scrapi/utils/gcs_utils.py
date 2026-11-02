@@ -68,6 +68,7 @@ class GCSUtils(Common):
         gcs_uri: str,
         content: str,
         content_type: str = "text/html; charset=utf-8",
+        cache_control: str | None = None,
     ) -> str:
         """Uploads a string to a GCS URI and returns the mtls URL.
 
@@ -75,6 +76,7 @@ class GCSUtils(Common):
             gcs_uri: The full GCS URI (e.g., gs://bucket/path/to/file).
             content: The string content to upload.
             content_type: The MIME type of the content.
+            cache_control: Optional Cache-Control header value for the blob.
 
         Returns:
             The authenticated URL for the uploaded file.
@@ -85,6 +87,8 @@ class GCSUtils(Common):
         bucket_name, blob_path = self._parse_gcs_uri(gcs_uri)
         bucket = self.client.get_bucket(bucket_name)
         blob = bucket.blob(blob_path)
+        if cache_control is not None:
+            blob.cache_control = cache_control
         blob.upload_from_string(content, content_type=content_type)
 
         return (
@@ -96,11 +100,14 @@ class GCSUtils(Common):
         gcs_uri: str,
         local_path: str,
         content_type: str | None = None,
+        cache_control: str | None = None,
     ) -> str:
         """Uploads a local file to a GCS URI and returns the mtls URL."""
         bucket_name, blob_path = self._parse_gcs_uri(gcs_uri)
         bucket = self.client.get_bucket(bucket_name)
         blob = bucket.blob(blob_path)
+        if cache_control is not None:
+            blob.cache_control = cache_control
         blob.upload_from_filename(local_path, content_type=content_type)
         return (
             f"https://storage.mtls.cloud.google.com/{bucket_name}/{blob_path}"

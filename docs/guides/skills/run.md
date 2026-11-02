@@ -51,19 +51,19 @@ cxas push-eval \
   --app-name "projects/.../apps/<app>" \
   --file evals/goldens/order_lookup.yaml
 
-cxas run --app-name "projects/.../apps/<app>" --wait --filter-auto-metrics
+cxas run --app-name "projects/.../apps/<app>" --eval-type goldens --wait --filter-auto-metrics
 ```
 
-Pushes golden files and waits for results. This is the most comprehensive test but also the slowest.
+Pushes golden files and waits for results. This is the most comprehensive deterministic test.
 
-### 4. Local simulations (AI-driven)
+### 4. Simulations (local or platform milestones)
 
 ```python
 from cxas_scrapi.evals.simulation_evals import SimulationEvals
-# ... runs all simulation YAML files in parallel ...
+# ... runs simulation YAML files locally in parallel or on the platform via run_on_platform=True ...
 ```
 
-Runs simulations using the deployment configured in `gecx-config.json`. The skill uses parallel execution (up to 5 concurrent simulations) to keep runtime reasonable.
+Runs simulations using the deployment configured in `gecx-config.json`. Simulations can run locally in parallel (up to 5 concurrent simulations) or directly on the CES platform as CXAS 2.0 Milestone evaluations (`cxas push-eval --file evals/simulations/ && cxas run --app-name "projects/.../apps/<app>" --eval-type scenarios --wait`, or `cxas evals report --run --platform-sims`).
 
 ---
 

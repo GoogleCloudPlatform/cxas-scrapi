@@ -14,14 +14,39 @@
 
 import asyncio
 import logging
-import random
 import threading
+import time
 import typing
 from typing import Any
 
 from google import genai
+from tenacity import (
+    AsyncRetrying,
+    RetryCallState,
+    Retrying,
+    stop_after_attempt,
+    wait_exponential,
+    wait_random,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _log_before_sleep(retry_state: RetryCallState) -> None:
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    is_quota = exc is not None and (
+        "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
+    )
+    err_msg = (
+        "Quota/Rate Limit Exhausted"
+        if is_quota
+        else f"{type(exc).__name__}: {exc}"
+    )
+    sleep_s = retry_state.next_action.sleep if retry_state.next_action else 0.0
+    logger.warning(
+        f"  Attempt {retry_state.attempt_number} failed: {err_msg} "
+        f"(retrying in {sleep_s:.1f}s)..."
+    )
 
 
 class GeminiGenerate:
@@ -168,15 +193,26 @@ class GeminiGenerate:
         contents = self._build_contents(prompt, audio_path, audio_bytes)
 
         try:
-            response = self.client.models.generate_content(
-                model=target_model, contents=contents, config=config
-            )
-
-            if response_mime_type == "application/json" and response_schema:
-                return response.parsed
-            return response.text
+            for attempt in Retrying(
+                stop=stop_after_attempt(5),
+                wait=wait_exponential(multiplier=10, exp_base=1.5)
+                + wait_random(0, 3),
+                sleep=time.sleep,
+                before_sleep=_log_before_sleep,
+                reraise=True,
+            ):
+                with attempt:
+                    response = self.client.models.generate_content(
+                        model=target_model, contents=contents, config=config
+                    )
+                    if (
+                        response_mime_type == "application/json"
+                        and response_schema
+                    ):
+                        return response.parsed
+                    return response.text
         except Exception:
-            logger.exception("Gemini generation failed")
+            logger.exception("  Gemini generation failed after all retries.")
             return None
 
     def generate_with_parts(
@@ -333,44 +369,38 @@ class GeminiGenerate:
 
         contents = self._build_contents(prompt, audio_path, audio_bytes)
 
-        for attempt in range(max_retries):
-            try:
-                # ACQUIRE SEMAPHORE: Wait if too many requests are running
-                async with self.semaphore:
-                    response = await self.client.aio.models.generate_content(
-                        model=target_model, contents=contents, config=config
-                    )
+        if max_retries <= 0:
+            return None
 
-                if response_mime_type == "application/json" and response_schema:
-                    return response.parsed
-                return response.text
-
-            except Exception as e:
-                is_quota = "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)
-                err_msg = (
-                    "Quota/Rate Limit Exhausted"
-                    if is_quota
-                    else f"{type(e).__name__}: {e}"
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(max_retries),
+                wait=wait_exponential(
+                    multiplier=base_delay_seconds, exp_base=1.5
                 )
-
-                logger.warning(f"  Attempt {attempt + 1} failed: {err_msg}")
-
-                if attempt == max_retries - 1:
-                    logger.exception(
-                        "  ❌ All retry attempts failed. Check GCP quota."
-                    )
-                    return None
-
-            # EXPONENTIAL BACKOFF WITH JITTER
-            sleep_time = (base_delay_seconds * (1.5**attempt)) + random.uniform(
-                0, 3
-            )
-            logger.info(
-                f"    ⏳ Sleeping for {sleep_time:.1f}s before retry..."
-            )
-            await asyncio.sleep(sleep_time)
-
-        return None
+                + wait_random(0, 3),
+                sleep=asyncio.sleep,
+                before_sleep=_log_before_sleep,
+                reraise=True,
+            ):
+                with attempt:
+                    async with self.semaphore:
+                        response = (
+                            await self.client.aio.models.generate_content(
+                                model=target_model,
+                                contents=contents,
+                                config=config,
+                            )
+                        )
+                    if (
+                        response_mime_type == "application/json"
+                        and response_schema
+                    ):
+                        return response.parsed
+                    return response.text
+        except Exception:
+            logger.exception("  ❌ All retry attempts failed. Check GCP quota.")
+            return None
 
     def generate_embeddings(
         self, contents: list[str], model_name: str = "gemini-embedding-001"

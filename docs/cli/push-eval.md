@@ -1,6 +1,6 @@
 # cxas push-eval
 
-`cxas push-eval` reads evaluation definitions from a local YAML file and syncs them to an app in CX Agent Studio — the easiest way to keep your golden evals under version control and deploy them on demand.
+`cxas push-eval` reads evaluation definitions from a local YAML file or directory and syncs them to an app in CX Agent Studio — keeping your golden and milestone scenario evaluations under version control and deploying them on demand.
 
 ## Usage
 
@@ -13,31 +13,83 @@ cxas push-eval --app-name APP --file FILE
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--app-name APP` | Yes | — | Full resource name of the target app (e.g., `projects/{project}/locations/{location}/apps/{app}`). |
-| `--file FILE` | Yes | — | Path to the YAML file containing one or more evaluation definitions. |
+| `--file FILE` | Yes | — | Path to the YAML file or directory containing Golden (`conversations:`), Simulation/Milestone (`evals:`), or exported Scenario Milestone (`scenario.milestones`) definitions. |
 
-## YAML File Format
+## Supported YAML File Formats
 
-The YAML file should contain a list of evaluation objects. Each object is parsed using `EvalUtils.load_golden_evals_from_yaml` and then pushed via `Evaluations.update_evaluation`. A typical file looks like this:
+`cxas push-eval` automatically detects the evaluation format from the YAML structure:
+
+### 1. Golden Evaluations (`conversations:`)
+
+Files with a `conversations:` key (or a single golden `turns:` definition) are parsed using `EvalUtils.load_golden_evals_from_yaml` and synced as deterministic turn-by-turn Golden evaluations:
 
 ```yaml
-- displayName: "Billing Query — Golden"
-  description: "Tests that the agent correctly routes billing questions."
-  conversations:
-    - turns:
-        - userInput: "What is my current balance?"
-          expectedAgentResponse: "I can look up your balance. Could you provide your account number?"
+common_session_parameters:
+  order_12345_status: "shipped"
+
+conversations:
+  - conversation: "Billing Query — Golden"
+    turns:
+      - user: "What is my current balance?"
+        agent: "I can look up your balance. Could you provide your account number?"
 ```
 
-Each evaluation in the file is synced independently. If an evaluation with the same display name already exists, it is updated in place.
+### 2. Simulation & Milestone Evals (`evals:` → CXAS 2.0 Milestone Scenarios)
+
+Files (or directories of files) with an `evals:` key or `steps:` list are sanitized into CXAS 2.0 Platform Milestone YAML via `EvalUtils.convert_sim_evals_to_milestone_yaml` (stripping client-only keys such as `audio_expectations`, `naturalness_metric`, and `barge_in_after_ms`, and hoisting `inject_variables` from later steps into `session_parameters`) and imported onto the platform via `EvalUtils.push_milestone_evals_from_yaml` (`POST /v1beta/{app}:importEvaluations` with `conflictResolutionStrategy: "OVERWRITE"`):
+
+```yaml
+evals:
+  - name: "authenticated_billing_inquiry"
+    tags: ["P0", "billing"]
+    session_parameters:
+      account_id: "9820598207"
+    steps:
+      - goal: "Ask about current account balance after authenticating"
+        success_criteria: "Agent authenticates the caller and provides billing information"
+        response_guide: "Provide account ID 9820598207 when asked."
+        max_turns: 6
+        inject_variables:
+          auth_state: "verified"
+    expectations:
+      - "The agent must verify the caller's identity before providing account details"
+```
+
+### 3. Platform Scenario Milestone Dicts (`scenario.milestones`)
+
+Evaluation dictionaries exported in the platform `scenario.milestones` format are normalized via `Evaluations.eval_dict_to_yaml` and `EvalUtils.sanitize_milestone_eval_dict`, then imported via the CES `:importEvaluations` endpoint:
+
+```yaml
+display_name: "Order Status Milestone Eval"
+tags: ["P0"]
+scenario:
+  session_parameters:
+    order_id: "ORD-12345"
+  milestones:
+    - goal: "Ask about order ORD-12345"
+      successCriteria: "Agent provides shipping status"
+      responseGuide: "Polite customer checking order status"
+      maxTurnCount: 4
+```
+
+Each evaluation is synced independently. Existing evaluations with the same display name are overwritten in place.
 
 ## Examples
 
-**Push all evaluations from a YAML file:**
+**Push golden evaluations from a YAML file:**
 
 ```bash
 cxas push-eval \
   --app-name projects/my-gcp-project/locations/us-central1/apps/abc123 \
   --file evaluations/golden-evals.yaml
+```
+
+**Push simulation evaluations (file or directory) as CXAS 2.0 platform milestone evaluations:**
+
+```bash
+cxas push-eval \
+  --app-name projects/my-gcp-project/locations/us-central1/apps/abc123 \
+  --file evaluations/simulation-evals.yaml
 ```
 
 **Push after pulling a branch to sync evals to a new app:**

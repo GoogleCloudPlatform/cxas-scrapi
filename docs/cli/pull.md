@@ -5,7 +5,7 @@ Use `cxas pull` to download a CX Agent Studio app to your local machine — it's
 ## Usage
 
 ```
-cxas pull <app> [--target-dir DIR] [--version-id VERSION] [--project-id PROJECT] [--location LOCATION] [--overwrite]
+cxas pull <app> [--target-dir DIR] [--app-dir-name NAME] [--version-id VERSION] [--project-id PROJECT] [--location LOCATION] [--overwrite]
 ```
 
 ## Arguments
@@ -19,6 +19,7 @@ cxas pull <app> [--target-dir DIR] [--version-id VERSION] [--project-id PROJECT]
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--target-dir DIR` | No | `.` (current directory) | The local directory to extract the app into. The directory is created if it does not exist. |
+| `--app-dir-name NAME` | No | Exported app folder name | Override the top-level folder name created inside `--target-dir`. Useful when pulling multiple dev or staging apps into a single shared local directory. |
 | `--version-id VERSION` | No | — | Optional. Export a specific app version instead of the live app. Can be a version display name (e.g., `'v1.0'`), a bare version ID (e.g., `'001'`), or a full resource name (`projects/.../locations/.../apps/.../versions/001`). |
 | `--project-id PROJECT` | No* | — | GCP project ID. Required when `app` is a display name rather than a full resource name. |
 | `--location LOCATION` | No* | — | GCP location (e.g., `global`, `us-central1`). Required when `app` is a display name. |
@@ -80,6 +81,17 @@ cxas pull "My Support Agent" \
   --target-dir ./my-agent \
   --project-id my-gcp-project \
   --location us-central1
+```
+
+**Pull into a custom directory name (e.g., sharing one local folder across dev apps):**
+
+```bash
+cxas pull "my-support-agent-dev" \
+  --target-dir ./cxas_app \
+  --app-dir-name support_agent \
+  --project-id my-gcp-project \
+  --location us-central1 \
+  --overwrite
 ```
 
 ## Related Commands

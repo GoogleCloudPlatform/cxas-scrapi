@@ -121,6 +121,54 @@ class AgentToolNotExists(Rule):
         return results
 
 
+_NON_LLM_AGENT_KEYS: frozenset[str] = frozenset(
+    {
+        "guidedAgent",
+        "guided_agent",
+        "remoteDialogflowAgent",
+        "remote_dialogflow_agent",
+    }
+)
+
+
+def _resolve_agent_dir(agents_dir: Path, agent_ref: str) -> Path | None:
+    """Resolve an agent reference to its directory under ``agents/``.
+
+    CES exports may set ``rootAgent`` to the agent's ``displayName`` (which can
+    contain spaces or differ in casing from the sanitized directory name).
+    """
+    direct = agents_dir / agent_ref
+    if direct.is_dir():
+        return direct
+
+    sanitized = agents_dir / agent_ref.replace(" ", "_")
+    if sanitized.is_dir():
+        return sanitized
+
+    if not agents_dir.is_dir():
+        return None
+
+    ref_norm = agent_ref.replace(" ", "_").lower()
+    for subdir in sorted(agents_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+        if subdir.name.replace(" ", "_").lower() == ref_norm:
+            return subdir
+        agent_json = subdir / f"{subdir.name}.json"
+        if agent_json.exists():
+            try:
+                agent_data = json.loads(agent_json.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            if (
+                isinstance(agent_data, dict)
+                and agent_data.get("displayName") == agent_ref
+            ):
+                return subdir
+
+    return None
+
+
 @rule("config")
 class AgentMissingInstruction(Rule):
     id = "A004"
@@ -135,6 +183,13 @@ class AgentMissingInstruction(Rule):
 
         if file_path.name == "app.json":
             return []
+
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict) and (_NON_LLM_AGENT_KEYS & data.keys()):
+                return []
+        except json.JSONDecodeError:
+            pass
 
         agent_dir = file_path.parent
         instruction = agent_dir / "instruction.txt"
@@ -178,11 +233,18 @@ class RootAgentMissingEndSession(Rule):
             return []
 
         root_agent_name = data.get("rootAgent")
-        if not root_agent_name:
+        if not root_agent_name or not isinstance(root_agent_name, str):
             return []
 
-        agent_dir = file_path.parent / "agents" / root_agent_name
-        agent_json = agent_dir / f"{root_agent_name}.json"
+        agent_dir = _resolve_agent_dir(
+            file_path.parent / "agents", root_agent_name
+        )
+        if not agent_dir:
+            return []
+
+        agent_json = agent_dir / f"{agent_dir.name}.json"
+        if not agent_json.exists():
+            agent_json = agent_dir / f"{root_agent_name}.json"
         if not agent_json.exists():
             return []
 
@@ -286,8 +348,10 @@ class AppRootAgentValidation(Rule):
             return results
 
         # 4. Check if rootAgent exists under agents/
-        agent_dir = file_path.parent / "agents" / root_agent_name
-        if not agent_dir.exists() or not agent_dir.is_dir():
+        agent_dir = _resolve_agent_dir(
+            file_path.parent / "agents", root_agent_name
+        )
+        if not agent_dir:
             results.append(
                 self.make_result(
                     file=rel,
@@ -304,18 +368,21 @@ class AppRootAgentValidation(Rule):
             return results
 
         # 5. Check if <rootAgent>.json exists
-        agent_json = agent_dir / f"{root_agent_name}.json"
-        if not agent_json.exists():
+        agent_json = agent_dir / f"{agent_dir.name}.json"
+        if (
+            not agent_json.exists()
+            and not (agent_dir / f"{root_agent_name}.json").exists()
+        ):
             results.append(
                 self.make_result(
                     file=rel,
                     message=(
                         f"Root agent '{root_agent_name}' exists but is "
-                        f"missing required '{root_agent_name}.json' file"
+                        f"missing required '{agent_dir.name}.json' file"
                     ),
                     fix=(
                         f"Create file 'agents/"
-                        f"{root_agent_name}/{root_agent_name}.json'"
+                        f"{agent_dir.name}/{agent_dir.name}.json'"
                     ),
                 )
             )

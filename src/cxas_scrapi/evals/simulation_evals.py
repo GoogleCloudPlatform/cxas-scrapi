@@ -27,21 +27,24 @@ import shutil
 import time
 import typing
 import uuid
-from collections.abc import Callable
+import zlib
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import pandas as pd
 import pydantic
 import yaml
+from google import genai
 from rich.progress import Progress
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.audio_transformer import resolve_noise_config
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import BidiSessionError, Sessions
 from cxas_scrapi.core.tools import Tools
-from cxas_scrapi.core.traces import Traces
+from cxas_scrapi.core.traces import Traces, _parse_pass_fail
 from cxas_scrapi.evals.naturalness import (
     NaturalnessConfig,
     NaturalnessResult,
@@ -66,6 +69,12 @@ from cxas_scrapi.utils.eval_utils import (
 from cxas_scrapi.utils.gemini import GeminiGenerate
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 from cxas_scrapi.utils.tracing import trace_report
+from cxas_scrapi.utils.tracing.audio_analysis import ANALYSIS_REGISTRY
+from cxas_scrapi.utils.tracing.audio_drift import flag_drift
+from cxas_scrapi.utils.tracing.audio_metrics import (
+    measure_call,
+    try_render_join_steps,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -552,6 +561,69 @@ def cleanup_session_dir(func: typing.Any) -> typing.Any:
     return wrapper
 
 
+def _voice_locale(voice_name: str) -> str:
+    """Extracts the BCP-47 locale prefix from a TTS voice name."""
+    parts = voice_name.split("-")
+    if len(parts) >= 2:
+        return f"{parts[0]}-{parts[1]}"
+    return "en-US"
+
+
+def _scenario_locale(session_parameters: Mapping[str, Any] | None) -> str:
+    """Determines the target locale from scenario session_parameters."""
+    if not session_parameters:
+        return "en-US"
+    explicit_locale = str(session_parameters.get("locale") or "").strip()
+    if explicit_locale and "-" in explicit_locale:
+        return explicit_locale
+    user_lang = str(session_parameters.get("user_lang") or "").strip().upper()
+    if user_lang in {"S", "ES"} or user_lang.startswith("ES"):
+        return "es-US"
+    return "en-US"
+
+
+def expected_caller_turns(tc: Mapping[str, Any]) -> int:
+    """Returns the number of expected caller turns/steps in a scenario."""
+    steps = tc.get("steps") or []
+    if isinstance(steps, list) and steps:
+        return len(steps)
+    turns = tc.get("turns") or tc.get("conversation_Turns") or []
+    if isinstance(turns, list) and turns:
+        return len(turns)
+    return 0
+
+
+def actual_caller_turns(row: Mapping[str, Any]) -> int:
+    """Counts actual spoken/text caller turns from a simulation result."""
+    transcript = str(row.get("transcript") or "")
+    if transcript.strip():
+        user_lines = [
+            ln
+            for ln in transcript.splitlines()
+            if ln.strip().startswith("User:")
+            and not ln.strip().startswith("User: event")
+            and ln.strip() != "User:"
+        ]
+        return len(user_lines)
+    detailed_trace = row.get("detailed_trace")
+    if isinstance(detailed_trace, list) and detailed_trace:
+        user_trace = [
+            str(ln)
+            for ln in detailed_trace
+            if str(ln).strip().startswith("User:")
+            and not str(ln).strip().startswith("User: event")
+            and str(ln).strip() != "User:"
+        ]
+        return len(user_trace)
+    turns = row.get("conversation_Turns") or row.get("conversation_turns")
+    if isinstance(turns, list):
+        return len(turns)
+    turn_count = row.get("turns")
+    if isinstance(turn_count, int):
+        return turn_count
+    return 0
+
+
 class SimulationEvals(Apps):
     """Wrapper class to simulate entire multi-turn conversations with a
     CXAS Agent."""
@@ -567,6 +639,8 @@ class SimulationEvals(Apps):
         deployment_id: str | None = None,
         vertex_location: str = "global",
         naturalness: bool | dict[str, Any] | None = None,
+        audio_analysis: bool = False,
+        sim_user_voices: Sequence[str] | None = None,
         **kwargs: typing.Any,
     ) -> None:
         self.expectations_only = expectations_only
@@ -575,6 +649,10 @@ class SimulationEvals(Apps):
         # defers entirely to each test case; True enables it everywhere with
         # defaults; a dict is merged over the test case's own block.
         self.naturalness = naturalness
+        self.audio_analysis = audio_analysis
+        self.sim_user_voices: list[str] = [
+            v.strip() for v in (sim_user_voices or []) if v and v.strip()
+        ]
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
@@ -595,6 +673,409 @@ class SimulationEvals(Apps):
             location=self.vertex_location,
             credentials=self.creds,
         )
+
+    def _voice_config_for(
+        self, test_case: Mapping[str, Any]
+    ) -> dict[str, str] | None:
+        """Deterministically selects a TTS voice_config for a test case."""
+        existing = test_case.get("voice_config")
+        if isinstance(existing, dict) and existing.get("voice_name"):
+            return dict(existing)
+        if not self.sim_user_voices:
+            return None
+        locale = _scenario_locale(test_case.get("session_parameters"))
+        candidates = [
+            v
+            for v in self.sim_user_voices
+            if _voice_locale(v).lower() == locale.lower()
+        ]
+        if not candidates:
+            candidates = list(self.sim_user_voices)
+        name = str(test_case.get("name") or "")
+        idx = zlib.crc32(name.encode("utf-8")) % len(candidates)
+        voice_name = candidates[idx]
+        return {
+            "voice_name": voice_name,
+            "language_code": _voice_locale(voice_name),
+        }
+
+    @staticmethod
+    def requires_local_execution(
+        test_case: dict[str, Any],
+    ) -> tuple[bool, str]:
+        """Checks if a test case requires local execution (cannot be run as a
+        platform Milestone eval).
+
+        Returns:
+            (requires_local: bool, reason: str)
+        """
+        if test_case.get("modality") == "audio":
+            return True, "Audio modality requires local client simulation"
+        if test_case.get("audio_expectations"):
+            return True, "audio_expectations requires local client simulation"
+        if test_case.get("audio_analysis"):
+            return True, "audio_analysis requires local client simulation"
+        if test_case.get("voice_config"):
+            return True, "voice_config requires local client simulation"
+        if test_case.get("naturalness_metric") or test_case.get("naturalness"):
+            return True, "naturalness_metric requires local client evaluation"
+        if test_case.get("barge_in_after_ms") is not None:
+            return True, "barge_in_after_ms requires local audio bidi session"
+        for step in test_case.get("steps", []):
+            if (
+                isinstance(step, dict)
+                and step.get("barge_in_after_ms") is not None
+            ):
+                return (
+                    True,
+                    "Step barge_in_after_ms requires local bidi session",
+                )
+        return False, ""
+
+    def to_milestone_yaml(
+        self, test_cases: list[dict[str, Any]] | dict[str, Any]
+    ) -> str:
+        """Converts simulation test case(s) into CES Platform Milestone YAML."""
+        from cxas_scrapi.utils.eval_utils import (  # noqa: PLC0415
+            EvalUtils,
+        )
+
+        return EvalUtils.convert_sim_evals_to_milestone_yaml(test_cases)
+
+    def push_to_platform(
+        self,
+        test_cases: list[dict[str, Any]] | dict[str, Any],
+        conflict_strategy: str = "OVERWRITE",
+    ) -> Any:
+        """Pushes simulation test case(s) to CES as Milestone evaluations."""
+        from cxas_scrapi.utils.eval_utils import (  # noqa: PLC0415
+            EvalUtils,
+        )
+
+        eval_utils = EvalUtils(app_name=self.app_name, creds=self.creds)
+        return eval_utils.push_milestone_evals_from_yaml(
+            source=test_cases,
+            app_name=self.app_name,
+            conflict_strategy=conflict_strategy,
+        )
+
+    def run_simulations_on_platform(
+        self,
+        test_cases: list[dict[str, Any]],
+        runs: int = 1,
+        timeout_seconds: int = 600,
+        use_tool_fakes: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        """Pushes and runs simulations on the CES platform via RunEvaluation,
+        returning results formatted as simulation result dictionaries.
+        """
+        from cxas_scrapi.core.evaluations import (  # noqa: PLC0415
+            Evaluations,
+        )
+        from cxas_scrapi.utils.eval_utils import (  # noqa: PLC0415
+            EvalUtils,
+        )
+
+        eval_client = Evaluations(app_name=self.app_name, creds=self.creds)
+        eval_utils = EvalUtils(app_name=self.app_name, creds=self.creds)
+
+        import_op = self.push_to_platform(test_cases)
+
+        eval_names: list[str] = []
+        if isinstance(import_op, dict):
+            imported_evals = import_op.get("response", {}).get(
+                "evaluations", []
+            )
+            if isinstance(imported_evals, list):
+                eval_names = [
+                    e["name"]
+                    for e in imported_evals
+                    if isinstance(e, dict) and "name" in e
+                ]
+
+        if not eval_names:
+            eval_names = [
+                tc["name"]
+                for tc in test_cases
+                if isinstance(tc, dict) and "name" in tc
+            ]
+        if not eval_names:
+            return []
+
+        run_eval_kwargs: dict[str, Any] = {
+            "evaluations": eval_names,
+            "app_name": self.app_name,
+            "modality": "text",
+            "run_count": runs,
+        }
+        if use_tool_fakes is not None:
+            run_eval_kwargs["use_tool_fakes"] = use_tool_fakes
+
+        try:
+            run_op = eval_client.run_evaluation(**run_eval_kwargs)
+        except Exception:
+            resolved_names = []
+            evals_map = None
+            for e_name in eval_names:
+                if e_name.startswith("projects/") and "/evaluations/" in e_name:
+                    resolved_names.append(e_name)
+                else:
+                    if evals_map is None:
+                        evals_map = eval_client._get_or_load_evals_map(
+                            self.app_name
+                        )
+                    r_name = evals_map.get("scenarios", {}).get(
+                        e_name
+                    ) or evals_map.get("goldens", {}).get(e_name)
+                    if r_name:
+                        resolved_names.append(r_name)
+            rest_kwargs: dict[str, Any] = {
+                "evaluations": resolved_names or eval_names,
+                "app_name": self.app_name,
+                "modality": "text",
+                "run_count": runs,
+            }
+            if use_tool_fakes is not None:
+                rest_kwargs["use_tool_fakes"] = use_tool_fakes
+            run_op = eval_client.run_evaluation_rest(**rest_kwargs)
+
+        meta_run = getattr(
+            getattr(run_op, "metadata", None), "evaluation_run", None
+        )
+        run_id = (
+            meta_run
+            if isinstance(meta_run, str) and meta_run
+            else getattr(run_op, "name", None)
+        )
+        if not isinstance(run_id, str) or not run_id:
+            run_id = None
+        if not run_id and hasattr(run_op, "operation"):
+            op_name_attr = getattr(run_op.operation, "name", None)
+            if isinstance(op_name_attr, str) and op_name_attr:
+                run_id = op_name_attr
+        if not run_id and isinstance(run_op, dict):
+            run_id = (
+                run_op.get("evaluationRun")
+                or run_op.get("metadata", {}).get("evaluationRun")
+                or run_op.get("response", {}).get("evaluationRun")
+                or run_op.get("name")
+            )
+
+        if (
+            run_id
+            and "/evaluationRuns/" not in run_id
+            and hasattr(run_op, "_refresh")
+        ):
+            from google.cloud.ces_v1beta.types import (  # noqa: PLC0415
+                RunEvaluationOperationMetadata,
+            )
+
+            for _ in range(12):
+                with contextlib.suppress(Exception):
+                    refreshed = run_op._refresh(None)
+                    meta = RunEvaluationOperationMetadata()
+                    meta._pb.ParseFromString(refreshed.metadata.value)
+                    if meta.evaluation_run:
+                        run_id = meta.evaluation_run
+                        break
+                time.sleep(5)
+
+        if (
+            run_id
+            and "/evaluationRuns/" not in run_id
+            and "/operations/" in run_id
+        ):
+            op_name = run_id
+            for _ in range(12):
+                with contextlib.suppress(Exception):
+                    op_state = eval_client.get_operation_rest(op_name)
+                    candidate = op_state.get("metadata", {}).get(
+                        "evaluationRun"
+                    ) or op_state.get("response", {}).get("evaluationRun")
+                    if candidate:
+                        run_id = candidate
+                        break
+                time.sleep(5)
+
+        raw_results = []
+        if run_id and "/evaluationRuns/" in run_id:
+            raw_results = eval_utils.wait_for_run_and_get_results(
+                run_id, timeout_seconds=timeout_seconds
+            )
+
+        df_dict = eval_utils.evals_to_dataframe(results=raw_results)
+        df_summary = df_dict.get("summary", pd.DataFrame())
+        df_metadata = df_dict.get("metadata", pd.DataFrame())
+        df_failures = df_dict.get("failures", pd.DataFrame())
+
+        sim_results: list[dict[str, Any]] = []
+        tc_map = {
+            tc.get("name"): tc for tc in test_cases if isinstance(tc, dict)
+        }
+
+        for tc_name, tc_def in tc_map.items():
+            tc_runs = (
+                df_summary[df_summary["display_name"] == tc_name]
+                if not df_summary.empty
+                else pd.DataFrame()
+            )
+            if tc_runs.empty:
+                sim_results.append(
+                    {
+                        "name": tc_name,
+                        "passed": False,
+                        "status": "FAIL",
+                        "goals": "0/0",
+                        "expectations": "0/0",
+                        "duration_s": 0.0,
+                        "run": 1,
+                        "runs": runs,
+                        "platform": True,
+                        "step_details": [],
+                        "expectation_details": [],
+                        "session_parameters": tc_def.get(
+                            "session_parameters", {}
+                        ),
+                    }
+                )
+                continue
+
+            tc_steps = (
+                tc_def.get("steps", [])
+                if isinstance(tc_def.get("steps"), list)
+                else []
+            )
+
+            for run_idx, (_, row) in enumerate(tc_runs.iterrows()):
+                res_id = row.get("eval_result_id", "")
+                res_meta = (
+                    df_metadata[df_metadata["eval_result_id"] == res_id]
+                    if not df_metadata.empty
+                    else pd.DataFrame()
+                )
+                res_fails = (
+                    df_failures[df_failures["eval_result_id"] == res_id]
+                    if not df_failures.empty
+                    else pd.DataFrame()
+                )
+
+                milestone_rows = (
+                    res_meta[res_meta["type"] == "Milestone"]
+                    if not res_meta.empty and "type" in res_meta.columns
+                    else pd.DataFrame()
+                )
+                exp_rows = (
+                    res_meta[res_meta["type"] == "Custom Expectation"]
+                    if not res_meta.empty and "type" in res_meta.columns
+                    else pd.DataFrame()
+                )
+
+                milestones_met = (
+                    sum(milestone_rows["outcome"] == "PASS")
+                    if not milestone_rows.empty
+                    else 0
+                )
+                total_milestones = len(milestone_rows)
+                exps_met = (
+                    sum(exp_rows["outcome"] == "PASS")
+                    if not exp_rows.empty
+                    else 0
+                )
+                total_exps = len(exp_rows)
+
+                step_details = []
+                for step_idx, (_, m_row) in enumerate(
+                    milestone_rows.iterrows()
+                ):
+                    raw_score = str(m_row.get("score", "")).upper()
+                    if (
+                        raw_score == "COMPLETED"
+                        or m_row.get("outcome") == "PASS"
+                    ):
+                        step_status = "Completed"
+                    elif raw_score == "IN_PROGRESS":
+                        step_status = "In Progress"
+                    else:
+                        step_status = "Not Started"
+                    criteria = str(m_row.get("success_criteria") or "")
+                    if (
+                        not criteria
+                        and step_idx < len(tc_steps)
+                        and isinstance(tc_steps[step_idx], dict)
+                    ):
+                        criteria = str(
+                            tc_steps[step_idx].get("success_criteria")
+                            or tc_steps[step_idx].get("successCriteria")
+                            or ""
+                        )
+                    step_details.append(
+                        {
+                            "goal": str(m_row.get("expected", "")),
+                            "success_criteria": criteria,
+                            "status": step_status,
+                            "justification": str(m_row.get("actual", "")),
+                        }
+                    )
+
+                expectation_details = []
+                for _, e_row in exp_rows.iterrows():
+                    expectation_details.append(
+                        {
+                            "expectation": str(e_row.get("expected", "")),
+                            "status": (
+                                "Met"
+                                if e_row.get("outcome") == "PASS"
+                                else "Not Met"
+                            ),
+                            "justification": str(e_row.get("actual", "")),
+                        }
+                    )
+
+                status_val = str(row.get("evaluation_status", "")).upper()
+                exec_state_val = str(row.get("execution_state", "")).upper()
+                passed = (
+                    status_val == "PASS"
+                    and exec_state_val not in ("ERROR", "ERRORED", "CANCELLED")
+                    and res_fails.empty
+                )
+                conv_name = str(row.get("conversation", ""))
+                sess_id = (
+                    conv_name.rsplit("/", 1)[-1]
+                    if "/" in conv_name
+                    else conv_name
+                )
+
+                result_entry: dict[str, Any] = {
+                    "name": tc_name,
+                    "passed": passed,
+                    "status": "PASS" if passed else "FAIL",
+                    "goals": f"{milestones_met}/{total_milestones}",
+                    "expectations": f"{exps_met}/{total_exps}",
+                    "duration_s": 0.0,
+                    "run": run_idx + 1,
+                    "runs": runs,
+                    "platform": True,
+                    "eval_result_id": res_id,
+                    "evaluation_run": str(
+                        row.get("evaluation_run", "") or run_id or ""
+                    ),
+                    "conversation_name": conv_name,
+                    "session_id": sess_id,
+                    "step_details": step_details,
+                    "expectation_details": expectation_details,
+                    "session_parameters": tc_def.get("session_parameters", {}),
+                }
+                if exec_state_val in (
+                    "ERROR",
+                    "ERRORED",
+                ) or status_val in ("ERROR", "ERRORED"):
+                    result_entry["error"] = str(
+                        row.get("error_message") or "Unknown Agent Exception"
+                    )
+
+                sim_results.append(result_entry)
+
+        return sim_results
 
     def _parse_agent_response(
         self, response: Any
@@ -830,6 +1311,197 @@ class SimulationEvals(Apps):
             latency_ms_by_turn=latencies,
         )
 
+    def _evaluate_audio_analysis(
+        self,
+        eval_conv: LLMUserConversation,
+        detailed_trace: list[str],
+        turn_traces: list[dict[str, Any]],
+        eval_model: str,
+        console_logging: bool,
+        session_id: str = "",
+        modality: str = "text",
+    ) -> None:
+        """Runs comprehensive audio analysis (multimodal audio checks,
+        signal-level acoustic metrics, and voice drift detection).
+
+        Sets `eval_conv.audio_analysis_result`,
+        `eval_conv.audio_metrics_result`, and `eval_conv.audio_drift_result`.
+        """
+        if console_logging:
+            print("\nEvaluating Audio Analysis...")
+
+        # 1. Multimodal Gemini Audio Checks
+        try:
+            traces = Traces(app_name=self.app_name, creds=self.creds)
+            res = traces.analyze_audio(session_id)
+            if isinstance(res, dict) and not res.get("error"):
+                eval_conv.audio_analysis_result = res
+            elif getattr(eval_conv, "agent_audio_paths", None):
+                local_paths_dict = eval_conv.agent_audio_paths
+                sorted_turns = sorted(local_paths_dict.keys())
+                local_wavs = [
+                    local_paths_dict[t]
+                    for t in sorted_turns
+                    if os.path.exists(local_paths_dict[t])
+                ]
+                if local_wavs:
+                    audio_parts = []
+                    for wav_path in local_wavs:
+                        try:
+                            with open(wav_path, "rb") as wf:
+                                audio_bytes = wf.read()
+                            audio_parts.append(
+                                genai.types.Part.from_bytes(
+                                    data=audio_bytes, mime_type="audio/wav"
+                                )
+                            )
+                        except Exception as read_exc:
+                            logger.warning(
+                                "Failed to read local WAV %s: %s",
+                                wav_path,
+                                read_exc,
+                            )
+                    if audio_parts:
+                        checks_result = {}
+                        resolved_registry = getattr(
+                            traces,
+                            "_resolve_audio_analyses",
+                            lambda: ANALYSIS_REGISTRY,
+                        )()
+                        if (
+                            not isinstance(resolved_registry, dict)
+                            or not resolved_registry
+                        ):
+                            resolved_registry = ANALYSIS_REGISTRY
+                        for (
+                            analysis_name,
+                            analysis,
+                        ) in resolved_registry.items():
+                            if (
+                                analysis_name == "no_long_pauses"
+                                or not analysis.filter_files(
+                                    ["agent-turn-1.wav"]
+                                )
+                            ):
+                                checks_result[analysis_name] = {
+                                    "result": "SKIP",
+                                    "justification": (
+                                        "Full session audio not available for "
+                                        "pause analysis."
+                                    ),
+                                    "files_analyzed": [],
+                                }
+                                continue
+                            try:
+                                parts = list(audio_parts)
+                                parts.append(analysis.prompt)
+                                resp = self.genai_client.generate_with_parts(
+                                    parts=parts
+                                )
+                                parsed = _parse_pass_fail(resp)
+                                checks_result[analysis_name] = {
+                                    **parsed,
+                                    "files_analyzed": [
+                                        os.path.basename(p) for p in local_wavs
+                                    ],
+                                }
+                            except Exception as check_exc:
+                                logger.warning(
+                                    "Audio check %s failed: %s",
+                                    analysis_name,
+                                    check_exc,
+                                )
+                                checks_result[analysis_name] = {
+                                    "result": "ERROR",
+                                    "justification": str(check_exc),
+                                    "files_analyzed": [],
+                                }
+                        eval_conv.audio_analysis_result = checks_result
+        except Exception as exc:
+            logger.warning(f"Multimodal audio checks failed: {exc}")
+
+        # 2. Signal-level acoustic metrics and voice drift
+        try:
+            measured = None
+            try:
+                traces = Traces(app_name=self.app_name, creds=self.creds)
+                measured_res = traces.measure_audio(session_id)
+                if isinstance(measured_res, dict) and not measured_res.get(
+                    "error"
+                ):
+                    measured = measured_res
+            except Exception:
+                measured = None
+
+            if not measured and getattr(eval_conv, "agent_audio_paths", None):
+                local_paths_dict = eval_conv.agent_audio_paths
+                sorted_turns = sorted(local_paths_dict.keys())
+                local_wavs = [
+                    local_paths_dict[t]
+                    for t in sorted_turns
+                    if os.path.exists(local_paths_dict[t])
+                ]
+                if local_wavs:
+                    try:
+                        call, turns = measure_call(local_wavs)
+                        call["conversation_id"] = session_id
+                        measured = {"call": call, "turns": turns}
+                    except Exception as meas_exc:
+                        logger.warning(
+                            f"Signal-level measurement failed: {meas_exc}"
+                        )
+
+            if (
+                measured
+                and isinstance(measured, dict)
+                and "call" in measured
+                and "turns" in measured
+            ):
+                eval_conv.audio_metrics_result = {
+                    "call": measured.get("call", {}),
+                    "turns": measured.get("turns", []),
+                }
+
+                agent_text_by_turn: dict[int, list[str]] = {}
+                for t in extract_agent_turns(detailed_trace):
+                    agent_text_by_turn.setdefault(t.turn_index, []).append(
+                        t.text
+                    )
+
+                rows = []
+                for turn_item in measured.get("turns", []):
+                    if turn_item.get("skipped"):
+                        continue
+                    t_idx = int(turn_item.get("turn", 0))
+                    conv_turn = t_idx - 1
+                    rows.append(
+                        {
+                            "turn": t_idx,
+                            "dur_s": turn_item.get("dur_s"),
+                            "lufs": turn_item.get("lufs"),
+                            "f0_median_hz": turn_item.get("f0_median_hz"),
+                            "artic_rate": turn_item.get("artic_rate"),
+                            "n_syl": turn_item.get("n_syl"),
+                            "seams": turn_item.get("seams", []),
+                            "agent_text": " | ".join(
+                                agent_text_by_turn.get(conv_turn, [])
+                            ),
+                            # each part is a separate TTS render: JUMP
+                            "joins": try_render_join_steps(
+                                turn_item.get("path"),
+                                agent_text_by_turn.get(conv_turn, []),
+                            ),
+                        }
+                    )
+                rows.sort(key=lambda r: r["turn"])
+                flagged = flag_drift(rows)
+                eval_conv.audio_drift_result = {
+                    "rows": rows,
+                    "flagged": flagged,
+                }
+        except Exception as exc:
+            logger.warning(f"Audio metrics and drift analysis failed: {exc}")
+
     def _send_request_with_retry(
         self,
         session_id: str,
@@ -840,7 +1512,9 @@ class SimulationEvals(Apps):
         turn_num: int | None = None,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
     ) -> Any:
@@ -857,6 +1531,10 @@ class SimulationEvals(Apps):
             "burst_noise_files": burst_noise_files,
             "use_tool_fakes": use_tool_fakes,
         }
+        if background_noise_file is not None:
+            run_kwargs["bg_noise_snr"] = bg_noise_snr
+        if burst_noise_files is not None:
+            run_kwargs["burst_noise_snr"] = burst_noise_snr
         if voice_config is not None:
             run_kwargs["voice_config"] = voice_config
 
@@ -891,6 +1569,62 @@ class SimulationEvals(Apps):
                 time.sleep(self.retry_delay_base**attempt)
         return response
 
+    @staticmethod
+    def _reconcile_completed_steps(
+        eval_conv: LLMUserConversation,
+        session_ended: bool = False,
+    ) -> None:
+        """Reconciles steps marked ready for completion to COMPLETED status.
+
+        In the simulated user protocol, steps whose criteria are met are primed
+        with 'ready for completion' in their justification while status remains
+        IN_PROGRESS awaiting a transition turn. When a conversation finishes or
+        the session ends, any uncompleted step whose justification indicates
+        it was ready for completion (or whose criteria match session
+        termination) is transitioned to StepStatus.COMPLETED.
+        """
+        harness_error = getattr(eval_conv, "harness_error", None)
+        if harness_error and not type(harness_error).__module__.startswith(
+            "unittest.mock"
+        ):
+            return
+
+        for prog in getattr(eval_conv, "steps_progress", []) or []:
+            if getattr(prog, "status", None) == StepStatus.COMPLETED:
+                continue
+
+            justification = (getattr(prog, "justification", "") or "").lower()
+            step = getattr(prog, "step", None)
+            criteria = (getattr(step, "success_criteria", "") or "").lower()
+
+            if session_ended and (
+                "escalat" in criteria
+                or "transfer" in criteria
+                or "being transferred" in criteria
+            ):
+                prog.status = StepStatus.COMPLETED
+                prog.justification = (
+                    "Agent ended session via escalation/transfer — "
+                    "matches success criteria."
+                )
+            elif "ready for completion" in justification:
+                prog.status = StepStatus.COMPLETED
+                suffix = (
+                    "on session end"
+                    if session_ended
+                    else "on conversation completion"
+                )
+                if "(reconciled" not in justification:
+                    prog.justification = (
+                        f"{prog.justification} "
+                        f"(Reconciled to completed {suffix})."
+                        if prog.justification
+                        else (
+                            f"Goal criteria met "
+                            f"(Reconciled to completed {suffix})."
+                        )
+                    )
+
     def _print_completion_status(self, eval_conv: LLMUserConversation) -> None:
         """Prints the final step progress of the conversation."""
         print("\n--- Conversation Complete ---")
@@ -914,7 +1648,9 @@ class SimulationEvals(Apps):
         modality: str = "text",
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
         initial_utterance: str = _FIRST_UTTERANCE,
@@ -922,6 +1658,7 @@ class SimulationEvals(Apps):
         single_bidi_stream: bool = False,
         max_turns: int | None = None,
         naturalness: bool | dict[str, Any] | None = None,
+        audio_analysis: bool | None = None,
         **kwargs: Any,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
@@ -940,14 +1677,31 @@ class SimulationEvals(Apps):
             naturalness: Overrides the test case's `naturalness_metric`
                 block. `None` (the default) defers to the test case, so
                 simulations that never declare the metric are unaffected.
+            audio_analysis: Run multimodal audio checks, acoustic metrics,
+                and voice drift analysis. Defaults to instance setting.
         """
         sim_user_model = sim_user_model or _DEFAULT_SIM_USER_MODEL
         eval_model = eval_model or _DEFAULT_EVAL_MODEL
         if session_id is None:
             session_id = str(uuid.uuid4())
+        effective_audio_analysis = (
+            audio_analysis
+            if audio_analysis is not None
+            else getattr(self, "audio_analysis", False)
+        )
+        if (
+            effective_audio_analysis
+            and naturalness is None
+            and getattr(self, "naturalness", None) is None
+        ):
+            effective_naturalness = True
+        else:
+            effective_naturalness = (
+                naturalness if naturalness is not None else self.naturalness
+            )
         naturalness_config = parse_naturalness_config(
             test_case,
-            naturalness if naturalness is not None else self.naturalness,
+            effective_naturalness,
         )
         voice_config = voice_config or test_case.get("voice_config")
         eval_conv = LLMUserConversation(
@@ -975,16 +1729,36 @@ class SimulationEvals(Apps):
             single_bidi_stream = True
             skip_playback_wait = False
 
+        resolved_noise = resolve_noise_config(
+            config_or_case=test_case,
+            background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
+            burst_noise_files=burst_noise_files,
+            burst_noise_snr=burst_noise_snr,
+        )
+        effective_bg_file = resolved_noise["background_noise_file"]
+        effective_bg_snr = resolved_noise["bg_noise_snr"]
+        effective_burst_files = resolved_noise["burst_noise_files"]
+        effective_burst_snr = resolved_noise["burst_noise_snr"]
+
         interactive_session = None
         if modality == "audio" and single_bidi_stream:
             client = self.sessions_client
+            create_kwargs: dict[str, Any] = {
+                "session_id": session_id,
+                "capture_agent_audio": capture_agent_audio,
+                "background_noise_file": effective_bg_file,
+                "use_tool_fakes": use_tool_fakes,
+                "skip_playback_wait": skip_playback_wait,
+                "voice_config": voice_config,
+            }
+            if effective_bg_file is not None:
+                create_kwargs["bg_noise_snr"] = effective_bg_snr
+            if effective_burst_files is not None:
+                create_kwargs["burst_noise_files"] = effective_burst_files
+                create_kwargs["burst_noise_snr"] = effective_burst_snr
             interactive_session = client.create_interactive_session(
-                session_id=session_id,
-                capture_agent_audio=capture_agent_audio,
-                background_noise_file=background_noise_file,
-                use_tool_fakes=use_tool_fakes,
-                skip_playback_wait=skip_playback_wait,
-                voice_config=voice_config,
+                **create_kwargs
             )
             interactive_session.start()
 
@@ -1123,8 +1897,10 @@ class SimulationEvals(Apps):
                         console_logging=console_logging,
                         turn_num=current_sim_turn,
                         capture_agent_audio=capture_agent_audio,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
+                        background_noise_file=effective_bg_file,
+                        bg_noise_snr=effective_bg_snr,
+                        burst_noise_files=effective_burst_files,
+                        burst_noise_snr=effective_burst_snr,
                         use_tool_fakes=use_tool_fakes,
                         voice_config=voice_config,
                     )
@@ -1172,20 +1948,12 @@ class SimulationEvals(Apps):
                             "\nSession has been closed by the Agent via "
                             "end_session tool."
                         )
-                    # Mark current step as completed if the session ending
-                    # is a valid success (escalation evals)
-                    for prog in eval_conv.steps_progress:
-                        criteria = prog.step.success_criteria.lower()
-                        if prog.status != StepStatus.COMPLETED and (
-                            "escalat" in criteria
-                            or "transfer" in criteria
-                            or "being transferred" in criteria
-                        ):
-                            prog.status = StepStatus.COMPLETED
-                            prog.justification = (
-                                "Agent ended session via escalation/transfer — "
-                                "matches success criteria."
-                            )
+                    # Mark steps as completed if session ending matches
+                    # criteria (escalation/transfer) or if goal was primed as
+                    # ready for completion.
+                    self._reconcile_completed_steps(
+                        eval_conv, session_ended=True
+                    )
                     break
 
                 # Get the next simulated user utterance based on the agent's
@@ -1200,6 +1968,8 @@ class SimulationEvals(Apps):
                     detailed_trace.append(f"User: {user_utterance}")
 
                 current_sim_turn += 1
+
+            self._reconcile_completed_steps(eval_conv)
 
             if console_logging:
                 self._print_completion_status(eval_conv)
@@ -1220,6 +1990,16 @@ class SimulationEvals(Apps):
                 session_id=session_id,
                 modality=modality,
             )
+            if effective_audio_analysis:
+                self._evaluate_audio_analysis(
+                    eval_conv=eval_conv,
+                    detailed_trace=detailed_trace,
+                    turn_traces=turn_traces,
+                    eval_model=eval_model,
+                    console_logging=console_logging,
+                    session_id=session_id,
+                    modality=modality,
+                )
             eval_conv._session_id = session_id
             eval_conv.session_id = session_id
             eval_conv._detailed_trace = detailed_trace
@@ -1262,7 +2042,9 @@ class SimulationEvals(Apps):
         parallel: int,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
@@ -1276,6 +2058,9 @@ class SimulationEvals(Apps):
         name = tc["name"]
         label = f"{name} (run {run_idx + 1}/{runs})"
         session_id = str(uuid.uuid4())
+        voice_config = self._voice_config_for(tc)
+        if voice_config and not tc.get("voice_config"):
+            tc = {**tc, "voice_config": voice_config}
         try:
             _start = time.time()
 
@@ -1288,12 +2073,16 @@ class SimulationEvals(Apps):
                 modality=modality,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
+                bg_noise_snr=bg_noise_snr,
                 burst_noise_files=burst_noise_files,
+                burst_noise_snr=burst_noise_snr,
                 use_tool_fakes=use_tool_fakes,
                 skip_playback_wait=skip_playback_wait,
                 single_bidi_stream=single_bidi_stream,
             )
             duration_s = round(time.time() - _start, 1)
+
+            self._reconcile_completed_steps(conv)
 
             goals_completed = sum(
                 1
@@ -1396,15 +2185,60 @@ class SimulationEvals(Apps):
                 )
                 result["naturalness_details"] = naturalness_result.model_dump()
 
+            audio_analysis_res = getattr(conv, "audio_analysis_result", None)
+            if audio_analysis_res and not audio_analysis_res.get("error"):
+                result["audio_analysis"] = audio_analysis_res
+
+            audio_metrics_res = getattr(conv, "audio_metrics_result", None)
+            if audio_metrics_res and not audio_metrics_res.get("error"):
+                result["audio_metrics"] = audio_metrics_res
+
+            audio_drift_res = getattr(conv, "audio_drift_result", None)
+            if audio_drift_res and not audio_drift_res.get("error"):
+                result["audio_drift"] = audio_drift_res
+
+            noise_cfg = resolve_noise_config(
+                tc,
+                background_noise_file=background_noise_file,
+                bg_noise_snr=bg_noise_snr,
+                burst_noise_files=burst_noise_files,
+                burst_noise_snr=burst_noise_snr,
+            )
+            if noise_cfg["background_noise_file"]:
+                result["background_noise_file"] = noise_cfg[
+                    "background_noise_file"
+                ]
+                result["bg_noise_snr"] = noise_cfg["bg_noise_snr"]
+                result["bg_noise_level"] = noise_cfg["bg_noise_level"]
+            if noise_cfg["burst_noise_files"]:
+                result["burst_noise_files"] = noise_cfg["burst_noise_files"]
+                result["burst_noise_snr"] = noise_cfg["burst_noise_snr"]
+                result["burst_noise_level"] = noise_cfg["burst_noise_level"]
+
+            if voice_config and isinstance(result, dict):
+                result.setdefault(
+                    "sim_user_voice", voice_config.get("voice_name", "")
+                )
+
             return result
         except Exception as e:
             print(f"  ERROR  {label}: {e}")
-            return {
+            err_result: dict[str, Any] = {
                 "name": name,
                 "run": run_idx + 1,
                 "passed": False,
                 "error": str(e),
+                "session_id": session_id,
+                "session_parameters": tc.get("session_parameters", {}),
+                "goals": f"0/{len(tc.get('steps') or [])}",
+                "expectations": (f"0/{self._declared_expectations_count(tc)}"),
+                "turns": 0,
             }
+            if voice_config:
+                err_result["sim_user_voice"] = voice_config.get(
+                    "voice_name", ""
+                )
+            return err_result
 
     @staticmethod
     def _declared_expectations_count(
@@ -1427,16 +2261,138 @@ class SimulationEvals(Apps):
         return 0
 
     @staticmethod
+    def _transcript_lines(row: dict[str, Any]) -> list[str]:
+        return [
+            line
+            for line in (row.get("transcript") or "").split("\n")
+            if line.startswith(("User:", "Agent:", "Agent Action:"))
+            and line.strip() != "User:"
+        ]
+
+    @staticmethod
+    def _ends_unanswered(row: dict[str, Any]) -> bool:
+        lines = SimulationEvals._transcript_lines(row)
+        return (
+            bool(lines)
+            and lines[-1].startswith("User:")
+            and not lines[-1].startswith("User: event")
+        )
+
+    @staticmethod
+    def _agent_ended_call(turn: dict[str, Any]) -> bool:
+        for message in turn.get("messages") or []:
+            for chunk in message.get("chunks") or []:
+                payload = chunk.get("payload")
+                if isinstance(payload, dict):
+                    if any(
+                        str(k).startswith(("transferTo", "transfer_to"))
+                        for k in payload
+                    ):
+                        return True
+                    if payload.get("action") == "end":
+                        return True
+                    if any(
+                        isinstance(v, dict) and v.get("action") == "end"
+                        for v in payload.values()
+                    ):
+                        return True
+                tc = chunk.get("toolCall") or chunk.get("tool_call") or {}
+                if isinstance(tc, dict):
+                    dname = (
+                        tc.get("displayName") or tc.get("display_name") or ""
+                    )
+                    tool_ref = str(tc.get("tool") or "")
+                    if dname == "end_session" or tool_ref.endswith(
+                        "/end_session"
+                    ):
+                        return True
+        return False
+
+    @staticmethod
+    def _lost_turn(
+        row: dict[str, Any], conv: dict[str, Any] | None
+    ) -> str | None:
+        if not conv or not conv.get("turns"):
+            return None
+        if SimulationEvals._agent_ended_call(conv["turns"][-1]):
+            return None
+        lines = SimulationEvals._transcript_lines(row)
+        sent = [line for line in lines if line.startswith("User:")]
+        spoken = [line for line in sent if not line.startswith("User: event")]
+        input_types = conv.get("inputTypes") or conv.get("input_types") or []
+        if spoken and "INPUT_TYPE_AUDIO" not in input_types:
+            return "caller audio never reached CES"
+        turn_count = int(conv.get("turnCount") or conv.get("turn_count") or 0)
+        if turn_count < len(sent):
+            return "caller's last turn never reached CES"
+        return None
+
+    def _ces_conversation_lookup(
+        self,
+    ) -> Callable[[dict[str, Any]], dict[str, Any] | None]:
+        cache: dict[str, dict[str, Any] | None] = {}
+        history_holder: list[Any] = []
+
+        def lookup(row: dict[str, Any]) -> dict[str, Any] | None:
+            sid = row.get("session_id")
+            if not sid:
+                return None
+            if sid not in cache:
+                try:
+                    if not history_holder:
+                        history_holder.append(
+                            ConversationHistory(
+                                app_name=self.app_name,
+                                creds=self.creds,
+                                transport="rest",
+                            )
+                        )
+                    conv_obj = history_holder[0].get_conversation(sid)
+                    if isinstance(conv_obj, dict):
+                        cache[sid] = conv_obj
+                    elif hasattr(type(conv_obj), "to_dict"):
+                        cache[sid] = type(conv_obj).to_dict(conv_obj)
+                    else:
+                        cache[sid] = None
+                except Exception:  # noqa: BLE001
+                    cache[sid] = None
+            return cache[sid]
+
+        return lookup
+
+    @staticmethod
     def _inconclusive_reason(
-        row: dict[str, Any], declared_by_name: dict[str, int]
+        row: dict[str, Any],
+        declared_by_name: dict[str, int],
+        lookup: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+        expected_turns_by_name: Mapping[str, int] | None = None,
     ) -> str | None:
         if row.get("error"):
             return f"session died: {str(row['error'])[:80]}"
-        name = row.get("name")
+        name = str(row.get("name") or "")
+        expected_turns = (expected_turns_by_name or {}).get(name, 0)
+        has_turn_data = any(
+            k in row
+            for k in (
+                "transcript",
+                "detailed_trace",
+                "conversation_Turns",
+                "conversation_turns",
+                "turns",
+            )
+        )
+        if (
+            expected_turns > 0
+            and (has_turn_data or not row.get("passed"))
+            and actual_caller_turns(row) == 0
+        ):
+            return "caller turns never reached agent (0 turns)"
         if declared_by_name.get(name, 0) > 0 and str(
             row.get("expectations", "")
         ).endswith("/0"):
             return "judge returned no verdicts"
+        if lookup is not None and SimulationEvals._ends_unanswered(row):
+            return SimulationEvals._lost_turn(row, lookup(row))
         return None
 
     def _aggregate_simulation_results(
@@ -1450,7 +2406,9 @@ class SimulationEvals(Apps):
         verbose: bool,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
@@ -1526,19 +2484,23 @@ class SimulationEvals(Apps):
         verbose: bool = False,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         expectations_only: bool | None = None,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
         naturalness: bool | dict[str, Any] | None = None,
-        infra_retries: int = 0,
+        audio_analysis: bool | None = None,
+        infra_retries: int = 2,
         retry_parallel: int | None = None,
         retry_cooldown: float = 60.0,
+        run_on_platform: bool = False,
+        platform_timeout: int = 600,
+        sim_user_voices: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
-        if expectations_only is not None:
-            self.expectations_only = expectations_only
         """Runs multiple simulations, optionally in parallel.
 
         Args:
@@ -1554,13 +2516,134 @@ class SimulationEvals(Apps):
             naturalness: Run-level override for the optional Naturalness
                 Metric. Leave as None to honour each test case's own
                 `naturalness_metric` block.
+            audio_analysis: Run multimodal audio checks, acoustic metrics,
+                and voice drift analysis. Defaults to instance setting.
+            run_on_platform: If True, executes platform-compatible cases via
+                CES Milestone evals.
+            platform_timeout: Max seconds to wait for platform evaluation run.
         """
+        if expectations_only is not None:
+            self.expectations_only = expectations_only
+        if sim_user_voices is not None:
+            self.sim_user_voices = [
+                v.strip() for v in sim_user_voices if v and v.strip()
+            ]
+        if run_on_platform:
+            platform_cases: list[dict[str, Any]] = []
+            local_cases: list[dict[str, Any]] = []
+            effective_naturalness = (
+                naturalness
+                if naturalness is not None
+                else getattr(self, "naturalness", False)
+            )
+            effective_audio_analysis = (
+                audio_analysis
+                if audio_analysis is not None
+                else getattr(self, "audio_analysis", False)
+            )
+            has_audio_capture_or_noise = bool(
+                capture_agent_audio
+                or background_noise_file
+                or burst_noise_files
+            )
+            for tc in test_cases:
+                effective_tc = dict(tc) if isinstance(tc, dict) else {}
+                if (
+                    modality
+                    and modality.lower() != "text"
+                    and "modality" not in effective_tc
+                ):
+                    effective_tc["modality"] = modality
+                if (
+                    effective_audio_analysis or has_audio_capture_or_noise
+                ) and not effective_tc.get("audio_analysis"):
+                    effective_tc["audio_analysis"] = True
+                if effective_naturalness and not effective_tc.get(
+                    "naturalness_metric"
+                ):
+                    effective_tc["naturalness_metric"] = True
+                requires_local, reason = self.requires_local_execution(
+                    effective_tc
+                )
+                if requires_local:
+                    logger.info(
+                        "Test case '%s' routed to local simulation (%s)",
+                        tc.get("name", "unnamed"),
+                        reason,
+                    )
+                    local_cases.append(tc)
+                else:
+                    platform_cases.append(tc)
+
+            results: list[dict[str, Any]] = []
+            if platform_cases:
+                fakes_cases: list[dict[str, Any]] = []
+                non_fakes_cases: list[dict[str, Any]] = []
+                for ptc in platform_cases:
+                    case_fakes = (
+                        ptc.get("use_tool_fakes")
+                        if ptc.get("use_tool_fakes") is not None
+                        else use_tool_fakes
+                    )
+                    if case_fakes:
+                        fakes_cases.append(ptc)
+                    else:
+                        non_fakes_cases.append(ptc)
+
+                if fakes_cases:
+                    results.extend(
+                        self.run_simulations_on_platform(
+                            fakes_cases,
+                            runs=runs,
+                            timeout_seconds=platform_timeout,
+                            use_tool_fakes=True,
+                        )
+                    )
+                if non_fakes_cases:
+                    results.extend(
+                        self.run_simulations_on_platform(
+                            non_fakes_cases,
+                            runs=runs,
+                            timeout_seconds=platform_timeout,
+                        )
+                    )
+            if local_cases:
+                results.extend(
+                    self.run_simulations(
+                        test_cases=local_cases,
+                        runs=runs,
+                        parallel=parallel,
+                        sim_user_model=sim_user_model,
+                        eval_model=eval_model,
+                        modality=modality,
+                        verbose=verbose,
+                        capture_agent_audio=capture_agent_audio,
+                        background_noise_file=background_noise_file,
+                        burst_noise_files=burst_noise_files,
+                        use_tool_fakes=use_tool_fakes,
+                        expectations_only=expectations_only,
+                        skip_playback_wait=skip_playback_wait,
+                        single_bidi_stream=single_bidi_stream,
+                        progress_callback=progress_callback,
+                        naturalness=naturalness,
+                        audio_analysis=audio_analysis,
+                        infra_retries=infra_retries,
+                        retry_parallel=retry_parallel,
+                        retry_cooldown=retry_cooldown,
+                        run_on_platform=False,
+                        sim_user_voices=sim_user_voices,
+                    )
+                )
+            return results
+
         sim_user_model = sim_user_model or _DEFAULT_SIM_USER_MODEL
         eval_model = eval_model or _DEFAULT_EVAL_MODEL
         if naturalness is not None:
             # Persist on the instance so wrappers that reimplement the
             # aggregation loop still see the override.
             self.naturalness = naturalness
+        if audio_analysis is not None:
+            self.audio_analysis = audio_analysis
         jobs = self._prepare_simulation_jobs(test_cases, runs)
         results = self._aggregate_simulation_results(
             jobs,
@@ -1572,7 +2655,9 @@ class SimulationEvals(Apps):
             verbose,
             capture_agent_audio=capture_agent_audio,
             background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
             burst_noise_files=burst_noise_files,
+            burst_noise_snr=burst_noise_snr,
             use_tool_fakes=use_tool_fakes,
             skip_playback_wait=skip_playback_wait,
             single_bidi_stream=single_bidi_stream,
@@ -1584,18 +2669,36 @@ class SimulationEvals(Apps):
             for tc in test_cases
             if isinstance(tc, dict) and tc.get("name")
         }
+        expected_turns_by_name = {
+            tc.get("name", ""): expected_caller_turns(tc)
+            for tc in test_cases
+            if isinstance(tc, dict) and tc.get("name")
+        }
         tc_by_name = {
             tc.get("name", ""): tc
             for tc in test_cases
             if isinstance(tc, dict) and tc.get("name")
         }
 
+        conv_lookup = (
+            self._ces_conversation_lookup()
+            if modality.lower() == "audio"
+            else None
+        )
+
         for attempt in range(1, max(0, infra_retries) + 1):
             bad = [
                 (idx, why)
                 for idx, row in enumerate(results)
                 if isinstance(row, dict)
-                and (why := self._inconclusive_reason(row, declared_by_name))
+                and (
+                    why := self._inconclusive_reason(
+                        row,
+                        declared_by_name,
+                        lookup=conv_lookup,
+                        expected_turns_by_name=expected_turns_by_name,
+                    )
+                )
             ]
             if not bad:
                 break
@@ -1621,7 +2724,9 @@ class SimulationEvals(Apps):
             effective_retry_parallel = max(
                 1,
                 min(
-                    retry_parallel if retry_parallel is not None else parallel,
+                    retry_parallel
+                    if retry_parallel is not None
+                    else max(1, parallel // 2),
                     len(retry_jobs),
                 ),
             )
@@ -1635,7 +2740,9 @@ class SimulationEvals(Apps):
                 verbose,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
+                bg_noise_snr=bg_noise_snr,
                 burst_noise_files=burst_noise_files,
+                burst_noise_snr=burst_noise_snr,
                 use_tool_fakes=use_tool_fakes,
                 skip_playback_wait=skip_playback_wait,
                 single_bidi_stream=single_bidi_stream,
@@ -1664,7 +2771,14 @@ class SimulationEvals(Apps):
             (row, why)
             for row in results
             if isinstance(row, dict)
-            and (why := self._inconclusive_reason(row, declared_by_name))
+            and (
+                why := self._inconclusive_reason(
+                    row,
+                    declared_by_name,
+                    lookup=conv_lookup,
+                    expected_turns_by_name=expected_turns_by_name,
+                )
+            )
         ]
         for row, _ in still:
             if row.get("passed"):
@@ -1906,3 +3020,6 @@ class SimulationEvals(Apps):
                 f.write(yaml_content)
 
         return yaml_content
+
+
+_reconcile_completed_steps = SimulationEvals._reconcile_completed_steps

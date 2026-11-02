@@ -15,23 +15,36 @@
 
 """Utility functions for generating reports."""
 
+import base64
+import concurrent.futures
 import contextlib
+import dataclasses
 import datetime
 import glob
+import io
 import json
+import logging
 import math
 import os
+import pathlib
 import re
+import statistics
 import typing
+import wave
+import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, Protocol
 
 import jinja2
+import numpy as np
 import pandas as pd
 import yaml
 
 from cxas_scrapi.core import conversation_history, tools
+from cxas_scrapi.core.audio_transformer import snr_to_noise_level
+from cxas_scrapi.evals import naturalness
 from cxas_scrapi.evals import runner as evals_runner
+from cxas_scrapi.prompts import naturalness_prompts
 from cxas_scrapi.utils import (
     base_components,
     eval_utils,
@@ -39,6 +52,19 @@ from cxas_scrapi.utils import (
     report_components,
 )
 from cxas_scrapi.utils.latency_parser import LatencyParser
+from cxas_scrapi.utils.tracing import (
+    audio_analysis,
+    audio_drift,
+    audio_metrics,
+    audio_transcription,
+)
+
+try:
+    from pydub import AudioSegment
+except ImportError:  # pragma: no cover
+    AudioSegment = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
 
 _ORIG_OPEN = open
 
@@ -62,6 +88,26 @@ def _fmt_duration(seconds: typing.Any) -> str:
     if seconds >= seconds_per_minute:
         return f"{seconds / seconds_per_minute:.1f}m"
     return f"{seconds:.1f}s"
+
+
+def _join_chunk_text(
+    chunks: Sequence[Mapping[str, Any]] | None,
+) -> str:
+    """Join the text of every chunk in an agent response.
+
+    A single agent turn can be emitted as multiple chunks (e.g. a short
+    filler said before a tool call, then the substantive answer after the
+    tool returns). Rendering only the first chunk makes the turn look
+    truncated even though the platform stored — and the scorer evaluated —
+    the full response. Concatenate all chunk texts so the report matches.
+    """
+    if not chunks:
+        return ""
+    return " ".join(
+        text
+        for c in chunks
+        if isinstance(c, Mapping) and (text := (c.get("text") or "").strip())
+    )
 
 
 def _resolve_tool_name(
@@ -617,9 +663,13 @@ def _get_combined_template_module(
         "sim_wall_clock_s": 0,
         "failure_patterns_html": "",
         "suite_latency_html": "",
+        "suite_pl": None,
+        "suite_audio": None,
+        "suite_audio_html": "",
         "_fmt_duration": lambda s: f"{s:.1f}s",
         "_fmt_ms": _fmt_ms,
         "_pl_status_cls": _pl_status_cls,
+        "json": json,
     }
     if extra_vars:
         default_vars.update(extra_vars)
@@ -646,6 +696,2598 @@ def _render_suite_latency_drawer(suite_pl: dict[str, Any] | None) -> str:
     return str(
         mod.render_suite_latency(suite_pl, trend_chart, _fmt_ms, _pl_status_cls)
     )
+
+
+def _extract_transcript_messages(r: dict[str, Any]) -> list[list[str]]:
+    """Extract normalized [who, text] chat messages from evaluation result."""
+    out: list[list[str]] = []
+
+    # 1. Direct transcript list of pairs or dicts
+    tr = r.get("transcript")
+    if isinstance(tr, list):
+        for item in tr:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                who_raw = str(item[0]).lower().strip()
+                who = (
+                    "caller"
+                    if who_raw in ("caller", "user", "human")
+                    else (
+                        "agent"
+                        if who_raw in ("agent", "bot", "assistant")
+                        else "event"
+                    )
+                )
+                out.append([who, str(item[1])])
+            elif isinstance(item, dict):
+                role = (
+                    str(item.get("role") or item.get("who") or "")
+                    .lower()
+                    .strip()
+                )
+                text = str(
+                    item.get("text")
+                    or item.get("content")
+                    or item.get("message")
+                    or ""
+                )
+                who = (
+                    "caller"
+                    if role in ("caller", "user", "human")
+                    else (
+                        "agent"
+                        if role in ("agent", "bot", "assistant")
+                        else "event"
+                    )
+                )
+                out.append([who, text])
+        if out:
+            return out
+
+    # 2. String transcript
+    if isinstance(tr, str) and tr.strip():
+        for raw_line in tr.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            line_low = line.lower()
+            if line_low.startswith("caller:") or line_low.startswith("user:"):
+                prefix_len = line.index(":") + 1
+                out.append(["caller", line[prefix_len:].strip()])
+            elif line_low.startswith("agent:") or line_low.startswith(
+                "agent text:"
+            ):
+                prefix_len = line.index(":") + 1
+                out.append(["agent", line[prefix_len:].strip()])
+            elif line_low.startswith("event:"):
+                prefix_len = line.index(":") + 1
+                out.append(["event", line[prefix_len:].strip()])
+            else:
+                out.append(["event", line])
+        if out:
+            return out
+
+    # 3. conversation list
+    conv = r.get("conversation")
+    if isinstance(conv, list):
+        for item in conv:
+            if isinstance(item, dict):
+                role = str(item.get("role") or "").lower().strip()
+                text = str(item.get("text") or item.get("content") or "")
+                who = (
+                    "caller"
+                    if role in ("caller", "user", "human")
+                    else (
+                        "agent"
+                        if role in ("agent", "bot", "assistant")
+                        else "event"
+                    )
+                )
+                out.append([who, text])
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                who_raw = str(item[0]).lower().strip()
+                who = (
+                    "caller"
+                    if who_raw in ("caller", "user", "human")
+                    else (
+                        "agent"
+                        if who_raw in ("agent", "bot", "assistant")
+                        else "event"
+                    )
+                )
+                out.append([who, str(item[1])])
+        if out:
+            return out
+
+    # 4. detailed_trace list
+    dt = r.get("detailed_trace")
+    if isinstance(dt, list):
+        for entry in dt:
+            for raw_line in str(entry).splitlines():
+                line = raw_line.strip()
+                if (
+                    not line
+                    or line.startswith("Agent Text (Diag):")
+                    or line.startswith("User Query:")
+                ):
+                    continue
+                if line.startswith("Agent Text:"):
+                    out.append(["agent", line[len("Agent Text:") :].strip()])
+                elif line.startswith("User:"):
+                    out.append(["caller", line[len("User:") :].strip()])
+                elif (
+                    line.startswith("Tool Call")
+                    or line.startswith("Tool Response")
+                    or line.startswith("Callback:")
+                ):
+                    out.append(["event", line])
+        if out:
+            return out
+
+    # 5. turns list
+    turns = r.get("turns")
+    if isinstance(turns, list):
+        for t in turns:
+            if isinstance(t, dict):
+                if t.get("user_query"):
+                    out.append(["caller", str(t["user_query"])])
+                elif t.get("user_text"):
+                    out.append(["caller", str(t["user_text"])])
+                elif t.get("user_input"):
+                    out.append(["caller", str(t["user_input"])])
+                if t.get("agent_response"):
+                    out.append(["agent", str(t["agent_response"])])
+                elif t.get("agent_text"):
+                    out.append(["agent", str(t["agent_text"])])
+                comparisons = t.get("comparisons")
+                if isinstance(comparisons, list):
+                    for c in comparisons:
+                        if isinstance(c, dict):
+                            c_type = c.get("type")
+                            actual = c.get("actual")
+                            if actual and actual != "(missed)":
+                                if c_type == "text":
+                                    out.append(["agent", str(actual)])
+                                elif c_type == "tool_call":
+                                    out.append(
+                                        ["event", f"Tool Call: {actual}"]
+                                    )
+                                elif c_type == "transfer":
+                                    out.append(["event", f"Transfer: {actual}"])
+                parts = t.get("parts")
+                if isinstance(parts, list):
+                    for p in parts:
+                        if isinstance(p, dict):
+                            role = str(p.get("role") or "").lower()
+                            chunks = p.get("chunks") or []
+                            txt = " ".join(
+                                c.get("text", "")
+                                for c in chunks
+                                if isinstance(c, dict)
+                            )
+                            who = (
+                                "caller"
+                                if role in ("caller", "user")
+                                else ("agent" if role == "agent" else "event")
+                            )
+                            if txt:
+                                out.append([who, txt])
+    return out
+
+
+def _collect_spans(node: Any) -> list[dict[str, Any]]:
+    """Recursively collect all span dicts from a trace root or turn node."""
+    collected: list[dict[str, Any]] = []
+    if not isinstance(node, dict):
+        return collected
+    if "name" in node:
+        collected.append(node)
+    for k in ("rootSpan", "root_span", "childSpans", "child_spans", "spans"):
+        val = node.get(k)
+        if isinstance(val, list):
+            for item in val:
+                collected.extend(_collect_spans(item))
+        elif isinstance(val, dict):
+            collected.extend(_collect_spans(val))
+    return collected
+
+
+def _aggregate_suite_audio_analysis(
+    sim_results: Sequence[Mapping[str, Any]] | None = None,
+    golden_results: Sequence[Mapping[str, Any]] | None = None,
+    audio_analysis: bool | None = None,
+) -> dict[str, Any]:
+    """Aggregate suite-level audio, voice quality, and language metrics."""
+    all_runs: list[dict[str, Any]] = []
+    if golden_results:
+        for r in golden_results:
+            d = dict(r)
+            d["_eval_type"] = "golden"
+            all_runs.append(d)
+    if sim_results:
+        for r in sim_results:
+            d = dict(r)
+            d["_eval_type"] = "sim"
+            all_runs.append(d)
+
+    total_runs = len(all_runs)
+    graded_runs_count = 0
+    naturalness_runs_count = 0
+    nat_scores: list[float] = []
+    gpa_scores: list[float] = []
+
+    grade_counts = {"human_like": 0, "transitional": 0, "bot_like": 0}
+    turn_grade_counts = {"Human-like": 0, "Transitional": 0, "Bot-like": 0}
+    total_graded_turns = 0
+
+    turn_factors_meta = [
+        ("emotion", "Emotion & Tone"),
+        ("pacing", "Pacing & Rhythm"),
+        ("grammarStyle", "Spoken Grammar Style"),
+        ("disfluency", "Natural Disfluency"),
+        ("lexicalVariety", "Lexical Variety"),
+        ("concision", "Concision & Spoken Length"),
+        ("spokenNumbers", "Spoken Numbers & Formatting"),
+        ("empathyCalibration", "Empathy Calibration"),
+        ("scriptedness", "Unscripted Delivery"),
+        ("turnTaking", "Turn-Taking & Barge-In"),
+        ("perceivedLatency", "Perceived Latency"),
+    ]
+    turn_factor_scores: dict[str, list[float]] = {
+        k: [] for k, _ in turn_factors_meta
+    }
+
+    conv_factors_meta = [
+        ("personaConsistency", "Persona Consistency"),
+        ("repetitionAvoidance", "Repetition Avoidance"),
+        ("emotionalArcTracking", "Emotional Arc Tracking"),
+        ("conversationalFlow", "Conversational Flow"),
+    ]
+    conv_factor_scores: dict[str, list[float]] = {
+        k: [] for k, _ in conv_factors_meta
+    }
+
+    check_keys = [
+        ("agent_voice_consistency", "Voice Consistency"),
+        ("no_long_pauses", "No Long Pauses (>20s)"),
+        ("agent_having_trouble", "No 'Having Trouble' Fallback"),
+        ("agent_looping", "No Agent Looping"),
+        ("agent_cutoff", "No Abrupt Audio Cutoff"),
+    ]
+    check_stats: dict[str, dict[str, int]] = {
+        k: {"pass": 0, "fail": 0, "skip": 0, "total": 0} for k, _ in check_keys
+    }
+
+    lang_counts: dict[str, int] = {}
+    lang_mismatches: dict[str, int] = {}
+    total_switches = 0
+    adhered_switches = 0
+    mismatch_switches = 0
+
+    wer_vals: list[float] = []
+    high_wer_count = 0
+
+    issues_meta = [
+        ("robotic_delivery", "Robotic / Scripted Delivery", "var(--serious)"),
+        ("language_mismatch", "Language Switch / Mismatch", "var(--critical)"),
+        (
+            "voice_drift",
+            "Voice Drift / Persona Inconsistency",
+            "var(--serious)",
+        ),
+        ("long_pauses", "Long Pauses / Dead Air", "var(--critical)"),
+        ("agent_looping", "Agent Looping / Repetition", "var(--critical)"),
+        ("audio_cutoff", "Abrupt Audio Cutoff / Truncation", "var(--critical)"),
+        (
+            "having_trouble",
+            "Agent Having Trouble / Error Fallback",
+            "var(--critical)",
+        ),
+        ("flat_emotion", "Flat Emotion or Empathy Mismatch", "var(--warn)"),
+        ("unnatural_pacing", "Unnatural Pacing or Rhythm", "var(--warn)"),
+        (
+            "written_grammar",
+            "Written-Style Grammar / Spoken Numbers",
+            "var(--warn)",
+        ),
+        ("overlong_turns", "Overlong / Verbose Spoken Turn", "var(--warn)"),
+        ("turn_taking", "Poor Turn-Taking / Barge-In", "var(--serious)"),
+        ("high_wer", "High Transcription WER (>25%)", "var(--warn)"),
+        ("audio_exp_failed", "Audio Expectation Not Met", "var(--serious)"),
+        (
+            "verdict_barged_missed",
+            "Interrupted Decisive Turn",
+            "var(--critical)",
+        ),
+        (
+            "wall_of_text",
+            "Wall of Text (>12s TTS / >80 words)",
+            "var(--serious)",
+        ),
+        (
+            "markdown_link_tts_leakage",
+            "Markdown Link / URL TTS Leakage",
+            "var(--critical)",
+        ),
+        (
+            "prompt_or_directive_leakage",
+            "Prompt / Directive Leakage",
+            "var(--critical)",
+        ),
+        (
+            "early_ack_redundancy",
+            "Redundant Early Acknowledgment",
+            "var(--warn)",
+        ),
+        (
+            "subagent_transfer_verbalization",
+            "Subagent Transfer Verbalization",
+            "var(--warn)",
+        ),
+        (
+            "subagent_ping_pong_loop",
+            "Subagent Ping-Pong Loop",
+            "var(--critical)",
+        ),
+        (
+            "ignored_user",
+            "Ignored Human Escalation Request",
+            "var(--critical)",
+        ),
+        (
+            "caller_requested_human",
+            "Caller Requested Human Agent",
+            "var(--warn)",
+        ),
+        ("tts_cache_seam", "TTS Cache Vintage Seam", "var(--serious)"),
+        ("loudness_jump", "Loudness Jump (>3.0 dB LUFS)", "var(--serious)"),
+        ("midturn_voice_seam", "Mid-Turn Voice Pitch Seam", "var(--critical)"),
+        ("voice_jump", "Voice Jump at a Render Join", "var(--serious)"),
+        ("audio_truncation", "Audio Playback Truncation", "var(--critical)"),
+    ]
+    issue_counts: dict[str, int] = {k: 0 for k, _, _ in issues_meta}
+    issue_dict: dict[str, tuple[str, str]] = {
+        k: (lbl, col) for k, lbl, col in issues_meta
+    }
+    issue_short_dict: dict[str, str] = {
+        "language_mismatch": "Lang mismatch",
+        "voice_drift": "Voice drift",
+        "long_pauses": "Dead air",
+        "agent_looping": "Looping",
+        "audio_cutoff": "Cutoff",
+        "having_trouble": "Trouble",
+        "flat_emotion": "Flat emotion",
+        "unnatural_pacing": "Pacing",
+        "written_grammar": "Grammar",
+        "overlong_turns": "Verbose",
+        "turn_taking": "Barge-in",
+        "high_wer": "High WER",
+        "audio_exp_failed": "Exp failed",
+        "verdict_barged_missed": "Barged verdict",
+        "wall_of_text": "Wall of text",
+        "markdown_link_tts_leakage": "TTS link leak",
+        "prompt_or_directive_leakage": "Prompt leak",
+        "early_ack_redundancy": "Early ack",
+        "subagent_transfer_verbalization": "Router leak",
+        "subagent_ping_pong_loop": "Ping-pong",
+        "ignored_user": "Ignored user",
+        "caller_requested_human": "Asked human",
+        "tts_cache_seam": "TTS seam",
+        "loudness_jump": "Loudness jump",
+        "midturn_voice_seam": "Voice seam",
+        "voice_jump": "Voice jump",
+        "audio_truncation": "Truncation",
+    }
+
+    suite_barge_turns = 0
+    suite_total_turns = 0
+    suite_total_llm_turns = 0
+    sessions_with_barge_in = 0
+
+    suite_measured_acoustic_runs = 0
+    suite_clean_acoustic_runs = 0
+    suite_seam_runs = 0
+    suite_loud_runs = 0
+    suite_midturn_runs = 0
+    suite_jump_runs = 0
+    suite_jump_turns = 0
+    suite_join_runs = 0
+    suite_trunc_runs = 0
+    suite_lufs_means: list[float] = []
+    suite_rate_means: list[float] = []
+    suite_f0_sds: list[float] = []
+    suite_max_seam_st = 0.0
+
+    run_rows: list[dict[str, Any]] = []
+    eval_run_indices: dict[tuple[str, str], int] = {}
+    spanish_words = {
+        "hola",
+        "gracias",
+        "por",
+        "favor",
+        "español",
+        "necesito",
+        "ayuda",
+        "cuenta",
+        "internet",
+        "servicio",
+        "buenos",
+        "dias",
+        "días",
+        "tardes",
+        "noches",
+    }
+
+    for idx, r in enumerate(all_runs):
+        is_graded = False
+        run_issues: list[str] = []
+
+        nat_details = r.get("naturalness_details")
+        nat_score: float | None = None
+        nat_label: str | None = None
+
+        if isinstance(nat_details, dict):
+            is_graded = True
+            raw_score = nat_details.get("overall_score")
+            if raw_score is not None:
+                with contextlib.suppress(ValueError, TypeError):
+                    nat_score = float(raw_score)
+            nat_label = nat_details.get("overall_label")
+
+            # Collect factor averages if explicitly provided
+            if isinstance(nat_details.get("factor_averages"), dict):
+                for q, s in nat_details["factor_averages"].items():
+                    if s is not None:
+                        try:
+                            s_val = float(s)
+                            if q not in turn_factor_scores:
+                                turn_factor_scores[q] = []
+                            turn_factor_scores[q].append(s_val)
+                        except (ValueError, TypeError):
+                            pass
+
+            for t in nat_details.get("turns", []):
+                t_lbl = t.get("label")
+                if t_lbl in turn_grade_counts:
+                    turn_grade_counts[t_lbl] += 1
+                    total_graded_turns += 1
+                for f in t.get("factors", []):
+                    q = f.get("quality")
+                    s = f.get("score")
+                    if q and s is not None:
+                        try:
+                            s_val = float(s)
+                            if q not in turn_factor_scores:
+                                turn_factor_scores[q] = []
+                            if not nat_details.get("factor_averages"):
+                                turn_factor_scores[q].append(s_val)
+                            if q == "scriptedness" and s_val <= 2:
+                                run_issues.append("robotic_delivery")
+                            elif (
+                                q in ("emotion", "empathyCalibration")
+                                and s_val <= 2
+                            ):
+                                run_issues.append("flat_emotion")
+                            elif q == "pacing" and s_val <= 2:
+                                run_issues.append("unnatural_pacing")
+                            elif (
+                                q in ("grammarStyle", "spokenNumbers")
+                                and s_val <= 2
+                            ):
+                                run_issues.append("written_grammar")
+                            elif q == "concision" and s_val <= 2:
+                                run_issues.append("overlong_turns")
+                            elif (
+                                q in ("turnTaking", "disfluency") and s_val <= 2
+                            ):
+                                run_issues.append("turn_taking")
+                            elif q == "perceivedLatency" and s_val <= 2:
+                                run_issues.append("long_pauses")
+                        except (ValueError, TypeError):
+                            pass
+
+            for f in nat_details.get("conversation_factors", []):
+                q = f.get("quality")
+                s = f.get("score")
+                if q and s is not None:
+                    try:
+                        s_val = float(s)
+                        if q not in conv_factor_scores:
+                            conv_factor_scores[q] = []
+                        conv_factor_scores[q].append(s_val)
+                        if q == "personaConsistency" and s_val <= 2:
+                            run_issues.append("voice_drift")
+                        elif q == "repetitionAvoidance" and s_val <= 2:
+                            run_issues.append("agent_looping")
+                        elif q == "emotionalArcTracking" and s_val <= 2:
+                            run_issues.append("flat_emotion")
+                        elif q == "conversationalFlow" and s_val <= 2:
+                            run_issues.append("turn_taking")
+                    except (ValueError, TypeError):
+                        pass
+
+            for reason in nat_details.get("failure_reasons", []):
+                r_low = reason.lower()
+                if "latency" in r_low or "slow" in r_low:
+                    run_issues.append("long_pauses")
+                if "language" in r_low:
+                    run_issues.append("language_mismatch")
+
+        if nat_score is None and r.get("naturalness"):
+            raw_nat = str(r["naturalness"])
+            m_s = re.search(r"(\d+(\.\d+)?)", raw_nat)
+            if m_s:
+                nat_score = float(m_s.group(1))
+                is_graded = True
+            if not nat_label and r.get("naturalness_label"):
+                nat_label = str(r["naturalness_label"])
+
+        grade_key = "ungraded"
+        grade_label = "Ungraded"
+        if nat_score is not None:
+            nat_scores.append(nat_score)
+            naturalness_runs_count += 1
+            if nat_score >= 4.0 or nat_label == "Human-like":
+                grade_key = "human_like"
+                grade_label = "Human-like"
+                gpa_scores.append(4.0)
+            elif nat_score >= 2.5 or nat_label == "Transitional":
+                grade_key = "transitional"
+                grade_label = "Transitional"
+                gpa_scores.append(3.0 if nat_score >= 3.5 else 2.0)
+            else:
+                grade_key = "bot_like"
+                grade_label = "Bot-like"
+                gpa_scores.append(1.0 if nat_score >= 1.5 else 0.0)
+                run_issues.append("robotic_delivery")
+            grade_counts[grade_key] += 1
+
+        # Language Detection & Language Switch
+        sparams = (
+            r.get("session_parameters", {})
+            if isinstance(r.get("session_parameters"), dict)
+            else {}
+        )
+        vconfig = (
+            r.get("voice_config", {})
+            if isinstance(r.get("voice_config"), dict)
+            else {}
+        )
+        raw_lang = (
+            r.get("language")
+            or r.get("routed_language")
+            or vconfig.get("language_code")
+            or sparams.get("language")
+            or sparams.get("lang")
+            or sparams.get("dfcx_lang")
+            or sparams.get("language_code")
+            or sparams.get("locale")
+            or sparams.get("preferred_language")
+            or sparams.get("target_language")
+            or ""
+        )
+        raw_lang_str = str(raw_lang).strip().lower()
+        if raw_lang_str.startswith("es") or "spanish" in raw_lang_str:
+            routed_lang = "Spanish"
+        elif raw_lang_str.startswith("fr") or "french" in raw_lang_str:
+            routed_lang = "French"
+        elif raw_lang_str.startswith("de") or "german" in raw_lang_str:
+            routed_lang = "German"
+        else:
+            routed_lang = "English"
+
+        text_corpus = " ".join(
+            [
+                str(r.get("name", "")),
+                str(r.get("detailed_trace", "")),
+                str(r.get("transcript", "")),
+                str(r.get("step_details", "")),
+                str(r.get("expectation_details", "")),
+            ]
+        ).lower()
+
+        has_spanish = any(w in text_corpus for w in spanish_words) or any(
+            c in text_corpus for c in "áéíóúñ¿¡"
+        )
+        sw_field = r.get("language_switch")
+        is_lang_switch = bool(
+            sw_field
+            or "language switch" in text_corpus
+            or "switch to spanish" in text_corpus
+            or "switch to english" in text_corpus
+            or "bilingual" in text_corpus
+            or "habla español" in text_corpus
+        )
+
+        is_mismatch = bool(
+            r.get("language_mismatch") is True
+            or (
+                isinstance(sw_field, dict)
+                and (
+                    sw_field.get("adhered") is False
+                    or sw_field.get("mismatch") is True
+                )
+            )
+        )
+
+        for exp in r.get("expectation_details") or []:
+            if isinstance(exp, dict):
+                e_txt = (
+                    str(exp.get("expectation", ""))
+                    + " "
+                    + str(exp.get("justification", ""))
+                ).lower()
+                e_stat = str(exp.get("status", "")).lower()
+                if any(
+                    k in e_txt
+                    for k in (
+                        "language",
+                        "spanish",
+                        "english",
+                        "switch",
+                        "bilingual",
+                        "idioma",
+                    )
+                ) and any(
+                    bad in e_stat for bad in ("not met", "fail", "incomplete")
+                ):
+                    is_mismatch = True
+
+        for step in r.get("step_details") or []:
+            if isinstance(step, dict):
+                s_txt = (
+                    str(step.get("goal", ""))
+                    + " "
+                    + str(step.get("justification", ""))
+                ).lower()
+                s_stat = str(step.get("status", "")).lower()
+                if any(
+                    k in s_txt
+                    for k in (
+                        "language",
+                        "spanish",
+                        "english",
+                        "switch",
+                        "bilingual",
+                    )
+                ) and any(bad in s_stat for bad in ("fail", "incomplete")):
+                    is_mismatch = True
+
+        lang_name = routed_lang
+        if routed_lang == "English" and has_spanish and not is_lang_switch:
+            lang_name = "Spanish"
+
+        lang_counts[lang_name] = lang_counts.get(lang_name, 0) + 1
+        if is_mismatch:
+            lang_mismatches[lang_name] = lang_mismatches.get(lang_name, 0) + 1
+            run_issues.append("language_mismatch")
+
+        if is_lang_switch:
+            total_switches += 1
+            if is_mismatch:
+                mismatch_switches += 1
+            else:
+                adhered_switches += 1
+
+        # Multimodal Audio Checks
+        audio_checks_map = (
+            r.get("audio_analysis", {})
+            if isinstance(r.get("audio_analysis"), dict)
+            else {}
+        )
+        checks_passed = 0
+        checks_total = 0
+        for ck, _ in check_keys:
+            val = audio_checks_map.get(ck)
+            if val is not None:
+                is_graded = True
+                checks_total += 1
+                res = str(
+                    val.get("result", "") if isinstance(val, dict) else val
+                ).upper()
+                if "PASS" in res:
+                    check_stats[ck]["pass"] += 1
+                    checks_passed += 1
+                elif "FAIL" in res:
+                    check_stats[ck]["fail"] += 1
+                    if ck == "agent_voice_consistency":
+                        run_issues.append("voice_drift")
+                    elif ck == "no_long_pauses":
+                        run_issues.append("long_pauses")
+                    elif ck == "agent_having_trouble":
+                        run_issues.append("having_trouble")
+                    elif ck == "agent_looping":
+                        run_issues.append("agent_looping")
+                    elif ck == "agent_cutoff":
+                        run_issues.append("audio_cutoff")
+                else:
+                    check_stats[ck]["skip"] += 1
+                check_stats[ck]["total"] += 1
+
+        if r.get("audio_expectations"):
+            is_graded = True
+        for exp in r.get("expectation_details") or []:
+            if isinstance(exp, dict) and exp.get("requires_audio_paths"):
+                is_graded = True
+                if str(exp.get("status", "")).lower() in ("not met", "fail"):
+                    run_issues.append("audio_exp_failed")
+
+        # WER
+        wer_val = (
+            r.get("wer") or r.get("overall_wer") or r.get("average_turn_wer")
+        )
+        if wer_val is not None:
+            try:
+                w_f = float(wer_val)
+                wer_vals.append(w_f)
+                is_graded = True
+                if w_f > 0.25:
+                    high_wer_count += 1
+                    run_issues.append("high_wer")
+            except (ValueError, TypeError):
+                pass
+
+        # Extract intent
+        val = (
+            r.get("file_name")
+            or r.get("file")
+            or r.get("source_file")
+            or r.get("eval_file")
+            or r.get("intent")
+            or r.get("name")
+        )
+        run_intent = pathlib.Path(str(val)).stem if val else "unknown"
+
+        # Deterministic Phase 1 Extractor Signals
+        run_barge_turns = 0
+        has_barge_in = False
+        has_verdict_barged_missed = False
+        run_max_tts_ms = 0.0
+        run_agent_speech_ms = 0.0
+        agent_utterances: list[str] = []
+        caller_utterances: list[str] = []
+
+        turn_traces = r.get("turn_traces") or []
+        turn_tts_cache_types: list[str] = []
+        for t in turn_traces:
+            if not isinstance(t, dict):
+                continue
+            all_spans = _collect_spans(t)
+
+            turn_cached: bool | None = None
+            for span in all_spans:
+                s_name = str(span.get("name", "")).upper()
+                s_attrs = span.get("attributes") or {}
+                if (
+                    s_name == "TTS"
+                    or "time to first audio (ms)" in s_attrs
+                    or "cache hit" in s_attrs
+                    or "cached" in s_attrs
+                ):
+                    c_hit = s_attrs.get("cache hit")
+                    if c_hit is not None:
+                        turn_cached = bool(c_hit)
+                    elif s_attrs.get("cached") is not None:
+                        turn_cached = bool(s_attrs.get("cached"))
+                    elif span.get("cached") is not None:
+                        turn_cached = bool(span.get("cached"))
+                    elif s_attrs.get("time to first audio (ms)") is not None:
+                        with contextlib.suppress(ValueError, TypeError):
+                            turn_cached = (
+                                float(s_attrs["time to first audio (ms)"])
+                                < 50.0
+                            )
+            if turn_cached is not None:
+                turn_tts_cache_types.append(
+                    "cached" if turn_cached else "fresh"
+                )
+            else:
+                turn_tts_cache_types.append("")
+
+            t_interrupted = bool(
+                t.get("interrupted")
+                or t.get("agent_interrupted")
+                or t.get("vad_barge_in")
+                or t.get("barge_in")
+            )
+            for msg in t.get("messages") or []:
+                if (
+                    isinstance(msg, str)
+                    and "agent speaking was interrupted" in msg.lower()
+                ):
+                    t_interrupted = True
+                    break
+                elif isinstance(msg, dict):
+                    m_text = str(
+                        msg.get("text") or msg.get("message") or ""
+                    ).lower()
+                    if "agent speaking was interrupted" in m_text:
+                        t_interrupted = True
+                        break
+
+            for span in all_spans:
+                s_name = str(span.get("name", "")).lower()
+                s_attrs = span.get("attributes") or {}
+                if (
+                    "interruption" in s_name
+                    or s_attrs.get("barge-in")
+                    or s_attrs.get("barge_in")
+                    or s_attrs.get("interrupted")
+                ):
+                    t_interrupted = True
+                    break
+
+            if t_interrupted:
+                run_barge_turns += 1
+                has_barge_in = True
+                has_decisive_action = bool(
+                    t.get("tool_name")
+                    or t.get("tool_call")
+                    or t.get("verdict_barged_missed")
+                    or any(
+                        "tool" in str(s.get("name", "")).lower()
+                        for s in all_spans
+                    )
+                )
+                if (
+                    has_decisive_action
+                    or t.get("verdict_barged_missed")
+                    or r.get("verdict_barged_missed")
+                ):
+                    has_verdict_barged_missed = True
+
+            # Track TTS duration per turn
+            turn_tts_ms = float(t.get("tts_ms") or 0.0)
+            for span in all_spans:
+                s_name = str(span.get("name", "")).upper()
+                s_attrs = span.get("attributes") or {}
+                dur_ms = None
+                if (
+                    s_name == "TTS"
+                    or "audio duration (ms)" in s_attrs
+                    or "audio_duration_ms" in s_attrs
+                ):
+                    raw_dur_ms = s_attrs.get(
+                        "audio duration (ms)"
+                    ) or s_attrs.get("audio_duration_ms")
+                    if raw_dur_ms is not None:
+                        with contextlib.suppress(ValueError, TypeError):
+                            dur_ms = float(raw_dur_ms)
+                    if dur_ms is None:
+                        dur = span.get("duration", "")
+                        if isinstance(dur, str) and dur.endswith("s"):
+                            with contextlib.suppress(ValueError):
+                                dur_ms = float(dur[:-1]) * 1000.0
+                        elif isinstance(dur, (int, float)):
+                            dur_ms = float(dur) * 1000.0
+                if dur_ms is not None and dur_ms > 0:
+                    turn_tts_ms = max(turn_tts_ms, dur_ms)
+
+            if turn_tts_ms > 0:
+                run_agent_speech_ms += turn_tts_ms
+                run_max_tts_ms = max(run_max_tts_ms, turn_tts_ms)
+                if turn_tts_ms > 12000.0:
+                    run_issues.append("wall_of_text")
+
+            for part in t.get("parts") or []:
+                role = part.get("role")
+                chunks = part.get("chunks") or []
+                text = " ".join(
+                    c.get("text", "") for c in chunks if isinstance(c, dict)
+                )
+                if not text and isinstance(part.get("text"), str):
+                    text = part["text"]
+                if role == "agent" and text:
+                    agent_utterances.append(text)
+                elif role in ("user", "caller") and text:
+                    caller_utterances.append(text)
+
+        if r.get("max_tts_ms"):
+            with contextlib.suppress(ValueError, TypeError):
+                run_max_tts_ms = max(run_max_tts_ms, float(r["max_tts_ms"]))
+        if r.get("agent_speech_ms"):
+            with contextlib.suppress(ValueError, TypeError):
+                run_agent_speech_ms = max(
+                    run_agent_speech_ms, float(r["agent_speech_ms"])
+                )
+        if run_max_tts_ms > 12000.0:
+            run_issues.append("wall_of_text")
+
+        if r.get("interruption_signal") or r.get("barge_in"):
+            has_barge_in = True
+            if run_barge_turns == 0:
+                run_barge_turns = 1
+
+        trace_has_seam = False
+        prev_annotated_type = ""
+        for ctype in turn_tts_cache_types:
+            if ctype:
+                if prev_annotated_type and ctype != prev_annotated_type:
+                    trace_has_seam = True
+                    break
+                prev_annotated_type = ctype
+
+        # PR #506 Barge-In and VAD evaluation fields
+        barge_in_details: list[dict[str, Any]] = []
+        for s_idx, step in enumerate(r.get("step_details") or []):
+            if not isinstance(step, dict):
+                continue
+            s_barge_ms = step.get("barge_in_after_ms")
+            s_interrupted = bool(step.get("agent_interrupted"))
+            s_vad_barge = bool(step.get("vad_barge_in"))
+            s_vad_skip = step.get("vad_skip_reason")
+            s_awareness = bool(step.get("barge_in_awareness_injected"))
+            s_meta = step.get("barge_in_metadata")
+            played_ms = None
+            total_ms = None
+            if s_meta is not None:
+                if isinstance(s_meta, dict):
+                    if s_meta.get("interrupted"):
+                        s_interrupted = True
+                    played_ms = s_meta.get("played_audio_duration_ms")
+                    total_ms = s_meta.get("total_audio_duration_ms")
+                elif hasattr(s_meta, "interrupted"):
+                    if s_meta.interrupted:
+                        s_interrupted = True
+                    played_ms = getattr(
+                        s_meta, "played_audio_duration_ms", None
+                    )
+                    total_ms = getattr(s_meta, "total_audio_duration_ms", None)
+
+            if s_interrupted or s_vad_barge:
+                has_barge_in = True
+                run_barge_turns += 1
+
+            if (
+                s_barge_ms is not None
+                or s_interrupted
+                or s_vad_barge
+                or s_vad_skip
+                or s_awareness
+                or s_meta is not None
+            ):
+                barge_in_details.append(
+                    {
+                        "step": step.get("turn") or f"Step {s_idx + 1}",
+                        "barge_in_after_ms": s_barge_ms,
+                        "agent_interrupted": s_interrupted,
+                        "vad_barge_in": s_vad_barge,
+                        "vad_skip_reason": str(s_vad_skip)
+                        if s_vad_skip
+                        else None,
+                        "barge_in_awareness_injected": s_awareness,
+                        "played_audio_duration_ms": (
+                            round(float(played_ms), 1)
+                            if played_ms is not None
+                            else None
+                        ),
+                        "total_audio_duration_ms": (
+                            round(float(total_ms), 1)
+                            if total_ms is not None
+                            else None
+                        ),
+                    }
+                )
+
+        if r.get("agent_interrupted") or r.get("vad_barge_in"):
+            has_barge_in = True
+            if run_barge_turns == 0:
+                run_barge_turns = 1
+
+        # Acoustic Signal & Voice Drift Metrics
+        a_metrics = r.get("audio_metrics") or r.get("voice_metrics")
+        if not a_metrics:
+            sess_id = r.get("session_id")
+            if sess_id:
+                local_wavs = []
+                agent_paths = r.get("agent_audio_paths")
+                if isinstance(agent_paths, dict):
+                    local_wavs = [
+                        p
+                        for _, p in sorted(agent_paths.items())
+                        if os.path.exists(p)
+                    ]
+                if not local_wavs:
+                    candidates = sorted(
+                        glob.glob(f"/tmp/scrapi_evals/*{sess_id}*/*agent*.wav")
+                        + glob.glob(f".cxas/audio/{sess_id}/*agent*.wav")
+                    )
+                    local_wavs = [p for p in candidates if os.path.exists(p)]
+                if local_wavs:
+                    try:
+                        call, turns = audio_metrics.measure_call(local_wavs)
+                        call["conversation_id"] = sess_id
+                        r["audio_metrics"] = {"call": call, "turns": turns}
+                        r["audio_drift"] = audio_drift.flag_drift(turns)
+                    except Exception:
+                        try:
+                            fallback_turns = []
+                            total_dur = 0.0
+                            for w_idx, wpath in enumerate(local_wavs):
+                                with wave.open(wpath, "rb") as wf:
+                                    nf = wf.getnframes()
+                                    fr = wf.getframerate()
+                                    dur = nf / float(fr) if fr else 0.0
+                                    total_dur += dur
+                                    raw = wf.readframes(nf)
+                                    samp = np.frombuffer(raw, dtype=np.int16)
+                                    rms = (
+                                        float(
+                                            np.sqrt(
+                                                np.mean(
+                                                    samp.astype(np.float64) ** 2
+                                                )
+                                            )
+                                        )
+                                        if len(samp)
+                                        else 0.0
+                                    )
+                                    db = (
+                                        round(20 * math.log10(rms / 32768.0), 1)
+                                        if rms > 0
+                                        else -100.0
+                                    )
+                                    fallback_turns.append(
+                                        {
+                                            "turn_index": w_idx,
+                                            "duration_s": round(dur, 2),
+                                            "lufs": db,
+                                            "flags": [],
+                                        }
+                                    )
+                            if fallback_turns:
+                                call = {
+                                    "conversation_id": sess_id,
+                                    "duration_s": round(total_dur, 2),
+                                    "lufs_mean": round(
+                                        statistics.mean(
+                                            [t["lufs"] for t in fallback_turns]
+                                        ),
+                                        1,
+                                    ),
+                                    "flags": [],
+                                    "drift_reasons": [],
+                                }
+                                r["audio_metrics"] = {
+                                    "call": call,
+                                    "turns": fallback_turns,
+                                }
+                                r["audio_drift"] = {
+                                    "flags": [],
+                                    "drift_reasons": [],
+                                }
+                        except Exception:
+                            pass
+                    if isinstance(r.get("runs"), list):
+                        for sub_r in r["runs"]:
+                            if isinstance(sub_r, dict) and not sub_r.get(
+                                "audio_metrics"
+                            ):
+                                sub_r["audio_metrics"] = r.get("audio_metrics")
+                                sub_r["audio_drift"] = r.get("audio_drift")
+                    a_metrics = r.get("audio_metrics")
+
+        call_metrics: dict[str, Any] = {}
+        turn_metrics_rows: list[dict[str, Any]] = []
+        if isinstance(a_metrics, tuple) and len(a_metrics) == 2:
+            call_metrics = (
+                dict(a_metrics[0]) if isinstance(a_metrics[0], dict) else {}
+            )
+            turn_metrics_rows = (
+                list(a_metrics[1]) if isinstance(a_metrics[1], list) else []
+            )
+        elif isinstance(a_metrics, dict):
+            if "call" in a_metrics and isinstance(a_metrics["call"], dict):
+                call_metrics = dict(a_metrics["call"])
+                turn_metrics_rows = list(a_metrics.get("turns") or [])
+            else:
+                call_metrics = dict(a_metrics)
+                turn_metrics_rows = list(a_metrics.get("turns") or [])
+
+        a_drift = r.get("audio_drift")
+        drift_rows: list[dict[str, Any]] = []
+        if isinstance(a_drift, list):
+            drift_rows = [dict(x) for x in a_drift if isinstance(x, dict)]
+        elif isinstance(a_drift, dict):
+            if "turns" in a_drift and isinstance(a_drift["turns"], list):
+                drift_rows = [
+                    dict(x) for x in a_drift["turns"] if isinstance(x, dict)
+                ]
+            elif "rows" in a_drift and isinstance(a_drift["rows"], list):
+                drift_rows = [
+                    dict(x) for x in a_drift["rows"] if isinstance(x, dict)
+                ]
+            elif "flagged" in a_drift and isinstance(a_drift["flagged"], list):
+                drift_rows = [
+                    dict(x) for x in a_drift["flagged"] if isinstance(x, dict)
+                ]
+
+        run_acoustic_flags: list[str] = []
+        if trace_has_seam:
+            run_acoustic_flags.append("SEAM")
+
+        for f in call_metrics.get("flags") or []:
+            f_str = str(f).upper()
+            if f_str not in run_acoustic_flags:
+                run_acoustic_flags.append(f_str)
+
+        for dr in drift_rows:
+            for f in dr.get("flags") or []:
+                f_str = str(f).upper()
+                if f_str not in run_acoustic_flags:
+                    run_acoustic_flags.append(f_str)
+
+        if "SEAM" in run_acoustic_flags:
+            run_issues.append("tts_cache_seam")
+
+        loud_thresh = getattr(
+            audio_drift,
+            "LOUD_STEP_LUFS",
+            getattr(audio_drift, "DEFAULT_LOUD_DB", 3.0),
+        )
+        has_loud = "LOUD" in run_acoustic_flags
+        if not has_loud:
+            adj_d = call_metrics.get("max_adj_dlufs")
+            if (
+                adj_d is not None
+                and isinstance(adj_d, (int, float))
+                and adj_d > loud_thresh
+            ):
+                has_loud = True
+                run_acoustic_flags.append("LOUD")
+        if has_loud:
+            run_issues.append("loudness_jump")
+
+        seam_mild = getattr(
+            audio_metrics,
+            "SEAM_MILD_ST",
+            getattr(audio_metrics, "SEAM_DRIFT_ST", 7.0),
+        )
+        has_midturn = (
+            "MIDTURN" in run_acoustic_flags
+            or "MIDDRIFT" in run_acoustic_flags
+            or "INTRA_TURN_SPEAKER_CHANGE" in run_acoustic_flags
+            or "INTRA_TURN_VOICE_DRIFT" in run_acoustic_flags
+            or bool(call_metrics.get("seam_speaker_change_turns"))
+            or bool(call_metrics.get("seam_drift_turns"))
+        )
+        if not has_midturn:
+            seam_st = call_metrics.get("max_seam_st")
+            if (
+                seam_st is not None
+                and isinstance(seam_st, (int, float))
+                and seam_st >= seam_mild
+            ):
+                has_midturn = True
+                run_acoustic_flags.append("MIDTURN")
+        if has_midturn:
+            run_issues.append("midturn_voice_seam")
+
+        if "TRUNC" in run_acoustic_flags:
+            run_issues.append("audio_truncation")
+
+        # JUMP: the voice stepped up louder and higher where a turn's next
+        # rendered part started (audio_drift); only turns sent in several
+        # parts are measured, so count the runs that had a join at all.
+        run_jump_turns = sum(
+            1 for dr in drift_rows if "JUMP" in (dr.get("flags") or [])
+        )
+        run_has_joins = any(dr.get("joins") for dr in drift_rows)
+        if run_jump_turns:
+            run_issues.append("voice_jump")
+
+        acoustic_turns: list[dict[str, Any]] = []
+        drift_by_turn: dict[int, dict[str, Any]] = {}
+        for d in drift_rows:
+            t_num = d.get("turn")
+            if t_num is not None:
+                with contextlib.suppress(ValueError, TypeError):
+                    drift_by_turn[int(t_num)] = d
+
+        for tm in turn_metrics_rows:
+            t_num = tm.get("turn", 0)
+            dr = drift_by_turn.get(t_num, {})
+            t_flags = list(dr.get("flags") or [])
+            t_tts = dr.get("tts") or tm.get("tts") or ""
+            acoustic_turns.append(
+                {
+                    "turn": t_num,
+                    "dur_s": (
+                        round(float(tm["dur_s"]), 2)
+                        if tm.get("dur_s") is not None
+                        else None
+                    ),
+                    "lufs": (
+                        round(float(tm["lufs"]), 1)
+                        if tm.get("lufs") is not None
+                        and not math.isnan(tm["lufs"])
+                        else None
+                    ),
+                    "artic_rate": (
+                        round(float(tm["artic_rate"]), 1)
+                        if tm.get("artic_rate") is not None
+                        and not math.isnan(tm["artic_rate"])
+                        else None
+                    ),
+                    "pitch_hz": (
+                        round(float(tm["f0_median_hz"]), 1)
+                        if tm.get("f0_median_hz") is not None
+                        and not math.isnan(tm["f0_median_hz"])
+                        else None
+                    ),
+                    "max_seam_st": (
+                        round(float(tm["max_seam_st"]), 1)
+                        if tm.get("max_seam_st") is not None
+                        else None
+                    ),
+                    "tts": t_tts,
+                    "flags": t_flags,
+                }
+            )
+
+        if not turn_metrics_rows and turn_tts_cache_types:
+            for t_idx, tts_type in enumerate(turn_tts_cache_types, 1):
+                if tts_type:
+                    acoustic_turns.append(
+                        {
+                            "turn": t_idx,
+                            "dur_s": None,
+                            "lufs": None,
+                            "artic_rate": None,
+                            "pitch_hz": None,
+                            "max_seam_st": None,
+                            "tts": tts_type,
+                            "flags": [],
+                        }
+                    )
+
+        drift_reasons: list[str] = []
+        for dr in drift_rows:
+            desc = audio_drift.describe(dr)
+            if desc:
+                drift_reasons.append(f"Turn {dr.get('turn', '?')}: {desc}")
+
+        has_tts_spans = any(bool(x) for x in turn_tts_cache_types)
+        is_measured = bool(
+            call_metrics or drift_rows or turn_metrics_rows or has_tts_spans
+        )
+        if is_measured:
+            is_graded = True
+            suite_measured_acoustic_runs += 1
+            has_acoustic_defect = bool(
+                "tts_cache_seam" in run_issues
+                or "loudness_jump" in run_issues
+                or "midturn_voice_seam" in run_issues
+                or "audio_truncation" in run_issues
+                or "voice_jump" in run_issues
+            )
+            if not has_acoustic_defect:
+                suite_clean_acoustic_runs += 1
+            if "tts_cache_seam" in run_issues:
+                suite_seam_runs += 1
+            if "loudness_jump" in run_issues:
+                suite_loud_runs += 1
+            if "midturn_voice_seam" in run_issues:
+                suite_midturn_runs += 1
+            if "audio_truncation" in run_issues:
+                suite_trunc_runs += 1
+            if run_has_joins:
+                suite_join_runs += 1
+            if run_jump_turns:
+                suite_jump_runs += 1
+                suite_jump_turns += run_jump_turns
+
+            if call_metrics.get("lufs_mean") is not None:
+                suite_lufs_means.append(float(call_metrics["lufs_mean"]))
+            if call_metrics.get("rate_mean") is not None:
+                suite_rate_means.append(float(call_metrics["rate_mean"]))
+            if call_metrics.get("f0_median_sd_st") is not None:
+                suite_f0_sds.append(float(call_metrics["f0_median_sd_st"]))
+            if call_metrics.get("max_seam_st") is not None:
+                suite_max_seam_st = max(
+                    suite_max_seam_st, float(call_metrics["max_seam_st"])
+                )
+
+        acoustic_detail = {
+            "measured": is_measured,
+            "lufs_mean": (
+                round(float(call_metrics["lufs_mean"]), 2)
+                if call_metrics.get("lufs_mean") is not None
+                else None
+            ),
+            "lufs_sd": (
+                round(float(call_metrics["lufs_sd"]), 2)
+                if call_metrics.get("lufs_sd") is not None
+                else None
+            ),
+            "max_adj_dlufs": (
+                round(float(call_metrics["max_adj_dlufs"]), 2)
+                if call_metrics.get("max_adj_dlufs") is not None
+                else None
+            ),
+            "rate_mean": (
+                round(float(call_metrics["rate_mean"]), 2)
+                if call_metrics.get("rate_mean") is not None
+                else None
+            ),
+            "rate_cov_pct": (
+                round(float(call_metrics["rate_cov_pct"]), 1)
+                if call_metrics.get("rate_cov_pct") is not None
+                else None
+            ),
+            "f0_median_sd_st": (
+                round(float(call_metrics["f0_median_sd_st"]), 2)
+                if call_metrics.get("f0_median_sd_st") is not None
+                else None
+            ),
+            "max_seam_st": (
+                round(float(call_metrics["max_seam_st"]), 1)
+                if call_metrics.get("max_seam_st") is not None
+                else None
+            ),
+            "flags": sorted(list(set(run_acoustic_flags))),
+            "turns": acoustic_turns,
+            "drift_reasons": drift_reasons,
+            "barge_in_details": barge_in_details,
+        }
+
+        if r.get("verdict_barged_missed"):
+            has_verdict_barged_missed = True
+
+        suite_barge_turns += run_barge_turns
+        if has_barge_in:
+            sessions_with_barge_in += 1
+            is_graded = True
+
+        if has_verdict_barged_missed:
+            run_issues.append("verdict_barged_missed")
+
+        if not agent_utterances and isinstance(r.get("detailed_trace"), list):
+            for entry in r["detailed_trace"]:
+                s_entry = str(entry)
+                if s_entry.startswith("Agent Text:") or s_entry.startswith(
+                    "Agent:"
+                ):
+                    agent_utterances.append(s_entry.split(":", 1)[1].strip())
+                elif s_entry.startswith("User:") or s_entry.startswith(
+                    "Caller:"
+                ):
+                    caller_utterances.append(s_entry.split(":", 1)[1].strip())
+
+        if not agent_utterances and isinstance(r.get("transcript"), str):
+            for line in r["transcript"].splitlines():
+                if line.startswith("Agent:"):
+                    agent_utterances.append(line.split(":", 1)[1].strip())
+                elif line.startswith("Caller:") or line.startswith("User:"):
+                    caller_utterances.append(line.split(":", 1)[1].strip())
+
+        if not agent_utterances and isinstance(r.get("turns"), list):
+            for t in r["turns"]:
+                if not isinstance(t, dict):
+                    continue
+                user_u = (
+                    t.get("user_input")
+                    or t.get("user_text")
+                    or t.get("user_query")
+                )
+                if user_u:
+                    caller_utterances.append(str(user_u).strip())
+                agent_u = t.get("agent_text") or t.get("agent_response")
+                if agent_u:
+                    agent_utterances.append(str(agent_u).strip())
+                for c in t.get("comparisons") or []:
+                    if (
+                        isinstance(c, dict)
+                        and c.get("type") == "text"
+                        and c.get("actual")
+                        and c.get("actual") != "(missed)"
+                    ):
+                        agent_utterances.append(str(c["actual"]).strip())
+
+        early_ack_count = 0
+        early_ack_regex = re.compile(
+            r"^(sure|certainly|of course|absolutely|i understand|"
+            r"i'd be happy to|i can help with that|no problem)[,.]?",
+            re.IGNORECASE,
+        )
+        subagent_transfer_regex = re.compile(
+            r"\b(transferring to|routing to|calling|handing off to|transfer to)"
+            r"\s+([a-zA-Z0-9_-]+_(agent|subagent|flow)|dialogflow|nga)\b"
+            r"|\b(routing agent|subagent)\b",
+            re.IGNORECASE,
+        )
+        directive_leak_regex = re.compile(
+            r"(<no[ _-]?speech>|<thought>|\[pause\]|<silent>|\[internal\]|"
+            r"\bsystem:\s*|\binstruction:\s*)",
+            re.IGNORECASE,
+        )
+        markdown_link_regex = re.compile(
+            r"\[[^\]]+\]\((https?://[^\)]+|\/[^\)]+)\)|\bhttps?://[^\s<>]+",
+            re.IGNORECASE,
+        )
+
+        for u in agent_utterances:
+            words = u.split()
+            if len(words) > 80:
+                run_issues.append("wall_of_text")
+            if early_ack_regex.match(u.strip()):
+                early_ack_count += 1
+            if subagent_transfer_regex.search(u):
+                run_issues.append("subagent_transfer_verbalization")
+            if directive_leak_regex.search(u):
+                run_issues.append("prompt_or_directive_leakage")
+            if markdown_link_regex.search(u):
+                run_issues.append("markdown_link_tts_leakage")
+
+        if early_ack_count >= 2:
+            run_issues.append("early_ack_redundancy")
+
+        trace_str = (
+            " ".join(str(x) for x in (r.get("detailed_trace") or []))
+            + " "
+            + str(r.get("transcript") or "")
+        )
+        transfer_matches = re.findall(
+            r"\b(?:transfer|routing|handoff)\b", trace_str, re.IGNORECASE
+        )
+        if (
+            len(transfer_matches) >= 3
+            or r.get("subagent_ping_pong_loop")
+            or r.get("transfer_loop_count", 0) >= 2
+        ):
+            run_issues.append("subagent_ping_pong_loop")
+
+        caller_text = " ".join(caller_utterances).lower()
+        human_req_keywords = [
+            "human",
+            "representative",
+            "operator",
+            "speak to someone",
+            "talk to someone",
+            "real person",
+            "customer service rep",
+        ]
+        caller_wants_human = (
+            any(k in caller_text for k in human_req_keywords)
+            or "dtmf: 0" in caller_text
+            or "dtmf 0" in caller_text
+            or bool(r.get("dtmf_zero"))
+        )
+        human_req_count = sum(caller_text.count(k) for k in human_req_keywords)
+        if (
+            "dtmf: 0" in caller_text
+            or "dtmf 0" in caller_text
+            or r.get("dtmf_zero")
+        ):
+            human_req_count += 1
+
+        if caller_wants_human or human_req_count > 0:
+            run_issues.append("caller_requested_human")
+            if human_req_count >= 2:
+                has_human_transfer = any(
+                    k in trace_str.lower()
+                    for k in (
+                        "transfertohuman",
+                        "transfertoagent",
+                        "live_agent",
+                        "escalat",
+                        "human_agent",
+                    )
+                )
+                if not has_human_transfer:
+                    run_issues.append("ignored_user")
+
+        unique_run_issues = sorted(list(set(run_issues)))
+        for iss in unique_run_issues:
+            if iss in issue_counts:
+                issue_counts[iss] += 1
+
+        run_status_label = lang_name
+        if is_lang_switch:
+            run_status_label = (
+                "Switch (Mismatch)" if is_mismatch else "Switch (OK)"
+            )
+        elif is_mismatch:
+            run_status_label = f"{lang_name} (Mismatch)"
+
+        summary_txt = ""
+        if isinstance(nat_details, dict) and nat_details.get("summary"):
+            summary_txt = nat_details["summary"]
+        elif is_mismatch:
+            summary_txt = (
+                "Language switch or language adherence mismatch detected."
+            )
+
+        pl_p50 = None
+        conv_pl = r.get("_conv_latency")
+        if isinstance(conv_pl, dict) and conv_pl.get("p50_ms") is not None:
+            pl_p50 = float(conv_pl["p50_ms"])
+
+        eval_type_str = str(r.get("_eval_type", "sim"))
+        eval_name_str = str(r.get("name", f"eval_{idx}"))
+        eval_key = (eval_type_str, eval_name_str)
+        per_eval_run_idx = eval_run_indices.get(eval_key, 0)
+        eval_run_indices[eval_key] = per_eval_run_idx + 1
+
+        row_id = f"conv-{idx}"
+
+        if isinstance(r.get("turns"), int) and r["turns"] > 0:
+            turns_count = r["turns"]
+        elif isinstance(r.get("turns"), list) and r["turns"]:
+            turns_count = len(r["turns"])
+        elif isinstance(conv_pl, dict) and conv_pl.get("total_turns"):
+            turns_count = int(conv_pl["total_turns"])
+        elif isinstance(r.get("turn_traces"), list) and r["turn_traces"]:
+            turns_count = len(r["turn_traces"])
+        elif isinstance(r.get("conversation"), list) and r["conversation"]:
+            turns_count = len(r["conversation"])
+        elif (
+            isinstance(nat_details, dict)
+            and isinstance(nat_details.get("turns"), list)
+            and nat_details["turns"]
+        ):
+            turns_count = len(nat_details["turns"])
+        elif isinstance(r.get("detailed_trace"), list) and r["detailed_trace"]:
+            agent_l = 0
+            user_l = 0
+            for dt in r["detailed_trace"]:
+                for raw_l in str(dt).splitlines():
+                    ls = raw_l.strip()
+                    if ls.startswith("Agent Text:"):
+                        agent_l += 1
+                    elif ls.startswith("User:"):
+                        user_l += 1
+            turns_count = (
+                agent_l if agent_l > 0 else (user_l if user_l > 0 else 1)
+            )
+        else:
+            turns_count = 1
+
+        if isinstance(r.get("llm_turns"), int) and r["llm_turns"] > 0:
+            llm_turns_count = r["llm_turns"]
+        elif isinstance(r.get("llm_calls"), int) and r["llm_calls"] > 0:
+            llm_turns_count = r["llm_calls"]
+        elif (
+            isinstance(conv_pl, dict)
+            and isinstance(conv_pl.get("lat_llm_calls"), list)
+            and conv_pl["lat_llm_calls"]
+        ):
+            llm_turns_count = len(conv_pl["lat_llm_calls"])
+        elif isinstance(r.get("turn_traces"), list) and r["turn_traces"]:
+            llm_span_count = 0
+
+            def _walk_spans(node: Any) -> None:
+                nonlocal llm_span_count
+                if isinstance(node, dict):
+                    nm = str(node.get("name", "")).strip().upper()
+                    if (
+                        nm == "LLM"
+                        or nm.startswith("LLM:")
+                        or nm.startswith("LLM ")
+                    ):
+                        llm_span_count += 1
+                    for ck in ("childSpans", "child_spans", "spans"):
+                        if isinstance(node.get(ck), list):
+                            _walk_spans(node[ck])
+                    root = node.get("rootSpan") or node.get("root_span")
+                    if isinstance(root, dict):
+                        _walk_spans(root)
+                elif isinstance(node, list):
+                    for item in node:
+                        _walk_spans(item)
+
+            _walk_spans(r["turn_traces"])
+            llm_turns_count = (
+                llm_span_count if llm_span_count > 0 else turns_count
+            )
+        elif isinstance(r.get("detailed_trace"), list) and r["detailed_trace"]:
+            dt_llm = 0
+            for dt in r["detailed_trace"]:
+                for raw_l in str(dt).splitlines():
+                    ls = raw_l.strip()
+                    if ls.startswith("Agent Text:") or ls.startswith(
+                        "Tool Call:"
+                    ):
+                        dt_llm += 1
+            llm_turns_count = dt_llm if dt_llm > 0 else turns_count
+        else:
+            llm_turns_count = turns_count
+
+        dur_val = (
+            r.get("duration_s")
+            or r.get("duration")
+            or r.get("duration_seconds")
+        )
+        dur_s = None
+        if dur_val is not None:
+            with contextlib.suppress(ValueError, TypeError):
+                dur_s = float(dur_val)
+
+        pl_max = None
+        if isinstance(conv_pl, dict) and conv_pl.get("max_ms"):
+            with contextlib.suppress(ValueError, TypeError):
+                pl_max = float(conv_pl["max_ms"])
+
+        wer_rounded = None
+        if wer_val is not None:
+            with contextlib.suppress(ValueError, TypeError):
+                wer_rounded = round(float(wer_val), 3)
+
+        audio_checks_detail = []
+        for ck, ck_lbl in check_keys:
+            val = audio_checks_map.get(ck)
+            if val is not None:
+                res_str = str(
+                    val.get("result", "") if isinstance(val, dict) else val
+                ).upper()
+                res = (
+                    "PASS"
+                    if "PASS" in res_str
+                    else ("FAIL" if "FAIL" in res_str else "SKIP")
+                )
+                just = ""
+                if isinstance(val, dict):
+                    just = str(
+                        val.get("justification")
+                        or val.get("reason")
+                        or val.get("details")
+                        or ""
+                    )
+                audio_checks_detail.append(
+                    {
+                        "key": ck,
+                        "label": ck_lbl,
+                        "result": res,
+                        "justification": just,
+                    }
+                )
+
+        conv_factors_detail = []
+        cf_lbl_map = dict(conv_factors_meta)
+        if isinstance(nat_details, dict) and isinstance(
+            nat_details.get("conversation_factors"), list
+        ):
+            for cf in nat_details["conversation_factors"]:
+                if isinstance(cf, dict):
+                    q = cf.get("quality", "")
+                    sc = cf.get("score")
+                    sc_f = None
+                    if sc is not None:
+                        with contextlib.suppress(ValueError, TypeError):
+                            sc_f = float(sc)
+                    just = str(
+                        cf.get("justification") or cf.get("reason") or ""
+                    )
+                    conv_factors_detail.append(
+                        {
+                            "key": q,
+                            "label": cf_lbl_map.get(q, q),
+                            "score": sc_f,
+                            "justification": just,
+                        }
+                    )
+
+        turn_naturalness_detail = []
+        if isinstance(nat_details, dict) and isinstance(
+            nat_details.get("turns"), list
+        ):
+            for i, t in enumerate(nat_details["turns"]):
+                if isinstance(t, dict):
+                    t_idx = (
+                        t.get("turn_number")
+                        or t.get("turn_idx")
+                        or t.get("turn")
+                        or (i + 1)
+                    )
+                    t_sc = t.get("score")
+                    t_sc_f = None
+                    if t_sc is not None:
+                        with contextlib.suppress(ValueError, TypeError):
+                            t_sc_f = float(t_sc)
+                    t_lbl = str(t.get("label") or "")
+                    t_just = str(
+                        t.get("justification") or t.get("reason") or ""
+                    )
+                    low_f = []
+                    for f in t.get("factors") or []:
+                        if isinstance(f, dict):
+                            fq = f.get("quality")
+                            fs = f.get("score")
+                            if fq and fs is not None:
+                                with contextlib.suppress(ValueError, TypeError):
+                                    if float(fs) <= 2:
+                                        low_f.append(fq)
+                    turn_naturalness_detail.append(
+                        {
+                            "turn_index": t_idx,
+                            "score": t_sc_f,
+                            "label": t_lbl,
+                            "justification": t_just,
+                            "low_factors": low_f,
+                        }
+                    )
+
+        transcript_messages = _extract_transcript_messages(r)
+
+        failure_reasons = []
+        if isinstance(r.get("failure_reasons"), list):
+            failure_reasons = [str(fr) for fr in r["failure_reasons"]]
+        elif isinstance(nat_details, dict) and isinstance(
+            nat_details.get("failure_reasons"), list
+        ):
+            failure_reasons = [str(fr) for fr in nat_details["failure_reasons"]]
+
+        if is_graded:
+            graded_runs_count += 1
+
+        run_rows.append(
+            {
+                "id": row_id,
+                "row_id": row_id,
+                "is_graded": bool(is_graded),
+                "intent": run_intent,
+                "eval_name": eval_name_str,
+                "run_num": r.get("run", 1),
+                "run_idx": per_eval_run_idx,
+                "eval_type": eval_type_str,
+                "session_id": r.get("session_id", ""),
+                "audio_src": (
+                    f"audio/{r['session_id']}/"
+                    + (
+                        "full-session.wav"
+                        if eval_type_str == "golden"
+                        else "full-scenario.wav"
+                    )
+                    if r.get("session_id")
+                    else ""
+                ),
+                "passed": bool(r.get("passed")),
+                "outcome": "passed" if bool(r.get("passed")) else "failed",
+                "grade_key": grade_key,
+                "grade_label": grade_label,
+                "score": nat_score,
+                "language": lang_name,
+                "language_switch": is_lang_switch,
+                "language_mismatch": is_mismatch,
+                "language_status_label": run_status_label,
+                "audio_checks_passed": checks_passed,
+                "audio_checks_total": checks_total,
+                "audio_checks_status": (
+                    "PASS"
+                    if (checks_total and checks_passed == checks_total)
+                    else ("FAIL" if checks_total else "N/A")
+                ),
+                "turns_count": turns_count,
+                "llm_turns_count": llm_turns_count,
+                "acoustic_measured": bool(is_measured),
+                "duration_s": dur_s,
+                "pl_p50_ms": pl_p50,
+                "pl_max_ms": pl_max,
+                "barge_turns": run_barge_turns,
+                "max_tts_ms": (
+                    round(run_max_tts_ms, 1) if run_max_tts_ms else None
+                ),
+                "agent_speech_ms": (
+                    round(run_agent_speech_ms, 1)
+                    if run_agent_speech_ms
+                    else None
+                ),
+                "caller_requested_human": bool(caller_wants_human),
+                "wer": wer_rounded,
+                "issue_keys": unique_run_issues,
+                "issue_labels": [
+                    issue_dict[k][0]
+                    for k in unique_run_issues
+                    if k in issue_dict
+                ],
+                "flag_labels": [
+                    issue_short_dict.get(k, issue_dict[k][0])
+                    for k in unique_run_issues
+                    if k in issue_dict
+                ],
+                "summary_text": summary_txt,
+                "failure_reasons": failure_reasons,
+                "audio_checks_detail": audio_checks_detail,
+                "conv_factors_detail": conv_factors_detail,
+                "turn_naturalness_detail": turn_naturalness_detail,
+                "transcript_messages": transcript_messages,
+                "acoustic_detail": acoustic_detail,
+            }
+        )
+        suite_total_turns += turns_count
+        suite_total_llm_turns += llm_turns_count
+
+    mean_nat = (
+        round(sum(nat_scores) / len(nat_scores), 2) if nat_scores else None
+    )
+    mean_gpa = (
+        round(sum(gpa_scores) / len(gpa_scores), 2) if gpa_scores else None
+    )
+    grade_denom = naturalness_runs_count or graded_runs_count
+
+    grade_bands = [
+        {
+            "key": "human_like",
+            "label": "Human-like (4.0–5.0)",
+            "short": "Human-like",
+            "color": "var(--good)",
+            "count": grade_counts["human_like"],
+            "pct": (
+                round(grade_counts["human_like"] / grade_denom * 100)
+                if grade_denom
+                else 0
+            ),
+        },
+        {
+            "key": "transitional",
+            "label": "Transitional (2.5–3.9)",
+            "short": "Transitional",
+            "color": "var(--warn)",
+            "count": grade_counts["transitional"],
+            "pct": (
+                round(grade_counts["transitional"] / grade_denom * 100)
+                if grade_denom
+                else 0
+            ),
+        },
+        {
+            "key": "bot_like",
+            "label": "Bot-like (1.0–2.4)",
+            "short": "Bot-like",
+            "color": "var(--critical)",
+            "count": grade_counts["bot_like"],
+            "pct": (
+                round(grade_counts["bot_like"] / grade_denom * 100)
+                if grade_denom
+                else 0
+            ),
+        },
+    ]
+
+    turn_factors_list = []
+    for k, lbl in turn_factors_meta:
+        scores = turn_factor_scores.get(k, [])
+        m = round(sum(scores) / len(scores), 2) if scores else None
+        col = (
+            "var(--good)"
+            if (m and m >= 4.0)
+            else ("var(--warn)" if (m and m >= 3.0) else "var(--critical)")
+        )
+        turn_factors_list.append(
+            {
+                "key": k,
+                "label": lbl,
+                "mean_score": m,
+                "pct": round(m / 5.0 * 100) if m is not None else 0,
+                "count": len(scores),
+                "low_count": sum(1 for s in scores if s <= 2),
+                "color": col,
+            }
+        )
+
+    conv_factors_list = []
+    for k, lbl in conv_factors_meta:
+        scores = conv_factor_scores.get(k, [])
+        m = round(sum(scores) / len(scores), 2) if scores else None
+        col = (
+            "var(--good)"
+            if (m and m >= 4.0)
+            else ("var(--warn)" if (m and m >= 3.0) else "var(--critical)")
+        )
+        conv_factors_list.append(
+            {
+                "key": k,
+                "label": lbl,
+                "mean_score": m,
+                "pct": round(m / 5.0 * 100) if m is not None else 0,
+                "count": len(scores),
+                "low_count": sum(1 for s in scores if s <= 2),
+                "color": col,
+            }
+        )
+
+    language_bars = []
+    for l_name, cnt in sorted(lang_counts.items(), key=lambda x: -x[1]):
+        m_cnt = lang_mismatches.get(l_name, 0)
+        language_bars.append(
+            {
+                "key": l_name.lower(),
+                "label": l_name,
+                "count": cnt,
+                "pct": round(cnt / total_runs * 100) if total_runs else 0,
+                "mismatch_count": m_cnt,
+                "color": "var(--critical)" if m_cnt > 0 else "var(--good)",
+            }
+        )
+    if total_switches > 0:
+        language_bars.append(
+            {
+                "key": "language_switch",
+                "label": "Language Switch",
+                "count": total_switches,
+                "pct": (
+                    round(total_switches / total_runs * 100)
+                    if total_runs
+                    else 0
+                ),
+                "mismatch_count": mismatch_switches,
+                "color": "var(--critical)"
+                if mismatch_switches > 0
+                else "var(--good)",
+            }
+        )
+
+    audio_checks_list = []
+    for ck, lbl in check_keys:
+        st = check_stats[ck]
+        c_tot = st["total"]
+        c_pass = st["pass"]
+        c_fail = st["fail"]
+        p_pct = round(c_pass / c_tot * 100) if c_tot else 0
+        audio_checks_list.append(
+            {
+                "key": ck,
+                "label": lbl,
+                "pass_count": c_pass,
+                "fail_count": c_fail,
+                "total_count": c_tot,
+                "pct": p_pct,
+                "color": "var(--critical)" if c_fail > 0 else "var(--good)",
+            }
+        )
+
+    issue_bars = []
+    for k, cnt in sorted(issue_counts.items(), key=lambda x: -x[1]):
+        if cnt > 0:
+            lbl, col = issue_dict[k]
+            issue_bars.append(
+                {
+                    "key": k,
+                    "label": lbl,
+                    "count": cnt,
+                    "pct": round(
+                        cnt / (graded_runs_count or total_runs or 1) * 100
+                    ),
+                    "color": col,
+                }
+            )
+
+    intents_count: dict[str, int] = {}
+    for r_row in run_rows:
+        it = r_row.get("intent", "unknown")
+        intents_count[it] = intents_count.get(it, 0) + 1
+    intents_list = [
+        {
+            "key": k,
+            "label": (
+                k.replace("_", " ").replace("-", " ").strip().capitalize()
+                if k != "unknown"
+                else "Unknown"
+            ),
+            "count": c,
+        }
+        for k, c in sorted(intents_count.items(), key=lambda x: -x[1])
+    ]
+    barge_in_rate = round(suite_barge_turns / max(1, suite_total_turns), 3)
+
+    mean_score_str = f"{mean_nat:.2f}" if mean_nat is not None else "—"
+    gpa_str = f"{mean_gpa:.2f}" if mean_gpa is not None else "—"
+    gpa_meta = (
+        f"{graded_runs_count} of {total_runs} runs graded &middot; "
+        f"Mean Naturalness {mean_score_str}/5.0 &middot; GPA {gpa_str} / 4"
+    )
+
+    audio_check_tips = _get_audio_analysis_tooltips()
+    turn_tips, conv_tips, grade_tips = _parse_naturalness_prompt_tooltips()
+    wer_tip = _get_wer_tooltip()
+    acoustic_tips = _get_acoustic_metrics_tooltips()
+    issue_tips = _get_issue_tooltips(
+        audio_check_tips, turn_tips, conv_tips, wer_tip, acoustic_tips
+    )
+
+    acoustic_consistency_pct = (
+        round(suite_clean_acoustic_runs / suite_measured_acoustic_runs * 100)
+        if suite_measured_acoustic_runs
+        else 100
+    )
+    acoustic_summary = {
+        "measured_runs": suite_measured_acoustic_runs,
+        "clean_runs": suite_clean_acoustic_runs,
+        "seam_runs": suite_seam_runs,
+        "loud_runs": suite_loud_runs,
+        "midturn_runs": suite_midturn_runs,
+        "trunc_runs": suite_trunc_runs,
+        "jump_runs": suite_jump_runs,
+        "jump_turns": suite_jump_turns,
+        "join_runs": suite_join_runs,
+        "jump_free_pct": (
+            round((1 - suite_jump_runs / suite_join_runs) * 100)
+            if suite_join_runs
+            else None
+        ),
+        "consistency_pct": acoustic_consistency_pct,
+        "mean_lufs": (
+            round(sum(suite_lufs_means) / len(suite_lufs_means), 2)
+            if suite_lufs_means
+            else None
+        ),
+        "mean_artic_rate": (
+            round(sum(suite_rate_means) / len(suite_rate_means), 2)
+            if suite_rate_means
+            else None
+        ),
+        "mean_pitch_sd_st": (
+            round(sum(suite_f0_sds) / len(suite_f0_sds), 2)
+            if suite_f0_sds
+            else None
+        ),
+        "max_seam_st": round(suite_max_seam_st, 1),
+    }
+
+    checks_pass_runs = sum(
+        1 for r_row in run_rows if r_row.get("audio_checks_status") == "PASS"
+    )
+    checks_total_runs = sum(
+        1
+        for r_row in run_rows
+        if r_row.get("audio_checks_status") in ("PASS", "FAIL")
+    )
+    checks_pass_pct = (
+        round(100 * checks_pass_runs / checks_total_runs)
+        if checks_total_runs
+        else None
+    )
+
+    mismatch_runs = sum(
+        1 for r_row in run_rows if r_row.get("language_mismatch") is True
+    )
+    lang_matched_runs = total_runs - mismatch_runs
+    lang_adherence_pct = (
+        round(100 * lang_matched_runs / total_runs) if total_runs else None
+    )
+
+    flagged_runs = sum(
+        1 for r_row in run_rows if len(r_row.get("issue_keys", [])) > 0
+    )
+    clean_issue_runs = total_runs - flagged_runs
+    clean_issue_pct = (
+        round(100 * clean_issue_runs / total_runs) if total_runs else None
+    )
+
+    avg_llm_turns = (
+        round(suite_total_llm_turns / total_runs, 1) if total_runs else 0.0
+    )
+    avg_conv_turns = (
+        round(suite_total_turns / total_runs, 1) if total_runs else 0.0
+    )
+
+    overview_metrics = {
+        "checks_pass_runs": checks_pass_runs,
+        "checks_total_runs": checks_total_runs,
+        "checks_pass_pct": checks_pass_pct,
+        "lang_matched_runs": lang_matched_runs,
+        "lang_mismatch_runs": mismatch_runs,
+        "lang_adherence_pct": lang_adherence_pct,
+        "flagged_runs": flagged_runs,
+        "clean_issue_runs": clean_issue_runs,
+        "clean_issue_pct": clean_issue_pct,
+        "total_llm_turns": suite_total_llm_turns,
+        "avg_llm_turns": avg_llm_turns,
+        "total_conv_turns": suite_total_turns,
+        "avg_conv_turns": avg_conv_turns,
+    }
+
+    for b in grade_bands:
+        b["tip"] = grade_tips.get(b["key"], "")
+    for chk in audio_checks_list:
+        chk["tip"] = audio_check_tips.get(chk["key"], "")
+    for cf in conv_factors_list:
+        cf["tip"] = conv_tips.get(cf["key"], "")
+    for tf in turn_factors_list:
+        tf["tip"] = turn_tips.get(tf["key"], "")
+    for ib in issue_bars:
+        ib["tip"] = issue_tips.get(ib["key"], "")
+
+    tip_grade_dist = (
+        "Distribution of overall conversation naturalness grades across"
+        " evaluated runs. Graded on a 1.0–5.0 scale by Gemini multimodal"
+        " audio/transcript evaluation and mapped to a 4.0 GPA scale (Human-like"
+        " = 4.0, Transitional = 2.0–3.0, Bot-like = 0.0–1.0)."
+    )
+    tip_gpa_sub = (
+        "Mean Naturalness is the average 1.0–5.0 overall_score across graded"
+        " runs. GPA maps each run to a 4.0 scale: ≥4.0 (Human-like) = 4.0,"
+        " 3.5–3.9 = 3.0, 2.5–3.4 (Transitional) = 2.0, 1.5–2.4 = 1.0, <1.5 ="
+        " 0.0."
+    )
+    tip_audio_checks_head = (
+        "Pass rates for multimodal Gemini audio checks (inspecting WAV"
+        " recordings for voice consistency, >20s silence, looping, cutoff, and"
+        " error fallbacks) alongside whole-conversation coherence factors"
+        " (1–5 scale)."
+    )
+    tip_lang_head = (
+        "Compares the routed/configured session language against the language"
+        " spoken by the agent, and tracks whether mid-call caller language"
+        " switches (e.g. English → Spanish) were adhered to without mismatch."
+    )
+    tip_ux_head = (
+        "Ranked frequency of spoken UX defects across all runs, combining low"
+        " naturalness factor scores (≤2/5), failed multimodal audio checks,"
+        " language switch mismatches, slow perceived latency (>2,500 ms), and"
+        " high ASR Word Error Rate (>25%). Click any bar to filter affected"
+        " runs."
+    )
+    tip_turn_head = (
+        "Mean score (1.0 = bot-like, 5.0 = human-like) for each of the 11"
+        " per-turn vocal and linguistic dimensions evaluated across all graded"
+        " agent turns. Flags turns scoring ≤2/5."
+    )
+    tip_conv_head = (
+        "Whole-call coherence ratings (1–5 scale), multimodal WAV recording"
+        " checks (PASS/FAIL), and user speech transcription Word Error Rate"
+        " (WER)."
+    )
+    tip_th_grade = (
+        "Mapped from 1.0–5.0 overall naturalness score: Human-like (≥4.0),"
+        " Transitional (2.5–3.9), or Bot-like (<2.5)."
+    )
+    tip_th_score = (
+        "Overall naturalness score on a 1.0–5.0 scale evaluated across vocal"
+        " and linguistic factors."
+    )
+    tip_th_lang = (
+        "Configured or routed language code vs agent spoken language. Flags"
+        " language switch adherence or mismatches."
+    )
+    tip_th_checks = (
+        "Status of multimodal checks inspecting audio recordings for voice"
+        " drift, silence >20s, loops, cutoff, or error fallbacks."
+    )
+    tip_th_pl = (
+        "Median turn perceived latency (p50 ms) measured from end of caller"
+        " speech to start of agent audio."
+    )
+    tip_th_issues = (
+        "Audio and conversational quality issues flagged across factors,"
+        " checks, language adherence, and latency."
+    )
+
+    tooltips = {
+        "tip_grade_dist": tip_grade_dist,
+        "tip_gpa_sub": tip_gpa_sub,
+        "tip_audio_checks_head": tip_audio_checks_head,
+        "tip_lang_head": tip_lang_head,
+        "tip_ux_head": tip_ux_head,
+        "tip_turn_head": tip_turn_head,
+        "tip_conv_head": tip_conv_head,
+        "tip_th_grade": tip_th_grade,
+        "tip_th_score": tip_th_score,
+        "tip_th_lang": tip_th_lang,
+        "tip_th_checks": tip_th_checks,
+        "tip_th_pl": tip_th_pl,
+        "tip_th_issues": tip_th_issues,
+        "wer_tip": wer_tip,
+        "issue_tips": issue_tips,
+        "grade_tips": grade_tips,
+        "turn_tips": turn_tips,
+        "conv_tips": conv_tips,
+        "audio_check_tips": audio_check_tips,
+        "acoustic_tips": acoustic_tips,
+        "acoustic_consistency": acoustic_tips.get("acoustic_consistency", ""),
+        "voice_jump": acoustic_tips.get("voice_jump", ""),
+    }
+
+    conv_data_json = json.dumps(
+        {
+            "run_rows": run_rows,
+            "issue_bars": issue_bars,
+            "acoustic_summary": acoustic_summary,
+            "tooltips": tooltips,
+        }
+    ).replace("</", "<\\/")
+
+    if audio_analysis is False:
+        has_audio_analysis = False
+    elif audio_analysis is True:
+        has_audio_analysis = True
+    else:
+        has_audio_analysis = bool(
+            graded_runs_count > 0
+            or total_switches > 0
+            or mismatch_runs > 0
+            or any(
+                r.get("modality") == "audio"
+                or r.get("routed_language")
+                or r.get("language")
+                or r.get("audio_analysis")
+                or r.get("audio_metrics")
+                or r.get("voice_metrics")
+                or r.get("audio_drift")
+                or r.get("naturalness_details")
+                or r.get("naturalness")
+                or r.get("wer") is not None
+                for r in all_runs
+            )
+        )
+
+    return {
+        "total_runs": total_runs,
+        "has_audio_analysis": has_audio_analysis,
+        "graded_runs": graded_runs_count,
+        "naturalness_runs": naturalness_runs_count,
+        "mean_score": mean_nat,
+        "gpa_4": mean_gpa,
+        "gpa_meta": gpa_meta,
+        "grade_bands": grade_bands,
+        "turn_grade_counts": turn_grade_counts,
+        "total_graded_turns": total_graded_turns,
+        "turn_factors": turn_factors_list,
+        "conv_factors": conv_factors_list,
+        "language_bars": language_bars,
+        "audio_checks": audio_checks_list,
+        "acoustic_summary": acoustic_summary,
+        "issue_bars": issue_bars,
+        "intents_list": intents_list,
+        "barge_stats": {
+            "barge_turns": suite_barge_turns,
+            "sessions_with_barge_in": sessions_with_barge_in,
+            "barge_in_rate": barge_in_rate,
+        },
+        "wer_summary": {
+            "mean_wer": (
+                round(sum(wer_vals) / len(wer_vals), 3) if wer_vals else None
+            ),
+            "high_wer_count": high_wer_count,
+            "total_count": len(wer_vals),
+        },
+        "checks_pass_runs": checks_pass_runs,
+        "checks_total_runs": checks_total_runs,
+        "checks_pass_pct": checks_pass_pct,
+        "lang_matched_runs": lang_matched_runs,
+        "lang_mismatch_runs": mismatch_runs,
+        "lang_adherence_pct": lang_adherence_pct,
+        "flagged_runs": flagged_runs,
+        "clean_issue_runs": clean_issue_runs,
+        "clean_issue_pct": clean_issue_pct,
+        "total_llm_turns": suite_total_llm_turns,
+        "avg_llm_turns": avg_llm_turns,
+        "total_conv_turns": suite_total_turns,
+        "avg_conv_turns": avg_conv_turns,
+        "overview_metrics": overview_metrics,
+        "tooltips": tooltips,
+        "conv_data_json": conv_data_json,
+        "run_rows": run_rows,
+    }
+
+
+def _get_audio_analysis_tooltips() -> dict[str, str]:
+    """Extract tooltips dynamically from ANALYSIS_REGISTRY prompts."""
+    tips: dict[str, str] = {}
+    for key, analysis in audio_analysis.ANALYSIS_REGISTRY.items():
+        prompt = analysis.prompt.strip()
+        task_m = re.search(
+            r"#\s*Task\s*\n(.*?)(?=\n#|\Z)", prompt, re.DOTALL | re.IGNORECASE
+        )
+        out_m = re.search(
+            r"#\s*Output\s*\n(.*?)(?=\n#|\Z)", prompt, re.DOTALL | re.IGNORECASE
+        )
+        task_str = " ".join(task_m.group(1).split()) if task_m else ""
+        out_str = " ".join(out_m.group(1).split()) if out_m else ""
+        if task_str and out_str:
+            tips[key] = f"Task: {task_str} Output: {out_str}"
+        elif task_str:
+            tips[key] = task_str
+        else:
+            tips[key] = " ".join(prompt.split())
+    return tips
+
+
+def _parse_naturalness_prompt_tooltips() -> tuple[
+    dict[str, str], dict[str, str], dict[str, str]
+]:
+    """Extract turn and conversation quality tooltips dynamically.
+
+    Parses naturalness_prompts constants and NaturalnessConfig defaults.
+    """
+    turn_tips: dict[str, str] = {}
+    for match in re.finditer(
+        r"[-*]\s*`([^`]+)`\s*[—–-]\s*(.*?)(?=\n[-*]\s*`|\Z)",
+        naturalness_prompts.DEFAULT_TURN_QUALITIES,
+        re.DOTALL,
+    ):
+        q_name = match.group(1).strip()
+        q_desc = " ".join(match.group(2).split())
+        turn_tips[q_name] = q_desc
+
+    cfg = naturalness.NaturalnessConfig()
+    b = cfg.latency_bands_ms
+    turn_tips["perceivedLatency"] = (
+        f"Turn perceived latency rating (bands: <{b[0]}ms = 5, "
+        f"<{b[1]}ms = 4, <{b[2]}ms = 3, <{b[3]}ms = 2, ≥{b[3]}ms = 1)."
+    )
+
+    conv_tips: dict[str, str] = {}
+    for match in re.finditer(
+        r"[-*]\s*`([^`]+)`\s*[—–-]\s*(.*?)(?=\n[-*]\s*`|\Z)",
+        naturalness_prompts.DEFAULT_CONVERSATION_QUALITIES,
+        re.DOTALL,
+    ):
+        q_name = match.group(1).strip()
+        q_desc = " ".join(match.group(2).split())
+        conv_tips[q_name] = q_desc
+
+    grade_tips: dict[str, str] = {}
+    for match in re.finditer(
+        r"[-*]\s*`([^`]+)`\s*[—–-]\s*(.*?)(?=\n[-*]\s*`|\Z)",
+        naturalness_prompts.NATURALNESS_RUBRIC,
+        re.DOTALL,
+    ):
+        lbl = match.group(1).strip()
+        desc = " ".join(match.group(2).split())
+        if lbl == "Human-like":
+            grade_tips["human_like"] = (
+                f"Human-like (≥{cfg.human_like_at_or_above}/5.0, GPA 4.0):"
+                f" {desc}"
+            )
+        elif lbl == "Transitional":
+            grade_tips["transitional"] = (
+                f"Transitional ({cfg.bot_like_below}–"
+                f"{cfg.human_like_at_or_above}/5.0, GPA 2.0–3.0): {desc}"
+            )
+        elif lbl == "Bot-like":
+            grade_tips["bot_like"] = (
+                f"Bot-like (<{cfg.bot_like_below}/5.0, GPA 0.0–1.0): {desc}"
+            )
+
+    return turn_tips, conv_tips, grade_tips
+
+
+def _get_wer_tooltip() -> str:
+    """Extract WER tooltip from audio_transcription module."""
+    doc = audio_transcription.calculate_wer.__doc__ or ""
+    lines = [
+        line.strip()
+        for line in doc.splitlines()
+        if "WER =" in line or "Word Error Rate" in line
+    ]
+    formula = " ".join(lines) if lines else "Word Error Rate"
+    return (
+        f"{formula}. Evaluated by comparing ASR transcripts against Gemini"
+        " reference transcription."
+    )
+
+
+def _get_acoustic_metrics_tooltips() -> dict[str, str]:
+    """Dynamically extract acoustic and voice drift tooltips."""
+    drift_doc = audio_drift.__doc__ or ""
+    metrics_doc = audio_metrics.__doc__ or ""
+
+    def _extract_drift_flag(header_pattern: str) -> str:
+        m = re.search(
+            rf"^\s*{header_pattern}\s+(.*?)(?=\n\s*(?:SEAM|LOUD|TRUNC|MIDTURN|JUMP)\s|\n\n|\Z)",
+            drift_doc,
+            re.DOTALL | re.MULTILINE,
+        )
+        return " ".join(m.group(1).split()) if m else ""
+
+    seam_doc = _extract_drift_flag(r"SEAM")
+    loud_doc = _extract_drift_flag(r"LOUD")
+    trunc_doc = _extract_drift_flag(r"TRUNC")
+    midturn_doc = _extract_drift_flag(r"MIDTURN\s*/\s*MIDDRIFT")
+    jump_doc = _extract_drift_flag(r"JUMP")
+
+    bullets = [
+        " ".join(m.group(1).split()).rstrip(",.")
+        for m in re.finditer(
+            r"^\*\s+(.*?)(?=\n\*\s+|\n\n|\Z)",
+            metrics_doc,
+            re.DOTALL | re.MULTILINE,
+        )
+    ]
+    consistency_summary = (
+        "; ".join(bullets)
+        if bullets
+        else (
+            "integrated loudness (LUFS), articulation rate (syllables/s),"
+            " median pitch (Hz), and within-turn voice seams"
+        )
+    )
+
+    loud_step = getattr(audio_drift, "DEFAULT_LOUD_DB", 3.0)
+    seam_strong = getattr(audio_metrics, "SEAM_SPEAKER_CHANGE_ST", 11.0)
+    seam_mild = getattr(audio_metrics, "SEAM_DRIFT_ST", 7.0)
+    trunc_ratio = getattr(audio_drift, "TRUNC_RATIO", 0.6)
+    trunc_min_syl = getattr(audio_drift, "TRUNC_MIN_SYLLABLES", 8)
+
+    return {
+        "tts_cache_seam": (
+            f"SEAM ({seam_doc})"
+            if seam_doc
+            else (
+                "Triggered when adjacent agent turns transition between cached"
+                " and fresh TTS synthesis (vintage seam)."
+            )
+        ),
+        "loudness_jump": (
+            f"LOUD ({loud_doc})"
+            if loud_doc
+            else (
+                "Triggered when adjacent agent turns exhibit an integrated"
+                f" loudness jump exceeding {loud_step:.1f} dB LUFS."
+            )
+        ),
+        "midturn_voice_seam": (
+            f"MIDTURN / MIDDRIFT ({midturn_doc}; thresholds:"
+            f" ≥{seam_mild:.1f} st drift, ≥{seam_strong:.1f} st speaker change)"
+            if midturn_doc
+            else (
+                "Triggered when median pitch shifts across an intra-turn pause"
+                f" by ≥{seam_mild:.1f} st or ≥{seam_strong:.1f} st."
+            )
+        ),
+        "audio_truncation": (
+            f"TRUNC ({trunc_doc})"
+            if trunc_doc
+            else (
+                "Triggered when agent audio syllable count falls below"
+                f" ratio < {trunc_ratio:.1f} (≥{trunc_min_syl} syllables)."
+            )
+        ),
+        "voice_jump": (
+            f"JUMP ({jump_doc})"
+            if jump_doc
+            else (
+                "Triggered when the voice steps up louder and higher where a"
+                " turn's next rendered part starts."
+            )
+        ),
+        "acoustic_consistency": (
+            f"Signal-level voice consistency ({consistency_summary})."
+        ),
+    }
+
+
+def _get_issue_tooltips(
+    audio_check_tips: dict[str, str],
+    turn_tips: dict[str, str],
+    conv_tips: dict[str, str],
+    wer_tip: str,
+    acoustic_tips: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Derive issue tooltips from prompt-extracted descriptions."""
+    ac_tips = acoustic_tips or _get_acoustic_metrics_tooltips()
+    return {
+        "robotic_delivery": (
+            "Triggered when run is Bot-like or scriptedness ≤2/5"
+            f" ({turn_tips.get('scriptedness', '')})"
+        ),
+        "language_mismatch": (
+            "Triggered when the agent speaks the wrong language, ignores a"
+            " caller's mid-call language switch request, or fails a language"
+            " expectation."
+        ),
+        "voice_drift": (
+            "Triggered when audio check fails"
+            f" ({audio_check_tips.get('agent_voice_consistency', '')})"
+            " or personaConsistency ≤2/5"
+            f" ({conv_tips.get('personaConsistency', '')})."
+        ),
+        "long_pauses": (
+            "Triggered when audio check fails"
+            f" ({audio_check_tips.get('no_long_pauses', '')})"
+            " or perceived latency factor ≤2/5."
+        ),
+        "agent_looping": (
+            "Triggered when audio check fails"
+            f" ({audio_check_tips.get('agent_looping', '')})"
+            " or repetitionAvoidance ≤2/5"
+            f" ({conv_tips.get('repetitionAvoidance', '')})."
+        ),
+        "audio_cutoff": (
+            "Triggered when audio check fails"
+            f" ({audio_check_tips.get('agent_cutoff', '')})."
+        ),
+        "having_trouble": (
+            "Triggered when audio check fails"
+            f" ({audio_check_tips.get('agent_having_trouble', '')})."
+        ),
+        "flat_emotion": (
+            "Triggered when emotion/empathy ≤2/5"
+            f" ({turn_tips.get('emotion', '')})."
+        ),
+        "unnatural_pacing": (
+            f"Triggered when pacing ≤2/5 ({turn_tips.get('pacing', '')})."
+        ),
+        "written_grammar": (
+            "Triggered when grammarStyle or spokenNumbers ≤2/5"
+            f" ({turn_tips.get('grammarStyle', '')})."
+        ),
+        "overlong_turns": (
+            f"Triggered when concision ≤2/5 ({turn_tips.get('concision', '')})."
+        ),
+        "turn_taking": (
+            "Triggered when turnTaking or disfluency ≤2/5"
+            f" ({turn_tips.get('turnTaking', '')})."
+        ),
+        "high_wer": f"Triggered when {wer_tip} exceeds 25%.",
+        "audio_exp_failed": (
+            "Triggered when a custom audio_expectation evaluated against"
+            " recorded WAV files is Not Met."
+        ),
+        "verdict_barged_missed": (
+            "Triggered when a decisive turn (tool call, parameter collection,"
+            " or verdict) was interrupted mid-speech by caller barge-in."
+        ),
+        "wall_of_text": (
+            "Triggered when an agent turn exceeds 12 seconds of speech or 80"
+            " spoken words without pausing for caller input."
+        ),
+        "markdown_link_tts_leakage": (
+            "Triggered when unrendered markdown link syntax (e.g. [text](url))"
+            " or raw web URLs are verbalized in agent TTS audio."
+        ),
+        "prompt_or_directive_leakage": (
+            "Triggered when internal prompt instructions, thoughts, or"
+            " directives (e.g. <thought>, [pause], <no speech>) leak into"
+            " spoken agent audio."
+        ),
+        "early_ack_redundancy": (
+            "Triggered when the agent repeatedly prefaces responses with"
+            " redundant acknowledgments or filler phrases across consecutive"
+            " turns."
+        ),
+        "subagent_transfer_verbalization": (
+            "Triggered when internal architectural subagent or router names"
+            " (e.g. transfer to billing_agent) are verbalized to the caller."
+        ),
+        "subagent_ping_pong_loop": (
+            "Triggered when multiple subagent handoffs occur in a loop or"
+            " ping-pong back and forth within a single conversation."
+        ),
+        "ignored_user": (
+            "Triggered when the caller requests a human representative or"
+            " presses DTMF 0 two or more times without being transferred."
+        ),
+        "caller_requested_human": (
+            "Triggered when the caller requested transfer to a human"
+            " representative or agent."
+        ),
+        "tts_cache_seam": ac_tips.get(
+            "tts_cache_seam",
+            "Triggered when adjacent agent turns transition between cached and"
+            " fresh TTS synthesis (vintage seam).",
+        ),
+        "loudness_jump": ac_tips.get(
+            "loudness_jump",
+            "Triggered when adjacent agent turns exhibit an integrated"
+            " loudness jump exceeding threshold.",
+        ),
+        "midturn_voice_seam": ac_tips.get(
+            "midturn_voice_seam",
+            "Triggered when median pitch shifts abruptly across an intra-turn"
+            " pause.",
+        ),
+        "voice_jump": ac_tips.get(
+            "voice_jump",
+            "Triggered when the voice steps up louder and higher where a"
+            " turn's next rendered part starts.",
+        ),
+        "audio_truncation": ac_tips.get(
+            "audio_truncation",
+            "Triggered when agent audio duration falls well under expected turn"
+            " text.",
+        ),
+    }
+
+
+def _render_suite_audio_analysis(audio_data: dict[str, Any] | None) -> str:
+    """Render Audio Analysis & Quality tab HTML via Jinja2 template macro."""
+    if not isinstance(audio_data, dict) or not audio_data.get(
+        "has_audio_analysis"
+    ):
+        return ""
+    mod = _get_combined_template_module()
+    return str(mod.render_suite_audio(audio_data))
 
 
 def _resolve_conv_trace_dict(
@@ -1367,6 +4009,7 @@ def generate_html_report(
     app_name: str = "",
     wall_clock_s: float | None = None,
     user_agent_extension: str | None = None,
+    audio_analysis: bool | None = None,
 ) -> None:
     """Generate an HTML report and save it locally or upload to GCS.
 
@@ -1429,8 +4072,11 @@ def generate_html_report(
 
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    html = _get_html_head(ts)
-    html += _get_summary_block(
+    suite_audio = _aggregate_suite_audio_analysis(
+        results, [], audio_analysis=audio_analysis
+    )
+
+    overview_html = _get_summary_block(
         passed,
         total,
         errors,
@@ -1440,9 +4086,8 @@ def generate_html_report(
         wall_clock_s,
         suite_pl=suite_pl,
     )
-
-    html += _get_results_table(eval_stats)
-    html += '\n<h2 id="section-sims">Eval Details</h2>\n'
+    overview_html += _get_results_table(eval_stats)
+    overview_html += '\n<h2 id="section-sims">Eval Details</h2>\n'
 
     for name, s in sorted(
         eval_stats.items(), key=lambda x: x[1]["pass"] / max(x[1]["total"], 1)
@@ -1451,22 +4096,26 @@ def generate_html_report(
         is_all_pass = s["pass"] == s["total"]
         cls = "pass-bg" if is_all_pass else "fail-bg"
         passed_str = "true" if is_all_pass else "false"
-        html += (
+        overview_html += (
             f'<div class="eval-card" id="eval-{name}" '
             f'data-passed="{passed_str}">\n'
         )
-        html += (
+        overview_html += (
             f'<div class="eval-header {cls}">'
             f'<span>{_escape(name)} <span class="badge sim">sim</span></span>'
             f"<span>{score}</span></div>\n"
         )
-        html += '<div class="eval-body">\n'
+        overview_html += '<div class="eval-body">\n'
 
         for r in s["runs"]:
-            html += _get_run_detail(r, ces_base, tools_map)
-        html += "</div></div>\n"
+            overview_html += _get_run_detail(r, ces_base, tools_map)
+        overview_html += "</div></div>\n"
 
-    html += "</body></html>"
+    mod = _get_combined_template_module()
+    scaffold = str(
+        mod.render_standalone_report_scaffold(overview_html, suite_audio)
+    )
+    html = f"{_get_html_head(ts)}{scaffold}</body></html>"
 
     if output_path.startswith("gs://"):
         mtls_url = _upload_to_gcs(output_path, html)
@@ -1496,8 +4145,14 @@ def generate_combined_html_report(
     sim_wall_clock_s: float | None = None,
     user_agent_extension: str | None = None,
     bg_noise_file: str | None = None,
+    bg_noise_snr: float | None = None,
     burst_noise_files: list[str] | None = None,
     traces_dir: str | None = None,
+    audio_analysis: bool | None = None,
+    recordings_bucket: str | None = None,
+    enriched_report: bool = False,
+    gcs: Any | None = None,
+    audio_encoder: Callable[[Any], Any] | None = None,
 ) -> str:
     """Generate combined HTML report based on results from multiple sources.
 
@@ -1796,6 +4451,27 @@ def generate_combined_html_report(
         else None
     )
 
+    # Suite Audio Analysis & Quality
+    suite_audio = _aggregate_suite_audio_analysis(
+        golden_results=golden_results,
+        sim_results=sim_results,
+        audio_analysis=audio_analysis,
+    )
+    suite_audio_html = _render_suite_audio_analysis(suite_audio)
+
+    # Enrich simulation results with CES server-side stereo recordings & VAD
+    if sim_results and (enriched_report or recordings_bucket):
+        rec_bucket = resolve_recordings_bucket(
+            app_id=app_name, explicit_bucket=recordings_bucket
+        )
+        if rec_bucket:
+            enrich_sim_results_with_recordings(
+                sim_results,
+                recordings_bucket=rec_bucket,
+                gcs=gcs,
+                encoder=audio_encoder or encode_opus,
+            )
+
     # Process traces for simulation results to simplify template
     if sim_results:
         for r in sim_results:
@@ -1919,15 +4595,21 @@ def generate_combined_html_report(
         failure_groups=failure_groups
     )
     failure_patterns_html = f_patterns.render()
+    suite_latency_html = (
+        _render_suite_latency_drawer(suite_pl) if suite_pl else ""
+    )
     template = _get_combined_report_template()
     html = template.render(
         failure_patterns_html=failure_patterns_html,
+        suite_latency_html=suite_latency_html,
         suite_pl=suite_pl,
         trend_chart=_prepare_trend_chart(suite_pl.get("turn_trend_buckets", []))
         if suite_pl
         else None,
         _fmt_ms=_fmt_ms,
         _pl_status_cls=_pl_status_cls,
+        suite_audio=suite_audio,
+        suite_audio_html=suite_audio_html,
         ts=ts,
         pct=pct,
         passed=passed,
@@ -1958,6 +4640,8 @@ def generate_combined_html_report(
         bg_noise_file=(
             os.path.basename(bg_noise_file) if bg_noise_file else None
         ),
+        bg_noise_snr=bg_noise_snr,
+        snr_to_noise_level=snr_to_noise_level,
         burst_noise_files=burst_noise_files,
         tool_results_html=tool_results_html,
         callback_results_html=callback_results_html,
@@ -1965,7 +4649,7 @@ def generate_combined_html_report(
 
     # Wrap compiled body dynamically in declarative BaseShell scaffold envelope.
     report = report_components.BaseShell(
-        title=f"Combined Eval Report - {ts}",
+        title=f"Eval Report - {ts}",
         body_content=[base_components.Raw(html)],
     )
     html_out = report.render()
@@ -2008,6 +4692,7 @@ def generate_combined_json_report(
     golden_modality: str = "text",
     sim_modality: str = "text",
     sim_wall_clock_s: float | None = None,
+    audio_analysis: bool | None = None,
 ) -> str:
     """Generate a combined JSON report based on results from multiple sources.
 
@@ -2050,6 +4735,12 @@ def generate_combined_json_report(
     total = sum(c["total"] for c in per_type.values())
     passed = sum(c["passed"] for c in per_type.values())
 
+    suite_audio = _aggregate_suite_audio_analysis(
+        golden_results=golden_results,
+        sim_results=sim_results,
+        audio_analysis=audio_analysis,
+    )
+
     report = {
         "schema_version": 1,
         "generated_at": datetime.datetime.now().isoformat(),
@@ -2064,6 +4755,7 @@ def generate_combined_json_report(
             "passed": passed,
             "pass_rate_pct": round(100 * passed / total, 2) if total else 0,
             **per_type,
+            "audio_analysis": suite_audio,
         },
         "results": {
             "golden": _sanitize_for_json(golden_results),
@@ -2182,16 +4874,96 @@ def _compile_callback_results_card(
     )
 
 
+def _build_turn_comparisons(
+    turn: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Build the expected/actual comparison rows for one replayed turn.
+
+    Each ``expectation_outcome`` entry pairs an expected element with what was
+    observed. An entry can also carry an *observed* agent response with no
+    expectation at all: this happens when the agent says more than the golden
+    modeled -- e.g. a short filler said before a tool call is matched to the
+    expected reply, and the substantive answer produced after the tool returns
+    is left unmatched. Those observed-only responses must still be rendered,
+    otherwise the report looks like the agent never said them even though the
+    platform recorded and the scorer evaluated the full turn.
+    """
+    comparisons = []
+    for o in turn.get("expectation_outcome", []):
+        exp = o.get("expectation", {})
+        comp = {"outcome": _outcome_str(o.get("outcome"))}
+
+        if "agent_response" in exp:
+            comp["type"] = "text"
+            comp["expected"] = _join_chunk_text(
+                exp["agent_response"].get("chunks", [])
+            )
+            obs = o.get("observed_agent_response", {})
+            comp["actual"] = (
+                _join_chunk_text(obs.get("chunks", [])) if obs else "(missed)"
+            )
+        elif "tool_call" in exp:
+            tc = exp["tool_call"]
+            comp["type"] = "tool_call"
+            comp["expected"] = (
+                tc.get("display_name") or tc.get("tool", "").split("/")[-1]
+            )
+            comp["expected_args"] = tc.get("args", {})
+            obs = o.get("observed_tool_call", {})
+            comp["actual"] = (
+                (obs.get("display_name") or obs.get("tool", "").split("/")[-1])
+                if obs
+                else "(missed)"
+            )
+            comp["actual_args"] = obs.get("args", {}) if obs else {}
+            tir = o.get("toolInvocationResult", {})
+            comp["tool_invocation_score"] = tir.get("parameterCorrectnessScore")
+            comp["tool_invocation_explanation"] = tir.get("explanation")
+        elif "agent_transfer" in exp:
+            at = exp["agent_transfer"]
+            comp["type"] = "transfer"
+            comp["expected"] = at.get(
+                "display_name", at.get("target_agent", "").split("/")[-1]
+            )
+            obs = o.get("observed_agent_transfer", {})
+            comp["actual"] = (
+                obs.get(
+                    "display_name",
+                    obs.get("target_agent", "").split("/")[-1],
+                )
+                if obs
+                else "(missed)"
+            )
+        elif "tool_response" in exp:
+            continue
+        elif o.get("observed_agent_response"):
+            comp["type"] = "text"
+            comp["expected"] = "(none)"
+            comp["actual"] = _join_chunk_text(
+                o["observed_agent_response"].get("chunks", [])
+            )
+        else:
+            continue
+
+        comparisons.append(comp)
+    return comparisons
+
+
 def load_golden_results(
-    run_id: str, app_name: str, include: list[str] | None = None
+    run_id: str | list[str],
+    app_name: str,
+    include: list[str] | None = None,
+    min_run_passes: int | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch golden results and parse into report-friendly format.
 
     Args:
-      run_id: The evaluation run ID to load results for.
+      run_id: Evaluation run ID (or comma-separated IDs / list of IDs) to load.
       app_name: CX Agent Studio (CXAS) agent resource name.
       include: Categories of evaluations to include (e.g. 'goldens',
         'scenarios').
+      min_run_passes: Optional k-of-N pass threshold when reconciling multiple
+        evaluation runs.
 
     Returns:
       A list of formatted evaluation result dictionaries.
@@ -2199,20 +4971,33 @@ def load_golden_results(
     if include is None:
         include = ["goldens", "scenarios"]
 
-    utils = eval_utils.EvalUtils(app_name=app_name)
-    full_run_id = (
-        run_id
-        if run_id.startswith("projects/")
-        else f"{app_name}/evaluationRuns/{run_id}"
-    )
+    if isinstance(run_id, str):
+        run_ids = [rid.strip() for rid in run_id.split(",") if rid.strip()]
+    else:
+        run_ids = [str(rid).strip() for rid in run_id if str(rid).strip()]
 
-    raw_results = utils.list_evaluation_results_by_run(full_run_id)
+    utils = eval_utils.EvalUtils(app_name=app_name)
+    raw_results = []
+    for rid in run_ids:
+        full_run_id = (
+            rid
+            if rid.startswith("projects/")
+            else f"{app_name}/evaluationRuns/{rid}"
+        )
+        raw_results.extend(utils.list_evaluation_results_by_run(full_run_id))
 
     evals_map = utils.get_evaluations_map(app_name, reverse=False)
     name_lookup = {}
     for cat in ["goldens", "scenarios"]:
         for resource, display in evals_map.get(cat, {}).items():
             name_lookup[resource] = display
+
+    evals_by_resource: dict[str, Any] = {}
+    with contextlib.suppress(Exception):
+        for ev_item in utils.list_evaluations(app_name) or []:
+            ev_name = getattr(ev_item, "name", "")
+            if ev_name:
+                evals_by_resource[ev_name] = ev_item
 
     results = []
     for r in raw_results:
@@ -2248,69 +5033,8 @@ def load_golden_results(
                 "index": i + 1,
                 "semantic_score": sem.get("score"),
                 "semantic_explanation": sem.get("explanation"),
-                "comparisons": [],
+                "comparisons": _build_turn_comparisons(turn),
             }
-            for o in turn.get("expectation_outcome", []):
-                exp = o.get("expectation", {})
-                outcome = _outcome_str(o.get("outcome"))
-                comp = {"outcome": outcome}
-
-                if "agent_response" in exp:
-                    chunks = exp["agent_response"].get("chunks", [])
-                    comp["type"] = "text"
-                    comp["expected"] = (
-                        chunks[0].get("text", "") if chunks else ""
-                    )
-                    obs = o.get("observed_agent_response", {})
-                    comp["actual"] = (
-                        obs.get("chunks", [{}])[0].get("text", "")
-                        if obs
-                        else "(missed)"
-                    )
-                elif "tool_call" in exp:
-                    tc = exp["tool_call"]
-                    comp["type"] = "tool_call"
-                    comp["expected"] = (
-                        tc.get("display_name")
-                        or tc.get("tool", "").split("/")[-1]
-                    )
-                    comp["expected_args"] = tc.get("args", {})
-                    obs = o.get("observed_tool_call", {})
-                    comp["actual"] = (
-                        (
-                            obs.get("display_name")
-                            or obs.get("tool", "").split("/")[-1]
-                        )
-                        if obs
-                        else "(missed)"
-                    )
-                    comp["actual_args"] = obs.get("args", {}) if obs else {}
-                    tir = o.get("toolInvocationResult", {})
-                    comp["tool_invocation_score"] = tir.get(
-                        "parameterCorrectnessScore"
-                    )
-                    comp["tool_invocation_explanation"] = tir.get("explanation")
-                elif "tool_response" in exp:
-                    continue
-                elif "agent_transfer" in exp:
-                    at = exp["agent_transfer"]
-                    comp["type"] = "transfer"
-                    comp["expected"] = at.get(
-                        "display_name",
-                        at.get("target_agent", "").split("/")[-1],
-                    )
-                    obs = o.get("observed_agent_transfer", {})
-                    if obs:
-                        comp["actual"] = obs.get(
-                            "display_name",
-                            obs.get("target_agent", "").split("/")[-1],
-                        )
-                    else:
-                        comp["actual"] = "(missed)"
-                else:
-                    continue
-
-                turn_data["comparisons"].append(comp)
             turns.append(turn_data)
 
         expectations = []
@@ -2342,7 +5066,10 @@ def load_golden_results(
         # One entry per golden turn: ("text", "...") or ("event", "...")
         turn_inputs = []
         try:
-            ev_obj = utils.get_evaluation(eval_resource)
+            ev_obj = evals_by_resource.get(eval_resource)
+            if ev_obj is None:
+                ev_obj = utils.get_evaluation(eval_resource)
+                evals_by_resource[eval_resource] = ev_obj
             evd = type(ev_obj).to_dict(ev_obj)
             golden_def = evd.get("golden", {})
             for turn_def in golden_def.get("turns", []):
@@ -2392,7 +5119,47 @@ def load_golden_results(
             }
         )
 
+    if min_run_passes is not None or len(run_ids) > 1:
+        return reconcile_golden_runs(
+            results, min_run_passes=min_run_passes or 1
+        )
+
     return results
+
+
+def reconcile_golden_runs(
+    results: list[dict[str, Any]],
+    min_run_passes: int = 1,
+) -> list[dict[str, Any]]:
+    """Reconcile multiple golden runs per evaluation using k-of-N voting."""
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for r in results:
+        name = r.get("name", "?")
+        if name not in by_name:
+            by_name[name] = []
+            order.append(name)
+        by_name[name].append(r)
+
+    reconciled: list[dict[str, Any]] = []
+    for name in order:
+        runs = by_name[name]
+        passes = sum(1 for r in runs if r.get("passed"))
+        passed = passes >= min_run_passes
+        failing = [r for r in runs if not r.get("passed")]
+        passing = [r for r in runs if r.get("passed")]
+        chosen = dict(
+            passing[0]
+            if passed and passing
+            else (failing[0] if failing else runs[0])
+        )
+        chosen["passed"] = passed
+        chosen["passes"] = passes
+        chosen["runs"] = len(runs)
+        if failing:
+            chosen["failed_runs"] = len(failing)
+        reconciled.append(chosen)
+    return reconciled
 
 
 def _merge_naturalness(common: Any, case: Any) -> Any:
@@ -2412,23 +5179,120 @@ def _merge_naturalness(common: Any, case: Any) -> Any:
 
 
 def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
-    """Loads sim files and merges common params and expectations.
+    """Loads sim files (.yaml, .yml, .json) and merges common params.
 
     Args:
-      yaml_path: Path to the YAML test cases file.
+      yaml_path: Path to the YAML or JSON test cases file.
 
     Returns:
       List of merged evaluation test case dicts.
     """
     with open(yaml_path) as f:
-        data = yaml.safe_load(f) or {}
+        if str(yaml_path).lower().endswith(".json"):
+            data = json.load(f) or {}
+        else:
+            data = yaml.safe_load(f) or {}
     if isinstance(data, list):
         return data
+    if not isinstance(data, dict):
+        return []
 
-    common_params = data.get("common_session_parameters", {}) or {}
+    common_session_params = (
+        data.get("common_session_parameters")
+        if isinstance(data.get("common_session_parameters"), dict)
+        else {}
+    )
+    common_params_dict = (
+        data.get("common_params")
+        if isinstance(data.get("common_params"), dict)
+        else {}
+    )
+
+    # Merge session parameters: common_session_parameters or common_params
+    merged_common_session_params = common_session_params.copy()
+    if "session_parameters" in common_params_dict and isinstance(
+        common_params_dict["session_parameters"], dict
+    ):
+        merged_common_session_params.update(
+            common_params_dict["session_parameters"]
+        )
+    else:
+        # Non-noise, non-meta keys in common_params act as
+        # common session parameters
+        meta_and_noise_keys = {
+            "background_noise",
+            "background_noise_file",
+            "common_background_noise",
+            "bg_noise_level",
+            "common_bg_noise_level",
+            "noise_level",
+            "bg_noise_snr",
+            "common_bg_noise_snr",
+            "burst_noise",
+            "common_burst_noise",
+            "burst_noise_files",
+            "common_burst_noise_files",
+            "burst_noise_level",
+            "common_burst_noise_level",
+            "burst_noise_snr",
+            "common_burst_noise_snr",
+            "config",
+            "common_config",
+            "expectations",
+            "common_expectations",
+            "naturalness_metric",
+            "common_naturalness_metric",
+        }
+        for k, v in common_params_dict.items():
+            if k not in meta_and_noise_keys:
+                merged_common_session_params[k] = v
+
     common_expectations = data.get("common_expectations", []) or []
     common_naturalness = data.get("common_naturalness_metric")
-    cases = data.get("evals", [])
+
+    common_config = {}
+    if isinstance(data.get("common_config"), dict):
+        common_config = data["common_config"]
+    elif isinstance(data.get("config"), dict):
+        common_config = data["config"]
+
+    # Extract common noise settings from data, common_params, or common_config
+    def _find_common(keys: list[str]) -> Any:
+        for src in (data, common_params_dict, common_config):
+            if isinstance(src, dict):
+                for k in keys:
+                    if k in src and src[k] is not None:
+                        return src[k]
+        return None
+
+    common_bg_noise = _find_common(
+        ["common_background_noise", "background_noise", "background_noise_file"]
+    )
+    common_bg_level = _find_common(
+        ["common_bg_noise_level", "bg_noise_level", "noise_level"]
+    )
+    common_bg_snr = _find_common(["common_bg_noise_snr", "bg_noise_snr"])
+    common_burst_noise = _find_common(
+        [
+            "common_burst_noise",
+            "burst_noise",
+            "burst_noise_files",
+            "common_burst_noise_files",
+        ]
+    )
+    common_burst_level = _find_common(
+        ["common_burst_noise_level", "burst_noise_level"]
+    )
+    common_burst_snr = _find_common(
+        ["common_burst_noise_snr", "burst_noise_snr"]
+    )
+
+    cases = (
+        data.get("evals")
+        or data.get("test_cases")
+        or data.get("scenarios")
+        or []
+    )
     if not isinstance(cases, list):
         return []
 
@@ -2438,13 +5302,125 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
             case_copy = c.copy()
             # Merge session parameters
             case_params = case_copy.get("session_parameters", {}) or {}
-            merged = common_params.copy()
-            merged.update(case_params)
-            case_copy["session_parameters"] = merged
+            merged_params = merged_common_session_params.copy()
+            merged_params.update(case_params)
+            case_copy["session_parameters"] = merged_params
 
-            # Merge expectations
+            # Merge config
+            if common_config:
+                case_cfg = (
+                    case_copy.get("config").copy()
+                    if isinstance(case_copy.get("config"), dict)
+                    else {}
+                )
+                merged_cfg = common_config.copy()
+                merged_cfg.update(case_cfg)
+                case_copy["config"] = merged_cfg
+
+            # Merge background noise defaults if present
+            case_bg = case_copy.get("background_noise")
+            case_cfg_bg = (
+                case_copy["config"].get("background_noise")
+                if isinstance(case_copy.get("config"), dict)
+                else None
+            )
+
+            # Check if this case explicitly opted out of background noise
+            if case_bg is False or case_cfg_bg is False:
+                case_copy["background_noise"] = False
+                if "config" not in case_copy or not isinstance(
+                    case_copy["config"], dict
+                ):
+                    case_copy["config"] = {}
+                case_copy["config"]["background_noise"] = False
+            else:
+                # Merge background_noise: if both common and case are dicts,
+                # merge them
+                if isinstance(common_bg_noise, dict) and isinstance(
+                    case_bg, dict
+                ):
+                    merged_bg = common_bg_noise.copy()
+                    merged_bg.update(case_bg)
+                    case_copy["background_noise"] = merged_bg
+                elif case_bg is not None:
+                    case_copy["background_noise"] = case_bg
+                elif common_bg_noise is not None:
+                    case_copy["background_noise"] = (
+                        common_bg_noise.copy()
+                        if isinstance(common_bg_noise, dict)
+                        else common_bg_noise
+                    )
+
+                # Propagate common bg noise level and SNR if not specified
+                if common_bg_level is not None and (
+                    "bg_noise_level" not in case_copy
+                    and (
+                        not isinstance(case_copy.get("config"), dict)
+                        or "bg_noise_level" not in case_copy["config"]
+                    )
+                ):
+                    case_copy["bg_noise_level"] = common_bg_level
+
+                if common_bg_snr is not None and (
+                    "bg_noise_snr" not in case_copy
+                    and (
+                        not isinstance(case_copy.get("config"), dict)
+                        or "bg_noise_snr" not in case_copy["config"]
+                    )
+                ):
+                    case_copy["bg_noise_snr"] = common_bg_snr
+
+                # Merge burst noise
+                case_burst = case_copy.get("burst_noise")
+                case_cfg_burst = (
+                    case_copy["config"].get("burst_noise")
+                    if isinstance(case_copy.get("config"), dict)
+                    else None
+                )
+                if case_burst is False or case_cfg_burst is False:
+                    case_copy["burst_noise"] = False
+                else:
+                    if isinstance(common_burst_noise, dict) and isinstance(
+                        case_burst, dict
+                    ):
+                        merged_burst = common_burst_noise.copy()
+                        merged_burst.update(case_burst)
+                        case_copy["burst_noise"] = merged_burst
+                    elif case_burst is not None:
+                        case_copy["burst_noise"] = case_burst
+                    elif common_burst_noise is not None:
+                        case_copy["burst_noise"] = (
+                            common_burst_noise.copy()
+                            if isinstance(common_burst_noise, dict)
+                            else common_burst_noise
+                        )
+
+                    if common_burst_level is not None and (
+                        "burst_noise_level" not in case_copy
+                        and (
+                            not isinstance(case_copy.get("config"), dict)
+                            or "burst_noise_level" not in case_copy["config"]
+                        )
+                    ):
+                        case_copy["burst_noise_level"] = common_burst_level
+
+                    if common_burst_snr is not None and (
+                        "burst_noise_snr" not in case_copy
+                        and (
+                            not isinstance(case_copy.get("config"), dict)
+                            or "burst_noise_snr" not in case_copy["config"]
+                        )
+                    ):
+                        case_copy["burst_noise_snr"] = common_burst_snr
+
+            # Merge expectations (respecting exclude_common_expectations)
             case_expectations = case_copy.get("expectations", []) or []
-            case_copy["expectations"] = common_expectations + case_expectations
+            if case_copy.get("exclude_common_expectations"):
+                case_copy["expectations"] = list(case_expectations)
+            else:
+                case_copy["expectations"] = (
+                    common_expectations + case_expectations
+                )
 
             # Merge the optional naturalness metric block. A per-eval block
             # wins key-by-key, and an explicit `false` opts that eval out.
@@ -2560,6 +5536,1836 @@ def load_callback_test_results(csv_or_json_path: str) -> list[dict[str, Any]]:
     return results
 
 
+def summarize_and_gate_evals(
+    sim_results: list[dict[str, Any]] | None = None,
+    golden_results: list[dict[str, Any]] | None = None,
+    tool_results: list[dict[str, Any]] | None = None,
+    callback_results: list[dict[str, Any]] | None = None,
+    min_run_passes: int = 1,
+    min_pass_rate: float | None = None,
+) -> dict[str, Any]:
+    """Compute k-of-N case pass rates and evaluate gate criteria."""
+    all_cases: list[dict[str, Any]] = []
+
+    def _collect_grouped(
+        items: list[dict[str, Any]] | None, category: str
+    ) -> None:
+        if not items:
+            return
+        by_name: dict[str, list[dict[str, Any]]] = {}
+        order: list[str] = []
+        for item in items:
+            name = str(item.get("name", item.get("test_name", "?")))
+            if name not in by_name:
+                by_name[name] = []
+                order.append(name)
+            by_name[name].append(item)
+
+        for name in order:
+            runs = by_name[name]
+            if len(runs) == 1 and "passes" in runs[0] and "runs" in runs[0]:
+                passes = int(runs[0]["passes"])
+                total_runs = int(runs[0]["runs"])
+            else:
+                passes = sum(1 for r in runs if r.get("passed"))
+                total_runs = len(runs)
+            passed = passes >= min_run_passes
+            durations = [
+                float(r["duration_s"])
+                for r in runs
+                if isinstance(r.get("duration_s"), (int, float))
+            ]
+            avg_duration_s = (
+                round(sum(durations) / len(durations), 2) if durations else 0.0
+            )
+            failed_expectations: list[str] = []
+            errors: list[str] = []
+            session_ids: list[str] = []
+            for r in runs:
+                sid = str(r.get("session_id") or "")
+                if sid and sid not in session_ids:
+                    session_ids.append(sid)
+                err = str(r.get("error") or r.get("errors") or "")
+                if err and err not in errors:
+                    errors.append(err)
+                exp_list = (
+                    r.get("expectation_details")
+                    if isinstance(r.get("expectation_details"), list)
+                    else (
+                        r.get("expectations")
+                        if isinstance(r.get("expectations"), list)
+                        else []
+                    )
+                )
+                for exp in exp_list or []:
+                    if isinstance(exp, dict) and exp.get("status") != "Met":
+                        exp_name = exp.get("expectation", "")
+                        if exp_name and exp_name not in failed_expectations:
+                            failed_expectations.append(exp_name)
+            rep_exp = runs[-1].get("expectations", "") if runs else ""
+            all_cases.append(
+                {
+                    "name": name,
+                    "category": category,
+                    "passed": passed,
+                    "passes": passes,
+                    "runs": total_runs,
+                    "required_passes": min_run_passes,
+                    "avg_duration_s": avg_duration_s,
+                    "failed_expectations": failed_expectations,
+                    "errors": errors,
+                    "session_ids": session_ids,
+                    "representative_goals": (
+                        runs[-1].get("goals", "") if runs else ""
+                    ),
+                    "representative_expectations": (
+                        rep_exp if isinstance(rep_exp, str) else ""
+                    ),
+                }
+            )
+
+    _collect_grouped(sim_results, "simulation")
+    _collect_grouped(golden_results, "golden")
+    _collect_grouped(tool_results, "tool")
+    _collect_grouped(callback_results, "callback")
+
+    total = len(all_cases)
+    passed_count = sum(1 for c in all_cases if c["passed"])
+    pass_rate = (passed_count / total) if total > 0 else 0.0
+    max_runs = max((c["runs"] for c in all_cases), default=1)
+
+    for c in all_cases:
+        tag = "PASS" if c["passed"] else "FAIL"
+        print(f"  [{tag}] {c['name']} ({c['passes']}/{c['runs']} runs)")
+        if not c["passed"]:
+            for exp_text in c["failed_expectations"]:
+                print(f"         NOT MET: {exp_text}")
+
+    rule_label = (
+        f" ({min_run_passes}-of-{max_runs})"
+        if max_runs > 1 or min_run_passes > 1
+        else ""
+    )
+    print(f"----- {passed_count}/{total} cases passed{rule_label} -----")
+
+    gate_passed = True
+    gate_reason = ""
+    if min_pass_rate is not None:
+        if total == 0:
+            gate_passed = False
+            gate_reason = "No evaluations ran — failing closed"
+            print(f"::error::{gate_reason}")
+        elif pass_rate < min_pass_rate:
+            gate_passed = False
+            gate_reason = (
+                f"Pass rate {passed_count}/{total} ({pass_rate:.0%}) "
+                f"is below threshold {min_pass_rate:.0%}"
+            )
+            print(f"::error::{gate_reason}")
+
+    return {
+        "passed_cases": passed_count,
+        "total_cases": total,
+        "pass_rate": pass_rate,
+        "min_run_passes": min_run_passes,
+        "min_pass_rate": min_pass_rate,
+        "gate_passed": gate_passed,
+        "gate_reason": gate_reason,
+        "cases": all_cases,
+        "sim_reconciled": [
+            c for c in all_cases if c.get("category") == "simulation"
+        ],
+    }
+
+
+def resolve_provenance_info() -> dict[str, str]:
+    """Resolve git/CI/Guitar provenance from environment variables."""
+    git_sha = (
+        os.environ.get("GITHUB_SHA")
+        or os.environ.get("KOKORO_GIT_COMMIT")
+        or os.environ.get("GUITAR_CHANGELIST")
+        or os.environ.get("CITC_CL")
+        or "local"
+    )
+    git_ref = (
+        os.environ.get("GITHUB_REF_NAME")
+        or os.environ.get("KOKORO_GOB_BRANCH")
+        or os.environ.get("CITC_CLIENT")
+        or "local"
+    )
+    run_id = (
+        os.environ.get("GITHUB_RUN_ID")
+        or os.environ.get("GUITAR_WORKFLOW_ID")
+        or os.environ.get("KOKORO_BUILD_ID")
+        or "local"
+    )
+    return {
+        "git_sha": str(git_sha),
+        "git_ref": str(git_ref),
+        "run_id": str(run_id),
+    }
+
+
+def write_eval_stamp(
+    output_dir: str,
+    suite_name: str,
+    gate_summary: dict[str, Any],
+    modality: str = "text",
+    runs: int = 1,
+    published_urls: dict[str, str] | None = None,
+) -> str:
+    """Write an EVAL_STAMP-<suite>.txt metadata file into output_dir."""
+    safe_suite = (
+        re.sub(r"[^a-zA-Z0-9._-]+", "-", suite_name).strip("-") or "evals"
+    )
+    stamp_path = os.path.join(output_dir, f"EVAL_STAMP-{safe_suite}.txt")
+    now_utc = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    prov = resolve_provenance_info()
+    lines = [
+        f"suite:         {suite_name}",
+        f"modality:      {modality}",
+        f"runs:          {runs}",
+        f"min_passes:    {gate_summary.get('min_run_passes', 1)}",
+        f"min_pass_rate: {gate_summary.get('min_pass_rate')}",
+        (
+            f"cases_passed:  {gate_summary.get('passed_cases', 0)}/"
+            f"{gate_summary.get('total_cases', 0)}"
+        ),
+        f"pass_rate:     {gate_summary.get('pass_rate', 0.0):.2%}",
+        f"gate_passed:   {gate_summary.get('gate_passed', True)}",
+        f"git_sha:       {prov['git_sha']}",
+        f"git_ref:       {prov['git_ref']}",
+        f"run_id:        {prov['run_id']}",
+        f"timestamp_utc: {now_utc}",
+    ]
+    if published_urls:
+        if published_urls.get("report_url"):
+            lines.append(f"report_url:    {published_urls['report_url']}")
+        if published_urls.get("latest_url"):
+            lines.append(f"latest_url:    {published_urls['latest_url']}")
+    with _ORIG_OPEN(stamp_path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return stamp_path
+
+
+def write_junit_xml(
+    junit_path: str,
+    suite_name: str,
+    gate_summary: dict[str, Any],
+    published_urls: dict[str, str] | None = None,
+    testsuite_prefix: str = "cxas_evals",
+) -> str:
+    """Write a JUnit XML report with per-scenario <testcase> elements."""
+    safe_suite = (
+        re.sub(r"[^a-zA-Z0-9._-]+", "_", suite_name).strip("_") or "evals"
+    )
+    cases: list[dict[str, Any]] = list(gate_summary.get("cases") or [])
+    failures_count = sum(1 for c in cases if not c.get("passed"))
+    if not gate_summary.get("gate_passed", True) and failures_count == 0:
+        failures_count = 1
+    total_duration = sum(
+        float(c.get("avg_duration_s", 0.0) or 0.0) for c in cases
+    )
+
+    suite_el = ET.Element(
+        "testsuite",
+        attrib={
+            "name": f"{testsuite_prefix}_{safe_suite}",
+            "tests": str(max(len(cases), 1)),
+            "failures": str(failures_count),
+            "errors": "0",
+            "time": f"{total_duration:.2f}",
+        },
+    )
+
+    if published_urls:
+        props_el = ET.SubElement(suite_el, "properties")
+        for key, val in sorted(published_urls.items()):
+            if val:
+                ET.SubElement(
+                    props_el, "property", attrib={"name": key, "value": val}
+                )
+
+    for case in cases:
+        category = str(case.get("category") or "simulation")
+        tc_el = ET.SubElement(
+            suite_el,
+            "testcase",
+            attrib={
+                "classname": f"{testsuite_prefix}.{safe_suite}.{category}",
+                "name": str(case.get("name", "unnamed")),
+                "time": f"{float(case.get('avg_duration_s', 0.0) or 0.0):.2f}",
+            },
+        )
+        passes = case.get("passes", 1 if case.get("passed") else 0)
+        runs = case.get("runs", 1)
+        req_passes = case.get(
+            "required_passes", gate_summary.get("min_run_passes", 1)
+        )
+        out_lines = [
+            f"Category: {category}",
+            f"Runs passed: {passes}/{runs} (required: {req_passes})",
+        ]
+        if case.get("representative_goals"):
+            out_lines.append(f"Goals: {case['representative_goals']}")
+        if case.get("representative_expectations"):
+            out_lines.append(
+                f"Expectations: {case['representative_expectations']}"
+            )
+        if case.get("session_ids"):
+            out_lines.append(f"Session IDs: {', '.join(case['session_ids'])}")
+        if published_urls and published_urls.get("report_url"):
+            out_lines.append(f"Report URL: {published_urls['report_url']}")
+        sys_out = ET.SubElement(tc_el, "system-out")
+        sys_out.text = "\n".join(out_lines)
+
+        if not case.get("passed"):
+            fail_reasons: list[str] = []
+            for exp in case.get("failed_expectations") or []:
+                fail_reasons.append(f"NOT MET: {exp}")
+            for err in case.get("errors") or []:
+                fail_reasons.append(f"ERROR: {err}")
+            msg = (
+                f"Scenario failed ({passes}/{runs} runs passed; "
+                f"needed {req_passes})"
+            )
+            fail_el = ET.SubElement(
+                tc_el,
+                "failure",
+                attrib={"message": msg, "type": "EvalAssertionFailure"},
+            )
+            fail_el.text = "\n".join([msg, *fail_reasons])
+
+    if not gate_summary.get("gate_passed", True):
+        gate_tc = ET.SubElement(
+            suite_el,
+            "testcase",
+            attrib={
+                "classname": f"{testsuite_prefix}.{safe_suite}",
+                "name": "__suite_pass_rate_gate__",
+                "time": "0.00",
+            },
+        )
+        reason = gate_summary.get("gate_reason") or "Suite gate failed"
+        fail_el = ET.SubElement(
+            gate_tc,
+            "failure",
+            attrib={"message": reason, "type": "EvalSuiteGateFailure"},
+        )
+        fail_el.text = reason
+
+    parent_dir = os.path.dirname(os.path.abspath(junit_path))
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+    tree = ET.ElementTree(suite_el)
+    ET.indent(tree, space="  ")
+    tree.write(junit_path, encoding="utf-8", xml_declaration=True)
+    return junit_path
+
+
+FRAME_S = 0.02
+VAD_DBFS = -42.0
+MIN_SPAN_S = 0.12
+MERGE_GAP_S = 0.35
+
+_DEAD_AIR_WARN_S = 2.5
+_DEAD_AIR_BAD_S = 4.0
+_MAX_DEAD_AIR_WARN_S = 3.0
+_MAX_DEAD_AIR_BAD_S = 5.0
+_SLOWEST_ROWS = 12
+_PRE_ROLL_S = 1.5
+
+_OPUS_BITRATE = "24k"
+_FALLBACK_SAMPLE_RATE = 8000
+_MAX_EMBEDDED_AUDIO_BYTES = 80 * 1024 * 1024
+_FETCH_WORKERS = 8
+
+_RECORDING_PREFIX = "audio-recording"
+_TURN_FILE_RE = re.compile(r"/full-session(?:\((\d+)\))?\.wav$")
+_CES_CONSOLE = "https://ces.cloud.google.com"
+
+
+class GcsClient(Protocol):
+    """The subset of `cxas_scrapi.utils.gcs_utils.GCSUtils` used here."""
+
+    def list_with_prefix(
+        self, gcs_bucket_uri: str, prefix: str
+    ) -> list[str]: ...
+
+    def download_blob(self, gcs_uri: str) -> bytes: ...
+
+
+@dataclasses.dataclass(frozen=True)
+class PcmAudio:
+    """Interleaved signed 16-bit little-endian PCM."""
+
+    data: bytes
+    sample_rate: int
+    channels: int
+
+    @property
+    def duration_s(self) -> float:
+        return len(self.data) / (2 * self.channels * self.sample_rate)
+
+
+@dataclasses.dataclass(frozen=True)
+class EncodedAudio:
+    data: bytes
+    mime_type: str
+
+
+@dataclasses.dataclass
+class TurnAudioInfo:
+    """VAD analysis of one stereo `full-session(k).wav` turn recording."""
+
+    duration_s: float
+    caller_spans: list[tuple[float, float]] = dataclasses.field(
+        default_factory=list
+    )
+    agent_spans: list[tuple[float, float]] = dataclasses.field(
+        default_factory=list
+    )
+    caller_start_s: float | None = None
+    caller_end_s: float | None = None
+    agent_start_s: float | None = None
+    agent_end_s: float | None = None
+    dead_air_s: float | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class SessionRecording:
+    """Per-turn recordings of one CES session, ordered by turn number."""
+
+    gcs_dir: str
+    turns: dict[int, PcmAudio]
+
+
+@dataclasses.dataclass
+class TraceEvent:
+    kind: str  # "tool", "transfer" or "system".
+    text: str
+    tool_input: str = ""
+    tool_output: str = ""
+
+
+@dataclasses.dataclass
+class TraceTurn:
+    user: str
+    agent: list[str] = dataclasses.field(default_factory=list)
+    events: list[TraceEvent] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class RunAudio:
+    """The embedded full-call track and per-turn analysis of one run."""
+
+    gcs_dir: str
+    encoded: EncodedAudio | None
+    duration_s: float
+    chapter_offsets: dict[int, float]
+    turns: dict[int, TurnAudioInfo]
+
+
+@dataclasses.dataclass
+class RunView:
+    """Everything needed to render one simulation run."""
+
+    result: Mapping[str, Any]
+    anchor: str
+    trace_turns: list[TraceTurn]
+    audio: RunAudio | None = None
+    audio_note: str = ""
+    setup_s: float | None = None
+    avg_dead_air_s: float | None = None
+    max_dead_air_s: float | None = None
+
+    @property
+    def name(self) -> str:
+        return str(self.result.get("name", "unknown"))
+
+    @property
+    def run_no(self) -> int:
+        return int(self.result.get("run", 1) or 1)
+
+    @property
+    def passed(self) -> bool:
+        return bool(self.result.get("passed"))
+
+    @property
+    def voice(self) -> str:
+        return str(self.result.get("sim_user_voice") or "default")
+
+
+def read_wav(wav_bytes: bytes) -> PcmAudio:
+    """Parses a 16-bit PCM WAV file."""
+    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+        if w.getsampwidth() != 2:
+            raise ValueError(
+                f"expected 16-bit PCM, got {8 * w.getsampwidth()}-bit"
+            )
+        return PcmAudio(
+            data=w.readframes(w.getnframes()),
+            sample_rate=w.getframerate(),
+            channels=w.getnchannels(),
+        )
+
+
+def write_wav(audio: PcmAudio) -> bytes:
+    """Serializes `PcmAudio` to 16-bit WAV bytes."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(audio.channels)
+        w.setsampwidth(2)
+        w.setframerate(audio.sample_rate)
+        w.writeframes(audio.data)
+    return buf.getvalue()
+
+
+def _samples(audio: PcmAudio) -> np.ndarray:
+    n = len(audio.data) // (2 * audio.channels)
+    return np.frombuffer(
+        audio.data[: n * 2 * audio.channels], dtype="<i2"
+    ).reshape(n, audio.channels)
+
+
+def channel_dbfs_frames(audio: PcmAudio, channel: int) -> list[float]:
+    """Returns the RMS level (dBFS) of `channel` per FRAME_S frame."""
+    x = _samples(audio)[:, channel].astype(np.float64)
+    if not x.size:
+        return []
+    frame_len = max(1, int(audio.sample_rate * FRAME_S))
+    starts = np.arange(0, x.size, frame_len)
+    sums = np.add.reduceat(x * x, starts)
+    counts = np.diff(np.append(starts, x.size))
+    rms = np.sqrt(sums / counts)
+    with np.errstate(divide="ignore"):
+        db = np.where(rms > 0, 20 * np.log10(rms / 32768.0), -120.0)
+    return db.tolist()
+
+
+def spans_from_frames(
+    frames: Sequence[float], threshold_dbfs: float = VAD_DBFS
+) -> list[tuple[float, float]]:
+    """Merges frames above `threshold_dbfs` into speech spans (seconds)."""
+    spans = []
+    cur = None
+    for i, level in enumerate(frames):
+        t = i * FRAME_S
+        if level > threshold_dbfs:
+            if cur is None:
+                cur = [t, t + FRAME_S]
+            else:
+                cur[1] = t + FRAME_S
+        elif cur is not None and t - cur[1] > MERGE_GAP_S:
+            spans.append(cur)
+            cur = None
+    if cur is not None:
+        spans.append(cur)
+    return [(round(a, 2), round(b, 2)) for a, b in spans if b - a >= MIN_SPAN_S]
+
+
+def analyze_turn(audio: PcmAudio) -> TurnAudioInfo:
+    """Runs VAD on a stereo turn recording (ch0 = caller, ch1 = agent)."""
+    info = TurnAudioInfo(duration_s=round(audio.duration_s, 2))
+    if audio.channels < 2:
+        return info
+    caller = spans_from_frames(channel_dbfs_frames(audio, 0))
+    agent = spans_from_frames(channel_dbfs_frames(audio, 1))
+    info.caller_spans, info.agent_spans = caller, agent
+    if caller:
+        info.caller_start_s = caller[0][0]
+        first_agent = agent[0][0] if agent else info.duration_s
+        before_agent = [s for s in caller if s[0] < first_agent]
+        info.caller_end_s = (
+            before_agent[-1][1] if before_agent else caller[0][1]
+        )
+    if agent:
+        info.agent_start_s = agent[0][0]
+        info.agent_end_s = agent[-1][1]
+    if info.caller_end_s is not None and info.agent_start_s is not None:
+        info.dead_air_s = round(
+            max(0.0, info.agent_start_s - info.caller_end_s), 2
+        )
+    return info
+
+
+def call_setup_s(info: TurnAudioInfo) -> float | None:
+    """Returns the time before the agent's greeting in turn 1."""
+    if info.agent_start_s is None:
+        return None
+    return round(info.agent_start_s - (info.caller_end_s or 0.0), 2)
+
+
+def concat_turns(
+    turns: Mapping[int, PcmAudio],
+) -> tuple[PcmAudio | None, dict[int, float]]:
+    """Concatenates turn recordings in order, returning chapter offsets."""
+    offsets = {}
+    chunks = []
+    first = None
+    t = 0.0
+    for k in sorted(turns):
+        audio = turns[k]
+        if first is None:
+            first = audio
+        elif (audio.sample_rate, audio.channels) != (
+            first.sample_rate,
+            first.channels,
+        ):
+            logger.warning(
+                "Skipping turn %d with a mismatched audio format.", k
+            )
+            continue
+        offsets[k] = round(t, 2)
+        chunks.append(audio.data)
+        t += audio.duration_s
+    if first is None:
+        return None, {}
+    full = PcmAudio(b"".join(chunks), first.sample_rate, first.channels)
+    return full, offsets
+
+
+def encode_opus(audio: PcmAudio) -> EncodedAudio:
+    """Encodes PCM to Ogg/Opus with the sandboxed ffmpeg behind pydub."""
+    if AudioSegment is None:
+        raise RuntimeError("pydub is not installed")
+    segment = AudioSegment(
+        data=audio.data,
+        sample_width=2,
+        frame_rate=audio.sample_rate,
+        channels=audio.channels,
+    )
+    buf = io.BytesIO()
+    segment.export(buf, format="ogg", codec="libopus", bitrate=_OPUS_BITRATE)
+    data = buf.getvalue()
+    if not data.startswith(b"OggS"):
+        raise ValueError("ffmpeg did not produce an Ogg stream")
+    return EncodedAudio(data=data, mime_type="audio/ogg")
+
+
+def downsample_wav(
+    audio: PcmAudio, target_rate: int = _FALLBACK_SAMPLE_RATE
+) -> EncodedAudio:
+    """Encodes PCM as WAV, box-filter downsampled to `target_rate`."""
+    factor = audio.sample_rate // target_rate
+    if factor <= 1 or audio.sample_rate % target_rate:
+        return EncodedAudio(data=write_wav(audio), mime_type="audio/wav")
+    x = _samples(audio)
+    n = (x.shape[0] // factor) * factor
+    y = x[:n].reshape(-1, factor, audio.channels).astype(np.int32).mean(axis=1)
+    pcm = y.round().astype("<i2").tobytes()
+    return EncodedAudio(
+        data=write_wav(PcmAudio(pcm, target_rate, audio.channels)),
+        mime_type="audio/wav",
+    )
+
+
+def encode_audio(
+    audio: PcmAudio,
+    encoder: Callable[[PcmAudio], EncodedAudio] = encode_opus,
+) -> EncodedAudio:
+    """Encodes with `encoder`, falling back to 8 kHz WAV if it fails."""
+    try:
+        return encoder(audio)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning("Audio encoding failed (%r); embedding 8 kHz WAV.", e)
+        return downsample_wav(audio)
+
+
+def _candidate_dates(run_date: datetime.date) -> list[datetime.date]:
+    one_day = datetime.timedelta(days=1)
+    return [run_date, run_date - one_day, run_date + one_day]
+
+
+def fetch_session_recording(
+    gcs: GcsClient,
+    bucket: str,
+    session_id: str,
+    run_date: datetime.date,
+) -> SessionRecording | None:
+    """Downloads the per-turn stereo recordings of a CES session."""
+    clean_bucket = bucket.removeprefix("gs://").strip("/")
+    bucket_name, _, custom_prefix = clean_bucket.partition("/")
+    candidate_prefixes = [
+        f"{_RECORDING_PREFIX}/{day.isoformat()}/{session_id}/"
+        for day in _candidate_dates(run_date)
+    ]
+    if custom_prefix:
+        candidate_prefixes.append(f"{custom_prefix.strip('/')}/{session_id}/")
+    for prefix in candidate_prefixes:
+        uris = gcs.list_with_prefix(f"gs://{bucket_name}", prefix)
+        turn_uris = {}
+        for uri in uris:
+            m = _TURN_FILE_RE.search(uri)
+            if m:
+                turn_uris[int(m.group(1) or 1)] = uri
+        if not turn_uris:
+            continue
+        turns = {}
+        for k, uri in sorted(turn_uris.items()):
+            try:
+                turns[k] = read_wav(gcs.download_blob(uri))
+            except (ValueError, EOFError, wave.Error) as e:
+                logger.warning("Skipping unreadable recording %s: %r", uri, e)
+        if turns:
+            return SessionRecording(
+                gcs_dir=f"gs://{bucket_name}/{prefix}", turns=turns
+            )
+    return None
+
+
+def _tool_label(line: str) -> tuple[str, str]:
+    head, _, rest = line.partition(" with ")
+    name = head.split(":", 1)[-1].strip().split("/")[-1]
+    rest = rest.removeprefix("args ").removeprefix("result ")
+    return name, rest
+
+
+def parse_trace_turns(detailed_trace: Sequence[str]) -> list[TraceTurn]:
+    """Groups a `detailed_trace` into turns, each started by a user line."""
+    turns = []
+    cur = None
+    for entry in detailed_trace or []:
+        for raw in str(entry).split("\n"):
+            line = raw.strip()
+            if not line or line.startswith(
+                ("Agent Text (Diag):", "User Query:")
+            ):
+                continue
+            if line.startswith("User:"):
+                cur = TraceTurn(user=line.removeprefix("User:").strip())
+                turns.append(cur)
+                continue
+            if cur is None:
+                cur = TraceTurn(user="")
+                turns.append(cur)
+            if line.startswith("Agent Text:"):
+                cur.agent.append(line.removeprefix("Agent Text:").strip())
+            elif line.startswith("Tool Call"):
+                name, args = _tool_label(line)
+                cur.events.append(TraceEvent("tool", name, tool_input=args))
+            elif line.startswith("Tool Response"):
+                name, result = _tool_label(line)
+                last = cur.events[-1] if cur.events else None
+                if last and last.kind == "tool" and last.text == name:
+                    last.tool_output = result
+                else:
+                    cur.events.append(
+                        TraceEvent("tool", name, tool_output=result)
+                    )
+            elif line.startswith("Agent Transfer:"):
+                text = line.removeprefix("Agent Transfer:").strip()
+                cur.events.append(TraceEvent("transfer", text))
+            else:
+                cur.events.append(TraceEvent("system", line))
+    return turns
+
+
+def percentile(values: Sequence[float], p: float) -> float | None:
+    """Nearest-rank percentile, or None for no values."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    k = round(p / 100.0 * (len(ordered) - 1))
+    return ordered[max(0, min(len(ordered) - 1, k))]
+
+
+def _anchor(name: str, run_no: int, used: set[str]) -> str:
+    base = re.sub(r"[^A-Za-z0-9_-]", "_", f"{name}__run{run_no}")
+    anchor, i = base, 2
+    while anchor in used:
+        anchor, i = f"{base}_{i}", i + 1
+    used.add(anchor)
+    return anchor
+
+
+def build_run_audio(
+    recording: SessionRecording,
+    encoder: Callable[[PcmAudio], EncodedAudio] = encode_opus,
+) -> RunAudio:
+    """Analyzes and encodes the full-call track of one run."""
+    full, offsets = concat_turns(recording.turns)
+    infos = {k: analyze_turn(a) for k, a in recording.turns.items()}
+    encoded = encode_audio(full, encoder) if full else None
+    return RunAudio(
+        gcs_dir=recording.gcs_dir,
+        encoded=encoded,
+        duration_s=round(full.duration_s, 2) if full else 0.0,
+        chapter_offsets=offsets,
+        turns=infos,
+    )
+
+
+def _apply_metrics(view: RunView) -> None:
+    """Fills setup and dead-air summary fields from the run's audio."""
+    if not view.audio:
+        return
+    first = view.audio.turns.get(1)
+    if first:
+        view.setup_s = call_setup_s(first)
+    dead = [
+        i.dead_air_s
+        for k, i in view.audio.turns.items()
+        if k > 1 and i.dead_air_s is not None
+    ]
+    if dead:
+        view.avg_dead_air_s = round(statistics.mean(dead), 2)
+        view.max_dead_air_s = max(dead)
+
+
+def _lat_cls(
+    x: float | None,
+    warn: float = _DEAD_AIR_WARN_S,
+    bad: float = _DEAD_AIR_BAD_S,
+) -> str:
+    if x is None:
+        return "lat-neutral"
+    if x < warn:
+        return "lat-good"
+    return "lat-warn" if x < bad else "lat-bad"
+
+
+def _ces_base(app_id: str) -> str:
+    return f"{_CES_CONSOLE}/{app_id}" if app_id.startswith("projects/") else ""
+
+
+def _prepare_ces_turn_vad(
+    info: TurnAudioInfo | None, turn_no: int
+) -> dict[str, Any] | None:
+    """Prepares template context dict for one turn's VAD timeline & badge."""
+    if info is None:
+        return None
+    dur = info.duration_s
+    segs: list[dict[str, Any]] = []
+    if dur and (info.caller_spans or info.agent_spans):
+        t = 0.0
+
+        def add_seg(kind: str, a: float, b: float, label: str) -> None:
+            nonlocal t
+            if b <= a:
+                return
+            width = 100.0 * (b - a) / dur
+            title = f"{label}: {a:.2f}s–{b:.2f}s ({b - a:.2f}s)"
+            text = f"{label} ({b - a:.2f}s)" if label else ""
+            segs.append(
+                {
+                    "kind": kind,
+                    "width_pct": width,
+                    "title": title,
+                    "text": text,
+                }
+            )
+            t = b
+
+        if info.caller_start_s is not None and info.caller_end_s is not None:
+            add_seg("tl-lead", 0.0, info.caller_start_s, "lead")
+            add_seg(
+                "tl-caller", info.caller_start_s, info.caller_end_s, "Caller"
+            )
+        if info.agent_start_s is not None and info.agent_end_s is not None:
+            wait = info.agent_start_s - t
+            if turn_no == 1:
+                kind, label = "tl-wait-init", "Setup"
+            else:
+                kind = (
+                    "tl-wait-short"
+                    if wait < _DEAD_AIR_WARN_S
+                    else "tl-wait-long"
+                )
+                label = "Dead air"
+            add_seg(kind, t, info.agent_start_s, label)
+            add_seg("tl-agent", info.agent_start_s, info.agent_end_s, "Agent")
+        add_seg("tl-tail", t, dur, "")
+
+    return {
+        "turn_no": turn_no,
+        "duration_s": dur,
+        "setup_s": call_setup_s(info) if turn_no == 1 else None,
+        "dead_air_s": info.dead_air_s if turn_no > 1 else None,
+        "dead_air_cls": (
+            _lat_cls(info.dead_air_s) if turn_no > 1 else "lat-neutral"
+        ),
+        "segments": segs,
+    }
+
+
+def _prepare_ces_audio_view(view: RunView) -> dict[str, Any]:
+    """Prepares template context dict for a run's CES audio player & VAD."""
+    audio = view.audio
+    has_audio = bool(audio and audio.encoded)
+    b64 = (
+        base64.b64encode(audio.encoded.data).decode("ascii")
+        if (audio and audio.encoded)
+        else ""
+    )
+    mime = audio.encoded.mime_type if (audio and audio.encoded) else ""
+    chapters = []
+    if audio:
+        for k, off in sorted(audio.chapter_offsets.items()):
+            info = audio.turns.get(k)
+            da = info.dead_air_s if (info and k > 1) else None
+            chapters.append({"turn": k, "offset_s": off, "dead_air_s": da})
+    turns_map = {
+        k: _prepare_ces_turn_vad(info, k)
+        for k, info in (audio.turns if audio else {}).items()
+    }
+    return {
+        "anchor": view.anchor,
+        "has_audio": has_audio,
+        "b64_data": b64,
+        "mime_type": mime,
+        "duration_s": audio.duration_s if audio else 0.0,
+        "gcs_dir": audio.gcs_dir if audio else "",
+        "audio_note": (
+            view.audio_note
+            or "No server-side recording found for this session."
+        ),
+        "chapter_offsets": dict(audio.chapter_offsets) if audio else {},
+        "chapters": chapters,
+        "turns": turns_map,
+        "setup_s": view.setup_s,
+        "avg_dead_air_s": view.avg_dead_air_s,
+        "avg_dead_air_cls": _lat_cls(view.avg_dead_air_s),
+        "max_dead_air_s": view.max_dead_air_s,
+        "max_dead_air_cls": _lat_cls(
+            view.max_dead_air_s, _MAX_DEAD_AIR_WARN_S, _MAX_DEAD_AIR_BAD_S
+        ),
+    }
+
+
+def _failure_reason(result: Mapping[str, Any]) -> str:
+    """Summarizes why a run failed."""
+    if "error" in result:
+        return f"error: {result['error']}"
+    reasons = [
+        f"expectation not met: {e.get('expectation')}"
+        for e in result.get("expectation_details") or []
+        if e.get("status") != "Met"
+    ]
+    reasons += [
+        f"goal {s.get('status')}: {s.get('goal')}"
+        for s in result.get("step_details") or []
+        if s.get("status") != "Completed"
+    ]
+    return "; ".join(reasons) or "see details"
+
+
+def _prepare_tags(tags: Sequence[Any]) -> list[dict[str, str]]:
+    out = []
+    for tag in tags:
+        t = str(tag)
+        cls = t.lower() if t.lower() in ("p0", "p1") else ""
+        out.append({"text": t, "cls": cls})
+    return out
+
+
+def render_report(
+    views: Sequence[RunView],
+    *,
+    title: str,
+    app_id: str,
+    sim_user_model: str,
+    eval_model: str,
+    modality: str,
+    recordings_uri: str,
+    source_report_uri: str = "",
+    tags_by_name: Mapping[str, Sequence[Any]] | None = None,
+    now: datetime.datetime | None = None,
+) -> str:
+    """Renders the enriched report page using the shared report templates."""
+    tags_by_name = tags_by_name or {}
+    now = now or datetime.datetime.now()
+    ces_base = _ces_base(app_id)
+    total = len(views)
+    passed = sum(1 for v in views if v.passed)
+    failed = [v for v in views if not v.passed]
+    with_audio = sum(1 for v in views if v.audio)
+    setups = [v.setup_s for v in views if v.setup_s is not None]
+    worst = []
+    for v in views:
+        if not v.audio:
+            continue
+        for k, info in v.audio.turns.items():
+            if k > 1 and info.dead_air_s is not None:
+                worst.append((info.dead_air_s, v, k, info))
+    dead = [d for d, *_ in worst]
+    worst.sort(key=lambda w: w[0], reverse=True)
+    ordered = sorted(views, key=lambda v: (v.passed, v.name, v.run_no))
+
+    over = sum(1 for d in dead if d > _DEAD_AIR_BAD_S)
+    dead_sub = ""
+    if dead:
+        dead_sub = (
+            f"p50 {percentile(dead, 50):.2f}s · p95 {percentile(dead, 95):.2f}s"
+            f" · max {max(dead):.2f}s · n={len(dead)}"
+        )
+    voices = sorted({v.voice for v in views}) or ["default"]
+    kpis = [
+        {
+            "label": "Pass rate",
+            "value": f"{100.0 * passed / total:.1f}%" if total else "—",
+            "sub": f"{passed}/{total} runs · {len(failed)} failed",
+        },
+        {
+            "label": "Sessions with server audio",
+            "value": f"{with_audio}/{total}",
+            "sub": recordings_uri,
+        },
+        {
+            "label": "Dead air after caller (turn ≥2)",
+            "value": f"avg {statistics.mean(dead):.2f}s" if dead else "—",
+            "sub": dead_sub,
+        },
+        {
+            "label": f"Turns with dead air > {_DEAD_AIR_BAD_S:.0f}s",
+            "value": f"{over} / {len(dead)}",
+            "sub": (
+                f"{100.0 * over / len(dead):.0f}% of post-greeting turns"
+                if dead
+                else ""
+            ),
+        },
+        {
+            "label": "Call setup before greeting",
+            "value": f"avg {statistics.mean(setups):.2f}s" if setups else "—",
+            "sub": f"p95 {percentile(setups, 95):.2f}s" if setups else "",
+        },
+        {
+            "label": "Sim user / judge model",
+            "value": f"{sim_user_model} / {eval_model}",
+            "sub": f"{modality} modality · TTS voice {', '.join(voices)}",
+        },
+    ]
+
+    toc_rows = []
+    for i, v in enumerate(ordered, 1):
+        toc_rows.append(
+            {
+                "idx": i,
+                "anchor": v.anchor,
+                "name": v.name,
+                "tags": _prepare_tags(tags_by_name.get(v.name, [])),
+                "passed": v.passed,
+                "goals": str(v.result.get("goals", "—")),
+                "expectations": str(v.result.get("expectations", "—")),
+                "turns": str(v.result.get("turns", "—")),
+                "avg_dead_air_s": v.avg_dead_air_s,
+                "avg_dead_air_cls": _lat_cls(v.avg_dead_air_s),
+                "max_dead_air_s": v.max_dead_air_s,
+                "max_dead_air_cls": _lat_cls(
+                    v.max_dead_air_s, _MAX_DEAD_AIR_WARN_S, _MAX_DEAD_AIR_BAD_S
+                ),
+                "setup_s": v.setup_s,
+            }
+        )
+
+    failures = [
+        {
+            "anchor": v.anchor,
+            "name": v.name,
+            "run_no": v.run_no,
+            "reason": _failure_reason(v.result),
+        }
+        for v in failed
+    ]
+
+    worst_rows = []
+    for i, (d, v, k, info) in enumerate(worst[:_SLOWEST_ROWS], 1):
+        seek_at = None
+        if v.audio and v.audio.encoded and k in v.audio.chapter_offsets:
+            seek_at = v.audio.chapter_offsets[k] + max(
+                0.0, (info.caller_end_s or 0.0) - _PRE_ROLL_S
+            )
+        worst_rows.append(
+            {
+                "idx": i,
+                "anchor": v.anchor,
+                "name": v.name,
+                "run_no": v.run_no,
+                "turn_no": k,
+                "dead_air_s": d,
+                "cls": _lat_cls(d, _MAX_DEAD_AIR_WARN_S, _MAX_DEAD_AIR_BAD_S),
+                "seek_at": seek_at,
+            }
+        )
+
+    runs_ctx = []
+    for i, v in enumerate(ordered, 1):
+        r = v.result
+        sid = str(r.get("session_id") or "")
+        session_link = (
+            f"{ces_base}?panel=conversation_list&id={sid}&source=EVAL"
+            if (sid and ces_base)
+            else ""
+        )
+        ces_audio = _prepare_ces_audio_view(v)
+        audio_turns = v.audio.turns if v.audio else {}
+        offsets = v.audio.chapter_offsets if v.audio else {}
+        n_turns = max([len(v.trace_turns), *list(audio_turns), 0])
+        turn_rows = []
+        for k in range(1, n_turns + 1):
+            turn = v.trace_turns[k - 1] if k <= len(v.trace_turns) else None
+            seek_offset_s = (
+                offsets[k]
+                if (k in offsets and v.audio and v.audio.encoded)
+                else None
+            )
+            turn_rows.append(
+                {
+                    "turn_no": k,
+                    "user": turn.user if turn else "",
+                    "agent_lines": list(turn.agent) if turn else [],
+                    "seek_offset_s": seek_offset_s,
+                    "turn_vad": ces_audio["turns"].get(k),
+                    "events": list(turn.events) if turn else [],
+                }
+            )
+        step_details = []
+        for s in r.get("step_details") or []:
+            status = str(s.get("status", ""))
+            if status == "Completed":
+                cls = "met"
+            elif status == "In Progress":
+                cls = "in-progress"
+            else:
+                cls = "not-met"
+            step_details.append(
+                {
+                    "goal": str(s.get("goal") or ""),
+                    "success_criteria": str(s.get("success_criteria") or ""),
+                    "status": status,
+                    "cls": cls,
+                    "justification": str(s.get("justification") or ""),
+                }
+            )
+        expectation_details = []
+        for e in r.get("expectation_details") or []:
+            status = str(e.get("status", ""))
+            cls = "met" if status == "Met" else "not-met"
+            expectation_details.append(
+                {
+                    "expectation": str(e.get("expectation") or ""),
+                    "status": status,
+                    "cls": cls,
+                    "justification": str(e.get("justification") or ""),
+                }
+            )
+        runs_ctx.append(
+            {
+                "idx": i,
+                "anchor": v.anchor,
+                "name": v.name,
+                "passed": v.passed,
+                "tags": _prepare_tags(tags_by_name.get(v.name, [])),
+                "run_no": v.run_no,
+                "goals": str(r.get("goals", "?")),
+                "expectations": str(r.get("expectations", "?")),
+                "turns": str(r.get("turns", "?")),
+                "voice": v.voice,
+                "session_id": sid,
+                "session_link": session_link,
+                "ces_audio": ces_audio,
+                "error": str(r["error"]) if "error" in r else None,
+                "turn_rows": turn_rows,
+                "step_details": step_details,
+                "expectation_details": expectation_details,
+                "session_parameters_json": json.dumps(
+                    r.get("session_parameters") or {}, indent=1
+                ),
+            }
+        )
+
+    data = {
+        "title": title,
+        "source_report_uri": source_report_uri,
+        "generated_at": f"{now:%Y-%m-%d %H:%M}",
+        "app_id": app_id,
+        "ces_base": ces_base,
+        "recordings_uri": recordings_uri,
+        "kpis": kpis,
+        "vad_dbfs": f"{VAD_DBFS:.0f}",
+        "frame_ms": f"{FRAME_S * 1000:.0f}",
+        "failures": failures,
+        "worst_rows": worst_rows,
+        "toc_rows": toc_rows,
+        "runs": runs_ctx,
+    }
+    mod = _get_combined_template_module()
+    body_html = str(mod.render_enriched_sim_report(data))
+    return report_components.BaseShell(
+        title=title,
+        body_content=[base_components.Raw(body_html)],
+    ).render()
+
+
+def enrich_sim_results_with_recordings(
+    results: Sequence[dict[str, Any] | Mapping[str, Any]],
+    *,
+    recordings_bucket: str,
+    gcs: GcsClient | None = None,
+    run_date: datetime.date | None = None,
+    encoder: Callable[[PcmAudio], EncodedAudio] = encode_opus,
+) -> list[RunView]:
+    """Fetches CES stereo recordings & attaches `_ces_audio` to `results`."""
+    if gcs is None:
+        gcs = gcs_utils.GCSUtils()
+    run_date = run_date or datetime.datetime.now(datetime.timezone.utc).date()
+    used: set[str] = set()
+    views = [
+        RunView(
+            result=r,
+            anchor=_anchor(
+                str(r.get("name", "run")), int(r.get("run", 1) or 1), used
+            ),
+            trace_turns=parse_trace_turns(r.get("detailed_trace") or []),
+        )
+        for r in results
+    ]
+
+    def load_audio(view: RunView) -> RunAudio | None:
+        if isinstance(view.result, dict) and isinstance(
+            view.result.get("_run_audio_obj"), RunAudio
+        ):
+            return view.result["_run_audio_obj"]
+        sid = view.result.get("session_id")
+        if not sid or "error" in view.result:
+            return None
+        try:
+            recording = fetch_session_recording(
+                gcs, recordings_bucket, str(sid), run_date
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Failed to fetch recordings for session %s: %r", sid, e
+            )
+            view.audio_note = f"Failed to fetch server-side recording: {e}"
+            return None
+        return (
+            build_run_audio(recording, encoder=encoder) if recording else None
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(_FETCH_WORKERS) as pool:
+        audios = list(pool.map(load_audio, views))
+
+    embedded = 0
+    for r, view, audio in zip(results, views, audios, strict=False):
+        if audio is not None:
+            if audio.encoded:
+                if (
+                    embedded + len(audio.encoded.data)
+                    > _MAX_EMBEDDED_AUDIO_BYTES
+                ):
+                    audio.encoded = None
+                    view.audio_note = (
+                        "Audio not embedded: report audio size limit reached."
+                    )
+                else:
+                    embedded += len(audio.encoded.data)
+            view.audio = audio
+            _apply_metrics(view)
+        if isinstance(r, dict):
+            r["_ces_audio"] = _prepare_ces_audio_view(view)
+            if audio is not None:
+                r["_run_audio_obj"] = audio
+
+    logger.info(
+        "Enriched report: %d runs, %d with audio, %.1f MB embedded audio.",
+        len(views),
+        sum(1 for v in views if v.audio),
+        embedded / 1e6,
+    )
+    return views
+
+
+def build_enriched_report(
+    results: Sequence[Mapping[str, Any]],
+    *,
+    gcs: GcsClient,
+    recordings_bucket: str,
+    app_id: str,
+    sim_user_model: str,
+    eval_model: str,
+    modality: str,
+    title: str = "Enriched Simulation Report",
+    run_date: datetime.date | None = None,
+    source_report_uri: str = "",
+    tags_by_name: Mapping[str, Sequence[Any]] | None = None,
+    encoder: Callable[[PcmAudio], EncodedAudio] = encode_opus,
+) -> str:
+    """Fetches recordings for `results` and renders the enriched HTML report."""
+    views = enrich_sim_results_with_recordings(
+        results,
+        recordings_bucket=recordings_bucket,
+        gcs=gcs,
+        run_date=run_date,
+        encoder=encoder,
+    )
+    return render_report(
+        views,
+        title=title,
+        app_id=app_id,
+        sim_user_model=sim_user_model,
+        eval_model=eval_model,
+        modality=modality,
+        recordings_uri=f"gs://{recordings_bucket}/{_RECORDING_PREFIX}",
+        source_report_uri=source_report_uri,
+        tags_by_name=tags_by_name,
+    )
+
+
+def enriched_report_uri(report_uri: str) -> str:
+    """Returns `<base>_enriched.html` for a `<base>.html` report URI."""
+    base = report_uri.removesuffix(".html")
+    return f"{base}_enriched.html"
+
+
+def resolve_recordings_bucket(
+    app_id: str | None = None,
+    explicit_bucket: str | None = None,
+    *,
+    app_name: str | None = None,
+) -> str | None:
+    """Resolves the GCS bucket holding CES session audio recordings."""
+    if explicit_bucket and explicit_bucket.strip():
+        return explicit_bucket.strip().removeprefix("gs://").strip("/")
+    target_app = app_id or app_name or ""
+    if not target_app:
+        return None
+    try:
+        from cxas_scrapi.core.traces import Traces  # noqa: PLC0415
+
+        traces_client = Traces(agent_id=target_app)
+        discovered = traces_client._get_audio_bucket(target_app)
+        if discovered:
+            return str(discovered).strip().removeprefix("gs://").strip("/")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Auto-discovery of recordings bucket failed: %r", exc)
+    return None
+
+
+def enrich_html_report(
+    results: Sequence[Mapping[str, Any]] | None = None,
+    *,
+    output_path: str | None = None,
+    output_html_path: str | None = None,
+    report_html_path: str | None = None,
+    sim_results: Sequence[Mapping[str, Any]] | None = None,
+    sim_results_path: str | None = None,
+    recordings_bucket: str | None = None,
+    app_id: str = "",
+    sim_user_model: str = "",
+    eval_model: str = "",
+    modality: str = "audio",
+    title: str = "Enriched Simulation Report",
+    source_report_uri: str = "",
+    tags_by_name: Mapping[str, Sequence[Any]] | None = None,
+    gcs: GcsClient | None = None,
+) -> str | None:
+    """Builds and writes the enriched HTML report to `output_path`."""
+    effective_results = results if results is not None else (sim_results or [])
+    if (
+        not effective_results
+        and sim_results_path
+        and os.path.isfile(sim_results_path)
+    ):
+        with _ORIG_OPEN(sim_results_path, encoding="utf-8") as sf:
+            loaded_data = json.load(sf)
+            effective_results = (
+                loaded_data.get("results", [])
+                if isinstance(loaded_data, dict)
+                else loaded_data
+            )
+    target_out = (
+        output_path
+        or output_html_path
+        or (enriched_report_uri(report_html_path) if report_html_path else None)
+    )
+    if not target_out:
+        return None
+    resolved_bucket = resolve_recordings_bucket(app_id, recordings_bucket)
+    if not resolved_bucket:
+        logger.warning(
+            "Cannot build enriched report: no recordings_bucket discovered."
+        )
+        return None
+    if gcs is None:
+        gcs = gcs_utils.GCSUtils()
+    html_content = build_enriched_report(
+        effective_results,
+        gcs=gcs,
+        recordings_bucket=resolved_bucket,
+        app_id=app_id,
+        sim_user_model=sim_user_model or "default",
+        eval_model=eval_model or "default",
+        modality=modality,
+        title=title,
+        source_report_uri=source_report_uri or (report_html_path or ""),
+        tags_by_name=tags_by_name,
+    )
+    parent = os.path.dirname(os.path.abspath(target_out))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with _ORIG_OPEN(target_out, "w", encoding="utf-8") as f:
+        f.write(html_content)
+    return target_out
+
+
+def render_index_html(
+    entries: list[dict[str, Any]],
+    title: str = "CXAS Evaluation Dashboard",
+) -> str:
+    """Render a self-contained HTML index page from manifest entries."""
+    latest_by_suite: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        sname = str(entry.get("suite") or "evals")
+        if sname not in latest_by_suite:
+            latest_by_suite[sname] = entry
+
+    cards = []
+    for sname, entry in sorted(latest_by_suite.items()):
+        cards.append(
+            {
+                "suite": sname,
+                "gate_passed": bool(entry.get("gate_passed", True)),
+                "passed_cases": entry.get("passed_cases", 0),
+                "total_cases": entry.get("total_cases", 0),
+                "pass_rate_pct_str": (
+                    f"{float(entry.get('pass_rate', 0.0)):.0%}"
+                ),
+                "timestamp_utc": str(entry.get("timestamp_utc", "")),
+                "latest_url": str(
+                    entry.get("latest_url") or entry.get("report_url") or "#"
+                ),
+                "latest_enriched_url": str(
+                    entry.get("latest_enriched_url") or ""
+                ),
+            }
+        )
+
+    rows = []
+    for entry in entries:
+        rows.append(
+            {
+                "timestamp_utc": str(entry.get("timestamp_utc", "")),
+                "suite": str(entry.get("suite", "")),
+                "gate_passed": bool(entry.get("gate_passed", True)),
+                "passed_cases": entry.get("passed_cases", 0),
+                "total_cases": entry.get("total_cases", 0),
+                "pass_rate_pct_str": (
+                    f"{float(entry.get('pass_rate', 0.0)):.1%}"
+                ),
+                "git_sha_short": str(entry.get("git_sha", ""))[:12],
+                "run_id": str(entry.get("run_id", "")),
+                "report_url": str(entry.get("report_url") or "#"),
+                "enriched_report_url": str(
+                    entry.get("enriched_report_url") or ""
+                ),
+            }
+        )
+
+    mod = _get_combined_template_module()
+    body_html = str(
+        mod.render_eval_index_dashboard(
+            {"title": title, "cards": cards, "rows": rows}
+        )
+    )
+    return report_components.BaseShell(
+        title=title,
+        body_content=[base_components.Raw(body_html)],
+    ).render()
+
+
+def publish_eval_report_bundle(
+    output_dir: str,
+    report_path: str,
+    gcs_bundle_uri: str,
+    suite_name: str | None = None,
+    gate_summary: dict[str, Any] | None = None,
+    report_title: str | None = None,
+    enriched_report_path: str | None = None,
+) -> dict[str, str]:
+    """Upload report HTML, artifacts, and rolling index.html to GCS."""
+    base_uri = gcs_bundle_uri.rstrip("/")
+    uploader = gcs_utils.GCSUtils()
+    uploaded: dict[str, str] = {}
+
+    if os.path.isfile(report_path):
+        report_uri = f"{base_uri}/report.html"
+        uploaded["report_url"] = uploader.upload_file(
+            report_uri,
+            report_path,
+            content_type="text/html; charset=utf-8",
+        )
+        uploaded["report_gcs_uri"] = report_uri
+
+    if enriched_report_path and os.path.isfile(enriched_report_path):
+        enriched_uri = f"{base_uri}/report_enriched.html"
+        uploaded["enriched_report_url"] = uploader.upload_file(
+            enriched_uri,
+            enriched_report_path,
+            content_type="text/html; charset=utf-8",
+        )
+        uploaded["enriched_report_gcs_uri"] = enriched_uri
+
+    patterns = [
+        "sim_results*.json",
+        "ces_results*.json",
+        "sim_cases*.yaml",
+        "tool_test_results*.csv",
+        "tool_test_results*.json",
+        "callback_test_results*.csv",
+        "callback_test_results*.json",
+        "EVAL_STAMP*.txt",
+        "junit*.xml",
+    ]
+    for pat in patterns:
+        for local_file in sorted(glob.glob(os.path.join(output_dir, pat))):
+            if os.path.isfile(local_file):
+                fname = os.path.basename(local_file)
+                dest_uri = f"{base_uri}/{fname}"
+                if fname.endswith(".json"):
+                    ctype = "application/json"
+                elif fname.endswith(".xml"):
+                    ctype = "application/xml"
+                else:
+                    ctype = "text/plain; charset=utf-8"
+                uploader.upload_file(dest_uri, local_file, content_type=ctype)
+
+    parent_uri = "/".join(base_uri.split("/")[:-1])
+    has_parent = parent_uri.startswith("gs://") and len(parent_uri) > len(
+        "gs://"
+    )
+    root_uri = parent_uri if has_parent else base_uri
+
+    if suite_name and os.path.isfile(report_path):
+        safe_suite = (
+            re.sub(r"[^a-zA-Z0-9._-]+", "-", suite_name).strip("-") or "evals"
+        )
+        latest_uri = f"{root_uri}/latest-{safe_suite}.html"
+        uploaded["latest_url"] = uploader.upload_file(
+            latest_uri,
+            report_path,
+            content_type="text/html; charset=utf-8",
+            cache_control="no-cache, max-age=0",
+        )
+        uploaded["latest_gcs_uri"] = latest_uri
+
+        if enriched_report_path and os.path.isfile(enriched_report_path):
+            latest_enriched_uri = (
+                f"{root_uri}/latest-{safe_suite}_enriched.html"
+            )
+            uploaded["latest_enriched_url"] = uploader.upload_file(
+                latest_enriched_uri,
+                enriched_report_path,
+                content_type="text/html; charset=utf-8",
+                cache_control="no-cache, max-age=0",
+            )
+            uploaded["latest_enriched_gcs_uri"] = latest_enriched_uri
+
+        stamp_local = os.path.join(output_dir, f"EVAL_STAMP-{safe_suite}.txt")
+        if os.path.isfile(stamp_local):
+            latest_stamp_uri = f"{root_uri}/latest-EVAL_STAMP-{safe_suite}.txt"
+            uploaded["latest_stamp_url"] = uploader.upload_file(
+                latest_stamp_uri,
+                stamp_local,
+                content_type="text/plain; charset=utf-8",
+                cache_control="no-cache, max-age=0",
+            )
+
+    if gate_summary is not None:
+        manifest_uri = f"{root_uri}/runs_manifest.json"
+        existing_entries: list[dict[str, Any]] = []
+        with contextlib.suppress(Exception):
+            if uploader.exists(manifest_uri):
+                raw_manifest = uploader.download_string(manifest_uri)
+                if isinstance(raw_manifest, str) and raw_manifest.strip():
+                    loaded = json.loads(raw_manifest)
+                    if isinstance(loaded, list):
+                        existing_entries = loaded
+
+        prov = resolve_provenance_info()
+        now_utc = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        new_entry = {
+            "timestamp_utc": now_utc,
+            "suite": suite_name or "evals",
+            "passed_cases": gate_summary.get("passed_cases", 0),
+            "total_cases": gate_summary.get("total_cases", 0),
+            "pass_rate": round(float(gate_summary.get("pass_rate", 0.0)), 4),
+            "gate_passed": bool(gate_summary.get("gate_passed", True)),
+            "git_sha": prov["git_sha"],
+            "git_ref": prov["git_ref"],
+            "run_id": prov["run_id"],
+            "report_url": uploaded.get("report_url", ""),
+            "latest_url": uploaded.get("latest_url", ""),
+            "enriched_report_url": uploaded.get("enriched_report_url", ""),
+            "latest_enriched_url": uploaded.get("latest_enriched_url", ""),
+            "bundle_gcs_uri": base_uri,
+        }
+        updated_entries = [new_entry, *existing_entries][:100]
+        with contextlib.suppress(Exception):
+            manifest_local = os.path.join(output_dir, "runs_manifest.json")
+            with _ORIG_OPEN(manifest_local, "w", encoding="utf-8") as mf:
+                json.dump(updated_entries, mf, indent=2)
+            uploaded["manifest_url"] = uploader.upload_file(
+                manifest_uri,
+                manifest_local,
+                content_type="application/json",
+                cache_control="no-cache, max-age=0",
+            )
+
+            index_local = os.path.join(output_dir, "index.html")
+            with _ORIG_OPEN(index_local, "w", encoding="utf-8") as idx_f:
+                idx_f.write(
+                    render_index_html(
+                        updated_entries,
+                        title=report_title or "CXAS Evaluation Dashboard",
+                    )
+                )
+            index_uri = f"{root_uri}/index.html"
+            uploaded["index_url"] = uploader.upload_file(
+                index_uri,
+                index_local,
+                content_type="text/html; charset=utf-8",
+                cache_control="no-cache, max-age=0",
+            )
+
+    return uploaded
+
+
+def write_github_step_summary(
+    gate_summary: dict[str, Any],
+    suite_name: str | None = None,
+    published_urls: dict[str, str] | None = None,
+    summary_path: str | None = None,
+) -> str | None:
+    """Write a Markdown summary table and links to GITHUB_STEP_SUMMARY."""
+    target_path = summary_path or os.environ.get("GITHUB_STEP_SUMMARY")
+    if not target_path:
+        return None
+
+    title = f"### {suite_name}" if suite_name else "### Evaluation Summary"
+    passed = gate_summary.get("passed_cases", 0)
+    total = gate_summary.get("total_cases", 0)
+    min_passes = gate_summary.get("min_run_passes", 1)
+    cases = gate_summary.get("cases", [])
+    max_runs = max((c.get("runs", 1) for c in cases), default=1)
+    rule_note = (
+        f" ({min_passes}-of-{max_runs} pass rule)"
+        if max_runs > 1 or min_passes > 1
+        else ""
+    )
+
+    lines = [
+        title,
+        "",
+        f"**{passed} / {total} cases passed**{rule_note}",
+        "",
+    ]
+
+    if published_urls:
+        link_parts = []
+        if published_urls.get("report_url"):
+            link_parts.append(
+                f"[Open HTML Report]({published_urls['report_url']})"
+            )
+        if published_urls.get("latest_url"):
+            link_parts.append(
+                f"[Latest for branch]({published_urls['latest_url']})"
+            )
+        if link_parts:
+            lines.append(" · ".join(link_parts))
+            lines.append("")
+
+    if cases:
+        lines.extend(
+            [
+                "| Status | Case | Runs Passed |",
+                "| :---: | :--- | :---: |",
+            ]
+        )
+        for c in cases:
+            status_str = "PASS" if c.get("passed") else "FAIL"
+            lines.append(
+                f"| {status_str} | `{c.get('name', '?')}` | "
+                f"{c.get('passes', 0)}/{c.get('runs', 1)} |"
+            )
+        lines.append("")
+
+    content = "\n".join(lines) + "\n"
+    with _ORIG_OPEN(target_path, "a") as f:
+        f.write(content)
+    return target_path
+
+
+def discover_eval_suite(
+    *,
+    app_dir: str | None = None,
+    simulation_dir: str | None = None,
+    goldens_dir: str | None = None,
+    tool_test_file: str | None = None,
+    shadow_dir: str | None = None,
+    include: list[str] | None = None,
+    filter_files: list[str] | None = None,
+    exclude_files: list[str] | None = None,
+    filter_tags: list[str] | None = None,
+    filter_names: list[str] | None = None,
+    suite_name: str | None = None,
+) -> dict[str, Any]:
+    """Discover and filter evaluation files/cases without GCP calls."""
+    effective_include = (
+        ["sims", "goldens", "tools", "callbacks"]
+        if include is None or "all" in include
+        else list(include)
+    )
+
+    sim_files: list[str] = []
+    sim_cases: list[dict[str, Any]] = []
+    if "sims" in effective_include:
+        sim_target = simulation_dir or (
+            os.path.join(app_dir, "evals", "simulations")
+            if app_dir
+            else "evals/simulations/"
+        )
+        if sim_target and os.path.exists(sim_target):
+            if not os.path.isdir(sim_target):
+                raw_sim_files = [sim_target]
+            else:
+                raw_sim_files = evals_runner._discover_yaml_and_extra_files(
+                    sim_target
+                )
+            sim_files = evals_runner._filter_file_list(
+                raw_sim_files, filter_files, exclude_files
+            )
+            for sf in sim_files:
+                loaded = _load_sim_test_cases(sf)
+                if filter_tags:
+                    loaded = [
+                        c
+                        for c in loaded
+                        if any(t in filter_tags for t in c.get("tags", []))
+                    ]
+                if filter_names:
+                    loaded = [
+                        c for c in loaded if c.get("name") in filter_names
+                    ]
+                sim_cases.extend(loaded)
+
+    golden_files: list[str] = []
+    if "goldens" in effective_include:
+        golden_target = goldens_dir or (
+            os.path.join(app_dir, "evals", "goldens")
+            if app_dir
+            else "evals/goldens/"
+        )
+        if golden_target and os.path.exists(golden_target):
+            raw_golden_files = (
+                [golden_target]
+                if not os.path.isdir(golden_target)
+                else evals_runner._discover_yaml_and_extra_files(golden_target)
+            )
+            golden_files = evals_runner._filter_file_list(
+                raw_golden_files, filter_files, exclude_files
+            )
+
+    tool_files: list[str] = []
+    if "tools" in effective_include:
+        tool_target = tool_test_file or (
+            os.path.join(app_dir, "evals", "tool_tests")
+            if app_dir
+            else "evals/tool_tests/"
+        )
+        if tool_target and os.path.exists(tool_target):
+            raw_tool_files = (
+                [tool_target]
+                if not os.path.isdir(tool_target)
+                else evals_runner._discover_yaml_and_extra_files(tool_target)
+            )
+            tool_files = evals_runner._filter_file_list(
+                raw_tool_files, filter_files, exclude_files
+            )
+
+    callback_files: list[str] = []
+    if "callbacks" in effective_include:
+        if app_dir and os.path.exists(app_dir):
+            callback_files.extend(
+                sorted(
+                    glob.glob(
+                        os.path.join(app_dir, "agents", "**", "test_*.py"),
+                        recursive=True,
+                    )
+                )
+            )
+        py_tool_dir = tool_test_file or (
+            os.path.join(app_dir, "evals", "tool_tests")
+            if app_dir
+            else "evals/tool_tests/"
+        )
+        if py_tool_dir and os.path.exists(py_tool_dir):
+            py_files = (
+                [py_tool_dir]
+                if os.path.isfile(py_tool_dir)
+                else sorted(glob.glob(os.path.join(py_tool_dir, "test_*.py")))
+            )
+            callback_files.extend(
+                evals_runner._filter_file_list(
+                    py_files, filter_files, exclude_files
+                )
+            )
+
+    shadow_files: list[str] = []
+    if "shadows" in effective_include:
+        shadow_target = shadow_dir or (
+            os.path.join(app_dir, "evals", "shadows")
+            if app_dir
+            else "evals/shadows/"
+        )
+        if shadow_target and os.path.exists(shadow_target):
+            raw_shadow_files = (
+                [shadow_target]
+                if not os.path.isdir(shadow_target)
+                else sorted(
+                    f
+                    for ext in ("*.yaml", "*.yml")
+                    for f in glob.glob(
+                        os.path.join(shadow_target, "**", ext), recursive=True
+                    )
+                )
+            )
+            shadow_files = evals_runner._filter_file_list(
+                raw_shadow_files, filter_files, exclude_files
+            )
+
+    print(
+        f"DRY RUN | suite={suite_name or 'default'} | "
+        f"app_dir={app_dir or '(none)'} | "
+        f"sim_files={len(sim_files)} | "
+        f"sim_cases={len(sim_cases)} | "
+        f"golden_files={len(golden_files)} | "
+        f"tool_files={len(tool_files)} | "
+        f"callback_files={len(callback_files)} | "
+        f"shadow_files={len(shadow_files)}"
+    )
+    for tc in sim_cases:
+        print(f"  [sim] {tc.get('name', 'unnamed')}")
+
+    return {
+        "dry_run": True,
+        "gate_passed": True,
+        "suite": suite_name or "default",
+        "app_dir": app_dir,
+        "sim_files": sim_files,
+        "sim_cases": [c.get("name", "unnamed") for c in sim_cases],
+        "golden_files": golden_files,
+        "tool_files": tool_files,
+        "callback_files": callback_files,
+        "shadow_files": shadow_files,
+    }
+
+
 def generate_combined_report_from_dir(
     output_dir: str,
     golden_run: str | None = None,
@@ -2582,6 +7388,7 @@ def generate_combined_report_from_dir(
     golden_parallel: int = 1,
     golden_timeout: int = 600,
     bg_noise_file: str | None = None,
+    bg_noise_snr: float | None = None,
     burst_noise_files: list[str] | None = None,
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
@@ -2594,7 +7401,27 @@ def generate_combined_report_from_dir(
     report_format: str = "html",
     vertex_location: str = "global",
     naturalness: bool | dict[str, Any] | None = None,
-) -> str:
+    audio_analysis: bool | None = None,
+    infra_retries: int = 2,
+    retry_parallel: int | None = None,
+    retry_cooldown: float = 60.0,
+    golden_run_method: str = "STABLE",
+    min_run_passes: int | None = None,
+    min_pass_rate: float | None = None,
+    gcs_bundle_uri: str | None = None,
+    suite_name: str | None = None,
+    github_step_summary: bool = False,
+    return_gate_status: bool = False,
+    platform_sims: bool = False,
+    exclude_files: list[str] | None = None,
+    sim_user_voices: list[str] | None = None,
+    junit_xml: str | None = None,
+    testsuite_prefix: str = "cxas_evals",
+    report_title: str | None = None,
+    dry_run: bool = False,
+    enriched_report: bool = False,
+    recordings_bucket: str | None = None,
+) -> str | tuple[str, dict[str, Any]]:
     """Load results from directory and generate a combined report.
 
     Args:
@@ -2626,10 +7453,29 @@ def generate_combined_report_from_dir(
         True enables it with defaults, False disables it, and a dict is
         merged over each test case's own config. None (default) defers to
         the test case.
+      platform_sims: If True, executes platform-compatible simulation test
+        cases as CXAS 2.0 Milestone evaluations on the CES platform.
 
     Returns:
       The resolved output path or URL where the report was saved.
     """
+    if dry_run:
+        dry_summary = discover_eval_suite(
+            app_dir=app_dir,
+            simulation_dir=simulation_dir,
+            goldens_dir=goldens_dir,
+            tool_test_file=tool_test_file,
+            include=include,
+            filter_files=filter_files,
+            exclude_files=exclude_files,
+            filter_tags=filter_tags,
+            filter_names=filter_names,
+            suite_name=suite_name,
+        )
+        if return_gate_status:
+            return "", dry_summary
+        return ""
+
     if not os.path.isdir(output_dir):
         raise ValueError(f"{output_dir} is not a directory.")
 
@@ -2650,6 +7496,19 @@ def generate_combined_report_from_dir(
     resolved_timestamp = timestamp
 
     if run:
+        extra_run_kwargs: dict[str, Any] = {}
+        if infra_retries != 2:
+            extra_run_kwargs["infra_retries"] = infra_retries
+        if retry_parallel is not None:
+            extra_run_kwargs["retry_parallel"] = retry_parallel
+        if retry_cooldown != 60.0:
+            extra_run_kwargs["retry_cooldown"] = retry_cooldown
+        if golden_run_method != "STABLE":
+            extra_run_kwargs["golden_run_method"] = golden_run_method
+        if exclude_files:
+            extra_run_kwargs["exclude_files"] = exclude_files
+        if sim_user_voices:
+            extra_run_kwargs["sim_user_voices"] = sim_user_voices
         run_results = run_all_evals(
             app_name=app_name,
             app_dir=app_dir,
@@ -2680,6 +7539,9 @@ def generate_combined_report_from_dir(
             capture_agent_audio=capture_agent_audio,
             vertex_location=vertex_location,
             naturalness=naturalness,
+            audio_analysis=bool(audio_analysis),
+            **({"platform_sims": True} if platform_sims else {}),
+            **extra_run_kwargs,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed
@@ -2813,9 +7675,28 @@ def generate_combined_report_from_dir(
                 raise ValueError(
                     "--app-name is required when golden_run is specified."
                 )
+            extra_golden_kwargs: dict[str, Any] = {}
+            if min_run_passes is not None:
+                extra_golden_kwargs["min_run_passes"] = min_run_passes
             golden_results = load_golden_results(
-                golden_run, app_name, include=include
+                golden_run, app_name, include=include, **extra_golden_kwargs
             )
+        elif "goldens" in include:
+            ces_files = glob.glob(os.path.join(output_dir, "ces_results*.json"))
+            if ces_files:
+                ces_files.sort(key=os.path.getmtime)
+                latest_ces_file = ces_files[-1]
+                with open(latest_ces_file) as f:
+                    ces_data = json.load(f)
+                    if isinstance(ces_data, list):
+                        golden_results = ces_data
+                    elif isinstance(ces_data, dict):
+                        golden_results = ces_data.get("results", [])
+
+    if min_run_passes is not None and golden_results and not golden_run:
+        golden_results = reconcile_golden_runs(
+            golden_results, min_run_passes=min_run_passes
+        )
 
     if not output_path:
         default_filename = (
@@ -2829,7 +7710,7 @@ def generate_combined_report_from_dir(
         output_path = os.path.join(output_dir, report_name)
 
     if report_format == "json":
-        return generate_combined_json_report(
+        actual_path = generate_combined_json_report(
             golden_results=golden_results,
             sim_results=sim_results,
             tool_results=tool_results,
@@ -2838,20 +7719,138 @@ def generate_combined_report_from_dir(
             app_name=app_name or "",
             golden_modality=modality,
             sim_modality=modality,
+            audio_analysis=audio_analysis,
+        )
+    else:
+        extra_html_kwargs: dict[str, Any] = {}
+        if enriched_report:
+            extra_html_kwargs["enriched_report"] = True
+        if recordings_bucket:
+            extra_html_kwargs["recordings_bucket"] = recordings_bucket
+        actual_path = generate_combined_html_report(
+            golden_results=golden_results,
+            sim_results=sim_results,
+            tool_results=tool_results,
+            callback_results=callback_results,
+            output_path=output_path,
+            app_name=app_name or "",
+            golden_modality=modality,
+            sim_modality=modality,
+            bg_noise_file=bg_noise_file,
+            burst_noise_files=burst_noise_files,
+            audio_analysis=audio_analysis,
+            **extra_html_kwargs,
         )
 
-    actual_path = generate_combined_html_report(
-        golden_results=golden_results,
-        sim_results=sim_results,
-        tool_results=tool_results,
-        callback_results=callback_results,
-        output_path=output_path,
-        app_name=app_name or "",
-        golden_modality=modality,
-        sim_modality=modality,
-        bg_noise_file=bg_noise_file,
-        burst_noise_files=burst_noise_files,
+    enriched_report_path: str | None = None
+    if (
+        enriched_report
+        and report_format == "html"
+        and actual_path
+        and not actual_path.startswith(("gs://", "http://", "https://"))
+        and os.path.isfile(actual_path)
+    ):
+        rec_bucket = resolve_recordings_bucket(
+            app_name=app_name, explicit_bucket=recordings_bucket
+        )
+        if rec_bucket:
+            stem, ext = os.path.splitext(actual_path)
+            candidate_enriched = f"{stem}_enriched{ext or '.html'}"
+            sim_json_candidates = sorted(
+                glob.glob(os.path.join(output_dir, "sim_results*.json")),
+                key=os.path.getmtime,
+            )
+            latest_sim_json = (
+                sim_json_candidates[-1] if sim_json_candidates else None
+            )
+            try:
+                enriched_report_path = enrich_html_report(
+                    report_html_path=actual_path,
+                    sim_results=sim_results,
+                    sim_results_path=latest_sim_json,
+                    recordings_bucket=rec_bucket,
+                    output_html_path=candidate_enriched,
+                    app_id=app_name or "",
+                    sim_user_model=sim_user_model or "",
+                    eval_model=eval_model or "",
+                    modality=modality,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"Warning: Failed to generate enriched report: {exc}")
+
+    should_gate_or_publish = any(
+        [
+            min_run_passes is not None,
+            min_pass_rate is not None,
+            gcs_bundle_uri is not None,
+            suite_name is not None,
+            github_step_summary,
+            return_gate_status,
+            junit_xml is not None,
+        ]
     )
+    if should_gate_or_publish:
+        gate_summary = summarize_and_gate_evals(
+            sim_results=sim_results,
+            golden_results=golden_results,
+            tool_results=tool_results,
+            callback_results=callback_results,
+            min_run_passes=min_run_passes or 1,
+            min_pass_rate=min_pass_rate,
+        )
+        if enriched_report_path:
+            gate_summary["enriched_report_path"] = enriched_report_path
+        if suite_name:
+            write_eval_stamp(
+                output_dir=output_dir,
+                suite_name=suite_name,
+                gate_summary=gate_summary,
+                modality=modality,
+                runs=runs,
+            )
+        published_urls: dict[str, str] = {}
+        if gcs_bundle_uri:
+            publish_kwargs: dict[str, Any] = {
+                "output_dir": output_dir,
+                "report_path": actual_path,
+                "gcs_bundle_uri": gcs_bundle_uri,
+                "suite_name": suite_name,
+            }
+            if gate_summary is not None:
+                publish_kwargs["gate_summary"] = gate_summary
+            if report_title is not None:
+                publish_kwargs["report_title"] = report_title
+            if enriched_report_path is not None:
+                publish_kwargs["enriched_report_path"] = enriched_report_path
+            published_urls = publish_eval_report_bundle(**publish_kwargs)
+            gate_summary["published_urls"] = published_urls
+            if suite_name:
+                write_eval_stamp(
+                    output_dir=output_dir,
+                    suite_name=suite_name,
+                    gate_summary=gate_summary,
+                    modality=modality,
+                    runs=runs,
+                    published_urls=published_urls,
+                )
+        if junit_xml:
+            write_junit_xml(
+                junit_path=junit_xml,
+                suite_name=suite_name or "evals",
+                gate_summary=gate_summary,
+                published_urls=published_urls,
+                testsuite_prefix=testsuite_prefix,
+            )
+            gate_summary["junit_xml"] = junit_xml
+        if github_step_summary:
+            write_github_step_summary(
+                gate_summary=gate_summary,
+                suite_name=suite_name,
+                published_urls=published_urls,
+            )
+        if return_gate_status:
+            return actual_path, gate_summary
+
     return actual_path
 
 
@@ -2874,6 +7873,7 @@ def run_all_evals(
     golden_timeout: int = 600,
     include: list[str] | None = None,
     bg_noise_file: str | None = None,
+    bg_noise_snr: float | None = None,
     burst_noise_files: list[str] | None = None,
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
@@ -2885,9 +7885,14 @@ def run_all_evals(
     capture_agent_audio: bool = False,
     vertex_location: str = "global",
     naturalness: bool | dict[str, Any] | None = None,
-    infra_retries: int = 0,
+    audio_analysis: bool = False,
+    infra_retries: int = 2,
     retry_parallel: int | None = None,
     retry_cooldown: float = 60.0,
+    golden_run_method: str = "STABLE",
+    platform_sims: bool = False,
+    exclude_files: list[str] | None = None,
+    sim_user_voices: list[str] | None = None,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -2921,18 +7926,30 @@ def run_all_evals(
         True enables it with defaults, False disables it, and a dict is
         merged over each test case's own config. None (default) defers to
         the test case.
+      platform_sims: If True, executes platform-compatible simulation test
+        cases as CXAS 2.0 Milestone evaluations on the CES platform.
 
     Returns:
       A dict containing lists of results for 'simulation', 'golden', 'tool', and
       'callback'.
     """
     extra_kwargs: dict[str, Any] = {}
-    if infra_retries:
+    if infra_retries != 2:
         extra_kwargs["infra_retries"] = infra_retries
     if retry_parallel is not None:
         extra_kwargs["retry_parallel"] = retry_parallel
     if retry_cooldown != 60.0:
         extra_kwargs["retry_cooldown"] = retry_cooldown
+    if audio_analysis:
+        extra_kwargs["audio_analysis"] = audio_analysis
+    if golden_run_method != "STABLE":
+        extra_kwargs["golden_run_method"] = golden_run_method
+    if platform_sims:
+        extra_kwargs["platform_sims"] = platform_sims
+    if exclude_files:
+        extra_kwargs["exclude_files"] = exclude_files
+    if sim_user_voices:
+        extra_kwargs["sim_user_voices"] = sim_user_voices
     return evals_runner.run_all_evals(
         app_name=app_name,
         modality=modality,

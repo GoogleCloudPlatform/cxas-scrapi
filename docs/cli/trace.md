@@ -25,6 +25,8 @@ All `cxas trace` subcommands share a few flags:
 | `cxas trace logs <id>` | Fetch Cloud Logging entries correlated to a conversation. |
 | `cxas trace audio download <id>` | Download the GCS audio recording. |
 | `cxas trace audio analyze <id>` | Run configured Gemini audio metrics over the recording. |
+| `cxas trace audio measure <id>` | Numeric voice-consistency metrics per agent turn and per call: loudness, articulation rate, pitch, timbre drift, voice seams inside a turn (`pip install "cxas-scrapi[audio-metrics]"`). |
+| `cxas trace audio drift <id>` | Per-turn voice-drift flags: `SEAM` (cached vs fresh TTS), `LOUD` (loudness step between turns), `TRUNC` (audio cut off), `MIDTURN` / `MIDDRIFT` (pitch seam inside a turn; a pitch-only drift is marked as such), and `JUMP` — the voice suddenly louder and higher where the turn's next rendered part starts (pitch ≥ 3 st and loudness ≥ 5 dB). JUMP is the one listeners report as "the voice changed"; the fix is sending the turn as one part. |
 | `cxas trace audio transcribe <id>` / `cxas trace transcribe-audio <id>` | Transcribe GCS user turn audio with Gemini Flash/Flash-Lite, calculate WER against CES transcripts, and optionally reprocess into a cloned BigQuery export table. |
 | `cxas trace triage <id>` | Run text-only Gemini triage prompts over the transcript. |
 | `cxas trace replay <id>` | Replay user inputs against the current agent and diff. |
@@ -148,6 +150,7 @@ audio:
   uri_pattern: "{bucket}/{conversation_id}.wav"
   download_dir: ./.cxas/audio
   mime_type: audio/wav
+  questions_file: null             # optional path to a JSON/YAML scorecard template with custom audio questions
 
 cloud_logging:
   default_level: WARNING
@@ -160,15 +163,21 @@ cloud_logging:
 
 gemini:
   model: gemini-2.5-flash
-  # Audio analyses come from `cxas_scrapi.utils.audio_analysis.ANALYSIS_REGISTRY`
+  # Built-in audio analyses are loaded from
+  # `cxas_scrapi/utils/tracing/audio_analysis_questions.json`
   # (5 built-ins: agent_voice_consistency, no_long_pauses,
-  # agent_having_trouble, agent_looping, agent_cutoff). Each declares which
-  # files it needs (e.g. `agent-turn-*.wav` vs `full-session.wav`) and a
-  # default prompt. Override a prompt per-project by listing the metric here:
+  # agent_having_trouble, agent_looping, agent_cutoff). Override a built-in
+  # question or define new custom questions using `prompt` or scorecard
+  # question fields (`questionBody`, `answerInstructions`, `answerChoices`,
+  # `fileFilter`):
   audio_metrics: {}
-  # Example override:
+  # Examples:
   #   agent_cutoff:
   #     prompt: "Custom cutoff prompt for our agent..."
+  #   background_noise_check:
+  #     questionBody: "Determine if loud background noise is present."
+  #     answerInstructions: "Check user turn recordings for background noise."
+  #     fileFilter: "user-turn"
   triage_metrics:
     hallucination:        { prompt: "..." }
     off_topic:            { prompt: "..." }

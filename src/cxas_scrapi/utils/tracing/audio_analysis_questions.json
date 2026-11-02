@@ -1,0 +1,123 @@
+{
+  "qaScorecard": {
+    "displayName": "Trace Audio Analysis Scorecard",
+    "description": "Default audio quality analysis questions for CXAS conversation traces."
+  },
+  "qaQuestions": [
+    {
+      "abbreviation": "agent_voice_consistency",
+      "order": 1,
+      "questionType": "CUSTOMIZABLE",
+      "questionMedium": "VOICE",
+      "fileFilter": "agent-turn",
+      "questionBody": "Your task is to determine if all the audio files are from the same speaker.",
+      "answerInstructions": "- You are a voice analysis assistant that will analyze conversation audio/wav files.\n- You will be given a list of audio clips / files. Each clip contains the audio of one person speaking.\n- You should analyze the voice profile (including pitch, timbre, and accent) to determine if the files are from the same speaker.\n- For finding outlier audio profiles, look for distinct differences (e.g. male vs female voice / pitch, different timbres) rather than minor fluctuations.",
+      "answerChoices": [
+        {
+          "key": "PASS",
+          "strValue": "PASS",
+          "body": "all audio files are from the same speaker",
+          "score": 1.0
+        },
+        {
+          "key": "FAIL",
+          "strValue": "FAIL",
+          "body": "any of the audio files are from a different speaker",
+          "score": 0.0
+        }
+      ]
+    },
+    {
+      "abbreviation": "no_long_pauses",
+      "order": 2,
+      "questionType": "CUSTOMIZABLE",
+      "questionMedium": "VOICE",
+      "fileFilter": "full-session",
+      "questionBody": "Your task is to determine if the conversation contains any pauses longer than 20 seconds.",
+      "answerInstructions": "- You are a voice analysis assistant that will analyze conversation audio/wav files.\n- You will be given an audio clip of a conversation between two people.\n- For finding pauses, look for distinct differences (e.g. silence or non-speech sounds like music or ambient noise) rather than minor fluctuations.\n- If there is a pause between 0 and 19 seconds, that should not be considered a long pause.",
+      "answerChoices": [
+        {
+          "key": "PASS",
+          "strValue": "PASS",
+          "body": "the audio clip does not contain long pauses",
+          "score": 1.0
+        },
+        {
+          "key": "FAIL",
+          "strValue": "FAIL",
+          "body": "the audio clip contains a long pause",
+          "score": 0.0
+        }
+      ]
+    },
+    {
+      "abbreviation": "agent_having_trouble",
+      "order": 3,
+      "questionType": "CUSTOMIZABLE",
+      "questionMedium": "VOICE",
+      "fileFilter": "agent-turn",
+      "questionBody": "Your task is to determine if any of the audio clips contain a person saying they are having trouble.",
+      "answerInstructions": "- You are a voice analysis assistant that will analyze conversation audio/wav files.\n- You will be given a list of audio clips / files. Each clip contains the audio of one person speaking.",
+      "answerChoices": [
+        {
+          "key": "PASS",
+          "strValue": "PASS",
+          "body": "none of the audio files contain a person saying they are having trouble",
+          "score": 1.0
+        },
+        {
+          "key": "FAIL",
+          "strValue": "FAIL",
+          "body": "any of the audio files contain a person saying they are having trouble",
+          "score": 0.0
+        }
+      ]
+    },
+    {
+      "abbreviation": "agent_looping",
+      "order": 4,
+      "questionType": "CUSTOMIZABLE",
+      "questionMedium": "VOICE",
+      "fileFilter": "agent-turn",
+      "questionBody": "Your task is to determine if the speaker repeats the same sentence or phrase multiple times in the conversation.",
+      "answerInstructions": "- You are a voice analysis assistant that will analyze conversation audio/wav files.\n- You will be given a list of audio clips / files. All audio clips are of the virtual agent speaking in a conversation.\n- A common issue with virtual agents is to get stuck in a loop, repeating the same sentence or phrase multiple times.\n- The repetition could be exact or contain minor variations, but the sentiment should be the same. Questions and statements never have the same sentiment and should not be considered to repeat.\n- The repetition could occur in the same file or across multiple files.",
+      "answerChoices": [
+        {
+          "key": "PASS",
+          "strValue": "PASS",
+          "body": "none of the audio files contain a person repeating the same sentence or phrase multiple times",
+          "score": 1.0
+        },
+        {
+          "key": "FAIL",
+          "strValue": "FAIL",
+          "body": "any of the audio files contain a person repeating the same sentence or phrase multiple times",
+          "score": 0.0
+        }
+      ]
+    },
+    {
+      "abbreviation": "agent_cutoff",
+      "order": 5,
+      "questionType": "CUSTOMIZABLE",
+      "questionMedium": "VOICE",
+      "fileFilter": "agent-turn",
+      "questionBody": "Your task is to determine if any of the agent's sentences are cutoff or abruptly ended before the sentence is completed.",
+      "answerInstructions": "- You are a voice analysis assistant that will analyze conversation audio/wav files.\n- You will be given a list of audio clips / files. All audio clips are of the virtual agent speaking in a conversation.\n- This could happen due to system issues or early termination of the turn.",
+      "answerChoices": [
+        {
+          "key": "PASS",
+          "strValue": "PASS",
+          "body": "none of the audio files contain a sentence that is cutoff",
+          "score": 1.0
+        },
+        {
+          "key": "FAIL",
+          "strValue": "FAIL",
+          "body": "any of the audio files contain a sentence that is cutoff",
+          "score": 0.0
+        }
+      ]
+    }
+  ]
+}
