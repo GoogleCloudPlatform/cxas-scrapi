@@ -58,7 +58,11 @@ def test_s009_app_guardrail_and_global_instruction_valid(
     content = json.dumps(
         {
             "displayName": "My App",
-            "guardrails": ["safety_check", "Safety Check Guardrail"],
+            "guardrails": [
+                "safety_check",
+                "Safety Check Guardrail",
+                "projects/p/locations/us/apps/a/guardrails/safety_check",
+            ],
             "globalInstruction": "global_instruction.txt",
         }
     )
@@ -68,6 +72,15 @@ def test_s009_app_guardrail_and_global_instruction_valid(
         app_json, content, _make_context(tmp_path)
     )
     assert results == []
+
+    # Null guardrails should not raise TypeError
+    null_content = json.dumps({"displayName": "My App", "guardrails": None})
+    assert (
+        AppGuardrailReferences().check(
+            app_json, null_content, _make_context(tmp_path)
+        )
+        == []
+    )
 
 
 def test_s009_app_missing_guardrail_and_global_instruction(

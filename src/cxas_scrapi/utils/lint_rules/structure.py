@@ -560,8 +560,21 @@ def _load_resource_dir_config(
     return None, None
 
 
+def _add_config_identifiers(cfg: dict | None, known: set[str]) -> None:
+    """Add ``displayName`` and ``name`` (plus last segment) from ``cfg``."""
+    if not isinstance(cfg, dict):
+        return
+    disp = cfg.get("displayName") or cfg.get("display_name")
+    if isinstance(disp, str) and disp:
+        known.add(disp)
+    cfg_name = cfg.get("name")
+    if isinstance(cfg_name, str) and cfg_name:
+        known.add(cfg_name)
+        known.add(cfg_name.rsplit("/", 1)[-1])
+
+
 def _collect_known_resource_names(app_root: Path, subdir: str) -> set[str]:
-    """Collect valid resource identifiers (dir name, stem, displayName)."""
+    """Collect valid resource identifiers (dir, stem, displayName, name)."""
     parent = app_root / subdir
     if not parent.exists() or not parent.is_dir():
         return set()
@@ -573,10 +586,7 @@ def _collect_known_resource_names(app_root: Path, subdir: str) -> set[str]:
             known.add(entry.name)
             known.add(entry.name.replace("_", " "))
             cfg, _ = _load_resource_dir_config(entry)
-            if cfg:
-                disp = cfg.get("displayName") or cfg.get("display_name")
-                if isinstance(disp, str) and disp:
-                    known.add(disp)
+            _add_config_identifiers(cfg, known)
         elif entry.is_file() and entry.suffix in (".json", ".yaml", ".yml"):
             known.add(entry.stem)
             known.add(entry.stem.replace("_", " "))
@@ -588,11 +598,21 @@ def _collect_known_resource_names(app_root: Path, subdir: str) -> set[str]:
                 )
             except Exception:
                 cfg = None
-            if isinstance(cfg, dict):
-                disp = cfg.get("displayName") or cfg.get("display_name")
-                if isinstance(disp, str) and disp:
-                    known.add(disp)
+            _add_config_identifiers(cfg, known)
     return known
+
+
+def _is_missing_local_resource(ref: str, subdir: str, known: set[str]) -> bool:
+    """Return True if ``ref`` is a local reference missing from ``known``."""
+    if ref in known:
+        return False
+    m = re.match(
+        rf"^projects/[^/]+/locations/[^/]+/apps/[^/]+/{re.escape(subdir)}/([^/]+)$",
+        ref,
+    )
+    if m:
+        return m.group(1) not in known
+    return "/" not in ref
 
 
 def _is_file_path_ref(val: object) -> bool:
@@ -613,16 +633,16 @@ def _referenced_file_exists(
     app_root: Path,
     context: LintContext,
 ) -> bool:
-    """Check if a relative file path exists under app_root or resource_dir."""
-    if (app_root / rel_path).exists():
-        return True
-    if _resolve_path(context.app_dir, rel_path).exists():
-        return True
-    return (resource_dir / rel_path).exists()
+    """Check if an app-relative file path exists on disk under ``app_root``."""
+    del resource_dir, context
+    p = Path(rel_path)
+    if p.is_absolute() or ".." in p.parts:
+        return False
+    return (app_root / p).is_file()
 
 
 @rule("structure")
-class AppGuardrailReferences(Rule):
+class AppResourceReferences(Rule):
     """App config references missing guardrails or globalInstruction."""
 
     id = "S009"
@@ -651,8 +671,10 @@ class AppGuardrailReferences(Rule):
         known_guardrails = _collect_known_resource_names(app_root, "guardrails")
         results: list[LintResult] = []
 
-        for gr in app_config.get("guardrails", []):
-            if isinstance(gr, str) and gr not in known_guardrails:
+        for gr in app_config.get("guardrails") or []:
+            if isinstance(gr, str) and _is_missing_local_resource(
+                gr, "guardrails", known_guardrails
+            ):
                 results.append(
                     self.make_result(
                         str(file_path),
@@ -691,6 +713,9 @@ class AppGuardrailReferences(Rule):
         return results
 
 
+AppGuardrailReferences = AppResourceReferences
+
+
 @rule("structure")
 class AgentResourceReferences(Rule):
     """Agent config references missing guardrails, toolsets, or instruction."""
@@ -719,8 +744,10 @@ class AgentResourceReferences(Rule):
         known_toolsets = _collect_known_resource_names(app_root, "toolsets")
         results: list[LintResult] = []
 
-        for gr in agent_config.get("guardrails", []):
-            if isinstance(gr, str) and gr not in known_guardrails:
+        for gr in agent_config.get("guardrails") or []:
+            if isinstance(gr, str) and _is_missing_local_resource(
+                gr, "guardrails", known_guardrails
+            ):
                 results.append(
                     self.make_result(
                         str(file_path),
@@ -736,7 +763,7 @@ class AgentResourceReferences(Rule):
                     )
                 )
 
-        for ts_entry in agent_config.get("toolsets", []):
+        for ts_entry in agent_config.get("toolsets") or []:
             ts_name = (
                 ts_entry.get("toolset")
                 if isinstance(ts_entry, dict)
@@ -745,7 +772,9 @@ class AgentResourceReferences(Rule):
             if (
                 isinstance(ts_name, str)
                 and ts_name
-                and ts_name not in known_toolsets
+                and _is_missing_local_resource(
+                    ts_name, "toolsets", known_toolsets
+                )
             ):
                 results.append(
                     self.make_result(

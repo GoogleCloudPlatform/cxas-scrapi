@@ -407,7 +407,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S006 | `strict-tool-path-layout` | Error | Tool config paths must be app-relative and prefixed with `tools/{tool_name}/` |
     | S007 | `sub-agent-single-parent` | Error | Sub-agents must have at most one parent agent (tree constraint) |
     | S008 | `singleton-guardrail-types` | Error | At most one guardrail of each singleton type (`llmPromptSecurity`) per app |
-    | S009 | `app-guardrail-references` | Error | App JSON references guardrails that don't exist in `guardrails/` |
+    | S009 | `app-resource-references` | Error | App JSON references guardrails or `globalInstruction` files that don't exist |
     | S010 | `agent-resource-references` | Error | Agent JSON references guardrails, toolsets, or `instruction` files that don't exist |
     | S011 | `tool-file-references` | Error | Tool JSON references `pythonCode` or `openApiSchema` files that don't exist |
     | S012 | `toolset-file-references` | Error | Toolset JSON references `openApiSchema` files that don't exist |
@@ -426,9 +426,9 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     ---
 
-    **S009 — app-guardrail-references**
+    **S009 — app-resource-references**
 
-    Validates that every guardrail referenced in `app.json` `guardrails` resolves to an existing guardrail directory/file stem or `displayName` under `guardrails/`.
+    Validates that every guardrail referenced in `app.json` `guardrails` resolves to an existing guardrail directory/file stem or `displayName` under `guardrails/`, and that an explicit `globalInstruction` file path exists on disk.
 
     ---
 
