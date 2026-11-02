@@ -396,13 +396,14 @@ _PYTHON_COLLECTION_METHODS: frozenset[str] = frozenset(
 
 
 def _extract_tools_calls(content: str) -> list[str]:
-    """Extract tool names invoked via ``tools.<name>(...)`` using AST."""
+    """Extract tool names invoked via ``tools`` or ``async_tools``."""
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SyntaxWarning)
             tree = ast.parse(content)
     except SyntaxError:
-        return list(dict.fromkeys(re.findall(r"\btools\.(\w+)\s*\(", content)))
+        matches = re.findall(r"\b(?:async_)?tools\.(\w+)\s*\(", content)
+        return list(dict.fromkeys(matches))
 
     calls: list[str] = []
     for node in ast.walk(tree):
@@ -410,7 +411,7 @@ def _extract_tools_calls(content: str) -> list[str]:
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "tools"
+            and node.func.value.id in ("tools", "async_tools")
         ):
             calls.append(node.func.attr)
     return list(dict.fromkeys(calls))

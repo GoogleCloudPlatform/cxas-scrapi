@@ -19,6 +19,7 @@ Validates agent tool Python files against CXAS conventions.
 """
 
 import ast
+import functools
 import json
 import re
 import typing
@@ -334,6 +335,56 @@ class ExcessiveReturnData(Rule):
         ]
 
 
+_TOOL_ATTR_RE = re.compile(r"\b(?:async_)?tools\.(\w+)\b")
+
+
+@functools.lru_cache(maxsize=512)
+def _extract_py_referenced_tools_cached(
+    py_path: Path,
+    mtime_ns: int,
+    file_size: int,
+    allow_string_literals: bool,
+) -> frozenset[str]:
+    """Return all tool names referenced via AST in ``py_path``."""
+    try:
+        text = py_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return frozenset()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(text)
+    except SyntaxError:
+        return frozenset(_TOOL_ATTR_RE.findall(text))
+
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in ("tools", "async_tools")
+        ):
+            found.add(node.attr)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2  # noqa: PLR2004
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id in ("tools", "async_tools")
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        ):
+            found.add(node.args[1].value)
+        elif (
+            allow_string_literals
+            and isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+        ):
+            found.update(_TOOL_ATTR_RE.findall(node.value))
+    return frozenset(found)
+
+
 def _py_file_references_tools(
     py_path: Path,
     candidate_names: set[str],
@@ -341,39 +392,13 @@ def _py_file_references_tools(
 ) -> bool:
     """Check via AST whether a Python file references any candidate tool."""
     try:
-        text = py_path.read_text()
+        stat = py_path.stat()
     except OSError:
         return False
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(text)
-    except SyntaxError:
-        return any(
-            re.search(rf"\btools\.{re.escape(n)}\b", text)
-            for n in candidate_names
-        )
-
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "tools"
-            and node.attr in candidate_names
-        ):
-            return True
-        if (
-            allow_string_literals
-            and isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-        ):
-            s = node.value
-            if s in candidate_names or any(
-                re.search(rf"\btools\.{re.escape(n)}\b", s)
-                for n in candidate_names
-            ):
-                return True
-    return False
+    referenced = _extract_py_referenced_tools_cached(
+        py_path, stat.st_mtime_ns, stat.st_size, allow_string_literals
+    )
+    return bool(candidate_names & referenced)
 
 
 def _is_tool_referenced_in_code_or_guardrails(
@@ -404,7 +429,9 @@ def _is_tool_referenced_in_code_or_guardrails(
     if guardrails_dir.exists():
         for gr_json in guardrails_dir.rglob("*.json"):
             try:
-                gr_data = json.loads(gr_json.read_text())
+                gr_data = json.loads(
+                    gr_json.read_text(encoding="utf-8", errors="replace")
+                )
             except (OSError, json.JSONDecodeError):
                 continue
             if not isinstance(gr_data, dict):
@@ -737,20 +764,44 @@ class MissingToolDescriptionInJSON(Rule):
                 if isinstance(tool_obj, dict):
                     description = tool_obj.get("description")
                 field_name = f"{active_tool_type}.description"
-                fix_msg = (
-                    f"Add a 'description' key to the '{active_tool_type}' "
-                    f"object in the tool's JSON file."
-                )
+                if active_tool_type == "pythonFunction":
+                    fix_msg = (
+                        "Add a docstring to the Python tool function or a "
+                        "'description' key to the 'pythonFunction' object in "
+                        "the tool's JSON file."
+                    )
+                else:
+                    fix_msg = (
+                        f"Add a 'description' key to the '{active_tool_type}' "
+                        f"object in the tool's JSON file."
+                    )
 
         if (
             (not description or not str(description).strip())
             and active_tool_type == "pythonFunction"
             and json_path is not None
         ):
-            py_path = json_path.parent / "python_function" / "python_code.py"
-            if py_path.exists():
+            app_root = json_path.parent.parent.parent
+            py_func_cfg = tool_config.get("pythonFunction")
+            code_ref = (
+                py_func_cfg.get("pythonCode")
+                if isinstance(py_func_cfg, dict)
+                else None
+            )
+            py_path = (
+                (app_root / code_ref)
+                if isinstance(code_ref, str) and code_ref.strip()
+                else (json_path.parent / "python_function" / "python_code.py")
+            )
+            if not py_path.is_file():
+                py_path = (
+                    json_path.parent / "python_function" / "python_code.py"
+                )
+            if py_path.is_file():
                 try:
-                    py_text = py_path.read_text()
+                    py_text = py_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
                     fn_node = _find_tool_ast_function(
                         py_text, json_path.parent.name
                     )
