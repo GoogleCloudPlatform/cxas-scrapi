@@ -15,12 +15,16 @@
 """Utility functions for processing and generating CXAS Tool Tests."""
 
 import ast
+import asyncio
+import concurrent.futures
 import enum
+import inspect
 import json
 import logging
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any, NamedTuple
 
 import pandas as pd
@@ -42,6 +46,7 @@ from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.core.variables import Variables
+from cxas_scrapi.utils.callback_libs import ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -92,30 +97,107 @@ class Expectation(BaseModel):
     value: Any | None = None
 
 
+class _OfflineMockToolsDispatcher:
+    """Mock tools dispatcher supporting Xbox v2 positional dict calls
+    `tools.<name>({...})` in offline tool tests.
+    """
+
+    def __init__(
+        self,
+        mock_tools: dict[str, Any] | None = None,
+        local_executors: dict[str, Any] | None = None,
+    ) -> None:
+        self._mock_tools = dict(mock_tools or {})
+        self._local_executors = dict(local_executors or {})
+
+    def __getattr__(self, name: str) -> Any:
+        def _invoke(*pos_args: Any, **kwargs: Any) -> Any:
+            if kwargs:
+                raise TypeError(
+                    f"Tool '{name}' in CES Xbox v2 does not accept keyword "
+                    "arguments; pass a single positional dict argument "
+                    f"tools.{name}({{...}})."
+                )
+            if len(pos_args) > 1:
+                raise TypeError(
+                    f"Tool '{name}' takes at most 1 positional dict argument "
+                    f"({len(pos_args)} given)."
+                )
+            args = pos_args[0] if pos_args else None
+            call_args: dict[str, Any] = {}
+            if isinstance(args, dict):
+                call_args.update(args)
+            elif args is not None:
+                raise TypeError(
+                    f"Tool '{name}' expects a single positional dict argument, "
+                    f"got {type(args).__name__}."
+                )
+
+            if name in self._mock_tools:
+                mock_val = self._mock_tools[name]
+                if callable(mock_val):
+                    return mock_val(call_args)
+                if isinstance(mock_val, dict):
+                    return dict(mock_val)
+                return mock_val
+
+            if name in self._local_executors:
+                return self._local_executors[name](call_args)
+
+            raise RuntimeError(
+                f"Tool '{name}' is not mocked and not found in local Python "
+                "tools during offline execution."
+            )
+
+        return _invoke
+
+
 class ToolEvals:
     """Utility class for testing CXAS Tools."""
 
     def __init__(
         self,
-        app_name: str,
+        app_name: str | None = None,
         creds: Any = None,
         user_agent_extension: str | None = None,
+        app_dir: str | None = None,
+        offline: bool = False,
     ) -> None:
         """Initializes the ToolEvals class.
 
         Args:
-            app_name: CXAS App name
+            app_name: Optional CXAS App name
                 (projects/{project}/locations/{location}/apps/{app}).
             creds: Optional Google Cloud credentials.
+            user_agent_extension: Optional user agent extension string.
+            app_dir: Optional local app directory for offline tool execution.
+            offline: If True (or when app_dir is provided without app_name),
+                do not instantiate GCP clients.
         """
-        self.app_name = app_name
+        self.app_name = app_name or ""
+        self.app_dir = app_dir
+        self.offline = bool(offline or (app_dir and not app_name))
+        self.creds = creds
+        self.user_agent_extension = user_agent_extension
+
+        if self.offline:
+            self.project_id = ""
+            self.location = "us"
+            self.tools_client = None  # type: ignore[assignment]
+            self.var_client = None  # type: ignore[assignment]
+            self.tool_map = {}
+            return
+
+        if not self.app_name:
+            raise ValueError(
+                "Either 'app_name' or 'app_dir' (with offline mode) must be "
+                "provided."
+            )
 
         parts = self.app_name.split("/")
         self.project_id = parts[1] if len(parts) > 1 else ""
         self.location = parts[3] if len(parts) > 3 else "us"
 
-        self.creds = creds
-        self.user_agent_extension = user_agent_extension
         self.tools_client = Tools(
             app_name=self.app_name,
             creds=self.creds,
@@ -496,14 +578,14 @@ class ToolEvals:
     def load_tool_test_cases_from_file(
         self, test_file_path: str
     ) -> list["ToolTestCase"]:
-        """Loads tool tests from a YAML file."""
+        """Loads tool tests from a YAML or JSON file."""
         with open(test_file_path, encoding="utf-8") as f:
             return self.load_tool_test_cases_from_yaml(f.read())
 
     def load_tool_tests_from_dir(
         self, directory_path: str = "tool_tests"
     ) -> list["ToolTestCase"]:
-        """Recursively loads all YAML tool tests from a directory."""
+        """Recursively loads all YAML/JSON tool tests from a directory."""
         all_tests = []
         if not os.path.exists(directory_path):
             print(f"Directory {directory_path} does not exist.")
@@ -511,7 +593,7 @@ class ToolEvals:
 
         for root, _, files in os.walk(directory_path):
             for file in files:
-                if file.endswith(".yaml") or file.endswith(".yml"):
+                if file.endswith((".yaml", ".yml", ".json")):
                     file_path = os.path.join(root, file)
                     try:
                         tests = self.load_tool_test_cases_from_file(file_path)
@@ -524,21 +606,36 @@ class ToolEvals:
     def load_tool_test_cases_from_yaml(
         self, yaml_data: str
     ) -> list["ToolTestCase"]:
-        """Loads tool tests from a YAML string."""
+        """Loads tool tests from a YAML or JSON string."""
         raw_data = yaml.safe_load(yaml_data)
-        if not raw_data or "tests" not in raw_data:
+        if not raw_data:
             return []
-
-        return self.load_tool_test_cases_from_data(raw_data["tests"])
+        if isinstance(raw_data, list):
+            return self.load_tool_test_cases_from_data(raw_data)
+        if isinstance(raw_data, dict):
+            for key in ("tests", "test_cases", "tool_tests"):
+                if key in raw_data and isinstance(raw_data[key], list):
+                    return self.load_tool_test_cases_from_data(raw_data[key])
+        return []
 
     def load_tool_test_cases_from_data(
         self, test_data: list[dict[str, Any]]
     ) -> list["ToolTestCase"]:
         """Loads tool tests from a list of dictionaries."""
-        # Pre-process data to handle VariableDeclaration objects
+        # Pre-process data to handle VariableDeclaration objects and auto-names
         cleaned_data = []
-        for case in test_data:
+        for idx, case in enumerate(test_data):
+            if not isinstance(case, dict):
+                continue
             case_copy = case.copy()
+            if not any(k in case_copy for k in ("name", "test_name", "id")):
+                tool_label = (
+                    case_copy.get("tool")
+                    or case_copy.get("tool_name")
+                    or case_copy.get("display_name")
+                    or "tool"
+                )
+                case_copy["name"] = f"{tool_label}_test_{idx + 1}"
             if "variables" in case_copy and isinstance(
                 case_copy["variables"], dict
             ):
@@ -566,19 +663,55 @@ class ToolEvals:
             updated_variables = tool_response["variables"]
 
         errors = []
-        # Validate response
+        resp_data = (
+            tool_response.get("response")
+            if isinstance(tool_response, dict) and "response" in tool_response
+            else tool_response
+        )
+
+        # Validate path-based response expectations
         for exp in test_case.response_expectations:
-            resp_data = (
-                tool_response.get("response")
-                if isinstance(tool_response, dict)
-                else tool_response
-            )
             actual_value = self._get_value_at_path(resp_data, exp.path)
             if not self._check_expectation(actual_value, exp):
                 errors.append(
                     f"Response expectation failed: path='{exp.path}',"
                     f" actual='{actual_value}', expected='{exp.value}',"
                     f" operator='{exp.operator}'"
+                )
+
+        # Validate direct expected_output / expected_response / expected dict
+        if test_case.expected_output is not None:
+            expected_out = test_case.expected_output
+            if isinstance(expected_out, dict) and isinstance(resp_data, dict):
+                for k, exp_val in expected_out.items():
+                    act_val = resp_data.get(k)
+                    if act_val != exp_val:
+                        errors.append(
+                            f"Expected output mismatch for key '{k}': "
+                            f"actual='{act_val}', expected='{exp_val}'"
+                        )
+            elif resp_data != expected_out:
+                errors.append(
+                    f"Expected output mismatch: actual='{resp_data}', "
+                    f"expected='{expected_out}'"
+                )
+
+        # Validate expected_status if specified
+        if test_case.expected_status is not None:
+            exp_status = str(test_case.expected_status).strip()
+            actual_status = None
+            if isinstance(resp_data, dict) and "status" in resp_data:
+                actual_status = str(resp_data["status"]).strip()
+            elif isinstance(tool_response, dict) and "status" in tool_response:
+                actual_status = str(tool_response["status"]).strip()
+            if (
+                actual_status is not None
+                and actual_status.upper() != exp_status.upper()
+                and exp_status.upper() not in ("PASSED", "FAILED", "SKIPPED")
+            ):
+                errors.append(
+                    f"Expected status mismatch: actual='{actual_status}', "
+                    f"expected='{exp_status}'"
                 )
 
         # Validate variables
@@ -593,14 +726,609 @@ class ToolEvals:
 
         return errors
 
-    def run_tool_tests(
-        self, test_cases: list["ToolTestCase"], debug: bool = False
+    @staticmethod
+    def _discover_local_tools(app_dir: str) -> dict[str, dict[str, Any]]:
+        """Discovers local tools and toolsets under <app_dir>/tools/ and
+        <app_dir>/toolsets/, indexing by directory name, displayName, and
+        pythonFunction.name.
+        """
+        app_path = Path(app_dir)
+        catalog: dict[str, dict[str, Any]] = {}
+
+        tools_root = app_path / "tools"
+        if tools_root.exists() and tools_root.is_dir():
+            for tool_dir in sorted(tools_root.iterdir()):
+                if not tool_dir.is_dir():
+                    continue
+                tool_meta: dict[str, Any] = {}
+                preferred_json = tool_dir / f"{tool_dir.name}.json"
+                json_candidates = (
+                    [preferred_json]
+                    if preferred_json.exists()
+                    else sorted(tool_dir.glob("*.json"))
+                )
+                for jf in json_candidates:
+                    try:
+                        with open(jf, encoding="utf-8") as f:
+                            loaded = json.load(f)
+                        if isinstance(loaded, dict):
+                            tool_meta = loaded
+                            break
+                    except (OSError, json.JSONDecodeError):
+                        continue
+
+                code_candidates = [
+                    tool_dir / "python_function" / "python_code.py",
+                    tool_dir / "python_code.py",
+                ]
+                py_func_cfg = (
+                    tool_meta.get("pythonFunction")
+                    or tool_meta.get("python_function")
+                    or {}
+                )
+                if isinstance(py_func_cfg, dict):
+                    code_ref = py_func_cfg.get("pythonCode") or py_func_cfg.get(
+                        "python_code"
+                    )
+                    if isinstance(code_ref, str) and code_ref.strip():
+                        code_candidates.insert(0, app_path / code_ref)
+                        code_candidates.insert(1, tool_dir / code_ref)
+
+                code_path: Path | None = None
+                for cand in code_candidates:
+                    if cand.exists() and cand.is_file():
+                        code_path = cand
+                        break
+
+                display_name = str(
+                    tool_meta.get("displayName")
+                    or tool_meta.get("display_name")
+                    or tool_dir.name
+                ).strip()
+                py_func_name = ""
+                if isinstance(py_func_cfg, dict):
+                    py_func_name = str(py_func_cfg.get("name") or "").strip()
+
+                info = {
+                    "dir_name": tool_dir.name,
+                    "display_name": display_name,
+                    "python_function_name": py_func_name,
+                    "code_path": code_path,
+                    "is_python": code_path is not None,
+                    "tool_meta": tool_meta,
+                }
+                for key in (tool_dir.name, display_name, py_func_name):
+                    if key:
+                        catalog[key] = info
+
+        toolsets_root = app_path / "toolsets"
+        if toolsets_root.exists() and toolsets_root.is_dir():
+            for ts_dir in sorted(toolsets_root.iterdir()):
+                if not ts_dir.is_dir():
+                    continue
+                ts_meta: dict[str, Any] = {}
+                for jf in sorted(ts_dir.glob("*.json")):
+                    try:
+                        with open(jf, encoding="utf-8") as f:
+                            loaded = json.load(f)
+                        if isinstance(loaded, dict):
+                            ts_meta = loaded
+                            break
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                display_name = str(
+                    ts_meta.get("displayName")
+                    or ts_meta.get("display_name")
+                    or ts_dir.name
+                ).strip()
+                info = {
+                    "dir_name": ts_dir.name,
+                    "display_name": display_name,
+                    "python_function_name": "",
+                    "code_path": None,
+                    "is_python": False,
+                    "tool_meta": ts_meta,
+                }
+                for key in (ts_dir.name, display_name):
+                    if key and key not in catalog:
+                        catalog[key] = info
+
+        return catalog
+
+    @staticmethod
+    def _discover_local_app_metadata(
+        app_dir: str,
+    ) -> tuple[str, dict[str, Any]]:
+        """Reads app display name and default variable values from app.json
+        or app.yaml in app_dir.
+        """
+        app_path = Path(app_dir)
+        app_display_name = app_path.name or "Local App"
+        app_vars_cache: dict[str, Any] = {}
+
+        for cfg_name in ("app.json", "app.yaml", "app.yml"):
+            cfg_file = app_path / cfg_name
+            if not cfg_file.exists() or not cfg_file.is_file():
+                continue
+            try:
+                with open(cfg_file, encoding="utf-8") as f:
+                    data = (
+                        json.load(f)
+                        if cfg_name.endswith(".json")
+                        else yaml.safe_load(f)
+                    )
+                if not isinstance(data, dict):
+                    continue
+                disp = data.get("displayName") or data.get("display_name")
+                if disp:
+                    app_display_name = str(disp)
+                var_decls = (
+                    data.get("variableDeclarations")
+                    or data.get("variable_declarations")
+                    or []
+                )
+                if isinstance(var_decls, list):
+                    for vd in var_decls:
+                        if not isinstance(vd, dict):
+                            continue
+                        vname = vd.get("name")
+                        schema = vd.get("schema") or {}
+                        if vname:
+                            app_vars_cache[str(vname)] = (
+                                schema.get("default")
+                                if isinstance(schema, dict)
+                                and "default" in schema
+                                else vd.get("value")
+                            )
+                break
+            except Exception:
+                continue
+
+        return app_display_name, app_vars_cache
+
+    @staticmethod
+    def _execute_local_python_tool(
+        code_path: Path,
+        preferred_func_name: str,
+        call_args: dict[str, Any],
+        tool_context: ToolContext,
+        tools_dispatcher: _OfflineMockToolsDispatcher,
+    ) -> Any:
+        """Executes a local Python tool function in an isolated namespace,
+        supporting both sync and async functions and injecting `context` and
+        `tools`.
+        """
+        with open(code_path, encoding="utf-8") as f:
+            code_str = f.read()
+
+        tree = ast.parse(code_str, filename=str(code_path))
+        top_funcs = [
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        if not top_funcs:
+            raise ValueError(
+                f"No top-level Python function found in {code_path}"
+            )
+
+        target_func_name = None
+        if preferred_func_name and preferred_func_name in top_funcs:
+            target_func_name = preferred_func_name
+        else:
+            public_funcs = [fn for fn in top_funcs if not fn.startswith("_")]
+            target_func_name = public_funcs[0] if public_funcs else top_funcs[0]
+
+        namespace: dict[str, Any] = {
+            "__name__": f"cxas_offline_tool_{target_func_name}",
+            "__file__": str(code_path),
+            "context": tool_context,
+            "tools": tools_dispatcher,
+            "ToolContext": ToolContext,
+        }
+        compiled = compile(tree, filename=str(code_path), mode="exec")
+        exec(compiled, namespace)
+
+        fn = namespace.get(target_func_name)
+        if not callable(fn):
+            raise ValueError(
+                f"Function '{target_func_name}' is not callable in {code_path}"
+            )
+
+        sig = inspect.signature(fn)
+        params = sig.parameters
+        accepts_var_kw = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        bound_kwargs: dict[str, Any] = {}
+        for k, v in (call_args or {}).items():
+            if accepts_var_kw or k in params:
+                bound_kwargs[k] = v
+
+        # If function explicitly declares `context` or `tool_context` parameter
+        # and it wasn't passed in args, pass tool_context
+        if "context" in params and "context" not in bound_kwargs:
+            bound_kwargs["context"] = tool_context
+        if "tool_context" in params and "tool_context" not in bound_kwargs:
+            bound_kwargs["tool_context"] = tool_context
+
+        # Also support single-positional-dict style if function has 1 param
+        # and call_args keys don't match param name
+        non_default_pos = [
+            p
+            for p in params.values()
+            if p.kind
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+            and p.name not in ("context", "tool_context")
+        ]
+        if (
+            not bound_kwargs
+            and call_args
+            and len(non_default_pos) == 1
+            and non_default_pos[0].name not in call_args
+        ):
+            raw_result = fn(call_args)
+        else:
+            raw_result = fn(**bound_kwargs)
+
+        if inspect.iscoroutine(raw_result):
+            try:
+                asyncio.get_running_loop()
+                # Run in a separate thread if an event loop is already running
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1
+                ) as pool:
+                    raw_result = pool.submit(asyncio.run, raw_result).result()
+            except RuntimeError:
+                raw_result = asyncio.run(raw_result)
+
+        return raw_result
+
+    def run_offline_tool_tests(
+        self,
+        test_cases: list["ToolTestCase"],
+        app_dir: str | None = None,
+        debug: bool = False,
     ) -> pd.DataFrame:
-        """Runs a list of tool tests.
+        """Runs tool tests completely offline against local Python function
+        tools in `<app_dir>/tools/`.
+        """
+        target_app_dir = app_dir or self.app_dir
+        if not target_app_dir:
+            raise ValueError(
+                "'app_dir' is required for offline tool test execution."
+            )
+        if not os.path.exists(target_app_dir):
+            raise FileNotFoundError(
+                f"App directory not found: {target_app_dir}"
+            )
+
+        catalog = self._discover_local_tools(target_app_dir)
+        app_display_name, app_vars_cache = self._discover_local_app_metadata(
+            target_app_dir
+        )
+        tester_email = "offline"
+
+        results = []
+        for test_case in test_cases:
+            print(f"Running offline test: {test_case.name} ({test_case.tool})")
+
+            tool_info = catalog.get(test_case.tool)
+            # Also check if a prefix matches a known non-Python toolset
+            if tool_info is None:
+                for key, cand_info in catalog.items():
+                    if not cand_info["is_python"] and test_case.tool.startswith(
+                        f"{key}_"
+                    ):
+                        tool_info = cand_info
+                        break
+
+            # Build initial state from variables / state / context
+            initial_state: dict[str, Any] = {}
+            for var_name, custom_val in test_case.variables.items():
+                if custom_val is None:
+                    if var_name in app_vars_cache:
+                        initial_state[var_name] = app_vars_cache[var_name]
+                else:
+                    initial_state[var_name] = custom_val
+
+            if test_case.state:
+                initial_state.update(test_case.state)
+
+            context_dict: dict[str, Any] = {}
+            if test_case.context:
+                context_dict = dict(test_case.context)
+                if isinstance(context_dict.get("state"), dict):
+                    merged_state = dict(context_dict["state"])
+                    merged_state.update(initial_state)
+                    initial_state = merged_state
+                elif isinstance(context_dict.get("variables"), dict):
+                    merged_state = dict(context_dict["variables"])
+                    merged_state.update(initial_state)
+                    initial_state = merged_state
+                else:
+                    # Treat flat context keys as state variables if neither
+                    # 'state' nor ToolContext fields are present
+                    known_ctx_fields = set(ToolContext.model_fields.keys()) | {
+                        "userContent",
+                        "invocationId",
+                        "agentName",
+                        "sessionId",
+                        "streamingStage",
+                        "languageCode",
+                        "projectId",
+                        "projectNumber",
+                        "appId",
+                        "turnIndex",
+                        "functionCallId",
+                        "variables",
+                    }
+                    for ck, cv in context_dict.items():
+                        if ck not in known_ctx_fields:
+                            initial_state.setdefault(ck, cv)
+
+            # Check if the target tool itself is mocked or non-Python
+            if tool_info is None:
+                if test_case.tool in test_case.mock_tools:
+                    mock_val = test_case.mock_tools[test_case.tool]
+                    resp_payload = (
+                        mock_val(test_case.args)
+                        if callable(mock_val)
+                        else mock_val
+                    )
+                    tool_response = {
+                        "response": resp_payload,
+                        "variables": initial_state,
+                    }
+                    errors = self.validate_tool_test(test_case, tool_response)
+                    status = "FAILED" if errors else "PASSED"
+                    results.append(
+                        {
+                            "test": test_case.name,
+                            "tool": test_case.tool,
+                            "status": status,
+                            "latency (ms)": 0.0,
+                            "app_display_name": app_display_name,
+                            "tester": tester_email,
+                            "errors": errors,
+                            "response": tool_response,
+                        }
+                    )
+                    continue
+
+                error = (
+                    f"Tool '{test_case.tool}' not found in local app "
+                    f"directory '{target_app_dir}'."
+                )
+                print(f"FAILED: {error}")
+                results.append(
+                    {
+                        "test": test_case.name,
+                        "tool": test_case.tool,
+                        "status": "FAILED",
+                        "latency (ms)": 0.0,
+                        "app_display_name": app_display_name,
+                        "tester": tester_email,
+                        "errors": [error],
+                    }
+                )
+                continue
+
+            if not tool_info["is_python"] or tool_info["code_path"] is None:
+                if test_case.tool in test_case.mock_tools:
+                    mock_val = test_case.mock_tools[test_case.tool]
+                    resp_payload = (
+                        mock_val(test_case.args)
+                        if callable(mock_val)
+                        else mock_val
+                    )
+                    tool_response = {
+                        "response": resp_payload,
+                        "variables": initial_state,
+                    }
+                    errors = self.validate_tool_test(test_case, tool_response)
+                    status = "FAILED" if errors else "PASSED"
+                    results.append(
+                        {
+                            "test": test_case.name,
+                            "tool": test_case.tool,
+                            "status": status,
+                            "latency (ms)": 0.0,
+                            "app_display_name": app_display_name,
+                            "tester": tester_email,
+                            "errors": errors,
+                            "response": tool_response,
+                        }
+                    )
+                    continue
+
+                skip_msg = (
+                    f"SKIPPED: Tool '{test_case.tool}' is a non-Python tool "
+                    "(no python_code.py found); offline execution applies to "
+                    "Python function tools unless mocked via 'mock_tools'."
+                )
+                print(skip_msg)
+                results.append(
+                    {
+                        "test": test_case.name,
+                        "tool": test_case.tool,
+                        "status": "SKIPPED",
+                        "latency (ms)": 0.0,
+                        "app_display_name": app_display_name,
+                        "tester": tester_email,
+                        "errors": [skip_msg],
+                    }
+                )
+                continue
+
+            tool_ctx_kwargs: dict[str, Any] = {
+                k: v
+                for k, v in context_dict.items()
+                if k in ToolContext.model_fields
+                or k
+                in (
+                    "userContent",
+                    "invocationId",
+                    "agentName",
+                    "sessionId",
+                    "streamingStage",
+                    "languageCode",
+                    "projectId",
+                    "projectNumber",
+                    "appId",
+                    "turnIndex",
+                    "functionCallId",
+                )
+            }
+            tool_ctx_kwargs["state"] = initial_state
+            tool_context = ToolContext(**tool_ctx_kwargs)
+
+            # Build local executors for peer Python tools in case a tool calls
+            # another local Python tool via `tools.<other_tool>({...})`
+            local_executors: dict[str, Any] = {}
+            dispatcher = _OfflineMockToolsDispatcher(
+                mock_tools=test_case.mock_tools,
+                local_executors=local_executors,
+            )
+
+            def _make_peer_executor(
+                cp: Path,
+                fn: str,
+                ctx: ToolContext,
+                disp: _OfflineMockToolsDispatcher,
+            ) -> Any:
+                return lambda a: self._execute_local_python_tool(
+                    cp, fn, a, ctx, disp
+                )
+
+            for peer_key, peer_info in catalog.items():
+                if peer_info["is_python"] and peer_info["code_path"]:
+                    peer_code = peer_info["code_path"]
+                    peer_fn_name = (
+                        peer_info["python_function_name"]
+                        or peer_info["dir_name"]
+                    )
+                    local_executors[peer_key] = _make_peer_executor(
+                        peer_code, peer_fn_name, tool_context, dispatcher
+                    )
+
+            latency_ms = 0.0
+            tool_response = None
+            try:
+                if debug:
+                    print(f"[DEBUG] Offline executing tool: {test_case.tool}")
+                    print(f"[DEBUG] Code path: {tool_info['code_path']}")
+                    print(f"[DEBUG] Args: {test_case.args}")
+                    print(f"[DEBUG] Initial state: {tool_context.state}")
+
+                preferred_fn = (
+                    tool_info["python_function_name"]
+                    or tool_info["dir_name"]
+                    or test_case.tool
+                )
+                start_time = time.perf_counter()
+                raw_output = self._execute_local_python_tool(
+                    code_path=tool_info["code_path"],
+                    preferred_func_name=preferred_fn,
+                    call_args=test_case.args,
+                    tool_context=tool_context,
+                    tools_dispatcher=dispatcher,
+                )
+                end_time = time.perf_counter()
+                latency_ms = (end_time - start_time) * 1000
+
+                merged_vars = dict(tool_context.state)
+                if getattr(tool_context, "actions", None) and getattr(
+                    tool_context.actions, "state_delta", None
+                ):
+                    merged_vars.update(tool_context.actions.state_delta)
+
+                if (
+                    isinstance(raw_output, dict)
+                    and "response" in raw_output
+                    and "variables" in raw_output
+                ):
+                    tool_response = raw_output
+                elif isinstance(raw_output, dict):
+                    tool_response = {
+                        "response": raw_output,
+                        "variables": merged_vars,
+                    }
+                else:
+                    tool_response = {
+                        "response": {"result": raw_output},
+                        "variables": merged_vars,
+                    }
+
+                if debug:
+                    print(f"[DEBUG] Tool Response: {tool_response}")
+
+                errors = self.validate_tool_test(test_case, tool_response)
+                status = "FAILED" if errors else "PASSED"
+
+                print(f"{status}: {test_case.tool} --> {test_case.name}")
+                if errors:
+                    print(errors)
+
+                results.append(
+                    {
+                        "test": test_case.name,
+                        "tool": test_case.tool,
+                        "status": status,
+                        "latency (ms)": latency_ms,
+                        "app_display_name": app_display_name,
+                        "tester": tester_email,
+                        "errors": errors,
+                        "response": tool_response,
+                    }
+                )
+            except Exception as e:
+                print(f"ERROR: Exception occurred during test execution: {e}")
+                results.append(
+                    {
+                        "test": test_case.name,
+                        "tool": test_case.tool,
+                        "status": "ERROR",
+                        "latency (ms)": latency_ms,
+                        "app_display_name": app_display_name,
+                        "tester": tester_email,
+                        "errors": [str(e)],
+                        "response": tool_response,
+                    }
+                )
+
+            print("-" * 30)
+
+        return self.tool_tests_to_dataframe(results)
+
+    def run_tool_tests(
+        self,
+        test_cases: list["ToolTestCase"],
+        debug: bool = False,
+        offline: bool | None = None,
+        app_dir: str | None = None,
+    ) -> pd.DataFrame:
+        """Runs a list of tool tests (online against GCP or offline against
+        local app_dir).
 
         Returns:
             A pandas DataFrame of results with status and errors.
         """
+        use_offline = (
+            bool(offline)
+            if offline is not None
+            else (self.offline or bool(app_dir and not self.app_name))
+        )
+        if use_offline:
+            return self.run_offline_tool_tests(
+                test_cases=test_cases,
+                app_dir=app_dir or self.app_dir,
+                debug=debug,
+            )
+
         # Fetch and unwrap app variables once
         raw_app_vars = self.var_client.list_variables()
         app_vars_cache = {}
@@ -938,13 +1666,21 @@ class ToolEvals:
 class ToolTestCase(BaseModel):
     """Data model for a tool test case."""
 
-    name: str
-    tool: str
+    name: str = Field(
+        default="tool_test",
+        validation_alias=AliasChoices("name", "test_name", "id"),
+    )
+    tool: str = Field(
+        validation_alias=AliasChoices("tool", "tool_name", "display_name")
+    )
 
     # We wrap the type in Annotated to add the BeforeValidator
     args: Annotated[dict[str, Any], BeforeValidator(Common.empty_to_dict)] = (
         Field(
-            default_factory=dict, validation_alias=AliasChoices("args", "agrs")
+            default_factory=dict,
+            validation_alias=AliasChoices(
+                "args", "agrs", "input", "inputs", "parameters"
+            ),
         )
     )
 
@@ -952,9 +1688,26 @@ class ToolTestCase(BaseModel):
         dict[str, Any], BeforeValidator(ToolEvals._parse_dict_input)
     ] = Field(default_factory=dict)
 
+    state: Annotated[
+        dict[str, Any], BeforeValidator(ToolEvals._parse_dict_input)
+    ] = Field(default_factory=dict)
+
     context: Annotated[
         dict[str, Any], BeforeValidator(ToolEvals._parse_dict_input)
     ] = Field(default_factory=dict)
+
+    mock_tools: Annotated[
+        dict[str, Any], BeforeValidator(Common.empty_to_dict)
+    ] = Field(default_factory=dict)
+
+    expected_output: Any | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "expected_output", "expected_response", "expected"
+        ),
+    )
+
+    expected_status: str | None = Field(default=None)
 
     response_expectations: Annotated[
         list[Expectation], BeforeValidator(Common.empty_to_list)
