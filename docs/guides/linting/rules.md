@@ -168,6 +168,13 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C006 | `callback-bare-except` | Warning | Bare `except:` without logging swallows errors silently |
     | C007 | `callback-tool-naming` | Info | Verify `tools.*` call uses correct naming convention |
     | C010 | `callback-python-syntax` | Error | Callback Python file must have valid syntax |
+    | C011 | `unconditional-callback-short-circuit` | Warning | Earlier callback in a multi-callback stage unconditionally returns a non-`None` value |
+    | C012 | `shared-state-reference-aliasing` | Warning | Mutable local container assigned to multiple session state keys without `.copy()` or `deepcopy()` |
+    | C013 | `state-none-deletes-key` | Warning | Assigning `None` to `state["k"]` deletes the key in the CES runtime rather than storing `None` |
+    | C014 | `unreturned-llm-response-mutation` | Warning | `after_model` callback mutates `llm_response` in-place on a path that returns `None` or falls through |
+    | C015 | `unsupported-llm-request-mutation` | Warning | `before_model` callback mutates `llm_request` attributes that the CES runtime discards |
+    | C016 | `non-string-state-dict-key` | Error | Dictionary assigned into session state contains non-`str` constant keys (`orjson` V2 error) |
+    | C017 | `invalid-xbox-tool-invocation` | Error | `tools.<name>()` called with keyword arguments or probed via `getattr`/`hasattr(tools, ...)` |
 
     ---
 
@@ -242,6 +249,76 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     Invalid Python syntax means the callback file can't be loaded. The platform silently fails to register callbacks with syntax errors.
 
     *Fix:* Fix the syntax error. Run `python -m py_compile python_code.py` locally to check.
+
+    ---
+
+    **C011 — unconditional-callback-short-circuit**
+
+    When an agent defines multiple callbacks for the same lifecycle stage, returning a non-`None` value (such as `LlmResponse(...)`, `Content(...)`, or a non-empty `dict`) short-circuits the stage and prevents any subsequent callbacks in that stage from running.
+
+    *Triggers:* An earlier callback in a multi-callback stage where every execution path unconditionally returns a non-`None` value without any `return None` or fallthrough path.
+
+    *Fix:* Return `None` on pass-through paths so subsequent callbacks in the stage can execute, or merge/reorder the callbacks.
+
+    ---
+
+    **C012 — shared-state-reference-aliasing**
+
+    Assigning the same local mutable container (`dict`, `list`, or `set` literal/comprehension) to two or more distinct `state["..."]` keys without copying creates a shared reference in session state, so mutating one key unexpectedly mutates the other.
+
+    *Triggers:* A local variable bound to a mutable container is assigned to two or more distinct `state["..."]` / `context.state["..."]` keys without `.copy()` or `deepcopy()`.
+
+    *Fix:* Assign `var.copy()` or `copy.deepcopy(var)` to each state key.
+
+    ---
+
+    **C013 — state-none-deletes-key**
+
+    In the CES runtime, assigning `None` to a session state key (`state["k"] = None` or `context.state["k"] = None`) deletes the key from session state rather than storing `None`, causing `KeyError` on downstream subscript reads (`state["k"]`) and `False` on `'k' in state` checks.
+
+    *Triggers:* Direct assignment `state["k"] = None`, `context.state["k"] = None`, or `context.variables["k"] = None`.
+
+    *Fix:* Use `state.pop("k", None)` if key deletion is intended, or assign an explicit empty sentinel (`""`, `False`) to clear the value while keeping the key present.
+
+    ---
+
+    **C014 — unreturned-llm-response-mutation**
+
+    In `after_model` callbacks, in-place mutations to `llm_response` (for example `llm_response.content = ...` or `llm_response.content.parts.append(...)`) are discarded by the CES runtime unless the `LlmResponse` object is explicitly returned (`return llm_response`).
+
+    *Triggers:* An `after_model_callback` mutates `llm_response` (or a local alias to its attributes) on a control-flow path that exits via `return None` or implicit fallthrough.
+
+    *Fix:* Add `return llm_response` after mutating the response object.
+
+    ---
+
+    **C015 — unsupported-llm-request-mutation**
+
+    In `before_model` callbacks, the CES runtime only honors mutations to `llm_request.contents`, `llm_request.config.system_instruction`, and `llm_request.config.excluded_tools`. Direct mutations to other attributes (such as `llm_request.tools`, `llm_request.model`, or `llm_request.config.temperature`) are silently discarded.
+
+    *Triggers:* Mutating `llm_request.<attr>` (where `<attr>` is not `contents` or `config`) or `llm_request.config.<attr>` (where `<attr>` is not `system_instruction` or `excluded_tools`).
+
+    *Fix:* Use `llm_request.config.excluded_tools` to hide tools, or modify `llm_request.contents` / `llm_request.config.system_instruction`.
+
+    ---
+
+    **C016 — non-string-state-dict-key**
+
+    The CES V2 runtime serializes session state with `orjson`, which requires all dictionary keys to be strings and raises `TypeError: Dict key must be str` on `int`, `float`, `bool`, `None`, or `tuple` keys.
+
+    *Triggers:* A dictionary literal containing non-`str` constant keys is assigned into `state[...]` / `context.state[...]` or passed to `state.update(...)`.
+
+    *Fix:* Convert all dictionary keys in session state to strings (`str(key)`).
+
+    ---
+
+    **C017 — invalid-xbox-tool-invocation**
+
+    In the CES Xbox v2 Python runtime (`system_library.py`), `Tools.__getattr__` returns a wrapper `def tool(args=None):` for every attribute name. Passing keyword arguments (`tools.my_tool(key=val)`) raises `TypeError` at runtime because the wrapper only accepts a single positional `dict` (`tools.my_tool({"key": val})`). In addition, probing tool existence with `getattr(tools, ...)` or `hasattr(tools, ...)` is always truthy and never raises `AttributeError`. Checked across both callbacks and Python tools.
+
+    *Triggers:* Calling `tools.<name>(key=val)` with keyword arguments, or calling `getattr(tools, ...)` / `hasattr(tools, ...)`.
+
+    *Fix:* Invoke known attached tools with a single positional dictionary (`tools.<name>({...})`) and remove `getattr`/`hasattr` probes on `tools`.
 
 === "T — Tools"
 
