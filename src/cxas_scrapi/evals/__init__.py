@@ -19,15 +19,22 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from cxas_scrapi.evals.callback_chain import (
+        AgentAssertionError,
         BenchmarkComparisonReport,
         CallbackChainRunner,
         CallbackTrace,
         LlmStepTrace,
+        MockLlm,
         ModeDiffReport,
         SessionMetricsSummary,
+        SessionSimulator,
+        ToolSpy,
         TurnTrace,
         UsageMetadata,
+        build_agent_tool_declarations,
         compare_execution_metrics,
+        load_local_python_tools,
+        render_agent_instruction,
     )
     from cxas_scrapi.evals.callback_evals import CallbackEvals
     from cxas_scrapi.evals.guardrail_evals import GuardrailEvals
@@ -42,6 +49,10 @@ if TYPE_CHECKING:
     from cxas_scrapi.evals.turn_evals import TurnEvals
 
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "AgentAssertionError": (
+        "cxas_scrapi.evals.callback_chain",
+        "AgentAssertionError",
+    ),
     "BenchmarkComparisonReport": (
         "cxas_scrapi.evals.callback_chain",
         "BenchmarkComparisonReport",
@@ -52,16 +63,34 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     ),
     "CallbackTrace": ("cxas_scrapi.evals.callback_chain", "CallbackTrace"),
     "LlmStepTrace": ("cxas_scrapi.evals.callback_chain", "LlmStepTrace"),
+    "MockLlm": ("cxas_scrapi.evals.callback_chain", "MockLlm"),
     "ModeDiffReport": ("cxas_scrapi.evals.callback_chain", "ModeDiffReport"),
     "SessionMetricsSummary": (
         "cxas_scrapi.evals.callback_chain",
         "SessionMetricsSummary",
     ),
+    "SessionSimulator": (
+        "cxas_scrapi.evals.callback_chain",
+        "SessionSimulator",
+    ),
+    "ToolSpy": ("cxas_scrapi.evals.callback_chain", "ToolSpy"),
     "TurnTrace": ("cxas_scrapi.evals.callback_chain", "TurnTrace"),
     "UsageMetadata": ("cxas_scrapi.evals.callback_chain", "UsageMetadata"),
+    "build_agent_tool_declarations": (
+        "cxas_scrapi.evals.callback_chain",
+        "build_agent_tool_declarations",
+    ),
     "compare_execution_metrics": (
         "cxas_scrapi.evals.callback_chain",
         "compare_execution_metrics",
+    ),
+    "load_local_python_tools": (
+        "cxas_scrapi.evals.callback_chain",
+        "load_local_python_tools",
+    ),
+    "render_agent_instruction": (
+        "cxas_scrapi.evals.callback_chain",
+        "render_agent_instruction",
     ),
     "CallbackEvals": ("cxas_scrapi.evals.callback_evals", "CallbackEvals"),
     "GuardrailEvals": ("cxas_scrapi.evals.guardrail_evals", "GuardrailEvals"),
@@ -96,22 +125,29 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "AgentAssertionError",
     "BenchmarkComparisonReport",
     "CallbackChainRunner",
     "CallbackEvals",
     "CallbackTrace",
     "GuardrailEvals",
     "LlmStepTrace",
+    "MockLlm",
     "ModeDiffReport",
     "SessionMetricsSummary",
+    "SessionSimulator",
     "ShadowEvals",
     "ShadowReport",
     "ShadowTestCase",
     "ShadowUserConversation",
     "SimulationEvals",
     "ToolEvals",
+    "ToolSpy",
     "TurnEvals",
     "TurnTrace",
     "UsageMetadata",
+    "build_agent_tool_declarations",
     "compare_execution_metrics",
+    "load_local_python_tools",
+    "render_agent_instruction",
 ]
