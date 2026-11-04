@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from cxas_scrapi.evals.callback_chain.errors import AgentAssertionError
+    from cxas_scrapi.evals.callback_chain.expect import expect
     from cxas_scrapi.evals.callback_chain.hydration import (
         STATE_REMOVED_SENTINEL,
         HydratedAgentConfig,
@@ -41,6 +42,14 @@ if TYPE_CHECKING:
         lint_app_dir,
         lint_stage_chain,
     )
+    from cxas_scrapi.evals.callback_chain.matchers import (
+        SessionExpectation,
+        StageExpectation,
+        TurnExpectation,
+        expect_session,
+        expect_stage,
+        expect_turn,
+    )
     from cxas_scrapi.evals.callback_chain.mocks import (
         MockLlm,
         ToolSpy,
@@ -57,6 +66,12 @@ if TYPE_CHECKING:
         detect_state_aliasing,
         normalize_image_version,
         normalize_stage,
+    )
+    from cxas_scrapi.evals.callback_chain.snapshots import (
+        SnapshotManager,
+        serialize_session_snapshot,
+        serialize_stage_snapshot,
+        serialize_turn_snapshot,
     )
     from cxas_scrapi.evals.callback_chain.traces import (
         CHAIN_LLM_ENV,
@@ -109,12 +124,16 @@ _LAZY_IMPORTS: dict[str, str] = {
     "STAGE_TO_FUNC_NAME": "cxas_scrapi.evals.callback_chain.semantics",
     "STAGE_TO_GLOBAL_JSON_KEYS": "cxas_scrapi.evals.callback_chain.semantics",
     "STATE_REMOVED_SENTINEL": "cxas_scrapi.evals.callback_chain.hydration",
+    "SessionExpectation": "cxas_scrapi.evals.callback_chain.matchers",
     "SessionMetricsSummary": "cxas_scrapi.evals.callback_chain.traces",
     "SessionSimulator": "cxas_scrapi.evals.callback_chain.turn",
+    "SnapshotManager": "cxas_scrapi.evals.callback_chain.snapshots",
+    "StageExpectation": "cxas_scrapi.evals.callback_chain.matchers",
     "StageType": "cxas_scrapi.evals.callback_chain.traces",
     "StateUpdateMode": "cxas_scrapi.evals.callback_chain.hydration",
     "ToolSpy": "cxas_scrapi.evals.callback_chain.mocks",
     "ToolStepTrace": "cxas_scrapi.evals.callback_chain.traces",
+    "TurnExpectation": "cxas_scrapi.evals.callback_chain.matchers",
     "TurnTrace": "cxas_scrapi.evals.callback_chain.traces",
     "UNSUPPORTED_GLOBAL_JSON_KEYS": (
         "cxas_scrapi.evals.callback_chain.semantics"
@@ -135,6 +154,10 @@ _LAZY_IMPORTS: dict[str, str] = {
     "compute_state_delta": "cxas_scrapi.evals.callback_chain.hydration",
     "deserialize_llm_response": "cxas_scrapi.evals.callback_chain.mocks",
     "detect_state_aliasing": "cxas_scrapi.evals.callback_chain.semantics",
+    "expect": "cxas_scrapi.evals.callback_chain.expect",
+    "expect_session": "cxas_scrapi.evals.callback_chain.matchers",
+    "expect_stage": "cxas_scrapi.evals.callback_chain.matchers",
+    "expect_turn": "cxas_scrapi.evals.callback_chain.matchers",
     "extract_in_scope_params": "cxas_scrapi.evals.callback_chain.hydration",
     "get_active_execution_context": "cxas_scrapi.evals.callback_chain.traces",
     "get_active_tool_call_log": "cxas_scrapi.evals.callback_chain.traces",
@@ -151,6 +174,9 @@ _LAZY_IMPORTS: dict[str, str] = {
     "resolve_llm": "cxas_scrapi.evals.callback_chain.turn",
     "sanitize_state_map": "cxas_scrapi.evals.callback_chain.hydration",
     "serialize_llm_response": "cxas_scrapi.evals.callback_chain.mocks",
+    "serialize_session_snapshot": "cxas_scrapi.evals.callback_chain.snapshots",
+    "serialize_stage_snapshot": "cxas_scrapi.evals.callback_chain.snapshots",
+    "serialize_turn_snapshot": "cxas_scrapi.evals.callback_chain.snapshots",
     "submit_in_context": "cxas_scrapi.evals.callback_chain.traces",
 }
 
@@ -192,12 +218,16 @@ __all__ = [
     "LlmStepTrace",
     "MockLlm",
     "ModeDiffReport",
+    "SessionExpectation",
     "SessionMetricsSummary",
     "SessionSimulator",
+    "SnapshotManager",
+    "StageExpectation",
     "StageType",
     "StateUpdateMode",
     "ToolSpy",
     "ToolStepTrace",
+    "TurnExpectation",
     "TurnTrace",
     "UsageMetadata",
     "_synthesize_chained_callback_module",
@@ -207,6 +237,10 @@ __all__ = [
     "compute_state_delta",
     "deserialize_llm_response",
     "detect_state_aliasing",
+    "expect",
+    "expect_session",
+    "expect_stage",
+    "expect_turn",
     "extract_in_scope_params",
     "get_active_execution_context",
     "get_active_tool_call_log",
@@ -223,5 +257,8 @@ __all__ = [
     "resolve_llm",
     "sanitize_state_map",
     "serialize_llm_response",
+    "serialize_session_snapshot",
+    "serialize_stage_snapshot",
+    "serialize_turn_snapshot",
     "submit_in_context",
 ]

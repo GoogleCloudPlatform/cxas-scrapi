@@ -134,9 +134,27 @@ cxas test-callbacks \
 
 | Exit code | Meaning |
 |-----------|---------|
-| 0 | All tests passed |
-| 1 | One or more tests failed |
-| 2 | Collection error (syntax error, import error) |
+| 0 | All checks passed (no status matched `--fail-on`) |
+| 1 | One or more checks matched `--fail-on` (default: `failed,error,risk`), no tests were found, or all discovered tests were skipped (unless `--fail-on` is given explicitly) |
+| 2 | Invalid CLI argument or incompatible flag combination |
+
+### Pytest plugin (`cxas_scrapi.evals.callback_chain.pytest_plugin`)
+
+`cxas test-callbacks` and `CallbackEvals` automatically pass the callback chain pytest plugin via `pytest.main(..., plugins=[...])`. When invoking `pytest` directly, opt in either on the command line:
+
+```bash
+pytest -p cxas_scrapi.evals.callback_chain.pytest_plugin
+```
+
+or in your test suite's top-level `conftest.py`:
+
+```python
+pytest_plugins = ["cxas_scrapi.evals.callback_chain.pytest_plugin"]
+```
+
+The plugin provides the following fixtures: `expect`, `mock_llm`, `tool_spy`, `snapshot_manager` (alias `cxas_snapshot`), `callback_runner`, `session_sim`, and `cxas_trace_collector` (along with CLI flags `--cxas-update-snapshots`, `--cxas-snapshot-ci`, `--cxas-llm`, `--cxas-app-dir`, and `--cxas-agent`).
+
+Active trace collectors are scoped via `contextvars.ContextVar`. If a test dispatches callback or turn execution to a `ThreadPoolExecutor` or background thread, use `submit_in_context(executor, fn, *args, **kwargs)` (from `cxas_scrapi.evals.callback_chain`) or `contextvars.copy_context().run` so traces attach deterministically to the current test's collector without leaking across pooled workers.
 
 ---
 
