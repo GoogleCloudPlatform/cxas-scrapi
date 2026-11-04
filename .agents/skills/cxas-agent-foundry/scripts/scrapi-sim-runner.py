@@ -39,6 +39,8 @@ from config import get_project_path, load_app_name
 
 from cxas_scrapi.core.audio_transformer import parse_noise_snr
 from cxas_scrapi.evals.simulation_evals import (
+    _DEFAULT_EVAL_MODEL,
+    _DEFAULT_SIM_USER_MODEL,
     LLMUserConversation,
     SimulationEvals,
 )
@@ -55,7 +57,7 @@ SIM_EVALS_YAML = get_project_path("evals", "simulations", "simulations.yaml")
 SIM_TESTS_DIR = get_project_path("evals", "simulations")
 REPORTS_DIR = get_project_path("eval-reports")
 
-_DEFAULT_MODEL = "gemini-3.1-flash-lite"
+_DEFAULT_MODEL = _DEFAULT_SIM_USER_MODEL
 
 
 def load_yaml() -> typing.Any:
@@ -122,8 +124,8 @@ class EnhancedSimRunner(SimulationEvals):
     def simulate_conversation(
         self,
         test_case: dict[str, Any],
-        sim_user_model: str | None = _DEFAULT_MODEL,
-        eval_model: str | None = _DEFAULT_MODEL,
+        sim_user_model: str | None = _DEFAULT_SIM_USER_MODEL,
+        eval_model: str | None = _DEFAULT_EVAL_MODEL,
         session_id: str | None = None,
         console_logging: bool = True,
         modality: str = "text",
@@ -301,14 +303,26 @@ def cmd_run(args: typing.Any) -> typing.Any:
         print("No matching evals with sim templates found.")
         return
 
-    model = args.model or _DEFAULT_MODEL
+    sim_user_model = (
+        getattr(args, "sim_user_model", None)
+        or args.model
+        or _DEFAULT_SIM_USER_MODEL
+    )
+    eval_model = (
+        getattr(args, "eval_model", None) or args.model or _DEFAULT_EVAL_MODEL
+    )
     modality = args.channel or "text"
     runs = args.runs or 1
     parallel = args.parallel or 1
 
+    model_desc = (
+        f"sim_user: {sim_user_model}, judge: {eval_model}"
+        if sim_user_model != eval_model
+        else f"model: {sim_user_model}"
+    )
     print(
         f"Running {len(test_cases)} evals x {runs} runs "
-        f"({modality}, model: {model})"
+        f"({modality}, {model_desc})"
     )
     if parallel > 1:
         print(f"Parallelism: {parallel} concurrent sessions")
@@ -344,8 +358,8 @@ def cmd_run(args: typing.Any) -> typing.Any:
         test_cases=test_cases,
         runs=runs,
         parallel=parallel,
-        sim_user_model=model,
-        eval_model=model,
+        sim_user_model=sim_user_model,
+        eval_model=eval_model,
         modality=modality,
         verbose=args.verbose,
         use_tool_fakes=args.use_tool_fakes,
@@ -388,12 +402,20 @@ def cmd_run(args: typing.Any) -> typing.Any:
     os.makedirs(REPORTS_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%d_%H%M")
 
+    report_model_label = (
+        f"{sim_user_model} (sim) / {eval_model} (judge)"
+        if sim_user_model != eval_model
+        else sim_user_model
+    )
+
     # Wrap results with metadata
     output = {
         "wall_clock_s": wall_clock_s,
         "parallel": parallel,
         "modality": modality,
-        "model": model,
+        "model": args.model or sim_user_model,
+        "sim_user_model": sim_user_model,
+        "eval_model": eval_model,
         "results": all_results,
     }
     json_path = os.path.join(REPORTS_DIR, f"sim_results_{ts}.json")
@@ -407,7 +429,7 @@ def cmd_run(args: typing.Any) -> typing.Any:
         all_results,
         report_path,
         modality,
-        model,
+        report_model_label,
         app_name,
         wall_clock_s=wall_clock_s,
     )
@@ -453,7 +475,27 @@ def main() -> typing.Any:
         help="Eval name (can specify multiple)",
     )
     p_run.add_argument("--channel", default="text", choices=["text", "audio"])
-    p_run.add_argument("--model", default=None)
+    p_run.add_argument(
+        "--model",
+        default=None,
+        help="Default Gemini model for simulated user and evaluation judge",
+    )
+    p_run.add_argument(
+        "--sim-user-model",
+        default=None,
+        help=(
+            "Gemini model name to use for the simulated user "
+            "(overrides --model; defaults to gemini-3.5-flash-lite)"
+        ),
+    )
+    p_run.add_argument(
+        "--eval-model",
+        default=None,
+        help=(
+            "Gemini model name to use for evaluating expectations "
+            "(overrides --model; defaults to gemini-3.5-flash-lite)"
+        ),
+    )
     p_run.add_argument("--runs", type=int, default=1)
     p_run.add_argument(
         "--parallel",

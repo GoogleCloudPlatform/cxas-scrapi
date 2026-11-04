@@ -18,12 +18,12 @@ Run from the project root:
     python -m pytest \
         .agents/skills/cxas-agent-foundry/scripts/tests/test_runners.py
 """
-import typing
 
 import importlib.util
 import os
 import sys
 import types
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -100,6 +100,8 @@ def test_sim_runner_cmd_run_delegation(sim_runner: typing.Any) -> typing.Any:
     mock_args.priority = "P0"
     mock_args.tag = None
     mock_args.model = "gemini-pro"
+    mock_args.sim_user_model = None
+    mock_args.eval_model = None
     mock_args.channel = "audio"
     mock_args.runs = 3
     mock_args.parallel = 1
@@ -109,6 +111,12 @@ def test_sim_runner_cmd_run_delegation(sim_runner: typing.Any) -> typing.Any:
     mock_args.use_tool_fakes = False
     mock_args.capture_agent_audio = False
     mock_args.deployment_id = None
+    mock_args.background_noise = None
+    mock_args.bg_noise_level = None
+    mock_args.bg_noise_snr = None
+    mock_args.burst_noise_level = None
+    mock_args.burst_noise_snr = None
+    mock_args.burst_noise_files = None
 
     mock_templates = {
         "test_case_1": {
@@ -169,6 +177,74 @@ def test_sim_runner_cmd_run_delegation(sim_runner: typing.Any) -> typing.Any:
             verbose=True,
             use_tool_fakes=False,
             capture_agent_audio=False,
+            background_noise_file=None,
+            bg_noise_snr=None,
+            burst_noise_files=None,
+            burst_noise_snr=None,
+        )
+
+
+def test_sim_runner_cmd_run_decoupled_models(
+    sim_runner: typing.Any,
+) -> typing.Any:
+    """Verify scrapi-sim-runner parses and forwards decoupled model flags."""
+    mock_templates = {
+        "test_case_1": {
+            "steps": [],
+            "expectations": [],
+            "session_parameters": {},
+        }
+    }
+    argv = [
+        "scrapi-sim-runner.py",
+        "run",
+        "--eval",
+        "test_case_1",
+        "--model",
+        "fallback-model",
+        "--sim-user-model",
+        "gemini-3.5-flash-lite",
+        "--eval-model",
+        "gemini-2.5-pro",
+    ]
+
+    with (
+        patch.object(sys, "argv", argv),
+        patch.object(sim_runner, "load_yaml", return_value={}),
+        patch.object(
+            sim_runner, "load_sim_templates", return_value=mock_templates
+        ),
+        patch.object(sim_runner, "EnhancedSimRunner") as MockEnhancedRunner,
+        patch.object(sim_runner, "generate_html_report"),
+    ):
+        mock_sim_inst = MockEnhancedRunner.return_value
+        mock_sim_inst.run_simulations.return_value = []
+
+        sim_runner.main()
+
+        mock_sim_inst.run_simulations.assert_any_call(
+            test_cases=[
+                {
+                    "name": "test_case_1",
+                    "steps": [],
+                    "expectations": [],
+                    "audio_expectations": [],
+                    "session_parameters": {},
+                    "metadata": {},
+                }
+            ],
+            runs=1,
+            parallel=1,
+            sim_user_model="gemini-3.5-flash-lite",
+            eval_model="gemini-2.5-pro",
+            modality="text",
+            verbose=False,
+            use_tool_fakes=False,
+            capture_agent_audio=False,
+            background_noise_file=None,
+            bg_noise_snr=None,
+            burst_noise_files=None,
+            burst_noise_snr=None,
         )
 
 
@@ -177,7 +253,9 @@ def test_sim_runner_cmd_run_delegation(sim_runner: typing.Any) -> typing.Any:
 # ---------------------------------------------------------------------------
 
 
-def test_run_evals_includes_all_by_default(evals_runner: typing.Any) -> typing.Any:
+def test_run_evals_includes_all_by_default(
+    evals_runner: typing.Any,
+) -> typing.Any:
     """Verify run-evals.py invokes combined report.
 
     It should include goldens, sims, and scenarios by default.
@@ -213,7 +291,9 @@ def test_run_evals_includes_all_by_default(evals_runner: typing.Any) -> typing.A
         assert call_kwargs["parallel"] == 4
 
 
-def test_run_evals_excludes_goldens_and_sims(evals_runner: typing.Any, config_mock: typing.Any) -> typing.Any:
+def test_run_evals_excludes_goldens_and_sims(
+    evals_runner: typing.Any, config_mock: typing.Any
+) -> typing.Any:
     """Verify run-evals.py skips goldens and sims correctly.
 
     Based on CLI flags.
