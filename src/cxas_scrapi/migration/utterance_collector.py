@@ -42,7 +42,7 @@ Analyze the following raw conversation utterances extracted from the legacy agen
 ### Standardization Buckets:
 1. **greeting_onboarding**: Welcome messages, initial greetings, introduction prompts, start-up intents.
 2. **authentication_authorization_security**: Prompts requesting PII, account verification questions, credentials collection, authorization notices, or access role limitations.
-3. **disambiguation_data_collection**: Questions designed to extract parameters, slot-filling prompts, list options selection, or narrowing down vague/overlapping intents.
+3. **disambiguation_data_collection**: Questions designed to extract parameters, parameter collection prompts, list options selection, or narrowing down vague/overlapping intents.
 4. **information_delivery_task_execution**: Dynamic readout of account balance/data, business logic execution results, transaction completions, troubleshooting steps, or status reports.
 5. **digital_deflection_omnichannel**: Prompts initiating deflection to SMS, secure email links, web portals, or app downloads.
 6. **disclaimers_terms_legal**: Legal compliance statements, call recording disclosures, billing/privacy terms and conditions.

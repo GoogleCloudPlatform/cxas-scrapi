@@ -1,8 +1,0 @@
-{
-  "name": "b842e67f-50e0-495e-9cf6-1d29bdb397ee",
-  "displayName": "Event Prefill - Skips Pre-Filled Slots",
-  "llmCriteria": {
-    "prompt": "Evaluate whether the agent correctly skips asking for information that was pre-filled from event data. When party_size is provided via event_data, the agent must NOT ask 'how many guests', 'how many people', 'party size', 'number of guests', or any variation asking for the number of diners. Instead, the agent should proceed directly to asking for the date or another reservation detail. PASS if the agent never asks about party size and moves on to the next piece of information. FAIL if the agent asks about party size in any form."
-  },
-  "tags": ["slot-machine", "event-prefill"]
-}

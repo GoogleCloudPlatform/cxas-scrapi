@@ -1,8 +1,0 @@
-{
-  "name": "348b992d-5edf-4846-bd59-757fc24e25a7",
-  "displayName": "Progress Stall Escalation",
-  "llmCriteria": {
-    "prompt": "Evaluate whether the agent correctly escalated the conversation when the user failed to provide useful reservation information. The agent MUST have provided the phone number 555-0100 somewhere in the conversation, indicating it gave up trying to complete the reservation and directed the user to call for help. PASS if the agent mentioned 555-0100 at any point. FAIL if the agent never mentioned this phone number — this means the stall detection did not trigger when it should have."
-  },
-  "tags": ["slot-machine", "off-the-rails", "stall-detection"]
-}

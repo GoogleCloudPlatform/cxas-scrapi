@@ -1,9 +1,0 @@
-{
-  "name": "f1a2b3c4-bbbb-4ddd-eeee-222222222222",
-  "pythonFunction": {
-    "name": "book_reservation",
-    "pythonCode": "tools/book_reservation/python_function/python_code.py",
-    "description": "Complete a reservation booking with the collected details. Called automatically by the system when all required information is confirmed — do not call directly."
-  },
-  "displayName": "book_reservation"
-}

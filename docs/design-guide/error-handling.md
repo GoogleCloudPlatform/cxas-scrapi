@@ -72,7 +72,7 @@ def create_reservation(
     guest_name: str,
     context
 ) -> dict:
-    """Create a confirmed reservation at Bella Notte."""
+    """Create a confirmed reservation at The Grand Bistro."""
 
     # Validate before hitting the API
     if not guest_name or not guest_name.strip():
@@ -83,8 +83,8 @@ def create_reservation(
     if party_size > 12:
         return {
             "agent_action": (
-                f"Bella Notte cannot accommodate parties of {party_size}. "
-                "The maximum is 12 guests. Direct the guest to events@bellanotte.com "
+                f"The Grand Bistro cannot accommodate parties of {party_size}. "
+                "The maximum is 12 guests. Direct the guest to events@grandbistro.com "
                 "for larger party inquiries."
             )
         }

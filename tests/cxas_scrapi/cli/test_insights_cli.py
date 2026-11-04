@@ -164,13 +164,13 @@ def test_handle_create_topic_model(mock_im_cls: typing.Any) -> None:
     args = argparse.Namespace(
         parent="projects/p/locations/l",
         display_name="TM 1",
-        app_name="bella_notte",
+        app_name="sample_app",
         deploy=True,
     )
     handle_create_topic_model(args)
     mock_inst.create_topic_model_for_app.assert_called_once_with(
         display_name="TM 1",
-        app_name="bella_notte",
+        app_name="sample_app",
         filter_str=None,
         parent="projects/p/locations/l",
         deploy=True,
@@ -186,7 +186,7 @@ def test_handle_create_analysis_rule(mock_ar_cls: typing.Any) -> None:
     args = argparse.Namespace(
         parent="projects/p/locations/l",
         display_name="AR 1",
-        app_name="bella_notte",
+        app_name="sample_app",
         filter=None,
         scorecard_revisions=None,
         issue_models=None,
@@ -233,7 +233,7 @@ def test_handle_analyze_metrics(
     args = argparse.Namespace(
         parent="projects/p/locations/l",
         time_window="24h",
-        app_name="bella_notte",
+        app_name="sample_app",
         filter=None,
         html_output=str(html_file),
         json_output=None,
