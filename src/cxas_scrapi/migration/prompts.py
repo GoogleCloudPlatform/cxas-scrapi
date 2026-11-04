@@ -15,16 +15,11 @@
 """Central repository for all migration prompts to ensure easy iteration and \
 version control."""
 
-from pathlib import Path
-
-# Inline copy of examples/bella_notte/agents/Bella_Notte_Host/instruction.txt,
-# used as the few-shot example in STEP_3B_CONSOLIDATION_INSTRUCTIONS when the
-# source tree is not available (e.g. installed wheel without examples/).
-# Keep this in sync with the source file; the loader prefers the file when
-# present so drift on the source file wins automatically.
+# Canonical host instruction used as the few-shot example in
+# STEP_3B_CONSOLIDATION_INSTRUCTIONS.
 _CANONICAL_EXAMPLE_FALLBACK = """\
 <role>
-You are the Bella Notte Host, the welcoming face and entry point of Bella Notte Italian Restaurant.
+You are the Concierge Host, the welcoming face and entry point for Customer Service.
 </role>
 
 <persona>
@@ -35,7 +30,7 @@ You are the Bella Notte Host, the welcoming face and entry point of Bella Notte 
 
 <guidelines>
   <guideline name="stay_in_scope">
-    You can ONLY help with restaurant reservations, takeout orders, or simple restaurant information (hours/location). Redirect other requests politely.
+    You can ONLY help with customer inquiries, support requests, or store hours and location. Redirect other requests politely.
   </guideline>
 </guidelines>
 
@@ -44,19 +39,15 @@ You are the Bella Notte Host, the welcoming face and entry point of Bella Notte 
     <step name="Welcome">
       <trigger>Conversation begins.</trigger>
       <action>
-        1. Greet the customer warmly with a brief opening line that names the restaurant and the things you can help with (reservations, takeout, hours).
+        1. Greet the customer warmly with a brief opening line that names the service and the things you can help with.
       </action>
     </step>
   </subtask>
 
   <subtask name="Intent_Routing">
-    <step name="Route_To_Reservation">
-      <trigger>Customer wants to book a table, make a reservation, or mentions reservation-specific details (party size, dining date/time, name for the reservation).</trigger>
-      <action>Call {@TOOL: set_active_flow} with flow="reservation" silently (no conversational text).</action>
-    </step>
-    <step name="Route_To_Takeout">
-      <trigger>Customer wants to place a takeout order or names a menu item to order.</trigger>
-      <action>Call {@TOOL: set_active_flow} with flow="takeout" silently (no conversational text).</action>
+    <step name="Route_To_Support">
+      <trigger>Customer wants technical support or account assistance.</trigger>
+      <action>Call {@TOOL: route_to_support} silently (no conversational text).</action>
     </step>
     <step name="Answer_General_Questions">
       <trigger>Customer has general questions about hours or location.</trigger>
@@ -68,27 +59,10 @@ You are the Bella Notte Host, the welcoming face and entry point of Bella Notte 
 
 
 def _load_canonical_example_escaped() -> str:
-    """Return the canonical Bella Notte instruction with braces escaped
+    """Return the canonical host instruction with braces escaped
     for splicing into ``str.format`` templates.
-
-    Reads ``examples/bella_notte/agents/Bella_Notte_Host/instruction.txt``
-    relative to the repo root. Falls back to the inline copy above when
-    the source tree isn't available (installed wheel without examples/).
     """
-    try:
-        path = (
-            Path(__file__).resolve().parents[3]
-            / "examples"
-            / "bella_notte"
-            / "agents"
-            / "Bella_Notte_Host"
-            / "instruction.txt"
-        )
-        text = path.read_text(encoding="utf-8")
-    except (OSError, IndexError):
-        text = _CANONICAL_EXAMPLE_FALLBACK
-    # Escape braces so .format() leaves the example intact.
-    return text.replace("{", "{{").replace("}", "}}")
+    return _CANONICAL_EXAMPLE_FALLBACK.replace("{", "{{").replace("}", "}}")
 
 
 _CANONICAL_EXAMPLE: str = _load_canonical_example_escaped()

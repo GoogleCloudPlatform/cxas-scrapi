@@ -441,20 +441,12 @@
 * add `cxas trace` for end-to-end conversation observability ([a76c35c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a76c35c7cb1f25c9f6b4b953360817eaae0fa50b)), closes [#120](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/120)
 * add DFCX conversation runner with live + history trace export ([#128](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/128)) ([5fb8a71](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5fb8a71acbdbf2b0ea6ef383a59ab17f48d71716))
 * add optimize structure consolidator ([21e9667](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/21e9667c6e49ef2e36e76ea402699f88b1cc3aac))
-* add rich response payload support to slot filling framework ([77edb75](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/77edb75b85b23e5b74ea457543c8bd3594cda538))
 * add widget tool linting and core SDK deserialization support ([1863906](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/18639061fbb406c263af6c51121732b7dd2f02d0))
 * added basic support for OpenAPI toolsets ([7a8e8d0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7a8e8d0a242192b81ea7fcd3dc97bac689372a55))
 * added fuzzy match for turn evals, case insensitive for contains turn evals ([bd1969d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bd1969dcf0f48e14a62fb9afb14d8c4357b49ce1))
-* **bella_notte:** event preemption, response propagation ([570e6ff](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/570e6ff60b6d1d2c521d527ec5179aad000d4632))
-* **bella_notte:** event preemption, response propagation, and expanded tool tests ([a6631f8](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a6631f8a0196625cb3c0c018228a07efe0a5dfb7))
-* **bella_notte:** event preemption, response propagation, and expanded tool tests ([1a2fc50](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1a2fc50da55d5075e8a89896466dda405be56c69))
-* **bella_notte:** per-agent DAG tools, multi-slot setters, 3-tier steer-back ([f66f74b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f66f74bb66da2f7eb9f431a7a20c99901c3b8be2))
-* **bella_notte:** structured logging, config validation, then_direct… ([d709a28](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/d709a287d8c09f53a62606bbc011929fc9b6e9e0))
-* **bella_notte:** structured logging, config validation, then_directive, engine hardening ([903d187](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/903d187bb2e8de6624b03c47f028b4c313b0d548))
 * **cli:** Address PR 84 feedback and improve CLI robustness ([552c9c9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/552c9c96dcdbac25c23e09a8455193cf87633611))
 * **cli:** Extend CLI functionality for iterating on deployments ([160fab9](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/160fab91ffbc089fb7ba8b656a75e5d69dbb58ec))
 * Consolidate and improve the usability protocols, and refactor the scoping layer to be cleanly structured as a first-class agent. ([4afb355](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4afb35533a0d71cefcf0bedd0de78f76936a79eb))
-* Docs/slot filling guide ([b4c44bb](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b4c44bb38cad63ac01f101974f61fb9037010cc6))
 * implement component linting ([56a6be2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/56a6be29f21c6e94ce9c6f0202f8b0ba01f878c7))
 * implement strict local GECX linter rules and scaffolder guidelines ([bc022c4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bc022c41ae3af214c5698e5c7a470e7bcf96fcf5))
 * implement strict local GECX linter rules and scaffolder guidelines ([3d5fe4d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3d5fe4d4a2c5dc2b23ab2cfa74e4080d313d9db5))
@@ -509,8 +501,6 @@
 
 ### Documentation
 
-* add comprehensive slot filling usage guide ([acd1c31](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/acd1c3174426f2390a582a646326fd8e6c5f263f))
-* add comprehensive slot filling usage guide ([a20a8aa](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a20a8aaec0cc7321b961fc1cbee0e6ec4e41656b))
 * add Critical User Journey (CUJ) Transcript and Report Generator README ([6cc4bce](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6cc4bce3d7ca9f4c297425af967c845dbf3c8bd9))
 * add DFCX migration guides, plus minor CLI configuration changes ([#117](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/117)) ([6e55b1a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6e55b1a7f6effd4dd67d900162f335c39abb4224))
 * add download link for VS Code agent studio extension VSIX ([dcb227d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/dcb227d57edd7fb56c778bac2764af6c61752c5f))
@@ -518,7 +508,6 @@
 * Add GIFs for VS Code extension installation and app import ([e67f6bb](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e67f6bb6a4a7b0d07d53b8529c7a231b9b447649))
 * Add GIFs for VS Code extension installation and app import ([fb6ff2c](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/fb6ff2ccfa1e4aeaab45d4fac8e14bb9144634de))
 * add usage to docs ([5cdb089](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5cdb089c57d2c421f53a47163ee53c891f2ff3ad))
-* recommend slot filling pattern for structured and sensitive flows ([da41102](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/da41102962d31099af87dd4ad52a61b1725b07c0))
 * refine ingestion protocols and unify scoping layer into framework agent ([e3ed0ab](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e3ed0ab54e1c121d04e6fc48eedbd249c58be995))
 * Update IAM roles to use roles/ces.* ([96a1b16](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/96a1b16f5c96a63841bfd50c40285d218653a82f))
 * Update IAM roles to use roles/ces.* ([954ac5d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/954ac5d246f695abbc2fb8d2ee9d3e9ca0a61555))
@@ -529,11 +518,6 @@
 
 ### Features
 
-* Add Slot Filling DAG Framework documentation and Bella Notte ex… ([e8d9fa2](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e8d9fa2a82ca11bb7bf2c19011d71252385a1b0f))
-* Add Slot Filling DAG Framework documentation and Bella Notte example ([b91d048](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b91d04872cdf8792add9bb72b6917426e1c5d119))
-* bella-notte: replace with full CXAS app structure ([055240b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/055240bd72802a8075facf4e2ff76b2f1226ee3b))
-* **bella-notte:** auto-confirm, stall gating, fresh-pending setter h… ([8a021be](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8a021be307dfc3ecea7e967e017c705361db8219))
-* **bella-notte:** auto-confirm, stall gating, fresh-pending setter hiding ([b0ddd35](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/b0ddd359ba106ed31cddff8c787ccad6971de886))
 * **cli:** add directory support, async execution, runs flag, and modality support to evals report ([819cb29](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/819cb291612f54b2755d3cf07b9602845a6f813c))
 * **cli:** add directory support, async execution, runs flag, and modality support to evals report ([36f07be](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/36f07bec8a26f292e0fddec3b505273bbed94b41))
 * **cli:** add directory support, filtering, and robust expectation check to evals report ([9f39cfc](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/9f39cfcc3b709c910b21107b88f16412e6e44b22))
@@ -564,8 +548,6 @@
 * **agent-development:** add team collaboration guide for multi-developer Git workflow ([eabedd0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/eabedd07f1d1a4d7594e831822386f6e23122bc5))
 * **agent-development:** add team collaboration guide for multi-developer Git workflow ([cd3c520](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/cd3c520b5f06d529c0c16feddeab7617cce11b39)), closes [#90](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/90)
 * Docs/design guide patterns tutorials ([c40c375](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c40c37539d3e278412cab8f0f082dd40d86a30ab))
-* scope DAG slot manager state to prevent cross-DAG-agent contamination ([4e5b0b0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4e5b0b0a322034065e038732627cf986145644c0))
-* scope DAG slot manager state to prevent cross-DAG-agent contamination ([7749ded](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7749ded6b08798840b30d9e6c638d8e81288796d))
 * **skills:** add multilingual agent patterns to cxas-agent-foundry s… ([23b70e4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/23b70e48326482c598ba7a5f1d46ca35e2e0d4cf))
 * **skills:** add multilingual agent patterns to cxas-agent-foundry skill ([e827656](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e8276567d2811bdd50d1e7157abaedd35cc7092a))
 * **skills:** add speech rate and pacing guidance to cxas-agent-found… ([4a85484](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4a8548437280e5030be39f2cdc3510fcd52e625c))

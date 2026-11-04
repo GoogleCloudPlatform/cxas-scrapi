@@ -25,7 +25,7 @@ The JSON config defines the tool's name, description, and parameter schema:
 ```json
 {
   "name": "check_availability",
-  "description": "Check whether a table is available at Bella Notte for a given date, time, and party size. Returns available=true and a slot ID if the time is open, or available=false with a reason if not.",
+  "description": "Check whether a table is available at The Grand Bistro for a given date, time, and party size. Returns available=true and a slot ID if the time is open, or available=false with a reason if not.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -51,7 +51,7 @@ The Python implementation is a function with a docstring, named parameters, and 
 
 ```python
 def check_availability(date: str, time: str, party_size: int, context) -> dict:
-    """Check whether a table is available at Bella Notte for a given date, time,
+    """Check whether a table is available at The Grand Bistro for a given date, time,
     and party size. Returns available=true and a slot ID if the time is open,
     or available=false with a reason if not."""
 
@@ -113,7 +113,7 @@ The tool docstring is injected into the model's context alongside the tool schem
 
     ```python
     def check_availability(date: str, time: str, party_size: int, context) -> dict:
-        """Check whether a table is available at Bella Notte for a given date, time,
+        """Check whether a table is available at The Grand Bistro for a given date, time,
         and party size. Returns available=true and a confirmed slot_id if open.
         Returns available=false and a reason string if the slot is unavailable.
         Call this before create_reservation — do not call create_reservation
@@ -154,7 +154,7 @@ The tool docstring is injected into the model's context alongside the tool schem
         guest_name: str,
         context
     ) -> dict:
-        """Create a confirmed reservation at Bella Notte. Requires a valid slot_id
+        """Create a confirmed reservation at The Grand Bistro. Requires a valid slot_id
         from check_availability. Returns a confirmation_number on success."""
         ...
     ```

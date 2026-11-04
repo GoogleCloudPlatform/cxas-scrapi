@@ -1,8 +1,0 @@
-{
-  "name": "356fb0bc-52cf-4d7a-9d3c-1c009994e3f6",
-  "displayName": "No False Escalation",
-  "llmCriteria": {
-    "prompt": "Evaluate whether the agent avoided false escalation. The agent must NOT have mentioned the phone number 555-0100 or told the user to call for help at any point in the conversation. The user took a brief conversational detour but then provided useful reservation information, so the agent should have continued the normal reservation flow without escalating. PASS if the agent never mentioned 555-0100. FAIL if the agent mentioned 555-0100 — this means the stall detection triggered incorrectly (false positive)."
-  },
-  "tags": ["slot-machine", "off-the-rails", "stall-detection"]
-}

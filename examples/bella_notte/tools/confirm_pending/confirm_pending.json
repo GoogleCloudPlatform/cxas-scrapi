@@ -1,9 +1,0 @@
-{
-  "name": "a1b2c3d4-1111-4aaa-bbbb-100000000001",
-  "pythonFunction": {
-    "name": "confirm_pending",
-    "pythonCode": "tools/confirm_pending/python_function/python_code.py",
-    "description": "Commit all pending slot values to filled. Call when the user confirms the readback is correct."
-  },
-  "displayName": "confirm_pending"
-}

@@ -208,5 +208,5 @@ The LLM reads the `_system_message` field and incorporates it naturally without 
 - **One instruction per phase, not one instruction for all phases.** Don't add an `{{#if auth_complete}}` section to an already-long instruction. Replace the instruction.
 - **Move business rules to tool docstrings where they belong.** Rules about how to format an argument ("convert to YYYY-MM-DD") belong in the docstring, not the instruction.
 - **Use `_system_message` for per-turn guidance.** Anything that changes turn-by-turn should come through `_system_message`, not the instruction.
-- **Remove instructions the framework already enforces.** If tool visibility prevents the LLM from calling a tool, you don't need an instruction saying "don't call X until Y." See the [Slot Filling pattern](slot-filling.md#2-tool-docstrings-keep-short) for more on this principle.
+- **Remove instructions the framework already enforces.** If tool visibility prevents the LLM from calling a tool, you don't need an instruction saying "don't call X until Y."
 - **Profile your instruction length.** Check how many tokens your instruction consumes. Anything over ~1,500 tokens is worth reviewing for redundancy.

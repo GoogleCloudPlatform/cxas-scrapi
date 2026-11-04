@@ -1,8 +1,0 @@
-{
-  "name": "6161a8d3-19a4-45e4-be14-dd70df646014",
-  "displayName": "Warm Restaurant Host Persona",
-  "llmCriteria": {
-    "prompt": "Evaluate whether the agent avoids sounding like a robotic form-filler. PASS if the agent uses complete sentences (not bare prompts like 'Date?' or 'Name?') in MOST of its turns. Brief or direct responses are fine — warmth is a bonus, not a requirement. FAIL ONLY if the agent outputs bare single-word prompts or raw slot names across the MAJORITY of the conversation. When in doubt, PASS."
-  },
-  "tags": ["slot-machine", "persona"]
-}

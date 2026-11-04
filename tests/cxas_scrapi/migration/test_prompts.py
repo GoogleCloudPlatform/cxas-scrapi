@@ -16,15 +16,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from cxas_scrapi.migration import prompts as prompts_module
 from cxas_scrapi.migration.prompts import Prompts
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-BELLA = (
-    REPO_ROOT / "examples/bella_notte/agents/Bella_Notte_Host/instruction.txt"
-)
 
 
 def test_step_3b_prompt_has_system_and_template_keys() -> None:
@@ -58,26 +51,18 @@ def test_step_3b_system_lists_canonical_tag_vocabulary() -> None:
         assert tag in sys_p, f"system prompt missing canonical tag: {tag}"
 
 
-def test_step_3b_system_embeds_bella_notte_content() -> None:
-    """The system prompt must include text from the canonical example file
-    so any drift on the source file shows up here as a snapshot mismatch."""
+def test_step_3b_system_embeds_canonical_example_content() -> None:
+    """The system prompt must include text from the canonical example."""
     sys_p = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS["system"]
-    bella_text = BELLA.read_text(encoding="utf-8")
-    # A characteristic snippet from the canonical example.
     for needle in (
-        "You are the Bella Notte Host",
+        "You are the Concierge Host",
         '<subtask name="Greeting">',
         '<step name="Welcome">',
-        # The {{...}} escaping survives — the literal example with single
-        # braces is what Gemini reads, so the SOURCE file's single-brace
-        # tokens are in the rendered prompt.
-        "set_active_flow",
+        "route_to_support",
     ):
         assert needle in sys_p, (
             f"system prompt missing example snippet: {needle!r}"
         )
-    # And the file content itself isn't empty.
-    assert bella_text.strip()
 
 
 def test_step_3b_template_formats_with_consolidator_keys() -> None:
@@ -96,15 +81,6 @@ def test_step_3b_template_formats_with_consolidator_keys() -> None:
     assert "{@AGENT:" in out
 
 
-def test_canonical_example_loader_uses_source_file_when_present() -> None:
-    """When the source tree is available, the loader prefers the file."""
-    text = prompts_module._load_canonical_example_escaped()
-    bella_text = BELLA.read_text(encoding="utf-8")
-    # File content (with double-braces) is in the loaded string.
-    escaped = bella_text.replace("{", "{{").replace("}", "}}")
-    assert escaped == text
-
-
 def test_canonical_example_loader_fallback_runs_without_crash() -> None:
     """The inline fallback is itself valid escaped content; smoke-test it
     by formatting through a tiny .format() template."""
@@ -113,5 +89,5 @@ def test_canonical_example_loader_fallback_runs_without_crash() -> None:
     escaped = fallback.replace("{", "{{").replace("}", "}}")
     template = "EXAMPLE:\n" + escaped
     out = template.format()  # no placeholders → format is identity
-    assert "Bella Notte" in out
-    assert "{@TOOL: set_active_flow}" in out
+    assert "Concierge Host" in out
+    assert "{@TOOL: route_to_support}" in out

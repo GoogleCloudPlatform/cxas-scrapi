@@ -38,15 +38,15 @@ def test_create_rule_for_app(
     mock_resp.status_code = 200
     mock_resp.json.return_value = {
         "name": "projects/p/locations/l/analysisRules/ar1",
-        "displayName": "Rule Bella Notte",
+        "displayName": "Rule Sample App",
         "active": True,
     }
     mock_request.return_value = mock_resp
 
     client = AnalysisRules(project_id="p", location="l")
     rule = client.create_rule_for_app(
-        display_name="Rule Bella Notte",
-        app_name="bella_notte",
+        display_name="Rule Sample App",
+        app_name="sample_app",
         scorecard_revisions=[
             "projects/p/locations/l/qaScorecards/sc1/revisions/latest"
         ],
@@ -57,9 +57,9 @@ def test_create_rule_for_app(
     mock_request.assert_called_once()
     call_kwargs = mock_request.call_args[1]
     assert call_kwargs["method"] == "POST"
-    assert call_kwargs["json"]["displayName"] == "Rule Bella Notte"
+    assert call_kwargs["json"]["displayName"] == "Rule Sample App"
     conv_filter = call_kwargs["json"]["conversationFilter"]
-    assert conv_filter == 'agent_id="bella_notte"'
+    assert conv_filter == 'agent_id="sample_app"'
     selector = call_kwargs["json"]["annotatorSelector"]
     assert selector["runSummarizationAnnotator"] is True
     assert selector["runSentimentAnnotator"] is True

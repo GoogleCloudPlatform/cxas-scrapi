@@ -295,6 +295,8 @@ Now that your workspace is ready, remember to treat **source control (e.g., Git)
 
 ## Next Steps
 
-Now that your workspace is fully functional, try building a complete, production-grade agent by following the hands-on building tutorial:
+Now that your workspace is fully functional, explore the design guide and patterns to build production-grade agents:
 
-*   **[Tutorial: Building a Restaurant Reservation Agent](restaurant-reservation.md)**
+*   **[Design Guide](../design-guide/index.md)** — Learn best practices for instructions, architecture, tools, and error handling.
+*   **[Patterns](../patterns/index.md)** — Architectural patterns like dynamic prompting and self-healing error recovery.
+*   **[Evaluation Guide](../guides/evaluation/index.md)** — Deep dive into platform goldens, local simulations, and automated testing.

@@ -34,12 +34,12 @@ Not every instruction needs every tag. Use the tags that match the complexity of
 
 ## A complete instruction example
 
-The following is a representative instruction set for a restaurant reservation agent (Bella Notte). It demonstrates how the tags compose in practice.
+The following is a representative instruction set for a restaurant reservation agent (The Bistro Assistant). It demonstrates how the tags compose in practice.
 
 ```xml
 <role>
-You are the reservations assistant for Bella Notte, an upscale Italian restaurant
-in San Francisco. You help guests make, modify, and cancel reservations. You have
+You are the reservations assistant for The Bistro, an upscale restaurant.
+You help guests make, modify, and cancel reservations. You have
 no knowledge of menu items, pricing, or kitchen operations — guests with those
 questions should be directed to the restaurant directly.
 </role>
@@ -55,7 +55,7 @@ Complete reservation requests accurately and confirm all details before finalizi
 
 <constraints>
 - Never confirm a reservation without collecting: date, time, party size, and guest name.
-- Never book a party larger than 12 — direct larger parties to events@bellanotte.com.
+- Never book a party larger than 12 — direct larger parties to events@thebistro.com.
 - Never modify a reservation made more than 24 hours in the future without
   calling the check_modification_policy tool first.
 - If the requested time is unavailable, always offer exactly two alternatives.
@@ -115,10 +115,10 @@ Assistant: "What date were you thinking — this weekend, or further out?"
 
     ```xml
     <role>
-    You are the reservations assistant for Bella Notte, an upscale Italian restaurant
-    in San Francisco. You handle reservation creation, modification, and cancellation.
+    You are the reservations assistant for The Bistro, an upscale restaurant.
+    You handle reservation creation, modification, and cancellation.
     Questions about the menu, pricing, or events are outside your scope — direct
-    those guests to the restaurant directly at info@bellanotte.com.
+    those guests to the restaurant directly at info@thebistro.com.
     </role>
     ```
 
@@ -144,7 +144,7 @@ Assistant: "What date were you thinking — this weekend, or further out?"
       party size, and guest name.
     - Never accept a party size greater than 12. If the guest requests more than 12,
       say: "For parties larger than 12, please contact our events team at
-      events@bellanotte.com."
+      events@thebistro.com."
     - If the requested time slot is unavailable, always offer exactly two alternatives.
       Never offer one or three.
     </constraints>
@@ -156,7 +156,7 @@ Assistant: "What date were you thinking — this weekend, or further out?"
 
 ## Do not encode a state machine in the prompt
 
-The most damaging instruction anti-pattern is hand-building a finite-state machine inside the prompt and asking the model to execute it on every turn: reading a counter variable, comparing it to a literal, branching to a named step, writing state back, and following `agent_action` codes verbatim. LLMs execute this kind of imperative control flow unreliably — they lose track of which "state" they are in, fire steps out of order, and skip the counter increments. Control flow, retry limits, and routing belong in **deterministic code** (callbacks and slot-filling DAG transitions), not in prose.
+The most damaging instruction anti-pattern is hand-building a finite-state machine inside the prompt and asking the model to execute it on every turn: reading a counter variable, comparing it to a literal, branching to a named step, writing state back, and following `agent_action` codes verbatim. LLMs execute this kind of imperative control flow unreliably — they lose track of which "state" they are in, fire steps out of order, and skip the counter increments. Control flow, retry limits, and routing belong in **deterministic code** (callbacks and deterministic state transitions), not in prose.
 
 === "Bad"
 
@@ -188,7 +188,7 @@ The most damaging instruction anti-pattern is hand-building a finite-state machi
     </taskflow>
     ```
 
-    The prompt states the goal and calls a setter tool. The retry counter, the "ask again vs. escalate" decision, and the transfer are owned by a `before_model`/`after_model` callback that keeps state in Python (a `_retries` dict). See the [slot-filling pattern](../patterns/slot-filling.md): *the LLM is a language interface, not a state machine.*
+    The prompt states the goal and calls a tool. The retry counter, the "ask again vs. escalate" decision, and the transfer are owned by a `before_model`/`after_model` callback that keeps state in Python (a `_retries` dict). Put retry/attempt counters in callbacks: *the LLM is a language interface, not a state machine.*
 
 ---
 
