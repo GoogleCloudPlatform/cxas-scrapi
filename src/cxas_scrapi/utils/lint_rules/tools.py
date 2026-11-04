@@ -343,7 +343,6 @@ def _extract_py_referenced_tools_cached(
     py_path: Path,
     mtime_ns: int,
     file_size: int,
-    allow_string_literals: bool,
 ) -> frozenset[str]:
     """Return all tool names referenced via AST in ``py_path``."""
     try:
@@ -376,19 +375,12 @@ def _extract_py_referenced_tools_cached(
             and isinstance(node.args[1].value, str)
         ):
             found.add(node.args[1].value)
-        elif (
-            allow_string_literals
-            and isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-        ):
-            found.update(_TOOL_ATTR_RE.findall(node.value))
     return frozenset(found)
 
 
 def _py_file_references_tools(
     py_path: Path,
     candidate_names: set[str],
-    allow_string_literals: bool,
 ) -> bool:
     """Check via AST whether a Python file references any candidate tool."""
     try:
@@ -396,7 +388,7 @@ def _py_file_references_tools(
     except OSError:
         return False
     referenced = _extract_py_referenced_tools_cached(
-        py_path, stat.st_mtime_ns, stat.st_size, allow_string_literals
+        py_path, stat.st_mtime_ns, stat.st_size
     )
     return bool(candidate_names & referenced)
 
@@ -410,9 +402,7 @@ def _is_tool_referenced_in_code_or_guardrails(
     agents_dir = app_root / "agents"
     if agents_dir.exists():
         for py_path in agents_dir.rglob("*.py"):
-            if _py_file_references_tools(
-                py_path, candidate_names, allow_string_literals=True
-            ):
+            if _py_file_references_tools(py_path, candidate_names):
                 return True
 
     tools_dir = app_root / "tools"
@@ -420,9 +410,7 @@ def _is_tool_referenced_in_code_or_guardrails(
         for py_path in tools_dir.rglob("*.py"):
             if own_tool_dir in py_path.parents:
                 continue
-            if _py_file_references_tools(
-                py_path, candidate_names, allow_string_literals=False
-            ):
+            if _py_file_references_tools(py_path, candidate_names):
                 return True
 
     guardrails_dir = app_root / "guardrails"

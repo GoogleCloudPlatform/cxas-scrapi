@@ -262,10 +262,11 @@ def test_t008_recognizes_tools_invoked_from_callbacks_tools_or_guardrails(
         ToolDisplayNameUnreferenced().check(f2, f2.read_text(), context) == []
     )
 
-    # 3. Prefix collision (cb_helper vs cb), comment, or unrelated bare string
-    # literal must still flag T008
+    # 3. Prefix collision (cb_helper vs cb), docstring/string mention, comment,
+    # or unrelated bare string literal must still flag T008
     (cb_dir / "python_code.py").write_text(
         "def before_model_callback(callback_context, llm_request):\n"
+        '    """Do not call tools.cb() here."""\n'
         "    callback_context.state['step'] = 'cb'\n"
         "    tools.cb_helper({})\n"
     )
@@ -285,6 +286,14 @@ def test_t008_recognizes_tools_invoked_from_callbacks_tools_or_guardrails(
     (cb_dir / "python_code.py").write_text(
         "async def before_model_callback(callback_context, llm_request):\n"
         "    await async_tools.cb({})\n"
+    )
+    assert (
+        ToolDisplayNameUnreferenced().check(f3, f3.read_text(), context) == []
+    )
+    (cb_dir / "python_code.py").write_text(
+        "def before_model_callback(callback_context, llm_request):\n"
+        "    fn = getattr(tools, 'cb')\n"
+        "    fn({})\n"
     )
     assert (
         ToolDisplayNameUnreferenced().check(f3, f3.read_text(), context) == []
