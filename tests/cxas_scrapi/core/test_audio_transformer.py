@@ -499,6 +499,132 @@ class TestAudioTransformer:
         seg2 = load_background_noise_segment("cafe", duration_ms=500)
         assert seg1.raw_data == seg2.raw_data
 
+    def test_load_background_noise_symlinked_package_layout(
+        self,
+        tmp_path: typing.Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import cxas_scrapi.core.audio_transformer as audio_mod  # noqa: PLC0415
+
+        # Simulate a packaged/symlinked tree where audio_transformer.py is a
+        # symlink into a separate store without sibling resources, while the
+        # package tree itself exposes ../resources/noise/cafe.wav.
+        store_dir = tmp_path / "store"
+        store_dir.mkdir()
+        real_module_file = store_dir / "audio_transformer.py"
+        real_module_file.write_text("# stub\n", encoding="utf-8")
+
+        pkg_core_dir = tmp_path / "pkg" / "cxas_scrapi" / "core"
+        pkg_noise_dir = tmp_path / "pkg" / "cxas_scrapi" / "resources" / "noise"
+        pkg_core_dir.mkdir(parents=True)
+        pkg_noise_dir.mkdir(parents=True)
+
+        symlinked_module_file = pkg_core_dir / "audio_transformer.py"
+        symlinked_module_file.symlink_to(real_module_file)
+
+        wav_path = pkg_noise_dir / "cafe.wav"
+        with wave.open(str(wav_path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(b"\x01\x00" * 4000)  # 250ms mono 16kHz PCM
+
+        monkeypatch.setattr(audio_mod, "__file__", str(symlinked_module_file))
+        seg = load_background_noise_segment("cafe", duration_ms=500)
+        assert len(seg) == 500
+        assert seg.frame_rate == 16000
+
+    def test_load_background_noise_symlinked_module_fallback_to_resolved_path(
+        self,
+        tmp_path: typing.Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import pathlib as pl  # noqa: PLC0415
+
+        import cxas_scrapi.core.audio_transformer as audio_mod  # noqa: PLC0415
+
+        # Simulate the inverse layout where __file__ is a standalone symlink
+        # pointing back to the real module inside the source tree.
+        real_module_file = pl.Path(audio_mod.__file__).resolve()
+        isolated_dir = tmp_path / "isolated" / "core"
+        isolated_dir.mkdir(parents=True)
+        symlinked_module_file = isolated_dir / "audio_transformer.py"
+        symlinked_module_file.symlink_to(real_module_file)
+
+        monkeypatch.setattr(audio_mod, "__file__", str(symlinked_module_file))
+        seg = load_background_noise_segment("cafe", duration_ms=250)
+        assert len(seg) == 250
+        assert seg.frame_rate == 16000
+
+    def test_qa_load_background_noise_rejects_traversal_and_supports_symlink_dir(
+        self,
+        tmp_path: typing.Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import cxas_scrapi.core.audio_transformer as audio_mod  # noqa: PLC0415
+
+        # Path-traversal strings via preset prefix must be rejected by allowlist
+        for bad_preset in (
+            "preset:../../etc/passwd",
+            "preset:../noise/cafe",
+            "../../nonexistent_secret",
+        ):
+            with pytest.raises(
+                ValueError, match="Unknown background noise preset"
+            ):
+                load_background_noise_segment(bad_preset, duration_ms=100)
+
+        # Symlinked resources/noise directory layout must resolve WAV cleanly
+        real_wav_store = tmp_path / "wav_store"
+        real_wav_store.mkdir()
+        wav_path = real_wav_store / "cafe.wav"
+        with wave.open(str(wav_path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(b"\x02\x00" * 3200)
+
+        pkg_root = tmp_path / "pkg_dir"
+        (pkg_root / "core").mkdir(parents=True)
+        (pkg_root / "resources").mkdir(parents=True)
+        (pkg_root / "resources" / "noise").symlink_to(
+            real_wav_store, target_is_directory=True
+        )
+        fake_mod = pkg_root / "core" / "audio_transformer.py"
+        fake_mod.write_text("# stub\n", encoding="utf-8")
+
+        monkeypatch.setattr(audio_mod, "__file__", str(fake_mod))
+        seg = load_background_noise_segment("cafe", duration_ms=300)
+        assert len(seg) == 300
+
+    # QA-005: Reproduction test for non-positive duration_ms boundary values
+    @pytest.mark.parametrize("bad_duration", [0, -100])
+    def test_qa_005_load_background_noise_rejects_non_positive_duration(
+        self, bad_duration: int
+    ) -> None:
+        for preset in ("white", "pink", "cafe"):
+            with pytest.raises(ValueError, match="duration_ms"):
+                load_background_noise_segment(preset, duration_ms=bad_duration)
+
+    # QA-005: Reproduction test for missing bundled WAV preset error clarity
+    def test_qa_005_load_background_noise_missing_bundled_preset_wav_error(
+        self,
+        tmp_path: typing.Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import cxas_scrapi.core.audio_transformer as audio_mod  # noqa: PLC0415
+
+        broken_pkg = tmp_path / "broken_pkg" / "core"
+        broken_pkg.mkdir(parents=True)
+        fake_mod = broken_pkg / "audio_transformer.py"
+        fake_mod.write_text(
+            "# stub with no sibling resources\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(audio_mod, "__file__", str(fake_mod))
+
+        with pytest.raises(FileNotFoundError, match=r"cafe\.wav"):
+            load_background_noise_segment("preset:cafe", duration_ms=250)
+
     @patch("cxas_scrapi.core.audio_transformer.AudioSegment")
     def test_load_background_noise_custom_file(
         self, mock_audio_segment: MagicMock

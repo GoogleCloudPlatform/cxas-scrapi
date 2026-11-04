@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib
+import os as _os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from cxas_scrapi.core.changelogs import Changelogs
     from cxas_scrapi.core.common import Common
     from cxas_scrapi.core.conversation_history import ConversationHistory
+    from cxas_scrapi.core.cxas_insights import CXASInsights
     from cxas_scrapi.core.deployments import Deployments
     from cxas_scrapi.core.evaluations import Evaluations
     from cxas_scrapi.core.guardrails import Guardrails
@@ -57,6 +59,9 @@ if TYPE_CHECKING:
     # Utilities
     from cxas_scrapi.utils.eval_utils import EvalUtils
     from cxas_scrapi.utils.google_sheets_utils import GoogleSheetsUtils
+    from cxas_scrapi.utils.insights_reconciler import InsightsReconciler
+    from cxas_scrapi.utils.metrics_extractor import MetricsExtractor
+    from cxas_scrapi.utils.scorecard_eval_runner import ScorecardEvalRunner
     from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
 else:
     _LAZY_IMPORTS = {
@@ -100,9 +105,25 @@ else:
         "ScorecardEvalRunner": "cxas_scrapi.utils.scorecard_eval_runner",
     }
 
+    def _module_exists(module_path: str) -> bool:
+        rel_path = module_path.removeprefix("cxas_scrapi.").replace(
+            ".", _os.sep
+        )
+        return any(
+            _os.path.isfile(_os.path.join(_base, rel_path + ".py"))
+            or _os.path.isfile(_os.path.join(_base, rel_path + ".pyc"))
+            or _os.path.isfile(_os.path.join(_base, rel_path, "__init__.py"))
+            for _base in __path__
+        )
+
     def __getattr__(name: str) -> Any:
         if name in _LAZY_IMPORTS:
             module_path = _LAZY_IMPORTS[name]
+            if not _module_exists(module_path):
+                raise ImportError(
+                    f"{name!r} requires optional module {module_path!r}, "
+                    "which is not included in this installation."
+                )
             module = importlib.import_module(module_path)
             return getattr(module, name)
         raise AttributeError(f"module {__name__} has no attribute {name}")
@@ -149,40 +170,9 @@ __all__ = [
     "Versions",
 ]
 
-
-__all__ = [
-    "Agents",
-    "Apps",
-    "BaseDFCXClient",
-    "CallbackEvals",
-    "Callbacks",
-    "ChangelogUtils",
-    "Changelogs",
-    "Common",
-    "ConversationHistory",
-    "ConversationalAgentsAPI",
-    "DFCXAgentExporter",
-    "DFCXAgents",
-    "DFCXGenerativeSettings",
-    "DFCXPlaybooks",
-    "DFCXTools",
-    "Deployments",
-    "EvalUtils",
-    "Evaluations",
-    "FlowDependencyResolver",
-    "FlowTreeVisualizer",
-    "GoogleSheetsUtils",
-    "GuardrailEvals",
-    "Guardrails",
-    "HighLevelGraphVisualizer",
-    "MainVisualizer",
-    "PlaybookTreeVisualizer",
-    "SecretManagerUtils",
-    "Sessions",
-    "SimulationEvals",
-    "ToolEvals",
-    "Tools",
-    "TurnEvals",
-    "Variables",
-    "Versions",
-]
+if not TYPE_CHECKING:
+    __all__ = [
+        _s
+        for _s in __all__
+        if _s in _LAZY_IMPORTS and _module_exists(_LAZY_IMPORTS[_s])
+    ]

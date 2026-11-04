@@ -19,9 +19,14 @@ import logging
 import os
 from typing import Any
 
-from InquirerPy import inquirer
-from InquirerPy.base.control import Choice
-from InquirerPy.validator import EmptyInputValidator
+try:
+    from InquirerPy import inquirer
+    from InquirerPy.base.control import Choice
+    from InquirerPy.validator import EmptyInputValidator
+except ImportError:
+    inquirer = None  # type: ignore[assignment]
+    Choice = None  # type: ignore[assignment,misc]
+    EmptyInputValidator = None  # type: ignore[assignment,misc]
 
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.utils.ui_styles import ESCAPE_KEYBINDINGS, PROMPT_STYLE
@@ -33,12 +38,16 @@ DEFAULT_LOCATION = "us"
 
 
 def is_interactive() -> bool:
-    """True if stdin is a TTY (so InquirerPy prompts work). Otherwise the
-    caller should fall back to the supplied --flag values or fail loudly."""
-    return os.isatty(0) and os.isatty(1)
+    """True if InquirerPy is installed and stdin/stdout are TTYs."""
+    return inquirer is not None and os.isatty(0) and os.isatty(1)
 
 
 def _ensure_interactive(prompt_label: str) -> None:
+    if inquirer is None:
+        raise RuntimeError(
+            f"Interactive prompt for {prompt_label!r} requires InquirerPy. "
+            "Install InquirerPy or pass the value via CLI flag."
+        )
     if not is_interactive():
         raise RuntimeError(
             f"Interactive prompt for {prompt_label!r} requested but stdin is "
