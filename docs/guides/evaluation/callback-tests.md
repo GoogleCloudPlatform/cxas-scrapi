@@ -138,6 +138,22 @@ cxas test-callbacks \
 | 1 | One or more tests failed |
 | 2 | Collection error (syntax error, import error) |
 
+### Pytest plugin (`cxas_scrapi.evals.callback_chain.pytest_plugin`)
+
+`cxas test-callbacks` and `CallbackEvals` automatically enable the callback chain pytest plugin via `-p cxas_scrapi.evals.callback_chain.pytest_plugin`. When invoking `pytest` directly, opt in either on the command line:
+
+```bash
+pytest -p cxas_scrapi.evals.callback_chain.pytest_plugin
+```
+
+or in your test suite's top-level `conftest.py`:
+
+```python
+pytest_plugins = ["cxas_scrapi.evals.callback_chain.pytest_plugin"]
+```
+
+Active trace collectors are scoped via `contextvars.ContextVar`. If a test dispatches callback or turn execution to a `ThreadPoolExecutor` or background thread, use `submit_in_context(executor, fn, *args, **kwargs)` (from `cxas_scrapi.evals.callback_chain`) or `contextvars.copy_context().run` so traces attach deterministically to the current test's collector without leaking across pooled workers.
+
 ---
 
 ## Testing a single callback
@@ -257,12 +273,12 @@ def test_returns_override_response_for_blocked_user():
 
 ## Linter integration
 
-The callback linter rules (C001-C010) catch many issues before you even write tests:
+The callback linter rules (`C001`-`C007`, `C010`, and `C101`-`C109`; `C008`/`C009` are retired) catch many issues before you even write tests:
 
 - **C001**: Wrong function name for the callback type
 - **C002**: Wrong number of arguments
 - **C006**: Bare `except:` without logging
-- **C008**: Missing typing imports that cause `NameError` at runtime
 - **C010**: Invalid Python syntax
+- **C101-C109**: Multi-callback chain hazards (unconditional short-circuit, shared state reference aliasing, undeclared subscript reads, `None` key deletion, tool callback return divergence, unreturned `llm_response` mutations, unsupported `llm_request` mutations, non-string dict keys under V2 `orjson`, and callback chain load errors)
 
 Running `cxas lint` before `cxas test-callbacks` is a good habit — fix the lint errors first, then verify behavior with tests.
