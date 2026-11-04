@@ -37,6 +37,14 @@ if TYPE_CHECKING:
 
 from cxas_scrapi.evals.callback_chain.compare import execute_compare_modes
 from cxas_scrapi.evals.callback_chain.errors import resolve_error_outcome
+from cxas_scrapi.evals.callback_chain.hydration import (
+    StateUpdateMode,
+    build_agent_tool_declarations,
+    build_contents_with_state_updates,
+    get_agent_in_scope_params,
+    load_local_python_tools,
+    render_agent_instruction,
+)
 from cxas_scrapi.evals.callback_chain.lint import (
     CallbackChainLintFinding,
     collect_subscript_or_in_keys_in_specs,
@@ -77,14 +85,23 @@ from cxas_scrapi.evals.callback_chain.traces import (
     ImageVersion,
     ModeDiffReport,
     StageType,
+    TurnTrace,
+)
+from cxas_scrapi.evals.callback_chain.turn import (
+    SessionSimulator,
+    execute_turn,
+    invoke_mock_llm,
+    invoke_tool_impl,
 )
 from cxas_scrapi.utils import callback_libs
 from cxas_scrapi.utils.callback_libs import (
     Blob,
     CallbackContext,
     Content,
+    Event,
     ExternalResponse,
     FunctionCall,
+    FunctionDeclaration,
     FunctionResponse,
     GenerateContentConfig,
     HttpMethod,
@@ -356,7 +373,19 @@ class CallbackChainRunner:
         )
 
         # Auto-bind local Python tools and optional injected environment tools
+        self._tool_load_warnings: list[str] = []
         self.local_python_tools: dict[str, Any] = {}
+        if self.app_dir is not None:
+            self.local_python_tools = load_local_python_tools(
+                self,
+                mock_tools=self._user_mock_tools,
+                env_tools=self.env_tools,
+            )
+            self.mock_tools = {
+                **self.env_tools,
+                **self.local_python_tools,
+                **self._user_mock_tools,
+            }
         self._mock_tools = self.mock_tools
 
         raw_ehs = (
@@ -2470,6 +2499,291 @@ class CallbackChainRunner:
             consecutive_fallback_count=consecutive_fallback_count,
             strict=strict,
         )
+
+    @staticmethod
+    def _invoke_tool_impl(
+        impl: Callable[..., Any],
+        working_tin: dict[str, Any],
+        tool_ctx: ToolContext,
+    ) -> Any:
+        """Invokes a tool implementation function with `(input, tool_ctx)` or
+        `(input,)`.
+        """
+        return invoke_tool_impl(impl, working_tin, tool_ctx)
+
+    @staticmethod
+    def _invoke_mock_llm(
+        mock_llm: LlmResponse
+        | Sequence[LlmResponse]
+        | Callable[..., LlmResponse]
+        | None,
+        ctx: CallbackContext,
+        eff_request: LlmRequest,
+        call_index: int = 0,
+    ) -> LlmResponse:
+        """Invokes `mock_llm` and validates that it returns an `LlmResponse`."""
+        return invoke_mock_llm(
+            mock_llm, ctx, eff_request, call_index=call_index
+        )
+
+    def render_instruction(
+        self,
+        state: dict[str, Any] | None = None,
+        *,
+        template_engine: typing.Literal["variables_only", "full"] | None = None,
+        resolve_tags: bool = True,
+        substitute_variables: bool = True,
+        substitute_single_brace: bool | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Renders the agent's instruction template with CES tags and state
+        variables.
+        """
+        return render_agent_instruction(
+            self,
+            state=state,
+            agent_dir=self.agent_dir,
+            app_dir=self.app_dir,
+            agent_config=self.agent_config,
+            app_config=self.app_config,
+            template_engine=template_engine,
+            resolve_tags=resolve_tags,
+            substitute_variables=substitute_variables,
+            substitute_single_brace=substitute_single_brace,
+            **kwargs,
+        )
+
+    def build_tool_declarations(
+        self,
+        *,
+        include_end_session: bool | None = None,
+    ) -> list[FunctionDeclaration]:
+        """Builds FunctionDeclaration schemas for the agent's tools and child
+        agents.
+        """
+        return build_agent_tool_declarations(
+            self,
+            agent_dir=self.agent_dir,
+            app_dir=self.app_dir,
+            agent_config=self.agent_config,
+            app_config=self.app_config,
+            include_end_session=include_end_session,
+        )
+
+    def hydrate_llm_request(
+        self,
+        llm_request: LlmRequest | None = None,
+        *,
+        state: dict[str, Any] | None = None,
+        events: Sequence[Event] | None = None,
+        state_update_mode: StateUpdateMode = "rearrange",
+        template_engine: typing.Literal["variables_only", "full"] | None = None,
+        substitute_single_brace: bool | None = None,
+        **kwargs: Any,
+    ) -> LlmRequest:
+        """Populates `system_instruction`, `tools`, and `<state_update>` on
+        `llm_request`.
+        """
+        req = (
+            copy.deepcopy(llm_request)
+            if llm_request is not None
+            else LlmRequest()
+        )
+        if events is not None and state_update_mode != "none":
+            in_scope = get_agent_in_scope_params(
+                self, state=state, template_engine=template_engine
+            )
+            if in_scope:
+                req.contents = build_contents_with_state_updates(
+                    events, in_scope, mode=state_update_mode
+                )
+        if req.config is None:
+            req.config = GenerateContentConfig()
+        has_sys = bool(
+            req.config.system_instruction is not None
+            and (
+                isinstance(req.config.system_instruction, str)
+                or req.config.system_instruction.parts
+            )
+        )
+        if not has_sys:
+            rendered = self.render_instruction(
+                state=state,
+                template_engine=template_engine,
+                substitute_single_brace=substitute_single_brace,
+                **kwargs,
+            )
+            if rendered:
+                req.config.system_instruction = Content(
+                    role="system",
+                    parts=[Part.from_text(rendered)],
+                )
+        existing_tools = req.config.tools or []
+        has_decls = any(bool(t.function_declarations) for t in existing_tools)
+        if not has_decls:
+            decls = self.build_tool_declarations()
+            if decls:
+                req.config.tools = [
+                    callback_libs.ToolDeclaration(function_declarations=decls)
+                ]
+        if req.config.temperature is None:
+            for cfg_src in (self.agent_config, self.app_config):
+                if not isinstance(cfg_src, dict):
+                    continue
+                ms = cfg_src.get("modelSettings") or cfg_src.get(
+                    "model_settings"
+                )
+                if isinstance(ms, dict) and ms.get("temperature") is not None:
+                    try:
+                        req.config.temperature = float(ms["temperature"])
+                        break
+                    except (TypeError, ValueError):
+                        pass
+        return req
+
+    def load_local_tool_impls(self) -> dict[str, Callable[..., Any]]:
+        """Loads local Python tool `run()` callables from the app's tools
+        directory.
+        """
+        return load_local_python_tools(
+            self,
+            agent_dir=self.agent_dir,
+            app_dir=self.app_dir,
+            agent_config=self.agent_config,
+            app_config=self.app_config,
+        )
+
+    def run_turn(
+        self,
+        ctx: CallbackContext | str | Content | None = None,
+        llm_request: LlmRequest | None = None,
+        mock_llm: LlmResponse
+        | Sequence[LlmResponse]
+        | Callable[..., LlmResponse]
+        | str
+        | None = None,
+        *,
+        user_input: str | Content | None = None,
+        initial_state: dict[str, Any] | None = None,
+        llm_callable: LlmResponse
+        | Sequence[LlmResponse]
+        | Callable[..., LlmResponse]
+        | str
+        | None = None,
+        llm: LlmResponse
+        | Sequence[LlmResponse]
+        | Callable[..., LlmResponse]
+        | str
+        | None = None,
+        hydrate_from_agent: bool | None = None,
+        auto_load_tools: bool = True,
+        state_update_mode: StateUpdateMode = "rearrange",
+        mode: ExecutionMode | None = None,
+        image_version: ImageVersion | None = None,
+        new_session: bool | None = None,
+        allow_content_update: bool | None = None,
+        simulate_struct_numbers: bool | None = None,
+        time_zone: str | None = None,
+        mock_tools: dict[str, Any] | None = None,
+        execute_tools: bool | None = None,
+        tool_impls: dict[str, Callable[..., Any] | dict[str, Any]]
+        | None = None,
+        include_agent_callbacks: bool | None = None,
+        max_llm_calls: int | None = None,
+        consecutive_fallback_count: int | None = None,
+        strict: bool | None = None,
+    ) -> tuple[LlmResponse | None, TurnTrace]:
+        """Executes a single-turn callback and tool pipeline
+        (`execute_turn`).
+        """
+        return execute_turn(
+            self,
+            ctx,
+            llm_request,
+            mock_llm,
+            user_input=user_input,
+            initial_state=initial_state,
+            llm_callable=llm_callable,
+            llm=llm,
+            hydrate_from_agent=hydrate_from_agent,
+            auto_load_tools=auto_load_tools,
+            mode=mode,
+            image_version=image_version,
+            new_session=new_session,
+            allow_content_update=allow_content_update,
+            simulate_struct_numbers=simulate_struct_numbers,
+            time_zone=time_zone,
+            mock_tools=mock_tools,
+            execute_tools=execute_tools,
+            tool_impls=tool_impls,
+            include_agent_callbacks=include_agent_callbacks,
+            max_llm_calls=max_llm_calls,
+            consecutive_fallback_count=consecutive_fallback_count,
+            strict=strict,
+            state_update_mode=state_update_mode,
+        )
+
+    def session(
+        self,
+        *,
+        state: dict[str, Any] | None = None,
+        initial_state: dict[str, Any] | None = None,
+        ctx: CallbackContext | None = None,
+        session_id: str = "sim_session",
+        language_code: str = "en-US",
+        llm: LlmResponse
+        | Sequence[LlmResponse]
+        | Callable[..., LlmResponse]
+        | str
+        | None = None,
+        mock_llm: LlmResponse
+        | Sequence[LlmResponse]
+        | Callable[..., LlmResponse]
+        | str
+        | None = None,
+        llm_callable: LlmResponse
+        | Sequence[LlmResponse]
+        | Callable[..., LlmResponse]
+        | str
+        | None = None,
+        hydrate_from_agent: bool | None = None,
+        auto_load_tools: bool = True,
+        auto_follow_transfers: bool = False,
+        max_agent_transfers: int = 3,
+        include_agent_callbacks: bool = True,
+        execute_tools: bool = True,
+        tool_impls: dict[str, Callable[..., Any] | dict[str, Any]]
+        | None = None,
+        state_update_mode: StateUpdateMode = "rearrange",
+        mode: ExecutionMode | None = None,
+        image_version: ImageVersion | None = None,
+        strict: bool | None = None,
+    ) -> SessionSimulator:
+        """Creates a multi-turn `SessionSimulator` bound to this runner."""
+        return SessionSimulator(
+            self,
+            state=state,
+            initial_state=initial_state,
+            ctx=ctx,
+            session_id=session_id,
+            language_code=language_code,
+            llm=llm,
+            mock_llm=mock_llm,
+            llm_callable=llm_callable,
+            hydrate_from_agent=hydrate_from_agent,
+            auto_load_tools=auto_load_tools,
+            auto_follow_transfers=auto_follow_transfers,
+            max_agent_transfers=max_agent_transfers,
+            include_agent_callbacks=include_agent_callbacks,
+            execute_tools=execute_tools,
+            tool_impls=tool_impls,
+            state_update_mode=state_update_mode,
+            mode=mode,
+            image_version=image_version,
+            strict=strict,
+        )
+
+    simulate_session = session
 
     def compare_modes(
         self,
