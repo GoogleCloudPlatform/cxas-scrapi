@@ -2443,7 +2443,7 @@ class SimulationEvals(Apps):
                     if progress_callback:
                         progress_callback(len(results), len(jobs))
             else:
-                max_workers = min(parallel, 25)
+                max_workers = parallel
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {
                         executor.submit(

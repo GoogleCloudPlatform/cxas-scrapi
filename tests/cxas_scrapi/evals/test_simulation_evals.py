@@ -1236,6 +1236,45 @@ def test_simulation_evals_aggregate_simulation_results_parallel() -> None:
     assert evals._run_single_simulation_job.call_count == 2
 
 
+def test_simulation_evals_aggregate_simulation_results_honors_high_parallel() -> (
+    None
+):
+    app_name = "projects/p/locations/l/apps/a"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name)
+
+    evals._run_single_simulation_job = MagicMock(return_value={"status": "ok"})
+    jobs = [({"name": "tc1"}, 0), ({"name": "tc1"}, 1)]
+
+    with patch(
+        "cxas_scrapi.evals.simulation_evals.ThreadPoolExecutor"
+    ) as mock_pool:
+        mock_executor = MagicMock()
+        mock_pool.return_value.__enter__.return_value = mock_executor
+        f1: typing.Any = MagicMock()
+        f1.result.return_value = {"status": "ok"}
+        f2: typing.Any = MagicMock()
+        f2.result.return_value = {"status": "ok"}
+        mock_executor.submit.side_effect = [f1, f2]
+        with patch(
+            "cxas_scrapi.evals.simulation_evals.as_completed",
+            return_value=[f1, f2],
+        ):
+            results = evals._aggregate_simulation_results(
+                jobs,
+                runs=1,
+                parallel=100,
+                sim_user_model="m_sim",
+                eval_model="m_eval",
+                modality="audio",
+                verbose=False,
+            )
+
+    mock_pool.assert_called_once_with(max_workers=100)
+    assert len(results) == 2
+
+
 @patch("cxas_scrapi.evals.simulation_evals.ConversationHistory")
 def test_simulation_evals_get_turns_from_platform(
     mock_ch_class: typing.Any,
