@@ -168,6 +168,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C006 | `callback-bare-except` | Warning | Bare `except:` without logging swallows errors silently |
     | C007 | `callback-tool-naming` | Info | Verify `tools.*` call uses correct naming convention |
     | C010 | `callback-python-syntax` | Error | Callback Python file must have valid syntax |
+    | C011 | `voice-before-model-request-mutation` | Warning | Voice apps ignore before_model llm_request mutations |
 
     ---
 
@@ -497,3 +498,34 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* `{var}` reference where `var` is not declared or doesn't resolve.
 
     *Fix:* Declare the variable in `app.json` or fix the reference.
+
+### Tools (T015-T017)
+
+**T015 — data-store-filter-template**
+*Triggers:* When a data store tool (or its sources) contains template syntax (`{...}` or `{{...}}`) inside a static `filter`.
+*Fix:* Remove the template syntax. Static filters do not support variable interpolation.
+
+**T016 — data-store-filter-parameter-behavior**
+*Triggers:* When a brand-scoped dataStoreTool (either explicitly containing a filter, or prefixed with `ds_`) specifies a `filterParameterBehavior` other than `NEVER_INCLUDE` or `3`.
+*Fix:* Set `filterParameterBehavior` to `NEVER_INCLUDE`.
+
+**T017 — data-store-voice-modality**
+*Triggers:* When a data store tool lacks an `AUDIO` configuration block in `modalityConfigs`, or does not disable `rewriterConfig`/`summarizationConfig` inside that block, or lacks a `snippetsConfig` while operating under a voice deployment (`GOOGLE_TELEPHONY_PLATFORM` or `CONTACT_CENTER_AS_A_SERVICE`).
+*Fix:* Add an `AUDIO` configuration to `modalityConfigs` and ensure `rewriterConfig.disabled` and `summarizationConfig.disabled` are both `true`, and provide a valid `snippetsConfig`.
+
+### Config (G001-G002)
+
+**G001 — guardrail-jinja-syntax**
+*Triggers:* When a guardrail's `llmPolicy.prompt` contains Jinja tokens (`{{...}}` or `{% ... %}`).
+*Fix:* Use CES `@@...@@` placeholder syntax or explicit string interpolation instead of Jinja templates.
+
+**G002 — crosscheck-locales-content-blocks**
+*Triggers:* When a combination of `brandId`, `supportedCountries`, and `supportedLanguages` defined in `deployments/*.yaml` is missing from `manifests/locales/content_blocks.yaml`.
+*Fix:* Ensure `content_blocks.yaml` declares the missing combination or remove it from the deployment configuration.
+
+### Variables (V105)
+
+**V105 — variable-declarations-limit**
+*Triggers:* When the number of items in `app.json`'s `variableDeclarations` exceeds 80% of `max_variables_per_app` (default 100).
+*Fix:* Remove unused variables or consolidate them.
+

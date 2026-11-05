@@ -17,7 +17,7 @@
 Validates app.json and agent JSON configuration files.
 """
 
-import json
+import json  # noqa: PLC0415
 from pathlib import Path
 
 from cxas_scrapi.utils.linter import (

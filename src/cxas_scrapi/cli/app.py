@@ -28,6 +28,9 @@ from typing import Any
 
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.python_bundler import (
+    strip_shared_bundles,
+)
 from cxas_scrapi.core.versions import Versions
 
 logger = logging.getLogger(__name__)
@@ -133,6 +136,7 @@ def app_pull(args: argparse.Namespace) -> None:
         getattr(args, "overwrite", False),
         app_version=app_version,
         app_dir_name=getattr(args, "app_dir_name", None),
+        args=args,
     )
 
 
@@ -143,6 +147,7 @@ def _app_pull(
     overwrite: bool = False,
     app_version: str | None = None,
     app_dir_name: str | None = None,
+    args: argparse.Namespace | None = None,
 ) -> None:
     """Helper to pull an app from CXAS."""
     try:
@@ -305,6 +310,17 @@ def _app_pull(
                                         )
                                         os.rmdir(dir_path)
 
+        if dest_app_root is not None:
+            app_root_for_strip = dest_app_root
+        else:
+            top_dir = export_members[0].split("/")[0] if export_members else ""
+            app_root_for_strip = (
+                os.path.join(target_dir, top_dir) if top_dir else target_dir
+            )
+
+        force_strip = getattr(args, "force", False) if args else False
+        strip_shared_bundles(Path(app_root_for_strip), force=force_strip)
+
         print("Successfully pulled app.")
 
     except Exception as e:
@@ -354,67 +370,20 @@ def _app_push(
     args: argparse.Namespace | None = None,
 ) -> str | None:
     """Helper to push an app to CXAS."""
-    temp_dir = tempfile.mkdtemp()
-    inner_dir = os.path.join(temp_dir, "agent")
-    os.makedirs(inner_dir)
-
-    valid_roots = [
-        "app.yaml",
-        "app.json",
-        "global_instruction.txt",
-        "environment.json",
-        "agents",
-        "tools",
-        "examples",
-        "guardrails",
-        "toolsets",
-        "evaluations",
-        "evaluationDatasets",
-        "evaluationExpectations",
-        ".github/workflows",
-    ]
-
-    for item in valid_roots:
-        src_path = os.path.join(app_dir, item)
-        if os.path.exists(src_path):
-            dst_path = os.path.join(inner_dir, item)
-            os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-            if os.path.isdir(src_path):
-                shutil.copytree(src_path, dst_path)
-            else:
-                shutil.copy2(src_path, dst_path)
-
-    # Inject explicit env_file if provided
-    if env_file:
-        if os.path.exists(env_file):
-            dst_path = os.path.join(inner_dir, "environment.json")
-            shutil.copy2(env_file, dst_path)
-            print(
-                f"Included custom environment file "
-                f"from {env_file} as environment.json"
-            )
-        else:
-            print(
-                f"Warning: Custom environment file "
-                f"'{env_file}' not found. Skipping."
-            )
-
-    # ZIP does not support timestamps before 1980.
-    # Touch files and directories in temp_dir with timestamps before 1980.
-    limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
-    for root, dirs, files in os.walk(temp_dir):
-        for name in files:
-            path = os.path.join(root, name)
-            if os.path.getmtime(path) < limit_time:
-                os.utime(path, None)
-        for name in dirs:
-            path = os.path.join(root, name)
-            if os.path.getmtime(path) < limit_time:
-                os.utime(path, None)
-
-    # Zip the filtered agent directory
     temp_zip = tempfile.mktemp(suffix=".zip")
-    shutil.make_archive(temp_zip.replace(".zip", ""), "zip", temp_dir)
+    from cxas_scrapi.core.packaging import package_app_archive
+
+    native_python_env = (
+        getattr(args, "native_python_env", False) if args else False
+    )
+
+    package_app_archive(
+        Path(app_dir),
+        Path(temp_zip),
+        Path(env_file) if env_file else None,
+        native_python_env=native_python_env,
+        wrapper_dir="agent",
+    )
 
     try:
         with open(temp_zip, "rb") as f:

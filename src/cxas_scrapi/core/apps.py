@@ -15,13 +15,18 @@
 # limitations under the License.
 
 import logging
+import os
+import tempfile
 import typing
+from pathlib import Path
 from typing import Any
 
 from google.cloud.ces_v1beta import AgentServiceClient, types
 from google.protobuf import field_mask_pb2
 
 from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.packaging import package_app_archive
+from cxas_scrapi.core.python_bundler import strip_shared_bundles
 
 
 class Apps(Common):
@@ -216,6 +221,7 @@ class Apps(Common):
         app_content: bytes | None = None,
         gcs_uri: str | None = None,
         local_path: str | None = None,
+        native_python_env: bool = False,
     ) -> Any:
         """Imports an app as a brand new app.
 
@@ -248,8 +254,20 @@ class Apps(Common):
         }
 
         if local_path:
-            with open(local_path, "rb") as f:
-                request_kwargs["app_content"] = f.read()
+            if os.path.isdir(local_path):
+                temp_zip = tempfile.mktemp(suffix=".zip")
+                package_app_archive(
+                    Path(local_path),
+                    Path(temp_zip),
+                    native_python_env=native_python_env,
+                    wrapper_dir="agent",
+                )
+                with open(temp_zip, "rb") as f:
+                    request_kwargs["app_content"] = f.read()
+                os.remove(temp_zip)
+            else:
+                with open(local_path, "rb") as f:
+                    request_kwargs["app_content"] = f.read()
         elif app_content:
             request_kwargs["app_content"] = app_content
         elif gcs_uri:
@@ -265,6 +283,7 @@ class Apps(Common):
         gcs_uri: str | None = None,
         local_path: str | None = None,
         conflict_strategy: str | None = None,
+        native_python_env: bool = False,
     ) -> Any:
         # Wait for long-running operation to complete.
         """Imports an app, overwriting an existing one.
@@ -308,8 +327,20 @@ class Apps(Common):
         }
 
         if local_path:
-            with open(local_path, "rb") as f:
-                request_kwargs["app_content"] = f.read()
+            if os.path.isdir(local_path):
+                temp_zip = tempfile.mktemp(suffix=".zip")
+                package_app_archive(
+                    Path(local_path),
+                    Path(temp_zip),
+                    native_python_env=native_python_env,
+                    wrapper_dir="agent",
+                )
+                with open(temp_zip, "rb") as f:
+                    request_kwargs["app_content"] = f.read()
+                os.remove(temp_zip)
+            else:
+                with open(local_path, "rb") as f:
+                    request_kwargs["app_content"] = f.read()
         elif app_content:
             request_kwargs["app_content"] = app_content
         elif gcs_uri:
@@ -341,3 +372,28 @@ class Apps(Common):
 
         request = types.ImportAppRequest(**request_kwargs)
         return self.client.import_app(request=request)
+
+    def extract_exported_app(
+        self,
+        app_content: bytes,
+        target_dir: str | Path,
+        *,
+        force_strip_bundles: bool = False,
+    ) -> Path:
+        """Helper to extract exported app zip bytes and strip bundled Python."""
+
+        target_path = Path(target_dir)
+        target_path.mkdir(parents=True, exist_ok=True)
+        top_dir = ""
+        with zipfile.ZipFile(io.BytesIO(app_content)) as z:
+            members = z.namelist()
+            if members:
+                first = members[0].split("/")[0]
+                if first and all(
+                    m == first or m.startswith(first + "/") for m in members
+                ):
+                    top_dir = first
+            z.extractall(target_path)
+        app_root = target_path / top_dir if top_dir else target_path
+        strip_shared_bundles(app_root, force=force_strip_bundles)
+        return app_root

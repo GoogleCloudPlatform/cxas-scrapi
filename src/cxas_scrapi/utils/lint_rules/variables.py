@@ -21,12 +21,12 @@ mistyped nested children, or wrong parent objects after a flat→nested
 """
 
 import ast
-import json
+import json  # noqa: PLC0415
 import re
 import typing
 from pathlib import Path
 
-import yaml
+import yaml  # noqa: PLC0415
 
 from cxas_scrapi.utils.linter import (
     LintContext,
@@ -530,7 +530,7 @@ def _collect_template_refs(content: str) -> list[tuple[str, int]]:
     stripped = _strip_inline_examples(content)
     refs = []
     for m in TEMPLATE_RE.finditer(stripped):
-        ref = m.group(1)
+        ref = m.group(1)  # noqa: B023
         if ref in INSTRUCTION_BUILTINS:
             continue
         line = stripped[: m.start()].count("\n") + 1
@@ -1026,3 +1026,47 @@ class InstructionVariableRef(Rule):
                     )
                 )
         return results
+
+
+@rule("config")
+class VariableDeclarationsLimit(Rule):
+    id = "V105"
+    name = "variable-declarations-limit"
+    description = (
+        "Warns when len(app['variableDeclarations'])"
+        " exceeds 80% of max_variables_per_app."
+    )
+    default_severity = Severity.WARNING
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+        if file_path.name != "app.json":
+            return []
+
+        import json  # noqa: PLC0415
+
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            return []
+
+        decls = data.get("variableDeclarations", [])
+        if not decls:
+            return []
+
+        limit = context.options.get("max_variables_per_app", 100)
+
+        if len(decls) > limit * 0.8:
+            return [
+                self.make_result(
+                    file=rel,
+                    message=(
+                        f"variableDeclarations count ({len(decls)})"
+                        f" exceeds 80% of limit ({limit})."
+                    ),
+                    fix="Remove unused variables or consolidate them.",
+                )
+            ]
+        return []
