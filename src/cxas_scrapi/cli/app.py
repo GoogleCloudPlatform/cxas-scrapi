@@ -372,6 +372,7 @@ def _app_push(
         "evaluationDatasets",
         "evaluationExpectations",
         ".github/workflows",
+        "pythonEnvFiles",
     ]
 
     for item in valid_roots:

@@ -191,6 +191,7 @@ nav:
       - Configuration: guides/linting/configuration.md
       - Rule Reference: guides/linting/rules.md
       - CI Integration: guides/linting/ci-integration.md
+    - Build & Packaging: guides/build.md
     - AI Skills:
       - guides/skills/index.md
       - Installing Skills: guides/skills/installation.md
