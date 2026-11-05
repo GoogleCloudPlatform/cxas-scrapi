@@ -2794,6 +2794,11 @@ def get_parser() -> argparse.ArgumentParser:
             "will be deleted"
         ),
     )
+    parser_push.add_argument(
+        "--native-python-env",
+        action="store_true",
+        help="Synthesize pythonEnvFiles.yaml without mutating python_code.py",
+    )
     parser_push.set_defaults(func=app_push)
 
     # Parser for 'lint'

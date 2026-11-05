@@ -168,6 +168,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C006 | `callback-bare-except` | Warning | Bare `except:` without logging swallows errors silently |
     | C007 | `callback-tool-naming` | Info | Verify `tools.*` call uses correct naming convention |
     | C010 | `callback-python-syntax` | Error | Callback Python file must have valid syntax |
+    | C011 | `voice-before-model-request-mutation` | Warning | Voice apps ignore before_model llm_request mutations |
 
     ---
 
@@ -527,3 +528,4 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 **V105 — variable-declarations-limit**
 *Triggers:* When the number of items in `app.json`'s `variableDeclarations` exceeds 80% of `max_variables_per_app` (default 100).
 *Fix:* Remove unused variables or consolidate them.
+
