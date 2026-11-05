@@ -139,6 +139,9 @@ class BargeInMetadata:
     played_audio_duration_ms: float = 0.0
     total_audio_duration_ms: float = 0.0
     estimated_heard_text: str = ""
+    barge_in_style: str | None = None
+    barge_in_mode: str | None = None
+    model_generated: bool = False
 
 
 class ScrapiRunSessionResponse:
@@ -324,7 +327,12 @@ class AgentTurnManager:
                 self.barge_in_triggered_time = time.time()
 
     def get_barge_in_metadata(
-        self, agent_text: str = "", barge_in_ignored: bool = False
+        self,
+        agent_text: str = "",
+        barge_in_ignored: bool = False,
+        barge_in_style: str | None = None,
+        barge_in_mode: str | None = None,
+        model_generated: bool = False,
     ) -> BargeInMetadata:
         with self.lock:
             total_audio_duration_ms = (
@@ -367,10 +375,15 @@ class AgentTurnManager:
                 played_audio_duration_ms=played_ms,
                 total_audio_duration_ms=total_audio_duration_ms,
                 estimated_heard_text=estimated_heard_text,
+                barge_in_style=barge_in_style,
+                barge_in_mode=barge_in_mode,
+                model_generated=model_generated,
             )
 
     def update_turn_index(self, turn_idx: int) -> bool:
         with self.lock:
+            if turn_idx == 0:
+                return True
             if self.current_turn_index is None:
                 self.current_turn_index = turn_idx
                 return True
@@ -782,8 +795,12 @@ class BidiSessionHandler:
 
     def _send_barge_in_pair(self, input_item: dict[str, Any], idx: int) -> None:
         turn_n_input = input_item["turn"]
-        turn_n1_input = input_item["barge_in_next"]
+        turn_n1_input = input_item.get("barge_in_next")
         barge_in_after_ms = input_item.get("barge_in_after_ms", 0)
+        barge_in_callback = input_item.get("barge_in_callback")
+        barge_in_style = input_item.get("barge_in_style")
+        barge_in_mode = input_item.get("barge_in_mode")
+        model_generated = bool(input_item.get("model_generated", False))
 
         with self.lock:
             self.is_sending_audio = True
@@ -810,6 +827,20 @@ class BidiSessionHandler:
                 trailing_silence=True,
             )
 
+            callback_started = False
+            callback_result: dict[str, Any] = {}
+            callback_thread: threading.Thread | None = None
+
+            def _invoke_reactive_callback(live_speech: str) -> None:
+                try:
+                    res = barge_in_callback(live_speech)
+                    if isinstance(res, dict):
+                        callback_result.update(res)
+                except Exception as cb_exc:
+                    logging.warning(
+                        "Reactive barge-in callback failed: %s", cb_exc
+                    )
+
             while not self.agent_turn_manager.is_agent_done_talking():
                 if self._connection_error is not None or not (
                     self.ws_app
@@ -817,6 +848,29 @@ class BidiSessionHandler:
                     and self.ws_app.sock.connected
                 ):
                     break
+                if barge_in_callback is not None and not callback_started:
+                    with self._barge_in_lock:
+                        live_snapshot = list(self.current_turn_outputs)
+                    live_text = (
+                        ParsedSessionResponse(
+                            live_snapshot
+                        ).consolidated_agent_text
+                        if live_snapshot
+                        else ""
+                    )
+                    if (
+                        live_text
+                        or self.agent_turn_manager.first_audio_received_time
+                        is not None
+                        or self.agent_turn_manager.turn_completed_flag
+                    ):
+                        callback_started = True
+                        callback_thread = threading.Thread(
+                            target=_invoke_reactive_callback,
+                            args=(live_text,),
+                            daemon=True,
+                        )
+                        callback_thread.start()
                 self._send_silence(1)
 
             if self._connection_error is not None:
@@ -829,13 +883,119 @@ class BidiSessionHandler:
                     )
                 return
 
+            if barge_in_callback is not None:
+                if not callback_started:
+                    with self._barge_in_lock:
+                        live_snapshot = list(self.current_turn_outputs)
+                    live_text = (
+                        ParsedSessionResponse(
+                            live_snapshot
+                        ).consolidated_agent_text
+                        if live_snapshot
+                        else ""
+                    )
+                    callback_started = True
+                    callback_thread = threading.Thread(
+                        target=_invoke_reactive_callback,
+                        args=(live_text,),
+                        daemon=True,
+                    )
+                    callback_thread.start()
+                if callback_thread is not None:
+                    cb_wait_start = time.time()
+                    while (
+                        callback_thread.is_alive()
+                        and time.time() - cb_wait_start < 15.0
+                    ):
+                        if (
+                            self.ws_app
+                            and self.ws_app.sock
+                            and self.ws_app.sock.connected
+                        ):
+                            self._send_silence(1)
+                        else:
+                            callback_thread.join(timeout=0.05)
+
+                if callback_result.get("should_barge_in") is False:
+                    with self.agent_turn_manager.lock:
+                        self.agent_turn_manager.barge_in_after_ms = None
+                    while not self.agent_turn_manager.is_agent_done_talking():
+                        if self._connection_error is not None or not (
+                            self.ws_app
+                            and self.ws_app.sock
+                            and self.ws_app.sock.connected
+                        ):
+                            break
+                        self._send_silence(1)
+                    with self._barge_in_lock:
+                        turn_n_outputs_snapshot = list(
+                            self.current_turn_outputs
+                        )
+                    agent_text = ParsedSessionResponse(
+                        turn_n_outputs_snapshot
+                    ).consolidated_agent_text
+                    metadata = self.agent_turn_manager.get_barge_in_metadata(
+                        agent_text=agent_text,
+                        barge_in_ignored=False,
+                        barge_in_style=callback_result.get(
+                            "barge_in_style", barge_in_style
+                        ),
+                        barge_in_mode=barge_in_mode or "reactive",
+                        model_generated=bool(
+                            callback_result.get(
+                                "model_generated", model_generated
+                            )
+                        ),
+                    )
+                    turn_n_audio = self._save_agent_audio_for_index(
+                        turn_n_local_idx
+                    )
+                    turn_n_response = ScrapiRunSessionResponse(
+                        original_response=types.RunSessionResponse(
+                            outputs=turn_n_outputs_snapshot
+                        ),
+                        agent_audio_paths=turn_n_audio,
+                        barge_in_metadata=metadata,
+                    )
+                    if self.response_queue is not None:
+                        self.response_queue.put(turn_n_response)
+                        self.response_queue.put(None)
+                    self.current_agent_turn_idx = turn_n_local_idx + 1
+                    self.current_turn_outputs = []
+                    self.next_turn_outputs = []
+                    return
+
+                if callback_result.get("barge_in_next") is not None:
+                    turn_n1_input = callback_result["barge_in_next"]
+                if callback_result.get("barge_in_style") is not None:
+                    barge_in_style = callback_result["barge_in_style"]
+                if callback_result.get("model_generated") is not None:
+                    model_generated = bool(callback_result["model_generated"])
+                if callback_result.get("barge_in_after_ms") is not None:
+                    barge_in_after_ms = int(
+                        callback_result["barge_in_after_ms"]
+                    )
+                    with self.agent_turn_manager.lock:
+                        self.agent_turn_manager.barge_in_after_ms = (
+                            barge_in_after_ms
+                        )
+                    while not self.agent_turn_manager.is_agent_done_talking():
+                        if self._connection_error is not None or not (
+                            self.ws_app
+                            and self.ws_app.sock
+                            and self.ws_app.sock.connected
+                        ):
+                            break
+                        self._send_silence(1)
+
             self.agent_turn_manager.record_barge_in_triggered()
-            self._stream_input_payload(
-                turn_n1_input,
-                idx + 1,
-                leading_silence=False,
-                trailing_silence=True,
-            )
+            if turn_n1_input:
+                self._stream_input_payload(
+                    turn_n1_input,
+                    idx + 1,
+                    leading_silence=False,
+                    trailing_silence=True,
+                )
 
             wait_start = time.time()
             while (
@@ -914,6 +1074,9 @@ class BidiSessionHandler:
             metadata = self.agent_turn_manager.get_barge_in_metadata(
                 agent_text=agent_text,
                 barge_in_ignored=barge_in_ignored,
+                barge_in_style=barge_in_style,
+                barge_in_mode=barge_in_mode,
+                model_generated=model_generated,
             )
 
             max_dur = (
@@ -1284,7 +1447,13 @@ class BidiSessionHandler:
                     "Received server interruption_signal (barge-in=%s)",
                     barge_in_val,
                 )
-                self.agent_turn_manager.mark_interrupted(barge_in=barge_in_val)
+                if (
+                    not self._barge_in_pair_active
+                    or self.agent_turn_manager.barge_in_triggered
+                ):
+                    self.agent_turn_manager.mark_interrupted(
+                        barge_in=barge_in_val
+                    )
 
             if response.session_output:
                 if (
@@ -1316,10 +1485,18 @@ class BidiSessionHandler:
                 ):
                     self._turn_n_server_idx = turn_idx
 
-                if (
-                    self._barge_in_pair_active
-                    and self._turn_n_server_idx is not None
-                    and turn_idx > self._turn_n_server_idx
+                if self._barge_in_pair_active and (
+                    (
+                        self._turn_n_server_idx is not None
+                        and turn_idx > self._turn_n_server_idx
+                    )
+                    or (
+                        turn_idx == 0
+                        and (
+                            self._barge_in_phase == "turn_n1"
+                            or self.agent_turn_manager.turn_completed_flag
+                        )
+                    )
                 ):
                     with self._barge_in_lock:
                         self.outputs.append(response.session_output)
@@ -1788,12 +1965,17 @@ class BidiInteractiveSession:
     def send_turn_with_barge_in(
         self,
         text: str,
-        barge_in_text: str,
-        barge_in_after_ms: int,
+        barge_in_text: str = "",
+        barge_in_after_ms: int = 500,
         variables: dict[str, Any] | None = None,
         barge_in_variables: dict[str, Any] | None = None,
         audio_bytes: bytes | None = None,
         barge_in_audio_bytes: bytes | None = None,
+        barge_in_callback: typing.Callable[[str], dict[str, Any] | None]
+        | None = None,
+        barge_in_style: str | None = None,
+        barge_in_mode: str | None = None,
+        model_generated: bool = False,
     ) -> tuple[Any, Any]:
         """Sends Turn N and schedules Turn N+1 to interrupt after
         barge_in_after_ms.
@@ -1801,18 +1983,61 @@ class BidiInteractiveSession:
         turn_n = self._prepare_turn_input(
             text, variables=variables, audio_bytes=audio_bytes
         )
-        turn_n1 = self._prepare_turn_input(
-            barge_in_text,
-            variables=barge_in_variables,
-            audio_bytes=barge_in_audio_bytes,
+        turn_n1 = (
+            self._prepare_turn_input(
+                barge_in_text,
+                variables=barge_in_variables,
+                audio_bytes=barge_in_audio_bytes,
+            )
+            if (
+                barge_in_text
+                or barge_in_audio_bytes is not None
+                or barge_in_callback is None
+            )
+            else None
         )
-        self.input_queue.put(
-            {
-                "turn": turn_n,
-                "barge_in_next": turn_n1,
-                "barge_in_after_ms": barge_in_after_ms,
-            }
-        )
+
+        wrapped_callback = None
+        if barge_in_callback is not None:
+
+            def _wrapped_cb(live_agent_text: str) -> dict[str, Any] | None:
+                cb_res = barge_in_callback(live_agent_text)
+                if not isinstance(cb_res, dict):
+                    return cb_res
+                if cb_res.get("should_barge_in") is False:
+                    return cb_res
+                out = dict(cb_res)
+                if "barge_in_next" not in out:
+                    cb_text = out.get("barge_in_text", barge_in_text)
+                    cb_vars = out.get("barge_in_variables", barge_in_variables)
+                    cb_audio = out.get(
+                        "barge_in_audio_bytes", barge_in_audio_bytes
+                    )
+                    if cb_text or cb_audio is not None:
+                        out["barge_in_next"] = self._prepare_turn_input(
+                            cb_text,
+                            variables=cb_vars,
+                            audio_bytes=cb_audio,
+                        )
+                return out
+
+            wrapped_callback = _wrapped_cb
+
+        queue_item: dict[str, Any] = {
+            "turn": turn_n,
+            "barge_in_next": turn_n1,
+            "barge_in_after_ms": barge_in_after_ms,
+        }
+        if wrapped_callback is not None:
+            queue_item["barge_in_callback"] = wrapped_callback
+        if barge_in_style is not None:
+            queue_item["barge_in_style"] = barge_in_style
+        if barge_in_mode is not None:
+            queue_item["barge_in_mode"] = barge_in_mode
+        if model_generated:
+            queue_item["model_generated"] = model_generated
+
+        self.input_queue.put(queue_item)
         try:
             resp_n = self.response_queue.get(timeout=90)
             if isinstance(resp_n, dict):

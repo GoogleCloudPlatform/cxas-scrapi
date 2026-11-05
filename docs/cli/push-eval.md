@@ -36,7 +36,7 @@ conversations:
 
 ### 2. Simulation & Milestone Evals (`evals:` → CXAS 2.0 Milestone Scenarios)
 
-Files (or directories of files) with an `evals:` key or `steps:` list are sanitized into CXAS 2.0 Platform Milestone YAML via `EvalUtils.convert_sim_evals_to_milestone_yaml` (stripping client-only keys such as `audio_expectations`, `naturalness_metric`, and `barge_in_after_ms`, and hoisting `inject_variables` from later steps into `session_parameters`) and imported onto the platform via `EvalUtils.push_milestone_evals_from_yaml` (`POST /v1beta/{app}:importEvaluations` with `conflictResolutionStrategy: "OVERWRITE"`):
+Files (or directories of files) with an `evals:` key or `steps:` list are sanitized into CXAS 2.0 Platform Milestone YAML via `EvalUtils.convert_sim_evals_to_milestone_yaml` (stripping client-only keys such as `audio_expectations`, `naturalness_metric`, `barge_in_after_ms`, and `barge_in`, and hoisting `inject_variables` from later steps into `session_parameters`) and imported onto the platform via `EvalUtils.push_milestone_evals_from_yaml` (`POST /v1beta/{app}:importEvaluations` with `conflictResolutionStrategy: "OVERWRITE"`):
 
 ```yaml
 evals:

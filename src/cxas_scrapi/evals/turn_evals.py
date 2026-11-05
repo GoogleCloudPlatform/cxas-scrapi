@@ -35,6 +35,11 @@ from cxas_scrapi.core.audio_transformer import resolve_noise_config
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import BargeInMetadata, Sessions
 from cxas_scrapi.core.variables import Variables
+from cxas_scrapi.evals.simulation_evals import (
+    BargeInConfig,
+    _merge_barge_in_dict,
+    generate_model_barge_in,
+)
 from cxas_scrapi.utils.dependency_manager import SessionDependencyManager
 from cxas_scrapi.utils.eval_utils import (
     ExpectationStatus,
@@ -111,9 +116,41 @@ class TurnStep(BaseModel):
     user: str | None = None
     event: str | None = None
     barge_in_after_ms: int | None = None
+    barge_in: BargeInConfig | None = None
     variables: dict[str, Any] = Field(default_factory=dict)
     config: dict[str, Any] = Field(default_factory=dict)
     expectations: list[TurnExpectation | str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_barge_in_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        return _merge_barge_in_dict(dict(data))
+
+    def has_barge_in(self) -> bool:
+        return bool(
+            (self.barge_in and self.barge_in.enabled)
+            or self.barge_in_after_ms is not None
+        )
+
+    def is_model_generated_barge_in(self) -> bool:
+        if not self.has_barge_in():
+            return False
+        cfg = self.barge_in
+        if not self.user and not self.event:
+            return True
+        if cfg is None:
+            return False
+        return bool(
+            cfg.goal
+            or cfg.guide
+            or cfg.style
+            or cfg.min_ms > 0
+            or cfg.max_ms > 0
+            or cfg.jitter_ms > 0
+            or (cfg.mode and cfg.mode.strip().lower() == "reactive")
+        )
 
 
 class TurnTestCase(BaseModel):
@@ -1047,7 +1084,7 @@ class TurnEvals:
             print(f"Running Turn Test: {case.name}")
 
             if case.turns:
-                if case.turns[0].barge_in_after_ms is not None:
+                if case.turns[0].has_barge_in():
                     raise ValueError(
                         f"Invalid barge-in configuration in '{case.name}': "
                         "The first turn (turn 0) cannot specify "
@@ -1055,8 +1092,8 @@ class TurnEvals:
                     )
                 for i in range(len(case.turns) - 1):
                     if (
-                        case.turns[i].barge_in_after_ms is not None
-                        and case.turns[i + 1].barge_in_after_ms is not None
+                        case.turns[i].has_barge_in()
+                        and case.turns[i + 1].has_barge_in()
                     ):
                         raise ValueError(
                             "Invalid barge-in configuration in "
@@ -1079,8 +1116,7 @@ class TurnEvals:
                     # Multi-turn sequence
                     full_conversation_trace = []
                     has_barge_in = any(
-                        getattr(step, "barge_in_after_ms", None) is not None
-                        for step in case.turns
+                        step.has_barge_in() for step in case.turns
                     )
                     use_bidi = has_barge_in or bool(
                         case.config.get("single_bidi_stream")
@@ -1136,20 +1172,217 @@ class TurnEvals:
                             if (
                                 interactive_session is not None
                                 and next_step is not None
-                                and next_step.barge_in_after_ms is not None
+                                and next_step.has_barge_in()
                             ):
                                 _, _, text_n = _resolve_step_input(step)
-                                _, _, text_n1 = _resolve_step_input(next_step)
-
-                                resp_n, resp_n1 = (
-                                    interactive_session.send_turn_with_barge_in(
-                                        text=text_n,
-                                        barge_in_text=text_n1,
-                                        barge_in_after_ms=next_step.barge_in_after_ms,
-                                        variables=step.variables,
-                                        barge_in_variables=next_step.variables,
-                                    )
+                                model_name = next_step.config.get(
+                                    "gemini_model",
+                                    case.config.get(
+                                        "gemini_model", "gemini-3.5-flash-lite"
+                                    ),
                                 )
+                                b_cfg = next_step.barge_in
+                                mode_str = (
+                                    (
+                                        b_cfg.mode
+                                        if b_cfg and b_cfg.mode
+                                        else "pre_turn"
+                                    )
+                                    .strip()
+                                    .lower()
+                                )
+
+                                if next_step.is_model_generated_barge_in():
+                                    if mode_str == "reactive":
+
+                                        def _turn_reactive_cb(
+                                            live_agent_text: str,
+                                            _ns: TurnStep = next_step,
+                                            _tn: str = text_n,
+                                            _idx: int = step_idx,
+                                            _mdl: str = model_name,
+                                            _trace: list[
+                                                str
+                                            ] = full_conversation_trace,
+                                        ) -> dict[str, Any]:
+                                            _cfg = _ns.barge_in
+                                            gen_out = generate_model_barge_in(
+                                                genai_client=self.genai_client,
+                                                genai_model=_mdl,
+                                                goal=(
+                                                    _cfg.goal
+                                                    if _cfg and _cfg.goal
+                                                    else (_ns.user or "")
+                                                ),
+                                                response_guide=(
+                                                    _cfg.guide
+                                                    if _cfg and _cfg.guide
+                                                    else (_ns.user or "")
+                                                ),
+                                                barge_in_style=(
+                                                    _cfg.style
+                                                    if _cfg and _cfg.style
+                                                    else None
+                                                ),
+                                                barge_in_mode="reactive",
+                                                barge_in_after_ms=(
+                                                    _cfg.after_ms
+                                                    if _cfg
+                                                    and _cfg.after_ms
+                                                    is not None
+                                                    else _ns.barge_in_after_ms
+                                                ),
+                                                barge_in_min_ms=(
+                                                    _cfg.min_ms if _cfg else 0
+                                                ),
+                                                barge_in_max_ms=(
+                                                    _cfg.max_ms if _cfg else 0
+                                                ),
+                                                barge_in_jitter_ms=(
+                                                    _cfg.jitter_ms
+                                                    if _cfg
+                                                    else 0
+                                                ),
+                                                conversation_history="\n".join(
+                                                    _trace
+                                                ),
+                                                preceding_user_utterance=_tn,
+                                                agent_current_speech=live_agent_text,
+                                                turn_idx=_idx + 1,
+                                            )
+                                            if gen_out.barge_in_utterance:
+                                                _ns.user = (
+                                                    gen_out.barge_in_utterance
+                                                )
+                                            return {
+                                                "should_barge_in": (
+                                                    gen_out.should_barge_in
+                                                ),
+                                                "barge_in_text": (
+                                                    gen_out.barge_in_utterance
+                                                ),
+                                                "barge_in_after_ms": (
+                                                    gen_out.barge_in_after_ms
+                                                ),
+                                                "barge_in_variables": (
+                                                    _ns.variables
+                                                ),
+                                                "barge_in_style": (
+                                                    gen_out.barge_in_style
+                                                ),
+                                                "model_generated": True,
+                                            }
+
+                                        resp_n, resp_n1 = (
+                                            interactive_session.send_turn_with_barge_in(
+                                                text=text_n,
+                                                barge_in_text="",
+                                                barge_in_after_ms=(
+                                                    next_step.barge_in_after_ms
+                                                    or 500
+                                                ),
+                                                variables=step.variables,
+                                                barge_in_variables=(
+                                                    next_step.variables
+                                                ),
+                                                barge_in_callback=_turn_reactive_cb,
+                                                barge_in_mode="reactive",
+                                                model_generated=True,
+                                            )
+                                        )
+                                    else:
+                                        gen_out = generate_model_barge_in(
+                                            genai_client=self.genai_client,
+                                            genai_model=model_name,
+                                            goal=(
+                                                b_cfg.goal
+                                                if b_cfg and b_cfg.goal
+                                                else (next_step.user or "")
+                                            ),
+                                            response_guide=(
+                                                b_cfg.guide
+                                                if b_cfg and b_cfg.guide
+                                                else (next_step.user or "")
+                                            ),
+                                            barge_in_style=(
+                                                b_cfg.style
+                                                if b_cfg and b_cfg.style
+                                                else None
+                                            ),
+                                            barge_in_mode=mode_str,
+                                            barge_in_after_ms=(
+                                                b_cfg.after_ms
+                                                if b_cfg
+                                                and b_cfg.after_ms is not None
+                                                else next_step.barge_in_after_ms
+                                            ),
+                                            barge_in_min_ms=(
+                                                b_cfg.min_ms if b_cfg else 0
+                                            ),
+                                            barge_in_max_ms=(
+                                                b_cfg.max_ms if b_cfg else 0
+                                            ),
+                                            barge_in_jitter_ms=(
+                                                b_cfg.jitter_ms if b_cfg else 0
+                                            ),
+                                            conversation_history="\n".join(
+                                                full_conversation_trace
+                                            ),
+                                            preceding_user_utterance=text_n,
+                                            turn_idx=step_idx + 1,
+                                        )
+                                        if (
+                                            not next_step.user
+                                            and not next_step.event
+                                        ) or (
+                                            b_cfg
+                                            and (
+                                                b_cfg.goal
+                                                or b_cfg.guide
+                                                or b_cfg.style
+                                            )
+                                        ):
+                                            text_n1 = gen_out.barge_in_utterance
+                                            next_step.user = text_n1
+                                        else:
+                                            _, _, text_n1 = _resolve_step_input(
+                                                next_step
+                                            )
+                                        resp_n, resp_n1 = (
+                                            interactive_session.send_turn_with_barge_in(
+                                                text=text_n,
+                                                barge_in_text=text_n1,
+                                                barge_in_after_ms=(
+                                                    gen_out.barge_in_after_ms
+                                                ),
+                                                variables=step.variables,
+                                                barge_in_variables=(
+                                                    next_step.variables
+                                                ),
+                                                barge_in_style=(
+                                                    gen_out.barge_in_style
+                                                ),
+                                                barge_in_mode=mode_str,
+                                                model_generated=True,
+                                            )
+                                        )
+                                else:
+                                    _, _, text_n1 = _resolve_step_input(
+                                        next_step
+                                    )
+                                    resp_n, resp_n1 = (
+                                        interactive_session.send_turn_with_barge_in(
+                                            text=text_n,
+                                            barge_in_text=text_n1,
+                                            barge_in_after_ms=(
+                                                next_step.barge_in_after_ms
+                                            ),
+                                            variables=step.variables,
+                                            barge_in_variables=(
+                                                next_step.variables
+                                            ),
+                                        )
+                                    )
                                 status_n = self._record_step_result(
                                     step,
                                     resp_n,

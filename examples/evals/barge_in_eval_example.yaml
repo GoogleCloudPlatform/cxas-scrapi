@@ -122,6 +122,35 @@ conversations:
           - type: "vad_skip_reason"
             value: "no barge-in period"
 
+  # Scenario 4: Model-generated barge-in in TurnEvals with style & timing range
+  - conversation: "Cymbal Order Support - Model-Generated Urgent Barge-In"
+    tags: [P1, voice, barge_in, model_generated]
+    config:
+      modality: "AUDIO"
+      capture_agent_audio: true
+    turns:
+      - turn: "1"
+        user: "Can you walk me through all the shipping tiers you offer?"
+        expectations:
+          - type: "contains"
+            value: "shipping"
+      - turn: "2"
+        # Model generates a varied interruption utterance and picks timing in [700, 1800] ms
+        barge_in:
+          goal: "Interrupt to urgently change shipping address for order ORD-5512"
+          guide: >
+            Cut in while the agent lists shipping tiers and ask to update the
+            delivery address on order ORD-5512 before it leaves the warehouse.
+          style: ["urgent_pivot", "impatient_cutoff"]
+          after_ms: [700, 1800]
+        expectations:
+          - type: "agent_interrupted"
+            value: true
+          - type: "vad_barge_in"
+            value: true
+          - type: "contains"
+            value: "ORD-5512"
+
 # -----------------------------------------------------------------------------
 # 2. SimulationEvals: Goal-Oriented LLM User Barge-In Scenarios
 # -----------------------------------------------------------------------------
@@ -171,3 +200,52 @@ evals:
       - "The agent must initiate a transfer or escalate the request"
     session_parameters:
       trouble_ticket: "NET-404"
+  - name: cymbal_model_generated_style_variance_barge_in
+    tags: [P0, audio, barge_in, model_generated]
+    steps:
+      - goal: Ask the agent to explain the full warranty coverage terms
+        success_criteria: Agent begins explaining the warranty terms
+        response_guide: >
+          Ask the agent to explain what the standard hardware warranty covers.
+        max_turns: 6
+      - goal: Barge in mid-explanation to report a wrong item in order ORD-77889
+        success_criteria: Agent stops warranty explanation and checks order ORD-77889
+        response_guide: >
+          Interrupt the warranty explanation to say you actually received the
+          wrong item in order ORD-77889 and need a replacement sent out.
+        max_turns: 8
+        # Model-generated barge-in sub-object with style rotation and dynamic timing window
+        barge_in:
+          style: ["urgent_pivot", "impatient_cutoff", "polite_interruption", "correction"]
+          after_ms: [650, 2000]
+          jitter_ms: 150
+    expectations:
+      - "The agent must stop its warranty explanation when interrupted"
+      - "The agent must look up or address order ORD-77889"
+    session_parameters:
+      order_id: "ORD-77889"
+
+  - name: cymbal_reactive_live_speech_barge_in
+    tags: [P1, audio, barge_in, reactive, model_generated]
+    steps:
+      - goal: Ask about international roaming plans
+        success_criteria: Agent begins describing international roaming options
+        response_guide: >
+          Ask the agent what international roaming packages are available.
+        max_turns: 6
+      - goal: Reactively barge in on the agent's live speech to pivot to a locked SIM card
+        success_criteria: Agent halts roaming overview and helps unlock SIM on account 445566
+        response_guide: >
+          React to what the agent is saying about roaming and interrupt to
+          report that your SIM card on account 445566 is PUK-locked right now.
+        max_turns: 8
+        barge_in:
+          mode: "reactive"
+          style: "auto"
+          after_ms: "auto"
+          min_ms: 600
+          max_ms: 1900
+    expectations:
+      - "The agent must pivot from roaming plans to the locked SIM issue on account 445566"
+    session_parameters:
+      account_id: "445566"

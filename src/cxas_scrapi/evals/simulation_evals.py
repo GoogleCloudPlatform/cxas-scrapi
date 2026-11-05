@@ -22,6 +22,7 @@ import inspect
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import time
@@ -88,16 +89,465 @@ _DEFAULT_GEMINI_MODEL = _DEFAULT_SIM_USER_MODEL
 _LATENCY_POLL_INTERVAL_S = 5.0
 
 
+class BargeInStyle(str, enum.Enum):
+    URGENT_PIVOT = "urgent_pivot"
+    IMPATIENT_CUTOFF = "impatient_cutoff"
+    POLITE_INTERRUPTION = "polite_interruption"
+    CORRECTION = "correction"
+    PREEMPTIVE_ANSWER = "preemptive_answer"
+    AUTO = "auto"
+
+
+_CONCRETE_BARGE_IN_STYLES: tuple[str, ...] = (
+    BargeInStyle.URGENT_PIVOT.value,
+    BargeInStyle.IMPATIENT_CUTOFF.value,
+    BargeInStyle.POLITE_INTERRUPTION.value,
+    BargeInStyle.CORRECTION.value,
+    BargeInStyle.PREEMPTIVE_ANSWER.value,
+)
+
+
+class BargeInGenerationOutput(pydantic.BaseModel):
+    barge_in_utterance: str = ""
+    barge_in_after_ms: int = 800
+    barge_in_style: str = BargeInStyle.URGENT_PIVOT.value
+    should_barge_in: bool = True
+    justification: str = ""
+
+
+def resolve_barge_in_style(
+    raw_style: str | list[str] | None,
+    run_idx: int = 0,
+    turn_idx: int = 0,
+) -> str:
+    """Selects a concrete barge-in style archetype, rotating across runs."""
+    candidates: list[str] = []
+    if isinstance(raw_style, (list, tuple)):
+        raw_items = [
+            str(s).strip().lower() for s in raw_style if str(s).strip()
+        ]
+    elif isinstance(raw_style, str) and raw_style.strip():
+        raw_items = [
+            s.strip().lower() for s in raw_style.split(",") if s.strip()
+        ]
+    else:
+        raw_items = []
+
+    for item in raw_items:
+        if item == BargeInStyle.AUTO.value:
+            for c in _CONCRETE_BARGE_IN_STYLES:
+                if c not in candidates:
+                    candidates.append(c)
+        elif item in llm_user_prompts.BARGE_IN_STYLE_GUIDES and (
+            item not in candidates
+        ):
+            candidates.append(item)
+
+    if not candidates:
+        candidates = list(_CONCRETE_BARGE_IN_STYLES)
+
+    idx = abs(int(run_idx) + max(0, int(turn_idx) - 1)) % len(candidates)
+    return candidates[idx]
+
+
+def _build_offline_barge_in_utterance(
+    goal: str,
+    response_guide: str,
+    style: str,
+    run_idx: int = 0,
+    turn_idx: int = 0,
+) -> str:
+    """Fallback utterance synthesis when no LLM client is configured."""
+    openers_by_style: dict[str, tuple[str, ...]] = {
+        "urgent_pivot": (
+            "Wait, hold on—",
+            "Actually, stop for a second—",
+            "Listen, something urgent came up—",
+        ),
+        "impatient_cutoff": (
+            "Yeah, skip the details—",
+            "Look, I don't need the whole rundown—",
+            "Right, got it, just—",
+        ),
+        "polite_interruption": (
+            "Sorry to interrupt, but",
+            "Pardon me for cutting in, but",
+            "Excuse me real quick—",
+        ),
+        "correction": (
+            "Oh wait, let me correct that—",
+            "Hold on, I gave you the wrong info—",
+            "Actually, wait a second—",
+        ),
+        "preemptive_answer": (
+            "Before you ask—",
+            "I already have that ready—",
+            "To jump ahead—",
+        ),
+    }
+    base_text = (response_guide or goal or "Excuse me").strip()
+    quoted = re.findall(r'"([^"]+)"', base_text)
+    core = quoted[-1].strip() if quoted else base_text
+    core_clean = re.sub(
+        r"^(?:(?:wait|hold on|sorry(?: to (?:interrupt|cut in))?|"
+        r"excuse me|actually|never mind(?: the details)?)[,!.\s—\-]+)+",
+        "",
+        core,
+        flags=re.IGNORECASE,
+    ).strip()
+    if not core_clean:
+        core_clean = core
+    openers = openers_by_style.get(style, openers_by_style["urgent_pivot"])
+    opener = openers[abs(int(run_idx) + int(turn_idx)) % len(openers)]
+    if core_clean and core_clean[0].isupper() and opener.endswith("but"):
+        core_clean = core_clean[0].lower() + core_clean[1:]
+    sep = " " if not opener.endswith(" ") else ""
+    return f"{opener}{sep}{core_clean}".strip()
+
+
+def generate_model_barge_in(
+    genai_client: GeminiGenerate | None,
+    genai_model: str,
+    goal: str = "",
+    response_guide: str = "",
+    barge_in_style: str | list[str] | None = None,
+    barge_in_mode: str = "pre_turn",
+    barge_in_after_ms: int | None = None,
+    barge_in_min_ms: int = 0,
+    barge_in_max_ms: int = 0,
+    barge_in_jitter_ms: int = 0,
+    conversation_history: str = "",
+    preceding_user_utterance: str = "",
+    agent_current_speech: str = "",
+    previous_barge_in_utterances: list[str] | None = None,
+    run_idx: int = 0,
+    turn_idx: int = 0,
+    rng: random.Random | None = None,
+) -> BargeInGenerationOutput:
+    """Generates a varied barge-in utterance and timing offset via LLM."""
+    rng = rng or random.Random()
+    selected_style = resolve_barge_in_style(
+        barge_in_style, run_idx=run_idx, turn_idx=turn_idx
+    )
+    style_info = llm_user_prompts.BARGE_IN_STYLE_GUIDES.get(
+        selected_style,
+        llm_user_prompts.BARGE_IN_STYLE_GUIDES[BargeInStyle.URGENT_PIVOT.value],
+    )
+
+    if barge_in_min_ms > 0 or barge_in_max_ms > 0:
+        min_ms = max(100, int(barge_in_min_ms or 500))
+        max_ms = max(min_ms, int(barge_in_max_ms or max(min_ms, 2500)))
+    elif barge_in_after_ms is not None:
+        base_ms = max(0, int(barge_in_after_ms))
+        if barge_in_jitter_ms > 0:
+            min_ms = max(100, base_ms - int(barge_in_jitter_ms))
+            max_ms = base_ms + int(barge_in_jitter_ms)
+        else:
+            min_ms = max_ms = base_ms
+    else:
+        min_ms, max_ms = 500, 2500
+
+    span = max(0, max_ms - min_ms)
+    frac_low, frac_high = style_info.get("timing_fraction", (0.2, 0.6))
+    rec_min = int(min_ms + span * frac_low)
+    rec_max = max(rec_min, int(min_ms + span * frac_high))
+
+    cues = llm_user_prompts.BARGE_IN_VARIATION_CUES
+    variation_directive = cues[abs(int(run_idx) + int(turn_idx)) % len(cues)]
+    prev_list = previous_barge_in_utterances or []
+    prev_formatted = (
+        "\n".join(f"- {u}" for u in prev_list) if prev_list else "None"
+    )
+
+    if genai_client is not None:
+        prompt = (
+            llm_user_prompts.BARGE_IN_USER_PROMPT.replace(
+                "{current_conversation_history}",
+                conversation_history or "(Start of conversation)",
+            )
+            .replace(
+                "{preceding_user_utterance}",
+                preceding_user_utterance or "(None)",
+            )
+            .replace(
+                "{agent_current_speech}",
+                agent_current_speech
+                or "(Not yet available - pre-turn scheduling mode)",
+            )
+            .replace(
+                "{barge_in_goal}",
+                goal or "Interrupt the agent mid-response",
+            )
+            .replace(
+                "{barge_in_response_guide}",
+                response_guide or goal or "Interrupt the agent naturally",
+            )
+            .replace("{barge_in_style}", selected_style)
+            .replace("{barge_in_style_description}", style_info["description"])
+            .replace(
+                "{barge_in_style_guidance}", style_info["phrasing_guidance"]
+            )
+            .replace("{variation_directive}", variation_directive)
+            .replace("{previous_barge_in_utterances}", prev_formatted)
+            .replace("{barge_in_min_ms}", str(min_ms))
+            .replace("{barge_in_max_ms}", str(max_ms))
+            .replace("{recommended_min_ms}", str(rec_min))
+            .replace("{recommended_max_ms}", str(rec_max))
+        )
+
+        raw_output = genai_client.generate(
+            prompt=prompt,
+            model_name=genai_model,
+            response_mime_type="application/json",
+            response_schema=BargeInGenerationOutput,
+        )
+
+        parsed_output: BargeInGenerationOutput | None = None
+        if isinstance(raw_output, BargeInGenerationOutput):
+            parsed_output = raw_output
+        elif isinstance(raw_output, dict):
+            parsed_output = BargeInGenerationOutput(**raw_output)
+        elif raw_output is not None and hasattr(
+            raw_output, "next_user_utterance"
+        ):
+            parsed_output = BargeInGenerationOutput(
+                barge_in_utterance=str(raw_output.next_user_utterance or ""),
+                barge_in_after_ms=(rec_min + rec_max) // 2,
+                barge_in_style=selected_style,
+                should_barge_in=True,
+                justification=(
+                    "Generated via LLMUserConversation.Output fallback."
+                ),
+            )
+
+        if parsed_output is not None:
+            chosen_ms = int(parsed_output.barge_in_after_ms or rec_min)
+            if barge_in_jitter_ms > 0 and min_ms < max_ms:
+                chosen_ms += rng.randint(
+                    -int(barge_in_jitter_ms), int(barge_in_jitter_ms)
+                )
+            chosen_ms = max(min_ms, min(max_ms, chosen_ms))
+            utterance = (parsed_output.barge_in_utterance or "").strip()
+            if parsed_output.should_barge_in and not utterance:
+                utterance = _build_offline_barge_in_utterance(
+                    goal, response_guide, selected_style, run_idx, turn_idx
+                )
+            style_out = (
+                parsed_output.barge_in_style or selected_style
+            ).strip() or selected_style
+            return BargeInGenerationOutput(
+                barge_in_utterance=utterance,
+                barge_in_after_ms=chosen_ms,
+                barge_in_style=style_out,
+                should_barge_in=bool(parsed_output.should_barge_in),
+                justification=parsed_output.justification
+                or f"Model-generated {style_out} barge-in at {chosen_ms}ms.",
+            )
+
+    if rec_min < rec_max:
+        slots = 5
+        slot_idx = abs(int(run_idx) * 2 + int(turn_idx)) % slots
+        chosen_ms = rec_min + int(
+            (rec_max - rec_min) * (slot_idx / (slots - 1))
+        )
+        if barge_in_jitter_ms > 0:
+            chosen_ms += rng.randint(
+                -int(barge_in_jitter_ms), int(barge_in_jitter_ms)
+            )
+        chosen_ms = max(min_ms, min(max_ms, chosen_ms))
+    else:
+        chosen_ms = min_ms
+
+    has_explicit_style_or_model_cfg = bool(
+        barge_in_style
+        or barge_in_min_ms > 0
+        or barge_in_max_ms > 0
+        or barge_in_jitter_ms > 0
+        or (barge_in_mode and barge_in_mode != "pre_turn")
+    )
+    if has_explicit_style_or_model_cfg:
+        utterance = _build_offline_barge_in_utterance(
+            goal, response_guide, selected_style, run_idx, turn_idx
+        )
+    else:
+        utterance = (response_guide or goal or "Excuse me").strip()
+
+    return BargeInGenerationOutput(
+        barge_in_utterance=utterance,
+        barge_in_after_ms=chosen_ms,
+        barge_in_style=selected_style,
+        should_barge_in=True,
+        justification="Interruption utterance generated from goal/guide.",
+    )
+
+
+class BargeInConfig(pydantic.BaseModel):
+    """Configuration sub-object for a barge-in step."""
+
+    enabled: bool = True
+    mode: str = "pre_turn"
+    style: str = ""
+    after_ms: int | None = None
+    min_ms: int = 0
+    max_ms: int = 0
+    jitter_ms: int = 0
+    goal: str = ""
+    guide: str = ""
+
+    @pydantic.model_validator(mode="before")
+    @classmethod
+    def _normalize_fields(cls, data: Any) -> Any:
+        if isinstance(data, bool):
+            return {"enabled": data}
+        if isinstance(data, int):
+            return {"enabled": True, "after_ms": data}
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        raw_after = out.get("after_ms")
+        if isinstance(raw_after, (list, tuple)) and len(raw_after) == 2:
+            low, high = int(raw_after[0]), int(raw_after[1])
+            if low > high:
+                low, high = high, low
+            out.setdefault("min_ms", low)
+            out.setdefault("max_ms", high)
+            out["after_ms"] = (low + high) // 2
+        elif isinstance(raw_after, str):
+            cleaned = raw_after.strip().lower()
+            if cleaned == "auto":
+                low = int(out.get("min_ms") or 500)
+                high = max(low, int(out.get("max_ms") or 2500))
+                out["min_ms"] = low
+                out["max_ms"] = high
+                out["after_ms"] = (low + high) // 2
+            elif cleaned.isdigit():
+                out["after_ms"] = int(cleaned)
+
+        raw_style = out.get("style")
+        if isinstance(raw_style, (list, tuple)):
+            out["style"] = ",".join(
+                str(s).strip() for s in raw_style if str(s).strip()
+            )
+
+        if out.get("enabled", True):
+            if (
+                out.get("after_ms") is None
+                and not out.get("min_ms")
+                and not out.get("max_ms")
+            ):
+                out["min_ms"] = 500
+                out["max_ms"] = 2500
+                out["after_ms"] = 1500
+            elif out.get("after_ms") is None:
+                low = int(out.get("min_ms") or 500)
+                high = max(low, int(out.get("max_ms") or 2500))
+                out["min_ms"] = low
+                out["max_ms"] = high
+                out["after_ms"] = (low + high) // 2
+
+        return out
+
+    def resolve_timing_bounds(self) -> tuple[int, int]:
+        if self.min_ms > 0 or self.max_ms > 0:
+            low = max(100, int(self.min_ms or 500))
+            high = max(low, int(self.max_ms or max(low, 2500)))
+            return low, high
+        if self.after_ms is not None:
+            base = max(0, int(self.after_ms))
+            if self.jitter_ms > 0:
+                return (
+                    max(100, base - int(self.jitter_ms)),
+                    base + int(self.jitter_ms),
+                )
+            return base, base
+        return 500, 2500
+
+
+def _merge_barge_in_dict(out: dict[str, Any]) -> dict[str, Any]:
+    raw_bi = out.get("barge_in")
+    legacy_keys = {
+        "barge_in_mode": "mode",
+        "barge_in_style": "style",
+        "barge_in_min_ms": "min_ms",
+        "barge_in_max_ms": "max_ms",
+        "barge_in_jitter_ms": "jitter_ms",
+        "barge_in_goal": "goal",
+        "barge_in_guide": "guide",
+    }
+    has_legacy = any(out.get(k) not in (None, "", 0) for k in legacy_keys)
+    raw_after = out.get("barge_in_after_ms")
+
+    if isinstance(raw_bi, BargeInConfig):
+        cfg = raw_bi.model_dump()
+    elif isinstance(raw_bi, dict):
+        cfg = dict(raw_bi)
+    elif raw_bi is True or has_legacy or raw_after is not None:
+        cfg = {"enabled": True}
+    else:
+        for k in legacy_keys:
+            out.pop(k, None)
+        out["barge_in"] = None
+        return out
+
+    for lk, sub_k in legacy_keys.items():
+        val = out.pop(lk, None)
+        if val not in (None, "", 0) and sub_k not in cfg:
+            cfg[sub_k] = val
+
+    if raw_after is not None and "after_ms" not in cfg:
+        cfg["after_ms"] = raw_after
+
+    parsed = BargeInConfig(**cfg)
+    if parsed.enabled:
+        out["barge_in"] = parsed
+        out["barge_in_after_ms"] = parsed.after_ms
+    else:
+        out["barge_in"] = None
+    return out
+
+
+def _is_barge_in_enabled(raw_bi: Any) -> bool:
+    if raw_bi is None or raw_bi is False:
+        return False
+    if isinstance(raw_bi, BargeInConfig):
+        return raw_bi.enabled
+    if isinstance(raw_bi, dict):
+        return bool(raw_bi.get("enabled", True))
+    return bool(raw_bi)
+
+
 class Step(pydantic.BaseModel):
     goal: str = ""
     success_criteria: str = ""
     response_guide: str = ""
     max_turns: int = 0
     barge_in_after_ms: int | None = None
+    barge_in: BargeInConfig | None = None
 
     static_utterance: str = ""
     # Variable injects are only supported for the first step
     inject_variables: dict[str, Any] = {}
+
+    @pydantic.model_validator(mode="before")
+    @classmethod
+    def _normalize_barge_in_config(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        return _merge_barge_in_dict(dict(data))
+
+    def is_barge_in_step(self) -> bool:
+        return bool(
+            (self.barge_in and self.barge_in.enabled)
+            or self.barge_in_after_ms is not None
+        )
+
+    def resolve_timing_bounds(self) -> tuple[int, int]:
+        if self.barge_in is not None:
+            return self.barge_in.resolve_timing_bounds()
+        if self.barge_in_after_ms is not None:
+            base = max(0, int(self.barge_in_after_ms))
+            return base, base
+        return 500, 2500
 
     def model_dump(self, **kwargs: typing.Any) -> typing.Any:
         kwargs.setdefault("exclude_defaults", True)
@@ -237,12 +687,20 @@ class LLMUserConversation(Conversation):
         test_case: dict[str, Any],
         max_turns: int | None = None,
         initial_utterance: str = _FIRST_UTTERANCE,
+        run_idx: int = 0,
     ) -> None:
         super().__init__()
         self.genai_client = genai_client
         self.genai_model = genai_model
         self.test_case = test_case
         self.initial_utterance = initial_utterance
+        self.run_idx = run_idx
+        self.barge_in_history: list[str] = []
+        self.last_barge_in_after_ms: int | None = None
+        self.last_barge_in_style: str | None = None
+        self.last_barge_in_mode: str = "pre_turn"
+        self.last_barge_in_model_generated: bool = False
+        self.last_should_barge_in: bool = True
         if max_turns is not None:
             self.max_turns = max_turns
         else:
@@ -301,15 +759,83 @@ class LLMUserConversation(Conversation):
                 return i
         return None
 
-    def peek_barge_in_after_ms(self) -> int | None:
-        """Returns barge_in_after_ms for the next active step, if configured."""
+    def _get_pending_barge_in_step_index(self) -> int | None:
+        """Finds the index of a pending barge-in step for the current turn.
+
+        Handles both:
+        1. The current active step itself is a barge-in step (e.g., after a
+           completed static step or on the initial welcome turn).
+        2. The current active step was just initiated by the LLM user
+           (status == IN_PROGRESS) and the immediately following step is an
+           unstarted barge-in step that should interrupt the agent's response
+           to the current turn.
+        """
         if not self._check_conversation_status():
             return None
         active_idx = self._get_active_step_index()
-        if active_idx is not None:
-            step = self.steps_progress[active_idx].step
-            return step.barge_in_after_ms
+        if active_idx is None:
+            return None
+        active_prog = self.steps_progress[active_idx]
+        if active_prog.step.is_barge_in_step():
+            return active_idx
+        if (
+            active_prog.status == StepStatus.IN_PROGRESS
+            and active_idx + 1 < len(self.steps_progress)
+        ):
+            next_prog = self.steps_progress[active_idx + 1]
+            if (
+                next_prog.status == StepStatus.NOT_STARTED
+                and next_prog.step.is_barge_in_step()
+            ):
+                return active_idx + 1
         return None
+
+    def peek_barge_in_after_ms(self) -> int | None:
+        """Returns barge_in_after_ms for the next pending barge-in step."""
+        barge_idx = self._get_pending_barge_in_step_index()
+        if barge_idx is not None:
+            step = self.steps_progress[barge_idx].step
+            if step.barge_in_after_ms is not None:
+                return step.barge_in_after_ms
+            if step.is_barge_in_step():
+                low, high = step.resolve_timing_bounds()
+                return (low + high) // 2
+        return None
+
+    def peek_barge_in_mode(self) -> str:
+        """Returns the barge-in mode for the pending barge-in step."""
+        barge_idx = self._get_pending_barge_in_step_index()
+        if barge_idx is not None:
+            cfg = self.steps_progress[barge_idx].step.barge_in
+            mode = ((cfg.mode if cfg else "") or "").strip().lower()
+            if mode in ("pre_turn", "reactive"):
+                return mode
+        return "pre_turn"
+
+    def _preserve_step_config(self, new_progresses: list[StepProgress]) -> None:
+        orig_steps = self.test_case.get("steps", [])
+        for i, prog in enumerate(new_progresses):
+            if i < len(orig_steps) and isinstance(orig_steps[i], dict):
+                normalized = Step(
+                    **{
+                        k: v
+                        for k, v in orig_steps[i].items()
+                        if k != "inject_variables"
+                    }
+                )
+                if prog.step.barge_in_after_ms is None:
+                    prog.step.barge_in_after_ms = normalized.barge_in_after_ms
+                if prog.step.barge_in is None:
+                    prog.step.barge_in = normalized.barge_in
+                if not prog.step.static_utterance:
+                    prog.step.static_utterance = normalized.static_utterance
+                if (
+                    "inject_variables" in orig_steps[i]
+                    and not prog.step.inject_variables
+                ):
+                    prog.step.inject_variables = orig_steps[i][
+                        "inject_variables"
+                    ]
 
     def _prepare_llm_prompt(self) -> str:
         """Prepares the prompt for the LLM user."""
@@ -358,7 +884,6 @@ class LLMUserConversation(Conversation):
         if active_idx is not None:
             active_step_prog = self.steps_progress[active_idx]
             if active_step_prog.step.static_utterance:
-                # Mark static step as completed
                 active_step_prog.status = StepStatus.COMPLETED
                 active_step_prog.justification = (
                     "Static utterance sent (bypassed LLM)."
@@ -371,9 +896,8 @@ class LLMUserConversation(Conversation):
                 )
                 merged_vars = {**session_params, **inject_vars}
                 return utterance, merged_vars
-            elif (
-                active_step_prog.step.barge_in_after_ms is not None
-                and not getattr(self, "genai_client", None)
+            elif active_step_prog.step.is_barge_in_step() and not getattr(
+                self, "genai_client", None
             ):
                 active_step_prog.status = StepStatus.COMPLETED
                 active_step_prog.justification = (
@@ -396,42 +920,145 @@ class LLMUserConversation(Conversation):
         )
 
         if output:
-            orig_steps = self.test_case.get("steps", [])
-            for i, prog in enumerate(output.step_progresses):
-                if i < len(orig_steps):
-                    orig = orig_steps[i]
-                    if isinstance(orig, dict):
-                        if (
-                            "barge_in_after_ms" in orig
-                            and prog.step.barge_in_after_ms is None
-                        ):
-                            prog.step.barge_in_after_ms = orig[
-                                "barge_in_after_ms"
-                            ]
-                        if (
-                            "static_utterance" in orig
-                            and not prog.step.static_utterance
-                        ):
-                            prog.step.static_utterance = orig[
-                                "static_utterance"
-                            ]
-                        if (
-                            "inject_variables" in orig
-                            and not prog.step.inject_variables
-                        ):
-                            prog.step.inject_variables = orig[
-                                "inject_variables"
-                            ]
+            self._preserve_step_config(output.step_progresses)
             self.steps_progress = output.step_progresses
             return output.next_user_utterance, {}
 
         return "", {}
 
-    def generate_barge_in_utterance(self) -> tuple[str, dict[str, Any]]:
+    def generate_barge_in_utterance(
+        self,
+        agent_current_speech: str = "",
+        preceding_user_utterance: str = "",
+    ) -> tuple[str, dict[str, Any]]:
         """Generates the next user utterance for barge-in without adding it to
         transcript.
         """
-        return self._next_user_utterance()
+        barge_idx = self._get_pending_barge_in_step_index()
+        if barge_idx is None:
+            return self._next_user_utterance()
+
+        barge_prog = self.steps_progress[barge_idx]
+        step = barge_prog.step
+        session_params = self.test_case.get("session_parameters", {})
+        orig_steps = self.test_case.get("steps", [])
+        inject_vars = (
+            orig_steps[barge_idx].get("inject_variables", {})
+            if barge_idx < len(orig_steps)
+            and isinstance(orig_steps[barge_idx], dict)
+            else {}
+        )
+        merged_vars = (
+            {**session_params, **inject_vars}
+            if (session_params or inject_vars)
+            else {}
+        )
+
+        if step.static_utterance:
+            for prior_idx in range(barge_idx):
+                prior_prog = self.steps_progress[prior_idx]
+                if prior_prog.status != StepStatus.COMPLETED:
+                    prior_prog.status = StepStatus.COMPLETED
+                    if not prior_prog.justification:
+                        prior_prog.justification = (
+                            "Completed prior to barge-in interruption."
+                        )
+            barge_prog.status = StepStatus.COMPLETED
+            barge_prog.justification = "Static utterance sent (bypassed LLM)."
+            low, high = step.resolve_timing_bounds()
+            if low < high:
+                slots = 5
+                slot = (
+                    abs(int(self.run_idx) * 2 + int(self.current_turn)) % slots
+                )
+                resolved_ms = low + int((high - low) * (slot / (slots - 1)))
+            else:
+                resolved_ms = (
+                    step.barge_in_after_ms
+                    if step.barge_in_after_ms is not None
+                    else low
+                )
+            barge_cfg = step.barge_in
+            self.last_barge_in_after_ms = resolved_ms
+            self.last_barge_in_style = (
+                barge_cfg.style if barge_cfg and barge_cfg.style else None
+            )
+            self.last_barge_in_mode = (
+                barge_cfg.mode if barge_cfg and barge_cfg.mode else "pre_turn"
+            )
+            self.last_barge_in_model_generated = False
+            self.last_should_barge_in = True
+            return step.static_utterance, merged_vars
+
+        if not preceding_user_utterance:
+            for line in reversed(self.transcript):
+                if line.startswith("User: "):
+                    preceding_user_utterance = line[len("User: ") :].strip()
+                    break
+
+        barge_cfg = step.barge_in
+        gen_output = generate_model_barge_in(
+            genai_client=getattr(self, "genai_client", None),
+            genai_model=self.genai_model,
+            goal=(
+                barge_cfg.goal if barge_cfg and barge_cfg.goal else step.goal
+            ),
+            response_guide=(
+                barge_cfg.guide
+                if barge_cfg and barge_cfg.guide
+                else step.response_guide
+            ),
+            barge_in_style=(
+                barge_cfg.style if barge_cfg and barge_cfg.style else None
+            ),
+            barge_in_mode=(
+                barge_cfg.mode if barge_cfg and barge_cfg.mode else "pre_turn"
+            ),
+            barge_in_after_ms=(
+                barge_cfg.after_ms
+                if barge_cfg and barge_cfg.after_ms is not None
+                else step.barge_in_after_ms
+            ),
+            barge_in_min_ms=barge_cfg.min_ms if barge_cfg else 0,
+            barge_in_max_ms=barge_cfg.max_ms if barge_cfg else 0,
+            barge_in_jitter_ms=barge_cfg.jitter_ms if barge_cfg else 0,
+            conversation_history=self.get_transcript(),
+            preceding_user_utterance=preceding_user_utterance,
+            agent_current_speech=agent_current_speech,
+            previous_barge_in_utterances=self.barge_in_history,
+            run_idx=self.run_idx,
+            turn_idx=self.current_turn,
+        )
+
+        self.last_barge_in_after_ms = gen_output.barge_in_after_ms
+        self.last_barge_in_style = gen_output.barge_in_style
+        self.last_barge_in_mode = (
+            barge_cfg.mode
+            if barge_cfg and barge_cfg.mode
+            else ("reactive" if agent_current_speech else "pre_turn")
+        )
+        self.last_barge_in_model_generated = True
+        self.last_should_barge_in = gen_output.should_barge_in
+
+        if not gen_output.should_barge_in:
+            return "", merged_vars
+
+        for prior_idx in range(barge_idx):
+            prior_prog = self.steps_progress[prior_idx]
+            if prior_prog.status != StepStatus.COMPLETED:
+                prior_prog.status = StepStatus.COMPLETED
+                prior_prog.justification = (
+                    "Completed prior to barge-in interruption."
+                )
+
+        barge_prog.status = StepStatus.COMPLETED
+        barge_prog.justification = (
+            gen_output.justification
+            or f"Model-generated barge-in ({gen_output.barge_in_style} at "
+            f"{gen_output.barge_in_after_ms}ms)."
+        )
+        self.barge_in_history.append(gen_output.barge_in_utterance)
+        return gen_output.barge_in_utterance, merged_vars
 
     def record_user_utterance(self, utterance: str) -> None:
         """Records a user utterance to transcript and advances current turn."""
@@ -721,15 +1348,30 @@ class SimulationEvals(Apps):
             return True, "naturalness_metric requires local client evaluation"
         if test_case.get("barge_in_after_ms") is not None:
             return True, "barge_in_after_ms requires local audio bidi session"
+        if _is_barge_in_enabled(test_case.get("barge_in")):
+            return True, "barge_in requires local audio bidi session"
         for step in test_case.get("steps", []):
-            if (
-                isinstance(step, dict)
-                and step.get("barge_in_after_ms") is not None
-            ):
-                return (
-                    True,
-                    "Step barge_in_after_ms requires local bidi session",
-                )
+            if isinstance(step, Step) and step.is_barge_in_step():
+                return True, "Step barge_in requires local bidi session"
+            if isinstance(step, dict):
+                if step.get("barge_in_after_ms") is not None:
+                    return (
+                        True,
+                        "Step barge_in_after_ms requires local bidi session",
+                    )
+                if _is_barge_in_enabled(step.get("barge_in")) or any(
+                    step.get(k) not in (None, "", 0)
+                    for k in (
+                        "barge_in_mode",
+                        "barge_in_style",
+                        "barge_in_min_ms",
+                        "barge_in_max_ms",
+                        "barge_in_jitter_ms",
+                        "barge_in_goal",
+                        "barge_in_guide",
+                    )
+                ):
+                    return True, "Step barge_in requires local bidi session"
         return False, ""
 
     def to_milestone_yaml(
@@ -1711,13 +2353,16 @@ class SimulationEvals(Apps):
             max_turns=max_turns,
             initial_utterance=initial_utterance,
         )
+        run_idx_val = kwargs.get("run_idx", getattr(self, "_active_run_idx", 0))
+        if isinstance(run_idx_val, int):
+            eval_conv.run_idx = run_idx_val
 
         # Initialize audio paths tracking
         eval_conv.agent_audio_paths = {}
         current_sim_turn = 0
 
         has_barge_in_step = any(
-            isinstance(s, dict) and s.get("barge_in_after_ms") is not None
+            isinstance(s, dict) and Step(**s).is_barge_in_step()
             for s in test_case.get("steps", [])
         )
         if has_barge_in_step and modality != "audio":
@@ -1790,22 +2435,118 @@ class SimulationEvals(Apps):
                     and interactive_session
                     and isinstance(barge_in_offset, int)
                 ):
-                    barge_in_utterance, barge_in_vars = (
-                        eval_conv.generate_barge_in_utterance()
+                    raw_mode = (
+                        eval_conv.peek_barge_in_mode()
+                        if hasattr(eval_conv, "peek_barge_in_mode")
+                        else "pre_turn"
                     )
+                    barge_in_mode = (
+                        raw_mode
+                        if isinstance(raw_mode, str) and raw_mode
+                        else "pre_turn"
+                    )
+                    barge_in_utterance = ""
                     barge_vars = accumulated_variables.copy()
-                    if barge_in_vars:
-                        barge_vars.update(barge_in_vars)
 
-                    resp_n, response = (
-                        interactive_session.send_turn_with_barge_in(
-                            text=user_utterance,
-                            barge_in_text=barge_in_utterance,
-                            barge_in_after_ms=barge_in_offset,
-                            variables=accumulated_variables,
-                            barge_in_variables=barge_vars,
+                    if barge_in_mode == "reactive":
+                        reactive_state: dict[str, Any] = {
+                            "utterance": "",
+                            "vars": barge_vars,
+                            "offset": barge_in_offset,
+                        }
+
+                        def _reactive_cb(
+                            live_agent_text: str,
+                            _prev_utt: str = user_utterance,
+                            _state: dict[str, Any] = reactive_state,
+                        ) -> dict[str, Any]:
+                            utt, b_vars = eval_conv.generate_barge_in_utterance(
+                                agent_current_speech=live_agent_text,
+                                preceding_user_utterance=_prev_utt,
+                            )
+                            if b_vars:
+                                _state["vars"].update(b_vars)
+                            should_bi = getattr(
+                                eval_conv, "last_should_barge_in", True
+                            )
+                            if not should_bi or not utt:
+                                return {
+                                    "should_barge_in": False,
+                                    "barge_in_style": getattr(
+                                        eval_conv, "last_barge_in_style", None
+                                    ),
+                                    "model_generated": True,
+                                }
+                            _state["utterance"] = utt
+                            resolved_ms = getattr(
+                                eval_conv, "last_barge_in_after_ms", None
+                            )
+                            if isinstance(resolved_ms, int):
+                                _state["offset"] = resolved_ms
+                            return {
+                                "should_barge_in": True,
+                                "barge_in_text": utt,
+                                "barge_in_after_ms": _state["offset"],
+                                "barge_in_variables": _state["vars"],
+                                "barge_in_style": getattr(
+                                    eval_conv, "last_barge_in_style", None
+                                ),
+                                "model_generated": getattr(
+                                    eval_conv,
+                                    "last_barge_in_model_generated",
+                                    True,
+                                ),
+                            }
+
+                        resp_n, response = (
+                            interactive_session.send_turn_with_barge_in(
+                                text=user_utterance,
+                                barge_in_text="",
+                                barge_in_after_ms=barge_in_offset,
+                                variables=accumulated_variables,
+                                barge_in_variables=barge_vars,
+                                barge_in_callback=_reactive_cb,
+                                barge_in_mode="reactive",
+                                model_generated=True,
+                            )
                         )
-                    )
+                        barge_in_utterance = reactive_state["utterance"]
+                        barge_in_offset = reactive_state["offset"]
+                    else:
+                        barge_in_utterance, barge_in_vars = (
+                            eval_conv.generate_barge_in_utterance()
+                        )
+                        if barge_in_vars:
+                            barge_vars.update(barge_in_vars)
+                        resolved_ms = getattr(
+                            eval_conv, "last_barge_in_after_ms", None
+                        )
+                        if isinstance(resolved_ms, int):
+                            barge_in_offset = resolved_ms
+
+                        send_kwargs: dict[str, Any] = {
+                            "text": user_utterance,
+                            "barge_in_text": barge_in_utterance,
+                            "barge_in_after_ms": barge_in_offset,
+                            "variables": accumulated_variables,
+                            "barge_in_variables": barge_vars,
+                        }
+                        if getattr(
+                            eval_conv, "last_barge_in_model_generated", False
+                        ):
+                            send_kwargs["barge_in_style"] = getattr(
+                                eval_conv, "last_barge_in_style", None
+                            )
+                            send_kwargs["barge_in_mode"] = getattr(
+                                eval_conv, "last_barge_in_mode", "pre_turn"
+                            )
+                            send_kwargs["model_generated"] = True
+
+                        resp_n, response = (
+                            interactive_session.send_turn_with_barge_in(
+                                **send_kwargs
+                            )
+                        )
 
                     if isinstance(resp_n, dict) and resp_n.get("session_ended"):
                         if resp_n.get("connection_error"):
@@ -1816,62 +2557,77 @@ class SimulationEvals(Apps):
                             raise BidiSessionError(err_msg)
                         break
 
-                    if resp_n and getattr(resp_n, "agent_audio_paths", None):
-                        audio_path_n = resp_n.agent_audio_paths.get(0)
-                        if audio_path_n:
-                            eval_conv.agent_audio_paths[current_sim_turn] = (
-                                audio_path_n
-                            )
-
-                    agent_text_n, trace_chunks_n, _, tool_calls_n = (
-                        self._parse_agent_response(resp_n)
-                    )
-                    parsed_n = ParsedSessionResponse(resp_n)
-                    if (
-                        parsed_n.barge_in_metadata
-                        and parsed_n.barge_in_metadata.interrupted
+                    if response is None and not (
+                        isinstance(resp_n, dict) and resp_n.get("session_ended")
                     ):
-                        heard = parsed_n.barge_in_metadata.estimated_heard_text
-                        eval_conv._add_agent_response(
-                            f"{heard}... [interrupted]"
+                        # Reactive barge-in was deferred to a later turn.
+                        response = resp_n
+                    else:
+                        if resp_n and getattr(
+                            resp_n, "agent_audio_paths", None
+                        ):
+                            audio_path_n = resp_n.agent_audio_paths.get(0)
+                            if audio_path_n:
+                                eval_conv.agent_audio_paths[
+                                    current_sim_turn
+                                ] = audio_path_n
+
+                        if console_logging:
+                            self.sessions_client.parse_result(resp_n)
+                        agent_text_n, trace_chunks_n, _, tool_calls_n = (
+                            self._parse_agent_response(resp_n)
                         )
-                    elif agent_text_n:
-                        eval_conv._add_agent_response(agent_text_n)
-
-                    eval_conv._add_agent_tool_calls(tool_calls_n)
-                    detailed_trace.append("\n".join(trace_chunks_n))
-                    turn_root_span_n = ParsedSessionResponse.extract_root_span(
-                        resp_n
-                    )
-                    if isinstance(turn_root_span_n, dict) and turn_root_span_n:
-                        turn_traces.append(
-                            {
-                                "turn_index": current_sim_turn,
-                                "user_utterance": user_utterance,
-                                "agent_text": agent_text_n,
-                                "root_span": turn_root_span_n,
-                            }
-                        )
-                    current_sim_turn += 1
-
-                    eval_conv.record_user_utterance(barge_in_utterance)
-                    detailed_trace.append(
-                        f"User: [Barge-In] {barge_in_utterance}"
-                    )
-
-                    if isinstance(response, dict) and response.get(
-                        "session_ended"
-                    ):
-                        if response.get("connection_error"):
-                            err_msg = (
-                                "Interactive session WebSocket error: "
-                                f"{response['connection_error']}"
+                        parsed_n = ParsedSessionResponse(resp_n)
+                        if (
+                            parsed_n.barge_in_metadata
+                            and parsed_n.barge_in_metadata.interrupted
+                        ):
+                            heard = (
+                                parsed_n.barge_in_metadata.estimated_heard_text
                             )
-                            raise BidiSessionError(err_msg)
-                        break
+                            eval_conv._add_agent_response(
+                                f"{heard}... [interrupted]"
+                            )
+                        elif agent_text_n:
+                            eval_conv._add_agent_response(agent_text_n)
 
-                    user_utterance = barge_in_utterance
-                    accumulated_variables = barge_vars
+                        eval_conv._add_agent_tool_calls(tool_calls_n)
+                        detailed_trace.append("\n".join(trace_chunks_n))
+                        turn_root_span_n = (
+                            ParsedSessionResponse.extract_root_span(resp_n)
+                        )
+                        if (
+                            isinstance(turn_root_span_n, dict)
+                            and turn_root_span_n
+                        ):
+                            turn_traces.append(
+                                {
+                                    "turn_index": current_sim_turn,
+                                    "user_utterance": user_utterance,
+                                    "agent_text": agent_text_n,
+                                    "root_span": turn_root_span_n,
+                                }
+                            )
+                        current_sim_turn += 1
+
+                        eval_conv.record_user_utterance(barge_in_utterance)
+                        detailed_trace.append(
+                            f"User: [Barge-In] {barge_in_utterance}"
+                        )
+
+                        if isinstance(response, dict) and response.get(
+                            "session_ended"
+                        ):
+                            if response.get("connection_error"):
+                                err_msg = (
+                                    "Interactive session WebSocket error: "
+                                    f"{response['connection_error']}"
+                                )
+                                raise BidiSessionError(err_msg)
+                            break
+
+                        user_utterance = barge_in_utterance
+                        accumulated_variables = barge_vars
                 elif modality == "audio" and interactive_session:
                     response = interactive_session.send_turn(
                         user_utterance,
@@ -2063,6 +2819,7 @@ class SimulationEvals(Apps):
             tc = {**tc, "voice_config": voice_config}
         try:
             _start = time.time()
+            self._active_run_idx = run_idx
 
             conv = self.simulate_conversation(
                 test_case=tc,
