@@ -35,10 +35,16 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich import box
-from InquirerPy import inquirer
-from InquirerPy.base.control import Choice
-from InquirerPy.utils import get_style
-from InquirerPy.validator import EmptyInputValidator
+try:
+    from InquirerPy import inquirer
+    from InquirerPy.base.control import Choice
+    from InquirerPy.utils import get_style
+    from InquirerPy.validator import EmptyInputValidator
+except ImportError:
+    inquirer = None  # type: ignore[assignment]
+    Choice = None  # type: ignore[assignment,misc]
+    get_style = None  # type: ignore[assignment]
+    EmptyInputValidator = None  # type: ignore[assignment,misc]
 
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/configure"
 
@@ -413,6 +419,11 @@ def _has_local_changes(app_dir: typing.Any) -> typing.Any:
 
 
 def main() -> typing.Any:
+    if inquirer is None:
+        raise RuntimeError(
+            "InquirerPy is required for interactive configuration. "
+            "Please install InquirerPy first."
+        )
     banner()
 
     existing = load_existing_config()

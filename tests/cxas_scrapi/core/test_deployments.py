@@ -353,7 +353,7 @@ def test_create_deployment_different_channels(
 
 @pytest.mark.skipif(
     not hasattr(types, "ExperimentConfig"),
-    reason="ExperimentConfig missing in ces_v1beta",
+    reason="ExperimentConfig requires newer google-cloud-ces",
 )
 @patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
@@ -408,7 +408,7 @@ def test_create_deployment_traffic_split_invalid_len(
 
 @pytest.mark.skipif(
     not hasattr(types, "ExperimentConfig"),
-    reason="ExperimentConfig missing in ces_v1beta",
+    reason="ExperimentConfig requires newer google-cloud-ces",
 )
 @patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
@@ -432,7 +432,7 @@ def test_create_deployment_traffic_split_invalid_version(
 
 @pytest.mark.skipif(
     not hasattr(types, "ExperimentConfig"),
-    reason="ExperimentConfig missing in ces_v1beta",
+    reason="ExperimentConfig requires newer google-cloud-ces",
 )
 @patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
@@ -465,7 +465,7 @@ def test_update_deployment_traffic_split_valid(
 
 @pytest.mark.skipif(
     not hasattr(types, "ExperimentConfig"),
-    reason="ExperimentConfig missing in ces_v1beta",
+    reason="ExperimentConfig requires newer google-cloud-ces",
 )
 @patch("cxas_scrapi.core.deployments.Versions")
 @patch("cxas_scrapi.core.apps.AgentServiceClient")
@@ -571,3 +571,85 @@ def test_update_deployment_isolated_channel_settings(
     assert "channel_profile.noise_suppression_level" in args.update_mask.paths
     assert len(args.update_mask.paths) == 1
     assert args.deployment.channel_profile.noise_suppression_level == "moderate"
+
+
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_update_deployment_app_version_without_experiment_config(
+    mock_client_cls: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(types, "ExperimentConfig", raising=False)
+    mock_client = mock_client_cls.return_value
+    mock_client.update_deployment.return_value = MagicMock()
+
+    deps = Deployments("projects/p/locations/l/apps/A")
+    deps.update_deployment("dep_id", app_version="v2")
+
+    args = mock_client.update_deployment.call_args[1]["request"]
+    assert args.deployment.app_version == (
+        "projects/p/locations/l/apps/A/versions/v2"
+    )
+    assert "app_version" in args.update_mask.paths
+    assert "experiment_config" not in args.update_mask.paths
+
+
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_traffic_split_without_experiment_config(
+    mock_client_cls: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(types, "ExperimentConfig", raising=False)
+    deps = Deployments("projects/p/locations/l/apps/A")
+
+    with pytest.raises(
+        ValueError, match="Traffic split requires at least two versions"
+    ):
+        deps.create_deployment(
+            "dep_id", "my_dep", "v1", traffic_split={"v1": 100}
+        )
+
+    with pytest.raises(
+        NotImplementedError, match="traffic_split requires ExperimentConfig"
+    ):
+        deps.create_deployment(
+            "dep_id", "my_dep", "v1", traffic_split={"v1": 90, "v2": 10}
+        )
+
+    with pytest.raises(
+        NotImplementedError, match="traffic_split requires ExperimentConfig"
+    ):
+        deps.update_deployment("dep_id", traffic_split={"v1": 50, "v2": 50})
+
+
+# QA-004: Reproduction test for traffic_split=None in update_deployment
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_qa_004_update_deployment_traffic_split_none_treated_as_unset(
+    mock_client_cls: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(types, "ExperimentConfig", raising=False)
+    mock_client = mock_client_cls.return_value
+    mock_client.update_deployment.return_value = MagicMock()
+
+    deps = Deployments("projects/p/locations/l/apps/A")
+    deps.update_deployment("dep_id", app_version="v2", traffic_split=None)
+
+    args = mock_client.update_deployment.call_args[1]["request"]
+    assert args.deployment.app_version == (
+        "projects/p/locations/l/apps/A/versions/v2"
+    )
+    assert "app_version" in args.update_mask.paths
+
+
+# QA-004: Reproduction test for empty dict traffic_split={} in create_deployment
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_qa_004_create_deployment_empty_traffic_split_raises_value_error(
+    mock_client_cls: typing.Any,
+) -> None:
+    deps = Deployments("projects/p/locations/l/apps/A")
+    with pytest.raises(
+        ValueError, match="Traffic split requires at least two versions"
+    ):
+        deps.create_deployment(
+            "dep_id", "my_dep", app_version="v1", traffic_split={}
+        )

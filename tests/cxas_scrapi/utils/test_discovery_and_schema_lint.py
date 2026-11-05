@@ -15,8 +15,10 @@
 """Tests for callback/toolset discovery and CES v1main schema parity."""
 
 import json
+import typing
 from pathlib import Path
 
+from cxas_scrapi.utils.lint_rules import schema as schema_mod
 from cxas_scrapi.utils.linter import (
     Discovery,
     LintContext,
@@ -25,7 +27,7 @@ from cxas_scrapi.utils.linter import (
 )
 
 
-def _get_schema_rule(rule_id: str) -> object:
+def _get_schema_rule(rule_id: str) -> typing.Any:
     reg = build_registry()
     for r in reg.all_rules():
         if r.id == rule_id:
@@ -267,3 +269,174 @@ def test_v002_v003_v005_v006_accept_v1main_fields(tmp_path: Path) -> None:
         )
     )
     assert _get_schema_rule("V006").check(eval_dir, "", ctx) == []
+
+
+def test_v003_accepts_tools_when_remote_agent_tool_missing_from_sdk(
+    tmp_path: Path,
+    monkeypatch: typing.Any,
+) -> None:
+    monkeypatch.delattr(schema_mod.types, "RemoteAgentTool", raising=False)
+    rule = _get_schema_rule("V003")
+    ctx = LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path / "evaluations",
+        app_root=tmp_path,
+    )
+
+    valid_agent_card = {
+        "name": "remote_tool",
+        "description": "A2A sub-agent",
+        "version": "0.1.0",
+        "supportedInterfaces": [
+            {
+                "url": "https://ces.googleapis.com/v1/apps/a",
+                "protocolBinding": "HTTP+JSON",
+                "protocolVersion": "1.0",
+            }
+        ],
+        "skills": [
+            {
+                "id": "pay",
+                "name": "pay",
+                "description": "Pay bill",
+                "tags": ["pay"],
+            }
+        ],
+    }
+
+    # 1. camelCase remoteAgentTool
+    camel_dir = tmp_path / "tools" / "remote_camel"
+    camel_dir.mkdir(parents=True)
+    (camel_dir / "remote_camel.json").write_text(
+        json.dumps(
+            {
+                "name": "remote_camel",
+                "displayName": "remote_camel",
+                "remoteAgentTool": {
+                    "name": "remote_camel",
+                    "description": "A2A remote sub-agent",
+                    "agentCard": valid_agent_card,
+                    "inputVariableMapping": {"in_var": "in_var"},
+                },
+            }
+        )
+    )
+    assert rule.check(camel_dir, "", ctx) == []
+
+    # 2. snake_case remote_agent_tool
+    snake_dir = tmp_path / "tools" / "remote_snake"
+    snake_dir.mkdir(parents=True)
+    (snake_dir / "remote_snake.json").write_text(
+        json.dumps(
+            {
+                "name": "remote_snake",
+                "displayName": "remote_snake",
+                "remote_agent_tool": {
+                    "name": "remote_snake",
+                    "description": "A2A remote sub-agent",
+                    "agent_card": valid_agent_card,
+                    "output_variable_mapping": {"out_var": "out_var"},
+                },
+            }
+        )
+    )
+    assert rule.check(snake_dir, "", ctx) == []
+
+    # 3. Non-remote tool (ensures linting other tools never hits AttributeError)
+    ds_dir = tmp_path / "tools" / "plain_ds"
+    ds_dir.mkdir(parents=True)
+    (ds_dir / "plain_ds.json").write_text(
+        json.dumps(
+            {
+                "name": "plain_ds",
+                "displayName": "plain_ds",
+                "dataStoreTool": {
+                    "name": "plain_ds",
+                    "engineSource": {
+                        "engine": "projects/p/locations/us/engines/e"
+                    },
+                },
+            }
+        )
+    )
+    assert rule.check(ds_dir, "", ctx) == []
+
+
+# QA-003: Reproduction test for empty / non-dict YAML config in SchemaValid
+def test_qa_003_schema_valid_handles_empty_or_non_dict_yaml_gracefully(
+    tmp_path: Path,
+) -> None:
+    rule = _get_schema_rule("V003")
+    ctx = LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path / "evaluations",
+        app_root=tmp_path,
+    )
+
+    empty_dir = tmp_path / "tools" / "empty_tool"
+    empty_dir.mkdir(parents=True)
+    (empty_dir / "empty_tool.yaml").write_text("", encoding="utf-8")
+    empty_res = rule.check(empty_dir, "", ctx)
+    assert len(empty_res) == 1
+
+    list_dir = tmp_path / "tools" / "list_tool"
+    list_dir.mkdir(parents=True)
+    (list_dir / "list_tool.yaml").write_text("- item1\n", encoding="utf-8")
+    list_res = rule.check(list_dir, "", ctx)
+    assert len(list_res) == 1
+
+
+# QA-003: Reproduction test for malformed remoteAgentTool & oneof collision
+def test_qa_003_v003_rejects_malformed_or_conflicting_remote_agent_tool(
+    tmp_path: Path,
+    monkeypatch: typing.Any,
+) -> None:
+    monkeypatch.delattr(schema_mod.types, "RemoteAgentTool", raising=False)
+    rule = _get_schema_rule("V003")
+    ctx = LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path / "evaluations",
+        app_root=tmp_path,
+    )
+
+    # Malformed non-dict remoteAgentTool payload must fail V003
+    malformed_dir = tmp_path / "tools" / "bad_remote"
+    malformed_dir.mkdir(parents=True)
+    (malformed_dir / "bad_remote.json").write_text(
+        json.dumps(
+            {
+                "name": "bad_remote",
+                "displayName": "bad_remote",
+                "remoteAgentTool": "not-a-dict",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert len(rule.check(malformed_dir, "", ctx)) >= 1
+
+    # Conflicting tool oneofs (remoteAgentTool + dataStoreTool) must fail V003
+    collision_dir = tmp_path / "tools" / "collision_remote"
+    collision_dir.mkdir(parents=True)
+    (collision_dir / "collision_remote.json").write_text(
+        json.dumps(
+            {
+                "name": "collision_remote",
+                "displayName": "collision_remote",
+                "remoteAgentTool": {
+                    "name": "collision_remote",
+                    "description": "A2A remote sub-agent",
+                },
+                "dataStoreTool": {
+                    "name": "collision_remote",
+                    "engineSource": {
+                        "engine": "projects/p/locations/us/engines/e"
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert len(rule.check(collision_dir, "", ctx)) >= 1

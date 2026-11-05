@@ -42,7 +42,7 @@ from cxas_scrapi.utils.linter import (
 # ── Shared helpers (ported from Validator) ───────────────────────────────
 
 
-def _load_json_or_yaml(directory: Path, file_name: str) -> dict:
+def _load_json_or_yaml(directory: Path, file_name: str) -> typing.Any:
     """Load config from ``<file_name>.yaml`` or ``<file_name>.json``."""
     yaml_path = directory / f"{file_name}.yaml"
     json_path = directory / f"{file_name}.json"
@@ -230,8 +230,65 @@ def _pop_missing_descriptor_fields(
             msg_dict.pop(key, None)
 
 
-def _strip_v1main_only_fields(data: dict, target: str) -> None:
+_OTHER_TOOL_ONEOF_KEYS: frozenset[str] = frozenset(
+    {
+        "clientFunction",
+        "client_function",
+        "openApiTool",
+        "open_api_tool",
+        "googleSearchTool",
+        "google_search_tool",
+        "connectorTool",
+        "connector_tool",
+        "dataStoreTool",
+        "data_store_tool",
+        "pythonFunction",
+        "python_function",
+        "mcpTool",
+        "mcp_tool",
+        "fileSearchTool",
+        "file_search_tool",
+        "systemTool",
+        "system_tool",
+        "agentTool",
+        "agent_tool",
+        "widgetTool",
+        "widget_tool",
+    }
+)
+
+
+def _validate_legacy_remote_agent_tool(tool_data: dict) -> str | None:
+    """Validate remoteAgentTool shape and oneof exclusivity."""
+    has_camel = "remoteAgentTool" in tool_data
+    has_snake = "remote_agent_tool" in tool_data
+    if not (has_camel or has_snake):
+        return None
+    if has_camel and has_snake:
+        return (
+            "Conflicting fields 'remoteAgentTool' and 'remote_agent_tool' "
+            "cannot both be set on Tool"
+        )
+    remote_key = "remoteAgentTool" if has_camel else "remote_agent_tool"
+    remote_val = tool_data[remote_key]
+    if not isinstance(remote_val, dict):
+        return (
+            f"Expected '{remote_key}' to be a JSON/YAML object, "
+            f"got {type(remote_val).__name__}"
+        )
+    conflicting = sorted(k for k in _OTHER_TOOL_ONEOF_KEYS if k in tool_data)
+    if conflicting:
+        return (
+            f"Tool oneof 'tool_type' cannot set both '{remote_key}' "
+            f"and {conflicting}"
+        )
+    return None
+
+
+def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
     """Strip CES v1main fields that lag in the google-cloud-ces v1beta wheel."""
+    if not isinstance(data, dict):
+        return
     if target in ("app_config", "agent_config"):
         model_settings = data.get("modelSettings") or data.get("model_settings")
         _pop_missing_descriptor_fields(
@@ -252,23 +309,28 @@ def _strip_v1main_only_fields(data: dict, target: str) -> None:
                         types.DataStoreTool.ModalityConfig,
                         ("snippetsConfig", "snippets_config"),
                     )
-        remote_tool = data.get("remoteAgentTool") or data.get(
-            "remote_agent_tool"
-        )
-        _pop_missing_descriptor_fields(
-            remote_tool,
-            types.RemoteAgentTool,
-            (
-                "apiAuthentication",
-                "api_authentication",
-                "statefulAgent",
-                "stateful_agent",
-                "inputVariableMapping",
-                "input_variable_mapping",
-                "outputVariableMapping",
-                "output_variable_mapping",
-            ),
-        )
+        if getattr(types, "RemoteAgentTool", None) is None:
+            if _validate_legacy_remote_agent_tool(data) is None:
+                data.pop("remoteAgentTool", None)
+                data.pop("remote_agent_tool", None)
+        else:
+            remote_tool = data.get("remoteAgentTool") or data.get(
+                "remote_agent_tool"
+            )
+            _pop_missing_descriptor_fields(
+                remote_tool,
+                types.RemoteAgentTool,
+                (
+                    "apiAuthentication",
+                    "api_authentication",
+                    "statefulAgent",
+                    "stateful_agent",
+                    "inputVariableMapping",
+                    "input_variable_mapping",
+                    "outputVariableMapping",
+                    "output_variable_mapping",
+                ),
+            )
     elif target == "guardrail_config":
         action = data.get("action")
         _pop_missing_descriptor_fields(
@@ -410,6 +472,14 @@ class SchemaValid(Rule):
         except FileNotFoundError as e:
             return [self.make_result(rel, f"Missing config: {e}")]
 
+        if not isinstance(data, dict):
+            return [
+                self.make_result(
+                    rel,
+                    f"Expected a JSON/YAML object, got {type(data).__name__}",
+                )
+            ]
+
         if self._do_resolve:
             try:
                 data = _resolve_paths(
@@ -419,9 +489,17 @@ class SchemaValid(Rule):
                 return [self.make_result(rel, f"Missing referenced file: {e}")]
 
         # Pop custom tools field from app_config to avoid proto validation
-        # failure
+        # failure, while validating embedded remoteAgentTool shapes if needed.
         if self.target == "app_config" and "tools" in data:
-            data.pop("tools")
+            embedded_tools = data.pop("tools")
+            if getattr(types, "RemoteAgentTool", None) is None and isinstance(
+                embedded_tools, list
+            ):
+                for item in embedded_tools:
+                    if isinstance(item, dict):
+                        err = _validate_legacy_remote_agent_tool(item)
+                        if err is not None:
+                            return [self.make_result(rel, err)]
 
         # Pop any custom _comment_ fields used for inline documentation
         for key in list(data.keys()):
@@ -450,6 +528,14 @@ class SchemaValid(Rule):
             if "golden" in lower_keys:
                 data.pop("scenario", None)
                 data.pop("Scenario", None)
+
+        if (
+            self.target == "tool_config"
+            and getattr(types, "RemoteAgentTool", None) is None
+        ):
+            err = _validate_legacy_remote_agent_tool(data)
+            if err is not None:
+                return [self.make_result(rel, err)]
 
         try:
             _validate_fields(data, self._proto_type, path=str(resource_dir))
