@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Callback lint rules (C001-C008).
+"""Callback lint rules (C001-C007, C010).
 
 Validates agent callback Python files against CXAS conventions.
 """
