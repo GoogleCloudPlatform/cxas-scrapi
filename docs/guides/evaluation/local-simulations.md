@@ -75,6 +75,7 @@ evals:
 | `inject_variables` | dict | Variables to inject for the first step (`step 0`); if declared on later steps, hoisted into `session_parameters` when converted to platform Milestone YAML |
 | `metadata` | dict | Optional step-level metadata dictionary |
 | `barge_in_after_ms` | int | Optional offset in ms after agent audio starts to trigger a barge-in utterance (local `audio` modality only; stripped when sanitizing for platform Milestone YAML) |
+| `barge_in` | dict / bool / int | Optional model-generated barge-in configuration (`mode`, `style`, `after_ms`, `min_ms`, `max_ms`, `jitter_ms`, `goal`, `guide`, `enabled`; local `audio` modality only) |
 
 ### Expectations
 
@@ -100,7 +101,7 @@ In addition to running locally via the Sessions API, SCRAPI can convert your sim
 When converting simulation test cases to CXAS 2.0 Milestone YAML (`EvalUtils.convert_sim_evals_to_milestone_yaml` or `SimulationEvals.to_milestone_yaml`):
 
 - Each evaluation and step is sanitized against the CES platform `MilestoneYamlTranslator` whitelists (`MILESTONE_ALLOWED_ROOT_KEYS`, `MILESTONE_ALLOWED_EVAL_KEYS`, `MILESTONE_ALLOWED_STEP_KEYS`).
-- Client-only keys (`audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, `barge_in_after_ms`, `modality`) are stripped automatically with logging warnings.
+- Client-only keys (`audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, `barge_in_after_ms`, `barge_in`, `modality`) are stripped automatically with logging warnings.
 - Step-level `inject_variables` on `step 0` are preserved, while `inject_variables` on later steps (`step_idx > 0`) are automatically hoisted into `session_parameters` with a warning.
 - When converting a directory of YAML files, file-level `common_session_parameters`, `common_expectations`, and `initial_event` are merged into each test case.
 - The sanitized YAML is imported via the CES REST `:importEvaluations` (`yamlContent`) endpoint, where each milestone is scored by the platform as `COMPLETED` (Pass), `IN_PROGRESS` (Fail), or `NOT_STARTED` (Fail) with a `justification`.
@@ -158,7 +159,7 @@ results = sim_evals.run_simulations(
 ```
 
 !!! info "Automatic hybrid routing (`run_on_platform=True`)"
-    When `run_on_platform=True` (or `--platform-sims` on the CLI) is enabled, `SimulationEvals.requires_local_execution(test_case)` inspects each test case. Standard text simulations (including those with `use_tool_fakes=True`, executed via platform `EvaluationConfig.tool_call_behaviour = FAKE`) run on the platform as CXAS 2.0 Milestone evaluations, while test cases that require local-only features (`modality: "audio"`, `audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, or `barge_in_after_ms`) are automatically partitioned and executed locally.
+    When `run_on_platform=True` (or `--platform-sims` on the CLI) is enabled, `SimulationEvals.requires_local_execution(test_case)` inspects each test case. Standard text simulations (including those with `use_tool_fakes=True`, executed via platform `EvaluationConfig.tool_call_behaviour = FAKE`) run on the platform as CXAS 2.0 Milestone evaluations, while test cases that require local-only features (`modality: "audio"`, `audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, `barge_in_after_ms`, or `barge_in`) are automatically partitioned and executed locally.
 
 ---
 
@@ -333,6 +334,40 @@ eval_conv = sim_evals.simulate_conversation(
 ```
 
 In audio mode, SCRAPI uses the Sessions API's audio streaming endpoint. The simulated user's messages are still text internally, but they're processed by the agent's audio pipeline, which exercises TTS/STT and any audio-specific callbacks.
+
+### Model-Generated Barge-In
+
+In `audio` modality, any step after the initial turn can configure a `barge_in` sub-object (`BargeInConfig`) so the simulated caller interrupts the agent mid-playback with diverse phrasing and dynamic timing across runs:
+
+```yaml
+evals:
+  - name: cymbal_style_variance_barge_in
+    steps:
+      - goal: Ask the agent to explain standard hardware warranty coverage
+        success_criteria: Agent begins explaining warranty terms
+        max_turns: 4
+      - goal: Barge in mid-explanation to report a wrong item in order ORD-77889
+        success_criteria: Agent stops warranty explanation and checks order ORD-77889
+        response_guide: >
+          Interrupt the warranty explanation to report receiving the wrong item
+          in order ORD-77889 and ask for a replacement.
+        max_turns: 6
+        barge_in:
+          mode: "pre_turn"  # or "reactive" to inspect the agent's live speech first
+          style: ["urgent_pivot", "impatient_cutoff", "polite_interruption", "correction"]
+          after_ms: [650, 2000]
+          jitter_ms: 150
+```
+
+| `barge_in` Field | Type | Default | Description |
+|------------------|------|---------|-------------|
+| `enabled` | bool | `true` | Enables or disables barge-in for this step |
+| `mode` | string | `"pre_turn"` | `"pre_turn"` pre-schedules the interruption before sending Turn N; `"reactive"` inspects the agent's live streaming speech first and can defer (`should_barge_in: false`) if the agent asks a short prerequisite question |
+| `style` | string / list | `"auto"` | Style archetype(s) rotated across runs: `urgent_pivot`, `impatient_cutoff`, `polite_interruption`, `correction`, `preemptive_answer`, or `auto` |
+| `after_ms` | int / `[min, max]` / `"auto"` | `[500, 2500]` | Fixed ms offset, `[min_ms, max_ms]` window, or `"auto"` |
+| `min_ms` / `max_ms` | int | `0` | Explicit timing window bounds in ms |
+| `jitter_ms` | int | `0` | Random timing jitter (`±jitter_ms`, clamped to bounds) |
+| `goal` / `guide` | string | `""` | Optional overrides for the step's `goal` and `response_guide` when generating the interruption |
 
 ---
 

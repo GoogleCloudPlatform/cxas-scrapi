@@ -341,6 +341,7 @@ class EvalUtils(Evaluations):
         sanitized_evals: list[dict[str, Any]] = []
         client_only_fields = [
             "barge_in_after_ms",
+            "barge_in",
             "audio_expectations",
             "audio_analysis",
             "naturalness_metric",
