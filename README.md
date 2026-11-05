@@ -205,3 +205,5 @@ Project Link: [https://github.com/GoogleCloudPlatform/cxas-scrapi](https://githu
 # References
 * [CX Agent Studio Documentation](https://docs.cloud.google.com/customer-engagement-ai/conversational-agents/ps)
 * [CX Agent Studio Console](https://ces.cloud.google.com/)
+
+For deterministic packaging, see [Build Guide](docs/guides/build.md).

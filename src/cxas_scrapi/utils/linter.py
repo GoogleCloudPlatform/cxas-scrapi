@@ -1009,6 +1009,12 @@ def run_rules(
             "tool_config": discovery._discover_resource_dirs("tools"),
             "toolset_config": discovery.discover_toolsets(),
             "guardrail_config": discovery.discover_guardrails(),
+            "deployment_config": {
+                p.stem: p
+                for p in sorted(discovery.app_root.glob("deployments/*.yaml"))
+            }
+            if discovery.app_root
+            else {},
             "evaluation_config": discovery.discover_evaluations(),
             "eval_expectation_config": (
                 discovery.discover_evaluation_expectations()
