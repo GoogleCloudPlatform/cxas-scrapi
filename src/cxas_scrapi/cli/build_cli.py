@@ -32,6 +32,8 @@ def app_build(args: argparse.Namespace) -> None:
                 out_root=args.out,
                 environment=args.env,
                 package_zip=args.zip,
+                native_python_env=getattr(args, "native_python_env", False),
+                strip_bridge=getattr(args, "strip_bridge", None),
             )
             if args.json:
                 print(json.dumps([r.model_dump(mode="json") for r in reports]))
@@ -56,6 +58,8 @@ def app_build(args: argparse.Namespace) -> None:
                 environment=args.env,
                 out_dir=args.out,
                 package_zip=args.zip,
+                native_python_env=getattr(args, "native_python_env", False),
+                strip_bridge=getattr(args, "strip_bridge", None),
             )
             if args.json:
                 print(report.model_dump_json())
@@ -82,7 +86,12 @@ def app_package(args: argparse.Namespace) -> None:
     )
 
     try:
-        out = package_app_archive(app_dir, zip_path, env_file)
+        out = package_app_archive(
+            app_dir,
+            zip_path,
+            env_file,
+            native_python_env=getattr(args, "native_python_env", False),
+        )
         print(f"Packaged app to {out}")
     except Exception as e:
         print(f"Package Error: {e}", file=sys.stderr)
@@ -115,6 +124,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser_build.add_argument(
         "--json", action="store_true", help="JSON output."
     )
+    parser_build.add_argument(
+        "--native-python-env", action="store_true", help="Native python env."
+    )
+    parser_build.add_argument(
+        "--strip-bridge",
+        choices=["presentation", "search", "killswitch", "all"],
+        help="Strip bridge shims.",
+    )
     parser_build.set_defaults(func=app_build)
 
     # Package
@@ -127,5 +144,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser_package.add_argument("--zip", help="Output zip file.")
     parser_package.add_argument(
         "--env-file", help="Custom environment.json file."
+    )
+    parser_package.add_argument(
+        "--native-python-env", action="store_true", help="Native python env."
     )
     parser_package.set_defaults(func=app_package)

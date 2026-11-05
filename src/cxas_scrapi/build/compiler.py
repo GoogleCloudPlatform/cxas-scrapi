@@ -140,6 +140,8 @@ def build_app(
     out_dir: str | Path,
     *,
     package_zip: bool = False,
+    native_python_env: bool = False,
+    strip_bridge: str | None = None,
 ) -> BuildReport:
     core_dir = Path(core_dir).resolve()
     out_dir = Path(out_dir).resolve()
@@ -561,7 +563,9 @@ def build_app(
     zip_path = None
     if package_zip:
         zip_path = out_dir / f"{brand_id}_{slug}.zip"
-        package_app_archive(out_dir, zip_path)
+        package_app_archive(
+            out_dir, zip_path, native_python_env=native_python_env
+        )
 
     return BuildReport(
         brand_id=brand_id,
@@ -580,6 +584,8 @@ def build_all(
     environment: str,
     *,
     package_zip: bool = False,
+    native_python_env: bool = False,
+    strip_bridge: str | None = None,
 ) -> list[BuildReport]:
     manifests = load_manifests(manifests_dir)
     reports = []
@@ -597,6 +603,8 @@ def build_all(
                 environment=environment,
                 out_dir=out_dir,
                 package_zip=package_zip,
+                native_python_env=native_python_env,
+                strip_bridge=strip_bridge,
             )
             reports.append(rep)
 
