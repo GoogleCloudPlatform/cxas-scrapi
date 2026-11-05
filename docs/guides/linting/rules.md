@@ -302,11 +302,11 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     **T012 — tool-json-missing-description**
 
-    Tool JSON configuration must include `pythonFunction.description` or `widgetTool.description`. The LLM relies on this description to know when to call the tool.
+    Tool JSON configuration must include a description (or, for `pythonFunction` tools, a docstring on the Python tool function). The LLM relies on this description to know when to call the tool.
 
-    *Triggers:* The description field is missing or empty in the tool's JSON configuration.
+    *Triggers:* The description field is missing or empty in the tool's JSON configuration (and, for `pythonFunction` tools, the Python tool function also lacks a docstring).
 
-    *Fix:* Add a 'description' key within the 'pythonFunction' or 'widgetTool' object in the tool's JSON file.
+    *Fix:* Add a docstring to the Python tool function or a `'description'` key within the tool type object (`pythonFunction`, `remoteAgentTool`, `widgetTool`, etc.) in the tool's JSON file.
 
 === "E — Evals"
 
