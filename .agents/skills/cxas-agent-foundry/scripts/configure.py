@@ -326,7 +326,7 @@ def select_model() -> typing.Any:
 
     model = inquirer.text(
         message="Enter model name:",
-        default="gemini-3.1-flash-live",
+        default="gemini-composite-v2",
     ).execute()
 
     console.print(f"  Selected: [green]{model}[/green]\n")
@@ -346,7 +346,7 @@ def review_and_confirm(config: typing.Any) -> typing.Any:
     table.add_row("App Name", config.get("app_name", ""))
     app_id_display = config["deployed_app_id"] or "[yellow]Not yet assigned (will be set after app creation)[/yellow]"
     table.add_row("App ID", app_id_display)
-    table.add_row("Model", config.get("model", "gemini-3.1-flash-live"))
+    table.add_row("Model", config.get("model", "gemini-composite-v2"))
     table.add_row("Modality", config["modality"])
     table.add_row("App Directory", config["app_dir"])
     if config.get("gcs_bucket"):
@@ -386,7 +386,7 @@ def _show_current_config(config: typing.Any) -> typing.Any:
     table.add_row("App Name", config.get("app_name", ""))
     app_id = config.get("deployed_app_id")
     table.add_row("App ID", app_id or "[yellow]Not set[/yellow]")
-    table.add_row("Model", config.get("model", "gemini-3.1-flash-live"))
+    table.add_row("Model", config.get("model", "gemini-composite-v2"))
     table.add_row("Modality", config.get("modality", ""))
     table.add_row("App Directory", config.get("app_dir", ""))
     if config.get("gcs_bucket"):
@@ -619,7 +619,7 @@ def main_non_interactive(args: typing.Any) -> typing.Any:
     project_id = args.project_id
     location = args.location or "us"
     modality = args.modality or "audio"
-    model = args.model or "gemini-3.1-flash-live"
+    model = args.model or "gemini-composite-v2"
     gcs_bucket = args.gcs_bucket or None
 
     if modality == "audio" and not gcs_bucket:

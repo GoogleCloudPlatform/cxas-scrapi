@@ -25,4 +25,5 @@ from cxas_scrapi.utils.lint_rules import (  # noqa: F401
     structure,
     tools,
     variables,
+    voice_composite,
 )

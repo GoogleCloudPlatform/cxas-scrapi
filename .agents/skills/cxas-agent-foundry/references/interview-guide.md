@@ -12,9 +12,9 @@
 ## Round 1: The Big Picture
 
 1. **What does this agent do?** -- "customer support for billing issues", "booking assistant", etc.
-2. **Modality** -- Voice/audio or text? This determines the model:
-   - **Audio/voice**: `gemini-3.1-flash-live` (streaming, real-time voice)
-   - **Text**: `gemini-3-flash` (text-only, lower latency)
+2. **Modality** -- Voice/audio or text? Both default to `gemini-composite-v2`:
+   - **Audio/voice**: `gemini-composite-v2` (default enterprise voice stack with Chirp 3 HD Aoede; `gemini-3.1-flash-live` only if native audio-to-audio is explicitly required)
+   - **Text**: `gemini-composite-v2` (uses the same underlying `gemini-3.7-flash-fast` execution model in text mode without TTS/ASR overhead and keeps the app omnichannel-ready; omit `audioProcessingConfig`, `evaluationAudioRecordingConfig`, and voice-only inline TTS audio tag rules for text-only agents)
    - **If voice:** Ask about speaking rate requirements. The default tempo can feel slow for some use cases. Set `speakingRate` in the Console's voice config rather than relying on prompt instructions — natural language pacing guidance is unreliable (see `references/gecx-design-guide.md` → Speech Rate and Pacing).
 3. **Requirements source** -- Ask for the PRD, spec doc, or requirements. Can be a file path, URL, or pasted text. If they don't have a formal doc, interview them to build one.
 4. **Existing resources** -- Do they have sample conversations, mock data, customer profiles, or an existing agent to reference?

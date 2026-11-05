@@ -77,9 +77,8 @@ def is_user_inactive(contents: list) -> bool:
         r"<context>no user activity detected for \d+ seconds\.</context>"
     )
     return len(contents) > 1 and any(
-        re.search(silence_pattern, p.text, re.IGNORECASE)
+        re.search(silence_pattern, p.text_or_transcript() or "", re.IGNORECASE)
         for p in contents[-1].parts
-        if p.text
     )
 
 
@@ -88,8 +87,9 @@ def get_reversed_agent_messages(contents: list) -> Iterator[str]:
     for content in reversed(contents):
         texts = []
         for part in content.parts:
-            if content.role == "model" and part.text is not None:
-                texts.append(part.text)
+            msg = part.text_or_transcript()
+            if content.role == "model" and msg is not None:
+                texts.append(msg)
         if texts:
             yield "".join(texts)
 
@@ -136,13 +136,12 @@ def before_model_callback(callback_context: CallbackContext, llm_request: LlmReq
     # user input. We detect this and return the greeting immediately.
     # -------------------------------------------------------------------------
     for part in callback_context.get_last_user_input():
-        if part.text == "<event>session start</event>":
-            greeting = (
-                "Hi, I am your virtual assistant. "
-                "How can I help you today?"
-            )
+        if (part.text_or_transcript() or "") == "<event>session start</event>":
             return LlmResponse.from_parts(parts=[
-                Part.from_text(text=greeting),
+                Part.from_customized_response(
+                    content="Hi, I am your virtual assistant. How can I help you today?",
+                    disable_barge_in=False,
+                ),
             ])
 
     # -------------------------------------------------------------------------
@@ -178,9 +177,9 @@ def before_model_callback(callback_context: CallbackContext, llm_request: LlmReq
                         text="I'm sorry, but I'm unable to hear you. "
                              "Please try calling again later. Have a great day."
                     ),
-                    Part.from_function_call(
-                        name="end_session",
-                        args={"session_escalated": False, "reason": "no_input_limit"},
+                    Part.from_end_session(
+                        reason="no_input_limit",
+                        escalated=False,
                     ),
                 ])
         else:
@@ -244,8 +243,8 @@ def before_model_callback(callback_context: CallbackContext, llm_request: LlmReq
     # -------------------------------------------------------------------------
     return LlmResponse.from_parts(parts=[
         Part.from_text(text=escalation["text"]),
-        Part.from_function_call(
-            name="end_session",
-            args={"session_escalated": True},
+        Part.from_end_session(
+            reason=trigger_value,
+            escalated=True,
         ),
     ])
