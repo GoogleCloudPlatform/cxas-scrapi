@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -338,6 +339,79 @@ def test_diff_autolabel_rules_and_report() -> None:
     assert "[~] To Update" in diff_res["report"]
     assert "[-] To Delete" in diff_res["report"]
     assert "[=] Unchanged" in diff_res["report"]
+
+
+def _remote_rule(rule_id: str, label_key: str, value: str) -> dict:
+    return {
+        "name": f"projects/p/locations/l/autoLabelingRules/{rule_id}",
+        "displayName": label_key,
+        "labelKey": label_key,
+        "labelKeyType": "LABEL_KEY_TYPE_CUSTOM",
+        "active": True,
+        "conditions": [{"condition": "", "value": value}],
+    }
+
+
+def _local_rule(label_key: str, value: str, **extra: str) -> dict:
+    return {
+        "label_key": label_key,
+        "label_key_type": "LABEL_KEY_TYPE_CUSTOM",
+        "conditions": [{"condition": "", "value": value}],
+        **extra,
+    }
+
+
+def test_diff_autolabel_rules_matches_server_generated_ids_on_label_key() -> (
+    None
+):
+    # Rules created in the console get numeric IDs; a local rule declared by
+    # label_key only must update them rather than be created again (which the
+    # API rejects with 409 Conflict, as the labelKey already exists).
+    remote_rules = [
+        _remote_rule("10213482959008695208", "intent", "'a'"),
+        _remote_rule("11249370771079330796", "status", "'old'"),
+    ]
+    local_data = {
+        "autolabeling_rules": [
+            _local_rule("intent", "'a'"),
+            _local_rule("status", "'new'"),
+        ]
+    }
+
+    diff_res = diff_autolabel_rules(local_data, remote_rules)
+
+    assert diff_res["to_create"] == []
+    assert diff_res["to_delete"] == []
+    assert diff_res["unchanged"] == ["10213482959008695208"]
+    rule_id, _, fields, remote_name = diff_res["to_update"][0]
+    assert rule_id == "11249370771079330796"
+    assert fields == ["conditions"]
+    assert remote_name.endswith("/autoLabelingRules/11249370771079330796")
+
+
+def test_diff_autolabel_rules_label_key_fallback_limits(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    remote_rules = [
+        _remote_rule("111", "status", "'a'"),
+        _remote_rule("222", "dup", "'a'"),
+        _remote_rule("333", "dup", "'a'"),
+    ]
+    local_data = {
+        "autolabeling_rules": [
+            # An explicit rule_id is never re-mapped to another remote rule.
+            _local_rule("status", "'a'", rule_id="status_rule"),
+            # Ambiguous labelKey: no guess, the rule is created as before.
+            _local_rule("dup", "'a'"),
+        ]
+    }
+
+    with caplog.at_level(logging.WARNING):
+        diff_res = diff_autolabel_rules(local_data, remote_rules)
+
+    assert [rid for rid, _ in diff_res["to_create"]] == ["status_rule", "dup"]
+    assert diff_res["unchanged"] == []
+    assert "Several remote rules use labelKey 'dup'" in caplog.text
 
 
 def test_format_diff_report_all_in_sync() -> None:
