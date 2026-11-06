@@ -59,6 +59,7 @@ evals:
 | `session_parameters` | dict | Variables injected at session start |
 | `steps` | list | Ordered sequence of conversational goals |
 | `expectations` | list | Post-conversation quality assertions evaluated by Gemini |
+| `tool_expectations` | list | Deterministic assertions on tool calls, inputs, outputs, ordering, and termination (see [Tool Expectations](tool-expectations.md)) |
 | `exclude_common_expectations` | bool | When `true`, skips merging file-level `common_expectations` into this test case |
 | `voice_config` | dict | Optional per-case TTS voice override (`{"voice_name": "...", "language_code": "..."}`); otherwise selected deterministically from `--sim-user-voices` |
 
@@ -88,6 +89,29 @@ expectations:
 ```
 
 Each expectation is judged as Met or Not Met, with a justification from Gemini.
+
+### Tool Expectations
+
+Unlike natural language expectations that judge agent transcript text, `tool_expectations` provide deterministic, hard-fail assertions evaluated directly on the agent's tool execution trace. They verify that tools were invoked with correct arguments, returned expected payloads, executed in proper order, and terminated the session cleanly:
+
+```yaml
+tool_expectations:
+  - type: tool_called
+    tool: lookup_account
+    min: 1
+  - type: tool_input
+    tool: check_availability
+    args:
+      item_id: "ITEM-42"
+  - type: tool_output
+    tool: check_availability
+    result:
+      status: "available"
+  - type: last_tool
+    tool: end_session
+```
+
+Tool expectations fold seamlessly into simulation results as `[tool] ` prefixed expectation details and update `result["passed"] = judge_passed and all_tool_checks_met`. For full operator reference and schema examples, see [Tool Expectations](tool-expectations.md).
 
 ---
 
