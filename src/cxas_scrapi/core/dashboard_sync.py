@@ -620,7 +620,12 @@ def export_remote_dashboards_to_yaml_dict(
 
 
 def _strip_container_server_fields(c: Any) -> Any:
-    """Recursively removes server-assigned IDs and metadata for diffs."""
+    """Recursively prepares a container for diffs.
+
+    Removes server-assigned IDs and metadata, and normalizes date ranges: the
+    API returns int64 fields such as ``relativeDateRange.quantity`` as JSON
+    strings (``"7"``), while local payloads hold integers.
+    """
     if isinstance(c, dict):
         cleaned: dict[str, Any] = {}
         server_fields = (
@@ -632,6 +637,9 @@ def _strip_container_server_fields(c: Any) -> Any:
         )
         for k, v in c.items():
             if k in server_fields:
+                continue
+            if k == "dateRangeConfig" and isinstance(v, dict):
+                cleaned[k] = _normalize_date_range(v)
                 continue
             cleaned[k] = _strip_container_server_fields(v)
         return cleaned
