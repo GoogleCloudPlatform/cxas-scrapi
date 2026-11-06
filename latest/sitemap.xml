@@ -89,6 +89,10 @@
          <lastmod>2026-11-06</lastmod>
     </url>
     <url>
+         <loc>https://googlecloudplatform.github.io/cxas-scrapi/latest/api/evals/tool-expectations/</loc>
+         <lastmod>2026-11-06</lastmod>
+    </url>
+    <url>
          <loc>https://googlecloudplatform.github.io/cxas-scrapi/latest/api/migration/</loc>
          <lastmod>2026-11-06</lastmod>
     </url>
@@ -334,6 +338,10 @@
     </url>
     <url>
          <loc>https://googlecloudplatform.github.io/cxas-scrapi/latest/guides/evaluation/shadow-evals/</loc>
+         <lastmod>2026-11-06</lastmod>
+    </url>
+    <url>
+         <loc>https://googlecloudplatform.github.io/cxas-scrapi/latest/guides/evaluation/tool-expectations/</loc>
          <lastmod>2026-11-06</lastmod>
     </url>
     <url>
