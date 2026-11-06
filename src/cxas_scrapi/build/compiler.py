@@ -248,7 +248,94 @@ def build_app(
         )
         replacements[f"@@env.{k}@@"] = v_rendered.replace("{service}", "")
 
+    cond_inline_re = re.compile(
+        r"\{@start(Channel|Brand|AgentEnabled|ToolEnabled)_([^}]+)\}"
+        r"([^\n]*?)"
+        r"\{@end\1_\2\}"
+    )
+    cond_start_re = re.compile(
+        r"^\{@start(Channel|Brand|AgentEnabled|ToolEnabled)_([^}]+)\}$"
+    )
+    cond_end_re = re.compile(
+        r"^\{@end(Channel|Brand|AgentEnabled|ToolEnabled)_([^}]+)\}$"
+    )
+    cond_any_re = re.compile(
+        r"\{@(?:start|end)(?:Channel|Brand|AgentEnabled|ToolEnabled)_[^}]+\}"
+    )
+
+    def _eval_cond(kind: str, arg: str) -> bool:
+        if kind == "Channel":
+            return arg == channel
+        if kind == "Brand":
+            return arg == brand_id
+        if kind == "AgentEnabled":
+            return (
+                arg not in disabled_agents
+                and arg not in pruned_agent_display_names
+            )
+        if kind == "ToolEnabled":
+            return (
+                arg not in disabled_tools
+                and arg not in pruned_tool_display_names
+            )
+        raise BuildError(f"Unknown conditional tag kind: {kind}")
+
+    def process_conditional_blocks(content: str) -> str:
+        if "{@start" not in content and "{@end" not in content:
+            return content
+
+        lines = content.split("\n")
+        out_lines: list[str] = []
+        stack: list[tuple[str, str, bool]] = []
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            m_start = cond_start_re.match(stripped)
+            if m_start:
+                kind, arg = m_start.group(1), m_start.group(2)
+                stack.append((kind, arg, _eval_cond(kind, arg)))
+                continue
+
+            m_end = cond_end_re.match(stripped)
+            if m_end:
+                kind, arg = m_end.group(1), m_end.group(2)
+                if not stack or stack[-1][0] != kind or stack[-1][1] != arg:
+                    raise BuildError(
+                        f"Line {i + 1}: Unbalanced or mismatched conditional "
+                        f"tag {stripped}."
+                    )
+                stack.pop()
+                continue
+
+            if all(item[2] for item in stack):
+                cur_line = line
+                while True:
+                    cur_line, count = cond_inline_re.subn(
+                        lambda m: (
+                            m.group(3)
+                            if _eval_cond(m.group(1), m.group(2))
+                            else ""
+                        ),
+                        cur_line,
+                    )
+                    if count == 0:
+                        break
+                leftover = cond_any_re.findall(cur_line)
+                if leftover:
+                    raise BuildError(
+                        f"Line {i + 1}: Unbalanced inline conditional "
+                        f"tag(s): {leftover}"
+                    )
+                out_lines.append(cur_line)
+
+        if stack:
+            unclosed = [f"{{@start{k}_{a}}}" for k, a, _ in stack]
+            raise BuildError(f"Unbalanced conditional tags remain: {unclosed}")
+
+        return "\n".join(out_lines)
+
     def process_string(s: str) -> str:
+        s = process_conditional_blocks(s)
         for ek, ev in env_manifest.templates.items():
             base_rendered = ev.format(
                 brand=brand.brand_id,
@@ -315,7 +402,7 @@ def build_app(
                             modified = True
                     data["childAgents"] = new_children
 
-                if "tools" in data:
+                if isinstance(data.get("tools"), list):
                     new_tools = []
                     for t in data["tools"]:
                         t_name = (
@@ -329,6 +416,17 @@ def build_app(
                         else:
                             modified = True
                     data["tools"] = new_tools
+                elif isinstance(data.get("tools"), dict):
+                    new_tools_dict = {}
+                    for t_key, t_val in data["tools"].items():
+                        if (
+                            t_key not in disabled_tools
+                            and t_key not in pruned_tool_display_names
+                        ):
+                            new_tools_dict[t_key] = t_val
+                        else:
+                            modified = True
+                    data["tools"] = new_tools_dict
 
                 if file == "app.json":
                     # Do NOT unconditionally overwrite app.json["rootAgent"]
@@ -402,6 +500,11 @@ def build_app(
                     else:
                         text = identity_block + "\n\n" + text
 
+                try:
+                    text = process_conditional_blocks(text)
+                except BuildError as e:
+                    raise BuildError(f"{path}: {e}") from e
+
                 for a in disabled_agents:
                     if f"{{@AGENT: {a}}}" in text:
                         warnings.append(
@@ -422,6 +525,16 @@ def build_app(
 
                 path.write_text(text, "utf-8")
                 validate_modalities(text, path.relative_to(out_dir))
+
+            elif file.endswith(".py"):
+                text = path.read_text("utf-8")
+                if "@@" in text or "{@start" in text or "{@end" in text:
+                    try:
+                        text = process_conditional_blocks(text)
+                        text = process_string(text)
+                    except BuildError as e:
+                        raise BuildError(f"{path}: {e}") from e
+                    path.write_text(text, "utf-8")
 
     deployments_dir = out_dir / "deployments"
     deployments_dir.mkdir(exist_ok=True)

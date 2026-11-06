@@ -462,3 +462,81 @@ def test_cli_app_build_and_package(tmp_path: Path) -> None:
     )
     app_package(args_pkg)
     assert zip_path.exists()
+
+
+def test_conditional_blocks_and_py_token_substitution(tmp_path: Path) -> None:
+    core_dir, manifests_dir = _setup_complex_compilation(tmp_path)
+    instr_path = core_dir / "agents" / "default_agent" / "instruction.txt"
+    instr_path.write_text(
+        "{@startChannel_VOICE_TELEPHONY}\n"
+        "Voice mode for @@brand.display_name@@.\n"
+        "{@startAgentEnabled_pruned_agent_display}\n"
+        "Route to {@AGENT: pruned_agent_display}.\n"
+        "{@endAgentEnabled_pruned_agent_display}\n"
+        "{@startBrand_brand_alpha}\n"
+        "Alpha voice fallback.\n"
+        "{@endBrand_brand_alpha}\n"
+        "{@endChannel_VOICE_TELEPHONY}\n"
+        "{@startChannel_DIGITAL_APP}\n"
+        "Digital mode for @@brand.display_name@@.\n"
+        "{@startToolEnabled_secret_tool_disabled}\n"
+        "Call {@TOOL: secret_tool_disabled}.\n"
+        "{@endToolEnabled_secret_tool_disabled}\n"
+        "{@endChannel_DIGITAL_APP}\n",
+        "utf-8",
+    )
+
+    py_dir = core_dir / "tools" / "active_tool" / "python_function"
+    py_dir.mkdir(parents=True)
+    (core_dir / "tools" / "active_tool" / "active_tool.json").write_text(
+        json.dumps({"displayName": "active_tool"}), "utf-8"
+    )
+    (py_dir / "python_code.py").write_text(
+        'def active_tool() -> str:\n    return "Welcome to @@brand.display_name@@"\n',
+        "utf-8",
+    )
+
+    out_voice = tmp_path / "out_voice"
+    rep_voice = build_app(
+        core_dir,
+        manifests_dir,
+        "brand_alpha",
+        "VOICE_TELEPHONY",
+        "prod",
+        out_voice,
+    )
+    assert not rep_voice.warnings
+    compiled_voice = (
+        out_voice / "agents" / "default_agent" / "instruction.txt"
+    ).read_text("utf-8")
+    assert "Voice mode for Cymbal Alpha." in compiled_voice
+    assert "Alpha voice fallback." in compiled_voice
+    assert "Digital mode" not in compiled_voice
+    assert "pruned_agent_display" not in compiled_voice
+    assert "{@start" not in compiled_voice
+
+    compiled_py = (
+        out_voice
+        / "tools"
+        / "active_tool"
+        / "python_function"
+        / "python_code.py"
+    ).read_text("utf-8")
+    assert 'return "Welcome to Cymbal Alpha"' in compiled_py
+
+    out_digital = tmp_path / "out_digital"
+    rep_digital = build_app(
+        core_dir,
+        manifests_dir,
+        "brand_beta",
+        "DIGITAL_APP",
+        "prod",
+        out_digital,
+    )
+    assert not rep_digital.warnings
+    compiled_digital = (
+        out_digital / "agents" / "default_agent" / "instruction.txt"
+    ).read_text("utf-8")
+    assert "Digital mode for Cymbal Beta." in compiled_digital
+    assert "Call {@TOOL: secret_tool_disabled}." in compiled_digital
+    assert "Voice mode" not in compiled_digital
