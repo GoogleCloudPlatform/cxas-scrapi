@@ -3580,3 +3580,114 @@ def test_simulation_evals_error_path_counts_tool_expectations_in_totals() -> (
     assert "error" in res
     assert res["goals"] == "0/1"
     assert res["expectations"] == "0/3"
+
+
+def test_simulation_evals_tool_expectations_without_llm_expectations_passes() -> (
+    None
+):
+    evals = _naturalness_evals(expectations_only=False)
+    conv = _passing_conv(naturalness_result=None)
+    conv.expectation_results = []
+    conv._detailed_trace = [
+        "Tool Call: lookup_account with args {'account_id': '101'}\n"
+        "Tool Response: lookup_account with result {'status': 'active'}\n"
+        "Tool Call (Output): end_session with args {}"
+    ]
+    tc = {
+        "name": "sim_test_no_llm_pass",
+        "steps": [{"goal": "Goal 1", "success_criteria": "Done"}],
+        "expectations": [],
+        "tool_expectations": [
+            {"type": "tool_called", "tool": "lookup_account"},
+        ],
+    }
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc=tc,
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is True
+    assert res["judge_passed"] is True
+    assert res["expectations"] == "2/2"
+
+
+def test_simulation_evals_tool_expectations_without_llm_expectations_preserves_judge_passed_on_tool_failure() -> (
+    None
+):
+    evals = _naturalness_evals(expectations_only=False)
+    conv = _passing_conv(naturalness_result=None)
+    conv.expectation_results = []
+    conv._detailed_trace = [
+        "Tool Call: lookup_account with args {'account_id': '101'}\n"
+        "Tool Response: lookup_account with result {'status': 'active'}\n"
+        "Tool Call (Output): end_session with args {}"
+    ]
+    tc = {
+        "name": "sim_test_no_llm_tool_fail",
+        "steps": [{"goal": "Goal 1", "success_criteria": "Done"}],
+        "expectations": [],
+        "tool_expectations": [
+            {"type": "tool_called", "tool": "uncalled_tool"},
+        ],
+    }
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc=tc,
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is False
+    assert res["judge_passed"] is True
+    assert res["expectations"] == "1/2"
+
+
+def test_inconclusive_reason_ignores_skipped_tool_expectations_without_llm_expectations() -> (
+    None
+):
+    evals = _naturalness_evals(expectations_only=False)
+    conv = _passing_conv(naturalness_result=None)
+    conv.expectation_results = []
+    conv._detailed_trace = None
+    tc = {
+        "name": "sim_test_skipped_tool_checks",
+        "steps": [{"goal": "Goal 1", "success_criteria": "Done"}],
+        "expectations": [],
+        "tool_expectations": [
+            {"type": "tool_called", "tool": "lookup_account"},
+        ],
+    }
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc=tc,
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["expectations"] == "0/0"
+    declared = {
+        tc["name"]: SimulationEvals._declared_expectations_count(
+            tc, include_tool_expectations=False
+        )
+    }
+    assert SimulationEvals._inconclusive_reason(res, declared) is None
