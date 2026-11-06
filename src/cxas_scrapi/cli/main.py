@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         app_branch,
         app_create,
         app_delete,
+        app_impact,
         app_init,
         app_lint,
         app_pull,
@@ -69,6 +70,7 @@ else:
     app_branch = LazyCallable("cxas_scrapi.cli.app", "app_branch")
     app_create = LazyCallable("cxas_scrapi.cli.app", "app_create")
     app_delete = LazyCallable("cxas_scrapi.cli.app", "app_delete")
+    app_impact = LazyCallable("cxas_scrapi.cli.app", "app_impact")
     app_init = LazyCallable("cxas_scrapi.cli.app", "app_init")
     app_lint = LazyCallable("cxas_scrapi.cli.app", "app_lint")
     app_pull = LazyCallable("cxas_scrapi.cli.app", "app_pull")
@@ -2897,6 +2899,50 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
     parser_lint.set_defaults(func=app_lint)
+
+    # Parser for 'impact'
+    parser_impact = subparsers.add_parser(
+        "impact",
+        help=(
+            "Analyze resource dependencies and blast radius across an app "
+            "directory."
+        ),
+    )
+    parser_impact.add_argument(
+        "--app-dir",
+        default=".",
+        help=(
+            "Path to the app directory to analyze (default: current directory)."
+        ),
+    )
+    parser_impact.add_argument(
+        "--target",
+        type=str,
+        default=None,
+        help=(
+            "Target resource to analyze (e.g., variable:customer_id, "
+            "tool:lookup_order, agent:Billing, guardrail:safety, "
+            "toolset:crm, or bare resource name)."
+        ),
+    )
+    parser_impact.add_argument(
+        "--diff",
+        nargs="?",
+        const="HEAD",
+        default=None,
+        help=(
+            "Compute combined blast radius for files changed in git diff "
+            "against the specified ref (default ref when flag is present: "
+            "HEAD)."
+        ),
+    )
+    parser_impact.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output results as JSON.",
+    )
+    parser_impact.set_defaults(func=app_impact)
 
     # Parser for 'llm-lint'
     parser_llm_lint = subparsers.add_parser(
