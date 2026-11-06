@@ -1,0 +1,10 @@
+{
+  "name": "execute_live_agent_handover",
+  "pythonFunction": {
+    "name": "execute_live_agent_handover",
+    "pythonCode": "tools/execute_live_agent_handover/python_function/python_code.py",
+    "description": "Hands the conversation to a live representative.\n\nCall this directly without replying to the customer first. Put the message\nfor the customer in pre_transfer_message instead.\n\nArgs:\n  reason (str): Short reason code for the handoff, e.g.\n    'customer_requested_agent' or 'request_not_supported'.\n  pre_transfer_message (Optional[str]): One sentence letting the customer know\n    you're connecting them with a representative.\n\nReturns:\n  dict[str, Any]: Handoff status and reason."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "execute_live_agent_handover"
+}

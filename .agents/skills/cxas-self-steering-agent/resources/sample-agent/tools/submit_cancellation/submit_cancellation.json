@@ -1,0 +1,10 @@
+{
+  "name": "submit_cancellation",
+  "pythonFunction": {
+    "name": "submit_cancellation",
+    "pythonCode": "tools/submit_cancellation/python_function/python_code.py",
+    "description": "Cancels an order that hasn't shipped yet.\n\nArgs:\n  order_number (str): The order number to cancel, as a string.\n  reason (str): The customer's reason for canceling, in a few words.\n\nReturns:\n  dict[str, Any]: Whether the order was canceled, and the refund timeline."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "submit_cancellation"
+}

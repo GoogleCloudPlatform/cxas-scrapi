@@ -1,0 +1,105 @@
+{
+  "name": "self-steering-agent-sample",
+  "displayName": "self-steering-agent-sample",
+  "rootAgent": "Support_Agent",
+  "audioProcessingConfig": {
+    "synthesizeSpeechConfigs": {
+      "en-US": {
+        "voice": "en-US-Chirp3-HD-Aoede",
+        "speakingRate": 1.0
+      }
+    },
+    "bargeInConfig": {
+      "bargeInAwareness": true
+    },
+    "ambientSoundConfig": {}
+  },
+  "loggingSettings": {
+    "redactionConfig": {},
+    "audioRecordingConfig": {},
+    "bigqueryExportSettings": {
+      "enabled": true,
+      "project": "$env_var"
+    },
+    "cloudLoggingSettings": {
+      "enableCloudLogging": true
+    },
+    "conversationLoggingSettings": {
+      "retentionWindow": "31536000s"
+    },
+    "evaluationAudioRecordingConfig": {},
+    "metricAnalysisSettings": {}
+  },
+  "modelSettings": {
+    "model": "gemini-composite-v1",
+    "temperature": 1.0
+  },
+  "variableDeclarations": [
+    {
+      "name": "current_playbook",
+      "description": "Playbook the agent currently has open.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "current_task",
+      "description": "Task the agent currently has loaded inside the open playbook.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "next_agent_actions",
+      "description": "Reply and actions queued by a tool through set_next_agent_actions, played by the before-model callback without calling the model.",
+      "schema": {
+        "type": "OBJECT"
+      }
+    },
+    {
+      "name": "played_greeting",
+      "description": "Whether the greeting was already sent.",
+      "schema": {
+        "type": "BOOLEAN",
+        "default": false
+      }
+    },
+    {
+      "name": "order_id",
+      "description": "Order number of the order that was last looked up.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "order_status",
+      "description": "Status of the order that was last looked up (Processing, Shipped, Delivered, Canceled, Return Started).",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "sms_disclosure_played",
+      "description": "Whether the text message terms were shared with the customer.",
+      "schema": {
+        "type": "BOOLEAN",
+        "default": false
+      }
+    }
+  ],
+  "dataStoreSettings": {},
+  "languageSettings": {
+    "defaultLanguageCode": "en-US",
+    "fallbackAction": "exit"
+  },
+  "defaultChannelProfile": {},
+  "timeZoneSettings": {
+    "timeZone": "America/New_York"
+  },
+  "toolExecutionMode": "PARALLEL",
+  "errorHandlingSettings": {}
+}
