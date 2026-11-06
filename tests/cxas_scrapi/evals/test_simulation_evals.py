@@ -3430,3 +3430,153 @@ def test_inconclusive_reason_detects_zero_caller_turns_and_retries() -> None:
         results[0]["retried_because"]
         == "caller turns never reached agent (0 turns)"
     )
+
+
+def test_simulation_evals_requires_local_execution_tool_expectations() -> None:
+    req, reason = SimulationEvals.requires_local_execution(
+        {
+            "name": "case_with_tool_exp",
+            "tool_expectations": [
+                {"type": "tool_called", "tool": "lookup_account"}
+            ],
+        }
+    )
+    assert req is True
+    assert "tool_expectations" in reason
+
+
+def test_simulation_evals_declared_expectations_counts_tool_expectations() -> (
+    None
+):
+    tc = {
+        "expectations": ["agent confirms action"],
+        "tool_expectations": [
+            {"type": "tool_called", "tool": "lookup_account"},
+            {"type": "terminal_tool", "tool": "end_session"},
+        ],
+    }
+    assert SimulationEvals._declared_expectations_count(tc) == 3
+
+
+def test_simulation_evals_with_tool_expectations_met_and_folded() -> None:
+    evals = _naturalness_evals(expectations_only=False)
+    conv = _passing_conv(naturalness_result=None)
+    conv.expectation_results = [
+        ExpectationResult(
+            expectation="Agent is helpful",
+            status=ExpectationStatus.MET,
+            justification="Helpful.",
+        )
+    ]
+    conv._detailed_trace = [
+        "Tool Call: lookup_account with args {'account_id': '101'}\n"
+        "Tool Response: lookup_account with result {'status': 'active'}\n"
+        "Tool Call (Output): end_session with args {}"
+    ]
+    tc = {
+        "name": "sim_test",
+        "steps": [{"goal": "Goal 1", "success_criteria": "Done"}],
+        "expectations": ["Agent is helpful"],
+        "tool_expectations": [
+            {"type": "tool_called", "tool": "lookup_account"},
+            {"type": "last_tool", "tool": "end_session"},
+        ],
+    }
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc=tc,
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is True
+    assert res["judge_passed"] is True
+    assert res["expectations"] == "4/4"
+    tool_details = [
+        d
+        for d in res["expectation_details"]
+        if d["expectation"].startswith("[tool] ")
+    ]
+    assert len(tool_details) == 3
+
+
+def test_simulation_evals_with_tool_expectations_failed_fails_run() -> None:
+    evals = _naturalness_evals(expectations_only=False)
+    conv = _passing_conv(naturalness_result=None)
+    conv.expectation_results = [
+        ExpectationResult(
+            expectation="Agent is helpful",
+            status=ExpectationStatus.MET,
+            justification="Helpful.",
+        )
+    ]
+    conv._detailed_trace = [
+        "Tool Call: cancel_order with args {'order_id': '999'}\n"
+        "Tool Call (Output): end_session with args {}"
+    ]
+    tc = {
+        "name": "sim_test",
+        "steps": [{"goal": "Goal 1", "success_criteria": "Done"}],
+        "expectations": ["Agent is helpful"],
+        "tool_expectations": [
+            {"type": "tool_not_called", "tool": "cancel_order"},
+        ],
+    }
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc=tc,
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is False
+    assert res["judge_passed"] is True
+    assert res["expectations"] == "2/3"
+
+
+def test_simulation_evals_error_path_counts_tool_expectations_in_totals() -> (
+    None
+):
+    evals = _naturalness_evals(expectations_only=False)
+    tc = {
+        "name": "sim_test",
+        "steps": [{"goal": "Goal 1", "success_criteria": "Done"}],
+        "expectations": ["Agent is helpful"],
+        "tool_expectations": [
+            {"type": "tool_called", "tool": "lookup_account"},
+            {"type": "tool_called", "tool": "create_order"},
+        ],
+    }
+
+    with patch.object(
+        evals,
+        "simulate_conversation",
+        side_effect=RuntimeError("connection died"),
+    ):
+        res = evals._run_single_simulation_job(
+            tc=tc,
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is False
+    assert "error" in res
+    assert res["goals"] == "0/1"
+    assert res["expectations"] == "0/3"

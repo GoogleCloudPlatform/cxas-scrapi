@@ -719,6 +719,8 @@ class SimulationEvals(Apps):
             return True, "voice_config requires local client simulation"
         if test_case.get("naturalness_metric") or test_case.get("naturalness"):
             return True, "naturalness_metric requires local client evaluation"
+        if test_case.get("tool_expectations"):
+            return True, "tool_expectations requires local client evaluation"
         if test_case.get("barge_in_after_ms") is not None:
             return True, "barge_in_after_ms requires local audio bidi session"
         for step in test_case.get("steps", []):
@@ -2220,6 +2222,21 @@ class SimulationEvals(Apps):
                     "sim_user_voice", voice_config.get("voice_name", "")
                 )
 
+            if tc.get("tool_expectations") and isinstance(result, dict):
+                from cxas_scrapi.evals import tool_expectations  # noqa: PLC0415
+
+                checks = tool_expectations.apply_to_result(tc, result)
+                failed_checks = [c for c in checks if not c.met]
+                if failed_checks and (parallel > 1 or not verbose):
+                    reasons = "; ".join(
+                        f"{c.operator}: {c.justification}"
+                        for c in failed_checks
+                    )
+                    print(
+                        f"  FAIL  {name} (run {run_idx + 1}/{runs})"
+                        f" [tool_expectations] {reasons}"
+                    )
+
             return result
         except Exception as e:
             print(f"  ERROR  {label}: {e}")
@@ -2244,19 +2261,24 @@ class SimulationEvals(Apps):
     def _declared_expectations_count(
         tc: dict[str, Any], conv: Any = None
     ) -> int:
-        tc_exp = len(tc.get("expectations") or []) + len(
-            tc.get("audio_expectations") or []
+        tc_exp = (
+            len(tc.get("expectations") or [])
+            + len(tc.get("audio_expectations") or [])
+            + len(tc.get("tool_expectations") or [])
         )
         if tc_exp > 0:
             return tc_exp
         if conv is not None:
             conv_exp = getattr(conv, "expectations", None)
             conv_audio_exp = getattr(conv, "audio_expectations", None)
+            conv_tool_exp = getattr(conv, "tool_expectations", None)
             count = 0
             if isinstance(conv_exp, (list, tuple)):
                 count += len(conv_exp)
             if isinstance(conv_audio_exp, (list, tuple)):
                 count += len(conv_audio_exp)
+            if isinstance(conv_tool_exp, (list, tuple)):
+                count += len(conv_tool_exp)
             return count
         return 0
 

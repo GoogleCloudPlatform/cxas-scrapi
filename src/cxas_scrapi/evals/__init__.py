@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from cxas_scrapi.evals import tool_expectations
 from cxas_scrapi.evals.callback_evals import CallbackEvals
 from cxas_scrapi.evals.guardrail_evals import GuardrailEvals
 from cxas_scrapi.evals.shadow_evals import (
@@ -35,4 +36,5 @@ __all__ = [
     "SimulationEvals",
     "ToolEvals",
     "TurnEvals",
+    "tool_expectations",
 ]
