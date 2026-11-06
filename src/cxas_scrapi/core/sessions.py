@@ -516,6 +516,7 @@ class BidiSessionHandler:
         self._close_status_code: int | None = None
         self._close_msg: str | None = None
         self._connection_error: BaseException | None = None
+        self._ws_closed = False
         # Set once a self-terminating transfer payload is seen: the session is
         # over, so the socket close that follows is the expected teardown.
         self._self_terminated_transfer = False
@@ -594,9 +595,14 @@ class BidiSessionHandler:
 
             return chunk_segment.raw_data[:chunk_bytes_len]
 
+    def _is_session_aborted(self) -> bool:
+        return self._ws_closed or self._connection_error is not None
+
     def _send_silence(self, num_chunks: int) -> None:
         chunk_duration_ms = 100
         for _ in range(num_chunks):
+            if self._is_session_aborted():
+                break
             noise_chunk = self._get_next_noise_chunk(chunk_duration_ms)
             query_message = types.BidiSessionClientMessage(
                 realtime_input=types.SessionInput(audio=noise_chunk)
@@ -671,6 +677,8 @@ class BidiSessionHandler:
 
             logging.debug("Sending audio chunks for turn %d...", turn_index)
             for i in range(0, len(audio_bytes), AUDIO_CHUNK_SIZE):
+                if self._is_session_aborted():
+                    return
                 chunk = audio_bytes[i : i + AUDIO_CHUNK_SIZE]
 
                 if self.bg_noise_segment is not None:
@@ -713,7 +721,7 @@ class BidiSessionHandler:
                         self.ws_app.send(query_json)
                 time.sleep(CHUNK_DELAY)
 
-            if trailing_silence:
+            if trailing_silence and not self._is_session_aborted():
                 logging.debug(
                     "Sending trailing silence for turn %d to "
                     "trigger endpointing...",
@@ -770,7 +778,12 @@ class BidiSessionHandler:
 
             logging.debug("Waiting for agent to finish turn %d...", turn_index)
             while not self.agent_turn_manager.is_agent_done_talking():
+                if self._is_session_aborted():
+                    break
                 self._send_silence(1)
+
+            if self._is_session_aborted():
+                return
 
             if not self.interactive:
                 self._save_and_increment_agent_audio()
@@ -1060,12 +1073,14 @@ class BidiSessionHandler:
 
             if self.inputs is not None:
                 for idx, input_item in enumerate(self.inputs):
+                    if self._is_session_aborted():
+                        break
                     self._send_single_input(input_item, idx)
             elif self.input_queue is not None:
                 idx = 0
-                while True:
+                while not self._is_session_aborted():
                     input_item = self.input_queue.get()
-                    if input_item is None:
+                    if input_item is None or self._is_session_aborted():
                         logging.debug("Received exit sentinel in input queue.")
                         break
                     self._send_single_input(input_item, idx)
@@ -1075,9 +1090,10 @@ class BidiSessionHandler:
                 self.ws_app.close()
                 return
 
-            logging.debug("All inputs sent and turns completed.")
-            time.sleep(1)  # arbitrary short wait before disconnecting
-            self.ws_app.close()
+            if not self._is_session_aborted():
+                logging.debug("All inputs sent and turns completed.")
+                time.sleep(1)  # arbitrary short wait before disconnecting
+                self.ws_app.close()
 
         except Exception as e:
             logging.debug("Error during send_inputs: %s", e)
@@ -1136,7 +1152,12 @@ class BidiSessionHandler:
                     idx,
                 )
                 while not self.agent_turn_manager.is_agent_done_talking():
+                    if self._is_session_aborted():
+                        break
                     time.sleep(1)
+
+                if self._is_session_aborted():
+                    return
 
                 if not self.interactive:
                     self._save_and_increment_agent_audio()
@@ -1514,6 +1535,8 @@ class BidiSessionHandler:
         logging.debug("WebSocket error: %s", error)
         # Stash connection-level errors
         self._connection_error = error
+        self._ws_closed = True
+        self.agent_turn_manager.mark_turn_completed()
         if self.response_queue is not None:
             if self._self_terminated_transfer:
                 # A self-terminating transfer already ended the session; the
@@ -1543,6 +1566,8 @@ class BidiSessionHandler:
         # Stash close status to verify clean closure
         self._close_status_code = close_status_code
         self._close_msg = close_msg
+        self._ws_closed = True
+        self.agent_turn_manager.mark_turn_completed()
         if self.response_queue is not None:
             self.response_queue.put(
                 {
@@ -1591,6 +1616,8 @@ class BidiSessionHandler:
                     f"bidi run timed out after {_BIDI_RUN_TIMEOUT_S}s "
                     "(no end-of-turn or close)"
                 )
+            self._ws_closed = True
+            self.agent_turn_manager.mark_turn_completed()
             with contextlib.suppress(Exception):
                 self.ws_app.close()
             wst.join(timeout=5)

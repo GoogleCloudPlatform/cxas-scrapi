@@ -98,6 +98,9 @@ ALLOWED_BRANDS: tuple[str, ...] = (
     "Parselmouth",
     "praat-parselmouth",
     "Praat",
+    "pydub",
+    "AudioSegment",
+    "requests",
 )
 
 
