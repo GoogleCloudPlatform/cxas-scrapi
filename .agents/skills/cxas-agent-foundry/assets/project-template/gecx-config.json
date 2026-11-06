@@ -1,10 +1,11 @@
 {
   "_comment_model": [
-    "MODEL SELECTION (set automatically based on modality):",
-    "  Audio/voice agents: model=gemini-3.1-flash-live, modality=audio, default_channel=audio",
-    "  Text-only agents:   model=gemini-3-flash, modality=text, default_channel=text",
-    "  IMPORTANT: When switching modality, update ALL THREE fields together:",
-    "  model, modality, AND default_channel. Mismatched values cause eval failures."
+    "MODEL SELECTION:",
+    "  Audio/voice agents: model=gemini-composite-v2, modality=audio, default_channel=audio",
+    "  Text-only agents:   model=gemini-composite-v2, modality=text, default_channel=text",
+    "  (Opt-in native audio-to-audio: model=gemini-3.1-flash-live)",
+    "  IMPORTANT: When switching modality, update modality AND default_channel",
+    "  together (and omit gcs_bucket for text agents). Mismatched values cause eval failures."
   ],
   "_comment_deployed_app_id": [
     "CRITICAL FORMATTING:",
@@ -24,7 +25,7 @@
   "app_name": "your-app-name",
   "deployed_app_id": null,
   "app_dir": "cxas_app/",
-  "model": "gemini-3.1-flash-live",
+  "model": "gemini-composite-v2",
   "modality": "audio",
   "default_channel": "audio",
   "gcs_bucket": "gs://YOUR_BUCKET_NAME"

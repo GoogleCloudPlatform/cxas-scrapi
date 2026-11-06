@@ -27,24 +27,28 @@
     "displayName": "Sample Support Agent",
     "description": "Sample customer support agent demonstrating GECX best practices",
     "rootAgent": "root_agent",
+    "globalInstruction": "global_instruction.txt",
     "tools": [
         "lookup_account",
+        "payload_update_tool",
         "set_session_state"
     ],
 
     "_comment_model_settings": [
-        "MODEL SETTINGS (set based on modality):",
-        "  Audio/voice: gemini-3.1-flash-live (streaming, real-time voice)",
-        "  Text-only:   gemini-3-flash (lower latency, no streaming)",
-        "  The '-live' suffix enables bidirectional streaming for voice."
+        "MODEL SETTINGS:",
+        "  Audio/voice & Text: gemini-composite-v2 (default enterprise stack; uses",
+        "    Chirp 3 HD Aoede for voice and gemini-3.7-flash-fast in text mode)",
+        "  Opt-in A2A:         gemini-3.1-flash-live (native audio-to-audio streaming; no inline TTS tags)"
     ],
     "modelSettings": {
-        "model": "gemini-3.1-flash-live"
+        "model": "gemini-composite-v2"
     },
 
     "_comment_audio_settings": [
         "AUDIO / LANGUAGE / TIMEZONE:",
         "  Set these for voice agents. Text-only agents can omit them.",
+        "  For gemini-composite-v2, omit Director's Notes on synthesizeSpeechConfigs",
+        "  and set bargeInAwareness: true.",
         "  toolExecutionMode: PARALLEL reduces latency by running independent",
         "  tool calls concurrently instead of sequentially."
     ],
@@ -55,13 +59,16 @@
         "timeZone": "America/New_York"
     },
     "audioProcessingConfig": {
+        "inactivityTimeout": "20s",
+        "bargeInConfig": {
+            "bargeInAwareness": true
+        },
         "synthesizeSpeechConfigs": {
             "en-US": {
+                "voice": "en-US-Chirp3-HD-Aoede",
                 "speakingRate": 1.0
             }
         }
-    },
-    "defaultChannelProfile": {
     },
     "_comment_logging_settings": [
         "LOGGING SETTINGS:",
@@ -107,6 +114,8 @@
         {"name": "_escalation_reason", "description": "Internal reason for escalation", "schema": {"type": "STRING", "default": ""}},
         {"name": "_escalation_topic", "description": "Internal topic category for escalation routing", "schema": {"type": "STRING", "default": ""}},
         {"name": "api_failed", "description": "Flag indicating API failure in callbacks", "schema": {"type": "STRING", "default": "false"}},
+        {"name": "api_error_detail", "description": "Diagnostic error detail from callback API failure", "schema": {"type": "STRING", "default": ""}},
+        {"name": "service_status", "description": "Derived customer service status from profile lookup", "schema": {"type": "STRING", "default": ""}},
         {"name": "no_input_counter", "description": "Consecutive silence/no-input count", "schema": {"type": "STRING", "default": "0"}}
     ]
 }

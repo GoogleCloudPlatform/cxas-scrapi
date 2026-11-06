@@ -27,6 +27,9 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | I014 | `missing-current-date` | Warning | Instruction (or global instruction) should reference `{current_date}` |
     | I015 | `banned-legacy-xml-tags` | Error | Instruction uses a banned legacy XML tag |
     | I016 | `prose-state-machine` | Warning | Instruction encodes a state machine in prose (named-step GOTOs, retry counters, STOP tokens, state writes, orchestrator `agent_action` traversal) |
+    | I017 | `composite-v2-invalid-audio-tags` | Error | Invalid Composite v2 TTS markup (`</prosody>`, `<slow>`, `[tag]`, or translated tags) in instructions or callbacks (`gemini-composite-v2`) |
+    | I018 | `composite-v2-normalization-scope` | Warning | Text normalization block lacks a `Scope:` guard excluding tool arguments (`gemini-composite-v2`) |
+    | I019 | `live-audio-inline-tags` | Error | Inline TTS delivery tags emitted on native audio-to-audio (`live`) models |
     | I020 | `ces-jinja-subset-syntax` | Error | Instruction uses unsupported CES Jinja syntax (`not in`, `dict['key']` subscripts, or `{# ... #}` comments) |
 
     ---
@@ -378,6 +381,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A004 | `config-missing-instruction` | Error | Agent directory must have an `instruction.txt` file |
     | A005 | `config-root-missing-end-session` | Error | Root agent must have `end_session` tool |
     | A006 | `config-root-agent` | Error | App config must have a valid `rootAgent` pointing to an existing agent directory |
+    | A013 | `composite-v2-speech-instruction` | Warning | Legacy Director's Notes in `synthesizeSpeechConfigs` or missing `voiceInstructionMode: "NO_INSTRUCTION"` on `gemini-composite-v2` |
     | A014 | `async-tool-missing-inactivity-timeout` | Error | Apps with `ASYNCHRONOUS` tools must configure `audioProcessingConfig.inactivityTimeout` |
     | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95 top-level variables (platform cap ~100) |
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |

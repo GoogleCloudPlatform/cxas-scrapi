@@ -56,9 +56,14 @@ def detect_modality_from_app(app_dir: typing.Any) -> typing.Any:
 
     app_name = app.get("displayName", app.get("name", ""))
 
-    # Detect modality from model name
-    if "live" in model.lower():
+    # Detect modality from audioProcessingConfig and model name
+    model_lower = model.lower()
+    audio_cfg = app.get("audioProcessingConfig")
+    has_audio_cfg = isinstance(audio_cfg, dict) and bool(audio_cfg)
+    if any(tok in model_lower for tok in ("live", "audio", "voice")):
         modality = "audio"
+    elif "composite" in model_lower:
+        modality = "audio" if has_audio_cfg else "text"
     else:
         modality = "text"
 
@@ -117,13 +122,13 @@ def main() -> typing.Any:
             print(f"Error: Failed to pull app. Exit code {result.returncode}")
             sys.exit(1)
 
-        # Detect modality from pulled app.json
-        app_name, model, modality = detect_modality_from_app(app_dir)
+        # Detect modality from pulled app.json (allow explicit --modality override)
+        app_name, model, detected_modality = detect_modality_from_app(app_dir)
+        modality = args.modality or detected_modality or "audio"
 
         if not model:
-            print("Warning: Could not detect model from app.json. Using defaults.")
-            model = "gemini-3.1-flash-live" if (args.modality == "audio") else "gemini-3-flash"
-            modality = args.modality or "audio"
+            print("Warning: Could not detect model from app.json. Using default.")
+            model = "gemini-composite-v2"
 
         if not app_name:
             app_name = args.app_id
@@ -138,7 +143,7 @@ def main() -> typing.Any:
             sys.exit(1)
 
         modality = args.modality
-        model = "gemini-3.1-flash-live" if modality == "audio" else "gemini-3-flash"
+        model = "gemini-composite-v2"
         app_name = folder_name
         deployed_app_id = None
 
