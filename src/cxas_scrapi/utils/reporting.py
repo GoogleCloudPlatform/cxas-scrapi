@@ -7390,6 +7390,7 @@ def generate_combined_report_from_dir(
     bg_noise_file: str | None = None,
     bg_noise_snr: float | None = None,
     burst_noise_files: list[str] | None = None,
+    burst_noise_snr: float | None = None,
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
     expectations_only: bool = False,
@@ -7497,6 +7498,10 @@ def generate_combined_report_from_dir(
 
     if run:
         extra_run_kwargs: dict[str, Any] = {}
+        if bg_noise_snr is not None:
+            extra_run_kwargs["bg_noise_snr"] = bg_noise_snr
+        if burst_noise_snr is not None:
+            extra_run_kwargs["burst_noise_snr"] = burst_noise_snr
         if infra_retries != 2:
             extra_run_kwargs["infra_retries"] = infra_retries
         if retry_parallel is not None:
@@ -7737,6 +7742,7 @@ def generate_combined_report_from_dir(
             golden_modality=modality,
             sim_modality=modality,
             bg_noise_file=bg_noise_file,
+            bg_noise_snr=bg_noise_snr,
             burst_noise_files=burst_noise_files,
             audio_analysis=audio_analysis,
             **extra_html_kwargs,
@@ -7875,6 +7881,7 @@ def run_all_evals(
     bg_noise_file: str | None = None,
     bg_noise_snr: float | None = None,
     burst_noise_files: list[str] | None = None,
+    burst_noise_snr: float | None = None,
     use_tool_fakes: bool = False,
     timestamp: str | None = None,
     expectations_only: bool = False,
@@ -7934,6 +7941,10 @@ def run_all_evals(
       'callback'.
     """
     extra_kwargs: dict[str, Any] = {}
+    if bg_noise_snr is not None:
+        extra_kwargs["bg_noise_snr"] = bg_noise_snr
+    if burst_noise_snr is not None:
+        extra_kwargs["burst_noise_snr"] = burst_noise_snr
     if infra_retries != 2:
         extra_kwargs["infra_retries"] = infra_retries
     if retry_parallel is not None:
