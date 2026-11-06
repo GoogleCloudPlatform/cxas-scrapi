@@ -84,6 +84,7 @@ class ToolSource(str, Enum):
 
     TOP_LEVEL = "top_level"
     DIAGNOSTIC_INFO = "diagnostic_info"
+    CALLBACK = "callback"
 
 
 class ParsedToolCall:
@@ -120,9 +121,13 @@ class ParsedSessionResponse:
     """
 
     def __init__(
-        self, response: Any, tools_map: dict[str, str] | None = None
+        self,
+        response: Any,
+        tools_map: dict[str, str] | None = None,
+        include_callback_tools: bool = False,
     ) -> None:
         self.tools_map = tools_map or {}
+        self.include_callback_tools = include_callback_tools
         self._raw_response = response
         self.outputs = []
 
@@ -150,6 +155,8 @@ class ParsedSessionResponse:
         self.user_texts: list[str] = []
         self.tool_calls: list[ParsedToolCall] = []
         self.tool_responses: list[ParsedToolResponse] = []
+        self.callback_tool_calls: list[ParsedToolCall] = []
+        self.callback_tool_responses: list[ParsedToolResponse] = []
         self.agent_transfer: Any | None = None
         self.custom_payloads: list[dict[str, Any]] = []
         self.citations: list[dict[str, Any]] = []
@@ -294,6 +301,104 @@ class ParsedSessionResponse:
                     reason=g_reason,
                     span_dict=triggered_span,
                 )
+
+    def _extract_callback_tool_spans(
+        self,
+        span_dict: dict[str, Any],
+        existing_llm_tools: set[str],
+    ) -> None:
+        """Extracts Tool and sibling Fake Tool spans invoked by Callback spans."""
+        if not isinstance(span_dict, dict):
+            return
+
+        def _record_span(tool_span: dict[str, Any], span_kind: str) -> None:
+            attrs = tool_span.get("attributes") or {}
+            if not isinstance(attrs, dict):
+                return
+            raw_name = (
+                attrs.get("display_name")
+                or attrs.get("displayName")
+                or attrs.get("tool")
+                or attrs.get("name")
+                or ""
+            )
+            if not raw_name:
+                for grandchild in (
+                    tool_span.get("childSpans")
+                    or tool_span.get("child_spans")
+                    or []
+                ):
+                    if isinstance(grandchild, dict) and str(
+                        grandchild.get("name", "")
+                    ).startswith("Tool: "):
+                        raw_name = str(grandchild["name"])[
+                            len("Tool: ") :
+                        ].strip()
+                        break
+            tool_name = self._resolve_tool_name(str(raw_name))
+            if not tool_name or tool_name in ("Tool", "Fake Tool"):
+                return
+            if span_kind == "Fake Tool" and tool_name in existing_llm_tools:
+                return
+            raw_in = (
+                attrs.get("args")
+                if "args" in attrs
+                else (
+                    attrs.get("input")
+                    if "input" in attrs
+                    else attrs.get("parameters")
+                )
+            )
+            args = expand_pb_struct(raw_in) if raw_in is not None else {}
+            if not isinstance(args, dict):
+                args = {} if args in (None, "") else {"value": args}
+            parsed_call = ParsedToolCall(
+                name=tool_name,
+                args=args,
+                source=ToolSource.CALLBACK,
+            )
+            self.callback_tool_calls.append(parsed_call)
+            if self.include_callback_tools:
+                self.tool_calls.append(parsed_call)
+            for out_key in ("response", "output", "result"):
+                if out_key in attrs and attrs[out_key] is not None:
+                    resp_val = expand_pb_struct(attrs[out_key])
+                    parsed_resp = ParsedToolResponse(
+                        name=tool_name, response=resp_val
+                    )
+                    self.callback_tool_responses.append(parsed_resp)
+                    if self.include_callback_tools:
+                        self.tool_responses.append(parsed_resp)
+                    break
+
+        def _walk(node: dict[str, Any]) -> None:
+            children = node.get("childSpans") or node.get("child_spans") or []
+            if not isinstance(children, list):
+                return
+            in_after_callback = False
+            for child in children:
+                if not isinstance(child, dict):
+                    continue
+                cname = str(child.get("name") or "")
+                if cname == "Callback":
+                    in_after_callback = True
+                    for grandchild in (
+                        child.get("childSpans")
+                        or child.get("child_spans")
+                        or []
+                    ):
+                        if not isinstance(grandchild, dict):
+                            continue
+                        gname = str(grandchild.get("name") or "")
+                        if gname in ("Tool", "Fake Tool"):
+                            _record_span(grandchild, gname)
+                elif cname == "Fake Tool" and in_after_callback:
+                    _record_span(child, "Fake Tool")
+                elif cname != "Guardrail":
+                    in_after_callback = False
+                    _walk(child)
+
+        _walk(span_dict)
 
     def _parse(self) -> None:
         top_dim = getattr(self._raw_response, "diagnostic_info", None)
@@ -675,6 +780,10 @@ class ParsedSessionResponse:
                         )
                         if transfer:
                             self.agent_transfer = transfer
+
+        existing_llm_tools = {tc.name for tc in self.tool_calls}
+        for span_dict in self.root_spans:
+            self._extract_callback_tool_spans(span_dict, existing_llm_tools)
 
         # Cleanup agent texts
         self.consolidated_agent_text = " ".join(self.agent_texts).strip()
