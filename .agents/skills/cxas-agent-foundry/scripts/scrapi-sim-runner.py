@@ -39,7 +39,6 @@ from config import get_project_path, load_app_name
 
 from cxas_scrapi.core.audio_transformer import parse_noise_snr
 from cxas_scrapi.evals.simulation_evals import (
-    _DEFAULT_EVAL_MODEL,
     _DEFAULT_SIM_USER_MODEL,
     LLMUserConversation,
     SimulationEvals,
@@ -58,6 +57,7 @@ SIM_TESTS_DIR = get_project_path("evals", "simulations")
 REPORTS_DIR = get_project_path("eval-reports")
 
 _DEFAULT_MODEL = _DEFAULT_SIM_USER_MODEL
+_DEFAULT_EVAL_MODEL = "gemini-3-flash-preview"
 
 
 def load_yaml() -> typing.Any:
@@ -493,7 +493,7 @@ def main() -> typing.Any:
         default=None,
         help=(
             "Gemini model name to use for evaluating expectations "
-            "(overrides --model; defaults to gemini-3.5-flash-lite)"
+            "(overrides --model; defaults to gemini-3-flash-preview)"
         ),
     )
     p_run.add_argument("--runs", type=int, default=1)

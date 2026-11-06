@@ -205,7 +205,7 @@ def test_sim_runner_cmd_run_decoupled_models(
         "--sim-user-model",
         "gemini-3.5-flash-lite",
         "--eval-model",
-        "gemini-2.5-pro",
+        "gemini-3-flash-preview",
     ]
 
     with (
@@ -236,7 +236,7 @@ def test_sim_runner_cmd_run_decoupled_models(
             runs=1,
             parallel=1,
             sim_user_model="gemini-3.5-flash-lite",
-            eval_model="gemini-2.5-pro",
+            eval_model="gemini-3-flash-preview",
             modality="text",
             verbose=False,
             use_tool_fakes=False,
