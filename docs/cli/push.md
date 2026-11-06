@@ -8,7 +8,7 @@
 cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
           [--app-name APP] [--display-name NAME]
           [--create-version] [--version-name NAME] [--version-description DESC]
-          [--overwrite]
+          [--overwrite] [--sync-shared]
           [--project-id PROJECT] [--location LOCATION]
 ```
 
@@ -25,6 +25,7 @@ cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
 | `--version-name NAME` | No | `import-TIMESTAMP` | Custom display name for the created version snapshot (used with `--create-version`). |
 | `--version-description DESC` | No | — | Description text for the created version snapshot (used with `--create-version`). |
 | `--overwrite` | No | `false` | Overwrite existing resources with imported data. Unmatched existing resources will be deleted. |
+| `--sync-shared` | No | `false` | Materialize shared callbacks and instruction fragments via `cxas sync-shared` before packaging and uploading. |
 | `--project-id PROJECT` | No | — | GCP project ID. Required for a display-name target or when creating a new app. Inferred from a full target resource name. |
 | `--location LOCATION` | No | — | GCP location (e.g., `global`, `us-central1`). Required for a display-name target or when creating a new app. Inferred from a full target resource name. |
 
@@ -35,11 +36,41 @@ The CLI bundles the following top-level items from `--app-dir` into a ZIP archiv
 - `app.yaml` / `app.json`
 - `global_instruction.txt`
 - `environment.json` (or the file you pass via `--env-file`)
-- `agents/`, `tools/`, `guardrails/`, `toolsets/`
+- `agents/`, `tools/`, `examples/`, `guardrails/`, `toolsets/`
 - `evaluations/`, `evaluationDatasets/`, `evaluationExpectations/`
 - `.github/workflows/`
 
-Everything else in the directory (e.g. `.git`, local test output) is ignored.
+Any other top-level directories or files in `--app-dir` (aside from standard repository/tooling metadata such as `.git`, `.gitignore`, `README.md`, `cxaslint.yaml`, `Dockerfile`, and `cxas_types.pyi`) are **not** part of the CXAS export format and will be excluded from the uploaded archive with an explicit warning:
+
+```text
+⚠️  Warning: The following top-level entries in ./my-agent are not part of the CXAS export format and will not be uploaded by cxas push: shared, custom_scripts
+```
+
+## Sharing Callbacks & Instruction Fragments (`cxas sync-shared`)
+
+Because the CES runtime executes each agent callback in an isolated sandbox and `cxas push` only uploads standard export directories, shared Python modules in top-level folders (such as `shared/`) cannot be imported directly at runtime. Use `cxas sync-shared` (or `cxas push --sync-shared`) to deterministically materialize shared code and prompt fragments into your agents before pushing:
+
+1. **Inline Callback Header Directive (`# @cxas-shared: <rel_path>`)**:
+   Place `# @cxas-shared: shared/callbacks/auth_guard.py` within the first 5 lines of any `agents/<agent>/**/*.py` callback file. Running `cxas sync-shared` copies the canonical file from `<app_dir>/shared/callbacks/auth_guard.py` into the target callback while preserving the `# @cxas-shared:` header.
+2. **Instruction Fragment Includes (`<!-- @cxas-include: <rel_path> -->`)**:
+   Wrap shared prompt sections in `instruction.txt` or `global_instruction.txt` with HTML comment markers:
+   ```markdown
+   <!-- @cxas-include: shared/instructions/tone.txt -->
+   (Synchronized automatically by cxas sync-shared)
+   <!-- @cxas-end-include -->
+   ```
+   Because CES preserves HTML comments in `instruction.txt` across exports, `cxas pull` followed by `cxas sync-shared` is round-trip idempotent.
+3. **Manifest Mapping (`shared/manifest.yaml` or `cxas_shared.yaml`)**:
+   Optionally declare canonical sources and target callback paths in `shared/manifest.yaml`:
+   ```yaml
+   mappings:
+     - source: shared/callbacks/common_before_model.py
+       targets:
+         - agents/agent_a/before_model_callbacks/cb/python_code.py
+         - agents/agent_b/before_model_callbacks/cb/python_code.py
+   ```
+
+Run `cxas sync-shared --app-dir ./my-agent --check` in CI to fail with exit code `1` if any target has drifted from its canonical source.
 
 ## Examples
 

@@ -41,6 +41,7 @@ When you pass a display name (e.g., `"My Support Agent"`) instead of a resource 
 |---------|-------------|
 | [`cxas pull`](pull.md) | Export an app from CX Agent Studio to a local directory. |
 | [`cxas push`](push.md) | Upload a local agent directory back to CX Agent Studio. |
+| [`cxas sync-shared`](push.md#sharing-callbacks--instruction-fragments-cxas-sync-shared) | Materialize or check shared callbacks (`# @cxas-shared:`) and instruction fragments (`<!-- @cxas-include: -->`) across agents. |
 | [`cxas create`](create.md) | Create a brand-new app in CX Agent Studio. |
 | [`cxas delete`](delete.md) | Permanently delete an app. |
 | [`cxas branch`](branch.md) | Clone an existing app into a new one (pull → create → push). |
