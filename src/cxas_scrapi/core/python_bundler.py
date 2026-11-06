@@ -45,7 +45,8 @@ def synthesize_python_env_files(
     app_dir: Path, dest_dir: Path | None = None
 ) -> Path | None:
     """
-    Synthesizes pythonEnvFiles/content/ and pythonEnvFiles.yaml from python_lib/.
+    Synthesizes pythonEnvFiles/content/ and pythonEnvFiles.yaml from
+    python_lib/.
     """
     if dest_dir is None:
         dest_dir = app_dir
@@ -75,23 +76,36 @@ def synthesize_python_env_files(
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, dst)
 
-    manifest = {}
+    manifest_entries = []
     for root, _dirs, files in os.walk(dest_lib):
-        for file in files:
+        for file in sorted(files):
             if file.endswith(".py"):
                 path = Path(root) / file
-                rel_path = path.relative_to(content_dir)
-                key = str(rel_path).replace(os.sep, "_").replace(".py", "")
-                manifest[key] = {
-                    "filePath": str(rel_path).replace(os.sep, "/"),
-                    "inlineContent": f"content/{str(rel_path).replace(os.sep, '/')}",  # noqa: E501
-                }
+                rel_content = path.relative_to(content_dir)
+                rel_env = path.relative_to(python_env_dir)
+                raw_id = (
+                    str(rel_content)
+                    .replace(os.sep, "-")
+                    .replace(".py", "")
+                    .replace("__init__", "init")
+                    .replace("_", "-")
+                )
+                clean_id = re.sub(r"[^a-zA-Z0-9-_]", "-", raw_id).strip("-_")
+                if len(clean_id) < 5:
+                    clean_id = f"pyenv-{clean_id}"
+                clean_id = clean_id[:36]
+                manifest_entries.append(
+                    {
+                        "name": clean_id,
+                        "filePath": str(rel_env).replace(os.sep, "/"),
+                    }
+                )
 
-    sorted_manifest = {k: manifest[k] for k in sorted(manifest.keys())}
+    manifest_entries.sort(key=lambda item: item["filePath"])
     yaml_path = python_env_dir / "pythonEnvFiles.yaml"
     with yaml_path.open("w", encoding="utf-8") as f:
         yaml.dump(
-            {"pythonEnvFiles": sorted_manifest},
+            {"pythonEnvFiles": manifest_entries},
             f,
             default_flow_style=False,
             sort_keys=False,
@@ -206,13 +220,13 @@ def bundle_shared_python(
         for agent in agents_dir.iterdir():
             if not agent.is_dir():
                 continue
-            cb_dir = agent / f"{agent.name}_callbacks"
-            if cb_dir.is_dir():
-                for cb in cb_dir.iterdir():
-                    if cb.is_dir():
-                        py_file = cb / "python_code.py"
-                        if py_file.is_file():
-                            entrypoints.append(py_file)
+            for cb_dir in sorted(agent.glob("*_callbacks")):
+                if cb_dir.is_dir():
+                    for cb in cb_dir.iterdir():
+                        if cb.is_dir():
+                            py_file = cb / "python_code.py"
+                            if py_file.is_file():
+                                entrypoints.append(py_file)
 
     tools_dir = app_dir / "tools"
     if tools_dir.is_dir():
@@ -282,11 +296,6 @@ def bundle_shared_python(
                 f'if getattr(_cxas_sys.modules.get("{m}"), "__cxas_digest__", None) != _CXAS_DIGEST:'  # noqa: E501
             )
 
-            # Note: We must construct parent packages if they don't exist
-            # but wait, the instructions specifically gave an example:
-            # _cxas_pkg = _cxas_sys.modules.setdefault("python_lib", _cxas_types.ModuleType("python_lib"))
-            # _cxas_mod = _cxas_types.ModuleType("python_lib.callback_guards")
-
             if len(parts) > 1:
                 parent = ".".join(parts[:-1])
                 bundle_lines.append(
@@ -299,13 +308,13 @@ def bundle_shared_python(
                 f'    _cxas_mod = _cxas_types.ModuleType("{m}")'
             )
             bundle_lines.append("    _cxas_mod.__cxas_digest__ = _CXAS_DIGEST")
+            bundle_lines.append(f'    _cxas_sys.modules["{m}"] = _cxas_mod')
 
             src_repr = repr(src)
             filename = m.replace(".", "/") + ".py"
             bundle_lines.append(
                 f'    exec(compile({src_repr}, "{filename}", "exec"), _cxas_mod.__dict__)'  # noqa: E501
             )
-            bundle_lines.append(f'    _cxas_sys.modules["{m}"] = _cxas_mod')
 
             if len(parts) > 1:
                 bundle_lines.append(
@@ -360,13 +369,13 @@ def strip_shared_bundles(
         for agent in agents_dir.iterdir():
             if not agent.is_dir():
                 continue
-            cb_dir = agent / f"{agent.name}_callbacks"
-            if cb_dir.is_dir():
-                for cb in cb_dir.iterdir():
-                    if cb.is_dir():
-                        py_file = cb / "python_code.py"
-                        if py_file.is_file():
-                            entrypoints.append(py_file)
+            for cb_dir in sorted(agent.glob("*_callbacks")):
+                if cb_dir.is_dir():
+                    for cb in cb_dir.iterdir():
+                        if cb.is_dir():
+                            py_file = cb / "python_code.py"
+                            if py_file.is_file():
+                                entrypoints.append(py_file)
 
     tools_dir = app_dir / "tools"
     if tools_dir.is_dir():
@@ -377,7 +386,7 @@ def strip_shared_bundles(
                     entrypoints.append(py_file)
 
     MARKER_REGEX = re.compile(
-        r"^(# === BEGIN CXAS_SHARED_BUNDLE \(sha256:([a-f0-9]{16})\) ===\n.*?^# === END CXAS_SHARED_BUNDLE ===\n?)",
+        r"^(# === BEGIN CXAS_SHARED_BUNDLE \(sha256:([a-f0-9]{16})\) ===\n.*?^# === END CXAS_SHARED_BUNDLE ===\n?)",  # noqa: E501
         re.MULTILINE | re.DOTALL,
     )
 
@@ -399,7 +408,7 @@ def strip_shared_bundles(
 
         parsed_modules = {}
         EXEC_REGEX = re.compile(
-            r'exec\(compile\((r?[\'"].*?[\'"]), "(.*?)", "exec"\), _cxas_mod\.__dict__\)',
+            r'exec\(compile\((r?[\'"].*?[\'"]), "(.*?)", "exec"\), _cxas_mod\.__dict__\)',  # noqa: E501
             re.DOTALL,
         )
         for exec_match in EXEC_REGEX.finditer(bundle_text):
@@ -427,7 +436,8 @@ def strip_shared_bundles(
 
         if actual_digest != expected_digest:
             raise BundleDigestMismatchError(
-                f"Block tampered in Console: {actual_digest} != {expected_digest}"
+                f"Block tampered in Console: "
+                f"{actual_digest} != {expected_digest}"
             )
 
         local_drift = False
@@ -442,10 +452,6 @@ def strip_shared_bundles(
                     if local_src != src:
                         local_drift = True
                         break
-        else:
-            # Materialize missing modules if not present locally? Instructions say:
-            # "optionally materialize python_lib/ if pythonEnvFiles/content/python_lib/ was exported"
-            pass
 
         if local_drift:
             raise BundleDigestMismatchError(

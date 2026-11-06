@@ -1,9 +1,10 @@
-import types
 import ast
 import json
+import types
 from pathlib import Path
 
 import pytest
+import yaml
 
 from cxas_scrapi.core.python_bundler import (
     BundleDigestMismatchError,
@@ -29,21 +30,28 @@ def test_ast_tree_shaking(tmp_path: Path) -> None:
     app_dir = tmp_path / "app"
     plib = app_dir / "python_lib"
     plib.mkdir(parents=True)
-    (plib / "guards.py").write_text("from python_lib import common\n")
-    (plib / "common.py").write_text("def x(): pass\n")
+    (plib / "guards.py").write_text(
+        "from python_lib.common import x\ndef check(): return x()\n"
+    )
+    (plib / "common.py").write_text("def x(): return 42\n")
     (plib / "unused_heavy.py").write_text("import json\n# lots of stuff")
 
     agent_dir = (
-        app_dir
-        / "agents"
-        / "my_agent"
-        / "my_agent_callbacks"
-        / "before_model_callbacks"
+        app_dir / "agents" / "my_agent" / "before_model_callbacks" / "cb_1"
     )
     agent_dir.mkdir(parents=True)
     ep = agent_dir / "python_code.py"
     ep.write_text(
-        "from __future__ import annotations\nimport python_lib.guards\ndef before_model_callback(cb, llm_request):\n    pass"
+        "from __future__ import annotations\nimport python_lib.guards\ndef before_model_callback(cb, llm_request):\n    return python_lib.guards.check()"
+    )
+
+    after_tool_dir = (
+        app_dir / "agents" / "my_agent" / "after_tool_callbacks" / "cb_2"
+    )
+    after_tool_dir.mkdir(parents=True)
+    ep2 = after_tool_dir / "python_code.py"
+    ep2.write_text(
+        "import python_lib.common\ndef after_tool_callback():\n    return python_lib.common.x()"
     )
 
     bundle_shared_python(app_dir)
@@ -52,10 +60,24 @@ def test_ast_tree_shaking(tmp_path: Path) -> None:
     assert "unused_heavy" not in content
     assert "common" in content
     assert "guards" in content
+    assert "CXAS_SHARED_BUNDLE" in ep2.read_text()
     # Topological sort check: common should be registered before guards
     common_idx = content.find("python_lib.common")
     guards_idx = content.find("python_lib.guards")
     assert common_idx < guards_idx
+
+    # Verify module pre-registration in _cxas_sys.modules allows transitive from-import during exec
+    sandbox_sys_modules: dict[str, types.ModuleType] = {}
+
+    class FakeSys:
+        modules = sandbox_sys_modules
+
+    class FakeTypes:
+        ModuleType = types.ModuleType
+
+    scope = {"_cxas_sys": FakeSys, "_cxas_types": FakeTypes}
+    exec(content, scope)
+    assert scope["before_model_callback"](None, None) == 42
 
 
 def test_pooled_sandbox_two_digests(tmp_path: Path) -> None:
@@ -104,9 +126,6 @@ def test_pooled_sandbox_two_digests(tmp_path: Path) -> None:
 
     class FakeSys:
         modules = sandbox_sys_modules
-
-    class FakeTypes:
-        ModuleType = types.ModuleType
 
     class FakeTypes:
         ModuleType = types.ModuleType
@@ -202,7 +221,16 @@ def test_native_python_env(tmp_path: Path) -> None:
     bundle_shared_python(app_dir, native_python_env=True)
 
     assert cb_dir.joinpath("python_code.py").read_text() == orig_ep
-    assert (app_dir / "pythonEnvFiles" / "pythonEnvFiles.yaml").exists()
+    yaml_path = app_dir / "pythonEnvFiles" / "pythonEnvFiles.yaml"
+    assert yaml_path.exists()
+    manifest = yaml.safe_load(yaml_path.read_text("utf-8"))
+    assert isinstance(manifest["pythonEnvFiles"], list)
+    assert manifest["pythonEnvFiles"] == [
+        {
+            "name": "python-lib-guards",
+            "filePath": "content/python_lib/guards.py",
+        }
+    ]
 
 
 def test_fuzz_search_filter() -> None:
@@ -271,7 +299,9 @@ def test_c011_rule(tmp_path: Path) -> None:
     # Needs a context with voice enabled
     app_root = tmp_path
     (app_root / "app.json").write_text('{"audioProcessingConfig": {"x": 1}}')
-    ctx = LintContext(project_root=tmp_path, app_dir=tmp_path, evals_dir=tmp_path)
+    ctx = LintContext(
+        project_root=tmp_path, app_dir=tmp_path, evals_dir=tmp_path
+    )
     ctx.app_root = app_root
 
     rule = VoiceBeforeModelToolMutation()
