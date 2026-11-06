@@ -69,6 +69,10 @@ per_file:
     I003: info # Relax IF/ELSE check for this file only
   "tools/internal_tool/python_function/python_code.py":
     T005: off  # This tool intentionally uses high-cardinality args
+
+# Python files or packages that hold your own lint rules
+custom_rules:
+  - lint_rules/team_rules.py
 ```
 
 ---
@@ -187,6 +191,24 @@ per_file:
 ```
 
 Per-file overrides take precedence over both the top-level `rules` and the rule's `default_severity`.
+
+### `custom_rules`
+
+**Type:** list of strings  
+**Default:** empty
+
+Python files or package directories that hold your own lint rules. Paths are relative to the directory that holds `cxaslint.yaml`. The linter imports each one and runs its rules with the built-in rules.
+
+```yaml
+custom_rules:
+  - lint_rules/team_rules.py   # A single module
+  - lint_rules/billing_rules   # A package directory with __init__.py
+```
+
+!!! warning
+    `cxas lint` runs the code in every file and package listed here. Only lint projects whose custom rules you trust.
+
+See [Custom Rules](custom-rules.md) for how to write a rule, and how to share rules as an installed package.
 
 ---
 
