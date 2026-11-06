@@ -275,6 +275,10 @@ def diff_autolabel_rules(
 ) -> dict[str, Any]:
     """Compares local YAML rules against active remote rules in GCP.
 
+    Local rules are matched to remote rules by rule ID. A local rule without
+    an explicit ``rule_id`` (or ``name``) that matches no remote ID is matched
+    on its ``labelKey`` instead, when exactly one unmatched remote rule uses it.
+
     Args:
         local_data: Parsed local YAML dictionary.
         remote_rules: List of active rules from CCAI Insights API.
@@ -291,11 +295,14 @@ def diff_autolabel_rules(
 
     # Map remote rules by their terminal ID and labelKey
     remote_by_id: dict[str, dict[str, Any]] = {}
+    remote_ids_by_label_key: dict[str, list[str]] = {}
     for r in remote_rules:
         name = r.get("name", "")
         rule_id = name.split("/")[-1] if name else r.get("labelKey", "")
         if rule_id:
             remote_by_id[rule_id] = r
+            label_key = r.get("labelKey", "")
+            remote_ids_by_label_key.setdefault(label_key, []).append(rule_id)
 
     to_create: list[tuple[str, dict[str, Any]]] = []
     to_update: list[tuple[str, dict[str, Any], list[str], str]] = []
@@ -304,6 +311,25 @@ def diff_autolabel_rules(
 
     for r in local_rules:
         rule_id, payload = yaml_rule_to_api_payload(r)
+        has_explicit_id = bool(r.get("rule_id") or r.get("name"))
+        if rule_id not in remote_by_id and not has_explicit_id:
+            # Rules created in the console (or without an ID) get a
+            # server-generated numeric ID, so a rule declared by label_key
+            # alone is matched on its labelKey instead.
+            candidates = [
+                rid
+                for rid in remote_ids_by_label_key.get(payload["labelKey"], [])
+                if rid not in seen_remote_ids
+            ]
+            if len(candidates) == 1:
+                rule_id = candidates[0]
+            elif len(candidates) > 1:
+                logger.warning(
+                    "Several remote rules use labelKey '%s' (%s); add a "
+                    "rule_id to the local rule to pick one.",
+                    payload["labelKey"],
+                    ", ".join(candidates),
+                )
         if rule_id not in remote_by_id:
             to_create.append((rule_id, payload))
         else:
