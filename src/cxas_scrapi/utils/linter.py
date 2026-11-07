@@ -25,6 +25,7 @@ Configuration lives in ``cxaslint.yaml``.
 
 import fnmatch
 import json
+import re
 import typing
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -590,6 +591,7 @@ class Discovery:
         if not agents_dir.exists():
             return []
         result = []
+        seen_paths: set[Path] = set()
         cb_types = [
             "before_model_callbacks",
             "after_model_callbacks",
@@ -612,8 +614,21 @@ class Discovery:
                     continue
                 for cb in sorted(cb_dir.iterdir()):
                     code = cb / "python_code.py"
-                    if code.exists():
+                    if code.exists() and code not in seen_paths:
+                        seen_paths.add(code)
                         result.append((agent_dir.name, cb_type, cb.name, code))
+            for d in sorted(agent_dir.iterdir()):
+                if not d.is_dir():
+                    continue
+                for cb_type in cb_types:
+                    if d.name.startswith(f"{cb_type}_"):
+                        code = d / "python_code.py"
+                        if code.exists() and code not in seen_paths:
+                            seen_paths.add(code)
+                            result.append(
+                                (agent_dir.name, cb_type, d.name, code)
+                            )
+                        break
         return result
 
     def discover_evals(self) -> dict[str, Path]:
@@ -784,16 +799,33 @@ def get_toolset_tools(
         if not schema_file.exists():
             return ToolsetResolution(behavior=ToolsetValidationBehavior.STRICT)
 
+        http_methods = {
+            "get",
+            "post",
+            "put",
+            "delete",
+            "patch",
+            "options",
+            "head",
+            "trace",
+        }
         tools = []
         try:
-            schema = yaml.safe_load(schema_file.read_text())
-            for _, methods in schema.get("paths", {}).items():
+            schema = yaml.safe_load(schema_file.read_text()) or {}
+            for path_str, methods in (schema.get("paths") or {}).items():
                 if not isinstance(methods, dict):
                     continue
-                for _, details in methods.items():
+                for method_name, details in methods.items():
                     if not isinstance(details, dict):
                         continue
                     op_id = details.get("operationId")
+                    if not op_id and str(method_name).lower() in http_methods:
+                        sanitized = re.sub(
+                            r"[^A-Za-z0-9_]",
+                            "_",
+                            str(path_str).strip("/"),
+                        )
+                        op_id = f"{str(method_name).upper()}_{sanitized}"
                     if op_id:
                         if allowed_tool_ids and op_id not in allowed_tool_ids:
                             continue

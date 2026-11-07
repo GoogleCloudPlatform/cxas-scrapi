@@ -110,7 +110,7 @@ parse the fulfillment blocks:
     -   Read `"entryFulfillment.messages"` inside `pages/<page_name>.json`.
     -   Extract speech variants under `"text": {"text": [...]}`. The simulated
         `Agent` turn MUST output this string verbatim.
-2.  **Form Slot-Filling Prompts**:
+2.  **Form Parameter Prompts**:
     -   Read `"initialPromptFulfillment.messages"` inside
         `"form.parameters[].fillBehavior"` in the page JSON.
     -   The simulated `Agent` turn asking for the parameter MUST output these

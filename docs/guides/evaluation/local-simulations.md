@@ -23,9 +23,9 @@ Because the user is simulated by a language model, the conversation is non-deter
 
 ---
 
-## YAML format
+## YAML & JSON format
 
-Simulation files use the `evals:` key at the top level:
+Simulation files (`.yaml`, `.yml`, or `.json`) use `evals:` (or `test_cases:` / `scenarios:`) at the top level, and support file-level `common_session_parameters` and `common_expectations` (individual cases can opt out via `exclude_common_expectations: true`):
 
 ```yaml
 evals:
@@ -59,6 +59,9 @@ evals:
 | `session_parameters` | dict | Variables injected at session start |
 | `steps` | list | Ordered sequence of conversational goals |
 | `expectations` | list | Post-conversation quality assertions evaluated by Gemini |
+| `tool_expectations` | list | Deterministic assertions on tool calls, inputs, outputs, ordering, and termination (see [Tool Expectations](tool-expectations.md)) |
+| `exclude_common_expectations` | bool | When `true`, skips merging file-level `common_expectations` into this test case |
+| `voice_config` | dict | Optional per-case TTS voice override (`{"voice_name": "...", "language_code": "..."}`); otherwise selected deterministically from `--sim-user-voices` |
 
 ### Step fields
 
@@ -87,6 +90,29 @@ expectations:
 
 Each expectation is judged as Met or Not Met, with a justification from Gemini.
 
+### Tool Expectations
+
+Unlike natural language expectations that judge agent transcript text, `tool_expectations` provide deterministic, hard-fail assertions evaluated directly on the agent's tool execution trace. They verify that tools were invoked with correct arguments, returned expected payloads, executed in proper order, and terminated the session cleanly:
+
+```yaml
+tool_expectations:
+  - type: tool_called
+    tool: lookup_account
+    min: 1
+  - type: tool_input
+    tool: check_availability
+    args:
+      item_id: "ITEM-42"
+  - type: tool_output
+    tool: check_availability
+    result:
+      status: "available"
+  - type: last_tool
+    tool: end_session
+```
+
+Tool expectations fold seamlessly into simulation results as `[tool] ` prefixed expectation details and update `result["passed"] = judge_passed and all_tool_checks_met`. For full operator reference and schema examples, see [Tool Expectations](tool-expectations.md).
+
 ---
 
 ## Running Simulations on the Platform (CXAS 2.0 Milestone Evals)
@@ -98,8 +124,8 @@ In addition to running locally via the Sessions API, SCRAPI can convert your sim
 When converting simulation test cases to CXAS 2.0 Milestone YAML (`EvalUtils.convert_sim_evals_to_milestone_yaml` or `SimulationEvals.to_milestone_yaml`):
 
 - Each evaluation and step is sanitized against the CES platform `MilestoneYamlTranslator` whitelists (`MILESTONE_ALLOWED_ROOT_KEYS`, `MILESTONE_ALLOWED_EVAL_KEYS`, `MILESTONE_ALLOWED_STEP_KEYS`).
-- Client-only keys (`audio_expectations`, `naturalness_metric`, `barge_in_after_ms`, `use_tool_fakes`, `modality`) are stripped automatically.
-- Step-level `inject_variables` on `step 0` are preserved, while `inject_variables` on later steps (`step_idx > 0`) are automatically hoisted into `session_parameters`.
+- Client-only keys (`audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, `barge_in_after_ms`, `modality`) are stripped automatically with logging warnings.
+- Step-level `inject_variables` on `step 0` are preserved, while `inject_variables` on later steps (`step_idx > 0`) are automatically hoisted into `session_parameters` with a warning.
 - When converting a directory of YAML files, file-level `common_session_parameters`, `common_expectations`, and `initial_event` are merged into each test case.
 - The sanitized YAML is imported via the CES REST `:importEvaluations` (`yamlContent`) endpoint, where each milestone is scored by the platform as `COMPLETED` (Pass), `IN_PROGRESS` (Fail), or `NOT_STARTED` (Fail) with a `justification`.
 
@@ -156,8 +182,86 @@ results = sim_evals.run_simulations(
 ```
 
 !!! info "Automatic hybrid routing (`run_on_platform=True`)"
-    When `run_on_platform=True` (or `--platform-sims` on the CLI) is enabled, `SimulationEvals.requires_local_execution(test_case)` inspects each test case. Standard text simulations run on the platform as CXAS 2.0 Milestone evaluations, while test cases that require local-only features (`modality: "audio"`, `audio_expectations`, `naturalness_metric`, `use_tool_fakes`, or `barge_in_after_ms`) are automatically partitioned and executed locally.
+    When `run_on_platform=True` (or `--platform-sims` on the CLI) is enabled, `SimulationEvals.requires_local_execution(test_case)` inspects each test case. Standard text simulations (including those with `use_tool_fakes=True`, executed via platform `EvaluationConfig.tool_call_behaviour = FAKE`) run on the platform as CXAS 2.0 Milestone evaluations, while test cases that require local-only features (`modality: "audio"`, `audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, or `barge_in_after_ms`) are automatically partitioned and executed locally.
 
+---
+
+## Background & Acoustic Noise Stress Testing
+
+When evaluating voice agents in `audio` modality, you can simulate real-world calling conditions by injecting background acoustic noise and intermittent burst noise directly onto simulated caller turns.
+
+### YAML Configuration
+
+Add `background_noise` and optional burst noise to your test case, or configure them file-wide via `common_background_noise` / `common_params`:
+
+```yaml
+# File-level common parameters applied to all test cases in this file:
+common_background_noise: "cafe"    # Preset, custom WAV, or shorthand "cafe:MEDIUM"
+common_bg_noise_level: "MEDIUM"     # "LOW" (20dB), "MEDIUM" (12dB), or "HIGH" (5dB)
+
+# Or grouped under common_params:
+# common_params:
+#   background_noise: "call_center"
+#   bg_noise_level: "LOW"
+
+evals:
+  - name: "order_lookup_noisy_cafe"
+    # Inherits common_background_noise and common_bg_noise_level automatically,
+    # or override / customize per-eval:
+    burst_noise:
+      files: ["dog_barking"]      # Built-in preset or custom WAV paths
+      snr: "HIGH"                 # Categorical level or float dB (5.0 dB)
+    voice_config:
+      prompt: "Speak with a slightly hurried, frustrated tone"  # Custom Gemini TTS style
+    steps:
+      - goal: "Ask about the status of order ORD-12345"
+        success_criteria: "The agent acknowledged order ORD-12345"
+
+  - name: "clean_quiet_call"
+    background_noise: false       # Explicit opt-out for quiet baseline testing
+    steps:
+      - goal: "Ask for store hours"
+        success_criteria: "Agent provided store hours"
+```
+
+### Noise Levels and Shorthand
+
+Categorical noise levels map directly to standardized Signal-to-Noise Ratios:
+- `LOW`: **20.0 dB SNR** (light, subtle background noise)
+- `MEDIUM`: **12.0 dB SNR** (moderate everyday background chatter/traffic; aliases: `med`, `moderate`)
+- `HIGH`: **5.0 dB SNR** (heavy, challenging acoustic noise; aliases: `heavy`, `loud`)
+
+You can also use shorthand syntax in `background_noise` directly, e.g.:
+```yaml
+background_noise: "cafe:HIGH"      # Equivalent to preset: cafe at 5.0 dB SNR
+background_noise: "traffic:LOW"    # Equivalent to preset: traffic at 20.0 dB SNR
+```
+
+### Built-in Presets
+
+SCRAPI bundles 13 verified acoustic presets (normalized to 16 kHz mono PCM):
+
+| Category | Presets | Description |
+|---|---|---|
+| **Public & Commercial** | `cafe`, `call_center`, `traffic` | Real coffee shop clatter, call center agents on headsets, and street traffic |
+| **Domestic & Indoor** | `baby_crying`, `kids_noise`, `dog_barking`, `tv_radio`, `kitchen` | Infant crying, playground children, barking dog, room TV news broadcast, and running sink water |
+| **Environmental** | `cross_talk`, `wind` | Continuous secondary human conversation, and Pixel 10 mic wind-tunnel buffeting (12mph) |
+| **Mathematical Color Noise** | `white`, `pink`, `brown` | Flat-spectrum, $1/\sqrt{f}$, and $1/f$ algorithmic noise |
+
+### Programmatic Usage
+
+Pass noise configuration directly to `SimulationEvals`:
+
+```python
+sim_evals = SimulationEvals(
+    app_name="projects/my-project/locations/us/apps/my-app",
+    modality="audio",
+    background_noise_file="call_center",
+    bg_noise_snr="MEDIUM",  # or 12.0
+    burst_noise_files=["dog_barking"],
+    burst_noise_snr="HIGH",  # or 5.0
+)
+```
 ---
 
 ## The `SimulationEvals` class

@@ -1,7 +1,0 @@
-{
-  "displayName": "Slot-Filling Flow Progression",
-  "llmCriteria": {
-    "prompt": "Evaluate whether the agent progresses naturally through the reservation slots during the portion of the conversation shown. After confirming a piece of information, the agent should move on to the next piece of information needed rather than repeating questions already answered. The conversation may only cover a subset of the full reservation flow — that is fine. PASS if the flow moves forward without getting stuck or repeating confirmed information. FAIL only if the agent clearly gets stuck in a loop, repeats a question that was already confirmed, or refuses to move forward when information has been provided."
-  },
-  "tags": ["slot-machine", "flow"]
-}

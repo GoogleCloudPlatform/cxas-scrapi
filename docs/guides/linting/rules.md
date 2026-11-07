@@ -27,6 +27,10 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | I014 | `missing-current-date` | Warning | Instruction (or global instruction) should reference `{current_date}` |
     | I015 | `banned-legacy-xml-tags` | Error | Instruction uses a banned legacy XML tag |
     | I016 | `prose-state-machine` | Warning | Instruction encodes a state machine in prose (named-step GOTOs, retry counters, STOP tokens, state writes, orchestrator `agent_action` traversal) |
+    | I017 | `composite-v2-invalid-audio-tags` | Error | Invalid Composite v2 TTS markup (`</prosody>`, `<slow>`, `[tag]`, or translated tags) in instructions or callbacks (`gemini-composite-v2`) |
+    | I018 | `composite-v2-normalization-scope` | Warning | Text normalization block lacks a `Scope:` guard excluding tool arguments (`gemini-composite-v2`) |
+    | I019 | `live-audio-inline-tags` | Error | Inline TTS delivery tags emitted on native audio-to-audio (`live`) models |
+    | I020 | `ces-jinja-subset-syntax` | Error | Instruction uses unsupported CES Jinja syntax (`not in`, `dict['key']` subscripts, or `{# ... #}` comments) |
 
     ---
 
@@ -150,7 +154,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     *Triggers:* A high-confidence marker on its own (a retry-counter read/write, an UPPER_SNAKE state write, a `lookup_flag` enum, an `agent_action`-verbatim loop, or a "state machine" step name); **or** signals from ≥ 2 categories totalling ≥ 4 occurrences; **or** ≥ 3 strong control-flow edges (conditional jumps + loop back-edges). Plain forward navigation ("proceed to subtask conclusion") on its own never fires. Surface forms are kept disjoint from I003 and I005 so no line is double-reported. Content inside `<inline_example>` regions is ignored.
 
-    *Fix:* Move the control flow out of the prompt. Put retry/attempt counters and failure limits in a `before_model`/`after_model` callback — the [slot-filling pattern](../../patterns/slot-filling.md) keeps retry state in Python (a `_retries` dict), never in a `{counter}` the LLM has to read and increment. Replace `Proceed to subtask X` / `Loop back to step Y` / `STOP` GOTOs, state-variable writes, and `IF`-on-`agent_action` dispatch with declarative slot-filling DAG transitions so the framework owns routing. Then rewrite the instruction to state the *goal*, not a transition table.
+    *Fix:* Move the control flow out of the prompt. Put retry/attempt counters and failure limits in a `before_model`/`after_model` callback — keep retry state in Python (a `_retries` dict), never in a `{counter}` the LLM has to read and increment. Replace `Proceed to subtask X` / `Loop back to step Y` / `STOP` GOTOs, state-variable writes, and `IF`-on-`agent_action` dispatch with deterministic callback logic so code owns routing. Then rewrite the instruction to state the *goal*, not a transition table.
 
     *Configurable:* `options.I016.min_distinct_categories` (default 2), `options.I016.min_total` (default 4), `options.I016.min_strong_edges` (default 3).
 
@@ -168,6 +172,10 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C006 | `callback-bare-except` | Warning | Bare `except:` without logging swallows errors silently |
     | C007 | `callback-tool-naming` | Info | Verify `tools.*` call uses correct naming convention |
     | C010 | `callback-python-syntax` | Error | Callback Python file must have valid syntax |
+    | C011 | `state-none-assignment` | Warning | Session state keys should not be assigned `None` (callbacks and tools) |
+    | C012 | `after-model-unreturned-response` | Error | `after_model_callback` mutates or constructs `LlmResponse` without returning it |
+    | C018 | `callback-llm-response-traps` | Error | Catches `Part.from_text(partial=...)`, `Part.from_end_session(session_escalated=...)`, `partial=True` hazards, and empty `parts=[]` |
+    | C019 | `sandbox-typing-and-imports` | Error | Unimported `typing` annotations, blocked sandbox HTTP/process imports, or `ThreadPoolExecutor` + `tools.*` (callbacks and tools) |
 
     ---
 
@@ -259,6 +267,8 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | T010 | `tool-python-syntax` | Error | Tool Python file must have valid syntax |
     | T011 | `tool-none-default` | Error | Tool parameter uses `None` as default value |
     | T012 | `tool-json-missing-description` | Error | Tool JSON configuration must include description |
+    | T015 | `tool-entry-first-def` | Error | Entry tool function must be the first top-level `def` in `python_code.py` |
+    | T016 | `tool-return-dict-annotation` | Warning | Python tool entry function should declare a `-> dict` return annotation |
 
     ---
 
@@ -302,11 +312,11 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     **T012 — tool-json-missing-description**
 
-    Tool JSON configuration must include `pythonFunction.description` or `widgetTool.description`. The LLM relies on this description to know when to call the tool.
+    Tool JSON configuration must include a description (or, for `pythonFunction` tools, a docstring on the Python tool function). The LLM relies on this description to know when to call the tool.
 
-    *Triggers:* The description field is missing or empty in the tool's JSON configuration.
+    *Triggers:* The description field is missing or empty in the tool's JSON configuration (and, for `pythonFunction` tools, the Python tool function also lacks a docstring).
 
-    *Fix:* Add a 'description' key within the 'pythonFunction' or 'widgetTool' object in the tool's JSON file.
+    *Fix:* Add a docstring to the Python tool function or a `'description'` key within the tool type object (`pythonFunction`, `remoteAgentTool`, `widgetTool`, etc.) in the tool's JSON file.
 
 === "E — Evals"
 
@@ -371,6 +381,10 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A004 | `config-missing-instruction` | Error | Agent directory must have an `instruction.txt` file |
     | A005 | `config-root-missing-end-session` | Error | Root agent must have `end_session` tool |
     | A006 | `config-root-agent` | Error | App config must have a valid `rootAgent` pointing to an existing agent directory |
+    | A013 | `composite-v2-speech-instruction` | Warning | Legacy Director's Notes in `synthesizeSpeechConfigs` or missing `voiceInstructionMode: "NO_INSTRUCTION"` on `gemini-composite-v2` |
+    | A014 | `async-tool-missing-inactivity-timeout` | Error | Apps with `ASYNCHRONOUS` tools must configure `audioProcessingConfig.inactivityTimeout` |
+    | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95 top-level variables (platform cap ~100) |
+    | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
 
     ---
 
@@ -407,6 +421,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S006 | `strict-tool-path-layout` | Error | Tool config paths must be app-relative and prefixed with `tools/{tool_name}/` |
     | S007 | `sub-agent-single-parent` | Error | Sub-agents must have at most one parent agent (tree constraint) |
     | S008 | `singleton-guardrail-types` | Error | At most one guardrail of each singleton type (`llmPromptSecurity`) per app |
+    | S009 | `guardrail-re2-quantifier-spacing` | Error | Guardrail `contentFilter` regex contains spaces inside RE2 repetition quantifiers (`{m, n}`) |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 

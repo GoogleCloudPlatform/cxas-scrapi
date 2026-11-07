@@ -1,8 +1,8 @@
-"""Activate a structured slot-filling flow.
+"""Activate a structured flow.
 
-Setter tool for the active_flow slot. When called, the routing engine
-activates the corresponding conditional slots and begins deterministic
-collection on the specialist agent.
+Setter tool for the active_flow. When called, the routing engine activates the
+corresponding conditional steps and begins deterministic collection on the
+specialist agent.
 """
 
 from typing import Any

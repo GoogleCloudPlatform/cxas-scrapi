@@ -20,8 +20,10 @@ from cxas_scrapi.utils.lint_rules import (  # noqa: F401
     config,
     evals,
     instructions,
+    runtime_traps,
     schema,
     structure,
     tools,
     variables,
+    voice_composite,
 )

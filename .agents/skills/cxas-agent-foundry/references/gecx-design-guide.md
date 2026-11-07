@@ -430,11 +430,11 @@ Use callbacks when behavior MUST be deterministic -- don't rely on instructions 
 **Key principle: Instructions tell the LLM WHAT to do (detection), callbacks ENFORCE HOW (execution).** Keep detection generative and natural. Make execution deterministic and reliable.
 
 #### Common callback patterns:
-- **Deterministic farewell**: `after_model_callback` injects text before `end_session` (LLM often calls `end_session` without speaking first)
-- **Deterministic greeting**: `before_model_callback` intercepts session start and returns static greeting
-- **Silence handling** (voice): `before_model_callback` detects "no user activity" signals, tracks counter in state, ends session after 3 silences
-- **Deterministic escalation**: `LlmResponse.from_parts()` combines text + agent transfer in a single response
-- **Calling tools from callbacks**: Use `tools.{function_name}(args)` for Python tools, `tools.{DisplayName}_{OperationId}(args)` for API connectors. System tools (`end_session`) cannot be called from callbacks.
+- **Deterministic farewell**: `after_model_callback` injects text before `end_session` when the LLM calls `end_session` without speaking first (walking `callback_context.events` via `part.text_or_transcript()` to prevent double-text across multi-model-call turns)
+- **Deterministic greeting**: `before_model_callback` intercepts session start (`<event>session start</event>`) and returns a static greeting
+- **Silence handling** (voice): `before_model_callback` detects `<context>no user activity detected...</context>` via `part.text_or_transcript()`, tracks counter in Python state, and ends session via `Part.from_end_session(...)` after 3 silences
+- **Deterministic escalation**: `before_model_callback` reads and clears the state trigger (`state.get("_action_trigger", "")` → `state["_action_trigger"] = ""`) and returns `LlmResponse.from_parts()` combining farewell `Part.from_text(...)` + `Part.from_agent_transfer(...)` or `Part.from_end_session(reason=..., escalated=True)` in a single response
+- **Calling tools from callbacks**: Use `tools.{function_name}(args)` for Python tools, `tools.{DisplayName}_{OperationId}(args)` for API connectors. System actions use `Part.from_end_session(...)` and `Part.from_agent_transfer(...)` rather than `tools.*`.
 
 #### Multi-model-call turns
 The LLM can split a single turn across multiple model calls. The `after_model_callback` fires on EACH call separately. Use `callback_context.events` to check if the agent already produced text in a prior model call -- prevents double-text injection.
@@ -467,19 +467,17 @@ Callbacks should enforce EXECUTION, not reimplement DETECTION. Signs of overfitt
 
 The agent might pass goldens with phrase matching, but fail on real conversations. Sims are a better proxy for real-world performance.
 
-#### Simpler instructions outperform complex ones
-Adding programmatic logic to instructions (state-tracked counters, multi-step conditionals, explicit keyword requirements) confuses the LLM. A simple "On the FIRST attempt... On the SECOND attempt..." works better than "First call the state-setting tool to increment count, then check count value and branch." The LLM handles natural language patterns better than code-like logic.
+#### Simpler instructions outperform prose state machines
+Encoding state-tracked retry counters, multi-step `IF/ELSE` trees, or turn-counting scripts (`"On the FIRST attempt... On the SECOND attempt..."`) in prose confuses the LLM and triggers `cxas lint` `I016` (`prose-state-machine`). Keep prompts declarative (state the goal and which `{@TOOL: ...}` to call) and move retry counters, attempt limits, and escalation branching into Python tools or `before_model_callback` state.
 
 #### Don't fight the LLM
 GUIDE, don't PREVENT:
-- `hide_tool()` reduces tool awareness -> worse instruction-following (for simple agents — see exception below)
+- `hide_tool()` reduces tool awareness -> worse instruction-following
 - "Do NOT call this tool" confuses the LLM
 - Removing tools breaks instructions and goldens that reference them
 - Complex programmatic logic in instructions -> LLM handles natural language better
 
 Instead: clear instructions, good tool docstrings, callbacks as a safety net.
-
-**Exception — Slot Filling Framework:** For slot-filling agents, dynamic per-turn `hide_tool()` is the correct approach. The callback computes which tools are valid based on current state (filled slots, pending readback, dependency satisfaction) and hides everything else. This is more reliable than any instruction because the LLM literally cannot call a tool it cannot see. See the Slot Filling Framework section for details.
 
 #### Never remove tools without auditing instructions first.
 Removing a tool breaks any instruction, golden, or constraint that references it.
@@ -496,14 +494,14 @@ These patterns cause regressions in practice. Avoid them.
 | `conditional_logic` for intent classification | LLM gets confused by priority-ordered conditionals and falls back to generic refusals | Use separate `<step>` elements with distinct triggers |
 | Negative conditions in triggers ("NOT [excluded category]") | LLM treats the negative as something to check, gets confused | Use positive triggers only; put the excluded case as an earlier, separate step |
 | Eager follow-up triggers ("After answering any question") | Fires after sub-agent returns, causing wrong responses | Use specific triggers tied to resolution points |
-| Relying on instruction for text-before-escalation | LLM calls tools without speaking first, ignoring "First Respond" text | Use `after_model_callback` to inject text before `end_session` |
+| Relying on instruction for text-before-escalation | LLM calls tools without speaking first, ignoring "First Respond" text | Use `after_model_callback` to inject text before `end_session` (or combine `Part.from_text(...)` + `Part.from_end_session(...)` via the `_action_trigger` pattern in `before_model_callback`) |
 | Simplifying instructions by removing examples/context | LLM loses the context it was depending on for correct behavior | Keep examples and context; reduce redundancy instead |
 | Hardcoded phrase lists in callbacks for detection | Misses natural variations ("I'm fed up" won't match `["unacceptable"]`). Agent overfits to evals, fails real conversations | Keep detection in instructions (LLM understands intent). Use callbacks only for execution (trigger pattern) |
-| Complex programmatic logic in instructions | State-tracked counters, multi-step conditionals confuse the LLM and reduce reliability | Use simple natural language: "On the FIRST... On the SECOND..." The LLM handles this better than code-like logic |
+| Prose state machines or retry counters in instructions | Counters, `FIRST/SECOND attempt` scripts, and multi-branch conditionals confuse the LLM and trigger `I016` | Keep prompts goal-directed and track retry counts / escalation thresholds deterministically in Python tools or callbacks |
 | Overly specific trigger keywords ("EXPLICITLY said 'current line'") | Makes the agent rigid and keyword-dependent instead of understanding intent naturally | Use natural language triggers. Trust the LLM's understanding of context |
 | Escalation tool calls in instruction only | LLM sometimes says text but forgets to call tools, or calls them with empty args | Use trigger pattern: instruction sets a state trigger via a state-setting tool, callback returns tools |
 | Escalation trigger callbacks on root agent only | Sub-agent flows bypass root callbacks -- trigger never fires | Add trigger-handling `before_model_callback` to ALL agents |
-| Using `hide_tool()` to prevent empty-arg calls | Reduces LLM's tool awareness, causes worse instruction-following overall | Use better docstrings + tool-level state fallback + trigger pattern instead. **Exception:** In slot-filling frameworks, dynamic per-turn `hide_tool()` is the primary correctness mechanism — see the Slot Filling Framework section below. |
+| Using `hide_tool()` to prevent empty-arg calls | Reduces LLM's tool awareness, causes worse instruction-following overall | Use better docstrings + tool-level state fallback + trigger pattern instead. |
 | "Do NOT call this tool" in instructions | Confuses the LLM, often reduces tool calling reliability | Guide with positive instructions ("call {@TOOL: state_setting_tool} with...") not negative constraints |
 
 ## Source Control
@@ -541,62 +539,6 @@ Leverage variables within instructions and update them programmatically through 
 Embed instructions in tool return values for progressive disclosure -- certain instructions only matter after a step is achieved. The tool returns contextual instruction strings based on the result (e.g., in-warranty vs out-of-warranty paths), and the instruction tells the agent "You MUST follow the instructions in the tool's response." Include `agent_action` keys in error returns for self-healing when prerequisites are missing.
 
 See `assets/project-template/` for full implementation examples of both patterns.
-
-## Slot Filling Framework
-
-For agents whose primary job is **collecting structured data to fire backend operations** — reservations, claims, orders, onboarding — the Slot Filling DAG Framework provides deterministic control flow that the LLM cannot bypass.
-
-### When to Use It
-
-Use slot filling when multiple of these apply:
-
-- **Multiple fields** to collect with **dependencies** between them (e.g., can't pick a time until availability is known)
-- **Validation rules** with specific error messages and retry limits
-- **Backend tasks** that fire automatically when inputs are ready
-- **Escalation paths** when retries exhaust
-- **Readback/confirmation** before committing values
-- The conversation must always make forward progress (no infinite loops)
-
-### When NOT to Use It
-
-- Simple Q&A or knowledge-base lookup agents — use XML `<taskflow>`
-- Single-tool agents with no multi-step collection — use the trigger pattern
-- Agents where the LLM needs judgment-based control flow (triage, troubleshooting) — use instructions
-- Agents with only 1-2 fields and no dependencies — overkill; use a simpler tool + state pattern
-
-### How It Works
-
-The framework splits the problem: the **LLM owns language** (parsing user intent, calling setter tools, generating warm responses), while a **deterministic Python callback owns control flow** (what to ask next, when to fire a task, how many retries remain, when to escalate).
-
-The LLM never decides "should I call the booking API now?" — it doesn't even see the tools for actions that aren't valid yet.
-
-Three layers, all in one callback file:
-
-1. **`_get_config()`** — agent-specific slots, tasks, executors, formatters. Replace this per project.
-2. **`_run_slot_filling(config, sm)`** — CES-agnostic orchestrator. Takes config + state dict, returns `{"hide_tools": [...], "preempt": bool, "message": str|None}`. Never touches CES types — testable outside the platform.
-3. **`before_model_callback()`** — thin CES adapter (~20 lines). Writes `_system_message`, applies tool visibility, handles preemption.
-
-### Key Design Principles
-
-**Tool visibility over prompt constraints.** The primary mechanism for controlling LLM behavior is `hide_tool()` — the LLM can't call what it can't see. This is more reliable than any instruction. (Note: this is the opposite of the general guidance for simple agents, where `hide_tool()` can reduce tool awareness. In slot filling, tool visibility is computed dynamically per-turn based on state and is the correct approach.)
-
-**Lean on the orchestrator.** If a constraint is enforced by code (validation, tool visibility, retry logic), don't duplicate it in prompts or tool docstrings. Redundant constraints cause the LLM to pre-filter input, skip tool calls, or improvise error messages — bypassing the framework's error handling.
-
-**Setters are thin.** Setter tools validate input, write to `pending`, signal errors via `_slot_errors`, and return. They contain zero DAG logic, zero control flow, zero knowledge of other slots.
-
-**Preempt when the answer is known.** When a task fires and the framework knows exactly what to say, it skips the LLM via `LlmResponse.from_parts()`. Faster, deterministic, and consistent.
-
-### Reference Implementation
-
-See `examples/bella_notte/` for a complete working example (restaurant reservation agent):
-
-- `PATTERN.md` — overview and quick-start guide
-- `slot_filling_dag_framework.md` — full framework specification (1000+ lines)
-- `callback.py` — complete callback with config + framework code
-- `agent_instruction.md` — agent instruction with slot filling protocol
-- `tools/` — all setter tools
-
-To build a new agent: copy `callback.py`, replace `_get_config()` with your slots/tasks/executors, create matching setter tools.
 
 ## Multilingual Agents
 

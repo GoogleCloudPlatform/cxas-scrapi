@@ -27,7 +27,8 @@ import shutil
 import time
 import typing
 import uuid
-from collections.abc import Callable
+import zlib
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -38,6 +39,7 @@ from google import genai
 from rich.progress import Progress
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.audio_transformer import resolve_noise_config
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import BidiSessionError, Sessions
@@ -69,7 +71,10 @@ from cxas_scrapi.utils.rate_limiter import RateLimiter
 from cxas_scrapi.utils.tracing import trace_report
 from cxas_scrapi.utils.tracing.audio_analysis import ANALYSIS_REGISTRY
 from cxas_scrapi.utils.tracing.audio_drift import flag_drift
-from cxas_scrapi.utils.tracing.audio_metrics import measure_call
+from cxas_scrapi.utils.tracing.audio_metrics import (
+    measure_call,
+    try_render_join_steps,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -556,6 +561,69 @@ def cleanup_session_dir(func: typing.Any) -> typing.Any:
     return wrapper
 
 
+def _voice_locale(voice_name: str) -> str:
+    """Extracts the BCP-47 locale prefix from a TTS voice name."""
+    parts = voice_name.split("-")
+    if len(parts) >= 2:
+        return f"{parts[0]}-{parts[1]}"
+    return "en-US"
+
+
+def _scenario_locale(session_parameters: Mapping[str, Any] | None) -> str:
+    """Determines the target locale from scenario session_parameters."""
+    if not session_parameters:
+        return "en-US"
+    explicit_locale = str(session_parameters.get("locale") or "").strip()
+    if explicit_locale and "-" in explicit_locale:
+        return explicit_locale
+    user_lang = str(session_parameters.get("user_lang") or "").strip().upper()
+    if user_lang in {"S", "ES"} or user_lang.startswith("ES"):
+        return "es-US"
+    return "en-US"
+
+
+def expected_caller_turns(tc: Mapping[str, Any]) -> int:
+    """Returns the number of expected caller turns/steps in a scenario."""
+    steps = tc.get("steps") or []
+    if isinstance(steps, list) and steps:
+        return len(steps)
+    turns = tc.get("turns") or tc.get("conversation_Turns") or []
+    if isinstance(turns, list) and turns:
+        return len(turns)
+    return 0
+
+
+def actual_caller_turns(row: Mapping[str, Any]) -> int:
+    """Counts actual spoken/text caller turns from a simulation result."""
+    transcript = str(row.get("transcript") or "")
+    if transcript.strip():
+        user_lines = [
+            ln
+            for ln in transcript.splitlines()
+            if ln.strip().startswith("User:")
+            and not ln.strip().startswith("User: event")
+            and ln.strip() != "User:"
+        ]
+        return len(user_lines)
+    detailed_trace = row.get("detailed_trace")
+    if isinstance(detailed_trace, list) and detailed_trace:
+        user_trace = [
+            str(ln)
+            for ln in detailed_trace
+            if str(ln).strip().startswith("User:")
+            and not str(ln).strip().startswith("User: event")
+            and str(ln).strip() != "User:"
+        ]
+        return len(user_trace)
+    turns = row.get("conversation_Turns") or row.get("conversation_turns")
+    if isinstance(turns, list):
+        return len(turns)
+    turn_count = row.get("turns")
+    if isinstance(turn_count, int):
+        return turn_count
+    return 0
+
+
 class SimulationEvals(Apps):
     """Wrapper class to simulate entire multi-turn conversations with a
     CXAS Agent."""
@@ -572,6 +640,7 @@ class SimulationEvals(Apps):
         vertex_location: str = "global",
         naturalness: bool | dict[str, Any] | None = None,
         audio_analysis: bool = False,
+        sim_user_voices: Sequence[str] | None = None,
         **kwargs: typing.Any,
     ) -> None:
         self.expectations_only = expectations_only
@@ -581,6 +650,9 @@ class SimulationEvals(Apps):
         # defaults; a dict is merged over the test case's own block.
         self.naturalness = naturalness
         self.audio_analysis = audio_analysis
+        self.sim_user_voices: list[str] = [
+            v.strip() for v in (sim_user_voices or []) if v and v.strip()
+        ]
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
@@ -602,6 +674,31 @@ class SimulationEvals(Apps):
             credentials=self.creds,
         )
 
+    def _voice_config_for(
+        self, test_case: Mapping[str, Any]
+    ) -> dict[str, str] | None:
+        """Deterministically selects a TTS voice_config for a test case."""
+        existing = test_case.get("voice_config")
+        if isinstance(existing, dict) and existing.get("voice_name"):
+            return dict(existing)
+        if not self.sim_user_voices:
+            return None
+        locale = _scenario_locale(test_case.get("session_parameters"))
+        candidates = [
+            v
+            for v in self.sim_user_voices
+            if _voice_locale(v).lower() == locale.lower()
+        ]
+        if not candidates:
+            candidates = list(self.sim_user_voices)
+        name = str(test_case.get("name") or "")
+        idx = zlib.crc32(name.encode("utf-8")) % len(candidates)
+        voice_name = candidates[idx]
+        return {
+            "voice_name": voice_name,
+            "language_code": _voice_locale(voice_name),
+        }
+
     @staticmethod
     def requires_local_execution(
         test_case: dict[str, Any],
@@ -616,10 +713,14 @@ class SimulationEvals(Apps):
             return True, "Audio modality requires local client simulation"
         if test_case.get("audio_expectations"):
             return True, "audio_expectations requires local client simulation"
+        if test_case.get("audio_analysis"):
+            return True, "audio_analysis requires local client simulation"
+        if test_case.get("voice_config"):
+            return True, "voice_config requires local client simulation"
         if test_case.get("naturalness_metric") or test_case.get("naturalness"):
             return True, "naturalness_metric requires local client evaluation"
-        if test_case.get("use_tool_fakes"):
-            return True, "use_tool_fakes requires local simulation session"
+        if test_case.get("tool_expectations"):
+            return True, "tool_expectations requires local client evaluation"
         if test_case.get("barge_in_after_ms") is not None:
             return True, "barge_in_after_ms requires local audio bidi session"
         for step in test_case.get("steps", []):
@@ -665,6 +766,7 @@ class SimulationEvals(Apps):
         test_cases: list[dict[str, Any]],
         runs: int = 1,
         timeout_seconds: int = 600,
+        use_tool_fakes: bool | None = None,
     ) -> list[dict[str, Any]]:
         """Pushes and runs simulations on the CES platform via RunEvaluation,
         returning results formatted as simulation result dictionaries.
@@ -702,13 +804,17 @@ class SimulationEvals(Apps):
         if not eval_names:
             return []
 
+        run_eval_kwargs: dict[str, Any] = {
+            "evaluations": eval_names,
+            "app_name": self.app_name,
+            "modality": "text",
+            "run_count": runs,
+        }
+        if use_tool_fakes is not None:
+            run_eval_kwargs["use_tool_fakes"] = use_tool_fakes
+
         try:
-            run_op = eval_client.run_evaluation(
-                evaluations=eval_names,
-                app_name=self.app_name,
-                modality="text",
-                run_count=runs,
-            )
+            run_op = eval_client.run_evaluation(**run_eval_kwargs)
         except Exception:
             resolved_names = []
             evals_map = None
@@ -725,12 +831,15 @@ class SimulationEvals(Apps):
                     ) or evals_map.get("goldens", {}).get(e_name)
                     if r_name:
                         resolved_names.append(r_name)
-            run_op = eval_client.run_evaluation_rest(
-                evaluations=resolved_names or eval_names,
-                app_name=self.app_name,
-                modality="text",
-                run_count=runs,
-            )
+            rest_kwargs: dict[str, Any] = {
+                "evaluations": resolved_names or eval_names,
+                "app_name": self.app_name,
+                "modality": "text",
+                "run_count": runs,
+            }
+            if use_tool_fakes is not None:
+                rest_kwargs["use_tool_fakes"] = use_tool_fakes
+            run_op = eval_client.run_evaluation_rest(**rest_kwargs)
 
         meta_run = getattr(
             getattr(run_op, "metadata", None), "evaluation_run", None
@@ -1379,6 +1488,11 @@ class SimulationEvals(Apps):
                             "agent_text": " | ".join(
                                 agent_text_by_turn.get(conv_turn, [])
                             ),
+                            # each part is a separate TTS render: JUMP
+                            "joins": try_render_join_steps(
+                                turn_item.get("path"),
+                                agent_text_by_turn.get(conv_turn, []),
+                            ),
                         }
                     )
                 rows.sort(key=lambda r: r["turn"])
@@ -1400,7 +1514,9 @@ class SimulationEvals(Apps):
         turn_num: int | None = None,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
     ) -> Any:
@@ -1417,6 +1533,10 @@ class SimulationEvals(Apps):
             "burst_noise_files": burst_noise_files,
             "use_tool_fakes": use_tool_fakes,
         }
+        if background_noise_file is not None:
+            run_kwargs["bg_noise_snr"] = bg_noise_snr
+        if burst_noise_files is not None:
+            run_kwargs["burst_noise_snr"] = burst_noise_snr
         if voice_config is not None:
             run_kwargs["voice_config"] = voice_config
 
@@ -1530,7 +1650,9 @@ class SimulationEvals(Apps):
         modality: str = "text",
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         voice_config: dict[str, Any] | None = None,
         initial_utterance: str = _FIRST_UTTERANCE,
@@ -1609,16 +1731,36 @@ class SimulationEvals(Apps):
             single_bidi_stream = True
             skip_playback_wait = False
 
+        resolved_noise = resolve_noise_config(
+            config_or_case=test_case,
+            background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
+            burst_noise_files=burst_noise_files,
+            burst_noise_snr=burst_noise_snr,
+        )
+        effective_bg_file = resolved_noise["background_noise_file"]
+        effective_bg_snr = resolved_noise["bg_noise_snr"]
+        effective_burst_files = resolved_noise["burst_noise_files"]
+        effective_burst_snr = resolved_noise["burst_noise_snr"]
+
         interactive_session = None
         if modality == "audio" and single_bidi_stream:
             client = self.sessions_client
+            create_kwargs: dict[str, Any] = {
+                "session_id": session_id,
+                "capture_agent_audio": capture_agent_audio,
+                "background_noise_file": effective_bg_file,
+                "use_tool_fakes": use_tool_fakes,
+                "skip_playback_wait": skip_playback_wait,
+                "voice_config": voice_config,
+            }
+            if effective_bg_file is not None:
+                create_kwargs["bg_noise_snr"] = effective_bg_snr
+            if effective_burst_files is not None:
+                create_kwargs["burst_noise_files"] = effective_burst_files
+                create_kwargs["burst_noise_snr"] = effective_burst_snr
             interactive_session = client.create_interactive_session(
-                session_id=session_id,
-                capture_agent_audio=capture_agent_audio,
-                background_noise_file=background_noise_file,
-                use_tool_fakes=use_tool_fakes,
-                skip_playback_wait=skip_playback_wait,
-                voice_config=voice_config,
+                **create_kwargs
             )
             interactive_session.start()
 
@@ -1757,8 +1899,10 @@ class SimulationEvals(Apps):
                         console_logging=console_logging,
                         turn_num=current_sim_turn,
                         capture_agent_audio=capture_agent_audio,
-                        background_noise_file=background_noise_file,
-                        burst_noise_files=burst_noise_files,
+                        background_noise_file=effective_bg_file,
+                        bg_noise_snr=effective_bg_snr,
+                        burst_noise_files=effective_burst_files,
+                        burst_noise_snr=effective_burst_snr,
                         use_tool_fakes=use_tool_fakes,
                         voice_config=voice_config,
                     )
@@ -1900,7 +2044,9 @@ class SimulationEvals(Apps):
         parallel: int,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
@@ -1914,6 +2060,9 @@ class SimulationEvals(Apps):
         name = tc["name"]
         label = f"{name} (run {run_idx + 1}/{runs})"
         session_id = str(uuid.uuid4())
+        voice_config = self._voice_config_for(tc)
+        if voice_config and not tc.get("voice_config"):
+            tc = {**tc, "voice_config": voice_config}
         try:
             _start = time.time()
 
@@ -1926,7 +2075,9 @@ class SimulationEvals(Apps):
                 modality=modality,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
+                bg_noise_snr=bg_noise_snr,
                 burst_noise_files=burst_noise_files,
+                burst_noise_snr=burst_noise_snr,
                 use_tool_fakes=use_tool_fakes,
                 skip_playback_wait=skip_playback_wait,
                 single_bidi_stream=single_bidi_stream,
@@ -2048,33 +2199,86 @@ class SimulationEvals(Apps):
             if audio_drift_res and not audio_drift_res.get("error"):
                 result["audio_drift"] = audio_drift_res
 
+            noise_cfg = resolve_noise_config(
+                tc,
+                background_noise_file=background_noise_file,
+                bg_noise_snr=bg_noise_snr,
+                burst_noise_files=burst_noise_files,
+                burst_noise_snr=burst_noise_snr,
+            )
+            if noise_cfg["background_noise_file"]:
+                result["background_noise_file"] = noise_cfg[
+                    "background_noise_file"
+                ]
+                result["bg_noise_snr"] = noise_cfg["bg_noise_snr"]
+                result["bg_noise_level"] = noise_cfg["bg_noise_level"]
+            if noise_cfg["burst_noise_files"]:
+                result["burst_noise_files"] = noise_cfg["burst_noise_files"]
+                result["burst_noise_snr"] = noise_cfg["burst_noise_snr"]
+                result["burst_noise_level"] = noise_cfg["burst_noise_level"]
+
+            if voice_config and isinstance(result, dict):
+                result.setdefault(
+                    "sim_user_voice", voice_config.get("voice_name", "")
+                )
+
+            if tc.get("tool_expectations") and isinstance(result, dict):
+                from cxas_scrapi.evals import tool_expectations  # noqa: PLC0415
+
+                checks = tool_expectations.apply_to_result(tc, result)
+                failed_checks = [c for c in checks if not c.met]
+                if failed_checks and (parallel > 1 or not verbose):
+                    reasons = "; ".join(
+                        f"{c.operator}: {c.justification}"
+                        for c in failed_checks
+                    )
+                    print(
+                        f"  FAIL  {name} (run {run_idx + 1}/{runs})"
+                        f" [tool_expectations] {reasons}"
+                    )
+
             return result
         except Exception as e:
             print(f"  ERROR  {label}: {e}")
-            return {
+            err_result: dict[str, Any] = {
                 "name": name,
                 "run": run_idx + 1,
                 "passed": False,
                 "error": str(e),
+                "session_id": session_id,
+                "session_parameters": tc.get("session_parameters", {}),
+                "goals": f"0/{len(tc.get('steps') or [])}",
+                "expectations": (f"0/{self._declared_expectations_count(tc)}"),
+                "turns": 0,
             }
+            if voice_config:
+                err_result["sim_user_voice"] = voice_config.get(
+                    "voice_name", ""
+                )
+            return err_result
 
     @staticmethod
     def _declared_expectations_count(
         tc: dict[str, Any], conv: Any = None
     ) -> int:
-        tc_exp = len(tc.get("expectations") or []) + len(
-            tc.get("audio_expectations") or []
+        tc_exp = (
+            len(tc.get("expectations") or [])
+            + len(tc.get("audio_expectations") or [])
+            + len(tc.get("tool_expectations") or [])
         )
         if tc_exp > 0:
             return tc_exp
         if conv is not None:
             conv_exp = getattr(conv, "expectations", None)
             conv_audio_exp = getattr(conv, "audio_expectations", None)
+            conv_tool_exp = getattr(conv, "tool_expectations", None)
             count = 0
             if isinstance(conv_exp, (list, tuple)):
                 count += len(conv_exp)
             if isinstance(conv_audio_exp, (list, tuple)):
                 count += len(conv_audio_exp)
+            if isinstance(conv_tool_exp, (list, tuple)):
+                count += len(conv_tool_exp)
             return count
         return 0
 
@@ -2183,10 +2387,28 @@ class SimulationEvals(Apps):
         row: dict[str, Any],
         declared_by_name: dict[str, int],
         lookup: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+        expected_turns_by_name: Mapping[str, int] | None = None,
     ) -> str | None:
         if row.get("error"):
             return f"session died: {str(row['error'])[:80]}"
-        name = row.get("name")
+        name = str(row.get("name") or "")
+        expected_turns = (expected_turns_by_name or {}).get(name, 0)
+        has_turn_data = any(
+            k in row
+            for k in (
+                "transcript",
+                "detailed_trace",
+                "conversation_Turns",
+                "conversation_turns",
+                "turns",
+            )
+        )
+        if (
+            expected_turns > 0
+            and (has_turn_data or not row.get("passed"))
+            and actual_caller_turns(row) == 0
+        ):
+            return "caller turns never reached agent (0 turns)"
         if declared_by_name.get(name, 0) > 0 and str(
             row.get("expectations", "")
         ).endswith("/0"):
@@ -2206,7 +2428,9 @@ class SimulationEvals(Apps):
         verbose: bool,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         skip_playback_wait: bool = False,
         single_bidi_stream: bool = False,
@@ -2241,7 +2465,7 @@ class SimulationEvals(Apps):
                     if progress_callback:
                         progress_callback(len(results), len(jobs))
             else:
-                max_workers = min(parallel, 25)
+                max_workers = parallel
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {
                         executor.submit(
@@ -2282,7 +2506,9 @@ class SimulationEvals(Apps):
         verbose: bool = False,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
         use_tool_fakes: bool = False,
         expectations_only: bool | None = None,
         skip_playback_wait: bool = False,
@@ -2295,6 +2521,7 @@ class SimulationEvals(Apps):
         retry_cooldown: float = 60.0,
         run_on_platform: bool = False,
         platform_timeout: int = 600,
+        sim_user_voices: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Runs multiple simulations, optionally in parallel.
 
@@ -2319,6 +2546,10 @@ class SimulationEvals(Apps):
         """
         if expectations_only is not None:
             self.expectations_only = expectations_only
+        if sim_user_voices is not None:
+            self.sim_user_voices = [
+                v.strip() for v in sim_user_voices if v and v.strip()
+            ]
         if run_on_platform:
             platform_cases: list[dict[str, Any]] = []
             local_cases: list[dict[str, Any]] = []
@@ -2326,6 +2557,16 @@ class SimulationEvals(Apps):
                 naturalness
                 if naturalness is not None
                 else getattr(self, "naturalness", False)
+            )
+            effective_audio_analysis = (
+                audio_analysis
+                if audio_analysis is not None
+                else getattr(self, "audio_analysis", False)
+            )
+            has_audio_capture_or_noise = bool(
+                capture_agent_audio
+                or background_noise_file
+                or burst_noise_files
             )
             for tc in test_cases:
                 effective_tc = dict(tc) if isinstance(tc, dict) else {}
@@ -2335,8 +2576,10 @@ class SimulationEvals(Apps):
                     and "modality" not in effective_tc
                 ):
                     effective_tc["modality"] = modality
-                if use_tool_fakes and not effective_tc.get("use_tool_fakes"):
-                    effective_tc["use_tool_fakes"] = True
+                if (
+                    effective_audio_analysis or has_audio_capture_or_noise
+                ) and not effective_tc.get("audio_analysis"):
+                    effective_tc["audio_analysis"] = True
                 if effective_naturalness and not effective_tc.get(
                     "naturalness_metric"
                 ):
@@ -2356,13 +2599,36 @@ class SimulationEvals(Apps):
 
             results: list[dict[str, Any]] = []
             if platform_cases:
-                results.extend(
-                    self.run_simulations_on_platform(
-                        platform_cases,
-                        runs=runs,
-                        timeout_seconds=platform_timeout,
+                fakes_cases: list[dict[str, Any]] = []
+                non_fakes_cases: list[dict[str, Any]] = []
+                for ptc in platform_cases:
+                    case_fakes = (
+                        ptc.get("use_tool_fakes")
+                        if ptc.get("use_tool_fakes") is not None
+                        else use_tool_fakes
                     )
-                )
+                    if case_fakes:
+                        fakes_cases.append(ptc)
+                    else:
+                        non_fakes_cases.append(ptc)
+
+                if fakes_cases:
+                    results.extend(
+                        self.run_simulations_on_platform(
+                            fakes_cases,
+                            runs=runs,
+                            timeout_seconds=platform_timeout,
+                            use_tool_fakes=True,
+                        )
+                    )
+                if non_fakes_cases:
+                    results.extend(
+                        self.run_simulations_on_platform(
+                            non_fakes_cases,
+                            runs=runs,
+                            timeout_seconds=platform_timeout,
+                        )
+                    )
             if local_cases:
                 results.extend(
                     self.run_simulations(
@@ -2387,6 +2653,7 @@ class SimulationEvals(Apps):
                         retry_parallel=retry_parallel,
                         retry_cooldown=retry_cooldown,
                         run_on_platform=False,
+                        sim_user_voices=sim_user_voices,
                     )
                 )
             return results
@@ -2410,7 +2677,9 @@ class SimulationEvals(Apps):
             verbose,
             capture_agent_audio=capture_agent_audio,
             background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
             burst_noise_files=burst_noise_files,
+            burst_noise_snr=burst_noise_snr,
             use_tool_fakes=use_tool_fakes,
             skip_playback_wait=skip_playback_wait,
             single_bidi_stream=single_bidi_stream,
@@ -2419,6 +2688,11 @@ class SimulationEvals(Apps):
 
         declared_by_name = {
             tc.get("name", ""): self._declared_expectations_count(tc)
+            for tc in test_cases
+            if isinstance(tc, dict) and tc.get("name")
+        }
+        expected_turns_by_name = {
+            tc.get("name", ""): expected_caller_turns(tc)
             for tc in test_cases
             if isinstance(tc, dict) and tc.get("name")
         }
@@ -2441,7 +2715,10 @@ class SimulationEvals(Apps):
                 if isinstance(row, dict)
                 and (
                     why := self._inconclusive_reason(
-                        row, declared_by_name, lookup=conv_lookup
+                        row,
+                        declared_by_name,
+                        lookup=conv_lookup,
+                        expected_turns_by_name=expected_turns_by_name,
                     )
                 )
             ]
@@ -2485,7 +2762,9 @@ class SimulationEvals(Apps):
                 verbose,
                 capture_agent_audio=capture_agent_audio,
                 background_noise_file=background_noise_file,
+                bg_noise_snr=bg_noise_snr,
                 burst_noise_files=burst_noise_files,
+                burst_noise_snr=burst_noise_snr,
                 use_tool_fakes=use_tool_fakes,
                 skip_playback_wait=skip_playback_wait,
                 single_bidi_stream=single_bidi_stream,
@@ -2516,7 +2795,10 @@ class SimulationEvals(Apps):
             if isinstance(row, dict)
             and (
                 why := self._inconclusive_reason(
-                    row, declared_by_name, lookup=conv_lookup
+                    row,
+                    declared_by_name,
+                    lookup=conv_lookup,
+                    expected_turns_by_name=expected_turns_by_name,
                 )
             )
         ]

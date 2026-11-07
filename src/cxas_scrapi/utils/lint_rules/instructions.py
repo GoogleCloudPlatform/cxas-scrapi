@@ -821,12 +821,12 @@ class ProseStateMachine(Rule):
                 fix=(
                     "Move control flow out of the prompt. Put retry/attempt"
                     " counters and failure limits in a before_model/"
-                    "after_model callback (slot-filling keeps retry state in"
+                    "after_model callback (keep retry state in"
                     " Python — never ask the LLM to read/increment a {counter}"
                     " variable). Replace 'Proceed to subtask X'/'Loop back to"
                     " step Y'/STOP GOTOs, state-variable writes, and"
                     " IF-on-agent_action dispatch with declarative"
-                    " slot-filling DAG transitions so the framework owns"
+                    " state transitions so deterministic callbacks own"
                     " routing. Write a goal-oriented prompt that states intent,"
                     " not a transition table."
                 ),

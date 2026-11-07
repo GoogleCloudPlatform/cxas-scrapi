@@ -1,9 +1,0 @@
-{
-  "name": "9d10a92b-be2f-42f4-a44b-b7a42f8fdf46",
-  "pythonFunction": {
-    "name": "set_selected_time",
-    "pythonCode": "tools/set_selected_time/python_function/python_code.py",
-    "description": "Record the guest's chosen time in HH:MM 24-hour format ('6 PM'→'18:00', '7:30 PM'→'19:30', '9 PM'→'21:00')."
-  },
-  "displayName": "set_selected_time"
-}
