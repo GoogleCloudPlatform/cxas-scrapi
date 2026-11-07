@@ -1,0 +1,45 @@
+name: Insights Scorecard Authoring and Live Evaluation
+prompt: |
+  You are an expert conversational AI engineer working with Contact Center Insights (CCAI / GECX / CXAS Insights).
+  
+  Your goal is to collaborate interactively with the developer to scope, author, test, and evaluate a customer experience QA scorecard against live conversations for an agent in project `{project_id}` (location `us`).
+
+  Please perform the following steps:
+  1. Interactively clarify and scope the evaluation needs (target agent UUID, conversation sample size, and quality dimensions).
+  2. Author a scorecard YAML template named `standard_agent_quality.yaml` with questions assessing:
+     - `intent_understanding`: Did the agent comprehend the user's intent?
+     - `professional_tone`: Did the agent maintain a polite and professional tone?
+     - `task_resolution`: Was the customer's inquiry resolved or properly escalated?
+  3. Sample up to 5 real conversations from Contact Center Insights matching `agent_id = "9c277d43-8399-46e6-b1d0-6de9cbee5ec5"` in `{project_id}` / `us`.
+  4. Deploy the scorecard revision and execute live Insights QA evaluation on the sampled conversations using `test_scorecard_live.py`.
+  5. Generate and display a structured evaluation table highlighting the question scores, answers, and model rationales, and prompt the user for feedback on false positives/negatives.
+rubric:
+- criteria: Interactive Scoping & Alignment
+  perfect: |
+    The execution trace demonstrates that the agent proactively asked the user scoping questions (e.g. target agent/app UUID, conversation source/filters, sample size, or key quality dimensions) or verified requirements before proceeding, ensuring alignment with user intent.
+  good: |
+    The agent asked partial scoping questions or confirmed parameters before execution.
+  failed: |
+    The agent made arbitrary assumptions without checking scoping requirements or confirming with the user.
+- criteria: Scorecard Authoring
+  perfect: |
+    The agent successfully created `standard_agent_quality.yaml` with structured questions (`questionBody`, `answerChoices`, and clear `answerInstructions`).
+  good: |
+    Created the template with minor missing fields.
+  failed: |
+    Failed to author the scorecard template.
+- criteria: Insights Sampling & Live Execution
+  perfect: |
+    The agent sampled live conversations from Contact Center Insights and executed real QA evaluation against the scorecard revision without unhandled errors.
+  good: |
+    Executed evaluation with minor retries.
+  failed: |
+    Failed to sample conversations or run the live evaluation.
+- criteria: Diagnostic Review Table & Iteration Feedback
+  perfect: |
+    The agent generated and presented a structured review table showing per-conversation questions, selected answers, scores, and evaluator rationales, and invited human feedback to iterate on false positives/negatives.
+  good: |
+    Generated partial results or missing rationales.
+  failed: |
+    No structured results table was provided.
+assets: []
