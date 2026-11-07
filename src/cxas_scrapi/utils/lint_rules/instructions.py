@@ -369,6 +369,15 @@ def _extract_py_tool_refs_and_dags(
         for tool in candidate_tools:
             if re.search(rf"\btools\.{re.escape(tool)}\b", text):
                 matched.add(tool)
+        for m in re.finditer(
+            r"\b(?:FunctionCall|from_function_call)\s*\(\s*(?:name\s*=\s*)?['\"](\w+)['\"]",
+            text,
+        ):
+            call_name = m.group(1)
+            if call_name in candidate_tools:
+                matched.add(call_name)
+            if call_name.endswith("_dag"):
+                dags.add(call_name)
         for m in re.finditer(r"\btools\.(\w+_dag)\s*\(", text):
             dags.add(m.group(1))
         return matched, dags
@@ -383,6 +392,36 @@ def _extract_py_tool_refs_and_dags(
                 matched.add(node.attr)
             if node.attr.endswith("_dag"):
                 dags.add(node.attr)
+        elif isinstance(node, ast.Call):
+            func_name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if func_name in ("FunctionCall", "from_function_call"):
+                call_tool_name: str | None = None
+                for kw in node.keywords:
+                    if (
+                        kw.arg == "name"
+                        and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, str)
+                    ):
+                        call_tool_name = kw.value.value
+                        break
+                if (
+                    call_tool_name is None
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    call_tool_name = node.args[0].value
+                if call_tool_name:
+                    if call_tool_name in candidate_tools:
+                        matched.add(call_tool_name)
+                    if call_tool_name.endswith("_dag"):
+                        dags.add(call_tool_name)
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             s = node.value
             matched |= _extract_tool_refs(s) & candidate_tools
@@ -598,12 +637,13 @@ class BannedLegacyXmlTags(Rule):
     )
 
     _INLINE_SPAN_RE = re.compile(
-        r'```[\s\S]*?```|`[^`]*`|"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\''
-        r'|"[^"]*"|(?<!\w)\'[^\']*\'(?!\w)'
+        r'```[\s\S]*?```|`[^`\n]*`|"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\''
+        r'|"[^"\n]*"|(?<!\w)\'[^\'\n]*\'(?!\w)'
     )
     _USER_TURN_RE = re.compile(
         r"(?im)^[ \t]*(?:\[user\]|user)[ \t]*:"
-        r"(?:[^\n]*?<context\b[\s\S]*?</context>|[^\n]*)"
+        r"(?:[^\n]*?(?:\n[ \t]*)?<context\b"
+        r"(?:(?!<context\b)[\s\S])*?</context>|[^\n]*)"
     )
 
     @classmethod
@@ -616,7 +656,8 @@ class BannedLegacyXmlTags(Rule):
         abs_start: int | None = None,
         excluded_spans: list[tuple[int, int]] | None = None,
     ) -> bool:
-        tag_name = re.sub(r"[<\s/>]", "", tag).lower()
+        m = re.match(r"<\s*/?\s*([A-Za-z_][\w-]*)", tag)
+        tag_name = m.group(1).lower() if m else ""
         if tag_name != "context":
             return False
         if abs_start is not None and excluded_spans is not None:

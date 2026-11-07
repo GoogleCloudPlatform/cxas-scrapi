@@ -47,6 +47,8 @@ def test_i012_recognizes_tools_used_in_global_instruction_callbacks_and_dags(
                     "update_language",
                     "hide_only_tool",
                     "dag_slot_setter",
+                    "fc_kw_tool",
+                    "fc_part_tool",
                     "truly_unused_tool",
                 ],
             }
@@ -62,6 +64,8 @@ def test_i012_recognizes_tools_used_in_global_instruction_callbacks_and_dags(
         "def before_model_callback(callback_context, llm_request):\n"
         "    callback_context.state['step'] = 'truly_unused_tool'\n"
         "    tools.hide_only_tool({})\n"
+        "    FunctionCall(name='fc_kw_tool', args={})\n"
+        "    Part.from_function_call(name='fc_part_tool', args={})\n"
         "    tools.truly_unused_tool_extended({})\n"
         "    tools.order_status_dag({})\n"
     )
@@ -109,3 +113,33 @@ def test_i015_deduplicates_context_and_ignores_runtime_envelope_examples(
     assert "<Context>" in results[1].message
     assert results[2].line == 9  # noqa: PLR2004
     assert "</Context>" in results[2].message
+
+
+def test_i015_next_line_user_turn_attributes_and_stray_quotes(
+    tmp_path: Path,
+) -> None:
+    ctx = LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path / "evaluations",
+        app_root=tmp_path,
+    )
+    inst = tmp_path / "agents" / "root_agent" / "instruction.txt"
+    inst.parent.mkdir(parents=True)
+    inst.write_text(
+        'Ignore `<context type="ivr">` inline code tags.\n'
+        "[user]:\n"
+        "<context>keypad=1</context>\n"
+        "User: hi\n"
+        "<context>caller_tier=gold</context>\n"
+        'The TV is 55" wide.\n'
+        "<context>real banned block</context>\n"
+        'Say "goodbye".\n'
+    )
+
+    results = BannedLegacyXmlTags().check(inst, inst.read_text(), ctx)
+    assert len(results) == 2  # noqa: PLR2004
+    assert results[0].line == 7  # noqa: PLR2004
+    assert "<context>" in results[0].message
+    assert results[1].line == 7  # noqa: PLR2004
+    assert "</context>" in results[1].message
