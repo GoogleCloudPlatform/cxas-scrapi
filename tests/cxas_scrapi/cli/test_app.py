@@ -1100,3 +1100,95 @@ def test_app_init_headless_failure(
     )
     assert expected_msg in captured.err
     assert "Use --force to overwrite." in captured.err
+
+
+def test_app_push_resolves_boolean_env_vars_in_staged_archive(
+    mock_apps_client: typing.Any, tmp_path: typing.Any
+) -> None:
+    import json  # noqa: PLC0415
+
+    app_json_path = tmp_path / "app.json"
+    app_json_path.write_text(
+        json.dumps(
+            {
+                "displayName": "Bool Env App",
+                "loggingSettings": {
+                    "bigqueryExportSettings": {
+                        "project": "$env_var",
+                        "dataset": "$env_var",
+                        "enabled": "$env_var",
+                    },
+                    "cloudLoggingSettings": {
+                        "enableCloudLogging": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    env_dev_path = tmp_path / "environment.dev.json"
+    env_dev_path.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "loggingSettings": {
+                        "bigqueryExportSettings": {
+                            "project": "dev-proj",
+                            "dataset": "dev-ds",
+                            "enabled": False,
+                        },
+                        "cloudLoggingSettings": {
+                            "enableCloudLogging": "false",
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/new-id", []
+    )
+
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        display_name="Bool Env App",
+        project_id="test-project",
+        location="us",
+        env_file=str(env_dev_path),
+    )
+
+    cli_app.app_push(args)
+
+    mock_apps_client.import_as_new_app.assert_called_once()
+    zip_bytes = mock_apps_client.import_as_new_app.call_args[1]["app_content"]
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        app_members = [n for n in zf.namelist() if n.endswith("app.json")]
+        assert len(app_members) == 1
+        staged_app = json.loads(zf.read(app_members[0]).decode("utf-8"))
+
+    bq = staged_app["loggingSettings"]["bigqueryExportSettings"]
+    assert bq["enabled"] is False
+    assert bq["project"] == "$env_var"
+    assert (
+        staged_app["loggingSettings"]["cloudLoggingSettings"][
+            "enableCloudLogging"
+        ]
+        is False
+    )
+
+    # Verify the working tree app.json on disk was NOT mutated
+    disk_app = json.loads(app_json_path.read_text(encoding="utf-8"))
+    assert (
+        disk_app["loggingSettings"]["bigqueryExportSettings"]["enabled"]
+        == "$env_var"
+    )
+    assert (
+        disk_app["loggingSettings"]["cloudLoggingSettings"][
+            "enableCloudLogging"
+        ]
+        is True
+    )

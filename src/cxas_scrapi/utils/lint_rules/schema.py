@@ -458,6 +458,37 @@ class SchemaValid(Rule):
 
         _strip_v1main_only_fields(data, self.target)
 
+        from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
+            resolve_env_booleans_for_lint,
+        )
+
+        target_to_category = {
+            "app_config": "app",
+            "agent_config": "agents",
+            "tool_config": "tools",
+            "toolset_config": "toolsets",
+            "guardrail_config": "guardrails",
+            "evaluation_config": "evaluations",
+            "eval_expectation_config": "evaluationExpectations",
+        }
+        cat = target_to_category.get(self.target)
+        if cat:
+            app_root = (
+                resource_dir
+                if self.target == "app_config"
+                else resource_dir.parent.parent
+            )
+            if (
+                not (app_root / "environment.json").is_file()
+                and context
+                and context.app_dir
+                and (context.app_dir / "environment.json").is_file()
+            ):
+                app_root = context.app_dir
+            resolve_env_booleans_for_lint(
+                data, cat, resource_dir.name, app_root
+            )
+
         try:
             obj = self._proto_type()
             json_format.ParseDict(data, obj._pb, ignore_unknown_fields=False)

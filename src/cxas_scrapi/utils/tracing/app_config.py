@@ -6,8 +6,9 @@ Cloud Logging settings, or BigQuery export settings — they are picked up from
 the agent's own configuration.
 
 `app.json` may reference per-environment values via the literal string
-`"$env_var"`. The matching key is looked up in `environment.json` (typed as
-a flat key→value map). Missing keys are left as `None` and a warning is logged.
+`"$env_var"`. The matching key is looked up in `environment.json` (mirroring
+`app.json` under `"app"` or at the root). Missing keys are left as `None` and a
+warning is logged.
 """
 
 # Copyright 2026 Google LLC
@@ -24,14 +25,113 @@ a flat key→value map). Missing keys are left as `None` and a warning is logged
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
+
+import yaml
+from google.cloud.ces_v1beta import types as ces_types
+from google.protobuf.descriptor import Descriptor, FieldDescriptor
 
 logger = logging.getLogger(__name__)
 
 ENV_VAR_PLACEHOLDER = "$env_var"
+
+_RESOURCE_DESCRIPTORS: dict[str, Descriptor] = {
+    "app": ces_types.App.pb().DESCRIPTOR,
+    "agents": ces_types.Agent.pb().DESCRIPTOR,
+    "tools": ces_types.Tool.pb().DESCRIPTOR,
+    "toolsets": ces_types.Toolset.pb().DESCRIPTOR,
+    "guardrails": ces_types.Guardrail.pb().DESCRIPTOR,
+    "evaluations": ces_types.Evaluation.pb().DESCRIPTOR,
+    "evaluationExpectations": ces_types.EvaluationExpectation.pb().DESCRIPTOR,
+}
+
+_ENV_CATEGORY_KEYS: frozenset[str] = frozenset(
+    {
+        "app",
+        "agents",
+        "tools",
+        "toolsets",
+        "guardrails",
+        "examples",
+        "evaluations",
+        "evaluationExpectations",
+    }
+)
+
+
+def _resolve_proto_field(
+    desc: Descriptor | None, key: str
+) -> FieldDescriptor | None:
+    """Finds a field on `desc` matching `key` (snake_case or camelCase)."""
+    if desc is None or desc.full_name.startswith("google.protobuf."):
+        return None
+    for field in desc.fields:
+        if key in (field.name, field.camelcase_name):
+            return field
+    return None
+
+
+def _is_proto_bool_path(desc: Descriptor | None, path: tuple[str, ...]) -> bool:
+    """Returns True when `path` resolves to a scalar `bool` field on `desc`."""
+    if not path or desc is None:
+        return False
+    cur: Descriptor | None = desc
+    idx = 0
+    while idx < len(path) - 1:
+        field = _resolve_proto_field(cur, path[idx])
+        if (
+            field is None
+            or field.type != FieldDescriptor.TYPE_MESSAGE
+            or field.message_type is None
+            or field.message_type.full_name.startswith("google.protobuf.")
+        ):
+            return False
+        if field.message_type.GetOptions().map_entry:
+            idx += 1
+            val_field = field.message_type.fields_by_name["value"]
+            if idx == len(path) - 1:
+                return val_field.type == FieldDescriptor.TYPE_BOOL
+            if (
+                val_field.type != FieldDescriptor.TYPE_MESSAGE
+                or val_field.message_type is None
+                or val_field.message_type.full_name.startswith(
+                    "google.protobuf."
+                )
+            ):
+                return False
+            cur = val_field.message_type
+        else:
+            if field.is_repeated:
+                return False
+            cur = field.message_type
+        idx += 1
+
+    leaf_field = _resolve_proto_field(cur, path[-1])
+    return (
+        leaf_field is not None
+        and not leaf_field.is_repeated
+        and leaf_field.type == FieldDescriptor.TYPE_BOOL
+    )
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    """Coerces a boolean, 0/1 integer, or stringified boolean to a `bool`."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        norm = value.strip().lower()
+        if norm in ("true", "1", "yes"):
+            return True
+        if norm in ("false", "0", "no"):
+            return False
+    return None
 
 
 class AppConfig:
@@ -150,12 +250,55 @@ class AppConfig:
         return None
 
     def _get(self, dotted_key: str) -> Any:
-        node: Any = self._app
-        for part in dotted_key.split("."):
-            if not isinstance(node, dict) or part not in node:
+        parts = dotted_key.split(".")
+        if parts[0] == "app":
+            if not isinstance(self._app.get("app"), dict):
                 return None
+            node: Any = self._app["app"]
+            rel_parts = tuple(parts[1:])
+        else:
+            if (
+                isinstance(self._app.get("app"), dict)
+                and parts[0] not in self._app
+            ):
+                return None
+            node = self._app
+            rel_parts = tuple(parts)
+
+        if not rel_parts:
+            return None
+
+        is_bool_field = _is_proto_bool_path(
+            _RESOURCE_DESCRIPTORS["app"], rel_parts
+        )
+
+        missing = False
+        for part in rel_parts[:-1]:
+            if not isinstance(node, dict) or part not in node:
+                missing = True
+                break
             node = node[part]
-        return self._resolve(node, key_hint=dotted_key)
+
+        leaf_key = rel_parts[-1]
+        if missing or not isinstance(node, dict) or leaf_key not in node:
+            if is_bool_field and self._env:
+                env_val = self._lookup_env(dotted_key)
+                if env_val is not None:
+                    return _coerce_bool(env_val)
+            return None
+
+        resolved = self._resolve(node[leaf_key], key_hint=dotted_key)
+        if is_bool_field:
+            if self._env:
+                env_override = self._lookup_env(dotted_key)
+                if env_override is not None:
+                    coerced = _coerce_bool(env_override)
+                    if coerced is not None:
+                        return coerced
+            coerced_res = _coerce_bool(resolved)
+            if coerced_res is not None:
+                return coerced_res
+        return resolved
 
     def audio_bucket(self) -> str | None:
         """Returns the GCS bucket configured for audio recording."""
@@ -177,7 +320,8 @@ class AppConfig:
                 f"enableCloudLogging"
             )
             if v is not None:
-                return bool(v)
+                coerced = _coerce_bool(v)
+                return coerced if coerced is not None else bool(v)
         return False
 
     def bigquery_export(self) -> dict[str, Any] | None:
@@ -191,11 +335,18 @@ class AppConfig:
             enabled = self._get(
                 f"{prefix}loggingSettings.bigqueryExportSettings.enabled"
             )
-            if project or dataset:
+            if project or dataset or enabled is not None:
+                coerced_enabled = (
+                    _coerce_bool(enabled) if enabled is not None else None
+                )
                 return {
                     "project": project,
                     "dataset": dataset,
-                    "enabled": bool(enabled) if enabled is not None else None,
+                    "enabled": (
+                        coerced_enabled
+                        if coerced_enabled is not None
+                        else (bool(enabled) if enabled is not None else None)
+                    ),
                 }
         return None
 
@@ -226,3 +377,359 @@ class AppConfig:
             if v is not None:
                 return v if isinstance(v, dict) else {}
         return {}
+
+
+def _merge_env_booleans_into_dict(
+    target: dict[str, Any],
+    env_node: dict[str, Any],
+    desc: Descriptor,
+    skip_keys: frozenset[str] = frozenset(),
+) -> tuple[bool, bool]:
+    """Recursively resolves boolean `$env_var` placeholders and boolean
+    overrides from `env_node` into `target` guided by protobuf `desc`.
+
+    Returns `(target_modified, env_modified)`.
+    """
+    target_modified = False
+    env_modified = False
+
+    for key, env_val in list(env_node.items()):
+        if key in skip_keys:
+            continue
+        field = _resolve_proto_field(desc, key)
+        if field is None:
+            continue
+
+        target_key = next(
+            (k for k in (key, field.camelcase_name, field.name) if k in target),
+            key,
+        )
+
+        if field.type == FieldDescriptor.TYPE_BOOL and not field.is_repeated:
+            coerced_bool = _coerce_bool(env_val)
+            if coerced_bool is not None:
+                if env_node[key] is not coerced_bool:
+                    env_node[key] = coerced_bool
+                    env_modified = True
+                if target.get(target_key) is not coerced_bool:
+                    target[target_key] = coerced_bool
+                    target_modified = True
+            continue
+
+        if (
+            field.type != FieldDescriptor.TYPE_MESSAGE
+            or field.message_type is None
+            or field.message_type.full_name.startswith("google.protobuf.")
+        ):
+            continue
+
+        if field.message_type.GetOptions().map_entry and isinstance(
+            env_val, dict
+        ):
+            val_field = field.message_type.fields_by_name["value"]
+            target_map = target.get(target_key)
+            if (
+                val_field.type == FieldDescriptor.TYPE_MESSAGE
+                and val_field.message_type is not None
+                and not val_field.message_type.full_name.startswith(
+                    "google.protobuf."
+                )
+            ):
+                for map_key, map_env_val in env_val.items():
+                    if not isinstance(map_env_val, dict):
+                        continue
+                    if isinstance(target_map, dict) and isinstance(
+                        target_map.get(map_key), dict
+                    ):
+                        t_mod, e_mod = _merge_env_booleans_into_dict(
+                            target_map[map_key],
+                            map_env_val,
+                            val_field.message_type,
+                        )
+                        target_modified |= t_mod
+                        env_modified |= e_mod
+            continue
+
+        if field.is_repeated:
+            target_list = target.get(target_key)
+            if isinstance(env_val, list) and isinstance(target_list, list):
+                for t_item, e_item in zip(target_list, env_val, strict=False):
+                    if isinstance(t_item, dict) and isinstance(e_item, dict):
+                        t_mod, e_mod = _merge_env_booleans_into_dict(
+                            t_item, e_item, field.message_type
+                        )
+                        target_modified |= t_mod
+                        env_modified |= e_mod
+            continue
+
+        if isinstance(env_val, dict):
+            existing_child = target.get(target_key)
+            if isinstance(existing_child, dict):
+                t_mod, e_mod = _merge_env_booleans_into_dict(
+                    existing_child, env_val, field.message_type
+                )
+                target_modified |= t_mod
+                env_modified |= e_mod
+            elif target_key not in target or existing_child is None:
+                sub_target: dict[str, Any] = {}
+                t_mod, e_mod = _merge_env_booleans_into_dict(
+                    sub_target, env_val, field.message_type
+                )
+                env_modified |= e_mod
+                if t_mod and sub_target:
+                    target[target_key] = sub_target
+                    target_modified = True
+
+    return target_modified, env_modified
+
+
+def _replace_bool_placeholders_with_default(
+    target: dict[str, Any], desc: Descriptor
+) -> None:
+    """Replaces literal `"$env_var"` on proto `bool` fields with `False`."""
+    for key, val in list(target.items()):
+        field = _resolve_proto_field(desc, key)
+        if field is None:
+            continue
+        if (
+            field.type == FieldDescriptor.TYPE_BOOL
+            and not field.is_repeated
+            and val == ENV_VAR_PLACEHOLDER
+        ):
+            target[key] = False
+        elif (
+            field.type == FieldDescriptor.TYPE_MESSAGE
+            and field.message_type is not None
+            and not field.message_type.full_name.startswith("google.protobuf.")
+        ):
+            if field.message_type.GetOptions().map_entry and isinstance(
+                val, dict
+            ):
+                val_field = field.message_type.fields_by_name["value"]
+                if (
+                    val_field.type == FieldDescriptor.TYPE_MESSAGE
+                    and val_field.message_type is not None
+                ):
+                    for map_val in val.values():
+                        if isinstance(map_val, dict):
+                            _replace_bool_placeholders_with_default(
+                                map_val, val_field.message_type
+                            )
+            elif field.is_repeated and isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict):
+                        _replace_bool_placeholders_with_default(
+                            item, field.message_type
+                        )
+            elif not field.is_repeated and isinstance(val, dict):
+                _replace_bool_placeholders_with_default(val, field.message_type)
+
+
+def resolve_env_booleans_for_lint(
+    data: dict[str, Any],
+    category: str,
+    resource_name: str,
+    app_root: Path,
+) -> None:
+    """Resolves boolean `$env_var` placeholders in-memory for `cxas lint`.
+
+    When `environment.json` is present in `app_root`, resolves boolean values
+    from it so invalid or missing values are still caught. When no
+    `environment.json` exists on disk (e.g. supplied via `--env-file` at push
+    time), substitutes `False` for literal `"$env_var"` on proto `bool` fields.
+    """
+    desc = _RESOURCE_DESCRIPTORS.get(category)
+    if desc is None or not isinstance(data, dict):
+        return
+
+    env_path = app_root / "environment.json"
+    if not env_path.is_file():
+        _replace_bool_placeholders_with_default(data, desc)
+        return
+
+    try:
+        with open(env_path, encoding="utf-8") as f:
+            env_data = json.load(f)
+    except Exception:
+        return
+
+    if not isinstance(env_data, dict):
+        return
+
+    env_copy = copy.deepcopy(env_data)
+    if category == "app":
+        target_app = data["app"] if isinstance(data.get("app"), dict) else data
+        if isinstance(env_copy.get("app"), dict):
+            _merge_env_booleans_into_dict(target_app, env_copy["app"], desc)
+        _merge_env_booleans_into_dict(
+            target_app, env_copy, desc, skip_keys=_ENV_CATEGORY_KEYS
+        )
+    else:
+        cat_env = env_copy.get(category)
+        if not isinstance(cat_env, dict):
+            return
+        disp = data.get("displayName") or data.get("display_name")
+        spec = (
+            cat_env.get(disp) if isinstance(disp, str) and disp else None
+        ) or cat_env.get(resource_name)
+        if isinstance(spec, dict):
+            _merge_env_booleans_into_dict(data, spec, desc)
+
+
+def resolve_env_booleans_in_dir(agent_dir: str) -> bool:
+    """Resolves boolean `$env_var` placeholders and boolean overrides from
+    `environment.json` into staged resource manifests inside `agent_dir`.
+
+    CES `ImportApp` parses `app.json` (and component manifests) into protobuf
+    messages before resolving `$env_var` string fields, so `"$env_var"` on a
+    protobuf `bool` field fails proto parsing unless resolved to a native JSON
+    boolean prior to archive creation.
+    """
+    env_path = os.path.join(agent_dir, "environment.json")
+    if not os.path.isfile(env_path):
+        return False
+
+    try:
+        with open(env_path, encoding="utf-8") as f:
+            env_data = json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to parse {env_path}: {e}")
+        return False
+
+    if not isinstance(env_data, dict):
+        return False
+
+    any_modified = False
+    env_modified = False
+    app_desc = _RESOURCE_DESCRIPTORS["app"]
+
+    # 1. Resolve into app.json / app.yaml
+    app_json_path = os.path.join(agent_dir, "app.json")
+    if os.path.isfile(app_json_path):
+        try:
+            with open(app_json_path, encoding="utf-8") as f:
+                app_data = json.load(f)
+            if isinstance(app_data, dict):
+                target_app = (
+                    app_data["app"]
+                    if isinstance(app_data.get("app"), dict)
+                    else app_data
+                )
+                app_mod = False
+                if isinstance(env_data.get("app"), dict):
+                    t_mod, e_mod = _merge_env_booleans_into_dict(
+                        target_app, env_data["app"], app_desc
+                    )
+                    app_mod |= t_mod
+                    env_modified |= e_mod
+                t_mod, e_mod = _merge_env_booleans_into_dict(
+                    target_app,
+                    env_data,
+                    app_desc,
+                    skip_keys=_ENV_CATEGORY_KEYS,
+                )
+                app_mod |= t_mod
+                env_modified |= e_mod
+                if app_mod:
+                    with open(app_json_path, "w", encoding="utf-8") as f:
+                        json.dump(app_data, f, indent=2)
+                    any_modified = True
+        except Exception as e:
+            logger.warning(
+                f"Failed to resolve booleans in {app_json_path}: {e}"
+            )
+
+    app_yaml_path = os.path.join(agent_dir, "app.yaml")
+    if os.path.isfile(app_yaml_path):
+        try:
+            with open(app_yaml_path, encoding="utf-8") as f:
+                app_yaml_data = yaml.safe_load(f)
+            if isinstance(app_yaml_data, dict):
+                target_app = (
+                    app_yaml_data["app"]
+                    if isinstance(app_yaml_data.get("app"), dict)
+                    else app_yaml_data
+                )
+                yaml_mod = False
+                if isinstance(env_data.get("app"), dict):
+                    t_mod, e_mod = _merge_env_booleans_into_dict(
+                        target_app, env_data["app"], app_desc
+                    )
+                    yaml_mod |= t_mod
+                    env_modified |= e_mod
+                t_mod, e_mod = _merge_env_booleans_into_dict(
+                    target_app,
+                    env_data,
+                    app_desc,
+                    skip_keys=_ENV_CATEGORY_KEYS,
+                )
+                yaml_mod |= t_mod
+                env_modified |= e_mod
+                if yaml_mod:
+                    with open(app_yaml_path, "w", encoding="utf-8") as f:
+                        yaml.safe_dump(app_yaml_data, f, sort_keys=False)
+                    any_modified = True
+        except Exception as e:
+            logger.warning(
+                f"Failed to resolve booleans in {app_yaml_path}: {e}"
+            )
+
+    # 2. Resolve into `<category>/<name>/<name>.{json,yaml,yml}` manifests
+    for category in ("tools", "toolsets", "agents", "guardrails"):
+        cat_env = env_data.get(category)
+        cat_dir = os.path.join(agent_dir, category)
+        cat_desc = _RESOURCE_DESCRIPTORS[category]
+        if not isinstance(cat_env, dict) or not os.path.isdir(cat_dir):
+            continue
+        for entry in sorted(os.listdir(cat_dir)):
+            comp_dir = os.path.join(cat_dir, entry)
+            if not os.path.isdir(comp_dir):
+                continue
+            for ext in (".json", ".yaml", ".yml"):
+                fpath = os.path.join(comp_dir, f"{entry}{ext}")
+                if not os.path.isfile(fpath):
+                    continue
+                is_yaml = ext in (".yaml", ".yml")
+                try:
+                    with open(fpath, encoding="utf-8") as f:
+                        comp_data = (
+                            yaml.safe_load(f) if is_yaml else json.load(f)
+                        )
+                    if not isinstance(comp_data, dict):
+                        continue
+                    disp = comp_data.get("displayName") or comp_data.get(
+                        "display_name"
+                    )
+                    spec = (
+                        cat_env.get(disp)
+                        if isinstance(disp, str) and disp
+                        else None
+                    ) or cat_env.get(entry)
+                    if not isinstance(spec, dict):
+                        continue
+                    t_mod, e_mod = _merge_env_booleans_into_dict(
+                        comp_data, spec, cat_desc
+                    )
+                    env_modified |= e_mod
+                    if t_mod:
+                        with open(fpath, "w", encoding="utf-8") as f:
+                            if is_yaml:
+                                yaml.safe_dump(comp_data, f, sort_keys=False)
+                            else:
+                                json.dump(comp_data, f, indent=2)
+                        any_modified = True
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to resolve booleans in {fpath}: {e}"
+                    )
+
+    # Write back environment.json only if stringified/int booleans normalized
+    if env_modified:
+        try:
+            with open(env_path, "w", encoding="utf-8") as f:
+                json.dump(env_data, f, indent=2)
+            any_modified = True
+        except Exception as e:
+            logger.debug(f"Could not update staged {env_path}: {e}")
+
+    return any_modified
