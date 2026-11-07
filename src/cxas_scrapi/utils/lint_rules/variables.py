@@ -561,30 +561,32 @@ def _collect_template_refs(content: str) -> list[tuple[str, int]]:
     return refs
 
 
-def _extract_non_fstring_constants(tree: ast.AST) -> set[str]:
-    """Return string constants from AST, excluding f-string parts."""
-    fstring_part_ids: set[int] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.JoinedStr):
-            for child in ast.walk(node):
-                if isinstance(child, ast.Constant):
-                    fstring_part_ids.add(id(child))
-    return {
-        node.value
+def _tree_replaces_placeholder(tree: ast.AST, placeholder: str) -> bool:
+    """Return True if ``tree`` calls ``.replace(placeholder, ...)``."""
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "replace"
+        and len(node.args) >= 2  # noqa: PLR2004
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and node.args[0].value == placeholder
         for node in ast.walk(tree)
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and id(node) not in fstring_part_ids
-    }
+    )
 
 
 def _agent_callback_substitutes_ref(file_path: Path, ref: str) -> bool:
-    """Return True if a callback in the same agent dir substitutes ``{ref}``."""
+    """Return True if an agent before_model callback replaces ``{ref}``."""
     agent_dir = file_path.parent
     if agent_dir.parent.name != "agents" or not agent_dir.is_dir():
         return False
     placeholder = f"{{{ref}}}"
     for py_file in agent_dir.rglob("*.py"):
+        rel_parts = py_file.relative_to(agent_dir).parts
+        if not rel_parts or not rel_parts[0].startswith(
+            "before_model_callbacks"
+        ):
+            continue
         try:
             text = py_file.read_text(errors="ignore")
             with warnings.catch_warnings():
@@ -592,7 +594,7 @@ def _agent_callback_substitutes_ref(file_path: Path, ref: str) -> bool:
                 tree = ast.parse(text)
         except (OSError, SyntaxError):
             continue
-        if placeholder in _extract_non_fstring_constants(tree):
+        if _tree_replaces_placeholder(tree, placeholder):
             return True
     return False
 

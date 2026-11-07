@@ -330,21 +330,83 @@ def test_v104_recognizes_callback_substituted_instruction_placeholders(
     cb_dir.mkdir(parents=True, exist_ok=True)
     (cb_dir / "python_code.py").write_text(
         "# '{unhandled_var}' in a comment must not count as substitution\n"
+        "EXAMPLES = ['{bare_list_var}']\n"
         "def before_model_callback(callback_context, llm_request):\n"
         "    unhandled_var = 'local'\n"
         "    _ = f'f-string {unhandled_var} must not count as substitution'\n"
-        "    replacements = {'{methods_on_file}': 'Visa ending 1234'}\n"
+        "    llm_request.config.system_instruction = (\n"
+        "        llm_request.config.system_instruction.replace(\n"
+        "            '{methods_on_file}', 'Visa ending 1234'\n"
+        "        )\n"
+        "    )\n"
     )
+    after_cb = agent_dir / "after_agent_callbacks" / "cb" / "python_code.py"
+    after_cb.parent.mkdir(parents=True, exist_ok=True)
+    after_cb.write_text(
+        "def after_agent_callback(callback_context):\n"
+        "    return 'x'.replace('{after_cb_var}', 'y')\n"
+    )
+    (agent_dir / "helpers.py").write_text("LOG = '{helper_var}'\n")
+
     instr_path = agent_dir / "instruction.txt"
     instr_path.write_text(
         "Available payment methods: {methods_on_file}\n"
+        "Bare list in before_model: {bare_list_var}\n"
+        "After callback replace: {after_cb_var}\n"
+        "Helper file literal: {helper_var}\n"
         "Repeated undeclared on one line: {unhandled_var} and {unhandled_var}\n"
     )
     v104_results = InstructionVariableRef().check(
         instr_path, instr_path.read_text(), var_context
     )
-    assert len(v104_results) == 1
-    assert "unhandled_var" in v104_results[0].message
+    flagged = [r.message for r in v104_results]
+    assert len(flagged) == 4  # noqa: PLR2004
+    assert not any("methods_on_file" in m for m in flagged)
+    assert any("bare_list_var" in m for m in flagged)
+    assert any("after_cb_var" in m for m in flagged)
+    assert any("helper_var" in m for m in flagged)
+    assert any("unhandled_var" in m for m in flagged)
+
+
+def test_predefined_only_app_runs_v100_through_v104(
+    tmp_path: typing.Any,
+) -> None:
+    (tmp_path / "app.json").write_text(
+        '{"name": "test-app", "predefinedVariableDeclarations": ['
+        '{"name": "channel", "schema": {"type": "STRING"}}, '
+        '{"name": "caller", "schema": {"type": "OBJECT", '
+        '"properties": {"tier": {"type": "STRING"}}}}'
+        "]}"
+    )
+    _clear_schema_cache()
+    ctx = LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path / "evals",
+        app_root=tmp_path,
+    )
+    cb = tmp_path / "python_code.py"
+    cb.write_text(
+        "def cb(callback_context):\n"
+        "    _ = callback_context.state.get('channel')\n"
+        "    callback_context.state['channel'] = 123\n"
+        "    _ = callback_context.state.get('caller.missing_prop')\n"
+        "    _ = callback_context.state.get('tier')\n"
+        "    _ = callback_context.state.get('undeclared_var')\n"
+    )
+    assert len(CallbackVariableDeclared().check(cb, cb.read_text(), ctx)) == 1
+    assert len(CallbackVariableTypeMatch().check(cb, cb.read_text(), ctx)) == 1
+    assert (
+        len(CallbackNestedPropertyExists().check(cb, cb.read_text(), ctx)) == 1
+    )
+    assert len(CallbackStaleFlatVar().check(cb, cb.read_text(), ctx)) == 1
+
+    instr = tmp_path / "agents" / "Root" / "instruction.txt"
+    instr.parent.mkdir(parents=True, exist_ok=True)
+    instr.write_text("Channel {channel}, tier {caller.tier}, bad {missing}.\n")
+    v104 = InstructionVariableRef().check(instr, instr.read_text(), ctx)
+    assert len(v104) == 1
+    assert "missing" in v104[0].message
 
 
 def test_v103_instruction_deduplicates_same_line_refs(
